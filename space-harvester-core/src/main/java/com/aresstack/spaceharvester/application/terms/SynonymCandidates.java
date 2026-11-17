@@ -104,6 +104,8 @@ public class SynonymCandidates {
     private final String processorVersion;
     /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
     private volatile Predicate<PageKey> pageReleases = key -> false;
+    /** Schon berechnete Vektoren je Modell und Eingabe (SY2); ohne Datenverzeichnis nur im Speicher. */
+    private volatile SynonymVectorCache vectors = SynonymVectorCache.inMemory();
 
     /**
      * @param texts      aktueller projizierter Text einer Seite im Cache
@@ -132,6 +134,16 @@ public class SynonymCandidates {
         this.pageReleases = Objects.requireNonNull(released, "released");
     }
 
+    /** Schließt den dauerhaften Vektor-Cache an (SY2). */
+    public void vectors(SynonymVectorCache cache) {
+        this.vectors = Objects.requireNonNull(cache, "cache");
+    }
+
+    /** Der angeschlossene Vektor-Cache, auch für den Stand je Quelle. */
+    public SynonymVectorCache vectors() {
+        return vectors;
+    }
+
     /** Ob die Fundstelle an den KI-Dienst darf: ihre Quelle oder ihre Seite ist freigegeben. */
     private boolean released(RelationEvidence evidence) {
         return released.test(evidence.sourceId())
@@ -145,19 +157,26 @@ public class SynonymCandidates {
      * @param terms         betrachtete Begriffe nach dem Budget
      * @param embedded      Begriffe, die an das Embedding-Modell gingen
      * @param embeddingUsed ob Stufe B lief; {@code false} ohne Modell, ohne Budget oder nach einem Fehler des Dienstes
+     * @param complete      ob jeder einbettbare Begriff einen Vektor hat; {@code false}, wenn das Budget für neue
+     *                      Vektoren Begriffe übrig ließ (SY2) oder der Dienst scheiterte
      */
-    public record Collected(List<SynonymCandidate> candidates, int terms, int embedded, boolean embeddingUsed) {
+    public record Collected(List<SynonymCandidate> candidates, int terms, int embedded, boolean embeddingUsed,
+                            boolean complete) {
 
         public Collected {
             candidates = List.copyOf(candidates);
         }
+
+        public Collected(List<SynonymCandidate> candidates, int terms, int embedded, boolean embeddingUsed) {
+            this(candidates, terms, embedded, embeddingUsed, true);
+        }
     }
 
-    /** Ob ein Embedding-Modell eingestellt ist (Stufe B); ohne bleiben nur die Regeln. */
     /**
      * Stand einer Quelle für den automatischen Lauf (SY1): Fingerabdruck über die Einträge ihrer Seiten im
-     * Begriffsindex (Schlüssel und Eingabe-Hash), die Freigabe der Quelle und ob ein Embedding-Modell da ist. Gleicher
-     * Stand heißt, ein Lauf fände nichts Neues. Nur Hashes, keine Begriffe.
+     * Begriffsindex (Schlüssel und Eingabe-Hash), die Freigabe der Quelle und die Kennung des Embedding-Modells (SY2),
+     * damit ein Modellwechsel einen Lauf auslöst. Gleicher Stand heißt, ein Lauf fände nichts Neues. Nur Hashes und
+     * Kennungen, keine Begriffe.
      */
     public String state(String sourceId) {
         java.security.MessageDigest digest;
@@ -166,7 +185,7 @@ public class SynonymCandidates {
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 fehlt", e);
         }
-        digest.update((released.test(sourceId) + "|" + embeddingAvailable() + "|").getBytes(
+        digest.update((released.test(sourceId) + "|" + embeddingModel().orElse("-") + "|").getBytes(
                 java.nio.charset.StandardCharsets.UTF_8));
         TermIndex.Filter filter = new TermIndex.Filter(Set.of(sourceId), null, null, null, processorVersion);
         String from = null;
@@ -182,6 +201,25 @@ public class SynonymCandidates {
             from = batch.get(batch.size() - 1).sortKey();
         }
         return java.util.HexFormat.of().formatHex(digest.digest());
+    }
+
+    /** Kennung des eingestellten Embedding-Modells oder leer ohne Modell. */
+    public Optional<String> embeddingModel() {
+        try {
+            return embeddings.get().map(EmbeddingProvider::modelId);
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Ob ein Embedding-Modell eingestellt ist (Stufe B); ohne bleiben nur die Regeln. */
+    private static String sha256(String text) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 fehlt", e);
+        }
     }
 
     public boolean embeddingAvailable() {
@@ -211,7 +249,7 @@ public class SynonymCandidates {
         List<SynonymCandidate> candidates = run.merged();
         LOG.log(System.Logger.Level.INFO, "Synonymkandidaten: {0} Begriffe betrachtet, {1} eingebettet, {2} Kandidaten",
                 selected.size(), run.embedded, candidates.size());
-        return new Collected(candidates, selected.size(), run.embedded, embedded);
+        return new Collected(candidates, selected.size(), run.embedded, embedded, run.complete);
     }
 
     /** Faltung für Schreibvarianten: Umlaute und ß ausgeschrieben, nur Buchstaben und Ziffern. */
@@ -275,6 +313,7 @@ public class SynonymCandidates {
             }
         };
         int embedded;
+        boolean complete = true;
 
         Run(SynonymScope scope, SynonymBudget budget, JobContext context) {
             this.scope = scope;
@@ -615,22 +654,37 @@ public class SynonymCandidates {
             if (provider.isEmpty()) {
                 return false;
             }
+            // SY2: Begriffe mit Vektor im Cache zählen nicht gegen das Budget, das gilt nur für neue Vektoren.
+            String modelId = provider.get().modelId();
+            int dimensions = provider.get().dimensions();
+            SynonymVectorCache cache = vectors;
             List<Term> embeddable = new ArrayList<>();
+            List<Term> fresh = new ArrayList<>();
             List<String> inputs = new ArrayList<>();
+            List<String> hashes = new ArrayList<>();
             for (Term term : selected) {
-                if (embeddable.size() >= budget.maxEmbeddedTerms()) {
-                    break;
-                }
                 String input = embeddingInput(term);
-                if (input != null) {
+                if (input == null) {
+                    continue;
+                }
+                String hash = sha256(input);
+                Optional<float[]> cached = cache.find(modelId, hash).filter(vector -> vector.length == dimensions);
+                if (cached.isPresent()) {
+                    term.vector = cached.get();
                     embeddable.add(term);
+                } else if (fresh.size() < budget.maxEmbeddedTerms()) {
+                    embeddable.add(term);
+                    fresh.add(term);
                     inputs.add(input);
+                    hashes.add(hash);
+                } else {
+                    complete = false;
                 }
             }
             if (embeddable.size() < 2) {
                 return false;
             }
-            int dimensions = provider.get().dimensions();
+            Map<String, SynonymVectorCache.Entry> computed = new HashMap<>();
             try {
                 for (int from = 0; from < inputs.size(); from += EMBED_BATCH) {
                     checkpoint();
@@ -644,22 +698,40 @@ public class SynonymCandidates {
                         if (vector.length != dimensions) {
                             throw new IllegalStateException("Vektorlänge passt nicht zum Modell");
                         }
-                        embeddable.get(from + i).vector = EmbeddingIndex.normalized(vector);
+                        Term term = fresh.get(from + i);
+                        term.vector = EmbeddingIndex.normalized(vector);
+                        computed.put(hashes.get(from + i), new SynonymVectorCache.Entry(term.vector,
+                                releasedPages(term)));
                     }
                 }
             } catch (JobCancelledException | JobFailedException e) {
-                // Abbruch oder Frist des Auftrags: kein Dienstfehler, der Lauf endet.
+                // Abbruch oder Frist des Auftrags: kein Dienstfehler, der Lauf endet; Fertiges bleibt im Cache.
+                cache.putAll(modelId, computed);
                 throw e;
             } catch (RuntimeException e) {
                 // Nur der Typ ins Log; die übrigen Stufen bleiben nutzbar.
                 LOG.log(System.Logger.Level.WARNING, "Semantische Vorauswahl der Synonyme übersprungen ({0})",
                         e.getClass().getName());
+                cache.putAll(modelId, computed);
                 embeddable.forEach(term -> term.vector = null);
+                complete = false;
                 return false;
             }
+            cache.putAll(modelId, computed);
             embedded = embeddable.size();
-            neighbours(embeddable, dimensions, provider.get().modelId());
+            neighbours(embeddable, dimensions, modelId);
             return true;
+        }
+
+        /** Die Seiten der freigegebenen Fundstellen, aus denen die Eingabe eines Begriffs stammt. */
+        private Set<PageKey> releasedPages(Term term) {
+            Set<PageKey> pages = new HashSet<>();
+            for (SynonymCandidate.Context context : contexts(term)) {
+                if (released(context.evidence()) && context.evidence().pageId() != null) {
+                    pages.add(new PageKey(context.evidence().sourceId(), context.evidence().pageId()));
+                }
+            }
+            return pages;
         }
 
         /** Begriff und Fundstellen aus freigegebenen Quellen oder Seiten oder {@code null} ohne solche. */

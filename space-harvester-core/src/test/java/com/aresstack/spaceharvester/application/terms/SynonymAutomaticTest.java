@@ -208,6 +208,113 @@ class SynonymAutomaticTest {
         assertThat(waiting.automatic("wiki")).isPresent();
     }
 
+    /** Zählt, wie viele Eingaben an das Modell gingen. */
+    private final List<String> embedded = new ArrayList<>();
+
+    private EmbeddingProvider counting(EmbeddingProvider inner, String modelId) {
+        return new EmbeddingProvider() {
+            @Override
+            public String modelId() {
+                return modelId;
+            }
+
+            @Override
+            public int dimensions() {
+                return inner.dimensions();
+            }
+
+            @Override
+            public List<float[]> embed(List<String> texts) {
+                embedded.addAll(texts);
+                return inner.embed(texts);
+            }
+        };
+    }
+
+    private SynonymCandidates candidates() {
+        return new SynonymCandidates(catalog, store,
+                key -> Optional.ofNullable(cache.get(key)).map(PageSnapshot::header),
+                key -> Optional.ofNullable(cache.get(key)).flatMap(PLAIN::project), relations, () -> provider,
+                released::contains, new TermProcessor().version());
+    }
+
+    private SynonymDiscovery discovery(SynonymVectorCache vectors) {
+        SynonymCandidates candidates = candidates();
+        candidates.vectors(vectors);
+        return new SynonymDiscovery(catalog, candidates, new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW),
+                relations, model, ResolutionCache.inMemory(), jobs, () -> budget, Clock.fixed(T0, ZoneOffset.UTC));
+    }
+
+    @Test
+    void cachedVectorsAreNotEmbeddedAgain() {
+        provider = Optional.of(counting(vectorsByWord(Map.of("auto", 0, "kfz", 0)), "fake@1"));
+        SynonymDiscovery withCache = discovery(SynonymVectorCache.inMemory());
+        withCache.automatic("wiki");
+        int first = embedded.size();
+        assertThat(first).isGreaterThanOrEqualTo(2);
+
+        cached("Der Wagen fährt. Der Wagen ist rot.");
+        withCache.automatic("wiki");
+
+        // Nur der neue Begriff geht an das Modell; Auto und Kfz kommen aus dem Cache.
+        assertThat(embedded.subList(first, embedded.size())).allMatch(input -> !input.startsWith("Auto:")
+                && !input.startsWith("Kfz:")).isNotEmpty();
+    }
+
+    @Test
+    void theBudgetCountsOnlyNewVectorsAndTheRunContinuesLater() {
+        provider = Optional.of(counting(vectorsByWord(Map.of("auto", 0, "kfz", 0)), "fake@1"));
+        cached("Der Wagen fährt. Der Wagen ist rot.");
+        budget = new SynonymBudget(2000, 2, 0, true);
+        SynonymVectorCache vectors = SynonymVectorCache.inMemory();
+        SynonymDiscovery withCache = discovery(vectors);
+
+        withCache.automatic("wiki");
+        assertThat(vectors.state("wiki")).as("unvollständig: kein Stand").isEmpty();
+        int first = embedded.size();
+        assertThat(first).isEqualTo(2);
+
+        // Ohne Änderung läuft er weiter, weil ein Begriff noch keinen Vektor hat.
+        assertThat(withCache.automatic("wiki")).isPresent();
+        assertThat(embedded.size()).isGreaterThan(first);
+    }
+
+    @Test
+    void theStateSurvivesARestartAndAModelChangeStartsARun() {
+        provider = Optional.of(counting(vectorsByWord(Map.of("auto", 0, "kfz", 0)), "fake@1"));
+        SynonymVectorCache vectors = SynonymVectorCache.inMemory();
+        discovery(vectors).automatic("wiki");
+        assertThat(vectors.state("wiki")).isPresent();
+
+        // Neue Instanz wie nach einem Neustart: derselbe Stand, kein Lauf.
+        assertThat(discovery(vectors).automatic("wiki")).isEmpty();
+
+        provider = Optional.of(counting(vectorsByWord(Map.of("auto", 0, "kfz", 0)), "fake@2"));
+        assertThat(discovery(vectors).automatic("wiki")).isPresent();
+    }
+
+    @Test
+    void aWithdrawnPageReleaseRemovesItsVectors() {
+        released.clear();
+        PageReleases releases = PageReleases.inMemory();
+        SynonymVectorCache vectors = SynonymVectorCache.inMemory();
+        SynonymCandidates candidates = candidates();
+        candidates.vectors(vectors);
+        candidates.pageReleases(releases::contains);
+        SynonymDiscovery withCache = new SynonymDiscovery(catalog, candidates,
+                new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), relations, model,
+                ResolutionCache.inMemory(), jobs, () -> budget, Clock.fixed(T0, ZoneOffset.UTC));
+        withCache.pageReleases(releases::contains);
+        releases.subscribe(withCache::releasesChanged);
+        releases.add(List.of(new PageReleases.Entry(new PageKey("wiki", "1"), "DEV", null, PageReleases.CHAT, T0),
+                new PageReleases.Entry(new PageKey("wiki", "2"), "DEV", null, PageReleases.CHAT, T0)));
+        assertThat(synonyms()).hasSize(1);
+
+        releases.remove(List.of(new PageKey("wiki", "1")));
+
+        assertThat(synonyms()).as("ohne Vektor kein gestützter KI-Vorschlag").isEmpty();
+    }
+
     @Test
     void aNewPageReleaseStartsTheRunOfItsSourceAgain() {
         discovery.automatic("wiki");
