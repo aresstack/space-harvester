@@ -28,6 +28,7 @@ import com.aresstack.spaceharvester.application.standing.StandingDecisionStore;
 import com.aresstack.spaceharvester.application.standing.StandingConflictException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.standing.StandingReason;
+import com.aresstack.spaceharvester.application.standing.StatementConflicts;
 import com.aresstack.spaceharvester.application.standing.StatementKind;
 import com.aresstack.spaceharvester.application.standing.StatusQuoEntry;
 import com.aresstack.spaceharvester.application.standing.StatusQuoView;
@@ -84,6 +85,10 @@ import java.util.function.Supplier;
 final class StandingTab extends JPanel {
 
     static final String STATEMENTS = "Aussagen";
+    static final String CONFLICTS = "Mögliche Widersprüche";
+    static final String REPLACEMENTS = "Ablösungen";
+    /** Höchstens so viele Einträge holen den Wortlaut für „Mögliche Widersprüche“ auf einmal. */
+    private static final int CONFLICT_SENTENCES = 400;
     static final String BUSY = "Stand wird gelesen …";
     static final String BY_BEARER_TIP = "Nach Träger bündeln: Zustände (Eigenschaften, Rollen) unter ihrem Träger";
     static final String AS_LIST_TIP = "Als Liste nach Stand zeigen";
@@ -223,6 +228,11 @@ final class StandingTab extends JPanel {
     private final DefaultListModel<Row> model = new DefaultListModel<>();
     private final JList<Row> list = new JList<>(model);
     private final JScrollPane scroll;
+    private final DefaultListModel<Row> conflictModel = new DefaultListModel<>();
+    private final JList<Row> conflictList = new JList<>(conflictModel);
+    private StatementConflicts conflicts;
+    /** Die Liste, an der das Overlay zuletzt aufging (Aussagen oder Widersprüche). */
+    private JList<Row> popupOwner = list;
     private final BusyOverlay busy;
     private final InfoPopup popup = new InfoPopup();
     private Consumer<String> onStatus = text -> { };
@@ -281,7 +291,28 @@ final class StandingTab extends JPanel {
                     popup.setVisible(false);
                     jump(line.entry());
                 } else if (e.getClickCount() == 1) {
-                    details(row, e.getX(), e.getY());
+                    details(list, row, e.getX(), e.getY());
+                }
+            }
+        });
+        conflictList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        conflictList.setFixedCellHeight(ROW_HEIGHT);
+        conflictList.setCellRenderer(new Renderer());
+        conflictList.setOpaque(false);
+        conflictList.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                int index = conflictList.locationToIndex(e.getPoint());
+                if (index < 0 || !conflictList.getCellBounds(index, index).contains(e.getPoint())) {
+                    return;
+                }
+                conflictList.setSelectedIndex(index);
+                Row row = conflictModel.get(index);
+                if (e.getClickCount() >= 2 && row instanceof Line line) {
+                    popup.setVisible(false);
+                    jump(line.entry());
+                } else if (e.getClickCount() == 1) {
+                    details(conflictList, row, e.getX(), e.getY());
                 }
             }
         });
@@ -344,7 +375,17 @@ final class StandingTab extends JPanel {
         counts.setOpaque(false);
         chips.values().forEach(counts::add);
         tabs.tab(STATEMENTS, busy);
+        tabs.tab(CONFLICTS, Comic.scroll(conflictList));
         tabs.actions(counts, filter, bearer, field);
+        // Zahlen, Filter und Suche gehören zu „Aussagen“; bei den Widersprüchen stünden sie ohne Wirkung da.
+        tabs.onSelect(name -> {
+            boolean statements = STATEMENTS.equals(name);
+            for (JComponent tool : List.of(counts, filter, bearer, field)) {
+                tool.setVisible(statements);
+            }
+            popup.setVisible(false);
+            status();
+        });
         add(tabs, BorderLayout.CENTER);
     }
 
@@ -415,7 +456,8 @@ final class StandingTab extends JPanel {
         busy.setBusy(true);
         runner.run(() -> {
             StatusQuoView read = current.view(chosen, stop::get);
-            return new Loaded(read, rows(read, filter));
+            StatementConflicts found = StatementConflicts.of(read);
+            return new Loaded(read, rows(read, filter), found, conflictRows(found));
         }, loaded -> {
             if (request != generation) {
                 return;
@@ -427,6 +469,10 @@ final class StandingTab extends JPanel {
             sentenceGeneration++;
             counts(view);
             show(loaded.rows());
+            conflicts = loaded.conflicts();
+            conflictModel.clear();
+            conflictModel.addAll(loaded.conflictRows());
+            fetchConflictSentences(current);
             status();
         }, failure -> {
             if (request != generation) {
@@ -442,7 +488,77 @@ final class StandingTab extends JPanel {
         });
     }
 
-    private record Loaded(StatusQuoView view, List<Row> rows) {
+    private record Loaded(StatusQuoView view, List<Row> rows, StatementConflicts conflicts, List<Row> conflictRows) {
+    }
+
+    /**
+     * Die Zeilen für „Mögliche Widersprüche“: je Hinweis ein Kopf mit der Sachlage, darunter die bejahten und die
+     * verneinten Aussagen. Darunter die Ablösungen als eigene Gruppe mit ihrer Art, nie als Warnung.
+     */
+    static List<Row> conflictRows(StatementConflicts conflicts) {
+        List<Row> rows = new ArrayList<>();
+        for (StatementConflicts.PossibleContradiction contradiction : conflicts.contradictions()) {
+            List<StatusQuoEntry> all = new ArrayList<>(contradiction.affirmed());
+            all.addAll(contradiction.negated());
+            String modal = switch (contradiction.modality()) {
+                case MUSS -> " · muss";
+                case SOLL -> " · soll";
+                case KANN -> " · kann";
+                case DARF -> " · darf";
+                case NONE, UNKNOWN -> "";
+            };
+            rows.add(new Group(situation(contradiction.situation()) + modal + " · bejaht und verneint",
+                    Comic.STANDING_UNCLEAR, all.size()));
+            all.forEach(entry -> rows.add(new Line(entry, true)));
+        }
+        if (!conflicts.replacements().isEmpty()) {
+            rows.add(new Group(REPLACEMENTS, Comic.INK, conflicts.replacements().size()));
+            for (StatementConflicts.Replacement replacement : conflicts.replacements()) {
+                List<StatusQuoEntry> all = new ArrayList<>(replacement.current());
+                all.addAll(replacement.outdated());
+                rows.add(new Group(replacementKind(replacement.kind()) + ": " + replacement.predicate()
+                        + (replacement.object().isEmpty() ? "" : " · " + replacement.object()), Comic.MUTED,
+                        all.size()));
+                all.forEach(entry -> rows.add(new Line(entry, true)));
+            }
+        }
+        return rows;
+    }
+
+    static String replacementKind(StatementConflicts.ReplacementKind kind) {
+        return switch (kind) {
+            case NEGATION -> "anders verneint";
+            case ACTOR -> "anderer Handelnder";
+        };
+    }
+
+    private static String situation(com.aresstack.spaceharvester.application.standing.Situation situation) {
+        StringBuilder text = new StringBuilder(situation.subject()).append(' ').append(situation.predicate());
+        for (com.aresstack.spaceharvester.application.standing.Situation.Participant other : situation.others()) {
+            text.append(' ').append(other.marker() == null ? "" : other.marker() + " ").append(other.key());
+        }
+        return text.toString();
+    }
+
+    /** Beide Sätze im Wortlaut: für die (wenigen) Einträge der Hinweise den Originalsatz auf einmal holen. */
+    private void fetchConflictSentences(Actions current) {
+        List<StatusQuoEntry> missing = new ArrayList<>();
+        for (int i = 0; i < conflictModel.size() && missing.size() < CONFLICT_SENTENCES; i++) {
+            if (conflictModel.get(i) instanceof Line line && asked.add(line.entry().statement().id())) {
+                missing.add(line.entry());
+            }
+        }
+        if (missing.isEmpty()) {
+            return;
+        }
+        int request = sentenceGeneration;
+        runner.run(() -> current.sentences(missing), found -> {
+            if (request == sentenceGeneration) {
+                sentences.putAll(found);
+                conflictList.repaint();
+                list.repaint();
+            }
+        }, failure -> missing.forEach(entry -> asked.remove(entry.statement().id())));
     }
 
     /** Erst anmelden, dann lesen (ADR 0027): Entscheidungen und das Ende von „Aussagen analysieren“. */
@@ -519,6 +635,15 @@ final class StandingTab extends JPanel {
 
     private void status() {
         if (view == null) {
+            return;
+        }
+        if (CONFLICTS.equals(tabs.selected())) {
+            int found = conflicts == null ? 0 : conflicts.contradictions().size();
+            int replaced = conflicts == null ? 0 : conflicts.replacements().size();
+            String text = (found == 0 ? "Keine möglichen Widersprüche"
+                    : Texts.count(found, "möglicher Widerspruch", "mögliche Widersprüche"))
+                    + " · " + Texts.count(replaced, "Ablösung", "Ablösungen");
+            onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
             return;
         }
         int shownLines = 0;
@@ -879,6 +1004,10 @@ final class StandingTab extends JPanel {
     }
 
     private void details(Row row, int x, int y) {
+        details(list, row, x, y);
+    }
+
+    private void details(JList<Row> owner, Row row, int x, int y) {
         popup.clearLinks();
         popup.controls(null);
         if (row instanceof Line line) {
@@ -899,8 +1028,9 @@ final class StandingTab extends JPanel {
         } else {
             return;
         }
-        if (list.isShowing()) {
-            popup.showAt(list, x, y);
+        popupOwner = owner;
+        if (owner.isShowing()) {
+            popup.showAt(owner, x, y);
         }
     }
 
@@ -1001,20 +1131,21 @@ final class StandingTab extends JPanel {
         if (current == null) {
             return;
         }
-        Point at = popup.isVisible() && list.isShowing() ? historyAt() : null;
+        JList<Row> owner = popupOwner;
+        Point at = popup.isVisible() && owner.isShowing() ? historyAt(owner) : null;
         runner.run(() -> current.history(page, statementId), entries -> {
             popup.clearLinks();
             popup.controls(null);
             popup.text("Protokoll", history(entries));
-            if (at != null && list.isShowing()) {
-                popup.showAt(list, at.x, at.y);
+            if (at != null && owner.isShowing()) {
+                popup.showAt(owner, at.x, at.y);
             }
         }, failure -> onStatus.accept("Protokoll nicht lesbar (" + failure.getClass().getSimpleName() + ")"));
     }
 
-    private Point historyAt() {
+    private Point historyAt(JList<Row> owner) {
         Point screen = popup.getLocationOnScreen();
-        SwingUtilities.convertPointFromScreen(screen, list);
+        SwingUtilities.convertPointFromScreen(screen, owner);
         return screen;
     }
 
@@ -1186,6 +1317,14 @@ final class StandingTab extends JPanel {
         if (model.get(index) instanceof Line line) {
             jump(line.entry());
         }
+    }
+
+    List<Row> conflictRows() {
+        List<Row> rows = new ArrayList<>();
+        for (int i = 0; i < conflictModel.size(); i++) {
+            rows.add(conflictModel.get(i));
+        }
+        return rows;
     }
 
     JComponent statementsView() {
