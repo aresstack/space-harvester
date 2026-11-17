@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.CountChip;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -102,6 +103,8 @@ final class StandingTab extends JPanel {
     static final String HISTORY_TIP = "Protokoll: wer wann welchen Stand gesetzt oder gelöscht hat";
     static final String CLEAR_QUESTION = "Wirklich die Entscheidung von Hand löschen? Danach gilt wieder der "
             + "berechnete Stand.";
+    static final String NO_RIGHT_TO_DECIDE = "Keine Berechtigung, den Stand in dieser Quelle zu setzen";
+    static final String NO_RIGHT_TO_HISTORY = "Keine Berechtigung, das Protokoll in dieser Quelle zu lesen";
     static final String NOT_WATCHING = "Stand erneuert sich nicht von selbst (Anmeldung beim Core fehlgeschlagen)";
     static final String HELP = "Jede Aussage der Auswahl links hat einen Stand: „gilt“ (gilt jetzt), „geplant“ (soll "
             + "kommen, gilt noch nicht), „unklar“ (nicht bestimmbar, etwa auf einer Entwurfsseite) oder „überholt“ "
@@ -1162,17 +1165,25 @@ final class StandingTab extends JPanel {
     }
 
     /**
-     * Schreibt im Hintergrund. Das neue Lesen stößt der Core über {@code subscribeStanding} an; passt die Revision
-     * nicht mehr, wird sofort neu gelesen und die Statuszeile sagt es.
+     * Schreibt im Hintergrund. Das neue Lesen stößt der Core über {@code subscribeStanding} an; ist diese Anmeldung
+     * fehlgeschlagen, wird nach dem Schreiben selbst neu gelesen. Passt die Revision nicht mehr, wird sofort neu
+     * gelesen und die Statuszeile sagt es.
      */
     private void write(Callable<?> work, String done) {
         if (actions.get() == null) {
             return;
         }
-        runner.run(work, result -> onStatus.accept(done), failure -> {
+        runner.run(work, result -> {
+            onStatus.accept(done);
+            if (watchFailed) {
+                changed();
+            }
+        }, failure -> {
             if (failure instanceof StandingConflictException) {
                 onStatus.accept("Inzwischen von anderer Seite geändert; der Stand wurde neu gelesen");
                 changed();
+            } else if (failure instanceof AccessDeniedException) {
+                onStatus.accept(NO_RIGHT_TO_DECIDE);
             } else {
                 onStatus.accept("Stand nicht gesetzt (" + failure.getClass().getSimpleName() + ")");
             }
@@ -1194,7 +1205,8 @@ final class StandingTab extends JPanel {
             if (at != null && owner.isShowing()) {
                 popup.showAt(owner, at.x, at.y);
             }
-        }, failure -> onStatus.accept("Protokoll nicht lesbar (" + failure.getClass().getSimpleName() + ")"));
+        }, failure -> onStatus.accept(failure instanceof AccessDeniedException ? NO_RIGHT_TO_HISTORY
+                : "Protokoll nicht lesbar (" + failure.getClass().getSimpleName() + ")"));
     }
 
     private Point historyAt(JList<Row> owner) {

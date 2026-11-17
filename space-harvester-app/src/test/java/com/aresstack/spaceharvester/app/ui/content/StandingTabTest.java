@@ -355,6 +355,30 @@ class StandingTabTest {
     }
 
     @Test
+    void aMissingRightIsSaidInWords() {
+        Fixture fixture = new Fixture(view());
+        fixture.denied = true;
+        StandingTab tab = fixture.shownTab();
+        tab.click(indexOf(tab, "Der Sachbearbeiter prüft"));
+
+        tab.decisionChip(Standing.UEBERHOLT).doClick();
+
+        assertThat(fixture.status.get()).isEqualTo(StandingTab.NO_RIGHT_TO_DECIDE);
+    }
+
+    @Test
+    void withoutASubscriptionTheViewIsReadAgainAfterOwnWrites() {
+        Fixture fixture = new Fixture(view());
+        fixture.failSubscribe = true;
+        StandingTab tab = fixture.shownTab();
+        tab.click(indexOf(tab, "Der Sachbearbeiter prüft"));
+
+        tab.decisionChip(Standing.UEBERHOLT).doClick();
+
+        assertThat(fixture.reads.get()).isEqualTo(2);
+    }
+
+    @Test
     void theEndOfAnAnalysisRereadsButARunningOneOrASyncDoesNot() {
         assertThat(StandingTab.rereads(job(com.aresstack.spaceharvester.application.jobs.JobType.STATEMENT_ANALYSIS,
                 com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED))).isTrue();
@@ -508,6 +532,7 @@ class StandingTabTest {
         boolean conflict;
         boolean failSubscribe;
         final List<String> topics = new ArrayList<>();
+        boolean denied;
         final StandingTab tab;
 
         Fixture(StatusQuoView view) {
@@ -537,6 +562,9 @@ class StandingTabTest {
                 public StandingDecision decide(PageKey page, String statementId, Standing standing,
                                                long expectedRevision) {
                     writes.add("decide " + page.pageId() + " " + statementId + " " + standing + " " + expectedRevision);
+                    if (denied) {
+                        throw denied();
+                    }
                     if (conflict) {
                         throw new com.aresstack.spaceharvester.application.standing.StandingConflictException(
                                 expectedRevision + 1);
@@ -619,6 +647,18 @@ class StandingTabTest {
                     parts.stream().mapToInt(ReadingList.Part::points).sum(), parts, standing));
         }
         return new ReadingList(topic, List.of("Antrag", "Bescheid"), Instant.parse("2026-08-19T00:00:00Z"), pages);
+    }
+
+    /** Wie der Core sie wirft; der Konstruktor ist nur im Paket sichtbar. */
+    private static RuntimeException denied() {
+        try {
+            var constructor = com.aresstack.spaceharvester.application.access.AccessDeniedException.class
+                    .getDeclaredConstructor(boolean.class, String.class);
+            constructor.setAccessible(true);
+            return constructor.newInstance(false, "wiki");
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static void flush() {
