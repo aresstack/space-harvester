@@ -9,3 +9,16 @@ F05	Unterlage	vollständig	KEINE	Modalverb
 F06	Bescheid	fehlerhaft	KEINE	früher
 F07	Schnittstelle	freigegeben	KEINE	verneint
 F09	Bescheid	bestandskräftig	KEINE	Zustandswechsel
+R01	Prüfstelle	Behörde	BESTIMMUNG	„eine“ (17.11.2026, 06:40 MEZ, vor dem Lauf)
+R02	Weber|Frau Weber	Ansprechpartnerin	GLEICHSETZUNG	„die“
+R03	Referent|Referenten	Ansprechpartner	ROLLE	Mehrzahl ohne Artikel
+R04	Darlehen	Förderung	KEINE	„keine“
+R05	Prüfstelle	Bewilligungsstelle	KEINE	„nicht die“, verneint
+R06	Kammer	Partner	KEINE	„unser“, anderer Begleiter
+R07	Klein|Herr Klein	Sachbearbeiter	ROLLE	ohne Artikel
+R08	Bewilligungsstelle	Träger	GLEICHSETZUNG	„der“
+S01	Berger|Frau Berger	Referentin	ROLLE	Text S von FL (rules-14), nach der Vorgabe S01
+S02	Kanzlei	Poststelle	GLEICHSETZUNG	„die“, Angabe davor
+S03	Rechenzentrum	Dienstleister	ROLLE	ohne Artikel, Angabe danach
+S04	Sitzung	Montag	KEINE	Präpositionalgruppe, kein Rollennomen
+S05	Roth|Herr Roth	Vertreter	ROLLE	ohne Artikel, Genitiv danach

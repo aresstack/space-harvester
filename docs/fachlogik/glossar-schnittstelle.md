@@ -24,7 +24,7 @@ Einträge, Einordnung, Wichtigkeit, Belege und Zahlen kommen fertig aus dem Core
 | `classification` | Einordnung: `category` (`FACHLICH`, `TECHNISCH`, `ROLLE`, `UNKLAR`), `by` (`RULE`, `AI`, `MANUAL`), `reason` (Kennung wie `TECHNICAL_HEAD`, `TECHNICAL_SHAPE`, `ROLE_HEAD`; nie Freitext, Text dazu in der App) oder `null` (alte Einträge: als `UNKLAR` zeigen) |
 | `supportedBy` | welche Läufe den Begriff zuletzt nannten (`RULE`, `AI`); leer bei manuellen Einträgen |
 | `evidence` | bis zu drei Belegstellen (Seite, Position, Hash); nur lesbare, der Core filtert |
-| `definitionProposal` | Beleg einer Begriffsbestimmung („X ist ein Y“) als Position oder `null`; bleibt leer, bis der Parser den Artikel am Rollennomen kennt |
+| `definitionProposal` | Beleg einer Begriffsbestimmung („X ist ein Y“, Art `BESTIMMUNG`) als Position oder `null`: nur mit dem Begriff selbst als Träger, aus dem Original; bei mehreren die mit den meisten Seiten. Der Eintrag sagt nicht, ob es weitere gab; die Einzelheiten (`isA`) zeigen alle |
 | `evidenceStale` | „Beleg veraltet“: ein bestätigter Eintrag, den kein Lauf mehr stützt |
 | `explanation` | Erläuterung, schreibt nur der Mensch |
 | `revision` | für optimistisches Sperren: bei jeder Änderung mitgeben |
@@ -71,7 +71,7 @@ GlossaryOverview.View view(AccessContext caller, PageSelection selection, Glossa
     gezählt unter den gewählten Kategorien; jeweils mit Suchtext. Jeder Wert ist vorhanden, auch 0.
   - `pages`, `stalePages`: Seiten der Auswahl mit aktueller bzw. veralteter (übersprungener) Analyse.
   - `term(normalized)`: Einzelheiten zum Klick aus dem gehaltenen Ergebnis, ohne neues Rechnen: Verhalten (`acts`,
-    `undergoes`; verneinte Verben getrennt), Eigenschaften (`properties`), Ist-Beziehungen (`isA`, `instances`), je
+    `undergoes`; verneinte Verben getrennt), Eigenschaften (`properties`), Ist-Beziehungen (`isA`, `instances`, mit Art), je
     mit Anzahl, Herkunft (Original/Vorstufe) und bis zu drei Belegen. Nur Original zählt für Wichtigkeit; Vorstufe
     getrennt zeigen.
 - Der Reiter verknüpft, sortiert, filtert und zählt nichts selbst. Gerechnet wird nur über Seiten mit
@@ -86,6 +86,23 @@ GlossaryOverview.View view(AccessContext caller, PageSelection selection, Glossa
 - Ohne Auswahl im Bestand: `view(caller, RelationScope, Predicate<PageKey>, query, cancelled)`.
 - Weiter vorhanden für den Dienst und Einzelzugriffe: `importance(caller, sourceId, spaceKey, cancelled)` (Teilzahlen
   ohne Einträge) und `term(caller, sourceId, spaceKey, term, cancelled)`; der Reiter braucht beide nicht.
+
+### Art einer Ist-Beziehung: `GlossaryDerivation.Use#relation`
+
+Aus dem Begleiter des Rollennomens („X ist … Y“, Merkmal Artikel ab Regelfassung 13), nur aus Originalsätzen,
+bejaht, ohne Modalverb, Zeitbezug GILT, kein Zustandswechsel:
+
+| Begleiter | `relation` | Anzeige |
+|---|---|---|
+| ein, eine | `BESTIMMUNG` | „ist ein“: Begriffsbestimmung, Quelle von `definitionProposal` |
+| ohne, auch Mehrzahl | `ROLLE` | „ist“ (Rolle) |
+| der, die, das | `GLEICHSETZUNG` | „ist der/die/das“: **nur zeigen**; der Core macht daraus nie ein Synonym und führt keine Einträge zusammen („Frau Weber ist die Ansprechpartnerin“ hat dieselbe Bauart wie die Gleichsetzung zweier Stellen) |
+| kein, keine | – | keine Ist-Beziehung |
+| unser, dieser, jeder … | – | keine Ist-Beziehung |
+| Analyse vor Regelfassung 13 | `UNBEKANNT` | „ist“ ohne Art, bis neu analysiert wird |
+
+Beziehungen verschiedener Art zu demselben Nomen stehen getrennt. `Use#pages` nennt die Seiten mit dieser Aussage.
+Verhalten und Eigenschaften haben `relation == null`.
 
 ## Ändern
 
@@ -140,7 +157,7 @@ Seite Einstellungen: Tabelle je Art mit Zeilenaktionen, wie bei anderen mehrwert
 
 - Belege der Regel nur aus Seiten, nicht aus Anhängen (Positionen eines Anhangs passen nicht auf das Belegformat).
 - Belege der Regel dürfen von Seiten ohne KI-Freigabe stammen; dem Modell (FL5c) gehen nur Belege freigegebener Seiten.
-- `definitionProposal` bleibt leer, bis das Artikel-Merkmal des Parsers auf main ist.
+- `definitionProposal` nur aus Analysen ab Regelfassung 13 (Artikel-Merkmal); ältere Analysen ergeben keinen Vorschlag.
 - Wichtigkeit wird nicht gespeichert; sie gilt je Aufrufer (was er lesen darf).
 
 ## REST im Dienst (`/api/v1/glossary`)
