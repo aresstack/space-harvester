@@ -46,7 +46,7 @@ class ExplorerAnalyzeTest {
     private final List<String> actions = new CopyOnWriteArrayList<>();
     private final List<String> shownJobs = new CopyOnWriteArrayList<>();
     private final List<String> notices = new CopyOnWriteArrayList<>();
-    private volatile Boolean answer = Boolean.FALSE;
+    private volatile Explorer.AnalysisChoice answer = new Explorer.AnalysisChoice(false, false);
 
     @BeforeEach
     void setUp() throws Exception {
@@ -179,7 +179,7 @@ class ExplorerAnalyzeTest {
     void aSubtreeIsCountedThenConfirmedThenStartedWithTheLimit() throws Exception {
         useFakes();
         analyses.estimate = scope -> new StatementAnalysisJobs.Estimate(scope, 42, false, false);
-        answer = Boolean.TRUE;
+        answer = new Explorer.AnalysisChoice(true, false);
         clickLater(PARENT, Explorer.ANALYZE);
         await(() -> !shownJobs.isEmpty());
         assertThat(analyses.estimated).containsExactly(new Scope.Subtree("wiki", "OPS", "p2"));
@@ -188,6 +188,21 @@ class ExplorerAnalyzeTest {
         assertThat(actions).containsExactly(Explorer.ANALYZE);
         assertThat(analyses.started).containsExactly(new Started(new Scope.Subtree("wiki", "OPS", "p2"),
                 new StatementAnalysisJobs.Options(true, Explorer.ANALYSIS_LIMIT)));
+    }
+
+    @Test
+    void theTickedStageStartsTheJobWithTheSimplificationOfTheSettings() throws Exception {
+        useFakes();
+        analyses.estimate = scope -> new StatementAnalysisJobs.Estimate(scope, 7, false, false);
+        answer = new Explorer.AnalysisChoice(false, true);
+        clickLater(SPACE, Explorer.ANALYZE);
+        await(() -> !shownJobs.isEmpty());
+        // Ohne Angabe in der Datei gilt die Vorgabe des Core: „nur wo nötig“, zwei Abschnitte zugleich.
+        assertThat(analyses.started).containsExactly(new Started(new Scope.Space("wiki", "OPS"),
+                new StatementAnalysisJobs.Options(false, Explorer.ANALYSIS_LIMIT,
+                        new com.aresstack.spaceharvester.application.knowledge.StatementAnalysis
+                                .SimplificationRequest(com.aresstack.spaceharvester.application.configuration
+                                .SimplificationSettings.Mode.WHERE_NEEDED, 2))));
     }
 
     @Test

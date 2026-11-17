@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
+import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
@@ -478,6 +479,32 @@ public final class ConfigFileEditor {
             throw new IllegalArgumentException("Das Budget der Synonymerkennung ließ sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.terms.synonyms von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer Vorstufe „Sätze vereinfachen“ ({@code space-harvester.statements.
+     * simplification.*}, ADR 0032), dieselben Schlüssel wie im Dienst; nur der Block {@code simplification} unter
+     * {@code statements} ändert sich. Ohne eigenes Modell entfällt der Schlüssel {@code model}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSimplification(Path file, Draft base, SimplificationSettings simplification) {
+        String text = nested(base.text(), "statements", "simplification", indent -> {
+            String inner = indent + "  ";
+            return indent + "simplification:\n"
+                    + inner + "mode: " + simplification.mode().value() + "\n"
+                    + inner + "parallel: " + simplification.parallel() + "\n"
+                    + (simplification.model() == null ? "" : inner + "model: " + quoted(simplification.model()) + "\n");
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.simplification().equals(simplification)) {
+            throw new IllegalArgumentException("Die Vorstufe „Sätze vereinfachen“ ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.statements.simplification von Hand "
+                    + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
     }
