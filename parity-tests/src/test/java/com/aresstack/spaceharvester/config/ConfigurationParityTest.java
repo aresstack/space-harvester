@@ -112,6 +112,11 @@ class ConfigurationParityTest {
                   mode: always
                   parallel: 3
                   model: step-model
+                standing:
+                  outdated-words:
+                    - Archiv
+                    - abgelöst
+                  draft-words: Entwurf, idee
                 check:
                   scope: all
                   parallel: 4
@@ -195,6 +200,10 @@ class ConfigurationParityTest {
                         com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 3,
                         "step-model"));
 
+        // ADR 0032, FL6: Wörter des Stands, als YAML-Liste und als Text mit Kommas.
+        assertThat(app.standing()).isEqualTo(service2.standing())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.StandingSettings(
+                        java.util.List.of("archiv", "abgelöst"), java.util.List.of("entwurf", "idee")));
         // ADR 0032, FL4: Prüfschritt, beim Dienst über withSyncRules.
         assertThat(app.check()).isEqualTo(service2.check())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.CheckSettings(

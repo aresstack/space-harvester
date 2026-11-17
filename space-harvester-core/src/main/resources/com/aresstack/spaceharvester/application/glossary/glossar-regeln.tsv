@@ -1,0 +1,110 @@
+# Wortlisten der Einordnung nach Regeln (ADR 0032, FL5). Eine Zeile je Wort: art<TAB>wort, klein.
+# technik       Kopf technischer Begriffe: der Suchwert heißt so, endet nach Bindestrich oder Leerzeichen so oder
+#               endet als zusammengeschriebenes Kompositum so („Antragsdatenbank“). Mindestens fünf Buchstaben.
+# technik-wort  technisch nur als ganzes Wort oder nach Bindestrich/Leerzeichen („System“, „REST-API“), nie als Ende
+#               eines zusammengeschriebenen Worts: kurze Köpfe treffen fremde Wörter („Import“ auf „port“),
+#               mehrdeutige treffen Fachbegriffe („Rechtssystem“, „Aktienindex“, „Partnernetzwerk“).
+# rolle         Kopf von Rollen und Stellen, auch als Kompositum („Wirtschaftsprüfer“). Mindestens fünf Buchstaben.
+# rolle-wort    Rolle oder Stelle nur als ganzes Wort oder nach Bindestrich/Leerzeichen („Stelle“, nicht „Leerstelle“;
+#               „Leiter“, nicht „Halbleiter“). Technische Wörter gehen vor. Lieber UNKLAR als falsch.
+# art	wort
+technik	applikation
+technik	authentifizierung
+technik	backend
+technik	browser
+technik	datei
+technik	datenbank
+technik	deployment
+technik	firewall
+technik	frontend
+technik	hardware
+technik	mainframe
+technik	middleware
+technik	protokolldatei
+technik	quellcode
+technik	repository
+technik	schaltfläche
+technik	schnittstelle
+technik	server
+technik	software
+technik-wort	anwendung
+technik-wort	api
+technik-wort	batch
+technik-wort	bibliothek
+technik-wort	cache
+technik-wort	client
+technik-wort	cluster
+technik-wort	code
+technik-wort	container
+technik-wort	fachverfahren
+technik-wort	format
+technik-wort	framework
+technik-wort	host
+technik-wort	http
+technik-wort	https
+technik-wort	index
+technik-wort	job
+technik-wort	json
+technik-wort	konfiguration
+technik-wort	load balancer
+technik-wort	maske
+technik-wort	modul
+technik-wort	netzwerk
+technik-wort	oberfläche
+technik-wort	parameter
+technik-wort	port
+technik-wort	portal
+technik-wort	proxy
+technik-wort	queue
+technik-wort	rechner
+technik-wort	script
+technik-wort	skript
+technik-wort	speicher
+technik-wort	sql
+technik-wort	system
+technik-wort	tabelle
+technik-wort	terminal
+technik-wort	token
+technik-wort	treiber
+technik-wort	url
+technik-wort	verzeichnis
+technik-wort	warteschlange
+technik-wort	zertifikat
+rolle	abteilung
+rolle	ansprechpartner
+rolle	ansprechpartnerin
+rolle	antragsteller
+rolle	antragstellerin
+rolle	auftraggeber
+rolle	auftragnehmer
+rolle	bearbeiter
+rolle	bearbeiterin
+rolle	beauftragte
+rolle	beauftragter
+rolle	behörde
+rolle	dienstleister
+rolle	gremium
+rolle	gutachter
+rolle	gutachterin
+rolle	kommission
+rolle	leiterin
+rolle	lieferant
+rolle	mitarbeiter
+rolle	mitarbeiterin
+rolle	prüfer
+rolle	prüferin
+rolle	sachbearbeiter
+rolle	sachbearbeiterin
+rolle	verantwortliche
+rolle	verantwortlicher
+rolle-wort	amt
+rolle-wort	ausschuss
+rolle-wort	empfänger
+rolle-wort	kasse
+rolle-wort	kunde
+rolle-wort	kundin
+rolle-wort	leiter
+rolle-wort	leitung
+rolle-wort	referat
+rolle-wort	stelle
+rolle-wort	team
