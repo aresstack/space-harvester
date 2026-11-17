@@ -380,11 +380,21 @@ class StatementAnalysisJobsTest {
                         + "0 wegen verlorener Verneinung oder Modalverb verworfen; "
                         + "1 Seiten ohne Vorstufe (kein Modell oder keine KI-Freigabe)"));
 
-        // Zweiter Lauf: die aktuelle Analyse zählt nicht als erledigt, der Satz kommt aus der Ablage
+        // Fortsetzen oder zweiter Lauf: gleicher Text, Analysator und Stand der Vorstufe, also übersprungen
+        int parsed = parser.calls.get();
         JobStatus again = jobs.status(jobsWithStage.start(CALLER, new StatementAnalysisJobs.Scope.Space("wiki",
                 "DEV"), options).id());
         assertThat(inputs).hasSize(1);
+        assertThat(parser.calls).hasValue(parsed);
         assertThat(jobs.events(again.id())).anySatisfy(event -> assertThat(event.message())
+                .contains("2 aktuell übersprungen"));
+
+        // „Neu erzwingen“ rechnet neu; die Sätze kommen aus der Ablage
+        JobStatus forced = jobs.status(jobsWithStage.start(CALLER, new StatementAnalysisJobs.Scope.Space("wiki",
+                "DEV"), new StatementAnalysisJobs.Options(true, 0, options.simplification())).id());
+        assertThat(parser.calls).hasValue(parsed + 2);
+        assertThat(inputs).hasSize(1);
+        assertThat(jobs.events(forced.id())).anySatisfy(event -> assertThat(event.message())
                 .contains("0 Abschnitte mit Modellaufruf, 1 Sätze aus der Ablage"));
     }
 

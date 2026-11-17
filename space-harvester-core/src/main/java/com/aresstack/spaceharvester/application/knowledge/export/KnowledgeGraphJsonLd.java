@@ -205,7 +205,7 @@ public final class KnowledgeGraphJsonLd {
                 "analyzerVersion", "text", "lemma", "headForm", "mentionKind", "unresolved", "lexicalKey", "start",
                 "end", "sentence", "paragraph", "predicate", "predicateLemma", "voice", "clause", "core",
                 "verificationStatus", "negated", "modality", "temporality", "origin", "stageFlag",
-                "simplifiedSentence", "role", "relation", "marker", "basis", "priority", "certain", "attachmentKind")) {
+                "simplifiedSentence", "featuresFrom", "role", "relation", "marker", "basis", "priority", "certain", "attachmentKind")) {
             json.writeStringProperty(term, "sh:" + term);
         }
         set(json, "grammaticalCase", "sh:grammaticalCase");
@@ -397,6 +397,7 @@ public final class KnowledgeGraphJsonLd {
                 json.writeStringProperty("origin", statement.derivation().origin().name());
                 json.writeStringProperty("stageFlag", statement.derivation().stageFlag().name());
                 json.writeStringProperty("simplifiedSentence", statement.derivation().simplifiedSentence());
+                json.writeStringProperty("featuresFrom", statement.derivation().featuresFrom().name());
             }
             if (!statement.qualityReasons().isEmpty()) {
                 json.writeName("qualityReason");

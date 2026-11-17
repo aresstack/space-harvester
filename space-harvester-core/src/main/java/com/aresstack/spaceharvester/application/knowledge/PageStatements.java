@@ -19,6 +19,8 @@ public record PageStatements(State state, String reason, PageStatementAnalysis a
     public static final String TEXT_CHANGED = "text-changed";
     /** Parser, Modell oder Regeln haben sich seit der Analyse geändert. */
     public static final String ANALYZER_CHANGED = "analyzer-changed";
+    /** Nach dem Entzug der KI-Freigabe fehlen Aussagen der Vorstufe (ADR 0028, ADR 0032 FL3): neu ohne Vorstufe. */
+    public static final String STAGE_WITHDRAWN = "stage-withdrawn";
     /** Die Seite liegt nicht mehr im Bestand. */
     public static final String PAGE_MISSING = "page-missing";
 

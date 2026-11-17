@@ -141,9 +141,8 @@ public class StatementAnalysisJobs {
             context.checkpoint();
             try {
                 PageSnapshot snapshot = fetch.page(caller, target.sourceId(), target.pageId());
-                // Mit Vorstufe zählt eine aktuelle Analyse nicht als erledigt: Die Ablage je Satz spart die Aufrufe.
-                if (vorstufe == null && !options.reanalyze()
-                        && analysis.read(caller, snapshot).state() == PageStatements.State.CURRENT) {
+                // Aktuell = gleicher Text, Analysator und (mit Vorstufe) Stand der Vorstufe; auch nach Fortsetzen
+                if (!options.reanalyze() && analysis.current(caller, snapshot, vorstufe)) {
                     current++;
                     context.processed(1);
                     continue;

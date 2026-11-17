@@ -90,6 +90,17 @@ class StatementAnalysisStageTest {
         assertThat(after.mentions()).extracting(ParsedStatements.Mention::text).doesNotContain("Stelle");
         assertThat(parser.calls).hasValue(calls);
         assertThat(analysis.withdrawStage(List.of(page.key()), key -> false)).as("nichts mehr zu entfernen").isZero();
+        // Die ersetzten Original-Aussagen fehlen: veraltet mit eigenem Grund, der nächste Lauf rechnet neu
+        PageStatements read = analysis.read(CALLER, page);
+        assertThat(read.state()).isEqualTo(PageStatements.State.STALE);
+        assertThat(read.reason()).isEqualTo(PageStatements.STAGE_WITHDRAWN);
+        assertThat(analysis.current(CALLER, page, null)).isFalse();
+        analysis.analyze(CALLER, page, () -> false, request, costs -> {
+        });
+        assertThat(parser.calls).hasValue(calls + 1);
+        assertThat(parser.stages).as("ohne Freigabe ohne Vorstufe").isEmpty();
+        assertThat(store.find(page.key()).orElseThrow().stage()).isNull();
+        assertThat(analysis.read(CALLER, page).state()).isEqualTo(PageStatements.State.CURRENT);
     }
 
     @Test
@@ -104,6 +115,7 @@ class StatementAnalysisStageTest {
 
         assertThat(parser.stages).hasSize(1);
         assertThat(store.find(page.key()).orElseThrow().result().statements()).isEmpty();
+        assertThat(analysis.read(CALLER, page).reason()).isEqualTo(PageStatements.STAGE_WITHDRAWN);
     }
 
     @Test
@@ -118,6 +130,25 @@ class StatementAnalysisStageTest {
         assertThat(store.find(page.key()).orElseThrow().result().statements()).hasSize(2)
                 .allSatisfy(statement -> assertThat(statement.derivation().origin())
                         .isEqualTo(ParsedStatements.Origin.VORSTUFE));
+    }
+
+    @Test
+    void theStageIsStoredAndDecidesWhetherARunCanSkipThePage() {
+        PageSnapshot page = EnrichmentTestPages.text("wiki", "1", "1", TEXT);
+        analysis.analyze(CALLER, page, () -> false);
+        assertThat(store.find(page.key()).orElseThrow().stage()).isNull();
+        assertThat(analysis.current(CALLER, page, null)).isTrue();
+        assertThat(analysis.current(CALLER, page, request)).as("mit Vorstufe noch nicht gerechnet").isFalse();
+
+        analysis.analyze(CALLER, page, () -> false, request, costs -> {
+        });
+        assertThat(store.find(page.key()).orElseThrow().stage()).isEqualTo("where-needed|fake:m1|prompt-1");
+        assertThat(analysis.current(CALLER, page, request)).isTrue();
+        assertThat(analysis.current(CALLER, page, null)).as("ohne Vorstufe bleibt sie aktuell").isTrue();
+        assertThat(analysis.current(CALLER, page, new StatementAnalysis.SimplificationRequest(
+                SimplificationSettings.Mode.ALWAYS, 1))).as("andere Betriebsart").isFalse();
+        released.set(false);
+        assertThat(analysis.current(CALLER, page, request)).as("ohne Freigabe läuft keine Vorstufe").isTrue();
     }
 
     /** Die zweite Aussage als Aussage der Vorstufe. */

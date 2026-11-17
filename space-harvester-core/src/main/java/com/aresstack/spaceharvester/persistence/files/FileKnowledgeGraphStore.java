@@ -270,6 +270,10 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         root.put("analyzerId", analysis.analyzerId());
         root.put("analyzerVersion", analysis.analyzerVersion());
         root.put("analyzedAt", analysis.analyzedAt().toString());
+        if (analysis.stage() != null) {
+            // ADR 0032, FL3: Stand der Vorstufe; fehlt das Feld, wurde ohne Vorstufe gerechnet
+            root.put("stage", analysis.stage());
+        }
         ParsedStatements result = analysis.result();
         ObjectNode node = root.putObject("result");
         ArrayNode sentences = node.putArray("sentences");
@@ -328,6 +332,7 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 entry.put("origin", statement.derivation().origin().name());
                 entry.put("stageFlag", statement.derivation().stageFlag().name());
                 entry.put("simplifiedSentence", statement.derivation().simplifiedSentence());
+                entry.put("featuresFrom", statement.derivation().featuresFrom().name());
             }
         }
         ArrayNode attachments = node.putArray("attachments");
@@ -423,10 +428,9 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         return new PageStatementAnalysis(key, text(root, "spaceKey"), text(root, "title"),
                 text(root, "revision"), root.path("inputSha256").asString(), root.path("analyzerId").asString(),
                 root.path("analyzerVersion").asString(), Instant.parse(root.path("analyzedAt").asString()), result,
-                document);
+                document, text(root, "stage"));
     }
 
-    /** Der Aufzählungswert im Feld {@code field} oder {@code fallback}, wenn es fehlt oder unbekannt ist. */
     /** Herkunft einer Aussage (ADR 0032, FL3); ohne oder mit unlesbaren Feldern aus dem Original. */
     private static ParsedStatements.Derivation derivation(JsonNode entry) {
         ParsedStatements.Origin origin = enumOr(ParsedStatements.Origin.class, entry, "origin",
@@ -438,9 +442,11 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 || sentence.isBlank()) {
             return ParsedStatements.Derivation.ORIGINAL;
         }
-        return ParsedStatements.Derivation.vorstufe(flag, sentence);
+        return new ParsedStatements.Derivation(origin, flag, sentence, enumOr(ParsedStatements.Origin.class, entry,
+                "featuresFrom", ParsedStatements.Origin.VORSTUFE));
     }
 
+    /** Der Aufzählungswert im Feld {@code field} oder {@code fallback}, wenn es fehlt oder unbekannt ist. */
     private static <E extends Enum<E>> E enumOr(Class<E> type, JsonNode entry, String field, E fallback) {
         JsonNode value = entry.path(field);
         if (!value.isString()) {

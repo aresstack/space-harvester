@@ -123,6 +123,30 @@ public class StatementAnalysis {
         });
     }
 
+    /**
+     * Der Stand der Vorstufe, den ein Lauf mit {@code request} an der Analyse hinterlässt:
+     * {@code <Betriebsart>|<Simplifications#version()>}.
+     */
+    public String stage(SimplificationRequest request) {
+        return request.mode().value() + "|" + simplifications.version();
+    }
+
+    /**
+     * Ob ein Auftrag die Seite überspringen kann: die gespeicherte Analyse ist aktuell und, wenn die Vorstufe für die
+     * Seite läuft, mit demselben Stand der Vorstufe gerechnet. Ein Lauf ohne Vorstufe (oder ohne Freigabe der Seite)
+     * lässt eine Analyse mit Vorstufe als aktuell stehen.
+     */
+    public boolean current(AccessContext caller, PageSnapshot snapshot, SimplificationRequest request) {
+        PageStatements read = read(caller, snapshot);
+        if (read.state() != PageStatements.State.CURRENT) {
+            return false;
+        }
+        if (request == null || simplificationUnavailable(snapshot.key()).isPresent()) {
+            return true;
+        }
+        return stage(request).equals(read.analysis().stage());
+    }
+
     /** Ob die Vorstufe für diese Seite laufen kann: eingerichtet, Modell eingestellt, Seite für die KI freigegeben. */
     public Optional<String> simplificationUnavailable(PageKey key) {
         if (simplifications == null || !simplifications.available()) {
@@ -161,7 +185,9 @@ public class StatementAnalysis {
         String version = parser.version();
         String documentId = PageStatementAnalysis.documentId(key, input);
         ParsedStatements result;
+        String stage = null;
         if (request != null && simplificationUnavailable(key).isEmpty()) {
+            stage = stage(request);
             result = parser.analyze(documentId, analyzerText(text.get()), cancelled,
                     new StatementAnalyzer.Simplification() {
                         @Override
@@ -187,12 +213,15 @@ public class StatementAnalysis {
             throw new CancellationException("Analyse abgebrochen");
         }
         check(result, text.get().text().length());
-        if (simplifications != null && !simplifications.released(key)) {
-            // ADR 0028: Freigabe während der Analyse entzogen, kein Modelltext der Seite in den Graph
-            result = withoutStage(result);
+        if (stage != null && !simplifications.released(key)) {
+            // ADR 0028: Freigabe während der Analyse entzogen, kein Modelltext der Seite in den Graph; ohne die Aussagen
+            // der Vorstufe fehlen die ersetzten Original-Aussagen, also gilt die Analyse als veraltet
+            ParsedStatements stripped = withoutStage(result);
+            stage = stripped == result ? null : PageStatementAnalysis.STAGE_WITHDRAWN;
+            result = stripped;
         }
         PageStatementAnalysis analysis = new PageStatementAnalysis(key, snapshot.spaceKey(), snapshot.metadata().title(),
-                snapshot.revision(), input, parser.id(), version, clock.instant(), result);
+                snapshot.revision(), input, parser.id(), version, clock.instant(), result, null, stage);
         store.replace(analysis);
         return new PageStatements(PageStatements.State.CURRENT, null,
                 analysis.withResult(result.withoutConllu()));
@@ -210,6 +239,9 @@ public class StatementAnalysis {
         if (parser != null && !(parser.id().equals(stored.analyzerId())
                 && parser.version().equals(stored.analyzerVersion()))) {
             return PageStatements.ANALYZER_CHANGED;
+        }
+        if (PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.stage())) {
+            return PageStatements.STAGE_WITHDRAWN;
         }
         return null;
     }
@@ -356,7 +388,12 @@ public class StatementAnalysis {
             ParsedStatements result = stored.get().result();
             ParsedStatements stripped = withoutStage(result);
             if (stripped != result) {
-                store.replace(stored.get().withResult(stripped));
+                // Die ersetzten Original-Aussagen fehlen jetzt: veraltet, der nächste Lauf rechnet ohne Vorstufe
+                store.replace(stored.get().withResult(stripped).withStage(PageStatementAnalysis.STAGE_WITHDRAWN));
+                changed++;
+            } else if (stored.get().stage() != null
+                    && !PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.get().stage())) {
+                store.replace(stored.get().withStage(null)); // keine Aussage der Vorstufe übrig, nichts fehlt
                 changed++;
             }
         }
