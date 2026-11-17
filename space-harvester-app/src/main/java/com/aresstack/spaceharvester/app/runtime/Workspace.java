@@ -1601,6 +1601,22 @@ public final class Workspace {
         return harvester.changeLog().summary(caller, sourceId, updateId);
     }
 
+    /**
+     * Die Status-quo-Sicht der Auswahl links (ADR 0032, FL6): alle Aussagen mit Stand, fertig sortiert und gezählt.
+     * Reine Auswertung im Core; trotzdem nie auf dem EDT rufen. {@code cancelled} bricht mit
+     * {@link java.util.concurrent.CancellationException} ab.
+     */
+    public com.aresstack.spaceharvester.application.standing.StatusQuoView statusQuo(
+            com.aresstack.spaceharvester.application.holdings.PageSelection selection,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.statusQuo().view(caller, selection, cancelled);
+    }
+
+    /** Meldet Entscheidungen zum Stand (ADR 0027), auf dem Zustell-Thread des Core; danach die Sicht neu lesen. */
+    public Subscription subscribeStanding(Runnable listener) {
+        return harvester.statusQuo().subscribe(Objects.requireNonNull(listener, "listener"));
+    }
+
     /** Die gespeicherte Zusammenfassung eines Updates in einer Ebene (ADR 0031); {@code spaceKey == null} die Quelle. */
     public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> changeSummary(
             String sourceId, String updateId, String spaceKey) {
