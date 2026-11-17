@@ -121,7 +121,8 @@ class EnrichmentConfiguration {
                                         ObjectProvider<ReleaseRecomputation> recomputation,
                                         ObjectProvider<AiRelease> release,
                                         ObjectProvider<DocumentEnrichments> documents,
-                                        ObjectProvider<ChangeLog> changeLog) {
+                                        ObjectProvider<ChangeLog> changeLog,
+                                        ObjectProvider<SynonymDiscovery> synonyms) {
         PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
         ReleaseRecomputation withdrawals = recomputation.getIfAvailable();
         AiRelease pages = release.getIfAvailable();
@@ -136,6 +137,11 @@ class EnrichmentConfiguration {
                 ChangeLog log = changeLog.getIfAvailable();
                 if (log != null) {
                     log.withdrawn(snapshots.stream().map(PageSnapshot::key).toList());
+                }
+                // SY2: Vektoren der Synonymerkennung aus diesen Seiten und der Stand ihrer Quellen.
+                SynonymDiscovery discovery = synonyms.getIfAvailable();
+                if (discovery != null) {
+                    discovery.withdrawn(snapshots.stream().map(PageSnapshot::key).toList(), pages::mayProcess);
                 }
             });
         }

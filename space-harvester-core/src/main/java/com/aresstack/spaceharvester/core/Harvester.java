@@ -153,6 +153,7 @@ import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
+import com.aresstack.spaceharvester.persistence.files.FileSynonymVectorCache;
 import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.terms.AcronymResolution;
@@ -328,6 +329,7 @@ public final class Harvester implements AutoCloseable {
     private final PageFacts facts;
     private final TermRelations termRelations;
     private final AcronymRelationRule acronymRelationRule;
+    private FileSynonymVectorCache synonymVectors;
     private final AcronymResolution acronymResolution;
     private final Glossary glossary;
     private final GlossaryClassification glossaryClassification;
@@ -697,10 +699,17 @@ public final class Harvester implements AutoCloseable {
             FileResolutionCache synonymCache = new FileResolutionCache(
                     builder.dataDirectory.resolve("term-relations").resolve("synonyms"));
             TermSettings startTerms = builder.terms;
-            this.synonymDiscovery = new SynonymDiscovery(catalog, new SynonymCandidates(catalog, enrichmentStore,
+            SynonymCandidates synonymCandidates = new SynonymCandidates(catalog, enrichmentStore,
                     cache::findHeader, key -> cache.find(key).flatMap(projector::project), termRelations,
                     () -> embeddingForTerms == null ? Optional.empty() : embeddingForTerms.currentProvider(),
-                    judge::mayProcess, termProcessor.version()), access, termRelations, judge, synonymCache, jobs,
+                    judge::mayProcess, termProcessor.version());
+            // SY2: Vektoren und Stand je Quelle dauerhaft neben dem Ergebnis-Cache.
+            FileSynonymVectorCache synonymVectors = new FileSynonymVectorCache(
+                    builder.dataDirectory.resolve("term-relations").resolve("synonyms"));
+            synonymCandidates.vectors(synonymVectors);
+            this.synonymVectors = synonymVectors;
+            this.synonymDiscovery = new SynonymDiscovery(catalog, synonymCandidates, access, termRelations, judge,
+                    synonymCache, jobs,
                     () -> (this.settings != null ? this.settings.terms() : startTerms).synonyms(), clock);
             synonymDiscovery.pageReleases(pageReleases::contains);
             // SY1: Neue KI-Freigaben von Seiten lösen den automatischen Lauf ihrer Quelle aus.
@@ -952,6 +961,8 @@ public final class Harvester implements AutoCloseable {
                 this.glossary.withdrawAi(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
+                // SY2: Vektoren der Synonymerkennung aus diesen Seiten und der Stand ihrer Quellen.
+                synonymDiscovery.withdrawn(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
             });
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.
@@ -1090,6 +1101,7 @@ public final class Harvester implements AutoCloseable {
                     .assets(assetStore, exportWriter, clock)
                     .termRelations(termRelations, resolutionCache)
                     .synonymCache(synonymCache)
+                    .synonymVectors(synonymVectors)
                     .glossary(glossary)
                     .factEdits(factEditStore, clock)
                     .knowledgeGraph(graphStore, graph::forgetInputs)
