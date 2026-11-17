@@ -129,10 +129,25 @@ public final class ChangeLog implements AutoCloseable {
      * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
      */
     public Optional<UpdateMark> latestMark(AccessContext caller, String sourceId) {
+        return latestMark(caller, sourceId, null);
+    }
+
+    /**
+     * Wie {@link #latestMark(AccessContext, String)} für die Space-Ebene (ADR 0031): die jüngste Marke, deren Runde den
+     * Space abgeglichen hat. Die Marke bleibt eine der Quelle; der Space ist ein Ausschnitt.
+     *
+     * @param spaceKey ein Space, {@code null} für die ganze Quelle
+     */
+    public Optional<UpdateMark> latestMark(AccessContext caller, String sourceId, String spaceKey) {
         Objects.requireNonNull(caller, "caller");
         requireReadable(caller, sourceId);
         List<UpdateMark> marks = store.marks(sourceId);
-        return marks.isEmpty() ? Optional.empty() : Optional.of(marks.getLast());
+        for (int i = marks.size() - 1; i >= 0; i--) {
+            if (spaceKey == null || marks.get(i).spaces().contains(spaceKey)) {
+                return Optional.of(marks.get(i));
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -143,13 +158,25 @@ public final class ChangeLog implements AutoCloseable {
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne Freigabe der Quelle
      */
     public List<ChangeUpdate> updates(AccessContext caller, String sourceId) {
+        return updates(caller, sourceId, null);
+    }
+
+    /**
+     * Die Updates einer Quelle auf der Ebene eines Space (ADR 0031): dieselben Updates von Marke zu Marke, Zähler und
+     * Seiten nur aus Zeilen, deren neuer oder alter Space {@code spaceKey} ist. Ein Update ohne Änderungen im Space
+     * bleibt in der Liste (Zähler 0), das offene nur mit Änderungen. Zusammenfassungen gibt es hier noch je Quelle.
+     *
+     * @param spaceKey ein Space, {@code null} für die ganze Quelle
+     */
+    public List<ChangeUpdate> updates(AccessContext caller, String sourceId, String spaceKey) {
         Objects.requireNonNull(caller, "caller");
         requireReadable(caller, sourceId);
         Visibility visible = new Visibility(caller);
-        List<ChangeEntry> entries = store.changeEntries(ChangeQuery.source(sourceId), visible::view, 0,
+        ChangeQuery query = rows(sourceId, spaceKey, null, null);
+        List<ChangeEntry> entries = store.changeEntries(query, entry -> visible.within(entry, query), 0,
                 Integer.MAX_VALUE).entries();
         List<ChangeUpdate> updates = new ArrayList<>();
-        Set<String> summarized = store.summarizedUpdates(sourceId, null);
+        Set<String> summarized = store.summarizedUpdates(sourceId, spaceKey);
         int next = 0;
         for (Span span : spans(sourceId)) {
             // Zeilen und Marken sind beide nach Zeit geordnet: jede Zeile gehört zum ersten Update, das nach ihr endet.
@@ -162,7 +189,7 @@ public final class ChangeLog implements AutoCloseable {
                 continue;
             }
             ChangeUpdate update = consolidate(span, rows).update();
-            if (summarized.contains(update.id()) && store.summary(sourceId, update.id(), null)
+            if (summarized.contains(update.id()) && store.summary(sourceId, update.id(), spaceKey)
                     .filter(stored -> valid(stored, visible)).isPresent()) {
                 update = update.withSummarized();
             }
@@ -189,13 +216,30 @@ public final class ChangeLog implements AutoCloseable {
      * {@value #MAX_DIFF_STEPS} Schritte, ohne bleibt {@code diff} {@code null}.
      */
     public ChangeReport report(AccessContext caller, String sourceId, String update, boolean withDiffs) {
+        return report(caller, sourceId, update, null, withDiffs);
+    }
+
+    /** Der Bericht auf der Ebene eines Space ohne Unterschiede, {@code spaceKey} {@code null} für die ganze Quelle. */
+    public ChangeReport report(AccessContext caller, String sourceId, String update, String spaceKey) {
+        return report(caller, sourceId, update, spaceKey, false);
+    }
+
+    /**
+     * Der Bericht eines Updates auf der Ebene eines Space (ADR 0031): nur Seiten mit Zeilen, deren neuer oder alter
+     * Space {@code spaceKey} ist; eine verschobene Seite steht in beiden Spaces.
+     *
+     * @param spaceKey ein Space, {@code null} für die ganze Quelle
+     */
+    public ChangeReport report(AccessContext caller, String sourceId, String update, String spaceKey,
+                               boolean withDiffs) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(update, "update");
         requireReadable(caller, sourceId);
         Span span = span(sourceId, update);
         Visibility visible = new Visibility(caller);
-        List<ChangeEntry> rows = store.changeEntries(ChangeQuery.span(sourceId, span.from(), span.to()),
-                visible::view, 0, Integer.MAX_VALUE).entries();
+        ChangeQuery query = rows(sourceId, spaceKey, span.from(), span.to());
+        List<ChangeEntry> rows = store.changeEntries(query, entry -> visible.within(entry, query), 0,
+                Integer.MAX_VALUE).entries();
         Consolidated consolidated = consolidate(span, rows);
         if (consolidated.update().initial()) {
             return new ChangeReport(consolidated.update(), List.of());
@@ -211,9 +255,8 @@ public final class ChangeLog implements AutoCloseable {
 
     /**
      * Der Update-Text einer Ebene (ADR 0031, Abschnitt 2), seitenweise: Kopf mit Zeitraum und Zählern der Ebene, je
-     * Seite Pfad, Arten, Versionen, Zeitpunkt und geänderte Absätze. Rechte wie {@link #report}; Unterschiede werden nur
-     * für die Seiten des Ausschnitts gelesen. {@link ChangeReport#update()} trägt die Zähler der ganzen Quelle, die der
-     * Ebene stehen im Text und in {@link UpdateText#totalPages()}.
+     * Seite Pfad, Arten, Versionen, Zeitpunkt und geänderte Absätze. Rechte und Ebene wie {@link #report(AccessContext,
+     * String, String, String, boolean)}; Unterschiede werden nur für die Seiten des Ausschnitts gelesen.
      *
      * @param update   {@link ChangeUpdate#id()} oder {@link ChangeUpdate#OPEN}
      * @param spaceKey der Space, {@code null} für die ganze Quelle
@@ -246,14 +289,14 @@ public final class ChangeLog implements AutoCloseable {
         requireReadable(caller, sourceId);
         Span span = span(sourceId, update);
         Visibility visible = new Visibility(caller);
-        List<ChangeEntry> rows = store.changeEntries(ChangeQuery.span(sourceId, span.from(), span.to()),
-                visible::view, 0, Integer.MAX_VALUE).entries();
+        ChangeQuery query = rows(sourceId, spaceKey, span.from(), span.to());
+        List<ChangeEntry> rows = store.changeEntries(query, entry -> visible.within(entry, query), 0,
+                Integer.MAX_VALUE).entries();
         Consolidated consolidated = consolidate(span, rows);
         List<ReportedPage> level = new ArrayList<>();
         if (!consolidated.update().initial()) {
             for (ReportedPage page : consolidated.pages()) {
-                if ((spaceKey == null || inSpace(page, spaceKey))
-                        && (released == null || released.test(new PageKey(page.sourceId(), page.pageId())))) {
+                if (released == null || released.test(new PageKey(page.sourceId(), page.pageId()))) {
                     level.add(page);
                 }
             }
@@ -270,18 +313,6 @@ public final class ChangeLog implements AutoCloseable {
                 UpdateTextRenderer.counts(level), total, offset, window);
         return new UpdateText(UpdateText.FORMAT, sourceId, consolidated.update().id(), spaceKey, total, offset,
                 new ChangeReport(consolidated.update(), window), rendered.markdown(), rendered.sections());
-    }
-
-    /** Der Bericht beschränkt auf die Ebene: unverändert für die ganze Quelle, sonst nur die Seiten des Space. */
-    private static ChangeReport level(ChangeReport report, String spaceKey) {
-        return spaceKey == null ? report : new ChangeReport(report.update(),
-                report.pages().stream().filter(page -> inSpace(page, spaceKey)).toList());
-    }
-
-    /** Ob die Seite in der Ebene des Space liegt: dort steht, dorthin oder von dort gewandert ist. */
-    private static boolean inSpace(ReportedPage page, String spaceKey) {
-        return spaceKey.equals(page.spaceKey()) || spaceKey.equals(page.oldSpaceKey())
-                || spaceKey.equals(page.newSpaceKey());
     }
 
     /** Rohe Zeilen für die Einsicht, neueste zuerst, seitenweise; nur Zeilen, die der Aufrufer sehen darf. */
@@ -343,7 +374,7 @@ public final class ChangeLog implements AutoCloseable {
         if (stored.isEmpty()) {
             return Optional.empty();
         }
-        ChangeReport report = level(report(caller, sourceId, update), spaceKey);
+        ChangeReport report = report(caller, sourceId, update, spaceKey);
         Map<String, String> titles = new HashMap<>();
         report.pages().forEach(page -> titles.put(page.pageId(), page.title()));
         List<SummaryStatement> statements = new ArrayList<>();
@@ -402,7 +433,7 @@ public final class ChangeLog implements AutoCloseable {
         return runtime.jobs().submit(JobType.UPDATE_SUMMARY, sourceId, spaceKey, null, caller.jobOwner(),
                 parameters, JobTask.blocking(context -> {
                     // Mit Unterschieden (CL5); withDiff prüft das Leserecht am Inhalt je Seite.
-                    ChangeReport report = level(report(caller, sourceId, update, true), spaceKey);
+                    ChangeReport report = report(caller, sourceId, update, spaceKey, true);
                     Visibility visible = new Visibility(caller);
                     UpdateSummarizer.Result result = new UpdateSummarizer(runtime.model(), runtime.released())
                             .summarize(report, page -> releasedPath(page, visible, runtime.released()), context);
@@ -480,6 +511,12 @@ public final class ChangeLog implements AutoCloseable {
                 coalescer.mark(sourceId);
             }
         });
+    }
+
+    /** Die Zeilen einer Quelle oder eines ihrer Spaces, nach {@code after} bis {@code until} einschließlich. */
+    private static ChangeQuery rows(String sourceId, String spaceKey, Instant after, Instant until) {
+        return new ChangeQuery(Set.of(sourceId), Set.of(), Set.of(), spaceKey, null, after, false, until, true,
+                false);
     }
 
     private Span span(String sourceId, String update) {
@@ -585,7 +622,9 @@ public final class ChangeLog implements AutoCloseable {
         return new ReportedPage(last.sourceId(), space, last.pageId(), kind, kinds, title, List.of(), null,
                 first.oldVersion(), gone ? null : last.newVersion(), first.oldTitle(), gone ? null : last.newTitle(),
                 first.oldParentId(), gone ? null : last.newParentId(), first.oldSpaceKey(),
-                gone ? null : last.newSpaceKey(), pending && !gone, last.at(), null);
+                gone ? null : last.newSpaceKey(), pending && !gone, last.at(), null,
+                rows.stream().map(ChangeEntry::editor).filter(Objects::nonNull).distinct().toList(),
+                gone ? List.of() : last.labels());
     }
 
     /** Pfad und Verweis aus dem Cache; Vorfahren, die der Aufrufer nicht sehen darf, fehlen im Pfad. */
@@ -694,9 +733,19 @@ public final class ChangeLog implements AutoCloseable {
             if (moved && !page(entry.sourceId(), old, entry.pageId())) {
                 return new ChangeEntry(entry.sourceId(), entry.spaceKey(), entry.pageId(), entry.at(), entry.kind(),
                         entry.trigger(), entry.oldVersion(), entry.newVersion(), null, entry.newTitle(), null,
-                        entry.newParentId(), null, entry.newSpaceKey(), entry.generation(), entry.contentPending());
+                        entry.newParentId(), null, entry.newSpaceKey(), entry.generation(), entry.contentPending(),
+                        entry.editor(), entry.labels());
             }
             return entry;
+        }
+
+        /**
+         * Die Zeile wie {@link #view}, aber nur, wenn auch die gekürzte noch zur Abfrage passt: Eine Verschiebung in
+         * einen verborgenen Space zählt dort nicht und verrät ihn so nicht (ADR 0031, Space-Ebene).
+         */
+        ChangeEntry within(ChangeEntry entry, ChangeQuery query) {
+            ChangeEntry seen = view(entry);
+            return seen == null || seen == entry || query.matches(seen) ? seen : null;
         }
 
         boolean page(String sourceId, String spaceKey, String pageId) {

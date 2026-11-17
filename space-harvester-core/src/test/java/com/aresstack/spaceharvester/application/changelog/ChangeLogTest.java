@@ -542,4 +542,77 @@ class ChangeLogTest {
         assertThat(text.totalPages()).isZero();
         assertThat(text.markdown()).contains("Erstbefüllung: 2 Seiten, nur gezählt");
     }
+
+    // --- Space-Ebene, Bearbeiter, Labels (ADR 0031, TZ1) ------------------------------------------------------------
+
+    @Test
+    void theSpaceLevelListsTheSameUpdatesAndCountsOnlyItsOwnChanges() {
+        twoUpdatesAndAnOpenOne();
+        entries.add(new ChangeEntry("wiki", "OPS", "500", at(25), ChangeKind.NEW, ChangeTrigger.MANUAL, null, "1",
+                null, "Betrieb OPS", null, null, null, "OPS", null, false));
+
+        List<ChangeUpdate> all = log.updates(CALLER, "wiki");
+        List<ChangeUpdate> ops = log.updates(CALLER, "wiki", "OPS");
+        List<ChangeUpdate> dev = log.updates(CALLER, "wiki", "DEV");
+
+        assertThat(dev).extracting(ChangeUpdate::id).containsExactlyElementsOf(all.stream().map(ChangeUpdate::id)
+                .toList());
+        assertThat(ops).extracting(ChangeUpdate::id).containsExactly(all.get(1).id(), all.get(2).id());
+        assertThat(ops).extracting(ChangeUpdate::pages).containsExactly(1, 0);
+        assertThat(ops.getFirst().spaces()).containsOnlyKeys("OPS");
+        assertThat(dev.get(1).pages()).isEqualTo(3);
+        assertThat(log.report(CALLER, "wiki", all.get(1).id(), "OPS").pages()).extracting(ReportedPage::pageId)
+                .containsExactly("500");
+        assertThat(log.report(CALLER, "wiki", all.get(1).id(), "DEV").pages()).extracting(ReportedPage::pageId)
+                .doesNotContain("500");
+    }
+
+    @Test
+    void aMoveBetweenTwoSpacesCountsInBothWithoutRevealingAHiddenSpace() {
+        movesBetweenSpaces();
+        deniedSpaces.clear();
+
+        assertThat(log.report(CALLER, "wiki", ChangeUpdate.OPEN, "DEV").pages()).extracting(ReportedPage::pageId)
+                .containsExactlyInAnyOrder("300", "301");
+        assertThat(log.report(CALLER, "wiki", ChangeUpdate.OPEN, "OPS").pages()).extracting(ReportedPage::pageId)
+                .containsExactlyInAnyOrder("300", "301");
+
+        deniedSpaces.add("OPS");
+        ReportedPage left = log.report(CALLER, "wiki", ChangeUpdate.OPEN, "DEV").pages().stream()
+                .filter(page -> page.pageId().equals("300")).findFirst().orElseThrow();
+        assertThat(left.kind()).isEqualTo(ChangeKind.MOVED_OUT);
+        assertThat(left.newTitle()).isNull();
+        assertThat(left.newSpaceKey()).isNull();
+        assertThat(log.updates(CALLER, "wiki", "OPS")).allSatisfy(update -> assertThat(update.pages()).isZero());
+    }
+
+    @Test
+    void theLatestMarkOfASpaceIsTheNewestRoundThatSyncedIt() {
+        marks.add(new UpdateMark("wiki", at(10), "client:a", List.of("DEV", "OPS"), 0, true));
+        marks.add(new UpdateMark("wiki", at(20), "client:a", List.of("OPS"), 0, false));
+        marks.add(new UpdateMark("wiki", at(30), "client:a", List.of("DEV"), 0, false));
+
+        assertThat(log.latestMark(CALLER, "wiki", "OPS")).map(UpdateMark::at).contains(at(20));
+        assertThat(log.latestMark(CALLER, "wiki", "DEV")).map(UpdateMark::at).contains(at(30));
+        assertThat(log.latestMark(CALLER, "wiki", "QA")).isEmpty();
+        assertThat(log.latestMark(CALLER, "wiki")).map(UpdateMark::at).contains(at(30));
+    }
+
+    @Test
+    void editorsAndLabelsComeWithThePageButInTheirOwnFields() {
+        mark(10, true);
+        entries.add(new ChangeEntry("wiki", "DEV", "100", at(12), ChangeKind.CONTENT_CHANGED, ChangeTrigger.MANUAL,
+                "1", "2", "Start", "Start", null, null, "DEV", "DEV", null, false, "Ada", List.of("alt")));
+        entries.add(new ChangeEntry("wiki", "DEV", "100", at(14), ChangeKind.CONTENT_CHANGED, ChangeTrigger.MANUAL,
+                "2", "3", "Start", "Start", null, null, "DEV", "DEV", null, false, "Bea", List.of("neu")));
+        entries.add(new ChangeEntry("wiki", "DEV", "100", at(16), ChangeKind.CONTENT_CHANGED, ChangeTrigger.MANUAL,
+                "3", "4", "Start", "Start", null, null, "DEV", "DEV", null, false, "Ada", List.of("neu", "api")));
+
+        ReportedPage page = log.report(CALLER, "wiki", ChangeUpdate.OPEN).pages().getFirst();
+
+        assertThat(page.editors()).containsExactly("Ada", "Bea");
+        assertThat(page.labels()).containsExactly("neu", "api");
+        assertThat(log.entries(CALLER, new ChangeFilter("wiki", null, Set.of(), Set.of(), null, null, null, 0, 10))
+                .entries()).extracting(ChangeEntry::editor).containsExactly("Ada", "Bea", "Ada");
+    }
 }

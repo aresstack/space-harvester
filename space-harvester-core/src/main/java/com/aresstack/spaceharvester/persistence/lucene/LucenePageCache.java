@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.changelog.ChangeQuery;
 import com.aresstack.spaceharvester.application.changelog.ChangeWindow;
 import com.aresstack.spaceharvester.application.changelog.ContentChange;
 import com.aresstack.spaceharvester.application.changelog.ContentDiffer;
+import com.aresstack.spaceharvester.application.changelog.PageEditors;
 import com.aresstack.spaceharvester.application.changelog.TextDiff;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.StoredSummary;
@@ -123,6 +124,8 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
     private volatile HoldingsChanges changes = HoldingsChanges.NONE;
     /** Wem neue Zeilen und Marken gemeldet werden (ADR 0030), je Quelle nach dem Commit. */
     private volatile ContentDiffer contentDiffer = ContentDiffer.NONE;
+    /** Bearbeiter einer gespeicherten Fassung für die Protokollzeile (ADR 0031). */
+    private volatile PageEditors editors = PageEditors.NONE;
     /**
      * Obergrenze der Seiten und Payload-Bytes, die ein Schreiblauf bis zum Commit für Unterschiede vorhält (CL5);
      * darüber bekommen weitere Seiten des Laufs keinen Unterschied, der Lauf selbst geht weiter.
@@ -725,6 +728,11 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
         this.contentDiffer = Objects.requireNonNull(differ, "differ");
     }
 
+    /** Liest beim Speichern eines neuen Inhalts den Bearbeiter für die Protokollzeile (ADR 0031). */
+    public void editors(PageEditors editors) {
+        this.editors = Objects.requireNonNull(editors, "editors");
+    }
+
     /** Für Tests: Obergrenze der vorgehaltenen Seiten und Bytes je Schreiblauf (CL5). */
     void diffBudget(int pages, long bytes) {
         this.diffPageBudget = pages;
@@ -959,7 +967,7 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
                         doc.get(PageCacheSchema.PARENT_ID)));
                 changed(snapshot.key(), snapshot.header().metadata().partitionKey());
             }
-            ChangeRows.State state = ChangeRows.State.of(snapshot.header(), snapshot);
+            ChangeRows.State state = ChangeRows.State.of(snapshot.header(), snapshot, editor(snapshot));
             changeRows.present(snapshot.key(), state);
             PageSnapshot held = replacedContent.remove(snapshot.key());
             if (held != null) {
@@ -1170,6 +1178,22 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
                 finish();
                 publish();
                 recorded(recordedSources);
+            }
+        }
+
+        /** Nur für einen anderen Inhalt als den bestätigten: Unveränderte Seiten kosten kein Lesen der Payload. */
+        private String editor(PageSnapshot snapshot) {
+            PageEditors reader = editors;
+            if (reader == PageEditors.NONE || changeRows.sameContent(snapshot.key(), snapshot.payload().rawSha256())) {
+                return null;
+            }
+            try {
+                return reader.editor(snapshot).orElse(null);
+            } catch (RuntimeException e) {
+                // Ohne Meldung: sie könnte einen Namen enthalten.
+                LOG.log(System.Logger.Level.WARNING, "Bearbeiter einer Seite in {0} nicht gelesen ({1})",
+                        snapshot.key().sourceId(), e.getClass().getName());
+                return null;
             }
         }
 

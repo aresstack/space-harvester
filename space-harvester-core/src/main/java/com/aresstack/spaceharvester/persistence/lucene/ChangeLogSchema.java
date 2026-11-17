@@ -68,6 +68,9 @@ final class ChangeLogSchema {
     private static final String NEW_SPACE = P + "newSpaceKey";
     private static final String GENERATION = P + "generation";
     private static final String PENDING = P + "contentPending";
+    /** Nur abgelegt, nie indiziert: Personenbezug (ADR 0031), nicht suchbar. */
+    private static final String EDITOR = P + "editor";
+    private static final String LABEL = P + "label";
 
     /** Wert von {@link PageCacheSchema#TYPE} für Update-Marken und Präfix ihrer IDs. */
     static final String MARK = "mark";
@@ -103,6 +106,7 @@ final class ChangeLogSchema {
     private static final String DIFF_PART = X + "part";
     private static final String DIFF_TRUNCATED = X + "truncated";
     private static final char SEPARATOR = '\u001f';
+    private static final char HEADING_SEPARATOR = '\u001e';
 
     private ChangeLogSchema() {
     }
@@ -233,7 +237,8 @@ final class ChangeLogSchema {
         for (ParagraphChange paragraph : change.paragraphs()) {
             doc.add(new StoredField(DIFF_PART, paragraph.kind().name() + SEPARATOR
                     + (paragraph.before() == null ? "" : paragraph.before()) + SEPARATOR
-                    + (paragraph.after() == null ? "" : paragraph.after())));
+                    + (paragraph.after() == null ? "" : paragraph.after()) + SEPARATOR
+                    + String.join(String.valueOf(HEADING_SEPARATOR), paragraph.headings())));
         }
         if (change.truncated()) {
             doc.add(new StoredField(DIFF_TRUNCATED, "true"));
@@ -248,9 +253,13 @@ final class ChangeLogSchema {
             int second = part.indexOf(SEPARATOR, first + 1);
             ParagraphChange.Kind kind = ParagraphChange.Kind.valueOf(part.substring(0, first));
             String before = part.substring(first + 1, second);
-            String after = part.substring(second + 1);
+            // Vor ADR 0031 abgelegte Absätze haben keinen Überschriftenpfad.
+            int third = part.indexOf(SEPARATOR, second + 1);
+            String after = third < 0 ? part.substring(second + 1) : part.substring(second + 1, third);
+            List<String> headings = third < 0 || third == part.length() - 1 ? List.of()
+                    : List.of(part.substring(third + 1).split(String.valueOf(HEADING_SEPARATOR), -1));
             paragraphs.add(new ParagraphChange(kind, kind == ParagraphChange.Kind.ADDED ? null : before,
-                    kind == ParagraphChange.Kind.REMOVED ? null : after));
+                    kind == ParagraphChange.Kind.REMOVED ? null : after, headings));
         }
         return new ContentChange(doc.get(DIFF_SOURCE_ID), doc.get(DIFF_PAGE_ID), doc.get(DIFF_FROM), doc.get(DIFF_TO),
                 Instant.parse(doc.get(DIFF_AT_TEXT)), paragraphs, doc.get(DIFF_TRUNCATED) != null);
@@ -351,6 +360,10 @@ final class ChangeLogSchema {
         if (entry.contentPending()) {
             doc.add(new StoredField(PENDING, "true"));
         }
+        stored(doc, EDITOR, entry.editor());
+        for (String label : entry.labels()) {
+            doc.add(new StoredField(LABEL, label));
+        }
         return doc;
     }
 
@@ -360,7 +373,8 @@ final class ChangeLogSchema {
                 ChangeKind.valueOf(doc.get(KIND)), ChangeTrigger.parse(doc.get(TRIGGER)), doc.get(OLD_VERSION),
                 doc.get(NEW_VERSION), doc.get(OLD_TITLE), doc.get(NEW_TITLE), doc.get(OLD_PARENT),
                 doc.get(NEW_PARENT), doc.get(OLD_SPACE), doc.get(NEW_SPACE),
-                generation == null ? null : generation.longValue(), doc.get(PENDING) != null);
+                generation == null ? null : generation.longValue(), doc.get(PENDING) != null, doc.get(EDITOR),
+                List.of(doc.getValues(LABEL)));
     }
 
     /** Alle Zusammenfassungen. */

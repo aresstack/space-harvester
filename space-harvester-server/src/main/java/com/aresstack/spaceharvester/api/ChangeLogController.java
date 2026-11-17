@@ -55,13 +55,17 @@ public class ChangeLogController {
     @Operation(summary = "Updates einer Quelle",
             description = "Neuestes zuerst. Ein Update ist alles nach der vorigen bis einschließlich dieser Update-Marke, "
                     + "gleich welcher Auslöser es geholt hat; das offene Update (id open) nach der letzten Marke steht "
-                    + "vorn, wenn es Änderungen hat. Das erste Update ist die Erstbefüllung (initial).")
+                    + "vorn, wenn es Änderungen hat. Das erste Update ist die Erstbefüllung (initial). Mit space "
+                    + "dieselben Updates als Ausschnitt eines Space: Zähler nur aus Änderungen mit diesem neuen oder "
+                    + "alten Space, 0 heißt keine Änderung im Space.")
     @ApiResponse(responseCode = "200", description = "Liste der Updates")
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
-    public List<ChangeUpdate> updates(@Parameter(hidden = true) AccessContext caller, @PathVariable String sourceId) {
-        return changeLog.updates(caller, sourceId);
+    public List<ChangeUpdate> updates(@Parameter(hidden = true) AccessContext caller, @PathVariable String sourceId,
+                                      @Parameter(description = "Nur dieser Space (Ausschnitt), sonst die ganze Quelle")
+                                      @RequestParam(required = false) String space) {
+        return changeLog.updates(caller, sourceId, space);
     }
 
     @GetMapping(path = UPDATES + "/{updateId}", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -69,7 +73,8 @@ public class ChangeLogController {
             description = "Die geänderten Seiten nach Art und Titel, mehrere Änderungen derselben Seite zu einer "
                     + "zusammengefasst, mit Pfad und Verweis. Bei der Erstbefüllung nur Zähler. Mit diff=true trägt "
                     + "jede Seite mit Inhaltsänderung ihren Textunterschied (Absätze alt gegen neu), sofern der "
-                    + "Client ihren Inhalt lesen darf.")
+                    + "Client ihren Inhalt lesen darf. Mit space nur die Seiten dieses Space; eine verschobene Seite "
+                    + "steht in beiden Spaces.")
     @ApiResponse(responseCode = "200", description = "Änderungsbericht")
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder kein solches Update "
             + "(update-not-found)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -77,8 +82,10 @@ public class ChangeLogController {
     public ChangeReport report(@Parameter(hidden = true) AccessContext caller, @PathVariable String sourceId,
                                @PathVariable String updateId,
                                @Parameter(description = "Textunterschied je geänderter Seite mitliefern")
-                               @RequestParam(name = "diff", defaultValue = "false") boolean diff) {
-        return changeLog.report(caller, sourceId, updateId, diff);
+                               @RequestParam(name = "diff", defaultValue = "false") boolean diff,
+                               @Parameter(description = "Nur dieser Space (Ausschnitt), sonst die ganze Quelle")
+                               @RequestParam(required = false) String space) {
+        return changeLog.report(caller, sourceId, updateId, space, diff);
     }
 
     @GetMapping(path = UPDATES + "/{updateId}/text", produces = MediaType.APPLICATION_JSON_VALUE)
