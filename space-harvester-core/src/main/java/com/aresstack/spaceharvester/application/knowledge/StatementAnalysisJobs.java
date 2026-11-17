@@ -61,6 +61,10 @@ public class StatementAnalysisJobs {
     public static final String INCOMPLETE = "INCOMPLETE";
     /** Fehlercode ohne eingerichteten oder mit fehlendem bzw. defektem Analysator. */
     public static final String ANALYZER_UNAVAILABLE = "ANALYZER_UNAVAILABLE";
+    /** Code des Info-Ereignisses „so viele Seiten ohne KI-Freigabe, ohne Vorstufe analysiert“ (ADR 0032, FL3). */
+    public static final String STAGE_NOT_RELEASED = "STAGE_NOT_RELEASED";
+    /** Code des Info-Ereignisses „so viele Seiten ohne Vorstufe, weil kein Modell eingestellt ist“. */
+    public static final String STAGE_NO_MODEL = "STAGE_NO_MODEL";
 
     private final Jobs jobs;
     private final Discovery discovery;
@@ -136,7 +140,7 @@ public class StatementAnalysisJobs {
         long current = 0;
         long withoutText = 0;
         StatementAnalysis.SimplificationRequest vorstufe = options.simplification();
-        long[] costs = new long[9];
+        long[] costs = new long[10];
         for (Target target : walk.pages.values()) {
             context.checkpoint();
             try {
@@ -147,8 +151,14 @@ public class StatementAnalysisJobs {
                     context.processed(1);
                     continue;
                 }
-                if (vorstufe != null && analysis.simplificationUnavailable(snapshot.key()).isPresent()) {
-                    costs[7]++; // ohne Modell oder ohne KI-Freigabe: diese Seite ohne Vorstufe
+                if (vorstufe != null) {
+                    // Diese Seite ohne Vorstufe: ohne KI-Freigabe und ohne Modell getrennt gezählt
+                    String unavailable = analysis.simplificationUnavailable(snapshot.key()).orElse(null);
+                    if ("NOT_RELEASED".equals(unavailable)) {
+                        costs[7]++;
+                    } else if (unavailable != null) {
+                        costs[9]++;
+                    }
                 }
                 if (analysis.analyze(caller, snapshot, context::cancelRequested, vorstufe, run -> {
                     costs[0]++;
@@ -190,7 +200,16 @@ public class StatementAnalysisJobs {
                     + costs[2] + " Abschnitte mit Modellaufruf, " + costs[3] + " Sätze aus der Ablage, " + costs[4]
                     + " Antwortzeilen verworfen, " + costs[5] + " Sätze mit ergänzten Wörtern verworfen, " + costs[6]
                     + " unvollständig, " + costs[8] + " wegen verlorener Verneinung oder Modalverb verworfen; " + costs[7]
-                    + " Seiten ohne Vorstufe (kein Modell oder keine KI-Freigabe)"));
+                    + " Seiten ohne KI-Freigabe und " + costs[9] + " Seiten ohne Modell ohne Vorstufe"));
+            // Dieselben beiden Zahlen einzeln und mit Code, damit die Oberfläche sie am Auftrag zeigen kann
+            context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                    STAGE_NOT_RELEASED, costs[7] + " Seiten ohne KI-Freigabe, ohne Vorstufe analysiert", null, null,
+                    null));
+            if (costs[9] > 0) {
+                context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                        STAGE_NO_MODEL, costs[9] + " Seiten ohne Vorstufe analysiert, weil kein Modell eingestellt "
+                        + "ist", null, null, null));
+            }
         }
         if (walk.incomplete) {
             throw new JobFailedException(INCOMPLETE, "Der Umfang konnte nicht vollständig ermittelt werden; die "
