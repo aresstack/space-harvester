@@ -152,14 +152,17 @@ class FileKnowledgeGraphStoreTest {
                 s.end(), s.predicateText(), s.predicateLemma(), s.voice(), s.clause(), s.core(), s.arguments(),
                 s.findings(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
                 ParsedStatements.Features.UNKNOWN, ParsedStatements.Derivation.vorstufe(
-                        ParsedStatements.StageFlag.CONDITION, "Die Stelle prüft den Beleg."));
+                        ParsedStatements.StageFlag.CONDITION, "Die Stelle prüft den Beleg.").withFeaturesFromOriginal());
         new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
-                List.of(fromStage))));
+                List.of(fromStage))).withStage("always|fake:m1|prompt-1"));
 
         ParsedStatements.Statement read = new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow()
                 .result().statements().get(0);
         assertThat(read).isEqualTo(fromStage);
         assertThat(read.derivation().stageFlag()).isEqualTo(ParsedStatements.StageFlag.CONDITION);
+        assertThat(read.derivation().featuresFrom()).isEqualTo(ParsedStatements.Origin.ORIGINAL);
+        assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().stage())
+                .isEqualTo("always|fake:m1|prompt-1");
 
         new FileKnowledgeGraphStore(directory).replace(base);
         Path file;
@@ -167,7 +170,7 @@ class FileKnowledgeGraphStoreTest {
             file = files.findFirst().orElseThrow();
         }
         assertThat(Files.readString(file, StandardCharsets.UTF_8)).doesNotContain("origin", "stageFlag",
-                "simplifiedSentence");
+                "simplifiedSentence", "featuresFrom", "\"stage\"");
         assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements()
                 .get(0).derivation()).isEqualTo(ParsedStatements.Derivation.ORIGINAL);
     }

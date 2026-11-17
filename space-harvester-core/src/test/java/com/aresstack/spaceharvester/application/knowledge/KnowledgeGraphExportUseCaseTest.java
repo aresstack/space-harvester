@@ -176,6 +176,7 @@ class KnowledgeGraphExportUseCaseTest {
             assertThat(node.path("simplifiedSentence").asString())
                     .isEqualTo("Der Sachbearbeiter übermittelt den Beleg.");
             assertThat(node.has("temporality")).as("Kennzeichen ist kein Zeitbezug").isFalse();
+            assertThat(node.path("featuresFrom").asString()).isEqualTo("VORSTUFE");
         });
         assertThat(doc.path("@context").toString()).contains("\"stageFlag\":\"sh:stageFlag\"");
     }

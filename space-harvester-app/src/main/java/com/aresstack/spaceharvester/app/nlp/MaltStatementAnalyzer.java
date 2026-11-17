@@ -276,7 +276,7 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
         return new ParsedStatements.Statement(stage.id(), stage.sentence(), stage.start(), stage.end(),
                 stage.predicateText(), stage.predicateLemma(), stage.voice(), stage.clause(), stage.core(),
                 stage.arguments(), stage.findings(), stage.paragraph(), stage.quality(), stage.qualityReasons(),
-                stage.review(), original.features(), stage.derivation());
+                stage.review(), original.features(), stage.derivation().withFeaturesFromOriginal());
     }
 
     private static ParsedStatements.StageFlag flag(SimplifiedSentence.Flag flag) {

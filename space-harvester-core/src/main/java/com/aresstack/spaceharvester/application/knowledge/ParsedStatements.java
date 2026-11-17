@@ -197,15 +197,22 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
      * @param simplifiedSentence der vereinfachte Satz, aus dem die Aussage stammt, damit die Oberfläche ihn neben dem
      *                           Originalsatz zeigen kann; {@code null} beim Original
      */
-    public record Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence) {
+    public record Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom) {
 
         /** Aus dem Originalsatz (auch alle Analysen vor FL3). */
-        public static final Derivation ORIGINAL = new Derivation(Origin.ORIGINAL, StageFlag.NONE, null);
+        public static final Derivation ORIGINAL = new Derivation(Origin.ORIGINAL, StageFlag.NONE, null,
+                Origin.ORIGINAL);
 
+        /**
+         * @param featuresFrom woher Verneinung, Verbindlichkeit und Zeitbezug stammen: {@link Origin#ORIGINAL}, wenn
+         *                     das Original eine Aussage zum selben Verb hat (übernommen), sonst {@link Origin#VORSTUFE}
+         */
         public Derivation {
             Objects.requireNonNull(origin, "origin");
             Objects.requireNonNull(stageFlag, "stageFlag");
-            if (origin == Origin.ORIGINAL && (stageFlag != StageFlag.NONE || simplifiedSentence != null)) {
+            featuresFrom = featuresFrom == null ? origin : featuresFrom;
+            if (origin == Origin.ORIGINAL && (stageFlag != StageFlag.NONE || simplifiedSentence != null
+                    || featuresFrom != Origin.ORIGINAL)) {
                 throw new IllegalArgumentException("Eine Aussage aus dem Original hat kein Kennzeichen der Vorstufe");
             }
             if (origin == Origin.VORSTUFE && (stageFlag == StageFlag.NONE || simplifiedSentence == null
@@ -214,9 +221,14 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
             }
         }
 
-        /** Aus einem vereinfachten Satz. */
+        /** Aus einem vereinfachten Satz, mit eigenen Merkmalen. */
         public static Derivation vorstufe(StageFlag stageFlag, String simplifiedSentence) {
-            return new Derivation(Origin.VORSTUFE, stageFlag, simplifiedSentence);
+            return new Derivation(Origin.VORSTUFE, stageFlag, simplifiedSentence, Origin.VORSTUFE);
+        }
+
+        /** Dieselbe Herkunft mit Merkmalen aus der Original-Aussage desselben Verbs. */
+        public Derivation withFeaturesFromOriginal() {
+            return new Derivation(origin, stageFlag, simplifiedSentence, Origin.ORIGINAL);
         }
     }
 

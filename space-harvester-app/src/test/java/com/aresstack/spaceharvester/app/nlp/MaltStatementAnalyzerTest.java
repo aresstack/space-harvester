@@ -152,6 +152,8 @@ class MaltStatementAnalyzerTest {
         assertThat(text.substring(added.start(), added.end())).isEqualTo(text);
         assertThat(added.derivation().stageFlag()).isEqualTo(ParsedStatements.StageFlag.PLANNING);
         assertThat(added.derivation().simplifiedSentence()).isEqualTo(simplified);
+        assertThat(added.derivation().featuresFrom()).as("Original hat eine Aussage zu „übermitteln“")
+                .isEqualTo(ParsedStatements.Origin.ORIGINAL);
         assertThat(added.predicateLemma()).isEqualTo("übermitteln");
         // Rollen zeigen auf Erwähnungen der Vorstufe, die im Ergebnis stehen und auf den Originalsatz zeigen
         assertThat(added.arguments()).isNotEmpty().allSatisfy(argument -> {
