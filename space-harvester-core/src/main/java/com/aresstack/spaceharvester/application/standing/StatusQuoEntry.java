@@ -13,13 +13,15 @@ import java.util.Objects;
  * @param kind          Handlung oder Zustand
  * @param subject       Wortlaut des Handelnden bzw. Trägers oder {@code null}
  * @param subjectKey    dessen Grundform ({@code Mention#key()}) oder {@code null}
+ * @param situation     Sachlage für den Vergleich ({@link StatementConflicts}) oder {@code null}, wenn ein Beteiligter
+ *                      fehlt, offen ist (Pronomen) oder ein Teilsatz ist
  * @param quality       wirksame Stufe ({@link StandingRules#effectiveQuality}); nur PLAUSIBLE zählt als sicher
  * @param standing      Stand mit Herkunft und Grund
  * @param decision      Entscheidung eines Menschen zu dieser Aussage oder {@code null}
  * @param analysisStale ob die Analyse der Seite veraltet ist ({@link KnowledgeGraph.PageRef#state()})
  */
 public record StatusQuoEntry(KnowledgeGraph.PageRef page, ParsedStatements.Statement statement, StatementKind kind,
-                             String subject, String subjectKey, ParsedStatements.Quality quality,
+                             String subject, String subjectKey, Situation situation, ParsedStatements.Quality quality,
                              StatementStanding standing, StandingDecision decision, boolean analysisStale) {
 
     /** Befund eines Zustandswechsels („wird zuständig“); nicht gedeutet, nur mitgegeben. */
