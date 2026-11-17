@@ -186,6 +186,8 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Nichts gespeichert, abbrechbar; 5000 Seiten mit 500 Einträgen rund 0,4 s im Container. Der Reiter rechnet nichts
   selbst; neu geholt wird bei Glossar-Änderung, Auswahlwechsel und Ende von `STATEMENT_ANALYSIS`, `STATEMENT_CHECK` (sobald auf main),
   `GLOSSARY`.
+- Verfeinern: `view(caller, vorigeSicht, query, cancelled)` nutzt das gehaltene Ergebnis und liest nur die Einträge
+  neu; neue Auswahl oder Auftragsende = volle Sicht, Filter und Suche = Verfeinern.
 
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
