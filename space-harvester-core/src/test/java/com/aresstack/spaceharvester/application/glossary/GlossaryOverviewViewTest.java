@@ -167,8 +167,31 @@ class GlossaryOverviewViewTest {
                 new GlossaryOverview.Query(null, null, ReviewStatus.REJECTED), () -> false);
         assertThat(rejected.rows()).extracting(row -> row.entry().term()).containsExactly("Bescheid");
         assertThat(rejected.countsByStatus()).containsEntry(ReviewStatus.REJECTED, 1);
-        assertThat(overview.view(EDITOR, WIKI, key -> true, new GlossaryOverview.Query("bew", null, null),
+        assertThat(overview.view(EDITOR, WIKI, key -> true, new GlossaryOverview.Query("bew", null, Set.of()),
                 () -> false).rows()).extracting(row -> row.entry().term()).containsExactly("Bewilligungsstelle");
+    }
+
+    @Test
+    void statusChipsAreTogglesLikeTheCategories() {
+        GlossaryOverview.View all = overview.view(EDITOR, WIKI, key -> true, new GlossaryOverview.Query(null,
+                GlossaryOverview.Query.WITHOUT_TECHNICAL, Set.of(ReviewStatus.CONFIRMED, ReviewStatus.REJECTED)),
+                () -> false);
+
+        assertThat(all.rows()).extracting(row -> row.entry().term()).as("mit Wichtigkeit zuerst").containsExactly("Bescheid", "Zuwendung");
+        assertThat(all.countsByStatus()).as("je Status ohne den eigenen Filter").containsEntry(ReviewStatus.PROPOSED, 2)
+                .containsEntry(ReviewStatus.CONFIRMED, 1).containsEntry(ReviewStatus.REJECTED, 1);
+        assertThat(all.countsByCategory()).as("unter der gewählten Menge von Status")
+                .containsEntry(Category.FACHLICH, 1).containsEntry(Category.UNKLAR, 1)
+                .containsEntry(Category.ROLLE, 0).containsEntry(Category.TECHNISCH, 0);
+
+        GlossaryOverview.Query empty = new GlossaryOverview.Query(null, null, Set.of());
+        assertThat(empty.statuses()).isEqualTo(GlossaryOverview.Query.WITHOUT_REJECTED);
+        assertThat(new GlossaryOverview.Query(null, null, (ReviewStatus) null).statuses())
+                .isEqualTo(GlossaryOverview.Query.WITHOUT_REJECTED);
+        GlossaryOverview.Query old = new GlossaryOverview.Query(null, null, ReviewStatus.REJECTED);
+        assertThat(old.statuses()).containsExactly(ReviewStatus.REJECTED);
+        assertThat(old.status()).isEqualTo(ReviewStatus.REJECTED);
+        assertThat(GlossaryOverview.Query.DEFAULT.status()).isNull();
     }
 
     @Test
@@ -178,7 +201,7 @@ class GlossaryOverviewViewTest {
         int before = reads.get();
         glossary.add(EDITOR, new Glossary.NewEntry("Bewilligung", WIKI, null, List.of()));
 
-        GlossaryOverview.View refined = overview.view(EDITOR, full, new GlossaryOverview.Query("bew", null, null),
+        GlossaryOverview.View refined = overview.view(EDITOR, full, new GlossaryOverview.Query("bew", null, Set.of()),
                 () -> false);
 
         assertThat(reads.get()).as("keine neue Ableitung beim Verfeinern").isEqualTo(before);
@@ -200,7 +223,7 @@ class GlossaryOverviewViewTest {
         long revisions = store.all().stream().mapToLong(GlossaryEntry::revision).sum();
 
         GlossaryOverview.View it = overview.view(EDITOR, WIKI, key -> key.pageId().equals("3"),
-                new GlossaryOverview.Query(null, null, null), () -> false);
+                new GlossaryOverview.Query(null, null, Set.of()), () -> false);
 
         assertThat(it.pages()).isEqualTo(1);
         assertThat(it.rows()).filteredOn(row -> row.importance() != null).extracting(row -> row.entry().term())

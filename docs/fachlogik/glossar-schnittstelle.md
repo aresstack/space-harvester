@@ -59,16 +59,18 @@ GlossaryOverview.View view(AccessContext caller, PageSelection selection, Glossa
   Seiten der Auswahl (Knoten samt Kindern). Die Einträge kommen aus dem Geltungsbereich, in dem die Auswahl liegt: ein
   Space ergibt global, Quelle und Space; eine Quelle ergibt global und Quelle; mehrere Quellen oder „Wissensquellen“
   ergeben alle lesbaren Einträge (`View#scope`).
-- **`Query(q, categories, status)`**: Suchtext, Kategorien (`null` = alle) und Status (`null` = Vorschläge und
-  bestätigte, `REJECTED` = Sperrliste). `Query.DEFAULT` fragt ohne `TECHNISCH` (`Query.WITHOUT_TECHNICAL`); der Filter
-  „Technik“ fragt nur `TECHNISCH`.
+- **`Query(q, categories, statuses)`**: Suchtext, Kategorien (`null` = alle) und die Menge gezeigter Status. Die
+  Status-Chips sind Umschalter wie die Einordnung (gefüllt = wird gezeigt); `null` oder leer heißt
+  `Query.WITHOUT_REJECTED` (Vorschläge und bestätigte), `{REJECTED}` ist die Sperrliste. `Query.DEFAULT` fragt ohne
+  `TECHNISCH` (`Query.WITHOUT_TECHNICAL`) und ohne abgelehnte; der Filter „Technik“ fragt nur `TECHNISCH`. Die frühere
+  Form `Query(q, categories, ReviewStatus status)` und `status()` bleiben vorerst.
 - **`View`** liefert alles fertig:
   - `rows`: `ViewRow(entry, importance, category)`, schon verknüpft und sortiert: Einträge mit Wichtigkeit zuerst
     (Seitenstreuung, dann Handelnder, dann Erwähnungen), Einträge ohne Zeile (manuelle oder ohne aktuelle Analyse in
     der Auswahl, `importance == null`) hinten, alphabetisch. Begriffe der Ableitung ohne Glossareintrag erscheinen
     nicht (nicht vorgeschlagen: kein Seitenbeleg oder über `max-terms`).
-  - `countsByCategory` und `countsByStatus` für die Chips: Kategorien gezählt unter dem gewählten Status, Status
-    gezählt unter den gewählten Kategorien; jeweils mit Suchtext. Jeder Wert ist vorhanden, auch 0.
+  - `countsByCategory` und `countsByStatus` für die Chips: Kategorien gezählt unter der gewählten Menge von Status,
+    Status gezählt unter den gewählten Kategorien (ohne den eigenen Filter); jeweils mit Suchtext. Jeder Wert ist vorhanden, auch 0.
   - `pages`, `stalePages`: Seiten der Auswahl mit aktueller bzw. veralteter (übersprungener) Analyse.
   - `term(normalized)`: Einzelheiten zum Klick aus dem gehaltenen Ergebnis, ohne neues Rechnen: Verhalten (`acts`,
     `undergoes`; verneinte Verben getrennt), Eigenschaften (`properties`), Ist-Beziehungen (`isA`, `instances`, mit Art), je
