@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -267,7 +268,13 @@ public final class ChangeLog implements AutoCloseable {
      */
     public UpdateText updateText(AccessContext caller, String sourceId, String update, String spaceKey, int offset,
                                  int limit) {
-        return text(caller, sourceId, update, spaceKey, offset, limit, null);
+        return updateText(caller, sourceId, update, spaceKey, offset, limit, ZoneId.systemDefault());
+    }
+
+    /** Wie {@link #updateText(AccessContext, String, String, String, int, int)} mit Zeiten in {@code zone}. */
+    public UpdateText updateText(AccessContext caller, String sourceId, String update, String spaceKey, int offset,
+                                 int limit, ZoneId zone) {
+        return text(caller, sourceId, update, spaceKey, offset, limit, null, Objects.requireNonNull(zone, "zone"));
     }
 
     /**
@@ -276,11 +283,12 @@ public final class ChangeLog implements AutoCloseable {
      */
     UpdateText modelText(AccessContext caller, String sourceId, String update, String spaceKey,
                          Predicate<PageKey> released, int offset, int limit) {
-        return text(caller, sourceId, update, spaceKey, offset, limit, Objects.requireNonNull(released, "released"));
+        return text(caller, sourceId, update, spaceKey, offset, limit, Objects.requireNonNull(released, "released"),
+                null);
     }
 
     private UpdateText text(AccessContext caller, String sourceId, String update, String spaceKey, int offset,
-                            int limit, Predicate<PageKey> released) {
+                            int limit, Predicate<PageKey> released, ZoneId zone) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(update, "update");
         if (offset < 0 || limit < 1 || limit > UpdateText.MAX_LIMIT) {
@@ -310,7 +318,11 @@ public final class ChangeLog implements AutoCloseable {
             window.add(withDiff(caller, located, span.from(), span.to()));
         }
         UpdateTextRenderer.Rendered rendered = UpdateTextRenderer.render(consolidated.update(), spaceKey,
-                UpdateTextRenderer.counts(level), total, offset, window);
+                UpdateTextRenderer.counts(level), total, offset, window, zone);
+        if (released != null) {
+            // Namen von Personen gehen nie in Material für ein Modell, auch nicht im Bericht (ADR 0031).
+            window.replaceAll(ReportedPage::withoutEditors);
+        }
         return new UpdateText(UpdateText.FORMAT, sourceId, consolidated.update().id(), spaceKey, total, offset,
                 new ChangeReport(consolidated.update(), window), rendered.markdown(), rendered.sections());
     }

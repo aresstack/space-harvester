@@ -533,6 +533,33 @@ class ChangeLogTest {
     }
 
     @Test
+    void theDisplayTextGroupsParagraphsUnderHeadingsUsesTheReadersZoneAndNamesEditorsTheModelTextOnlyCountsThem() {
+        mark(10, true);
+        entries.add(new ChangeEntry("wiki", "DEV", "100", at(12), ChangeKind.CONTENT_CHANGED, ChangeTrigger.MANUAL,
+                "1", "2", "Start", "Start", null, null, "DEV", "DEV", null, false, "Ada", List.of("alt")));
+        entries.add(new ChangeEntry("wiki", "DEV", "100", at(14), ChangeKind.LABELS_CHANGED, ChangeTrigger.MANUAL,
+                "2", "2", "Start", "Start", null, null, "DEV", "DEV", null, false, "Cleo", List.of("neu", "api")));
+        header("100", null, "Start");
+        diff(12, "100", "1", "2",
+                new ParagraphChange(ParagraphChange.Kind.ADDED, null, "Erster", List.of("Betrieb", "Fristen")),
+                new ParagraphChange(ParagraphChange.Kind.CHANGED, "Alt", "Neu"),
+                new ParagraphChange(ParagraphChange.Kind.REMOVED, "Zweiter", null, List.of("Betrieb", "Fristen")));
+
+        UpdateText display = log.updateText(CALLER, "wiki", ChangeUpdate.OPEN, null, 0, 50,
+                java.time.ZoneId.of("Europe/Berlin"));
+        UpdateText model = log.modelText(CALLER, "wiki", ChangeUpdate.OPEN, null, key -> true, 0, 50);
+
+        assertThat(display.markdown()).contains("Zeitraum: 01.11.2026, 09:10 bis jetzt (offen)")
+                .contains("bearbeitet von Ada, Cleo").contains("Labels: neu, api\n")
+                .contains("### Betrieb › Fristen\n+ Erster\n− Zweiter\n~ Alt\n  → Neu\n")
+                .doesNotContain("2026-11-01T");
+        assertThat(model.markdown()).doesNotContain("Ada").doesNotContain("Cleo").contains("Bearbeiter: 2")
+                .contains("Zeitraum: 2026-11-01T08:10:00Z").contains("### Betrieb › Fristen\n+ Erster");
+        assertThat(model.report().pages()).allSatisfy(page -> assertThat(page.editors()).isEmpty());
+        assertThat(display.report().pages().getFirst().editors()).containsExactly("Ada", "Cleo");
+    }
+
+    @Test
     void theInitialLoadIsOnlyCountedInTheUpdateText() {
         twoUpdatesAndAnOpenOne();
         String initial = log.updates(CALLER, "wiki").getLast().id();

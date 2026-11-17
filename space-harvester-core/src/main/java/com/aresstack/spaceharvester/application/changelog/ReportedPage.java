@@ -52,6 +52,13 @@ public record ReportedPage(String sourceId, String spaceKey, String pageId, Chan
                 editors, labels);
     }
 
+    /** Dieselbe Seite ohne Namen von Bearbeitern, etwa für Material an ein Modell. */
+    ReportedPage withoutEditors() {
+        return new ReportedPage(sourceId, spaceKey, pageId, kind, kinds, title, path, url, oldVersion, newVersion,
+                oldTitle, newTitle, oldParentId, newParentId, oldSpaceKey, newSpaceKey, contentPending, at, diff,
+                List.of(), labels);
+    }
+
     /** Dieselbe Seite mit dem Unterschied ihres Inhalts. */
     ReportedPage withDiff(ContentDiff diff) {
         return new ReportedPage(sourceId, spaceKey, pageId, kind, kinds, title, path, url, oldVersion, newVersion,

@@ -93,8 +93,8 @@ public class ChangeLogController {
             description = "Die feste Textform update-text/v1 eines Updates (ADR 0031): Kopf mit Zeitraum und Zählern, je "
                     + "geänderter Seite Pfad, Arten, Versionen, Zeitpunkt und die geänderten Absätze. space beschränkt "
                     + "auf einen Space, ohne gilt die ganze Quelle. Seitenweise über offset und limit (Seiten). Mit "
-                    + "Accept text/markdown nur der Text, sonst JSON mit Bericht und Lage jeder Seite im Text. Rechte "
-                    + "wie beim Bericht.")
+                    + "Accept text/markdown nur der Text, sonst JSON mit Bericht und Lage jeder Seite im Text. Zeiten "
+                    + "in der Zone zone (Vorgabe Europe/Berlin), etwa 17.11.2026, 01:35. Rechte wie beim Bericht.")
     @ApiResponse(responseCode = "200", description = "Update-Text")
     @ApiResponse(responseCode = "400", description = "Ungültiger Ausschnitt (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -107,8 +107,11 @@ public class ChangeLogController {
                            @Parameter(description = "Space der Ebene; ohne die ganze Quelle")
                            @RequestParam(required = false) String space,
                            @RequestParam(defaultValue = "0") int offset,
-                           @RequestParam(defaultValue = "50") int limit) {
-        return changeLog.updateText(caller, sourceId, updateId, textWindow(space), offset(offset, limit), limit);
+                           @RequestParam(defaultValue = "50") int limit,
+                           @Parameter(description = "Zeitzone der Zeiten im Text, etwa Europe/Berlin")
+                           @RequestParam(defaultValue = DEFAULT_ZONE) String zone) {
+        return changeLog.updateText(caller, sourceId, updateId, textWindow(space), offset(offset, limit), limit,
+                zone(zone));
     }
 
     @GetMapping(path = UPDATES + "/{updateId}/text", produces = "text/markdown")
@@ -116,11 +119,23 @@ public class ChangeLogController {
                                            @PathVariable String sourceId, @PathVariable String updateId,
                                            @RequestParam(required = false) String space,
                                            @RequestParam(defaultValue = "0") int offset,
-                                           @RequestParam(defaultValue = "50") int limit) {
+                                           @RequestParam(defaultValue = "50") int limit,
+                                           @RequestParam(defaultValue = DEFAULT_ZONE) String zone) {
         UpdateText text = changeLog.updateText(caller, sourceId, updateId, textWindow(space), offset(offset, limit),
-                limit);
+                limit, zone(zone));
         return ResponseEntity.ok().contentType(MediaType.parseMediaType("text/markdown;charset=UTF-8"))
                 .body(text.markdown());
+    }
+
+    /** Zone der Zeiten im Update-Text, wenn der Aufrufer keine nennt. */
+    private static final String DEFAULT_ZONE = "Europe/Berlin";
+
+    private static java.time.ZoneId zone(String zone) {
+        try {
+            return java.time.ZoneId.of(zone.strip());
+        } catch (java.time.DateTimeException e) {
+            throw new InvalidQueryException("zone ist keine Zeitzone, etwa Europe/Berlin");
+        }
     }
 
     /** Der Space der Ebene, {@code null} für die ganze Quelle. */
