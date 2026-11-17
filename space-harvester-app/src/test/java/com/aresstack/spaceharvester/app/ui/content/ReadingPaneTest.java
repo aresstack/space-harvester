@@ -208,6 +208,17 @@ class ReadingPaneTest {
             assertThat(reloads[0]).isEqualTo(1);
             assertThat(pane.updateOffer()).as("der Hinweis verschwindet mit dem Klick").isEmpty();
             pane.offerUpdate("x", () -> reloads[0]++);
+            pane.updatePlate().clickClose();
+            assertThat(pane.updateOffer()).as("✕ blendet ihn aus, ohne neu zu laden").isEmpty();
+            assertThat(reloads[0]).isEqualTo(1);
+            pane.offerUpdate("x", () -> reloads[0]++);
+            assertThat(pane.updatePlate().actionFocusable()).as("per Tastatur erreichbar").isTrue();
+            pane.updatePlate().pressEnterOnAction();
+            assertThat(reloads[0]).isEqualTo(2);
+            pane.offerUpdate("x", () -> reloads[0]++);
+            pane.updatePlate().pressEscapeOnAction();
+            assertThat(pane.updateOffer()).isEmpty();
+            pane.offerUpdate("x", () -> reloads[0]++);
             pane.clear(" ");
             assertThat(pane.updateOffer()).as("eine andere Seite nimmt den Hinweis mit").isEmpty();
         });

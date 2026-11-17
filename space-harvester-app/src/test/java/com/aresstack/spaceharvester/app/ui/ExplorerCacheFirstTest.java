@@ -100,6 +100,93 @@ class ExplorerCacheFirstTest {
         });
     }
 
+    /**
+     * AT zu #861: Die Quelle antwortet in Stapeln und in anderer Reihenfolge als der Cache. Unbestätigte Kinder bleiben,
+     * bis der letzte Stapel kommt; Auswahl und Aufklappung bleiben, die Mitte sieht keinen Auswahlwechsel.
+     */
+    @Test
+    void theMergeKeepsUnconfirmedChildrenUntilTheLastBatchAndKeepsSelectionAndExpansion() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("seite.md"), "# Seite\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            int[] events = new int[1];
+            explorer.onSelection(selection -> events[0]++);
+            javax.swing.tree.DefaultTreeModel model = (javax.swing.tree.DefaultTreeModel) explorer.tree().getModel();
+            Explorer.Node top = (Explorer.Node) model.getRoot();
+            Explorer.Node space = new Explorer.Node(new Explorer.SpaceItem("handbuch", "X", "X"));
+            space.loaded = true;
+            space.fromCache = true;
+            // Aus dem Cache, nach Titel: A, B, C (aufgeklappt, mit Kind), D.
+            Explorer.Node a = page("a", "A", false);
+            Explorer.Node b = page("b", "B", false);
+            Explorer.Node c = page("c", "C", true);
+            c.loaded = true;
+            c.add(page("c1", "C1", false));
+            Explorer.Node d = page("d", "D", false);
+            for (Explorer.Node child : List.of(a, b, c, d)) {
+                space.add(child);
+            }
+            model.insertNodeInto(space, top, top.getChildCount());
+            explorer.tree().expandPath(new TreePath(space.getPath()));
+            explorer.tree().expandPath(new TreePath(c.getPath()));
+            explorer.tree().setSelectionPath(new TreePath(b.getPath()));
+            events[0] = 0;
+
+            // Erster Stapel der Quelle: C, A, Cursor offen.
+            explorer.merge(space, new Explorer.Batch(List.of(page("c", "C", true), page("a", "A", false)), "weiter"),
+                    true);
+            assertThat(titles(space)).containsExactly("C", "A", "B", "D", "more");
+            assertThat(explorer.tree().getSelectionPath().getLastPathComponent()).isSameAs(b);
+            assertThat(explorer.tree().isExpanded(new TreePath(c.getPath()))).isTrue();
+            assertThat(events[0]).as("die Mitte sieht keinen Auswahlwechsel").isZero();
+
+            // Letzter Stapel: B; D kennt die Quelle nicht mehr.
+            explorer.merge(space, new Explorer.Batch(List.of(page("b", "B", false)), null), false);
+            assertThat(titles(space)).containsExactly("C", "A", "B");
+            assertThat(explorer.tree().getSelectionPath().getLastPathComponent()).isSameAs(b);
+            assertThat(explorer.tree().isExpanded(new TreePath(c.getPath()))).isTrue();
+            assertThat(events[0]).isZero();
+        });
+    }
+
+    private static Explorer.Node page(String id, String title, boolean children) {
+        Explorer.Node node = new Explorer.Node(new Explorer.PageItem("handbuch", "X", id, title, children));
+        if (children) {
+            node.add(new Explorer.Node(new Explorer.Note(Explorer.LOADING)));
+        } else {
+            node.loaded = true;
+        }
+        return node;
+    }
+
+    private static List<String> titles(Explorer.Node parent) {
+        List<String> titles = new java.util.ArrayList<>();
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            Explorer.Item item = ((Explorer.Node) parent.getChildAt(i)).item();
+            titles.add(item instanceof Explorer.PageItem page ? page.title()
+                    : item instanceof Explorer.MoreItem ? "more" : String.valueOf(item));
+        }
+        return titles;
+    }
+
     private static JobStatus await(Workspace workspace, JobStatus started) throws InterruptedException {
         Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
         JobStatus status = started;

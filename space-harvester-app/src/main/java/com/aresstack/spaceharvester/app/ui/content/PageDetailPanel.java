@@ -1272,7 +1272,7 @@ public final class PageDetailPanel extends JPanel {
             ReadingPane.Prepared newer = fresh.get().prepared();
             readingPane.offerUpdate(ReadingPane.updateSentence(cachedVersion, fresh.get().view().version()), () -> {
                 if (shown == page) {
-                    readingPane.show(newer);
+                    readingPane.showKeepingPosition(newer);
                     renderDetails();
                 }
             });

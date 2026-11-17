@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
+import com.aresstack.spaceharvester.app.ui.controls.MessagePlate;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.diagrams.VectorDiagram;
@@ -82,16 +83,14 @@ final class ReadingPane extends JPanel {
     private final JEditorPane pane = new JEditorPane();
     private final JLabel hint = Comic.muted(" ");
     /** Hinweis oben, wenn die Quelle einen neueren Stand hat als der gezeigte aus dem Cache (Angelo, 17.11.2026). */
-    private final JPanel update = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 4));
-    private final JLabel updateText = new JLabel();
-    private final JLabel updateLink = new JLabel(RELOAD);
-    private Runnable reload = () -> { };
+    private final MessagePlate update = new MessagePlate();
     /** Text des Links im Hinweis auf einen neueren Stand. */
     static final String RELOAD = "Seite neu laden";
     /** Oberer Innenabstand der Ansicht ohne Wolkenbanner. */
     private static final int PADDING_TOP = 10;
     /** Die Ansicht mit den Inhaltswolken der Dokumentnavigation darüber, wie unter „Text“. */
-    private final NavigableDocumentPage page = new NavigableDocumentPage(Comic.scroll(pane), pane, PADDING_TOP);
+    private final javax.swing.JScrollPane scroll = Comic.scroll(pane);
+    private final NavigableDocumentPage page = new NavigableDocumentPage(scroll, pane, PADDING_TOP);
     /** Drehender Ring über dem Text, solange die Leseansicht lädt; statt eines Hinweistexts oben. */
     private final BusyOverlay overlay = new BusyOverlay(page);
     private String details = "";
@@ -137,24 +136,6 @@ final class ReadingPane extends JPanel {
         });
         overlay.setHighlight(Comic.BLUE);
         overlay.setVeilColor(Comic.SURFACE);
-        update.setBackground(new java.awt.Color(0xFFF6D5));
-        update.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.YELLOW, 1, true),
-                BorderFactory.createEmptyBorder(2, 6, 2, 6)));
-        updateText.setFont(Comic.regular(13f));
-        updateText.setForeground(Comic.TEXT);
-        updateLink.setFont(Comic.semiBold(13f));
-        updateLink.setForeground(Comic.BLUE);
-        updateLink.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        updateLink.getAccessibleContext().setAccessibleName(RELOAD);
-        updateLink.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent event) {
-                clickUpdate();
-            }
-        });
-        update.add(updateText);
-        update.add(updateLink);
-        update.setVisible(false);
         JPanel top = new JPanel();
         top.setOpaque(false);
         top.setLayout(new javax.swing.BoxLayout(top, javax.swing.BoxLayout.Y_AXIS));
@@ -184,34 +165,41 @@ final class ReadingPane extends JPanel {
         return "Es gibt " + (count > 1 ? count + " " : "") + "Updates seit Ihrem letzten Besuch –";
     }
 
-    /** Zeigt oben den Hinweis auf einen neueren Stand; „Seite neu laden“ führt {@code reload} aus und blendet ihn aus. */
+    /**
+     * Zeigt oben den Hinweis auf einen neueren Stand (Meldungsplatte mit ✕); „Seite neu laden“ führt {@code reload} aus
+     * und blendet ihn aus.
+     */
     void offerUpdate(String sentence, Runnable reload) {
-        this.reload = java.util.Objects.requireNonNull(reload, "reload");
-        updateText.setText(sentence);
-        update.setVisible(true);
-        revalidate();
-        repaint();
+        update.show(sentence, RELOAD, java.util.Objects.requireNonNull(reload, "reload"));
     }
 
     private void hideUpdate() {
-        reload = () -> { };
-        if (update.isVisible()) {
-            update.setVisible(false);
-            revalidate();
-            repaint();
-        }
+        update.dismiss();
     }
 
     /** Für Tests: der Satz des Hinweises auf einen neueren Stand, leer ohne Hinweis. */
     String updateOffer() {
-        return update.isVisible() ? updateText.getText() : "";
+        return update.sentence();
+    }
+
+    /** Für Tests: die Meldungsplatte des Hinweises. */
+    MessagePlate updatePlate() {
+        return update;
+    }
+
+    /**
+     * Zeigt einen neueren Stand derselben Seite an derselben Rollposition (nach „Seite neu laden“): Die Ansicht springt
+     * nicht an den Anfang.
+     */
+    void showKeepingPosition(Prepared prepared) {
+        java.awt.Point position = scroll.getViewport().getViewPosition();
+        show(prepared);
+        javax.swing.SwingUtilities.invokeLater(() -> scroll.getViewport().setViewPosition(position));
     }
 
     /** Ein Klick auf „Seite neu laden“ (auch für Tests). */
     void clickUpdate() {
-        Runnable action = reload;
-        hideUpdate();
-        action.run();
+        update.clickAction();
     }
 
     /**

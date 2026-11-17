@@ -57,6 +57,8 @@ public final class Comic {
     public static final Color GREEN = ResearchUiPalette.WAVE_GREEN;
     public static final Color DARK = ResearchUiPalette.SECONDARY_SURFACE;
     public static final Color LINE = ResearchUiPalette.LIGHT_CONTROL_BORDER;
+    /** Fläche einer Meldungsplatte mit Hinweis (helles Gelb, Rand {@link #YELLOW}). */
+    public static final Color NOTICE = new Color(0xFFF6D5);
 
     private Comic() {
     }
