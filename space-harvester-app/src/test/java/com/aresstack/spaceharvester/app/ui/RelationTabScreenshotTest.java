@@ -72,22 +72,21 @@ class RelationTabScreenshotTest {
                 new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"},
                 r -> List.of(r.fromTerm(), Relation.typeText(r.type()), r.toTerm(),
                         Relation.statusText(r.status()), Relation.originText(r.origin())),
-                List.of(), RelationType.ABBREVIATION, TermsView.NO_RELATIONS);
+                List.of(), RelationType.ABBREVIATION, RelationTab.NO_RELATIONS);
         tab.fetch(core);
         return tab;
     }
 
     private static javax.swing.JPanel surface(RelationTab tab, int width) {
         PillTabs tabs = new PillTabs();
-        tabs.tab(TermsView.ACRONYMS, new javax.swing.JPanel()).tab(TermsView.IDENTIFIERS, new javax.swing.JPanel())
-                .tab(TermsView.RELATIONS, tab.component())
-                .tab(TermsView.GLOSSARY, new javax.swing.JPanel()).tab(TermsView.GRAPH, new javax.swing.JPanel())
+        tabs.tab("Technische Angaben", new javax.swing.JPanel()).tab("Analyse", tab.component())
+                .tab("Originaldaten", new javax.swing.JPanel())
                 .actions(tab.proposeButton(), tab.createButton());
-        tabs.select(TermsView.RELATIONS);
+        tabs.select("Analyse");
         javax.swing.JPanel surface = new javax.swing.JPanel(new java.awt.BorderLayout());
         surface.setBackground(Comic.SURFACE);
         surface.setBorder(javax.swing.BorderFactory.createEmptyBorder(12, 14, 12, 14));
-        surface.add(Comic.plate("Begriffe", Comic.PETROL, tabs), java.awt.BorderLayout.CENTER);
+        surface.add(Comic.plate("Analyse", Comic.PETROL, tabs), java.awt.BorderLayout.CENTER);
         surface.setSize(width, 520);
         surface.validate();
         return surface;

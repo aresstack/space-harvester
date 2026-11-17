@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
- * Der Reiter „Graph“ unter Begriffe: ein Wissensgraph um einen Startbegriff. Begriffe sind Knoten, Beziehungen Kanten,
+ * Der Reiter „Graph“ unter Analysen ohne Seite: ein Wissensgraph um einen Startbegriff. Begriffe sind Knoten, Beziehungen Kanten,
  * beschriftet mit ihrer Art; bestätigte durchgezogen, auf Wunsch auch vorgeschlagene gestrichelt. Die Mitte steht im
  * Zentrum, ihre Nachbarn (Tiefe 1) im Kreis darum, deren Nachbarn (Tiefe 2) außen bei ihrem Vorgänger. Ein Doppelklick
  * auf einen Knoten macht ihn zur Mitte. Die Daten kommen aus einer {@link GraphSource}, außerhalb des EDT. Nur auf dem
@@ -50,8 +50,14 @@ import java.util.function.Supplier;
  */
 public final class TermGraphView {
 
-    static final String START = "Begriff eingeben und Enter drücken; ein Doppelklick auf einen Knoten macht ihn zur "
-            + "Mitte.";
+    /** Hilfe am ?-Knopf (keine Hinweistexte in der Ansicht); nennt keinen Reiterpfad. */
+    public static final String HELP = "Der Graph zeigt Begriffe als Knoten und ihre Beziehungen als Kanten, "
+            + "beschriftet mit der Art der Beziehung. Begriff oben rechts eingeben und Enter drücken oder „Zeigen“ "
+            + "wählen: Er steht in der Mitte, seine Nachbarn im Kreis darum. „Tiefe 2“ zeigt auch die Nachbarn der "
+            + "Nachbarn. Ein Doppelklick auf einen Knoten macht ihn zur Mitte.\n\n"
+            + "Gezeigt werden bestätigte Beziehungen, mit „Vorschläge zeigen“ auch vorgeschlagene, gestrichelt. "
+            + "Ist links eine Quelle, ein Space oder ein Ordner gewählt, zählen nur Beziehungen, deren Begriffe auf "
+            + "diesen Seiten vorkommen.";
     static final String NO_NEIGHBOURS = "Zu diesem Begriff gibt es noch keine Beziehungen.";
     static final String TRUNCATED = "Gezeigt werden die ersten " + GraphSource.MAX_NODES + " Begriffe.";
     /** Höchstens so viele Vorschläge zeigt die Begriffssuche am Startfeld. */
@@ -64,7 +70,7 @@ public final class TermGraphView {
     private final JComboBox<String> depth = Comic.combo();
     private final JCheckBox proposals = Comic.checkBox("Vorschläge zeigen");
     private final ComposerButton showButton = Comic.button("Zeigen", "Den Graphen um den Startbegriff zeichnen");
-    private final JLabel hint = Comic.muted(START);
+    private final JLabel hint = Comic.muted(" ");
     private final Canvas canvas = new Canvas();
     private final JPopupMenu suggestions = new JPopupMenu();
     private String centre;
@@ -85,7 +91,7 @@ public final class TermGraphView {
         this(context, context == null ? null : GraphSource.ofRelations((term, withProposals) -> {
             AppRuntime runtime = context.runtime();
             if (runtime == null) {
-                throw new IllegalStateException(TermsView.NO_RUNTIME);
+                throw new IllegalStateException(TermDirectory.NO_RUNTIME);
             }
             return runtime.workspace().termRelations(term, null, withProposals ? null : ReviewStatus.CONFIRMED,
                     null, TermRelations.MAX_LIMIT, null, scope.get().get()).relations();
@@ -112,7 +118,6 @@ public final class TermGraphView {
         JPanel lines = new JPanel(new BorderLayout(0, 2));
         lines.setOpaque(false);
         lines.add(heading, BorderLayout.NORTH);
-        lines.add(Comic.muted("Begriffe als Knoten, Beziehungen als Kanten"), BorderLayout.SOUTH);
         controls.setOpaque(false);
         controls.add(start);
         controls.add(depth);
@@ -246,7 +251,7 @@ public final class TermGraphView {
     void show(GraphSource.Graph graph) {
         canvas.graph(graph);
         if (graph.nodes().size() <= 1) {
-            hint.setText(graph.nodes().isEmpty() ? START : NO_NEIGHBOURS);
+            hint.setText(graph.nodes().isEmpty() ? " " : NO_NEIGHBOURS);
         } else {
             hint.setText(Texts.count(graph.nodes().size(), "Begriff", "Begriffe") + " · "
                     + Texts.count(graph.edges().size(), "Beziehung", "Beziehungen")

@@ -143,18 +143,20 @@ class MainWindowTest {
             assertThat(png).isNotEmptyFile();
         }
         // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen. Links die Suche
-        // und die Reiter der Seitenansicht, rechts Begriffe und Aufträge, dann Verwaltung und Einstellungen (Angelo,
+        // und die Reiter der Seitenansicht, rechts Aufträge, dann Verwaltung und Einstellungen (Angelo,
         // 13.11.2026); Inhalte hat keinen eigenen Knopf mehr.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
                 .containsSubsequence("Suche", "Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen",
-                        "Erweitert", "Export", "Chat", "Begriffe", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
+                        "Erweitert", "Export", "Chat", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
                 .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
                 .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");
         assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
-                .contains("Suche (Strg+1)", "Begriffe (Strg+3)", "Aufträge (Strg+4)",
-                        "Wissensquellen verwalten (Strg+5)", "Einstellungen (Strg+6)")
+                .contains("Suche (Strg+1)", "Aufträge (Strg+3)", "Wissensquellen verwalten (Strg+4)",
+                        "Einstellungen (Strg+5)")
+                .as("Begriffe stehen unter Analysen, kein eigener Bereich (BG2c)")
+                .noneMatch(tip -> tip != null && tip.startsWith("Begriffe (Strg+"))
                 .doesNotContain("Inhalte (Strg+2)");
         // Ein Reiter in der Leiste schaltet die Mitte auf Inhalte; in anderen Bereichen zeigt keiner der Reiter eine
         // Auswahl, zurück unter Inhalte ist der gewählte Reiter wieder dunkel.
@@ -168,7 +170,7 @@ class MainWindowTest {
         assertThat(window[0].current()).isEqualTo(AppContext.Section.CONTENT);
         assertThat(tabs).filteredOn(AbstractButton::isSelected)
                 .extracting(b -> b.getAccessibleContext().getAccessibleName()).containsExactly("Text");
-        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.TERMS));
+        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.ACTIVITIES));
         assertThat(tabs).noneMatch(AbstractButton::isSelected);
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.CONTENT));
         assertThat(tabs).filteredOn(AbstractButton::isSelected)

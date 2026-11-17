@@ -164,6 +164,11 @@ public final class PageDetailPanel extends JPanel {
             new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, STAND, StandingTab.HELP);
     /** Wohin nach dem Laden gesprungen wird (aus „Stand“); {@code null} ohne. */
     private StandingTab.Target pendingJump;
+    /** Hilfe zu Fachglossar und Graph der Auswahl, je nur auf ihrem Reiter zu sehen. */
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton glossaryHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, StandingTab.GLOSSARY, GlossaryTab.HELP);
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton graphHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, StandingTab.GRAPH, TermGraphView.HELP);
     private final JLabel empty = Comic.muted(EMPTY_PAGE);
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
@@ -603,7 +608,7 @@ public final class PageDetailPanel extends JPanel {
         // Begriffe vorn in der Reiterzeile des Stands, wie auf der Seite; keine zweite Reiterebene (AT 17.11.2026).
         standing.terms(overviewTerms, visible -> {
             overviewTermsShown = visible;
-            standingHelp.setVisible(standingShown() && standing.ownTabSelected());
+            showOverviewHelp();
             if (visible) {
                 loadOverviewTerms();
                 if (overviewRecount) {
@@ -617,18 +622,20 @@ public final class PageDetailPanel extends JPanel {
         // Fachglossar und Graph hinten in derselben Reiterzeile (BG2c, aus dem früheren Bereich „Begriffe“): dieselben
         // Ansichten, ihre Werkzeuge oben rechts nur auf ihrem Reiter, beide nach der Auswahl links.
         standing.tab(StandingTab.GLOSSARY, overviewGlossary.component(), visible -> {
-            standingHelp.setVisible(standingShown() && standing.ownTabSelected());
+            showOverviewHelp();
             if (visible) {
                 overviewGlossary.shown();
             }
         }, overviewGlossary.tools(), overviewGlossary.addButton(), overviewGlossary.detectButton());
         overviewGlossary.onStatus(text -> tabStatus(OVERVIEW_GLOSSARY, text));
         standing.tab(StandingTab.GRAPH, overviewGraph.component(), visible -> {
-            standingHelp.setVisible(standingShown() && standing.ownTabSelected());
+            showOverviewHelp();
             if (visible) {
                 overviewGraph.shown();
             }
         }, overviewGraph.tools());
+        glossaryHelp.setVisible(false);
+        graphHelp.setVisible(false);
         deck.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
@@ -765,7 +772,7 @@ public final class PageDetailPanel extends JPanel {
         // Unterreitern „Aussagen“, „Zuerst lesen“, „Mögliche Widersprüche“ (Angelo 17.11.2026, kein eigenes Symbol).
         boolean standingShown = standingShown();
         standing.shown(standingShown);
-        standingHelp.setVisible(standingShown && standing.ownTabSelected());
+        showOverviewHelp();
         // Im Reiter Chat steht mittig der Chat statt der Seitenüberschrift, rechts Neuer Chat und Chat löschen.
         boolean chatTab = CHAT.equals(selected);
         title.setVisible(!chatTab);
@@ -952,6 +959,15 @@ public final class PageDetailPanel extends JPanel {
         wideAnalysis.createButton().setVisible(ANALYSIS.equals(wideAdvanced.selected()));
         analysisView.shown(pageAnalysis);
         wideAnalysis.shown(wideShown);
+    }
+
+    /** Die ?-Hilfe zum gewählten Reiter von Analysen ohne Seite: Stand, Fachglossar oder Graph, sonst keine. */
+    private void showOverviewHelp() {
+        boolean shown = standingShown();
+        String selected = standing.tabs().selected();
+        standingHelp.setVisible(shown && standing.ownTabSelected());
+        glossaryHelp.setVisible(shown && StandingTab.GLOSSARY.equals(selected));
+        graphHelp.setVisible(shown && StandingTab.GRAPH.equals(selected));
     }
 
     private void loadOverviewTerms() {
@@ -2679,7 +2695,7 @@ public final class PageDetailPanel extends JPanel {
      */
     JComponent headerActions() {
         return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp,
-                standingHelp, chat.headerActions(), star, more);
+                standingHelp, glossaryHelp, graphHelp, chat.headerActions(), star, more);
     }
 
     /** Zurück und Vor für die Statuszeile des Hauptfensters. */

@@ -45,19 +45,10 @@ import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
-import static com.aresstack.spaceharvester.app.ui.TermsView.CONFIRM;
-import static com.aresstack.spaceharvester.app.ui.TermsView.CONFLICT;
-import static com.aresstack.spaceharvester.app.ui.TermsView.NO_MATCH;
-import static com.aresstack.spaceharvester.app.ui.TermsView.NO_RUNTIME;
-import static com.aresstack.spaceharvester.app.ui.TermsView.REJECT;
-import static com.aresstack.spaceharvester.app.ui.TermsView.REJECTED_BACKGROUND;
-import static com.aresstack.spaceharvester.app.ui.TermsView.RELATION_LIMIT;
-import static com.aresstack.spaceharvester.app.ui.TermsView.REMOVE;
-import static com.aresstack.spaceharvester.app.ui.TermsView.UNDO;
 
 /**
  * Die Liste der Beziehungen zwischen Begriffen (#120), eine eigenständige Komponente ohne Annahmen über ihren Einbau
- * (heute unter Begriffe, später im Reiter Analyse der Seite, ADR 0029). Liste mit Buchstabenleiste, Suchfeld, Chips
+ * (im Unterreiter „Analyse“ des Technik-Reiters, ADR 0029). Liste mit Buchstabenleiste, Suchfeld, Chips
  * zum Filtern nach Art (Abkürzung, Synonym, Schreibvariante, Verwandt; wie im Reiter Stand: kein Chip gedrückt =
  * alles, gedrückte = nur diese Arten; der Filter fragt den Core) und
  * sortierbaren Spalten, Bestätigen, Ablehnen und Entfernen mit Rückgängig. Die Aktionen „Neue Beziehung …“
@@ -65,7 +56,7 @@ import static com.aresstack.spaceharvester.app.ui.TermsView.UNDO;
  * Lauf mit Wartekreis über der Liste und Abbrechen, Ergebnis in der Statuszeile) setzt der Einbau oben rechts in seine
  * Reiterzeile. Eine optionale Seitenmenge ({@link #pages(PageSet)}) begrenzt auf die Auswahl links; ohne Menge gilt
  * alles. Die Liste blättert wie die Bezeichner: Seiten von je
- * {@link TermsView#RELATION_LIMIT} über einen {@link Pager}, die nächste beim Scrollen ans Ende; vorgeschlagene und
+ * {@link #RELATION_LIMIT} über einen {@link Pager}, die nächste beim Scrollen ans Ende; vorgeschlagene und
  * bestätigte zuerst, danach die abgelehnten, beides in der Ordnung des Core (Schlüssel). Den Anfangsbuchstaben und die
  * Arten grenzt der Core ein ({@code RelationSearch.startsWith}, {@code RelationSearch.type}); die App leitet nichts
  * ab. Bei ungerichteten Arten steht in der ersten Spalte das Ende, nach dem der Core sortiert, damit die Liste
@@ -73,8 +64,30 @@ import static com.aresstack.spaceharvester.app.ui.TermsView.UNDO;
  */
 public final class RelationTab {
 
+    static final String CONFIRM = "Bestätigen";
+    static final String REJECT = "Ablehnen";
+    static final String REMOVE = "Entfernen";
+    static final String UNDO = "Rückgängig";
+    static final String NEW_RELATION = "Neue Beziehung …";
+    static final String NO_RELATIONS = "Noch keine Beziehungen. Vorschläge entstehen aus den Akronymen der Seiten "
+            + "und aus „Synonyme vorschlagen“; „Neue Beziehung …“ legt eine an; bestätigte gelten für die Suche.";
+    static final String CONFLICT = "Die Beziehung wurde inzwischen geändert; die Liste ist neu geladen.";
+    /** Beziehungen je Seite ({@code TermRelations.relations}); die nächste Seite lädt beim Scrollen ans Ende. */
+    static final int RELATION_LIMIT = TermRelations.MAX_LIMIT;
+
+    /** {@code null}, wenn die Eingaben taugen, sonst der Grund in Worten. */
+    static String invalidNewRelation(String from, String to) {
+        if (from == null || from.isBlank() || to == null || to.isBlank()) {
+            return "Beide Begriffe angeben.";
+        }
+        if (from.trim().equalsIgnoreCase(to.trim())) {
+            return "Die Begriffe müssen sich unterscheiden.";
+        }
+        return null;
+    }
+
     private final AppContext context;
-    private final TermsView.Directory directory;
+    private final TermDirectory directory;
     private final int columnCount;
     /** Gezeigte Arten in der Reihenfolge des Dialogs; leer heißt alle. */
     private final List<RelationType> types;
@@ -87,7 +100,7 @@ public final class RelationTab {
             + "abgelehnt sichtbar und kommt nicht wieder");
     private final ComposerButton remove = Comic.button(REMOVE, "Eine manuelle Beziehung ganz löschen, jede andere "
             + "ablehnen");
-    private final ComposerButton create = Comic.button(TermsView.NEW_RELATION, "Eine eigene Beziehung zwischen zwei "
+    private final ComposerButton create = Comic.button(NEW_RELATION, "Eine eigene Beziehung zwischen zwei "
             + "Begriffen anlegen; sie gilt sofort als bestätigt");
     /** „Synonyme vorschlagen“ (#336): nur auf Klick, Umfang und Budget im Dialog, Lauf mit Fortschritt und Abbrechen. */
     static final String PROPOSE_SYNONYMS = "Synonyme vorschlagen";
@@ -159,13 +172,13 @@ public final class RelationTab {
     RelationTab(AppContext context, String title, String[] columns, Function<Relation, List<String>> cells,
                 List<RelationType> types, RelationType preset, String emptyHint) {
         this.context = context;
-        this.directory = new TermsView.Directory(title, columns);
+        this.directory = new TermDirectory(title, columns);
         this.columnCount = columns.length;
         this.cells = cells;
         this.types = List.copyOf(types);
         this.presetType = preset;
         this.emptyHint = emptyHint;
-        directory.show(List.of(), TermsView.PENDING);
+        directory.show(List.of(), TermDirectory.PENDING);
         JPanel review = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         review.setOpaque(false);
         for (ComposerButton button : List.of(confirm, reject, remove)) {
@@ -243,7 +256,7 @@ public final class RelationTab {
                 new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"},
                 r -> List.of(r.fromTerm(), Relation.typeText(r.type()), r.toTerm(), Relation.statusText(r.status()),
                         Relation.originText(r.origin())),
-                List.of(), RelationType.ABBREVIATION, TermsView.NO_RELATIONS);
+                List.of(), RelationType.ABBREVIATION, NO_RELATIONS);
     }
 
     /**
@@ -364,7 +377,7 @@ public final class RelationTab {
         RelationFetch source = source();
         if (source == null) {
             if (context != null) {
-                directory.show(List.of(), NO_RUNTIME);
+                directory.show(List.of(), TermDirectory.NO_RUNTIME);
             }
             return;
         }
@@ -383,7 +396,7 @@ public final class RelationTab {
         // Je Art sortiert der Core nach Schlüssel; der Pager führt die Arten in derselben Ordnung zusammen.
         pager = new Pager<>(ORDER, List.of(open, rejected));
         loading = false;
-        more(current, true, q.isEmpty() && letter == null ? emptyHint : NO_MATCH, notice);
+        more(current, true, q.isEmpty() && letter == null ? emptyHint : TermDirectory.NO_MATCH, notice);
     }
 
     /** Die Ordnung des Core: Schlüssel als UTF-8-Bytes. */
@@ -397,7 +410,7 @@ public final class RelationTab {
     private void more() {
         Pager<TermRelation> current = pager;
         if (current != null && !loading && current.hasMore()) {
-            more(request, false, NO_MATCH, null);
+            more(request, false, TermDirectory.NO_MATCH, null);
         }
     }
 
@@ -575,7 +588,7 @@ public final class RelationTab {
     private void askSynonymRun() {
         AppRuntime runtime = context == null ? null : context.runtime();
         if (runtime == null) {
-            directory.message(NO_RUNTIME);
+            directory.message(TermDirectory.NO_RUNTIME);
             return;
         }
         Workspace workspace = runtime.workspace();
@@ -727,7 +740,7 @@ public final class RelationTab {
         ComposerButton ok = Comic.primary("Anlegen", "Die Beziehung anlegen und bestätigen");
         cancel.addActionListener(e -> dialog.dispose());
         ok.addActionListener(e -> {
-            String invalid = TermsView.invalidNewRelation(from.getText(), to.getText());
+            String invalid = invalidNewRelation(from.getText(), to.getText());
             if (invalid != null) {
                 problem.setText(invalid);
                 return;
@@ -769,7 +782,7 @@ public final class RelationTab {
             boolean gone = relation != null && removed.containsKey(relation.id());
             boolean grey = gone || relation != null && "REJECTED".equals(relation.status());
             if (!selected) {
-                setBackground(grey ? REJECTED_BACKGROUND : table.getBackground());
+                setBackground(grey ? TermDirectory.REJECTED_BACKGROUND : table.getBackground());
                 setForeground(gone ? Comic.MUTED : table.getForeground());
             }
             Font font = table.getFont();
@@ -878,7 +891,7 @@ public final class RelationTab {
         return removed.containsKey(id);
     }
 
-    TermsView.Directory directory() {
+    TermDirectory directory() {
         return directory;
     }
 

@@ -44,7 +44,7 @@ public final class AppContext {
     public enum Section {
         // Reihenfolge der Tastenkürzel Strg+1 …: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche
         // ist die Startansicht.
-        SEARCH("Suche"), CONTENT("Inhalte"), TERMS("Begriffe"), ACTIVITIES("Aufträge"), STATUS("Status"),
+        SEARCH("Suche"), CONTENT("Inhalte"), ACTIVITIES("Aufträge"), STATUS("Status"),
         SOURCES("Wissensquellen verwalten"), SETTINGS("Einstellungen");
 
         /** Rechts in der Icon-Leiste, abgetrennt von allem anderen. */
@@ -53,11 +53,11 @@ public final class AppContext {
         }
 
         /**
-         * Rechts in der Icon-Leiste, links vom Trenner der Verwaltung (Angelo, 13.11.2026): Begriffe und Aufträge
-         * stehen nicht mehr bei den Reitern der Mitte.
+         * Rechts in der Icon-Leiste, links vom Trenner der Verwaltung (Angelo, 13.11.2026): Aufträge stehen nicht bei
+         * den Reitern der Mitte. Den Bereich „Begriffe“ gibt es nicht mehr; seine Reiter stehen unter Analysen (BG2c).
          */
         public boolean trailing() {
-            return this == TERMS || this == ACTIVITIES;
+            return this == ACTIVITIES;
         }
 
         /**

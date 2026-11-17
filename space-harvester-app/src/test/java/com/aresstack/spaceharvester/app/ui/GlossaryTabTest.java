@@ -55,22 +55,6 @@ class GlossaryTabTest {
                 0, false), GlossaryDerivation.Category.UNKLAR, null);
         glossary.put(entry("3", "Datenbankschema", "wiki", null, RelationOrigin.RULE, ReviewStatus.PROPOSED, 1,
                 false), GlossaryDerivation.Category.TECHNISCH, new GlossaryDerivation.Importance(2, 2, 0, 0, 0));
-        TermsView[] view = new TermsView[1];
-        List<Object> seen = new ArrayList<>();
-        SwingUtilities.invokeAndWait(() -> {
-            view[0] = new TermsView(null);
-            seen.add(view[0].glossary().addButton().isVisible());
-            seen.add(view[0].glossary().tools().isVisible());
-            view[0].tabs().select(TermsView.GLOSSARY);
-            seen.add(view[0].glossary().addButton().isVisible());
-            seen.add(view[0].glossary().detectButton().isVisible());
-            seen.add(view[0].glossary().tools().isVisible());
-            view[0].tabs().select(TermsView.GRAPH);
-            seen.add(view[0].glossary().detectButton().isVisible());
-            seen.add(view[0].glossary().tools().isVisible());
-        });
-        assertThat(seen).containsExactly(false, false, true, true, true, false, false);
-
         GlossaryTab[] tab = new GlossaryTab[1];
         List<String> status = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
@@ -250,7 +234,7 @@ class GlossaryTabTest {
             javax.swing.JTable table = tab[0].directory().table();
             table.clearSelection();
             java.awt.Component cell = table.prepareRenderer(table.getCellRenderer(0, 0), 0, 0);
-            assertThat(cell.getBackground()).isEqualTo(TermsView.REJECTED_BACKGROUND);
+            assertThat(cell.getBackground()).isEqualTo(TermDirectory.REJECTED_BACKGROUND);
             List<RowActions.Action> actions = tab[0].actions(tab[0].entryAtView(0));
             assertThat(actions.get(1).tooltip()).isEqualTo(GlossaryTab.RESTORE);
             actions.get(1).run().run();
