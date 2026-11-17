@@ -108,8 +108,9 @@ public final class GlossaryDerivation {
             Map<GlossaryRuleSettings.Kind, Set<String>> next = new EnumMap<>(GlossaryRuleSettings.Kind.class);
             for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
                 Set<String> set = new HashSet<>(DEFAULT.words(kind));
-                settings.added(kind).stream().map(TermText::normalize).forEach(set::add);
-                settings.excluded(kind).stream().map(TermText::normalize).forEach(set::remove);
+                // Schon normalisiert (GlossaryRuleSettings.normalize = TermText.normalize, wie die feste Liste).
+                set.addAll(settings.added(kind));
+                settings.excluded(kind).forEach(set::remove);
                 next.put(kind, set);
             }
             return new Rules(next);

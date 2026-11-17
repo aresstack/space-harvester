@@ -165,6 +165,18 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   (`exclude`) Wörter; Köpfe brauchen wie in der festen Liste mindestens 5 Buchstaben. Die feste Liste bleibt die
   Ressource `glossar-regeln.tsv`.
 
+## Umsetzung FL5b-2b (Teilzahlen, REST, Schnittstelle)
+
+- `GlossaryOverview`: Liste der Teilzahlen je Geltungsbereich (ohne Belege, nach Wichtigkeit) und Einzelheiten je
+  Begriff, je Aufrufer gerechnet, nichts gespeichert (`Harvester#glossaryOverview`).
+- Ereignisse des Auftrags mit fester Kennung: `GLOSSARY_RULES_DONE` (Zahlen der Regelphase) und
+  `GLOSSARY_MODEL_SKIPPED:NO_MODEL` bzw. `:NOT_RELEASED` (bewusst ausgelassen, gelb).
+- Wortlisten der Einstellung: ein falsches Wort ist ein Problem, die übrigen gelten; eine Normalisierung
+  (`GlossaryRuleSettings.normalize` = `TermText.normalize`).
+- REST: Felder `category`, `categoryBy`, `categoryReason`, `definitionProposal`, `supportedBy`, Filter `category`,
+  `PUT /{id}/category`. Der Dienst hat keinen Wissensgraphen: keine Regelphase, keine Teilzahlen, 503 ohne Modell.
+- Schnittstelle für den Glossar-Reiter: `docs/fachlogik/glossar-schnittstelle.md`.
+
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
   [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).

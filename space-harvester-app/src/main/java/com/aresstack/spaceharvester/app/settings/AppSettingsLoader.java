@@ -392,18 +392,13 @@ public final class AppSettingsLoader {
             problems.add(ROOT + "." + GlossaryRuleSettings.MAX_TERMS + ": " + e.getMessage());
         }
         for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
+            // Ein unbrauchbares Wort ist ein Problem; die übrigen Wörter seiner Liste gelten.
             Map<?, ?> lists = map(get(rules, kind.key()));
-            List<String> add = List.of();
-            try {
-                add = result.with(kind, words(get(lists, "add"), List.of(), problems), List.of()).added(kind);
-            } catch (IllegalArgumentException e) {
-                problems.add(ROOT + "." + kind.addKey() + ": " + e.getMessage());
-            }
-            try {
-                result = result.with(kind, add, words(get(lists, "exclude"), List.of(), problems));
-            } catch (IllegalArgumentException e) {
-                problems.add(ROOT + "." + kind.excludeKey() + ": " + e.getMessage());
-            }
+            List<String> add = GlossaryRuleSettings.accepted(kind, true, words(get(lists, "add"), List.of(),
+                    problems), message -> problems.add(ROOT + "." + kind.addKey() + ": " + message));
+            List<String> exclude = GlossaryRuleSettings.accepted(kind, false, words(get(lists, "exclude"),
+                    List.of(), problems), message -> problems.add(ROOT + "." + kind.excludeKey() + ": " + message));
+            result = result.with(kind, add, exclude);
         }
         return result;
     }
