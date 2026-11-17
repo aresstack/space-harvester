@@ -115,6 +115,12 @@ public final class SourceDataStores {
         return add("Fachglossar", sourceId -> glossary.removeSource(sourceId, ACTOR));
     }
 
+    /** Entscheidungen zum Stand von Seiten und Aussagen dieser Quelle (ADR 0032, FL6). */
+    public SourceDataStores standing(com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo) {
+        Objects.requireNonNull(statusQuo, "statusQuo");
+        return add("Entscheidungen zum Stand", sourceId -> statusQuo.removeSource(sourceId, ACTOR));
+    }
+
     /** Manuelle und geprüfte Fakten der Seiten dieser Quelle (Prüfablage). */
     public SourceDataStores factEdits(FactEditStore edits, Clock clock) {
         Objects.requireNonNull(edits, "edits");
