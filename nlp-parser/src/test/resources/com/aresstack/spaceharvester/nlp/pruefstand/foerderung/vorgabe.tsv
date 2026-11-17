@@ -130,3 +130,8 @@ S02	S	2	Poststelle	Kanzlei	-	-	nein	-	GILT	Zustand; Rollennomen mit „die“, A
 S03	S	3	Dienstleister	Rechenzentrum	-	-	nein	-	GILT	Zustand; Rollennomen ohne Artikel, Angabe „für die Behörde“ danach
 # S, Satz 4 („Die Sitzung ist am Montag.“): ausdrücklich keine Aussage erwartet; nur Präpositionalgruppe ist keine Zustandsaussage (gewollte Lücke, AT)
 S05	S	5	Vertreter	Roth|Herr Roth	-	-	nein	-	GILT	Zustand; Rollennomen ohne Artikel mit Genitiv „des Leiters“, Angabe „im Urlaub“ danach
+N01	N	1	prüfen	Beauftragte	Antrag	-	nein	-	GILT	Handelnder nominalisiertes Adjektiv mit „der“
+N02	N	2	unterschreiben	Beauftragter|Beauftragte	Bescheid	-	nein	-	GILT	Handelnder nominalisiertes Adjektiv mit „ein“ (starke Form)
+N03	N	3	informieren	Stelle	Angestellten|Angestellte	-	nein	-	GILT	Betroffenes nominalisiertes Adjektiv, Mehrzahl
+N04	N	4	Vorsitzende	Lang|Frau Lang	-	-	nein	-	GILT	Zustand; Rollennomen nominalisiertes Adjektiv mit „die“
+N05	N	5	Bevollmächtigte	Wolf|Herr Wolf	-	-	nein	-	GILT	Zustand; Rollennomen nominalisiertes Adjektiv mit „ein“ (starke Form)

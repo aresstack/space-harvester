@@ -1,0 +1,52 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/N@heute
+# sent_id = 1
+# text = Der Beauftragte prüft den Antrag.
+1	Der	der	DET	_	_	2	det	_	_
+2	Beauftragte	beauftragte	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Antrag	antrag	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Ein Beauftragter unterschreibt den Bescheid.
+1	Ein	ein	DET	_	_	2	det	_	_
+2	Beauftragter	beauftragte	NOUN	_	_	3	nsubj	_	_
+3	unterschreibt	unterschreiben	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Bescheid	bescheid	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Die Stelle informiert die Angestellten.
+1	Die	der	DET	_	_	2	det	_	_
+2	Stelle	stelle	NOUN	_	_	3	nsubj	_	_
+3	informiert	informieren	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Angestellten	angestellte	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 4
+# text = Frau Lang ist die Vorsitzende des Ausschusses.
+1	Frau	frau	NOUN	_	_	2	compound	_	_
+2	Lang	lang	PROPN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Vorsitzende	vorsitzende	NOUN	_	_	0	root	_	_
+6	des	der	DET	_	_	7	det	_	_
+7	Ausschusses	ausschuß	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 5
+# text = Herr Wolf ist ein Bevollmächtigter der Firma.
+1	Herr	herr	NOUN	_	_	2	compound	_	_
+2	Wolf	wolf	PROPN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	ein	ein	DET	_	_	5	det	_	_
+5	Bevollmächtigter	bevollmächtigte	NOUN	_	LemmaFrom=Form	0	root	_	_
+6	der	der	DET	_	_	7	det	_	_
+7	Firma	firma	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	5	punct	_	_
+

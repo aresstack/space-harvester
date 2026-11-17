@@ -1,0 +1,51 @@
+# Nominalisierte Adjektive und Partizipien in Verwaltungstexten (ADR 0032, rules-15, Auftrag AT 17.11.2026):
+# geschlossene Liste, je in der Zielform (schwache Form, Nominativ Einzahl, klein). Ein Nomen, das am Wortende ein
+# Listenwort mit Beugungsendung (-e, -er, -en, -em, -es) trägt, auch als Ende einer Zusammensetzung, bekommt diese
+# Grundform („ein Bevollmächtigter“, „den Bevollmächtigten“ → „bevollmächtigte“). Wörter außerhalb der Liste bleiben,
+# wie der Lemmatisierer sie liefert (Lücke, kein Fehler).
+abgeordnete
+angehörige
+angestellte
+arbeitslose
+arbeitssuchende
+auszubildende
+beamte
+beauftragte
+bedienstete
+behinderte
+bekannte
+berechtigte
+beschäftigte
+beschuldigte
+beteiligte
+betroffene
+bevollmächtigte
+delegierte
+ehrenamtliche
+erwachsene
+erwerbstätige
+geschädigte
+hauptamtliche
+hinterbliebene
+interessierte
+jugendliche
+kranke
+lehrende
+minderjährige
+mitwirkende
+pflegebedürftige
+reisende
+sachverständige
+schwerbehinderte
+selbständige
+selbstständige
+studierende
+teilnehmende
+unterzeichnete
+verantwortliche
+versicherte
+verstorbene
+vorgesetzte
+vorsitzende
+volljährige
+zuständige
