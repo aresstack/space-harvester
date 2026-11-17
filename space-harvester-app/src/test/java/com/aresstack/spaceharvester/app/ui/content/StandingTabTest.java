@@ -161,6 +161,34 @@ class StandingTabTest {
     }
 
     @Test
+    void theOverlayShowsTheVerdictOfTheModelInTheWordsOfTheStatementsTab() {
+        ParsedStatements.Statement judged = statement("v7", ParsedStatements.Negation.AFFIRMED,
+                ParsedStatements.Modality.NONE, ParsedStatements.Quality.PLAUSIBLE,
+                ParsedStatements.Derivation.ORIGINAL).withCheck(new ParsedStatements.Check(
+                ParsedStatements.Verdict.FALSCH, "1", false));
+        StatusQuoEntry entry = new StatusQuoEntry(page("2", "Antragsverfahren"), judged, StatementKind.ACTION,
+                "Der Antrag", "antrag", null, ParsedStatements.Quality.UNCERTAIN, new StatementStanding(
+                Standing.UNKLAR, StandingBasis.FEATURES, StandingReason.NO_FEATURES), null, false);
+        ParsedStatements.Statement correction = statement("v8", ParsedStatements.Negation.AFFIRMED,
+                ParsedStatements.Modality.NONE, ParsedStatements.Quality.PLAUSIBLE,
+                ParsedStatements.Derivation.modell("Der Antrag wird vom Sachbearbeiter geprüft.", "wiki/2@h#s1.v7",
+                        ParsedStatements.Origin.ORIGINAL));
+        StatusQuoEntry corrected = new StatusQuoEntry(page("2", "Antragsverfahren"), correction,
+                StatementKind.ACTION, "Der Antrag", "antrag", null, ParsedStatements.Quality.PLAUSIBLE,
+                new StatementStanding(Standing.GILT, StandingBasis.FEATURES, StandingReason.TEMPORALITY_GILT), null,
+                false);
+
+        assertThat(StandingTab.details(entry))
+                .contains(CheckTexts.VERDICT_LABEL + ": falsch")
+                .contains(CheckTexts.QUALITY_LABEL + ": unsicher (vom Parser: plausibel)")
+                .contains("Herkunft: Originalsatz");
+        assertThat(StandingTab.details(corrected))
+                .contains(CheckTexts.ORIGIN_LABEL + ": " + CheckTexts.ORIGIN_MODEL)
+                .contains(CheckTexts.MODEL_SENTENCE_LABEL + ": „Der Antrag wird vom Sachbearbeiter geprüft.“")
+                .doesNotContain(CheckTexts.VERDICT_LABEL);
+    }
+
+    @Test
     void anOutdatedPageNamesTheWordThatMadeIt() {
         StatusQuoEntry archived = new StatusQuoEntry(page("3", "Altes Verfahren"), statement("v9",
                 ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE, ParsedStatements.Quality.PLAUSIBLE,
@@ -397,6 +425,9 @@ class StandingTabTest {
                 com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED))).isTrue();
         assertThat(StandingTab.rereads(job(com.aresstack.spaceharvester.application.jobs.JobType.STATEMENT_ANALYSIS,
                 com.aresstack.spaceharvester.application.jobs.JobState.RUNNING))).isFalse();
+        assertThat(StandingTab.rereads(job(com.aresstack.spaceharvester.application.jobs.JobType.STATEMENT_CHECK,
+                com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED))).as("Urteile ändern die Stufe")
+                .isTrue();
         assertThat(StandingTab.rereads(job(com.aresstack.spaceharvester.application.jobs.JobType.SYNC,
                 com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED))).isFalse();
     }
