@@ -934,6 +934,25 @@ public final class PageDetailPanel extends JPanel {
         overviewTerms.selection(new SelectionTerms(context.runtime(), overviewSelection));
     }
 
+    /** Die Unterreiter des Technik-Reiters einer Seite. */
+    PillTabs advancedTabs() {
+        return advancedTabs;
+    }
+
+    /** Die Unterreiter des Technik-Reiters ohne Seite. */
+    PillTabs wideAdvanced() {
+        return wideAdvanced;
+    }
+
+    /** Der Unterreiter „Analyse“ der Seite und ohne Seite. */
+    AnalysisView analysisView() {
+        return analysisView;
+    }
+
+    AnalysisView wideAnalysis() {
+        return wideAnalysis;
+    }
+
     /** Die Begriffe der Auswahl im Reiter „Begriffe“ unter Analysen ohne Seite. */
     TermsTab overviewTerms() {
         return overviewTerms;
