@@ -852,6 +852,11 @@ public final class TermsView implements View {
             updateCount();
         }
 
+        /** Ersetzt die Zeile, deren Zelle {@code column} gleich {@code key} ist, an Ort und Stelle (Auswahl bleibt). */
+        void replace(int column, String key, List<String> row) {
+            model.replace(column, key, row);
+        }
+
         private void updateCount() {
             if (model.getRowCount() > 0) {
                 hint.setText(Texts.count(model.getRowCount(), "Eintrag", "Einträge")
@@ -995,6 +1000,22 @@ public final class TermsView implements View {
         void set(List<List<String>> rows) {
             all = List.copyOf(rows);
             filter(query);
+        }
+
+        void replace(int column, String key, List<String> row) {
+            List<List<String>> joined = new ArrayList<>(all);
+            joined.replaceAll(r -> column < r.size() && key.equals(r.get(column)) ? row : r);
+            all = List.copyOf(joined);
+            for (int i = 0; i < visible.size(); i++) {
+                List<String> r = visible.get(i);
+                if (column < r.size() && key.equals(r.get(column))) {
+                    List<List<String>> changed = new ArrayList<>(visible);
+                    changed.set(i, row);
+                    visible = changed;
+                    fireTableRowsUpdated(i, i);
+                    return;
+                }
+            }
         }
 
         void filter(String text) {

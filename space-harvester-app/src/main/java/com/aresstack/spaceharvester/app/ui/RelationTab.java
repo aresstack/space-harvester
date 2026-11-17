@@ -96,6 +96,24 @@ final class RelationTab {
                                          String cursor) throws Exception;
     }
 
+    /** Die Urteile im Core, wie {@link Workspace} sie anbietet; Tests setzen einen eigenen Stand. */
+    interface RelationActions {
+        TermRelation confirm(String id, long revision);
+
+        TermRelation reject(String id, long revision);
+
+        /** Leer, wenn der Core die (manuelle) Beziehung gelöscht hat. */
+        java.util.Optional<TermRelation> remove(String id, long revision);
+
+        TermRelation restore(String id);
+
+        TermRelation confirm(String id);
+
+        TermRelation add(TermRelations.NewRelation relation);
+    }
+
+    private RelationActions actions;
+
     /**
      * @param columns sichtbare Spalten; {@code cells} liefert je Beziehung genau so viele Werte
      * @param types   gezeigte Arten; leer heißt alle
@@ -134,14 +152,58 @@ final class RelationTab {
         directory.letters(letter -> load(null));
         directory.onSearch(q -> load(null));
         directory.onScrolledToEnd(this::more);
-        if (context != null) {
-            onReview = this::reviewInCore;
-        }
+        onReview = this::reviewInCore;
     }
 
     /** Tests: liest Beziehungen von {@code fetch} statt aus der Laufzeit. */
     void fetch(RelationFetch fetch) {
         this.fetch = fetch;
+    }
+
+    /** Tests: urteilt über {@code actions} statt über die Laufzeit. */
+    void actions(RelationActions actions) {
+        this.actions = actions;
+    }
+
+    private RelationActions actions() {
+        if (actions != null) {
+            return actions;
+        }
+        if (context == null || context.runtime() == null) {
+            return null;
+        }
+        Workspace workspace = context.runtime().workspace();
+        return new RelationActions() {
+            @Override
+            public TermRelation confirm(String id, long revision) {
+                return workspace.confirmRelation(id, revision);
+            }
+
+            @Override
+            public TermRelation reject(String id, long revision) {
+                return workspace.rejectRelation(id, revision);
+            }
+
+            @Override
+            public java.util.Optional<TermRelation> remove(String id, long revision) {
+                return workspace.removeRelation(id, revision);
+            }
+
+            @Override
+            public TermRelation restore(String id) {
+                return workspace.restoreRelation(id);
+            }
+
+            @Override
+            public TermRelation confirm(String id) {
+                return workspace.confirmRelation(id);
+            }
+
+            @Override
+            public TermRelation add(TermRelations.NewRelation relation) {
+                return workspace.addRelation(relation);
+            }
+        };
     }
 
     private RelationFetch source() {
@@ -271,24 +333,25 @@ final class RelationTab {
                 plain.origin(), plain.revision());
     }
 
-    /** Bestätigen, Ablehnen oder Entfernen mit dem gezeigten Stand; der Core prüft Rechte und Revision. */
+    /**
+     * Bestätigen, Ablehnen oder Entfernen mit dem gezeigten Stand; der Core prüft Rechte und Revision. Danach wird nur
+     * die Zeile an Ort und Stelle erneuert (Status, Revision): geladener Umfang, Rollposition und Auswahl bleiben,
+     * eine abgelehnte Zeile bleibt bis zum nächsten vollen Laden an ihrem Platz. Bei einem Konflikt liest der Reiter
+     * nur diese Beziehung aus dem Core nach.
+     */
     private void reviewInCore(String action, Relation relation) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null) {
+        RelationActions core = actions();
+        if (core == null) {
             return;
         }
         TermRelation before = removed.containsKey(relation.id()) ? removedCore.get(relation.id())
                 : loaded.get(relation.id());
-        keepSelected = relation.id();
-        Background.run(() -> {
-            switch (action) {
-                case CONFIRM -> runtime.workspace().confirmRelation(relation.id(), relation.revision());
-                case REJECT -> runtime.workspace().rejectRelation(relation.id(), relation.revision());
-                case UNDO -> undoRemove(runtime.workspace(), relation, before);
-                default -> runtime.workspace().removeRelation(relation.id(), relation.revision());
-            }
-            return relation;
-        }, done -> {
+        Background.run(() -> switch (action) {
+            case CONFIRM -> java.util.Optional.of(core.confirm(relation.id(), relation.revision()));
+            case REJECT -> java.util.Optional.of(core.reject(relation.id(), relation.revision()));
+            case UNDO -> java.util.Optional.of(undoRemove(core, relation, before));
+            default -> core.remove(relation.id(), relation.revision());
+        }, after -> {
             if (REMOVE.equals(action)) {
                 removed.put(relation.id(), relation);
                 if (before != null) {
@@ -298,31 +361,90 @@ final class RelationTab {
                 removed.remove(relation.id());
                 removedCore.remove(relation.id());
             }
-            load(null);
-        }, failure -> load(failure instanceof RelationConflictException
-                ? CONFLICT : action + " nicht möglich: " + failure.getMessage()));
+            replace(relation.id(), after.orElse(null));
+        }, failure -> {
+            if (failure instanceof RelationConflictException) {
+                reread(relation);
+            } else {
+                directory.message(action + " nicht möglich: " + failure.getMessage());
+            }
+        });
+    }
+
+    /** Liest nach einem Konflikt nur diese Beziehung aus dem Core nach und erneuert ihre Zeile. */
+    private void reread(Relation relation) {
+        RelationFetch source = source();
+        if (source == null) {
+            return;
+        }
+        Background.run(() -> {
+            for (ReviewStatus status : new ReviewStatus[] {null, ReviewStatus.REJECTED}) {
+                for (TermRelation found : source.fetch(null, status, relation.fromTerm(), null, null).relations()) {
+                    if (found.id().equals(relation.id())) {
+                        return java.util.Optional.of(found);
+                    }
+                }
+            }
+            return java.util.Optional.<TermRelation>empty();
+        }, found -> {
+            if (found.isPresent()) {
+                replace(relation.id(), found.get());
+                directory.message(CONFLICT);
+            } else {
+                // Im Core verschwunden: die Liste kennt sie nicht mehr, also voll neu laden.
+                load(CONFLICT);
+            }
+        }, failure -> load(CONFLICT));
+    }
+
+    /**
+     * Erneuert die Zeile der Beziehung {@code id} mit dem Stand {@code after} des Core; {@code null} heißt, der Core
+     * hat sie gelöscht (manuelle Beziehung entfernt): die Zeile bleibt durchgestrichen stehen, bis Rückgängig oder ein
+     * volles Laden sie klärt.
+     */
+    void replace(String id, TermRelation after) {
+        if (after == null) {
+            loaded.remove(id);
+        } else {
+            loaded.put(id, after);
+            Relation shown = inKeyOrder(after);
+            if (byId.containsKey(id)) {
+                byId.put(id, shown);
+                List<Relation> list = new ArrayList<>(shownRelations);
+                list.replaceAll(r -> r.id().equals(id) ? shown : r);
+                shownRelations = List.copyOf(list);
+                List<String> row = new ArrayList<>(cells.apply(shown));
+                row.add(id);
+                directory.replace(columnCount, id, List.copyOf(row));
+            }
+            if (removed.containsKey(id)) {
+                removed.put(id, shown);
+            }
+        }
+        directory.table().repaint();
+        selectionChanged();
     }
 
     /**
      * Stellt den Stand vor dem Entfernen wieder her: Eine manuelle Beziehung hat der Core gelöscht, sie entsteht neu
      * (gleicher Schlüssel, gleiche Kennung); eine automatische hat er abgelehnt, die Ablehnung wird aufgehoben.
+     *
+     * @return der Stand im Core danach
      */
-    private static void undoRemove(Workspace workspace, Relation relation, TermRelation before) {
+    private static TermRelation undoRemove(RelationActions core, Relation relation, TermRelation before) {
         if (before == null) {
             throw new IllegalStateException("der frühere Stand ist nicht bekannt");
         }
         if (before.origin() == RelationOrigin.MANUAL) {
-            TermRelation again = workspace.addRelation(new TermRelations.NewRelation(before.fromTerm(),
-                    before.toTerm(), before.type(), before.scope(), before.note(), before.evidence()));
-            if (before.status() == ReviewStatus.REJECTED) {
-                workspace.rejectRelation(again.id(), again.revision());
-            }
-        } else if (before.status() != ReviewStatus.REJECTED) {
-            workspace.restoreRelation(relation.id());
-            if (before.status() == ReviewStatus.CONFIRMED) {
-                workspace.confirmRelation(relation.id());
-            }
+            TermRelation again = core.add(new TermRelations.NewRelation(before.fromTerm(), before.toTerm(),
+                    before.type(), before.scope(), before.note(), before.evidence()));
+            return before.status() == ReviewStatus.REJECTED ? core.reject(again.id(), again.revision()) : again;
         }
+        if (before.status() == ReviewStatus.REJECTED) {
+            return before;
+        }
+        TermRelation restored = core.restore(relation.id());
+        return before.status() == ReviewStatus.CONFIRMED ? core.confirm(relation.id()) : restored;
     }
 
     /** Die Arten im Dialog „Neue Beziehung“: die des Reiters, sonst alle. */
@@ -368,12 +490,12 @@ final class RelationTab {
 
     /** Legt die Beziehung im Core an (manuell, bestätigt, global) und wählt sie danach in der Liste. */
     void createRelation(String from, RelationType type, String to) {
-        AppRuntime runtime = context == null ? null : context.runtime();
-        if (runtime == null) {
+        RelationActions core = actions();
+        if (core == null) {
             return;
         }
-        Background.run(() -> runtime.workspace().addRelation(new TermRelations.NewRelation(from.trim(), to.trim(),
-                type, null, null, null)), created -> {
+        Background.run(() -> core.add(new TermRelations.NewRelation(from.trim(), to.trim(), type, null, null, null)),
+                created -> {
             // Neu angelegt ist sie nicht mehr entfernt, auch wenn sie eben noch durchgestrichen dastand.
             removed.remove(created.id());
             removedCore.remove(created.id());

@@ -23,9 +23,57 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RelationTabTest {
 
     /** Ein Core im Kleinen: alle Beziehungen, nach Schlüssel sortiert, gefiltert und seitenweise mit Cursor. */
-    static final class FakeCore implements RelationTab.RelationFetch {
+    static final class FakeCore implements RelationTab.RelationFetch, RelationTab.RelationActions {
         private final List<TermRelation> all = new ArrayList<>();
         final List<String> calls = new CopyOnWriteArrayList<>();
+
+        private synchronized TermRelation with(String id, long revision, ReviewStatus status) {
+            for (int i = 0; i < all.size(); i++) {
+                TermRelation r = all.get(i);
+                if (r.id().equals(id)) {
+                    if (revision >= 0 && r.revision() != revision) {
+                        throw new com.aresstack.spaceharvester.application.terms.RelationConflictException(id,
+                                revision);
+                    }
+                    TermRelation changed = new TermRelation(r.id(), r.fromTerm(), r.toTerm(), r.type(), r.scope(),
+                            r.origin(), status, r.evidence(), r.note(), r.generation(), r.evidenceStale(),
+                            r.createdBy(), r.createdAt(), "test", Instant.EPOCH, r.revision() + 1);
+                    all.set(i, changed);
+                    return changed;
+                }
+            }
+            throw new IllegalArgumentException(id);
+        }
+
+        @Override
+        public TermRelation confirm(String id, long revision) {
+            return with(id, revision, ReviewStatus.CONFIRMED);
+        }
+
+        @Override
+        public TermRelation reject(String id, long revision) {
+            return with(id, revision, ReviewStatus.REJECTED);
+        }
+
+        @Override
+        public java.util.Optional<TermRelation> remove(String id, long revision) {
+            return java.util.Optional.of(with(id, revision, ReviewStatus.REJECTED));
+        }
+
+        @Override
+        public TermRelation restore(String id) {
+            return with(id, -1, ReviewStatus.PROPOSED);
+        }
+
+        @Override
+        public TermRelation confirm(String id) {
+            return with(id, -1, ReviewStatus.CONFIRMED);
+        }
+
+        @Override
+        public TermRelation add(TermRelations.NewRelation relation) {
+            throw new UnsupportedOperationException();
+        }
 
         void add(String from, String to, RelationType type, ReviewStatus status) {
             String key = TermRelation.key(from, to, type, RelationScope.GLOBAL);
@@ -128,6 +176,48 @@ class RelationTabTest {
         await("unter Z nichts", () -> directory.table().getRowCount() == 0);
         SwingUtilities.invokeAndWait(() -> assertThat(directory.hint()).isEqualTo(TermsView.NO_MATCH));
         assertThat(core.calls).contains("null/null/B/-", "null/REJECTED/B/-", "null/null/Z/-");
+    }
+
+    @Test
+    void aJudgementOnTheSecondPageRefreshesOnlyThatRowAndKeepsScopeAndSelection() throws Exception {
+        FakeCore core = new FakeCore();
+        for (int i = 0; i < 300; i++) {
+            core.add(String.format(Locale.ROOT, "Begriff%03d", i), "Lang " + i, RelationType.ABBREVIATION,
+                    ReviewStatus.PROPOSED);
+        }
+        RelationTab[] tab = new RelationTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = newTab(core);
+            tab[0].actions(core);
+            tab[0].load(null);
+        });
+        TermsView.Directory directory = tab[0].directory();
+        await("beide Seiten", () -> {
+            directory.loadMore();
+            return directory.table().getRowCount() == 300;
+        });
+        core.calls.clear();
+        SwingUtilities.invokeAndWait(() -> {
+            directory.table().setRowSelectionInterval(250, 250);
+            tab[0].reviewButtons().get(0).doClick();
+        });
+        await("Zeile 250 bestätigt", () -> "Bestätigt".equals(directory.table().getValueAt(250, 3)));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(directory.table().getRowCount()).isEqualTo(300);
+            assertThat(directory.table().getSelectedRow()).isEqualTo(250);
+            assertThat(directory.table().getValueAt(250, 0)).isEqualTo("Begriff250");
+            assertThat(tab[0].reviewButtons().get(0).isEnabled()).isFalse();
+            // Ablehnen: die Zeile bleibt an ihrem Platz und zeigt „Abgelehnt“.
+            tab[0].reviewButtons().get(1).doClick();
+        });
+        await("Zeile 250 abgelehnt", () -> "Abgelehnt".equals(directory.table().getValueAt(250, 3)));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(directory.table().getRowCount()).isEqualTo(300);
+            assertThat(directory.table().getSelectedRow()).isEqualTo(250);
+            assertThat(directory.table().getValueAt(251, 0)).isEqualTo("Begriff251");
+        });
+        // Kein volles Neuladen: der Core wurde nicht erneut nach Seiten gefragt.
+        assertThat(core.calls).isEmpty();
     }
 
     private static RelationTab newTab(RelationTab.RelationFetch fetch) {
