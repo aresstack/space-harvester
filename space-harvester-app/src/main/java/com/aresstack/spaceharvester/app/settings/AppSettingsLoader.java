@@ -11,6 +11,8 @@ import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
+import com.aresstack.spaceharvester.application.check.CheckScope;
+import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
@@ -225,7 +227,8 @@ public final class AppSettingsLoader {
                 inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems),
                 consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems),
                 enrichment(map(get(root, "enrichment")), problems), analytics(map(get(app, "analytics")), problems),
-                simplification(map(get(map(get(root, "statements")), "simplification")), problems));
+                simplification(map(get(map(get(root, "statements")), "simplification")), problems),
+                check(map(get(map(get(root, "statements")), "check")), problems));
     }
 
     /**
@@ -249,6 +252,28 @@ public final class AppSettingsLoader {
         }
         Object model = get(simplification, "model");
         return new SimplificationSettings(mode, (int) parallel, model == null ? null : model.toString());
+    }
+
+    /**
+     * {@code space-harvester.statements.check.*}: Prüfschritt (ADR 0032, FL4), wie beim Dienst ({@link CheckSettings}).
+     * Ein unlesbarer Wert ist ein Problem und lässt die Vorgabe stehen.
+     */
+    private CheckSettings check(Map<?, ?> check, List<String> problems) {
+        CheckScope scope = CheckScope.UNCERTAIN_AND_STAGE;
+        Object scopeValue = get(check, "scope");
+        try {
+            scope = CheckScope.parse(scopeValue == null ? null : scopeValue.toString());
+        } catch (IllegalArgumentException e) {
+            problems.add(ROOT + "." + CheckSettings.SCOPE + ": " + e.getMessage());
+        }
+        String parallelKey = ROOT + "." + CheckSettings.PARALLEL;
+        long parallel = longNumber(get(check, "parallel"), CheckSettings.DEFAULT_PARALLEL, parallelKey, problems);
+        if (parallel < 1 || parallel > Integer.MAX_VALUE) {
+            problems.add(parallelKey + ": Mindestens ein Satz zugleich");
+            parallel = CheckSettings.DEFAULT_PARALLEL;
+        }
+        Object model = get(check, "model");
+        return new CheckSettings(scope, (int) parallel, model == null ? null : model.toString());
     }
 
     /**

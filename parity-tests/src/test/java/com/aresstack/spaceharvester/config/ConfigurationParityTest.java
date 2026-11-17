@@ -112,6 +112,10 @@ class ConfigurationParityTest {
                   mode: always
                   parallel: 3
                   model: step-model
+                check:
+                  scope: all
+                  parallel: 4
+                  model: check-model
             """;
 
     private static final String TOKEN = "parity-token";
@@ -190,6 +194,11 @@ class ConfigurationParityTest {
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
                         com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 3,
                         "step-model"));
+
+        // ADR 0032, FL4: Prüfschritt, beim Dienst über withSyncRules.
+        assertThat(app.check()).isEqualTo(service2.check())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.CheckSettings(
+                        com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "check-model"));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder

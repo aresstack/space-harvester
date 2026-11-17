@@ -5,6 +5,9 @@ import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.check.CheckScope;
+import com.aresstack.spaceharvester.application.check.CheckUnavailableException;
+import com.aresstack.spaceharvester.application.check.StatementChecks;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
@@ -65,6 +68,14 @@ public class StatementAnalysisJobs {
     public static final String STAGE_NOT_RELEASED = "STAGE_NOT_RELEASED";
     /** Code des Info-Ereignisses „so viele Seiten ohne Vorstufe, weil kein Modell eingestellt ist“. */
     public static final String STAGE_NO_MODEL = "STAGE_NO_MODEL";
+    /** Phase, in der der Prüfauftrag Seiten prüft (ADR 0032, FL4). */
+    public static final String PHASE_CHECK = "Aussagen prüfen";
+    /** Fehlercode des Prüfauftrags ohne eingestelltes Chat-Modell. */
+    public static final String CHECK_UNAVAILABLE = "CHECK_UNAVAILABLE";
+    /** Code des Info-Ereignisses mit den Zahlen des Prüfschritts. */
+    public static final String CHECK_COSTS = "CHECK_COSTS";
+    /** Code des Info-Ereignisses „so viele Seiten ohne KI-Freigabe nicht geprüft“. */
+    public static final String CHECK_NOT_RELEASED = "CHECK_NOT_RELEASED";
 
     private final Jobs jobs;
     private final Discovery discovery;
@@ -214,6 +225,122 @@ public class StatementAnalysisJobs {
         if (walk.incomplete) {
             throw new JobFailedException(INCOMPLETE, "Der Umfang konnte nicht vollständig ermittelt werden; die "
                     + "gefundenen Seiten wurden verarbeitet, weitere fehlen.");
+        }
+    }
+
+    /** Ob der Prüfschritt laufen kann: eingerichtet und Chat-Modell eingestellt; ruft kein Modell. */
+    public boolean checkAvailable() {
+        return analysis.checkAvailable();
+    }
+
+    /**
+     * Startet den Prüfauftrag (ADR 0032, FL4): Das Chat-Modell beurteilt die Aussagen der gespeicherten, aktuellen
+     * Analysen im Umfang; der Aufrufer wartet nicht. Nur auf ausdrücklichen Auftrag, nie als Folge eines Abgleichs oder
+     * einer Analyse. Seiten ohne KI-Freigabe gehen nicht an das Modell, Seiten ohne aktuelle Analyse werden nicht neu
+     * analysiert; beide werden gezählt. Jede Seite wird für sich ersetzt, ein Abbruch behält die fertigen Seiten, und
+     * schon gelesene Urteile bleiben in der Ablage, sodass ein neuer Lauf nur fehlende fragt.
+     *
+     * <p>Der Auftrag steht als {@link JobType#STATEMENT_ANALYSIS} in der Liste (eigene Phase {@value #PHASE_CHECK});
+     * {@code written} zählt geprüfte Seiten. Ereignisse nennen nur Zahlen.
+     *
+     * @throws CheckUnavailableException ohne eingestelltes Modell
+     */
+    public JobStatus startCheck(AccessContext caller, Scope scope, CheckOptions options) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(scope, "scope");
+        Objects.requireNonNull(options, "options");
+        if (!analysis.checkAvailable()) {
+            throw new CheckUnavailableException(CheckUnavailableException.Reason.NO_MODEL);
+        }
+        return jobs.submit(JobType.STATEMENT_ANALYSIS, scope.sourceId(), scope.spaceKey(), scope.rootPageId(), owner,
+                JobTask.blocking(context -> runCheck(caller, scope, options, context)));
+    }
+
+    private void runCheck(AccessContext caller, Scope scope, CheckOptions options, JobContext context) {
+        context.phase(COMPONENT, PHASE_DISCOVERY);
+        Walk walk = new Walk(caller, scope, options.maxPages() == 0 ? Integer.MAX_VALUE : bound(options.maxPages()),
+                context::checkpoint);
+        walk.onPage = () -> context.discovered(1);
+        walk.run();
+        if (options.maxPages() > 0 && walk.pages.size() > options.maxPages()) {
+            throw new JobFailedException(SCOPE_TOO_LARGE, "Der Umfang hat mehr als " + options.maxPages()
+                    + " Seiten; es wurde nichts geprüft. Bitte ausdrücklich mit höherer Grenze bestätigen.");
+        }
+        context.phase(COMPONENT, PHASE_CHECK);
+        StatementAnalysis.CheckRequest request = new StatementAnalysis.CheckRequest(options.scope(),
+                options.parallel());
+        long notReleased = 0;
+        long notCurrent = 0;
+        // Aussagen, Modellaufrufe, aus der Ablage, verworfene Zeilen, widersprüchlich, Korrekturen im Wortabgleich
+        // verworfen, STIMMT, UNVOLLSTAENDIG, FALSCH, ohne Urteil, übernommene Korrekturen, als Aussage verworfene
+        // Korrekturen, Vorstufen-Aussagen ohne Abschnitt
+        long[] costs = new long[13];
+        for (Target target : walk.pages.values()) {
+            context.checkpoint();
+            try {
+                PageSnapshot snapshot = fetch.page(caller, target.sourceId(), target.pageId());
+                java.util.Optional<CheckUnavailableException.Reason> unavailable =
+                        analysis.checkUnavailable(snapshot.key());
+                if (unavailable.isPresent()) {
+                    if (unavailable.get() == CheckUnavailableException.Reason.NO_MODEL) {
+                        throw new JobFailedException(CHECK_UNAVAILABLE, "Für den Prüfschritt ist kein Chat-Modell "
+                                + "eingestellt; geprüfte Seiten bleiben geprüft.");
+                    }
+                    notReleased++;
+                    context.processed(1);
+                    continue;
+                }
+                analysis.check(caller, snapshot, context::cancelRequested, request, run -> {
+                    StatementChecks.Costs c = run.run();
+                    long[] values = {c.statements(), c.modelCalls(), c.fromStore(), c.rejected(), c.conflicting(),
+                            c.correctionsRejected(), c.stimmt(), c.unvollstaendig(), c.falsch(), c.unanswered(),
+                            run.corrections(), run.rejectedCorrections(), run.withoutSection()};
+                    for (int i = 0; i < values.length; i++) {
+                        costs[i] += values[i];
+                    }
+                });
+                context.written(1);
+            } catch (CancellationException e) {
+                context.checkpoint();
+                throw e;
+            } catch (CheckUnavailableException e) {
+                if (e.reason() == CheckUnavailableException.Reason.NO_MODEL) {
+                    throw new JobFailedException(CHECK_UNAVAILABLE, "Für den Prüfschritt ist kein Chat-Modell "
+                            + "eingestellt; geprüfte Seiten bleiben geprüft.", e);
+                }
+                if (e.reason() == CheckUnavailableException.Reason.NOT_RELEASED) {
+                    notReleased++; // Freigabe während des Laufs entzogen: nichts geschrieben
+                } else {
+                    notCurrent++;
+                }
+            } catch (JobFailedException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                if (context.cancelRequested()) {
+                    context.checkpoint();
+                }
+                context.failed(1);
+                context.record(JobEvent.Draft.warning(e instanceof AccessDeniedException ? JobEvent.Category.ACCESS
+                        : JobEvent.Category.SOURCE, COMPONENT, "PAGE_FAILED",
+                        "Eine Seite wurde nicht geprüft (" + e.getClass().getSimpleName() + ")"));
+            }
+            context.processed(1);
+        }
+        context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, CHECK_COSTS,
+                "Prüfschritt „" + (options.scope() == CheckScope.ALL ? "alle Aussagen" : "unsichere und Vorstufe")
+                        + "“: " + walk.pages.size() + " Seiten ermittelt, " + notCurrent + " ohne aktuelle Analyse; "
+                        + costs[0] + " Aussagen geprüft, " + costs[1] + " Sätze mit Modellaufruf, " + costs[2]
+                        + " Urteile aus der Ablage; " + costs[6] + " STIMMT, " + costs[7] + " UNVOLLSTAENDIG, "
+                        + costs[8] + " FALSCH, " + costs[9] + " ohne gültiges Urteil (werden im nächsten Lauf erneut "
+                        + "gefragt); " + costs[3] + " Antwortzeilen verworfen, " + costs[4] + " widersprüchlich; "
+                        + costs[10] + " Korrekturen übernommen, " + (costs[5] + costs[11])
+                        + " Korrekturen verworfen; " + costs[12] + " Aussagen der Vorstufe ohne Abschnitt ungeprüft "
+                        + "(Seite neu analysieren)", null, null, null));
+        context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                CHECK_NOT_RELEASED, notReleased + " Seiten ohne KI-Freigabe nicht geprüft", null, null, null));
+        if (walk.incomplete) {
+            throw new JobFailedException(INCOMPLETE, "Der Umfang konnte nicht vollständig ermittelt werden; die "
+                    + "gefundenen Seiten wurden geprüft, weitere fehlen.");
         }
     }
 
@@ -448,6 +575,32 @@ public class StatementAnalysisJobs {
             if (maxPages < 0) {
                 throw new IllegalArgumentException("maxPages darf nicht negativ sein");
             }
+        }
+    }
+
+    /**
+     * Optionen des Prüfauftrags (ADR 0032, FL4); {@link #of} übernimmt Auswahl und Obergrenze aus den Einstellungen.
+     *
+     * @param maxPages wie bei {@link Options#maxPages()}
+     * @param scope    welche Aussagen das Modell sieht
+     * @param parallel so viele Sätze einer Seite höchstens zugleich, mindestens 1
+     */
+    public record CheckOptions(int maxPages, CheckScope scope, int parallel) {
+
+        public CheckOptions {
+            if (maxPages < 0) {
+                throw new IllegalArgumentException("maxPages darf nicht negativ sein");
+            }
+            Objects.requireNonNull(scope, "scope");
+            if (parallel < 1) {
+                throw new IllegalArgumentException("parallel muss mindestens 1 sein");
+            }
+        }
+
+        /** Auswahl und Obergrenze aus den Einstellungen. */
+        public static CheckOptions of(int maxPages,
+                                      com.aresstack.spaceharvester.application.configuration.CheckSettings settings) {
+            return new CheckOptions(maxPages, settings.scope(), settings.parallel());
         }
     }
 
