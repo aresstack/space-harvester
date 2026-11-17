@@ -153,6 +153,18 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   unverändert. Belege der Regel dürfen von Seiten ohne KI-Freigabe stammen; FL5c zeigt dem Modell nur Belege
   freigegebener Seiten.
 
+## Umsetzung FL5b-2a (Regelphase im Auftrag, Einstellungen)
+
+- Auftrag `GLOSSARY` je Quelle mit zwei Phasen: zuerst „Begriffe ableiten“ (ohne Modell, abbrechbar, Teilergebnisse
+  je 50 Vorschläge, Abgleich am Ende mit Herkunft `RULE`), dann wie bisher „Fachbegriffe ermitteln“ mit Modell. Der
+  Auftrag startet auch ohne Modell und ohne KI-Freigabe; die Modellphase fällt dann aus, löscht nichts, und ein
+  Ereignis des Auftrags nennt Grund und Zahlen der Regelphase. Im Dienst gibt es keinen Wissensgraphen, dort bleibt es
+  beim Start nur mit Modell (503 wie bisher).
+- Einstellungen unter `space-harvester.glossary.rules.*` (beide Loader, Paritätstest): `max-terms` und je Art
+  (`technical-heads`, `technical-words`, `role-heads`, `role-words`) zusätzliche (`add`) und ausgeschlossene
+  (`exclude`) Wörter; Köpfe brauchen wie in der festen Liste mindestens 5 Buchstaben. Die feste Liste bleibt die
+  Ressource `glossar-regeln.tsv`.
+
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
   [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).

@@ -53,6 +53,11 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
 | `space-harvester.statements.simplification.model` | leer | eigenes Chat-Modell für die Vorstufe; leer heißt `ai.chat-model` (Dienst und Schlüssel bleiben dieselben). Wirkt beim nächsten Aufruf |
 | `space-harvester.statements.standing.outdated-words` | `archiv, archiviert, veraltet, obsolet, obsolete, deprecated, abgelöst, historie, historisch` | Status-quo-Sicht (ADR 0032, FL6): Wörter, an denen ein Label, der Titel der Seite oder der Titel eines Vorfahren die Seite als überholt kennzeichnet; ganzes Wort, ohne Groß/Klein; YAML-Liste oder Text mit Kommas; fehlend oder leer heißt Vorgabe |
 | `space-harvester.statements.standing.draft-words` | `entwurf, draft, konzept, planung, vorschlag` | wie oben, für Entwürfe (geltende Aussagen werden „unklar“) |
+| `space-harvester.glossary.rules.max-terms` | `500` | Begriffsableitung für das Fachglossar (ADR 0032, FL5b): höchstens so viele Vorschläge der Regel je Geltungsbereich und Lauf, nach Wichtigkeit; die übrigen Einträge bleiben unverändert. Mindestens 1 |
+| `space-harvester.glossary.rules.technical-heads.add` / `.exclude` | leer | technische Köpfe zur festen Wortliste dazu oder heraus; gelten auch als Ende eines zusammengeschriebenen Worts („Antragsdatenbank“), darum mindestens 5 Buchstaben (kürzere unter `technical-words`). YAML-Liste oder Text mit Kommas |
+| `space-harvester.glossary.rules.technical-words.add` / `.exclude` | leer | technische Wörter, nur als ganzes Wort oder nach Bindestrich/Leerzeichen („Batch-Job“, „Load Balancer“) |
+| `space-harvester.glossary.rules.role-heads.add` / `.exclude` | leer | Köpfe für Rollen und Stellen, wie `technical-heads` mindestens 5 Buchstaben |
+| `space-harvester.glossary.rules.role-words.add` / `.exclude` | leer | Wörter für Rollen und Stellen, nur als ganzes Wort |
 
 - `GET /api/v1/configuration`: wirksame Version, `activatedAt` und die Werte. Vom API-Key und vom Proxy-Passwort
   steht nur `apiKeySet` bzw. `passwordSet`; Adressen ohne Query.

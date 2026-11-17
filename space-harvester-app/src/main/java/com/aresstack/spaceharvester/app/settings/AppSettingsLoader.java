@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
@@ -223,7 +224,7 @@ public final class AppSettingsLoader {
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
                 sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
                 localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
-                inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems),
+                inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), map(get(root, "glossary")), problems),
                 consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems),
                 enrichment(map(get(root, "enrichment")), problems), analytics(map(get(app, "analytics")), problems),
                 simplification(map(get(map(get(root, "statements")), "simplification")), problems),
@@ -372,6 +373,40 @@ public final class AppSettingsLoader {
     }
 
     /** {@code space-harvester.terms.synonyms.*}: Budget der Synonymerkennung (#336), dieselben Schlüssel wie beim Dienst. */
+    private TermSettings terms(Map<?, ?> terms, Map<?, ?> glossary, List<String> problems) {
+        return terms(terms, problems).withGlossaryRules(glossaryRules(map(get(glossary, "rules")), problems));
+    }
+
+    /**
+     * {@code space-harvester.glossary.rules.*}: Regeln der Begriffsableitung (ADR 0032, FL5b), wie beim Dienst
+     * ({@link GlossaryRuleSettings}): Höchstzahl und je Art zusätzliche und ausgeschlossene Wörter als YAML-Liste oder
+     * Text mit Kommas. Ein unlesbarer Wert ist ein Problem und lässt die Vorgabe stehen.
+     */
+    private GlossaryRuleSettings glossaryRules(Map<?, ?> rules, List<String> problems) {
+        GlossaryRuleSettings result = GlossaryRuleSettings.DEFAULT;
+        try {
+            result = result.withMaxTerms(integer(get(rules, "max-terms"), GlossaryRuleSettings.DEFAULT_MAX_TERMS,
+                    ROOT + "." + GlossaryRuleSettings.MAX_TERMS, problems));
+        } catch (IllegalArgumentException e) {
+            problems.add(ROOT + "." + GlossaryRuleSettings.MAX_TERMS + ": " + e.getMessage());
+        }
+        for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
+            Map<?, ?> lists = map(get(rules, kind.key()));
+            List<String> add = List.of();
+            try {
+                add = result.with(kind, words(get(lists, "add"), List.of(), problems), List.of()).added(kind);
+            } catch (IllegalArgumentException e) {
+                problems.add(ROOT + "." + kind.addKey() + ": " + e.getMessage());
+            }
+            try {
+                result = result.with(kind, add, words(get(lists, "exclude"), List.of(), problems));
+            } catch (IllegalArgumentException e) {
+                problems.add(ROOT + "." + kind.excludeKey() + ": " + e.getMessage());
+            }
+        }
+        return result;
+    }
+
     private TermSettings terms(Map<?, ?> terms, List<String> problems) {
         Map<?, ?> synonyms = map(get(terms, "synonyms"));
         String prefix = SynonymBudget.PREFIX;

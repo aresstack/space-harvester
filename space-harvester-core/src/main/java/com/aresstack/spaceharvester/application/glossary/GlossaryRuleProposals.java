@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.glossary;
 
+import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.terms.RelationEvidence;
@@ -29,7 +30,7 @@ import java.util.stream.Stream;
 public final class GlossaryRuleProposals {
 
     /** Standard für die Höchstzahl der Vorschläge je Geltungsbereich und Lauf. */
-    public static final int DEFAULT_MAX_TERMS = 500;
+    public static final int DEFAULT_MAX_TERMS = GlossaryRuleSettings.DEFAULT_MAX_TERMS;
 
     private GlossaryRuleProposals() {
     }
@@ -59,11 +60,23 @@ public final class GlossaryRuleProposals {
      * @throws CancellationException sobald {@code cancelled} zutrifft
      */
     public static Batch of(Collection<KnowledgeGraph.AnalysedPage> pages, int maxTerms, BooleanSupplier cancelled) {
+        return of(pages, GlossaryDerivation.Rules.DEFAULT, maxTerms, cancelled);
+    }
+
+    /** Vorschläge mit den Regeln der Einstellung {@code space-harvester.glossary.rules.*}. */
+    public static Batch of(Collection<KnowledgeGraph.AnalysedPage> pages, GlossaryRuleSettings settings,
+                           BooleanSupplier cancelled) {
+        return of(pages, GlossaryDerivation.Rules.of(settings), settings.maxTerms(), cancelled);
+    }
+
+    /** Wie {@link #of(Collection, int, BooleanSupplier)} mit diesen Wortlisten. */
+    public static Batch of(Collection<KnowledgeGraph.AnalysedPage> pages, GlossaryDerivation.Rules rules,
+                           int maxTerms, BooleanSupplier cancelled) {
         Objects.requireNonNull(cancelled, "cancelled");
         if (maxTerms < 1) {
             throw new IllegalArgumentException("maxTerms muss mindestens 1 sein");
         }
-        GlossaryDerivation.Result derivation = GlossaryDerivation.of(pages, cancelled);
+        GlossaryDerivation.Result derivation = GlossaryDerivation.of(pages, cancelled, rules);
         List<Glossary.Proposal> proposals = new ArrayList<>();
         Set<String> retained = new LinkedHashSet<>();
         for (GlossaryDerivation.Term term : derivation.terms()) {

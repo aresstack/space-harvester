@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.glossary;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.knowledge.CountedStatements;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
@@ -16,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -72,13 +74,8 @@ public final class GlossaryDerivation {
     /** Die Wortlisten der Regeln, an einer Stelle. */
     static final String RULES_RESOURCE = "glossar-regeln.tsv";
 
-    private static final Map<String, Set<String>> WORDS = words();
     /** Kürzester Kopf, der auch als Ende eines zusammengeschriebenen Worts gilt (Auflage des Architekten). */
-    static final int MIN_COMPOUND_HEAD = 5;
-    private static final Set<String> TECHNICAL_HEADS = WORDS.getOrDefault("technik", Set.of());
-    private static final Set<String> TECHNICAL_WORDS = WORDS.getOrDefault("technik-wort", Set.of());
-    private static final Set<String> ROLE_HEADS = WORDS.getOrDefault("rolle", Set.of());
-    private static final Set<String> ROLE_WORDS = WORDS.getOrDefault("rolle-wort", Set.of());
+    static final int MIN_COMPOUND_HEAD = GlossaryRuleSettings.MIN_COMPOUND_HEAD;
     /**
      * Binnenmajuskel vor Kleinbuchstabe („SharePoint“, nicht „GmbH“, „BAföG“) oder Punkt/Unterstrich im Wort
      * („config.yaml“, „ANTRAG_ID“).
@@ -87,6 +84,41 @@ public final class GlossaryDerivation {
             Pattern.compile(".*(\\p{Ll}\\p{Lu}\\p{Ll}|[\\p{L}\\p{N}][._][\\p{L}\\p{N}]).*");
 
     private GlossaryDerivation() {
+    }
+
+    /**
+     * Die Wortlisten der Einordnung: die feste Liste ({@value #RULES_RESOURCE}) mit den Wörtern der Einstellung
+     * {@code space-harvester.glossary.rules.*} je Art dazu und ohne die ausgeschlossenen (ADR 0032, FL5b).
+     *
+     * @param words je Art die normalisierten Wörter
+     */
+    public record Rules(Map<GlossaryRuleSettings.Kind, Set<String>> words) {
+
+        /** Die feste Liste ohne Einstellung. */
+        public static final Rules DEFAULT = new Rules(load());
+
+        public Rules {
+            Map<GlossaryRuleSettings.Kind, Set<String>> copy = new EnumMap<>(GlossaryRuleSettings.Kind.class);
+            words.forEach((kind, set) -> copy.put(kind, Set.copyOf(set)));
+            words = Map.copyOf(copy);
+        }
+
+        /** Die feste Liste mit den Wörtern der Einstellung. */
+        public static Rules of(GlossaryRuleSettings settings) {
+            Map<GlossaryRuleSettings.Kind, Set<String>> next = new EnumMap<>(GlossaryRuleSettings.Kind.class);
+            for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
+                Set<String> set = new HashSet<>(DEFAULT.words(kind));
+                settings.added(kind).stream().map(TermText::normalize).forEach(set::add);
+                settings.excluded(kind).stream().map(TermText::normalize).forEach(set::remove);
+                next.put(kind, set);
+            }
+            return new Rules(next);
+        }
+
+        /** Die Wörter einer Art. */
+        public Set<String> words(GlossaryRuleSettings.Kind kind) {
+            return words.getOrDefault(kind, Set.of());
+        }
     }
 
     /** Einordnung eines Begriffs. */
@@ -264,7 +296,17 @@ public final class GlossaryDerivation {
      * @throws CancellationException sobald {@code cancelled} zutrifft (je Seite geprüft)
      */
     public static Result of(Collection<KnowledgeGraph.AnalysedPage> pages, BooleanSupplier cancelled) {
+        return of(pages, cancelled, Rules.DEFAULT);
+    }
+
+    /**
+     * Über die gegebenen sichtbaren Seiten mit diesen Wortlisten.
+     *
+     * @throws CancellationException sobald {@code cancelled} zutrifft (je Seite geprüft)
+     */
+    public static Result of(Collection<KnowledgeGraph.AnalysedPage> pages, BooleanSupplier cancelled, Rules rules) {
         Objects.requireNonNull(cancelled, "cancelled");
+        Objects.requireNonNull(rules, "rules");
         Counting counting = new Counting();
         for (KnowledgeGraph.AnalysedPage page : pages) {
             if (cancelled.getAsBoolean()) {
@@ -277,7 +319,7 @@ public final class GlossaryDerivation {
             counting.page(page);
         }
         List<Term> list = new ArrayList<>();
-        counting.terms.values().forEach(builder -> list.add(builder.build(counting.terms)));
+        counting.terms.values().forEach(builder -> list.add(builder.build(counting.terms, rules)));
         list.sort(Comparator.comparing(Term::importance, Importance.ORDER.reversed())
                 .thenComparing(Term::normalized));
         return new Result(list, counting.pages, counting.stalePages, counting.statements, counting.notCounted,
@@ -286,14 +328,21 @@ public final class GlossaryDerivation {
 
     /** Einordnung nach Regeln für einen Wortlaut. Offen für Prüfstand und Tests. */
     public static CategoryRule ruleFor(String term) {
+        return ruleFor(term, Rules.DEFAULT);
+    }
+
+    /** Einordnung nach Regeln für einen Wortlaut mit diesen Wortlisten. */
+    public static CategoryRule ruleFor(String term, Rules rules) {
         String normalized = TermText.normalize(term);
         if (TECHNICAL_SHAPE.matcher(term).matches()) {
             return CategoryRule.TECHNICAL_SHAPE;
         }
-        if (endsWithHead(normalized, TECHNICAL_HEADS, true) || endsWithHead(normalized, TECHNICAL_WORDS, false)) {
+        if (endsWithHead(normalized, rules.words(GlossaryRuleSettings.Kind.TECHNICAL_HEADS), true)
+                || endsWithHead(normalized, rules.words(GlossaryRuleSettings.Kind.TECHNICAL_WORDS), false)) {
             return CategoryRule.TECHNICAL_HEAD;
         }
-        if (endsWithHead(normalized, ROLE_HEADS, true) || endsWithHead(normalized, ROLE_WORDS, false)) {
+        if (endsWithHead(normalized, rules.words(GlossaryRuleSettings.Kind.ROLE_HEADS), true)
+                || endsWithHead(normalized, rules.words(GlossaryRuleSettings.Kind.ROLE_WORDS), false)) {
             return CategoryRule.ROLE_HEAD;
         }
         return CategoryRule.NONE;
@@ -346,8 +395,8 @@ public final class GlossaryDerivation {
         return false;
     }
 
-    private static Map<String, Set<String>> words() {
-        Map<String, Set<String>> words = new HashMap<>();
+    private static Map<GlossaryRuleSettings.Kind, Set<String>> load() {
+        Map<GlossaryRuleSettings.Kind, Set<String>> words = new EnumMap<>(GlossaryRuleSettings.Kind.class);
         try (InputStream input = GlossaryDerivation.class.getResourceAsStream(RULES_RESOURCE)) {
             if (input == null) {
                 throw new IllegalStateException("Wortliste fehlt: " + RULES_RESOURCE);
@@ -361,20 +410,21 @@ public final class GlossaryDerivation {
                 if (columns.length != 2) {
                     throw new IllegalStateException("Ungültige Zeile in " + RULES_RESOURCE + ": " + line);
                 }
-                String kind = columns[0].strip();
+                GlossaryRuleSettings.Kind kind = GlossaryRuleSettings.Kind.ofResource(columns[0].strip());
+                if (kind == null) {
+                    throw new IllegalStateException("Unbekannte Art in " + RULES_RESOURCE + ": " + line);
+                }
                 String word = TermText.normalize(columns[1]);
-                if (("technik".equals(kind) || "rolle".equals(kind)) && word.length() < MIN_COMPOUND_HEAD) {
+                if (kind.compound() && word.length() < MIN_COMPOUND_HEAD) {
                     throw new IllegalStateException("Kopf unter " + MIN_COMPOUND_HEAD + " Buchstaben gilt nur als "
-                            + "ganzes Wort (" + kind + "-wort): " + word);
+                            + "ganzes Wort (" + kind.resourceKind() + "-wort): " + word);
                 }
                 words.computeIfAbsent(kind, k -> new HashSet<>()).add(word);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        Map<String, Set<String>> frozen = new HashMap<>();
-        words.forEach((kind, set) -> frozen.put(kind, Set.copyOf(set)));
-        return Map.copyOf(frozen);
+        return words;
     }
 
     /** Zählstand über alle Seiten. */
@@ -571,9 +621,9 @@ public final class GlossaryDerivation {
                     .map(Map.Entry::getKey).orElse(normalized);
         }
 
-        Term build(Map<String, Builder> all) {
+        Term build(Map<String, Builder> all, Rules rules) {
             String term = display();
-            CategoryRule rule = ruleFor(term);
+            CategoryRule rule = ruleFor(term, rules);
             UnaryOperator<String> same = lemma -> lemma;
             UnaryOperator<String> shown = key -> all.get(key).display();
             return new Term(term, normalized, proper * 2 > mentions, new Importance(pages, mentions, asActor,
