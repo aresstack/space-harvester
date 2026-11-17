@@ -415,6 +415,72 @@ class GlossaryTabTest {
                 .isEqualTo("Auf 12 Seiten, 30 Erwähnungen, handelnd 4×, betroffen 1×, als Träger 2×");
     }
 
+    @Test
+    void everyReasonOfRuleAndModelIsShownInWords() {
+        GlossaryDerivation.Category fachlich = GlossaryDerivation.Category.FACHLICH;
+        GlossaryDerivation.Category rolle = GlossaryDerivation.Category.ROLLE;
+        GlossaryDerivation.Category technik = GlossaryDerivation.Category.TECHNISCH;
+        GlossaryDerivation.Category unklar = GlossaryDerivation.Category.UNKLAR;
+        // Die KI: je Kennung der Grund in Klammern, eine unbekannte ohne Klammer.
+        assertThat(by(AI, fachlich, "DOMAIN_OBJECT")).isEqualTo("fachlich · von der KI (fachlicher Gegenstand)");
+        assertThat(by(AI, fachlich, "DOMAIN_PROCESS")).isEqualTo("fachlich · von der KI (fachlicher Ablauf)");
+        assertThat(by(AI, fachlich, "LEGAL_TERM")).isEqualTo("fachlich · von der KI (Rechtsbegriff)");
+        assertThat(by(AI, rolle, "PERSON_ROLE")).isEqualTo("Rolle · von der KI (Rolle einer Person)");
+        assertThat(by(AI, rolle, "ORGANISATION")).isEqualTo("Rolle · von der KI (Stelle oder Organisation)");
+        assertThat(by(AI, technik, "SYSTEM_COMPONENT")).isEqualTo("Technik · von der KI (technisches System)");
+        assertThat(by(AI, technik, "DATA_FORMAT")).isEqualTo("Technik · von der KI (Datenformat)");
+        // Auch das UNKLAR der KI wird gespeichert: man sieht, dass sie schon geschaut hat.
+        assertThat(by(AI, unklar, "GENERIC_WORD")).isEqualTo("unklar · von der KI (allgemeines Wort)");
+        assertThat(by(AI, unklar, "CONTEXT_UNCLEAR"))
+                .isEqualTo("unklar · von der KI (aus den Belegen nicht zu entscheiden)");
+        assertThat(by(AI, fachlich, "SOMETHING_NEW")).isEqualTo("fachlich · von der KI");
+        assertThat(by(AI, fachlich, null)).isEqualTo("fachlich · von der KI");
+        // Die Regel: je Kennung der Grund; der Vorgabesatz nur bei UNKLAR, sonst ohne Klammer.
+        assertThat(by(RULE, technik, "TECHNICAL_HEAD")).isEqualTo("Technik · nach Regel (Technikwort am Wortende)");
+        assertThat(by(RULE, technik, "TECHNICAL_SHAPE"))
+                .isEqualTo("Technik · nach Regel (Schreibweise eines Bezeichners)");
+        assertThat(by(RULE, rolle, "ROLE_HEAD")).isEqualTo("Rolle · nach Regel (Rollenwort am Wortende)");
+        assertThat(by(RULE, rolle, "ROLE_OF_PERSON")).isEqualTo("Rolle · nach Regel (als Rolle einer Person genannt)");
+        assertThat(by(RULE, unklar, null)).isEqualTo("unklar · nach Regel (kein Technik- oder Rollenwort)");
+        assertThat(by(RULE, unklar, "SOMETHING_NEW")).isEqualTo("unklar · nach Regel (kein Technik- oder Rollenwort)");
+        assertThat(by(RULE, technik, "SOMETHING_NEW")).isEqualTo("Technik · nach Regel");
+        assertThat(by(RULE, rolle, null)).isEqualTo("Rolle · nach Regel");
+        assertThat(by(MANUAL, fachlich, "LEGAL_TERM")).isEqualTo("fachlich · von Hand");
+    }
+
+    @Test
+    void theModelPhaseStepsOfTheProtocolReadInWordsWithoutInternalNames() {
+        // Glossary#classify: die KI ordnet ein.
+        assertThat(GlossaryTab.historyLine(new GlossaryAccess.History("classify", "ai:glossary", T,
+                ReviewStatus.PROPOSED))).isEqualTo(GlossaryTab.minute(T) + " · von der KI eingeordnet");
+        // Glossary#withdrawAi: die Freigabe endet; ohne Handelnden, nie „von ai-release“.
+        assertThat(GlossaryTab.historyLine(new GlossaryAccess.History("unclassify", "ai-release", T,
+                ReviewStatus.PROPOSED))).isEqualTo(GlossaryTab.minute(T) + " · Einordnung der KI zurückgenommen "
+                + "(Seite nicht mehr für die KI freigegeben)");
+        // Ein Handelnder ohne Doppelpunkt ist kein Benutzer und erscheint nie als „von …“.
+        assertThat(GlossaryTab.actorText("ai-release")).isEmpty();
+        assertThat(GlossaryTab.historyLine(new GlossaryAccess.History("stale", "evidence-check", T,
+                ReviewStatus.PROPOSED))).isEqualTo(GlossaryTab.minute(T) + " · als „Beleg veraltet“ markiert");
+        assertThat(GlossaryTab.actorText("USER:angelo@app")).isEqualTo("von angelo");
+        // Von Hand eingeordnet bleibt „categorize“ mit dem Benutzer.
+        assertThat(GlossaryTab.historyLine(new GlossaryAccess.History("categorize", "USER:angelo", T,
+                ReviewStatus.PROPOSED))).isEqualTo(GlossaryTab.minute(T) + " · von angelo eingeordnet");
+    }
+
+    private static final com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy AI =
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy.AI;
+    private static final com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy RULE =
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy.RULE;
+    private static final com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy MANUAL =
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy.MANUAL;
+
+    private static String by(com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy who,
+                             GlossaryDerivation.Category category, String reason) {
+        return GlossaryTab.categorized(category,
+                new com.aresstack.spaceharvester.application.glossary.GlossaryEntry.Classification(category, who,
+                        reason));
+    }
+
     /** Nur die Sperrliste: abgelehnt an, vorgeschlagen und bestätigt aus, über die Chips. */
     static void onlyRejected(GlossaryTab tab) {
         for (ReviewStatus status : List.of(ReviewStatus.REJECTED, ReviewStatus.PROPOSED, ReviewStatus.CONFIRMED)) {
