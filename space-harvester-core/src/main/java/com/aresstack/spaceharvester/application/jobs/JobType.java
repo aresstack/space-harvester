@@ -90,8 +90,8 @@ public enum JobType {
      * Lädt von der Quelle herunter: Bilder, Anhänge und die Exporte aus der Quelle (Confluence-Metadaten, Analytics;
      * #944). Erst Vorbereitung (Seiten aus dem Bestand bestimmen, ohne Quelle), dann Download, mit je eigener Grenze
      * ({@link JobStage}): Vorbereitung {@code jobs.parallel-preparations}, Download {@code jobs.parallel-downloads},
-     * in der App die Auswahl „Vorbereitung“ und „Downloads“ der Auftragsliste. Belegt keinen der Plätze für Abgleiche
-     * und Exporte ({@code jobs.max-concurrent}). Die Verbindungen je Download („Verbindungen“) teilen nur Bilder und
+     * in der App die Auswahl „Vorbereitung“ und „Downloads“ der Auftragsliste. Abgleiche und
+     * Seitenexporte zählen getrennt, aber nach derselben Einstellung „Vorbereitung“. Die Verbindungen je Download („Verbindungen“) teilen nur Bilder und
      * Anhänge unter sich auf; ein Export aus der Quelle fragt mit einer Verbindung, Seite für Seite.
      */
     public boolean download() {
