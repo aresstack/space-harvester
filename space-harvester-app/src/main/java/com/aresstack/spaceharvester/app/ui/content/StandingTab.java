@@ -226,8 +226,10 @@ final class StandingTab extends JPanel {
     record Target(String sourceId, String pageId, int start, int end) {
     }
 
-    /** Was die Liste gerade filtert. {@code only == null} zeigt jeden Stand. */
-    /** {@code stale}: auch Aussagen aus veralteten Analysen zeigen (Chip „veraltet N“); sonst bleiben sie weg. */
+    /**
+     * Was die Liste gerade filtert. {@code only == null} zeigt jeden Stand; {@code stale} zeigt auch Aussagen aus
+     * veralteten Analysen (Chip „veraltet N“), sonst bleiben sie weg.
+     */
     record Filter(Standing only, boolean actions, boolean states, boolean certainOnly, String text, boolean byBearer,
                   boolean stale) {
         static final Filter ALL = new Filter(null, true, true, false, "", false, true);
