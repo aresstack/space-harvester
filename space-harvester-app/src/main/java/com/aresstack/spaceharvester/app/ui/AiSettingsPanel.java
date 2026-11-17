@@ -153,6 +153,29 @@ final class AiSettingsPanel {
             + "ändern. Er gilt ohne Neustart beim nächsten Lauf. Schlüssel in der Konfigurationsdatei: "
             + "space-harvester.terms.synonyms.max-judged-pairs.";
     /**
+     * Lauf nach jedem Abgleich ({@code space-harvester.terms.synonyms.automatic}, SY1/SY3, Angelo 17.11.2026): nach
+     * der Anreicherung einer Quelle und nach neuer KI-Freigabe einer Seite startet ein Synonymlauf für die Quelle;
+     * aus heißt nur noch auf Klick. Gilt ohne Neustart beim nächsten Abgleich.
+     */
+    final javax.swing.JCheckBox automaticSynonyms = Comic.checkBox(AUTOMATIC_SYNONYMS_TEXT);
+    final HelpButton automaticSynonymsHelp = new HelpButton(Dialogs.CLOSE_SIZE, AUTOMATIC_SYNONYMS_LABEL,
+            AUTOMATIC_SYNONYMS_HELP);
+    static final String AUTOMATIC_SYNONYMS_LABEL = "Synonyme";
+    static final String AUTOMATIC_SYNONYMS_TEXT = "Nach jedem Abgleich vorschlagen";
+    /** Die Zeile auf der Abschlussseite des Assistenten. */
+    static final String AUTOMATIC_SYNONYMS_ON = "nach jedem Abgleich";
+    static final String AUTOMATIC_SYNONYMS_OFF = "nur auf Klick";
+    static final String AUTOMATIC_SYNONYMS_HELP = "Mit Häkchen schlägt Space Harvester nach jedem Abgleich einer "
+            + "Quelle und immer dann, wenn eine Seite neu für die KI freigegeben wird, von selbst Synonyme für diese "
+            + "Quelle vor; der Lauf erscheint unter Aufträge. Ohne Häkchen gibt es Vorschläge nur, wenn du unter "
+            + "Begriffe auf „Synonyme vorschlagen“ klickst.\n\n"
+            + "Für Vorschläge aus der Bedeutung braucht es ein Embedding-Modell und für die KI freigegebene Seiten. "
+            + "Fehlt eins davon, findet der Lauf nur Schreibvarianten und Stellen wie „auch genannt“ oder "
+            + "„kurz: …“.\n\n"
+            + "Bestätigt wird dabei nichts: Alles bleibt ein Vorschlag, den du unter Begriffe › Synonyme annimmst oder "
+            + "ablehnst. Was du dort entschieden hast, bleibt bestehen. Gilt ohne Neustart beim nächsten Abgleich. "
+            + "Schlüssel in der Konfigurationsdatei: space-harvester.terms.synonyms.automatic.";
+    /**
      * Vorstufe „Sätze vereinfachen“ der Aussagenanalyse ({@code space-harvester.statements.simplification.*},
      * ADR 0032): Betriebsart, Abschnitte zugleich und das Modell nur für diesen Schritt.
      */
@@ -273,6 +296,9 @@ final class AiSettingsPanel {
                 + "lässt die Prüfung aus");
         modelRows.add(JUDGED_PAIRS_LABEL, Comic.row(judgedPairs, Comic.text(JUDGED_PAIRS_UNIT), judgedPairsHelp),
                 null);
+        automaticSynonyms.setToolTipText("Synonymlauf für eine Quelle nach jedem Abgleich und nach neuer KI-Freigabe; "
+                + "ohne Häkchen nur auf Klick");
+        modelRows.add(AUTOMATIC_SYNONYMS_LABEL, Comic.row(automaticSynonyms, automaticSynonymsHelp), null);
         simplifyMode.addItem(SIMPLIFY_WHERE_NEEDED);
         simplifyMode.addItem(SIMPLIFY_ALWAYS);
         simplifyMode.setToolTipText("Welche Sätze die Vorstufe der Aussagenanalyse vereinfacht");
@@ -392,6 +418,7 @@ final class AiSettingsPanel {
         visionModel.setText(current.visionModel() == null ? "" : current.visionModel());
         chatMaxTokens.setText(current.chatMaxTokens() == null ? "" : current.chatMaxTokens());
         judgedPairs.setValue(Math.min(savedBudget(settings).maxJudgedPairs(), SynonymRunForm.MAX_PAIRS));
+        automaticSynonyms.setSelected(savedBudget(settings).automatic());
         SimplificationSettings simplification = savedSimplification(settings);
         simplifyMode.setSelectedItem(simplification.mode() == SimplificationSettings.Mode.ALWAYS ? SIMPLIFY_ALWAYS
                 : SIMPLIFY_WHERE_NEEDED);
@@ -718,6 +745,7 @@ final class AiSettingsPanel {
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess)
                 || judgedPairs() != savedBudget(settings).maxJudgedPairs()
+                || automaticSynonyms() != savedBudget(settings).automatic()
                 || !simplification().equals(savedSimplification(settings))
                 || !check().equals(savedCheck(settings));
     }
@@ -772,10 +800,11 @@ final class AiSettingsPanel {
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         AiAccess chosen = accessDraft();
         int judged = judgedPairs();
+        boolean automatic = automaticSynonyms();
         SimplificationSettings simplification = simplification();
         CheckSettings check = check();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)
-                && judged == savedBudget(settings).maxJudgedPairs()
+                && judged == savedBudget(settings).maxJudgedPairs() && automatic == savedBudget(settings).automatic()
                 && simplification.equals(savedSimplification(settings)) && check.equals(savedCheck(settings))) {
             if (!quiet) {
                 feedback.info("Nichts geändert", null);
@@ -839,7 +868,7 @@ final class AiSettingsPanel {
                 try {
                     Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
                             false);
-                    store(context, measured.draft(), new char[0], chosen, judged, simplification, check);
+                    store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check);
                     return measured;
                 } finally {
                     if (resolved != null) {
@@ -848,7 +877,8 @@ final class AiSettingsPanel {
                 }
             }
             Measured measured = measure(context, runtime, draft, key, true);
-            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, simplification, check);
+            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, automatic, simplification,
+                    check);
             return measured;
         }, measured -> {
             if (!chosen.fromKeePass() && !vault && key.length > 0) {
@@ -933,16 +963,17 @@ final class AiSettingsPanel {
      */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs)
             throws IOException {
-        store(context, draft, key, access, judgedPairs, null, null);
+        store(context, draft, key, access, judgedPairs, null, null, null);
     }
 
     /**
-     * Wie {@link #store(AppContext, AiDraft, char[], AiAccess, Integer)}, dazu die Vorstufe „Sätze vereinfachen“
-     * ({@code statements.simplification.*}) und der Prüfschritt ({@code statements.check.*}); {@code null} oder
-     * unverändert lässt den jeweiligen Block in Ruhe.
+     * Wie {@link #store(AppContext, AiDraft, char[], AiAccess, Integer)}, dazu der Lauf nach jedem Abgleich
+     * ({@code terms.synonyms.automatic}), die Vorstufe „Sätze vereinfachen“ ({@code statements.simplification.*}) und
+     * der Prüfschritt ({@code statements.check.*}); {@code null} oder unverändert lässt den jeweiligen Block in Ruhe.
      */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
-                      SimplificationSettings simplification, CheckSettings check) throws IOException {
+                      Boolean automatic, SimplificationSettings simplification, CheckSettings check)
+            throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
@@ -950,8 +981,15 @@ final class AiSettingsPanel {
                 draft);
         written = editor.withAiAccess(context.configFile(), written, access);
         SynonymBudget budget = savedBudget(context.settings());
-        if (judgedPairs != null && judgedPairs != budget.maxJudgedPairs()) {
-            written = editor.withSynonymBudget(context.configFile(), written, budget.withMaxJudgedPairs(judgedPairs));
+        SynonymBudget wanted = budget;
+        if (judgedPairs != null) {
+            wanted = wanted.withMaxJudgedPairs(judgedPairs);
+        }
+        if (automatic != null) {
+            wanted = wanted.withAutomatic(automatic);
+        }
+        if (!wanted.equals(budget)) {
+            written = editor.withSynonymBudget(context.configFile(), written, wanted);
         }
         if (simplification != null && !simplification.equals(savedSimplification(context.settings()))) {
             written = editor.withSimplification(context.configFile(), written, simplification);
@@ -1024,6 +1062,16 @@ final class AiSettingsPanel {
         return (check.scope() == CheckScope.ALL ? CHECK_ALL : CHECK_UNCERTAIN_AND_STAGE)
                 + " · " + check.parallel() + " " + CHECK_PARALLEL_UNIT + " · "
                 + (check.model() == null ? "mit dem Text-Modell" : "Modell " + check.model());
+    }
+
+    /** Ob nach jedem Abgleich einer Quelle ein Synonymlauf startet. */
+    boolean automaticSynonyms() {
+        return automaticSynonyms.isSelected();
+    }
+
+    /** Die Zeile zum Lauf nach jedem Abgleich, für die Abschlussseite des Assistenten. */
+    static String automaticSynonymsSummary(SynonymBudget budget) {
+        return budget.automatic() ? AUTOMATIC_SYNONYMS_ON : AUTOMATIC_SYNONYMS_OFF;
     }
 
     /** Die eingestellten Paare je Synonymlauf für das Text-Modell; 0 = Prüfung aus. */
