@@ -29,6 +29,8 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiPredicate;
+import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 /**
  * Eine Wortliste als Tabelle (Einstellungen mit mehreren Wörtern, etwa die Wörter für den Stand oder die Regeln des
@@ -80,8 +82,12 @@ public final class WordTable {
     private final IconButton allOff = new IconButton(Glyph.CIRCLE_EMPTY, ALL_OFF_TIP).compact();
     private final IconButton reset = new IconButton(Glyph.BACK, DEFAULT_TIP).compact();
     private final JPanel panel = new JPanel(new BorderLayout(0, 4));
-    private final JLabel invalid = Comic.muted(" ");
+    private final WrappedText invalid = Comic.hint(" ");
     private final JScrollPane scroll;
+    /** Macht aus der Eingabe das Wort der Liste. */
+    private UnaryOperator<String> normalizer = typed -> typed.strip().toLowerCase(Locale.ROOT);
+    /** Der Grund, warum ein Wort nicht taugt, in Worten; {@code null} wenn es taugt. */
+    private Function<String, String> check = word -> word.chars().allMatch(Character::isLetterOrDigit) ? null : INVALID;
     /** Fragt vor „Alle aus“ und „Vorgabe“; Tests ersetzen die Rückfrage. */
     private BiPredicate<String, String> confirm = (heading, question) -> Dialogs.confirm(panel, heading, question);
 
@@ -161,6 +167,18 @@ public final class WordTable {
 
     public JComponent component() {
         return panel;
+    }
+
+    /**
+     * Eigene Regeln für neue Wörter (etwa die des Core beim Fachglossar: Leerzeichen und Bindestrich erlaubt).
+     *
+     * @param normalize macht aus der Eingabe das Wort der Liste
+     * @param problem   der Grund in Worten, warum ein Wort nicht taugt (steht unter dem Feld); {@code null} wenn es taugt
+     */
+    public WordTable checkWith(UnaryOperator<String> normalize, Function<String, String> problem) {
+        this.normalizer = Objects.requireNonNull(normalize, "normalize");
+        this.check = Objects.requireNonNull(problem, "problem");
+        return this;
     }
 
     /** Ob die Tabelle schon aus der Datei gefüllt wurde; vorher gilt nichts als geändert. */
@@ -257,12 +275,13 @@ public final class WordTable {
     }
 
     private void addTyped() {
-        String word = input.getText().strip().toLowerCase(Locale.ROOT);
-        if (word.isEmpty()) {
+        String word = normalizer.apply(input.getText());
+        if (word == null || word.isEmpty()) {
             return;
         }
-        if (!word.chars().allMatch(Character::isLetterOrDigit)) {
-            invalid.setText(INVALID);
+        String problem = check.apply(word);
+        if (problem != null) {
+            invalid.setText(problem);
             return;
         }
         invalid.setText(" ");
