@@ -141,7 +141,12 @@ class ExportPanelTest {
             panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
         });
         await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
-        SwingUtilities.invokeAndWait(() -> panel[0].output("pdf"));
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0].output("pdf");
+            // Architekt: Die Statuszeile gehört dem Hauptfenster; ein Auswahlwechsel beendet weder die Laufmeldung
+            // des gestarteten Exports noch sein Ergebnis, das Ergebnis ersetzt „gestartet“ auch bei anderer Auswahl.
+            panel[0].selection(null);
+        });
         await(() -> messages.stream().anyMatch(m -> m.getText().startsWith("PDF-Dokument wird eingeplant")));
         StatusMessageEvent.Payload started = messages.stream()
                 .filter(m -> m.getText().startsWith("PDF-Dokument wird eingeplant")).findFirst().orElseThrow();
@@ -154,8 +159,39 @@ class ExportPanelTest {
         assertThat(result.getText()).contains(".pdf");
         assertThat(result.isClosable()).as("Ergebnis bleibt, bis es der Benutzer wegklickt").isTrue();
         assertThat(result.getDurationMs()).isEqualTo(Integer.MAX_VALUE);
+        assertThat(messages).as("der Auswahlwechsel leert die Statuszeile nicht")
+                .noneMatch(m -> m.getText().isEmpty() && m.getReplaces() == null);
         SwingUtilities.invokeAndWait(() -> assertThat(panel[0].feedbackVisibleForTest())
                 .as("die Platte zeigt nur Warnungen und Probleme").isFalse());
+    }
+
+    /** Scheitert ein Export, während etwas anderes gewählt ist, steht er orange mit ✕ in der Statuszeile. */
+    @Test
+    void aFailedExportAtAnotherSelectionIsAnOrangeClosableStatusMessage() throws Exception {
+        Path out = startHandbuch();
+        Workspace workspace = context.runtime().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        // Der Ausgabeordner ist eine Datei: der Auftrag „Datei erzeugen“ (oder sein Start) scheitert.
+        Files.writeString(out, "kein Ordner");
+        List<StatusMessageEvent.Payload> messages = new java.util.concurrent.CopyOnWriteArrayList<>();
+        context.events().subscribe(StatusMessageEvent.class, event -> messages.add(event.getPayload()));
+        ExportPanel[] panel = new ExportPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ExportPanel(context);
+            panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
+        });
+        await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0].output("pdf");
+            panel[0].selection(null);
+        });
+        await(() -> messages.stream().anyMatch(m -> m.getSeverity() == com.aresstack.spaceharvester.app.event.Severity.WARN));
+        StatusMessageEvent.Payload failed = messages.stream()
+                .filter(m -> m.getSeverity() == com.aresstack.spaceharvester.app.event.Severity.WARN).findFirst().orElseThrow();
+        assertThat(failed.getText()).startsWith("PDF-Dokument");
+        assertThat(failed.isClosable()).as("bleibt mit ✕, verschwindet nicht von selbst").isTrue();
+        SwingUtilities.invokeAndWait(() -> assertThat(panel[0].feedbackVisibleForTest())
+                .as("bei anderer Auswahl keine Platte; der Grund steht unter Aufträge").isFalse());
     }
 
     @Test

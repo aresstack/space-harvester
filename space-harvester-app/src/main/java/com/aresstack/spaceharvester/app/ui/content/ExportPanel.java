@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.app.ui.Facts;
 import com.aresstack.spaceharvester.app.event.Severity;
 import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import com.aresstack.spaceharvester.app.ui.Feedback;
+import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.app.ui.FormatIcon;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.SettingsView;
@@ -203,6 +204,8 @@ public final class ExportPanel extends JPanel {
 
     private final AppContext context;
     private final Feedback feedback = new Feedback();
+    /** Die letzte Meldung der Platte in der Statuszeile; nur sie endet mit {@code feedback.clear()}. */
+    private String feedbackStatus;
     final Facts stand = new Facts();
     private final ComposerButton load = Comic.button(LOAD_SPACE, "Startet den Download sofort; der Auftrag läuft "
             + "unter Aufträge");
@@ -352,8 +355,19 @@ public final class ExportPanel extends JPanel {
         // „Gestartet“ und das Ergebnis eines Exports stehen in der Statuszeile des Hauptfensters: die Laufmeldung
         // bleibt, bis das Ergebnis sie ersetzt, das Ergebnis bleibt, bis es der Benutzer mit ✕ wegklickt (Architekt
         // 17.11.2026); die Platte zeigt nur noch Warnungen und Probleme.
-        feedback.statusLine((text, tone) -> context.events().publish(new StatusMessageEvent(text,
-                Integer.MAX_VALUE, Severity.INFO, tone != Comic.BLUE && !text.isEmpty())));
+        feedback.statusLine((text, tone) -> {
+            if (text.isEmpty()) {
+                // Nur die eigene Meldung beenden; steht inzwischen die einer anderen Ansicht dort, bleibt sie.
+                if (feedbackStatus != null) {
+                    context.events().publish(StatusMessageEvent.clear(feedbackStatus));
+                }
+                feedbackStatus = null;
+            } else {
+                feedbackStatus = text;
+                context.events().publish(new StatusMessageEvent(text, Integer.MAX_VALUE, Severity.INFO,
+                        tone != Comic.BLUE));
+            }
+        });
         add(feedback, BorderLayout.NORTH);
         add(Comic.column(standPlate, outputPlate), BorderLayout.CENTER);
         toggleNotices.setVisible(false);
@@ -529,13 +543,25 @@ public final class ExportPanel extends JPanel {
         Selection current = selection;
         // Jede Anfrage entwertet die vorige, auch die leere: ein noch laufender Abruf darf die Auswahl nicht zurückholen.
         int ticket = ++request;
-        if (runtime == null || current == null) {
+        if (runtime == null) {
             render(Data.NONE);
             return;
         }
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
         Set<String> watchedJobs = Set.copyOf(watched.keySet());
         Set<String> watchedSource = Set.copyOf(sourceJobs.keySet());
+        if (current == null) {
+            render(Data.NONE);
+            // Ohne Auswahl enden hier gestartete Exporte trotzdem in der Statuszeile (Ergebnis ersetzt „gestartet“).
+            if (!watchedJobs.isEmpty() || !watchedSource.isEmpty()) {
+                Background.run(() -> finished(runtime, watchedJobs, watchedSource), data -> {
+                    if (ticket == request) {
+                        finish(data);
+                    }
+                }, error -> { });
+            }
+            return;
+        }
+        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
         Map<Selection, String> preferred = Map.copyOf(lastOutput);
         Background.run(() -> gather(runtime, current, directory, watchedJobs, watchedSource, preferred), data -> {
             if (ticket == request) {
@@ -553,17 +579,10 @@ public final class ExportPanel extends JPanel {
     private static Data gather(AppRuntime runtime, Selection selection, Path directory, Set<String> watched,
                                Set<String> watchedSource, Map<Selection, String> preferred) {
         List<JobStatus> jobs = runtime.workspace().jobs();
-        List<JobStatus> finished = jobs.stream().filter(job -> watched.contains(job.id()) && job.state().terminal())
-                .toList();
-        List<JobStatus> finishedSource = jobs.stream().filter(job -> watchedSource.contains(job.id())
-                && job.state().terminal()).toList();
-        // Beendete Aufträge „Datei erzeugen“, auf die diese Ansicht wartet, samt ihrer Datei (Workspace.producedFile).
-        Map<String, ExportConversions.ConvertedFile> produced = new HashMap<>();
-        for (JobStatus job : finished) {
-            if (job.state() == JobState.COMPLETED) {
-                runtime.workspace().producedFile(job.id()).ifPresent(file -> produced.put(job.id(), file));
-            }
-        }
+        Data ended = finished(jobs, runtime, watched, watchedSource);
+        List<JobStatus> finished = ended.finished();
+        List<JobStatus> finishedSource = ended.finishedSource();
+        Map<String, ExportConversions.ConvertedFile> produced = ended.produced();
         // Eine Quelle: ihre Spaces; „Wissensquellen“: die Spaces aller Quellen, je mit Quellentitel davor.
         List<HarvestSource> sources = selection.global() ? runtime.workspace().sources()
                 : runtime.workspace().sources().stream().filter(s -> s.id().equals(selection.sourceId())).toList();
@@ -648,6 +667,34 @@ public final class ExportPanel extends JPanel {
                 .max(Comparator.comparing(JobStatus::createdAt)).orElse(null);
     }
 
+    /** Nur die beendeten Aufträge, auf die diese Ansicht wartet (Ergebnis in die Statuszeile), ohne Stand der Auswahl. */
+    private static Data finished(AppRuntime runtime, Set<String> watched, Set<String> watchedSource) {
+        return finished(runtime.workspace().jobs(), runtime, watched, watchedSource);
+    }
+
+    private static Data finished(List<JobStatus> jobs, AppRuntime runtime, Set<String> watched,
+                                 Set<String> watchedSource) {
+        List<JobStatus> finished = jobs.stream().filter(job -> watched.contains(job.id()) && job.state().terminal())
+                .toList();
+        List<JobStatus> finishedSource = jobs.stream().filter(job -> watchedSource.contains(job.id())
+                && job.state().terminal()).toList();
+        // Beendete Aufträge „Datei erzeugen“, auf die diese Ansicht wartet, samt ihrer Datei (Workspace.producedFile).
+        Map<String, ExportConversions.ConvertedFile> produced = new HashMap<>();
+        for (JobStatus job : finished) {
+            if (job.state() == JobState.COMPLETED) {
+                runtime.workspace().producedFile(job.id()).ifPresent(file -> produced.put(job.id(), file));
+            }
+        }
+        return new Data(null, null, null, null, List.of(), List.of(), null, null, finished, finishedSource, produced,
+                false, 0);
+    }
+
+    /** Meldet die beendeten Aufträge aus {@code data}: Datei oder Grund in die Statuszeile, Knöpfe neu. */
+    private void finish(Data data) {
+        data.finished().forEach(job -> finishOutput(job, data.produced().get(job.id())));
+        data.finishedSource().forEach(this::finishSource);
+    }
+
     /** Alles, was {@link #render} zeigt; {@link #NONE} ohne Auswahl oder Laufzeit. */
     record Data(Selection selection, JobStatus newest, JobStatus running, ExportDatasetInfo dataset,
                 List<String> files, List<SpaceRow> spaces, PageSelection holdings, JobStatus conversion,
@@ -713,8 +760,7 @@ public final class ExportPanel extends JPanel {
         renderOutput(data);
         revalidate();
         repaint();
-        data.finished().forEach(job -> finishOutput(job, data.produced().get(job.id())));
-        data.finishedSource().forEach(this::finishSource);
+        finish(data);
     }
 
     /**
@@ -1069,7 +1115,7 @@ public final class ExportPanel extends JPanel {
         Path directory = context.settings().outputDirectory();
         starting = current;
         startingFormat = format;
-        feedback.working(Format.title(format) + " wird eingeplant …");
+        exportStatus(Format.title(format) + " wird eingeplant …", Severity.INFO, false);
         renderButtons();
         com.aresstack.spaceharvester.application.holdings.Selection roots = coreSelection(runtime, current);
         Background.run(() -> {
@@ -1086,23 +1132,45 @@ public final class ExportPanel extends JPanel {
                 watched.put(jobs.get(i + 1).id(), current);
             }
             JobStatus data = jobs.get(0);
+            exportStatus(Format.title(format) + ": " + (current.spaceKey() == null
+                    ? Texts.count(jobs.size() / 2, "Auftrag", "Aufträge") + " je Space eingeplant, "
+                    + "die Dateien entstehen in " + name(directory)
+                    : data.state() == JobState.COMPLETED ? "Datei wird erzeugt …"
+                    : loadsFirst() ? "Seiten werden erst geladen, dann entsteht die Datei …"
+                    : "Daten aus dem Bestand, dann entsteht die Datei …"), Severity.INFO, false);
             if (Objects.equals(current, selection)) {
-                feedback.working(Format.title(format) + ": " + (current.spaceKey() == null
-                        ? Texts.count(jobs.size() / 2, "Auftrag", "Aufträge") + " je Space eingeplant, "
-                        + "die Dateien entstehen in " + name(directory)
-                        : data.state() == JobState.COMPLETED ? "Datei wird erzeugt …"
-                        : loadsFirst() ? "Seiten werden erst geladen, dann entsteht die Datei …"
-                        : "Daten aus dem Bestand, dann entsteht die Datei …"));
                 context.navigator().followJobs();
             }
             refresh();
         }, error -> {
             starting = null;
-            if (Objects.equals(current, selection)) {
-                feedback.problem(error);
-            }
+            failedStart(Format.title(format), error, current);
             renderButtons();
         });
+    }
+
+    /**
+     * Meldungen gestarteter Exporte gehören dem Hauptfenster, nicht der Auswahl (Architekt 17.11.2026): sie stehen in
+     * der Statuszeile, ein Auswahlwechsel beendet sie nicht, das Ergebnis ersetzt „gestartet“ auch bei anderer Auswahl.
+     *
+     * @param closable das Ergebnis bleibt, bis es der Benutzer mit ✕ wegklickt; die Laufmeldung ersetzt das Ergebnis
+     */
+    private void exportStatus(String text, Severity severity, boolean closable) {
+        context.events().publish(new StatusMessageEvent(text, Integer.MAX_VALUE, severity, closable));
+    }
+
+    /** Ein Export ließ sich nicht starten: Orange mit ✕ in der Statuszeile; der Grund auf der Platte, passt die Auswahl. */
+    private void failedStart(String what, Throwable error, Selection owner) {
+        exportStatus(what + " nicht gestartet: " + Problems.describe(error).title(), Severity.WARN, true);
+        if (Objects.equals(owner, selection)) {
+            feedback.problem(error);
+        }
+    }
+
+    /** Ein Export scheiterte: Orange mit ✕ in der Statuszeile, der Grund bleibt unter Aufträge (und auf der Platte). */
+    private String failedText(String what, JobStatus job) {
+        return what + ": " + Texts.type(job.type()) + " " + Texts.state(job).toLowerCase(Locale.GERMAN)
+                + " · Grund unter Aufträge";
     }
 
     /**
@@ -1120,17 +1188,19 @@ public final class ExportPanel extends JPanel {
         long open = watched.values().stream().filter(owner::equals).count();
         String remaining = owner.spaceKey() == null ? (open == 0 ? " · alle Dateien fertig"
                 : " · noch " + Texts.count((int) open, "Datei", "Dateien") + " offen") : "";
-        Consumer<Feedback> show;
+        // Das Ergebnis ersetzt „gestartet“ in der Statuszeile, auch wenn inzwischen etwas anderes gewählt ist.
+        Consumer<Feedback> show = f -> { };
         if (job.state() == JobState.COMPLETED && file != null) {
             lastFile.put(exportId, file);
             Path directory = file.path().getParent();
             String notices = file.noticeCount() == 0 ? ""
                     : ", " + Texts.count(file.noticeCount(), "Hinweis", "Hinweise");
-            show = f -> f.success(file.path().getFileName() + " gespeichert in "
-                    + (directory == null ? "" : name(directory)) + notices + remaining);
+            exportStatus(file.path().getFileName() + " gespeichert in " + (directory == null ? "" : name(directory))
+                    + notices + remaining, Severity.INFO, true);
         } else if (job.state() == JobState.COMPLETED) {
-            show = f -> f.success(format + " erzeugt; die Datei steht im Ausgabeordner" + remaining);
+            exportStatus(format + " erzeugt; die Datei steht im Ausgabeordner" + remaining, Severity.INFO, true);
         } else {
+            exportStatus(failedText(format, job) + remaining, Severity.WARN, true);
             show = f -> f.warning(format + ": " + Texts.type(job.type()) + " "
                     + Texts.state(job).toLowerCase(Locale.GERMAN) + remaining,
                     job.error() == null ? null : job.error().message());
@@ -1204,7 +1274,7 @@ public final class ExportPanel extends JPanel {
         com.aresstack.spaceharvester.application.metadata.AnalyticsQueries queries =
                 context.settings().analytics().toQueries();
         sourceStarting = new Pending(current, kind);
-        feedback.working(sourceTitle(kind) + " werden aus der Quelle geholt …");
+        exportStatus(sourceTitle(kind) + " werden aus der Quelle geholt …", Severity.INFO, false);
         renderButtons();
         com.aresstack.spaceharvester.application.holdings.Selection roots = coreSelection(runtime, current);
         Background.run(() -> kind.equals("analytics")
@@ -1214,19 +1284,15 @@ public final class ExportPanel extends JPanel {
             for (JobStatus job : jobs) {
                 sourceJobs.put(job.id(), new Pending(current, kind));
             }
-            if (Objects.equals(current, selection)) {
-                feedback.working(sourceTitle(kind) + ": " + Texts.count(jobs.size(), "Auftrag", "Aufträge")
-                        + (jobs.size() == 1 ? " eingeplant; die Datei entsteht in "
-                        : " je Space eingeplant; die Dateien entstehen in ") + name(directory));
-            }
+            exportStatus(sourceTitle(kind) + ": " + Texts.count(jobs.size(), "Auftrag", "Aufträge")
+                    + (jobs.size() == 1 ? " eingeplant; die Datei entsteht in "
+                    : " je Space eingeplant; die Dateien entstehen in ") + name(directory), Severity.INFO, false);
             context.navigator().followJobs();
             renderButtons();
             refresh();
         }, error -> {
             sourceStarting = null;
-            if (Objects.equals(current, selection)) {
-                feedback.problem(error);
-            }
+            failedStart(sourceTitle(kind), error, current);
             renderButtons();
         });
     }
@@ -1237,17 +1303,18 @@ public final class ExportPanel extends JPanel {
         if (export == null) {
             return;
         }
-        if (Objects.equals(export.selection(), selection)) {
-            Path directory = context.settings() == null ? null : context.settings().outputDirectory();
-            String file = SourceQueryExports.fileName(job.type(), job.partitionKey(), job.rootPageId(), job.id());
-            long open = sourceJobs.values().stream().filter(export::equals).count();
-            if (job.state() == JobState.COMPLETED) {
-                feedback.success(file + " gespeichert in " + (directory == null ? "Ausgabeordner" : name(directory))
-                        + (job.incomplete() ? " · " + Texts.count(job.progress().failed(), "Seite", "Seiten")
-                        + " ohne Antwort, Gründe in der Datei" : "")
-                        + (export.selection().spaceKey() != null ? "" : open == 0 ? " · alle Dateien fertig"
-                        : " · noch " + Texts.count((int) open, "Datei", "Dateien") + " offen"));
-            } else {
+        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        String file = SourceQueryExports.fileName(job.type(), job.partitionKey(), job.rootPageId(), job.id());
+        long open = sourceJobs.values().stream().filter(export::equals).count();
+        if (job.state() == JobState.COMPLETED) {
+            exportStatus(file + " gespeichert in " + (directory == null ? "Ausgabeordner" : name(directory))
+                    + (job.incomplete() ? " · " + Texts.count(job.progress().failed(), "Seite", "Seiten")
+                    + " ohne Antwort, Gründe in der Datei" : "")
+                    + (export.selection().spaceKey() != null ? "" : open == 0 ? " · alle Dateien fertig"
+                    : " · noch " + Texts.count((int) open, "Datei", "Dateien") + " offen"), Severity.INFO, true);
+        } else {
+            exportStatus(failedText(sourceTitle(export.format()), job), Severity.WARN, true);
+            if (Objects.equals(export.selection(), selection)) {
                 feedback.warning(sourceTitle(export.format()) + " " + Texts.state(job).toLowerCase(Locale.GERMAN),
                         job.error() == null ? null : job.error().message());
             }
@@ -1278,14 +1345,17 @@ public final class ExportPanel extends JPanel {
         Path directory = context.settings().outputDirectory();
         starting = current;
         startingFormat = format;
-        showConverted(exportId, f -> f.working(Format.title(format) + " wird eingeplant …"));
+        exportStatus(Format.title(format) + " wird eingeplant …", Severity.INFO, false);
+        showConverted(exportId, f -> { });
         Background.run(() -> runtime.workspace().startConversion(exportId, format, directory), job -> {
             starting = null;
             watched.put(job.id(), current);
-            showConverted(exportId, f -> f.working(Format.title(format) + " wird erzeugt …"));
+            exportStatus(Format.title(format) + " wird erzeugt …", Severity.INFO, false);
             refresh();
         }, error -> {
             starting = null;
+            exportStatus(Format.title(format) + " nicht gestartet: " + Problems.describe(error).title(),
+                    Severity.WARN, true);
             showConverted(exportId, f -> f.problem(error));
         });
     }

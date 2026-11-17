@@ -87,6 +87,17 @@ class MainWindowTest {
             window[0].statusClose().doClick();
             assertThat(window[0].statusText().getText()).isEqualTo(" ");
             assertThat(window[0].statusClose().isVisible()).isFalse();
+            // Eine Ansicht beendet nur ihre eigene Meldung: steht inzwischen eine andere dort, bleibt sie.
+            context.events().publish(new com.aresstack.spaceharvester.app.event.StatusMessageEvent(
+                    "Anhänge eingeplant", Integer.MAX_VALUE,
+                    com.aresstack.spaceharvester.app.event.Severity.INFO, true));
+            context.events().publish(com.aresstack.spaceharvester.app.event.StatusMessageEvent.clear(
+                    "Seite wird geladen …"));
+            assertThat(window[0].statusText().getText()).isEqualTo("Anhänge eingeplant");
+            context.events().publish(com.aresstack.spaceharvester.app.event.StatusMessageEvent.clear(
+                    "Anhänge eingeplant"));
+            assertThat(window[0].statusText().getText()).isEqualTo(" ");
+            assertThat(window[0].statusClose().isVisible()).isFalse();
         });
     }
 

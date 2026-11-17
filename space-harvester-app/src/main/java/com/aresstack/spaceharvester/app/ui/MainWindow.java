@@ -629,6 +629,10 @@ public final class MainWindow implements AppContext.Navigator {
         Runnable apply = () -> {
             StatusMessageEvent.Payload message = event.getPayload();
             String text = message.getText() == null ? "" : message.getText();
+            if (message.getReplaces() != null && !message.getReplaces().equals(status.getText())) {
+                // Eine Ansicht beendet nur ihre eigene Meldung; die einer anderen Ansicht bleibt stehen.
+                return;
+            }
             status.setText(text.isEmpty() ? " " : text);
             status.setToolTipText(text.isEmpty() ? null : text);
             status.setForeground(message.getSeverity() == Severity.ERROR ? Comic.RED
