@@ -52,6 +52,8 @@ public class GraphNeighbourhood {
         INSTRUMENT,
         TIME,
         CIRCUMSTANCE,
+        /** Träger einer Zustandsaussage (ADR 0032). */
+        BEARER,
         /** Nominaler Bezug; kein Besitz. */
         NOMINAL,
         /** Gleiche normalisierte Grundform auf einer anderen Seite: unbestätigter Kandidat, keine Identität. */

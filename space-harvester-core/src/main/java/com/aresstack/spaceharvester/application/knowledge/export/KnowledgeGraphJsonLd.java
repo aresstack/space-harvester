@@ -215,7 +215,7 @@ public final class KnowledgeGraphJsonLd {
         set(json, "exportedQuality", "sh:exportedQuality");
         for (String link : List.of("revisionOf", "documentOf", "page", "mention", "participant", "head",
                 "dependent", "evidence", "inRevision", "actor", "affectedObject", "recipient", "prepositionalObject",
-                "instrument", "time", "circumstance", "refersToStatement")) {
+                "instrument", "time", "circumstance", "bearer", "refersToStatement")) {
             reference(json, link, "sh:" + link);
         }
         json.writeName("participation");
@@ -501,6 +501,7 @@ public final class KnowledgeGraphJsonLd {
             case INSTRUMENT -> "instrument";
             case TIME -> "time";
             case CIRCUMSTANCE -> "circumstance";
+            case BEARER -> "bearer";
         };
     }
 

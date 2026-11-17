@@ -42,7 +42,7 @@ import java.util.Set;
 final class Bewertung {
 
     private static final Map<Role, Rolle> ROLLEN = Map.of(Role.ACTOR, Rolle.HANDELNDER, Role.AFFECTED_OBJECT,
-            Rolle.BETROFFENES, Role.RECIPIENT, Rolle.EMPFAENGER);
+            Rolle.BETROFFENES, Role.RECIPIENT, Rolle.EMPFAENGER, Role.BEARER, Rolle.HANDELNDER);
 
     private Bewertung() {
     }
@@ -191,7 +191,7 @@ final class Bewertung {
                         continue;
                     }
                     verb = true;
-                    grundform |= lesart.verb().equals(befund.lemma());
+                    grundform |= lesart.verb().toLowerCase(Locale.ROOT).equals(befund.lemma());
                     richtig |= rollenPassen(lesart, befund, false);
                     streng |= rollenPassen(lesart, befund, true);
                     // Merkmale an jeder Aussage mit passendem Verb, unabhängig von den Rollen
@@ -275,10 +275,12 @@ final class Bewertung {
     // ---- Abgleich ----------------------------------------------------------------------------------------------
 
     /** Gleiche Grundform oder gleicher Stamm ({@code abruft} zu {@code abrufen}, {@code vorliegt} zu {@code vorliegen}). */
-    static boolean verbPasst(String erwartet, String lemma) {
+    static boolean verbPasst(String vorgabe, String lemma) {
         if (lemma == null) {
             return false;
         }
+        // Rollennomen stehen in der Vorgabe großgeschrieben („Ansprechpartner“), Grundformen klein
+        String erwartet = vorgabe.toLowerCase(Locale.ROOT);
         if (erwartet.equals(lemma)) {
             return true;
         }

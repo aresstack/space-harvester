@@ -1,0 +1,88 @@
+# Erfundene Gold-Analysen zu Zustandsaussagen (ADR 0032).
+# sent_id = 1
+# text = Die Pumpe war defekt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Pumpe	Pumpe	NOUN	_	_	4	nsubj	_	_
+3	war	sein	AUX	_	_	4	cop	_	_
+4	defekt	defekt	ADJ	_	_	0	root	_	_
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 2
+# text = Der Techniker ist Ansprechpartner.
+1	Der	der	DET	_	_	2	det	_	_
+2	Techniker	Techniker	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Ansprechpartner	Ansprechpartner	NOUN	_	_	0	root	_	_
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 3
+# text = Die Anzeige wird rot.
+1	Die	der	DET	_	_	2	det	_	_
+2	Anzeige	Anzeige	NOUN	_	_	4	nsubj	_	_
+3	wird	werden	AUX	_	_	4	cop	_	_
+4	rot	rot	ADJ	_	_	0	root	_	_
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 4
+# text = Das Ventil bleibt dicht.
+1	Das	der	DET	_	_	2	det	_	_
+2	Ventil	Ventil	NOUN	_	_	3	nsubj	_	_
+3	bleibt	bleiben	VERB	_	_	0	root	_	_
+4	dicht	dicht	ADJ	_	_	3	xcomp	_	_
+5	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 5
+# text = Die Pumpe wird gewartet.
+1	Die	der	DET	_	_	2	det	_	_
+2	Pumpe	Pumpe	NOUN	_	_	4	nsubj	_	_
+3	wird	werden	AUX	_	_	4	cop	_	_
+4	gewartet	warten	ADJ	_	_	0	root	_	_
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 6
+# text = Der Bericht ist formal und inhaltlich korrekt.
+1	Der	der	DET	_	_	2	det	_	_
+2	Bericht	Bericht	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	formal	formal	ADJ	_	_	7	advmod	_	_
+5	und	und	CCONJ	_	_	6	cc	_	_
+6	inhaltlich	inhaltlich	ADJ	_	_	4	conj	_	_
+7	korrekt	korrekt	ADJ	_	_	0	root	_	_
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 7
+# text = In dem Lager ist die Pumpe das Ersatzteil.
+1	In	in	ADP	_	_	3	case	_	_
+2	dem	der	DET	_	_	3	det	_	_
+3	Lager	Lager	NOUN	_	_	6	obl	_	_
+4	ist	sein	AUX	_	_	6	cop	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Pumpe	Pumpe	NOUN	_	_	0	root	_	_
+7	das	der	DET	_	_	8	det	_	_
+8	Ersatzteil	Ersatzteil	NOUN	_	_	6	nsubj	_	_
+9	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 8
+# text = Der Techniker meldet, dass die Pumpe dicht ist.
+1	Der	der	DET	_	_	2	det	_	_
+2	Techniker	Techniker	NOUN	_	_	3	nsubj	_	_
+3	meldet	melden	VERB	_	_	0	root	_	_
+4	,	,	PUNCT	_	_	8	punct	_	_
+5	dass	dass	SCONJ	_	_	8	mark	_	_
+6	die	der	DET	_	_	7	det	_	_
+7	Pumpe	Pumpe	NOUN	_	_	8	nsubj	_	_
+8	dicht	dicht	ADJ	_	_	3	ccomp	_	_
+9	ist	sein	AUX	_	_	8	cop	_	_
+10	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Die Wartung ist zeitlich und technisch machbar.
+1	Die	der	DET	_	_	2	det	_	_
+2	Wartung	Wartung	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	zeitlich	zeitlich	ADJ	_	_	0	root	_	_
+5	und	und	CCONJ	_	_	7	cc	_	_
+6	technisch	technisch	ADJ	_	_	7	advmod	_	_
+7	machbar	machbar	ADJ	_	_	4	conj	_	_
+8	.	.	PUNCT	_	_	4	punct	_	_
+

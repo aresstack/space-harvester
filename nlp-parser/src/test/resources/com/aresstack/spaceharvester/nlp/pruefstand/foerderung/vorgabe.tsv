@@ -76,3 +76,20 @@ E17	E	9	nachbessern	Zuwendungsempfänger	§beanstanden|Punkte|Beanstandung	-	nei
 E18	E	10	auszahlen	Kasse	Mittel	-	nein	-	GILT	
 E19	E	10	vorliegen	Mittelabruf	-	-	nein	-	GILT	sobald-Satz
 E20	E	10	informieren	Kasse	Zuwendungsempfänger	-	nein	-	GILT	gemeinsames Subjekt über den Nebensatz hinweg
+# Text F (Zustände, Strang FL 17.11.2026, Vorschlag vom Architekten freigegeben): Spalte handelnder = Träger, verb = Eigenschaft oder Rollennomen.
+F01	F	1	zuständig	Bewilligungsstelle	-	-	nein	-	GILT	Zustand; Bezug „für die Prüfung“
+F02	F	2	unvollständig	Antrag	-	-	nein	-	GILT	Zustand
+F03	F	3	Ansprechpartner	Sachbearbeiter	-	-	nein	-	GILT	Zustand; Rollennomen
+F04	F	4	rückzahlbar	Zuschuss	-	-	ja	-	GILT	Zustand; verneint
+F05	F	5	vollständig	Unterlagen	-	-	nein	MUSS	GILT	Zustand; „müssen … sein“
+F06	F	6	fehlerhaft	Bescheid	-	-	nein	-	FRUEHER	Zustand; „war“
+F07	F	7	freigeben	-	Schnittstelle	-	ja	-	GILT	Gegenprobe: Zustandspassiv bleibt Verblesung
+F08	F	8	gültig	Zusage	-	-	nein	-	GILT	Zustand; „bleiben“
+F09	F	9	bestandskräftig	Bescheid	-	-	nein	-	GILT	Zustand; „werden“ mit Eigenschaft (Zustandswechsel)
+F10	F	10	Förderung	Zuschuss	-	-	nein	-	GILT	Zustand; Begriffsbestimmung „ist eine“
+# E21/E22 (17.11.2026, AT): Zustand im dass-/ob-Satz bekommt eine eigene Zeile, gleiche Regel wie Vollverben im Teilsatz (E15).
+E21	E	1	vollständig	Antrag	-	-	nein	-	GILT	Zustand im dass-Satz
+E22	E	3	förderfähig	Maßnahme	-	-	nein	-	GILT	Zustand im ob-Satz
+# F11/F12 (17.11.2026): Entwicklungssätze zu Bauarten, die beim Bau aus Kontrollzeilen kamen (Reihung von Eigenschaften, Partizip unter „werden“); festgelegt vor dem Lauf.
+F11	F	11	einwandfrei	Abrechnung	-	-	nein	-	GILT	Zustand; Reihung „fachlich und rechtlich“, eine Aussage
+F12	F	12	einziehen	-	Rate	-	nein	-	GILT	Gegenprobe: Vorgangspassiv, „per Lastschrift“ ist Mittel

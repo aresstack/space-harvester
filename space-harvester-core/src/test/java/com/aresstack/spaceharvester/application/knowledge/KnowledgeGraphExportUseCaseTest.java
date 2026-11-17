@@ -211,6 +211,37 @@ class KnowledgeGraphExportUseCaseTest {
                 .satisfies(node -> assertThat(node.has("refersToStatement")).as("Kopf ist kein Vollverb").isFalse());
     }
 
+    @Test
+    void aStateStatementLinksItsBearerAndSaysWhetherItIsAPropertyOrARoleNoun() throws Exception {
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        PageStatementAnalysis stored = store.find(new PageKey("wiki", "1")).orElseThrow();
+        ParsedStatements result = stored.result();
+        ParsedStatements.Statement verb = result.statements().get(0);
+        ParsedStatements.Argument actor = verb.withRole(ParsedStatements.Role.ACTOR).get(0);
+        // erfunden: „Der Sachbearbeiter ist Ansprechpartner“ als Zustandsaussage mit Träger
+        ParsedStatements.Statement state = new ParsedStatements.Statement(verb.id(), verb.sentence(), verb.start(),
+                verb.end(), "ist Ansprechpartner", "Ansprechpartner", ParsedStatements.Voice.ACTIVE,
+                ParsedStatements.Clause.MAIN, true, List.of(new ParsedStatements.Argument(
+                ParsedStatements.Role.BEARER, actor.mention(), "nsubj", null, ParsedStatements.Priority.CORE,
+                ParsedStatements.Basis.PARSER, true)), Set.of(ParsedStatements.Statement.STATE_ROLE_NOUN),
+                verb.paragraph(), ParsedStatements.Quality.PLAUSIBLE, List.of(), verb.review(), verb.features());
+        assertThat(state.state()).isTrue();
+        assertThat(state.roleNoun()).isEqualTo("Ansprechpartner");
+        assertThat(verb.state()).as("Vollverb").isFalse();
+        store.replace(stored.withResult(new ParsedStatements(result.sentences(), result.mentions(), List.of(state),
+                result.attachments(), result.components(), result.conllu())));
+
+        run(new Scope.Page("wiki", "1"));
+        JsonNode doc = read();
+        assertThat(nodes(doc, "Statement")).singleElement().satisfies(node -> {
+            assertThat(node.path("predicateLemma").asString()).isEqualTo("Ansprechpartner");
+            assertThat(node.path("finding").toString()).contains("STATE_ROLE_NOUN");
+            assertThat(node.path("bearer").toString()).contains("s0.t");
+            assertThat(node.has("actor")).as("ein Träger handelt nie").isFalse();
+        });
+        assertThat(doc.path("@context").toString()).contains("\"bearer\"");
+    }
+
     private static List<JsonNode> nodes(JsonNode doc, String type) {
         List<JsonNode> result = new java.util.ArrayList<>();
         doc.path("@graph").forEach(node -> {

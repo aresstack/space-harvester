@@ -289,6 +289,24 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
             return arguments.stream().filter(argument -> argument.role() == role).toList();
         }
 
+        /** Hinweis einer Zustandsaussage mit Eigenschaft („ist unvollständig“, ADR 0032). */
+        public static final String STATE_PROPERTY = "STATE_PROPERTY";
+        /** Hinweis einer Zustandsaussage mit Rollennomen („ist Ansprechpartner“, „ist eine Förderung“). */
+        public static final String STATE_ROLE_NOUN = "STATE_ROLE_NOUN";
+
+        /**
+         * Ob dies eine Zustandsaussage ist (Kopula mit Adjektiv oder Rollennomen, Träger {@link Role#BEARER}). Ihr
+         * Prädikat ist kein Verb: Verblisten, Valenz und Verbzählungen lassen sie aus.
+         */
+        public boolean state() {
+            return findings.contains(STATE_PROPERTY) || findings.contains(STATE_ROLE_NOUN);
+        }
+
+        /** Rollennomen einer Zustandsaussage ({@code Ansprechpartner}) oder {@code null}. */
+        public String roleNoun() {
+            return findings.contains(STATE_ROLE_NOUN) ? predicateLemma : null;
+        }
+
         /** Ob alle Beteiligten aus sicheren Parserkanten oder der Wortliste stammen. */
         public boolean certain() {
             return arguments.stream().allMatch(argument -> argument.certain()
@@ -359,7 +377,9 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
         PREPOSITIONAL_OBJECT,
         INSTRUMENT,
         TIME,
-        CIRCUMSTANCE
+        CIRCUMSTANCE,
+        /** Träger eines Zustands oder einer Eigenschaft (Subjekt einer Zustandsaussage, ADR 0032); handelt nie. */
+        BEARER
     }
 
     public enum Priority {

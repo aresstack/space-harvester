@@ -53,7 +53,7 @@ Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName
   Werte auf verschiedenen Seiten sind **lexikalische Kandidaten**, keine bestätigte Identität). Eine Erwähnung mit
   `sh:mentionKind "CLAUSE"` ist ein Teilsatz als Beteiligter (ADR 0032, „dass der Antrag vollständig ist“): sie hat nie
   einen `sh:lexicalKey` und ist nie ein Begriff; `sh:refersToStatement` → die Aussage des Teilsatzes (gleicher Satz,
-  Prädikat am Kopf des Teilsatzes), fehlt, wenn der Kopf kein Vollverb ist (z. B. Kopula).
+  Prädikat am Kopf des Teilsatzes, auch eine Zustandsaussage), fehlt, wenn der Kopf keine Aussage hat.
 - `sh:Statement` (Aussage/Handlung als eigener Knoten): `sh:predicate`, `sh:predicateLemma`, `sh:voice`
   (`ACTIVE`/`PASSIVE`/…), `sh:clause` (`MAIN`/`SUBORDINATE`/…), `sh:core` (Kernsicht), `sh:finding` (Unsicherheiten
   und Hinweise), `sh:sentence`, `sh:paragraph` (Absatz im Lesetext, ab 0; fehlt, wenn unbekannt), `sh:start`, `sh:end`, `sh:extractionQuality`
@@ -72,7 +72,14 @@ Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName
   (`stage-withdrawn`), bis sie ohne Vorstufe neu gerechnet ist,
   `sh:evidence` → Beleg, `sh:inRevision`, `prov:wasDerivedFrom` → Fassung, `prov:wasGeneratedBy` → Analyselauf.
   Rollen-Kanten zu Erwähnungen: `sh:actor`, `sh:affectedObject`, `sh:recipient`, `sh:prepositionalObject`,
-  `sh:instrument`, `sh:time`, `sh:circumstance`.
+  `sh:instrument`, `sh:time`, `sh:circumstance`, `sh:bearer`.
+  Zustandsaussage (ADR 0032): Kopula (`sein`, `werden`, `bleiben`) mit prädikativem Adjektiv oder Nomen. Ihr
+  `sh:predicateLemma` ist das Adjektiv bzw. Nomen (`zuständig`, `Ansprechpartner`), `sh:predicate` der Wortlaut mit
+  Kopula (`ist … zuständig`); das Subjekt hängt über `sh:bearer` (Rolle `BEARER`, Träger), nie über `sh:actor`.
+  `sh:finding` enthält genau eines von `STATE_PROPERTY` (Eigenschaft, Adjektiv) oder `STATE_ROLE_NOUN` (Rollennomen
+  oder Begriffsbestimmung: „ist Ansprechpartner“, „ist eine Förderung“), bei `werden` zusätzlich `STATE_CHANGE`
+  (der Zustand tritt erst ein). Eine Zustandsaussage ist kein Verb: Verblisten, Valenz und Verbzählungen lassen sie
+  aus. Ein Teilsatz mit Kopula („dass die Lieferung vollständig ist“) verweist mit `sh:refersToStatement` auf sie.
 - `sh:Participation` (qualifizierte Rolle, über `sh:participation`): `sh:role`, `sh:participant` → Erwähnung,
   `sh:relation` (UD), `sh:marker` (Präposition), `sh:priority`, `sh:basis` (`PARSER`, `COORDINATION`,
   `CASE_HEURISTIC`, `LEXICON`, `HEURISTIC`), `sh:certain`.

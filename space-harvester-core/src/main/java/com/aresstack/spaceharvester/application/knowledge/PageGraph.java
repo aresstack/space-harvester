@@ -66,6 +66,8 @@ public record PageGraph(PageKey key, List<Node> nodes, List<Edge> edges) {
         INSTRUMENT,
         TIME,
         CIRCUMSTANCE,
+        /** Träger einer Zustandsaussage (ADR 0032). */
+        BEARER,
         /** Nominaler Bezug ({@code Beleg} → {@code des Kunden}); kein Besitz. */
         NOMINAL
     }
