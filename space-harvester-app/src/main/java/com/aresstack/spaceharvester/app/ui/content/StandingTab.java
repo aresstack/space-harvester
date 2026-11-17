@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.standing.BearerStates;
 import com.aresstack.spaceharvester.application.standing.PageMark;
+import com.aresstack.spaceharvester.application.standing.ReadingList;
 import com.aresstack.spaceharvester.application.standing.SentenceText;
 import com.aresstack.spaceharvester.application.standing.Standing;
 import com.aresstack.spaceharvester.application.standing.StandingBasis;
@@ -85,6 +86,7 @@ import java.util.function.Supplier;
 final class StandingTab extends JPanel {
 
     static final String STATEMENTS = "Aussagen";
+    static final String READING = "Zuerst lesen";
     static final String CONFLICTS = "Mögliche Widersprüche";
     static final String REPLACEMENTS = "Ablösungen";
     /** Höchstens so viele Einträge holen den Wortlaut für „Mögliche Widersprüche“ auf einmal. */
@@ -113,7 +115,13 @@ final class StandingTab extends JPanel {
             + "Ein Klick auf eine Zeile zeigt Grund und Herkunft, ein Doppelklick springt an die Stelle im Lesetext. "
             + "Die Suche findet Handelnde, Träger, Prädikate, die übrigen Beteiligten in Grundform, Seitentitel und "
             + "vereinfachte Sätze, nicht aber Wörter, die nur im Originalsatz stehen. "
-            + "Die Zahlen oben zählen alle Aussagen der Auswahl; ein Klick filtert auf den Stand.";
+            + "Die Zahlen oben zählen alle Aussagen der Auswahl; ein Klick filtert auf den Stand.\n\n"
+            + "„Zuerst lesen“ ordnet die Seiten der Auswahl nach Lesewert, ohne KI und ohne verdeckte Formel: je "
+            + "sichere Aussage, die gilt, +1, je überholte −1; je häufigster Begriff der Auswahl auf der Seite +2; je "
+            + "Erwähnung des Themas +1; neu oder geändert in den letzten 90 Tagen +3; Seite überholt −10; Entwurf "
+            + "oder von Hand „geplant“/„unklar“ −5; Analyse veraltet −2. Ein Klick auf die Summe zeigt alle "
+            + "Teilzahlen, ein Klick auf den Titel öffnet die Seite. Ein Thema im Feld oben rechts (▾ schlägt die "
+            + "häufigsten Begriffe vor, Enter übernimmt) zeigt nur Seiten, die es erwähnen; ✕ zeigt wieder alle.";
     private static final int ROW_HEIGHT = 46;
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY)
             .withZone(ZoneId.systemDefault());
@@ -138,6 +146,9 @@ final class StandingTab extends JPanel {
 
         /** Das Protokoll der Entscheidungen, älteste zuerst. */
         List<StandingDecisionStore.AuditEntry> history(PageKey page, String statementId);
+
+        /** Die Leseempfehlung der Auswahl ({@code ReadingAdvice}), mit Thema oder ({@code null}) ohne; nie auf dem EDT. */
+        ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled);
 
         static Actions of(AppRuntime runtime) {
             if (runtime == null) {
@@ -179,6 +190,12 @@ final class StandingTab extends JPanel {
                 @Override
                 public List<StandingDecisionStore.AuditEntry> history(PageKey page, String statementId) {
                     return runtime.workspace().standingHistory(page, statementId);
+                }
+
+                @Override
+                public ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled) {
+                    return runtime.workspace().readingList(
+                            runtime.workspace().resolveSelection(selection.toCore(runtime)), topic, cancelled);
                 }
             };
         }
@@ -234,6 +251,7 @@ final class StandingTab extends JPanel {
     /** Die Liste, an der das Overlay zuletzt aufging (Aussagen oder Widersprüche). */
     private JList<Row> popupOwner = list;
     private final BusyOverlay busy;
+    private final ReadingFirstView reading;
     private final InfoPopup popup = new InfoPopup();
     private Consumer<String> onStatus = text -> { };
     private Consumer<Target> onJump = target -> { };
@@ -374,17 +392,34 @@ final class StandingTab extends JPanel {
         JPanel counts = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         counts.setOpaque(false);
         chips.values().forEach(counts::add);
+        reading = new ReadingFirstView(runner);
+        reading.onStatus(text -> {
+            if (READING.equals(tabs.selected())) {
+                onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
+            }
+        });
+        reading.onOpen(page -> onJump.accept(new Target(page.key().sourceId(), page.key().pageId(), -1, -1)));
+        JComponent topic = reading.topicField();
+        topic.setVisible(false);
         tabs.tab(STATEMENTS, busy);
+        tabs.tab(READING, reading);
         tabs.tab(CONFLICTS, Comic.scroll(conflictList));
-        tabs.actions(counts, filter, bearer, field);
-        // Zahlen, Filter und Suche gehören zu „Aussagen“; bei den Widersprüchen stünden sie ohne Wirkung da.
+        tabs.actions(counts, filter, bearer, field, topic);
+        // Zahlen, Filter und Suche gehören zu „Aussagen“, das Themenfeld zu „Zuerst lesen“; anderswo stünden sie
+        // ohne Wirkung da.
         tabs.onSelect(name -> {
             boolean statements = STATEMENTS.equals(name);
             for (JComponent tool : List.of(counts, filter, bearer, field)) {
                 tool.setVisible(statements);
             }
+            topic.setVisible(READING.equals(name));
             popup.setVisible(false);
-            status();
+            reading.shown(shown && READING.equals(name));
+            if (READING.equals(name)) {
+                reading.status();
+            } else {
+                status();
+            }
         });
         add(tabs, BorderLayout.CENTER);
     }
@@ -406,6 +441,13 @@ final class StandingTab extends JPanel {
         }
         this.selection = selection;
         dirty = true;
+        reading.source(selection == null ? null : (topic, stop) -> {
+            Actions current = actions.get();
+            if (current == null) {
+                throw new CancellationException("keine laufende App");
+            }
+            return current.reading(selection, topic, stop);
+        });
         if (selection == null) {
             cancelled.set(true);
             generation++;
@@ -425,6 +467,7 @@ final class StandingTab extends JPanel {
         if (!shown) {
             popup.setVisible(false);
         }
+        reading.shown(shown && READING.equals(tabs.selected()));
         loadIfShown();
     }
 
@@ -437,6 +480,7 @@ final class StandingTab extends JPanel {
     /** Liest die Sicht neu, etwa nach einer Entscheidung oder dem Ende einer Aussagenanalyse. */
     private void changed() {
         dirty = true;
+        reading.changed();
         loadIfShown();
     }
 
@@ -634,6 +678,10 @@ final class StandingTab extends JPanel {
     }
 
     private void status() {
+        if (READING.equals(tabs.selected())) {
+            reading.status();
+            return;
+        }
         if (view == null) {
             return;
         }
@@ -1295,6 +1343,10 @@ final class StandingTab extends JPanel {
 
     InfoPopup popup() {
         return popup;
+    }
+
+    ReadingFirstView reading() {
+        return reading;
     }
 
     PillTabs tabs() {

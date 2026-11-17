@@ -11,6 +11,8 @@ import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.standing.BearerStates;
 import com.aresstack.spaceharvester.application.standing.PageMark;
 import com.aresstack.spaceharvester.application.standing.PageStanding;
+import com.aresstack.spaceharvester.application.standing.ReadingList;
+import com.aresstack.spaceharvester.application.standing.ReadingReason;
 import com.aresstack.spaceharvester.application.standing.SentenceText;
 import com.aresstack.spaceharvester.application.standing.Standing;
 import com.aresstack.spaceharvester.application.standing.StandingBasis;
@@ -436,6 +438,62 @@ class StandingTabTest {
         assertThat(chip.getAccessibleContext().getAccessibleName()).startsWith("gilt 12");
     }
 
+    @Test
+    void readingFirstListsPagesWithSumAndOpensPartsOrPage() {
+        Fixture fixture = new Fixture(view());
+        StandingTab tab = fixture.shownTab();
+        assertThat(fixture.topics).as("gerechnet erst, wenn „Zuerst lesen“ sichtbar ist").isEmpty();
+        assertThat(tab.reading().topicField().isVisible()).isFalse();
+
+        tab.tabs().select(StandingTab.READING);
+        ReadingFirstView reading = tab.reading();
+
+        assertThat(fixture.topics).containsExactly("null");
+        assertThat(reading.topicField().isVisible()).isTrue();
+        assertThat(tab.chip(Standing.GILT).getParent().isVisible()).isFalse();
+        assertThat(reading.rows()).extracting(r -> r.page().title()).containsExactly("Seite 1", "Antragsverfahren");
+        assertThat(fixture.status.get()).isEqualTo("2 Seiten nach Lesewert");
+        assertThat(ReadingFirstView.brief(reading.rows().getFirst())).isEqualTo("3 gilt · 2 Begriffe · neu/geändert");
+        assertThat(reading.suggestButton().isEnabled()).isTrue();
+        assertThat(reading.suggestionMenu().getComponentCount()).isEqualTo(2);
+
+        reading.clickRow(0, false);
+        assertThat(reading.popup().titleText()).isEqualTo("Seite 1");
+        assertThat(reading.popup().bodyText()).startsWith("Summe: +10")
+                .contains("+3  3 sichere Aussagen, die gelten (je +1)")
+                .contains("+4  2 häufigste Begriffe der Auswahl (je +2): Antrag, Bescheid")
+                .contains("+3  neu oder geändert seit 19.08.2026")
+                .endsWith("Stand der Seite: „gilt“");
+        assertThat(reading.popup().linkTexts()).containsExactly(ReadingFirstView.OPEN_PAGE);
+        assertThat(ReadingFirstView.details(reading.rows().get(1), null)).startsWith("Summe: \u22125")
+                .contains("\u22125  Seite ist Entwurf");
+
+        reading.clickRow(1, true);
+        assertThat(fixture.jumps).as("Titel öffnet die Seite ohne Stelle")
+                .containsExactly(new StandingTab.Target("wiki", "2", -1, -1));
+
+        reading.rowList().setSelectedIndex(1);
+        ((javax.swing.JMenuItem) reading.suggestionMenu().getComponent(0)).doClick();
+        assertThat(reading.topic().getText()).isEqualTo("Antrag");
+        assertThat(fixture.topics).containsExactly("null", "Antrag");
+        assertThat(reading.rows()).extracting(r -> r.page().title()).containsExactly("Antragsverfahren");
+        assertThat(reading.rowList().getSelectedIndex()).as("gewählte Seite bleibt").isZero();
+        assertThat(fixture.status.get()).isEqualTo("1 Seite erwähnt „Antrag“");
+
+        reading.topic().setText("");
+        assertThat(fixture.topics).as("✕ gilt wieder für die ganze Auswahl").containsExactly("null", "Antrag", "null");
+
+        fixture.standingListener.get().run();
+        flush();
+        assertThat(fixture.topics).as("neu gerechnet nach einer Entscheidung").hasSize(4);
+
+        tab.tabs().select(StandingTab.STATEMENTS);
+        fixture.standingListener.get().run();
+        flush();
+        assertThat(fixture.topics).as("nicht gerechnet, solange „Zuerst lesen“ verdeckt ist").hasSize(4);
+        assertThat(reading.topicField().isVisible()).isFalse();
+    }
+
     // ---- Hilfen
 
     private static final class Fixture {
@@ -449,6 +507,7 @@ class StandingTabTest {
         final List<String> writes = new ArrayList<>();
         boolean conflict;
         boolean failSubscribe;
+        final List<String> topics = new ArrayList<>();
         final StandingTab tab;
 
         Fixture(StatusQuoView view) {
@@ -501,6 +560,12 @@ class StandingTabTest {
                 }
 
                 @Override
+                public ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled) {
+                    topics.add(String.valueOf(topic));
+                    return StandingTabTest.reading(topic, Fixture.this.view);
+                }
+
+                @Override
                 public Map<String, SentenceText> sentences(java.util.Collection<StatusQuoEntry> entries) {
                     sentenceCalls.add(entries.size());
                     Map<String, SentenceText> found = new java.util.HashMap<>();
@@ -535,6 +600,25 @@ class StandingTabTest {
             tab.selection(SPACE);
             return tab;
         }
+    }
+
+    /** Eine Leseempfehlung über die Seiten der Sicht; mit Thema nur die zweite Seite. */
+    static ReadingList reading(String topic, StatusQuoView view) {
+        List<ReadingList.Recommendation> pages = new ArrayList<>();
+        for (PageStanding standing : view.pages()) {
+            boolean first = standing.page().key().pageId().equals("1");
+            if (topic != null && first) {
+                continue;
+            }
+            List<ReadingList.Part> parts = first
+                    ? List.of(new ReadingList.Part(ReadingReason.CURRENT_STATEMENTS, 3, 3, List.of()),
+                    new ReadingList.Part(ReadingReason.TOP_TERMS, 2, 4, List.of("Antrag", "Bescheid")),
+                    new ReadingList.Part(ReadingReason.RECENT_CHANGE, 1, 3, List.of()))
+                    : List.of(new ReadingList.Part(ReadingReason.PAGE_DRAFT, 1, -5, List.of()));
+            pages.add(new ReadingList.Recommendation(standing.page(),
+                    parts.stream().mapToInt(ReadingList.Part::points).sum(), parts, standing));
+        }
+        return new ReadingList(topic, List.of("Antrag", "Bescheid"), Instant.parse("2026-08-19T00:00:00Z"), pages);
     }
 
     private static void flush() {
