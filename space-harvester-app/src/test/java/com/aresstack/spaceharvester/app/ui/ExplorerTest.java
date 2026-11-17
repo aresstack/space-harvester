@@ -101,8 +101,11 @@ class ExplorerTest {
         Explorer.Batch spaces = Explorer.children(context.runtime(), new Explorer.SourceItem("handbuch", "Handbuch"),
                 null);
         Explorer.SpaceItem space = (Explorer.SpaceItem) spaces.nodes().get(0).item();
-        Explorer.PageItem target = Explorer.children(context.runtime(), space, null).nodes().stream()
+        // Beide Seiten aus einer Auflistung vor dem Explorer: später kann der Bestand erst teilweise gefüllt sein.
+        List<Explorer.PageItem> pages = Explorer.children(context.runtime(), space, null).nodes().stream()
                 .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .toList();
+        Explorer.PageItem target = pages.stream().filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
                 .filter(page -> page.title().toLowerCase(java.util.Locale.ROOT).contains("wartung"))
                 .findFirst().orElseThrow();
         PageNavigation.Position position = new PageNavigation.Position("handbuch", space.spaceKey(), space.name(),
@@ -133,8 +136,7 @@ class ExplorerTest {
         assertThat(scopeCalls[0]).isZero();
 
         // Erst Treffer A (Pfad wird im Hintergrund geholt), dann B: die spätere Antwort für A überschreibt B nicht.
-        Explorer.PageItem other = Explorer.children(context.runtime(), space, null).nodes().stream()
-                .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+        Explorer.PageItem other = pages.stream()
                 .filter(page -> !page.pageId().equals(wanted)).findFirst().orElseThrow();
         SwingUtilities.invokeAndWait(() -> {
             explorer[0].revealPage("handbuch", other.pageId());
@@ -247,8 +249,11 @@ class ExplorerTest {
         Explorer.Batch spaces = Explorer.children(context.runtime(), new Explorer.SourceItem("handbuch", "Handbuch"),
                 null);
         Explorer.SpaceItem space = (Explorer.SpaceItem) spaces.nodes().get(0).item();
-        Explorer.PageItem target = Explorer.children(context.runtime(), space, null).nodes().stream()
+        // Beide Seiten aus einer Auflistung vor dem Explorer: später kann der Bestand erst teilweise gefüllt sein.
+        List<Explorer.PageItem> pages = Explorer.children(context.runtime(), space, null).nodes().stream()
                 .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .toList();
+        Explorer.PageItem target = pages.stream().filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
                 .filter(page -> page.title().contains("Modernisierung")).findFirst().orElseThrow();
         PageNavigation.Position position = new PageNavigation.Position("handbuch", space.spaceKey(), space.name(),
                 List.of(), new HarvestSource.PageNode(target.pageId(), target.title(), space.spaceKey(), false));
