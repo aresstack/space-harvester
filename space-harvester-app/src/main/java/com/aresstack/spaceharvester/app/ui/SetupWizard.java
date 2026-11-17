@@ -364,6 +364,8 @@ final class SetupWizard {
         int judged = settings.terms().synonyms().maxJudgedPairs();
         summary.add(AiSettingsPanel.JUDGED_PAIRS_LABEL,
                 judged == 0 ? "aus" : judged + " " + AiSettingsPanel.JUDGED_PAIRS_UNIT);
+        // Vorstufe der Aussagenanalyse (ADR 0032), einstellbar im Schritt „Modelle“.
+        summary.add(AiSettingsPanel.SIMPLIFY_LABEL, AiSettingsPanel.simplificationSummary(settings.simplification()));
         summary.add("Embedding-Modell", blank(settings.ai().embeddingModel()));
         summary.add("Rerank-Modell", blank(settings.ai().rerankModel()));
         summary.add("Vision-Modell", blank(settings.ai().visionModel()));

@@ -110,6 +110,7 @@ public final class Explorer {
             + "(MaltParser-Modell) eingerichtet";
     static final String ANALYZE_NOT_STARTED = "Nicht verfügbar: Die Laufzeit ist nicht gestartet";
     static final String REANALYZE = "Bereits analysierte Seiten erneut analysieren";
+    static final String SIMPLIFY = "Sätze vorher vereinfachen (Vorstufe mit Chat-Modell, nur Seiten mit KI-Freigabe)";
     /** Sicherheitsgrenze: bis hierhin zählt die Schätzung, darüber fragt der Dialog ausdrücklich nach allen Seiten. */
     static final int ANALYSIS_LIMIT = 500;
     private static final int NOTICE_MS = 8000;
@@ -284,8 +285,17 @@ public final class Explorer {
     /** „Analysieren“ über den Core ({@code Workspace}); Tests setzen eine eigene Umsetzung. */
     private Analyses analyses = new WorkspaceAnalyses();
     /** Bestätigung großer Analyseumfänge; Tests antworten ohne Dialog. */
-    private AnalysisConfirmation confirmation = (parent, title, text, action) ->
-            Dialogs.confirm(parent, title, text, REANALYZE, action);
+    private AnalysisConfirmation confirmation = (parent, title, text, action) -> {
+        boolean[] chosen = Dialogs.confirm(parent, title, text, java.util.List.of(REANALYZE, SIMPLIFY), action);
+        return chosen == null ? null : new AnalysisChoice(chosen[0], chosen[1]);
+    };
+
+    /** Einstellungen der Vorstufe „Sätze vereinfachen“ für den Start; ohne geladene Datei die Vorgabe des Core. */
+    private com.aresstack.spaceharvester.application.configuration.SimplificationSettings simplification() {
+        return context.settings() == null
+                ? com.aresstack.spaceharvester.application.configuration.SimplificationSettings.DEFAULT
+                : context.settings().simplification();
+    }
 
     /** Was „Analysieren“ vom Core braucht. */
     interface Analyses {
@@ -297,9 +307,18 @@ public final class Explorer {
         JobStatus start(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options);
     }
 
-    /** Fragt vor einem großen Analyseauftrag; {@code null} heißt abgebrochen, sonst „erneut analysieren“. */
+    /** Fragt vor einem großen Analyseauftrag; {@code null} heißt abgebrochen, sonst die angekreuzten Felder. */
     interface AnalysisConfirmation {
-        Boolean ask(java.awt.Component parent, String title, String text, String action);
+        AnalysisChoice ask(java.awt.Component parent, String title, String text, String action);
+    }
+
+    /**
+     * Was im Bestätigungsdialog angekreuzt war.
+     *
+     * @param reanalyze „erneut analysieren“
+     * @param simplify  mit der Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3)
+     */
+    record AnalysisChoice(boolean reanalyze, boolean simplify) {
     }
 
     private final class WorkspaceAnalyses implements Analyses {
@@ -1969,15 +1988,17 @@ public final class Explorer {
                 notice("Keine Seiten zum Analysieren", Severity.INFO);
                 return;
             }
-            Boolean reanalyze = confirmation.ask(tree, ANALYZE, analysisQuestion(estimate, where),
+            AnalysisChoice choice = confirmation.ask(tree, ANALYZE, analysisQuestion(estimate, where),
                     estimate.exceeded() ? "Alle analysieren" : ANALYZE);
-            if (reanalyze == null) {
+            if (choice == null) {
                 return;
             }
             // Über der Grenze hat der Benutzer ausdrücklich alle bestätigt; sonst schützt die Grenze davor, dass
             // der Umfang bis zum Start unbemerkt wächst (der Auftrag scheitert dann vor der ersten Analyse).
-            startAnalysis(scope, new StatementAnalysisJobs.Options(reanalyze,
-                    estimate.exceeded() ? 0 : ANALYSIS_LIMIT));
+            startAnalysis(scope, new StatementAnalysisJobs.Options(choice.reanalyze(),
+                    estimate.exceeded() ? 0 : ANALYSIS_LIMIT, choice.simplify()
+                    ? com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.SimplificationRequest
+                            .of(simplification()) : null));
         }, error -> notice("Analyse ließ sich nicht starten: " + Problems.describe(error).title(), Severity.ERROR));
     }
 

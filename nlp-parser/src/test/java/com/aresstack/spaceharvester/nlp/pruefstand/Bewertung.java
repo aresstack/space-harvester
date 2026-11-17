@@ -112,6 +112,14 @@ final class Bewertung {
     }
 
     static Zahlen bewerten(Textsatz satz, Variante variante, Text text) {
+        return bewerten(satz, variante, text, zeile -> true);
+    }
+
+    /**
+     * Wie oben; bei zusammengesetzten Varianten zählen nur Vorstufen-Zeilen (Index ab 0), die {@code akzeptiert}
+     * annimmt, etwa nur die, die der Wortabgleich des Core durchlässt.
+     */
+    static Zahlen bewerten(Textsatz satz, Variante variante, Text text, java.util.function.IntPredicate akzeptiert) {
         ParsedDocument original = satz.analyse(satz.varianten().get(0), text);
         ParsedDocument document = satz.analyse(variante, text);
         List<VorstufenSatz> vorstufe = satz.vorstufe(variante, text);
@@ -123,6 +131,9 @@ final class Bewertung {
         Map<String, Mention> mentions = new java.util.HashMap<>(StatementQuality.mentions(analysis));
         List<Befund> befunde = new ArrayList<>();
         for (Statement statement : analysis.statements()) {
+            if (variante.zusammengesetzt() && vorstufe != null && !akzeptiert.test(statement.sentence())) {
+                continue;
+            }
             int origin = vorstufe == null ? statement.sentence() + 1 : vorstufe.get(statement.sentence()).originalsatz();
             befunde.add(befund(analysis, mentions, statement, origin));
         }

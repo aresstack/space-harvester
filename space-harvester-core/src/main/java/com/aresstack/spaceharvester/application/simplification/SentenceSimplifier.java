@@ -69,11 +69,24 @@ public final class SentenceSimplifier {
     /** Modalverben im Präsens und Präteritum, auf die Grundform. */
     private static final Map<String, String> MODALS = modals();
     /** Was vor einem gleichen Stamm stehen darf: Verbzusatz oder untrennbare Vorsilbe, auch mit „ge“ danach. */
-    private static final List<String> PREFIXES = List.of("zurück", "ab", "an", "auf", "aus", "ein", "vor", "be", "ver",
-            "er", "ent", "zer", "ge");
+    private static final List<String> PREFIXES = List.of("zurück", "ab", "an", "auf", "aus", "ein", "vor", "fest",
+            "be", "ver", "er", "ent", "zer", "ge");
+    /**
+     * Trennbare Verbzusätze: stehen auch allein am Satzende („stellt … fest“) und nehmen „ge“ und „zu“ in die Mitte
+     * („festgestellt“, „vorzulegen“).
+     */
+    private static final List<String> PARTICLES = List.of("zurück", "ab", "an", "auf", "aus", "ein", "vor", "fest",
+            "durch", "mit", "nach", "weg", "zu");
+    /** Umstandswörter der Reihenfolge, die nur gelten, wenn der Abschnitt das passende Bindewort hat. */
+    private static final Map<String, Set<String>> CONNECTIVES = Map.of("danach", Set.of("nachdem", "sobald"),
+            "anschließend", Set.of("nachdem", "sobald"), "zuvor", Set.of("bevor"), "vorher", Set.of("bevor"));
+    /** Formen von „sein“ und „haben“ im Präsens, die mit „zu“ und Infinitiv eine Pflicht ausdrücken („ist … zu prüfen“). */
+    private static final Set<String> DUTY = Set.of("ist", "sind", "hat", "haben");
     /** Endungen, die beim Stammvergleich wegfallen, die längste zuerst. */
-    private static final List<String> SUFFIXES = List.of("ungen", "ung", "ern", "eln", "en", "er", "el", "et", "st",
-            "es", "em", "e", "n", "s", "t");
+    private static final List<String> SUFFIXES = List.of("ungen", "ung", "keit", "heit", "ern", "eln", "en", "er", "el",
+            "et", "st", "es", "em", "e", "n", "s", "t");
+    private static final List<String> SUFFIXES_LONGEST_FIRST = SUFFIXES.stream()
+            .sorted(Comparator.comparingInt(String::length).reversed()).toList();
     /** Funktionswörter ab vier Buchstaben: Artikel, Pronomen, Hilfs- und Modalverben, Bindewörter, Präpositionen. */
     private static final Set<String> FUNCTION_WORDS = Set.of("eine", "einen", "einem", "einer", "eines", "dieser",
             "diese", "dieses", "diesen", "diesem", "jeder", "jede", "jedes", "jeden", "jedem", "alle", "allen", "aller",
@@ -221,10 +234,75 @@ public final class SentenceSimplifier {
     static boolean related(String word, String known) {
         String a = word.toLowerCase(Locale.GERMAN);
         String b = known.toLowerCase(Locale.GERMAN);
-        if (a.equals(b) || stem(a).equals(stem(b))) {
+        if (a.equals(b)) {
             return true;
         }
-        return Character.isLowerCase(word.charAt(0)) && Character.isLowerCase(known.charAt(0)) && sameStem(a, b);
+        if (Character.isUpperCase(word.charAt(0)) && agent(a) && !agent(b)) {
+            // „Prüfer“ nur, wenn im Abschnitt selbst eine Form auf -er steht, nicht schon bei „prüfen“/„Prüfung“
+            return false;
+        }
+        boolean verbs = Character.isLowerCase(word.charAt(0)) && Character.isLowerCase(known.charAt(0));
+        for (String x : variants(a)) {
+            for (String y : variants(b)) {
+                if (sameForm(x, y) || verbs && sameStem(x, y)) {
+                    return true;
+                }
+            }
+        }
+        // abgetrennter Verbzusatz („stellt … fest“) zu einer Verbform mit diesem Zusatz („feststellt“)
+        return verbs && PARTICLES.contains(a) && b.startsWith(a) && b.length() >= a.length() + 3;
+    }
+
+    /** Ob ein Wort auf -er, -ers, -ern, -erin oder -erinnen endet (etwa ein Handelnder: „Prüfer“, „Prüferin“). */
+    private static boolean agent(String word) {
+        return word.length() >= 5 && (word.endsWith("er") || word.endsWith("ers") || word.endsWith("ern")
+                || word.endsWith("erin") || word.endsWith("erinnen"));
+    }
+
+    /** Das Wort und, nach einem trennbaren Verbzusatz, ohne eingeschobenes „ge“ oder „zu“ („festgestellt“ → „feststellt“). */
+    private static List<String> variants(String word) {
+        List<String> variants = new ArrayList<>(List.of(word));
+        for (String particle : PARTICLES) {
+            for (String infix : List.of("ge", "zu")) {
+                String head = particle + infix;
+                if (word.startsWith(head) && word.length() - head.length() >= 4) {
+                    variants.add(particle + word.substring(head.length()));
+                }
+            }
+        }
+        return variants;
+    }
+
+    /** Ob ein Satz eine Pflicht mit „sein“/„haben“ und „zu“-Infinitiv ausdrückt („ist … vorzulegen“, „hat … zu zahlen“). */
+    private static boolean duty(String text) {
+        List<String> words = new ArrayList<>();
+        Matcher matcher = WORD.matcher(text);
+        while (matcher.find()) {
+            words.add(matcher.group());
+        }
+        if (words.stream().noneMatch(word -> DUTY.contains(word.toLowerCase(Locale.GERMAN)))) {
+            return false;
+        }
+        for (int i = 0; i < words.size(); i++) {
+            String word = words.get(i).toLowerCase(Locale.GERMAN);
+            if ("zu".equals(word) && i + 1 < words.size() && infinitive(words.get(i + 1))) {
+                return true;
+            }
+            for (String particle : PARTICLES) {
+                if (word.startsWith(particle + "zu") && infinitive(words.get(i))
+                        && word.length() - particle.length() - 2 >= 4) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Ein Infinitiv nach „zu“: klein geschrieben, kein Funktionswort, mindestens fünf Buchstaben, auf -en. */
+    private static boolean infinitive(String raw) {
+        String word = raw.toLowerCase(Locale.GERMAN);
+        return Character.isLowerCase(raw.charAt(0)) && word.length() >= 5 && word.endsWith("en")
+                && !FUNCTION_WORDS.contains(word);
     }
 
     private static boolean negation(String word) {
@@ -237,9 +315,14 @@ public final class SentenceSimplifier {
         private final Set<String> numbers = new HashSet<>();
         private final Set<String> negations = new HashSet<>();
         private final Set<String> modals = new HashSet<>();
+        /** Modalverben, die der Text ohne Modalverb ausdrückt („ist … vorzulegen“ = muss); decken nur, fehlen nie. */
+        private final Set<String> implied = new HashSet<>();
 
         Words add(String text) {
             content.addAll(rawContentWords(text));
+            if (duty(text)) {
+                implied.add("müssen");
+            }
             Matcher number = NUMBER.matcher(text);
             while (number.find()) {
                 numbers.add(number.group());
@@ -260,14 +343,25 @@ public final class SentenceSimplifier {
 
         /** Ob jede Verneinung und jedes Modalverb aus {@code other} hier vorkommt. */
         boolean keepsPolarity(Words other) {
-            return negations.containsAll(other.negations) && modals.containsAll(other.modals);
+            return negations.containsAll(other.negations) && hasModals(other.modals);
+        }
+
+        private boolean hasModals(Set<String> wanted) {
+            return wanted.stream().allMatch(modal -> modals.contains(modal) || implied.contains(modal));
         }
 
         /** Ob alles aus {@code other} hier vorkommt, Inhaltswörter auch als Form desselben Stamms. */
         boolean covers(Words other) {
             return numbers.containsAll(other.numbers) && negations.containsAll(other.negations)
-                    && modals.containsAll(other.modals) && other.content.stream().allMatch(word ->
-                    content.stream().anyMatch(known -> related(word, known)));
+                    && hasModals(other.modals) && other.content.stream().allMatch(word -> covered(word));
+        }
+
+        private boolean covered(String word) {
+            Set<String> licence = CONNECTIVES.get(word.toLowerCase(Locale.GERMAN));
+            if (licence != null) {
+                return content.stream().anyMatch(known -> licence.contains(known.toLowerCase(Locale.GERMAN)));
+            }
+            return content.stream().anyMatch(known -> related(word, known));
         }
     }
 
@@ -305,7 +399,8 @@ public final class SentenceSimplifier {
         }
         String rest = longer.substring(0, longer.length() - shorter.length());
         for (String prefix : PREFIXES) {
-            if (rest.equals(prefix) || rest.equals(prefix + "ge")) {
+            String folded = fold(prefix);
+            if (rest.equals(folded) || rest.equals(folded + "ge")) {
                 return true;
             }
         }
@@ -313,16 +408,43 @@ public final class SentenceSimplifier {
     }
 
     private static String stem(String word) {
+        return stems(word).get(1);
+    }
+
+    /**
+     * Das Wort ohne vorangestelltes „ge“, nach einer und nach zwei abgeschnittenen Endungen („artikels“, „artikel“,
+     * „artik“), Umlaute wie Grundvokale („verträg“ → „vertrag“).
+     */
+    private static List<String> stems(String word) {
         String stem = word.toLowerCase(Locale.GERMAN);
         if (stem.startsWith("ge") && stem.length() > 6) {
             stem = stem.substring(2);
         }
-        for (String suffix : SUFFIXES.stream().sorted(Comparator.comparingInt(String::length).reversed()).toList()) {
-            if (stem.endsWith(suffix) && stem.length() - suffix.length() >= 3) {
-                return stem.substring(0, stem.length() - suffix.length());
+        List<String> stems = new ArrayList<>(List.of(fold(stem)));
+        for (int round = 0; round < 2; round++) {
+            for (String suffix : SUFFIXES_LONGEST_FIRST) {
+                if (stem.endsWith(suffix) && stem.length() - suffix.length() >= 3) {
+                    stem = stem.substring(0, stem.length() - suffix.length());
+                    break;
+                }
             }
+            stems.add(fold(stem));
         }
-        return stem;
+        return stems;
+    }
+
+    private static String fold(String word) {
+        return word.replace("ä", "a").replace("ö", "o").replace("ü", "u");
+    }
+
+    /** Gleicher Stamm nach einer Endung, oder ein gemeinsamer Stamm ab vier Buchstaben nach bis zu zwei Endungen. */
+    private static boolean sameForm(String a, String b) {
+        List<String> x = stems(a);
+        List<String> y = stems(b);
+        if (x.get(1).equals(y.get(1))) {
+            return true;
+        }
+        return x.stream().anyMatch(stem -> stem.length() >= 4 && y.contains(stem));
     }
 
     private static String resource(String name) {

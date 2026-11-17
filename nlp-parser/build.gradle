@@ -31,6 +31,8 @@ dependencies {
     // Modell-Manifest aus #99 lesen
     implementation libs.jackson.jr.objects
 
+    // Prüfstand: Wortabgleich der Vorstufe aus dem Core an den gepinnten Vorstufen messen (ADR 0032, FL3); nur Tests
+    testImplementation project(':space-harvester-core')
     testImplementation platform(libs.junit.bom)
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

@@ -45,6 +45,8 @@ public final class CopyButton extends JButton {
     private final Timer reset = new Timer(FEEDBACK_MILLIS, e -> done());
     private Popup badge;
     private boolean copied;
+    /** Den Fokus zeigt der Kreis nur, wenn er über die Tastatur kam; nach einem Klick nicht. */
+    private final KeyboardFocusRing focusRing = KeyboardFocusRing.install(this);
 
     /** Kopiert {@code text.get()} in die Zwischenablage des Systems. */
     public CopyButton(Supplier<String> text) {
@@ -130,10 +132,15 @@ public final class CopyButton extends JButton {
 
     @Override
     protected void paintComponent(Graphics graphics) {
-        if (isEnabled() && (getModel().isRollover() || getModel().isPressed() || hasFocus())) {
+        if (isEnabled() && (getModel().isRollover() || getModel().isPressed() || focusRing.shown())) {
             RoundHover.paint(graphics, 0, 0, getWidth(), getHeight(), getModel().isPressed());
         }
         super.paintComponent(graphics);
+    }
+
+    /** Ob der Fokus zuletzt über die Tastatur kam (für Tests). */
+    boolean showsKeyboardFocus() {
+        return focusRing.fromKeyboard();
     }
 
     @Override

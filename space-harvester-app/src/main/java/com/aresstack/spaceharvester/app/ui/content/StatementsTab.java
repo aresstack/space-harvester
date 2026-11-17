@@ -59,6 +59,16 @@ final class StatementsTab extends JPanel {
     static final String NO_PAGE = "Keine Seite geladen.";
     static final String LOADING_PAGE = "Seite wird geladen …";
     static final String PAGE_UNAVAILABLE = "Seite nicht geladen – Aussagen nicht verfügbar.";
+    static final String SIMPLIFY = "Sätze vereinfachen";
+    static final String WITH_STAGE = "mit Vorstufe „" + SIMPLIFY + "“";
+    static final String SIMPLIFY_TIP = "Gilt für „" + ANALYZE + "“: Ein Chat-Modell formt die Sätze vor dem MaltParser zu einfachen "
+            + "Hauptsätzen um; nur für Seiten mit KI-Freigabe. Betriebsart und Modell unter Einstellungen › Modelle";
+    static final String SIMPLIFY_NO_MODEL = "Die Vorstufe „" + SIMPLIFY + "“ lief nicht: Es ist kein Modell dafür "
+            + "eingestellt (Einstellungen › Modelle).";
+    static final String SIMPLIFY_NOT_RELEASED = "Die Vorstufe „" + SIMPLIFY + "“ lief nicht: Die Seite ist nicht für "
+            + "die KI freigegeben.";
+    static final String STAGE_WITHDRAWN = "Die KI-Freigabe der Seite wurde entzogen; die Aussagen der Vorstufe sind "
+            + "entfernt. Bitte neu ohne Vorstufe rechnen.";
     static final String NO_EVIDENCE = "Belege und Sprünge entfallen, weil sich der Text geändert hat.";
 
     private final Supplier<Actions> workspace;
@@ -82,6 +92,8 @@ final class StatementsTab extends JPanel {
     private final JPanel syntaxPanel = new JPanel(new BorderLayout(0, 4));
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton analyze = Comic.button(ANALYZE,
             "Analysiert nur diese Seite lokal mit MaltParser und übernimmt die Aussagen in den Wissensgraphen");
+    /** „mit Vorstufe“ (ADR 0032, FL3): gilt für den nächsten Klick auf „Mit MaltParser analysieren“. */
+    private final javax.swing.JCheckBox simplify = Comic.checkBox(WITH_STAGE);
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton cancel = Comic.button(CANCEL,
             "Bricht die laufende Analyse ab; die bisherige Analyse bleibt");
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton syntaxToggle = Comic.button(
@@ -110,8 +122,9 @@ final class StatementsTab extends JPanel {
     private AtomicBoolean running;
 
     /** @param workspace die Aktionen der laufenden App oder {@code null}, solange keine läuft */
-    StatementsTab(Supplier<Workspace> workspace, ParserModelSetup setup) {
-        this(() -> Actions.of(workspace.get()), new Runner() {
+    StatementsTab(Supplier<Workspace> workspace, ParserModelSetup setup,
+                  Supplier<com.aresstack.spaceharvester.application.configuration.SimplificationSettings> simplification) {
+        this(() -> Actions.of(workspace.get(), simplification), new Runner() {
             @Override
             public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
                 Background.run(work, onSuccess, onFailure);
@@ -130,6 +143,7 @@ final class StatementsTab extends JPanel {
         this.setup = setup;
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
+        simplify.setToolTipText(SIMPLIFY_TIP);
         head.badge("Experimentell", Comic.PETROL).action(progress, cancel, analyze).copy(copyText::toString);
         analyze.addActionListener(e -> analyze());
         cancel.addActionListener(e -> cancelRun());
@@ -152,7 +166,16 @@ final class StatementsTab extends JPanel {
         body.add(north, BorderLayout.NORTH);
         body.add(list, BorderLayout.CENTER);
         body.add(syntaxPanel, BorderLayout.SOUTH);
-        add(head, BorderLayout.NORTH);
+        // Die Option steht in einer eigenen Zeile rechts unter dem Knopf, zu dem sie gehört: In der Kopfzeile selbst
+        // überdeckt sie bei schmalem Fenster das Abzeichen neben dem Titel.
+        JPanel options = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        options.setOpaque(false);
+        options.add(simplify);
+        JPanel top = new JPanel(new BorderLayout(0, 4));
+        top.setOpaque(false);
+        top.add(head, BorderLayout.NORTH);
+        top.add(options, BorderLayout.SOUTH);
+        add(top, BorderLayout.NORTH);
         add(Comic.scroll(body), BorderLayout.CENTER);
         render(PageStatements.missing(PageStatements.NOT_ANALYSED), List.of());
         if (setup != null) {
@@ -386,8 +409,18 @@ final class StatementsTab extends JPanel {
         analyze.setEnabled(false);
         cancel.setVisible(true);
         progress.setText(RUNNING);
+        boolean withStage = simplify.isSelected();
+        String[] stageNote = new String[1];
         runner.run(() -> {
-            PageStatements result = actions.analyzeStatements(page, cancelled::get);
+            PageStatements result;
+            if (withStage) {
+                // Vor dem Lauf gefragt: Der Core analysiert sonst still ohne Vorstufe, und der Benutzer wüsste es nicht.
+                stageNote[0] = actions.simplificationUnavailable(page.key()).map(StatementsTab::stageNote)
+                        .orElse(null);
+                result = actions.analyzeSimplified(page, cancelled::get);
+            } else {
+                result = actions.analyzeStatements(page, cancelled::get);
+            }
             return new Loaded(result, true, actions.statementLinks(page.key()));
         }, loaded -> {
             finished(cancelled);
@@ -399,6 +432,10 @@ final class StatementsTab extends JPanel {
             onAnalysed.run();
             syntax.setText("");
             render(loaded.statements(), loaded.links());
+            if (stageNote[0] != null) {
+                explanation = explanation.isBlank() ? stageNote[0] : explanation + " " + stageNote[0];
+                onStatus.accept(explanation);
+            }
             if (syntaxPanel.getComponentCount() > 1) {
                 loadSyntax();
             }
@@ -444,6 +481,11 @@ final class StatementsTab extends JPanel {
             cancel.setVisible(false);
             progress.setText("Wird abgebrochen …");
         }
+    }
+
+    /** Warum die Vorstufe nicht lief, als Satz für die Statuszeile. */
+    static String stageNote(String reason) {
+        return "NOT_RELEASED".equals(reason) ? SIMPLIFY_NOT_RELEASED : SIMPLIFY_NO_MODEL;
     }
 
     private void toggleSyntax() {
@@ -630,6 +672,11 @@ final class StatementsTab extends JPanel {
         if (!features.isEmpty()) {
             body.add("Merkmale: " + features);
         }
+        ParsedStatements.Derivation derivation = statement.derivation();
+        if (derivation.origin() == ParsedStatements.Origin.VORSTUFE) {
+            // ADR 0032, FL3: Die Aussage stammt aus einem vereinfachten Satz; der Originalsatz bleibt der Beleg.
+            body.add("Herkunft: Vorstufe „" + SIMPLIFY + "“ · Kennzeichen: " + stageFlag(derivation.stageFlag()));
+        }
         for (ParsedStatements.Attachment attachment : result.attachments()) {
             boolean involved = statement.arguments().stream()
                     .anyMatch(argument -> argument.mention().equals(attachment.head()));
@@ -649,8 +696,12 @@ final class StatementsTab extends JPanel {
         if (!notes.isEmpty()) {
             body.add("Hinweise: " + String.join("; ", notes));
         }
+        boolean staged = derivation.origin() == ParsedStatements.Origin.VORSTUFE;
         if (evidence != null && !evidence.isBlank()) {
-            body.add("Beleg: „" + evidence.strip() + "“");
+            body.add((staged ? "Beleg (Originalsatz): „" : "Beleg: „") + evidence.strip() + "“");
+        }
+        if (staged) {
+            body.add("Vereinfachter Satz: „" + derivation.simplifiedSentence().strip() + "“");
         }
         return body;
     }
@@ -693,6 +744,17 @@ final class StatementsTab extends JPanel {
             default -> { }
         }
         return String.join(" · ", parts);
+    }
+
+    /** Das Kennzeichen der Vorstufe in Worten; nie als Zeitbezug zu lesen. */
+    static String stageFlag(ParsedStatements.StageFlag flag) {
+        return switch (flag) {
+            case FACT -> "Tatsache";
+            case CONDITION -> "Bedingung";
+            case PLANNING -> "Planung oder Absicht";
+            case DISCARDED -> "verworfen oder früher";
+            case NONE -> "keines";
+        };
     }
 
     static String roleLabel(ParsedStatements.Role role) {
@@ -743,13 +805,31 @@ final class StatementsTab extends JPanel {
                 case PageStatements.ANALYZER_CHANGED -> "Parser, Modell oder Regeln haben sich seit der Analyse "
                         + "geändert.";
                 case PageStatements.NO_TEXT -> "Die Seite hat derzeit keinen analysierbaren Text.";
+                case PageStatements.STAGE_WITHDRAWN -> STAGE_WITHDRAWN;
                 default -> "Die Analyse passt nicht mehr zur Seite.";
             };
             return why + " Die Aussagen unten sind veraltet; „" + ANALYZE + "“ ersetzt sie.";
         }
         return "Analysiert am " + statements.analysis().analyzedAt().toString().replace('T', ' ').replace("Z", " UTC")
                 + " mit " + statements.analysis().analyzerVersion().replace('|', ' ')
-                + ". Grammatische Zuordnung, keine geprüften Fakten.";
+                + ", " + stage(statements.analysis().stage()) + ". Grammatische Zuordnung, keine geprüften Fakten.";
+    }
+
+    /**
+     * Ob die Seite mit der Vorstufe gerechnet wurde ({@code PageStatementAnalysis#stage}: Betriebsart, Modell und
+     * Anweisung), als Satzteil hinter „Analysiert am … mit …“.
+     */
+    static String stage(String stage) {
+        if (stage == null || stage.isBlank()
+                || com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis.STAGE_WITHDRAWN
+                .equals(stage)) {
+            return "ohne Vorstufe";
+        }
+        int cut = stage.indexOf('|');
+        String mode = cut < 0 ? stage : stage.substring(0, cut);
+        String version = cut < 0 ? "" : stage.substring(cut + 1).replace('|', ' ').strip();
+        return "mit Vorstufe „" + SIMPLIFY + "“ (" + ("always".equals(mode) ? "immer" : "nur wo nötig")
+                + (version.isEmpty() ? "" : ", " + version) + ")";
     }
 
     private String sentence(ParsedStatements result, ParsedStatements.Statement statement) {
@@ -821,12 +901,36 @@ final class StatementsTab extends JPanel {
 
         Optional<String> syntaxDetails(PageSnapshot page);
 
+        /** Wie {@link #analyzeStatements}, mit der Vorstufe „Sätze vereinfachen“ nach den Einstellungen. */
+        default PageStatements analyzeSimplified(PageSnapshot page, java.util.function.BooleanSupplier cancelled) {
+            return analyzeStatements(page, cancelled);
+        }
+
+        /** Warum die Vorstufe für diese Seite nicht laufen kann ({@code NO_MODEL}, {@code NOT_RELEASED}); sonst leer. */
+        default Optional<String> simplificationUnavailable(
+                com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+            return Optional.empty();
+        }
+
         /** {@code null} ohne laufende App. */
-        static Actions of(Workspace workspace) {
+        static Actions of(Workspace workspace,
+                Supplier<com.aresstack.spaceharvester.application.configuration.SimplificationSettings> simplification) {
             if (workspace == null) {
                 return null;
             }
             return new Actions() {
+                @Override
+                public PageStatements analyzeSimplified(PageSnapshot page,
+                                                        java.util.function.BooleanSupplier cancelled) {
+                    return workspace.analyzeStatements(page, cancelled, simplification.get());
+                }
+
+                @Override
+                public Optional<String> simplificationUnavailable(
+                        com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                    return workspace.simplificationUnavailable(key);
+                }
+
                 @Override
                 public PageStatements statements(PageSnapshot page) {
                     return workspace.statements(page);
@@ -886,6 +990,11 @@ final class StatementsTab extends JPanel {
 
     boolean cancelOffered() {
         return cancel.isVisible();
+    }
+
+    /** Kreuzt „Sätze vereinfachen“ an oder ab. */
+    void simplify(boolean on) {
+        simplify.setSelected(on);
     }
 
     void clickAnalyze() {

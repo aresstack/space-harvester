@@ -673,6 +673,27 @@ public final class Workspace {
         return harvester.statementAnalysis().analyze(caller, snapshot, cancelled);
     }
 
+    /**
+     * Wie {@link #analyzeStatements(PageSnapshot, java.util.function.BooleanSupplier)}, mit der Vorstufe „Sätze
+     * vereinfachen“ (ADR 0032, FL3) nach {@code simplification}; kann sie für die Seite nicht laufen
+     * ({@link #simplificationUnavailable}), analysiert der Core ohne sie.
+     */
+    public PageStatements analyzeStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled,
+            com.aresstack.spaceharvester.application.configuration.SimplificationSettings simplification) {
+        return harvester.statementAnalysis().analyze(caller, snapshot, cancelled,
+                com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.SimplificationRequest
+                        .of(simplification), costs -> {
+                });
+    }
+
+    /**
+     * Warum die Vorstufe „Sätze vereinfachen“ für diese Seite nicht laufen kann ({@code NO_MODEL},
+     * {@code NOT_RELEASED}); leer, wenn sie laufen kann.
+     */
+    public Optional<String> simplificationUnavailable(PageKey key) {
+        return harvester.statementAnalysis().simplificationUnavailable(key);
+    }
+
     /** CoNLL-U der gespeicherten Analyse für die aufklappbaren Syntaxdetails. */
     public Optional<String> syntaxDetails(PageSnapshot snapshot) {
         return harvester.statementAnalysis().syntaxDetails(caller, snapshot);

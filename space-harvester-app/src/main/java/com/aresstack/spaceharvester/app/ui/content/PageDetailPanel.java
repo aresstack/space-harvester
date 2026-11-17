@@ -286,7 +286,9 @@ public final class PageDetailPanel extends JPanel {
         super(new BorderLayout(0, 8));
         this.context = context;
         this.statementsView = new StatementsTab(() -> context.runtime() == null ? null
-                : context.runtime().workspace(), context.parserModel());
+                : context.runtime().workspace(), context.parserModel(), () -> context.settings() == null
+                ? com.aresstack.spaceharvester.application.configuration.SimplificationSettings.DEFAULT
+                : context.settings().simplification());
         this.sourceView = new SourceUpdatesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), SourceUpdatesView.Mode.SUMMARY);
         this.sourceChanges = new SourceUpdatesView(() -> context.runtime() == null ? null
