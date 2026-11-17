@@ -130,7 +130,7 @@ class GlossaryTabScreenshotTest {
                     "1. Antragsverfahren: … die Antragsprüfung ist innerhalb von vier Wochen abzuschließen …",
                     "2. Ablauf: … nach der Antragsprüfung folgt der Bescheid …"), List.of(
                     new GlossaryAccess.History("propose", "rule:glossary", T, ReviewStatus.PROPOSED),
-                    new GlossaryAccess.History("categorize", "ai:glossary", T.plusSeconds(600),
+                    new GlossaryAccess.History("classify", "ai:glossary", T.plusSeconds(600),
                             ReviewStatus.PROPOSED))));
             popup.controls(tab[0].overlayControls(popup, entry, row, null));
             popup.link("Zu Beleg 1", () -> { }).link("Zu Beleg 2", () -> { });

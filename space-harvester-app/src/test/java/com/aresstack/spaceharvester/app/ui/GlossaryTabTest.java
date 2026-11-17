@@ -448,6 +448,25 @@ class GlossaryTabTest {
         assertThat(by(MANUAL, fachlich, "LEGAL_TERM")).isEqualTo("fachlich · von Hand");
     }
 
+    @Test
+    void theModelPhaseStepsOfTheProtocolReadInWordsWithoutInternalNames() {
+        // Glossary#classify: die KI ordnet ein.
+        assertThat(GlossaryTab.historyLine(new GlossaryAccess.History("classify", "ai:glossary", T,
+                ReviewStatus.PROPOSED))).isEqualTo(GlossaryTab.minute(T) + " · von der KI eingeordnet");
+        // Glossary#withdrawAi: die Freigabe endet; ohne Handelnden, nie „von ai-release“.
+        assertThat(GlossaryTab.historyLine(new GlossaryAccess.History("unclassify", "ai-release", T,
+                ReviewStatus.PROPOSED))).isEqualTo(GlossaryTab.minute(T) + " · Einordnung der KI zurückgenommen "
+                + "(Seite nicht mehr für die KI freigegeben)");
+        // Ein Handelnder ohne Doppelpunkt ist kein Benutzer und erscheint nie als „von …“.
+        assertThat(GlossaryTab.actorText("ai-release")).isEmpty();
+        assertThat(GlossaryTab.historyLine(new GlossaryAccess.History("stale", "evidence-check", T,
+                ReviewStatus.PROPOSED))).isEqualTo(GlossaryTab.minute(T) + " · als „Beleg veraltet“ markiert");
+        assertThat(GlossaryTab.actorText("USER:angelo@app")).isEqualTo("von angelo");
+        // Von Hand eingeordnet bleibt „categorize“ mit dem Benutzer.
+        assertThat(GlossaryTab.historyLine(new GlossaryAccess.History("categorize", "USER:angelo", T,
+                ReviewStatus.PROPOSED))).isEqualTo(GlossaryTab.minute(T) + " · von angelo eingeordnet");
+    }
+
     private static final com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy AI =
             com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy.AI;
     private static final com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy RULE =

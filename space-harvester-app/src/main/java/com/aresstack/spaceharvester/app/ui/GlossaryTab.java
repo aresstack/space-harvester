@@ -1230,13 +1230,23 @@ final class GlossaryTab {
             return "von der KI";
         }
         int colon = actor.indexOf(':');
+        if (colon < 0) {
+            // Ohne Doppelpunkt ist es kein Benutzer (Benutzer: „ART:name[@über]“), sondern eine interne Kennung.
+            return "";
+        }
         int at = actor.indexOf('@');
         String principal = actor.substring(colon + 1, at > colon ? at : actor.length());
         return principal.isBlank() ? "" : "von " + principal;
     }
 
+    /** Der Protokollschritt, wenn die KI-Freigabe einer Seite endet: ohne Handelnden. */
+    static final String UNCLASSIFIED = "Einordnung der KI zurückgenommen (Seite nicht mehr für die KI freigegeben)";
+
     /** Eine Protokollzeile: „10.11.2026 08:00 · von der Regel vorgeschlagen“. */
     static String historyLine(GlossaryAccess.History step) {
+        if ("unclassify".equals(step.action())) {
+            return minute(step.at()) + " · " + UNCLASSIFIED;
+        }
         String who = actorText(step.actor());
         return minute(step.at()) + " · " + (who.isEmpty() ? "" : who + " ") + actionText(step.action());
     }
@@ -1249,7 +1259,7 @@ final class GlossaryTab {
             case "reject" -> "abgelehnt";
             case "restore" -> "Ablehnung zurückgenommen";
             case "explain" -> "Erläuterung geändert";
-            case "categorize" -> "eingeordnet";
+            case "categorize", "classify" -> "eingeordnet";
             case "remove" -> "entfernt";
             case "propose" -> "vorgeschlagen";
             case "unsupport" -> "nicht mehr gestützt";
