@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -63,12 +64,29 @@ public class TermRelations {
     private final AccessGuard access;
     private final Function<PageKey, Optional<PageHeader>> headers;
     private final Clock clock;
+    private final TermIndex index;
+    private final String processorVersion;
 
     /**
      * @param headers Kopfdaten einer Seite im Cache, für die Rechte an Belegen; leer, wenn sie dort nicht liegt
      */
     public TermRelations(SourceCatalog catalog, TermRelationStore store, AccessGuard access,
                          Function<PageKey, Optional<PageHeader>> headers, Clock clock) {
+        this(catalog, store, access, headers, clock, null, null);
+    }
+
+    /**
+     * @param index            Begriffsindex für {@link RelationSearch#pages()} (BG1, ADR 0029) oder {@code null}
+     * @param processorVersion aktuelle Version des Prozessors {@code terms}, mit {@code index}
+     */
+    public TermRelations(SourceCatalog catalog, TermRelationStore store, AccessGuard access,
+                         Function<PageKey, Optional<PageHeader>> headers, Clock clock, TermIndex index,
+                         String processorVersion) {
+        if ((index == null) != (processorVersion == null)) {
+            throw new IllegalArgumentException("index und processorVersion nur zusammen");
+        }
+        this.index = index;
+        this.processorVersion = processorVersion;
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.store = Objects.requireNonNull(store, "store");
         this.access = Objects.requireNonNull(access, "access");
@@ -86,9 +104,22 @@ public class TermRelations {
      * @param sourceId nur globale und für diese Quelle geltende oder {@code null} für alle
      * @param limit    1 bis {@link #MAX_LIMIT}
      * @param cursor   {@code nextCursor} der vorigen Antwort oder {@code null}
+     * @param pages    nur Beziehungen, von denen mindestens ein Begriff auf einer Seite der Menge vorkommt und deren
+     *                 Geltungsbereich diese Seite deckt, etwa eine Quelle oder ein Space samt Unterseiten (BG1, ADR
+     *                 0029); {@code null} ohne diese Grenze. Für genau eine Seite wie {@link #forTerms}.
      */
     public record RelationSearch(String term, RelationType type, ReviewStatus status, RelationOrigin origin,
-                                 String sourceId, int limit, String cursor) {
+                                 String sourceId, int limit, String cursor, PageSet pages) {
+
+        public RelationSearch(String term, RelationType type, ReviewStatus status, RelationOrigin origin,
+                              String sourceId, int limit, String cursor) {
+            this(term, type, status, origin, sourceId, limit, cursor, null);
+        }
+
+        /** Dieselbe Suche, begrenzt auf diese Seiten. */
+        public RelationSearch within(PageSet pages) {
+            return new RelationSearch(term, type, status, origin, sourceId, limit, cursor, pages);
+        }
     }
 
     /** Ein Stapel Beziehungen, nach Schlüssel sortiert. */
@@ -150,6 +181,10 @@ public class TermRelations {
         String term = search.term() == null || search.term().isBlank() ? null : TermText.normalize(search.term());
         String after = search.cursor() == null ? null : decode(search.cursor());
         Visibility visibility = new Visibility(caller);
+        if (search.pages() != null && index == null) {
+            throw new IllegalStateException("Ohne Begriffsindex keine Suche je Seitenmenge");
+        }
+        Occurrences occurrences = search.pages() == null ? null : new Occurrences(caller, search.pages());
         List<TermRelation> sorted = new ArrayList<>(store.all());
         sorted.sort(Comparator.comparing(TermRelation::key, TermIndex.ORDER));
         List<TermRelation> found = new ArrayList<>();
@@ -161,7 +196,8 @@ public class TermRelations {
                     || (search.status() == null ? relation.status() == ReviewStatus.REJECTED
                     : relation.status() != search.status())
                     || search.sourceId() != null && !relation.scope().global()
-                    && !search.sourceId().equals(relation.scope().sourceId())) {
+                    && !search.sourceId().equals(relation.scope().sourceId())
+                    || occurrences != null && !occurrences.covered(relation)) {
                 continue;
             }
             Optional<TermRelation> visible = visibility.visible(relation);
@@ -578,6 +614,63 @@ public class TermRelations {
     }
 
     /** Sichtbarkeit von Beziehungen und Belegen für einen Aufrufer, je Seite und Geltungsbereich einmal geprüft. */
+    /**
+     * Wo die Begriffe einer Seitenmenge vorkommen (BG1): je Suchwert die lesbaren Seiten der Menge mit Quelle und
+     * Space, aus dem Begriffsindex, nur Seiten selbst. Je Suchwert einmal gefragt.
+     */
+    private final class Occurrences {
+
+        private final AccessContext caller;
+        private final PageSet pages;
+        private final Map<String, List<PageScope>> byTerm = new HashMap<>();
+        private final Map<PageKey, Optional<PageScope>> scopes = new HashMap<>();
+
+        Occurrences(AccessContext caller, PageSet pages) {
+            this.caller = caller;
+            this.pages = pages;
+        }
+
+        /** Mindestens ein Begriff kommt auf einer Seite der Menge vor, deren Ort der Geltungsbereich deckt. */
+        boolean covered(TermRelation relation) {
+            return covered(relation, TermText.normalize(relation.fromTerm()))
+                    || covered(relation, TermText.normalize(relation.toTerm()));
+        }
+
+        private boolean covered(TermRelation relation, String normalized) {
+            return byTerm.computeIfAbsent(normalized, this::scopes).stream()
+                    .anyMatch(page -> relation.scope().covers(page.sourceId(), page.spaceKey()));
+        }
+
+        private List<PageScope> scopes(String normalized) {
+            if (pages.isEmpty() || !TermText.usable(normalized)) {
+                return List.of();
+            }
+            TermIndex.Filter filter = new TermIndex.Filter(pages.sourceIds(), null, normalized, null,
+                    processorVersion, null, TermOrigin.PAGES, pages);
+            Set<PageScope> found = new LinkedHashSet<>();
+            String from = null;
+            while (true) {
+                List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
+                for (TermPosting posting : batch) {
+                    scopes.computeIfAbsent(posting.page(), this::scope).ifPresent(found::add);
+                }
+                if (batch.size() < TermIndex.MAX_BATCH) {
+                    return List.copyOf(found);
+                }
+                from = batch.get(batch.size() - 1).sortKey();
+            }
+        }
+
+        private Optional<PageScope> scope(PageKey key) {
+            return headers.apply(key).filter(header -> access.canRead(caller, key.sourceId(),
+                    header.metadata().partitionKey(), key.pageId()))
+                    .map(header -> new PageScope(key.sourceId(), header.metadata().partitionKey()));
+        }
+    }
+
+    private record PageScope(String sourceId, String spaceKey) {
+    }
+
     private final class Visibility {
 
         private final AccessContext caller;

@@ -667,7 +667,7 @@ public final class Harvester implements AutoCloseable {
             FileResolutionCache resolutionCache = new FileResolutionCache(builder.dataDirectory.resolve("term-relations"));
             this.termRelations = new TermRelations(catalog,
                     new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
-                    cache::findHeader, clock);
+                    cache::findHeader, clock, enrichmentStore, termProcessor.version());
             this.acronymRelationRule = new AcronymRelationRule(catalog, enrichmentStore, access, cache::findHeader,
                     termRelations, termProcessor.version(), clock);
             // #122: KI-Akronymauflösung über das Chat-Modell der wirksamen Konfiguration, nur für freigegebene Quellen.
