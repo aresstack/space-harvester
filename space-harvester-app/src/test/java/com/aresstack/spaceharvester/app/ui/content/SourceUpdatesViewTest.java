@@ -69,10 +69,22 @@ class SourceUpdatesViewTest {
 
         assertThat(view.updateHeadings()).containsExactly("Seit dem letzten Update", "16.11.2026, 18:30 · angelo",
                 "10.11.2026, 08:00 · angelo");
-        assertThat(view.counts(actions.open())).startsWith("noch nicht abgeschlossen").contains("1 neu");
+        assertThat(view.counts(actions.open())).isEqualTo("Änderungen seit dem letzten manuellen Update: 1 neu");
         assertThat(view.counts(actions.initial())).isEqualTo("Erstbefüllung · 340 Seiten");
         assertThat(view.selectedUpdate()).as("das jüngste abgeschlossene gewählt").isEqualTo(actions.second().id());
         assertThat(view.subscribed()).isTrue();
+    }
+
+    @Test
+    void anUpdateMarkedByTheCoreItselfShowsOnlyTheDate() {
+        ChangeUpdate s = actions.second();
+        ChangeUpdate byCore = new ChangeUpdate(s.id(), s.sourceId(), s.from(), s.to(), new UpdateMark("wiki", SECOND,
+                com.aresstack.spaceharvester.core.Harvester.OWNER, List.of("CLUK"), 0, false), false, s.kinds(),
+                s.spaces(), s.pages(), s.loaded(), s.reloaded(), false);
+        view.zone(ZoneOffset.UTC);
+
+        assertThat(view.heading(byCore)).isEqualTo("16.11.2026, 18:30");
+        assertThat(view.heading(s)).isEqualTo("16.11.2026, 18:30 · angelo");
     }
 
     @Test
