@@ -22,6 +22,7 @@ import com.aresstack.spaceharvester.app.ui.Downloads;
 import com.aresstack.spaceharvester.app.ui.Feedback;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection;
+import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.HoldingsListener;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
@@ -739,7 +740,7 @@ public final class ChatPanel extends JPanel {
         JMenuItem settings = new JMenuItem("Modelle unter Einstellungen › KI …");
         settings.addActionListener(e -> context.navigator().showGeneralSettings());
         menu.add(settings);
-        menu.show(model, 0, model.getHeight());
+        PopupHover.clearOnClose(menu, model).show(model, 0, model.getHeight());
     }
 
     private void showEffortMenu() {
@@ -749,7 +750,7 @@ public final class ChatPanel extends JPanel {
             item.addActionListener(e -> effort.setText(level));
             menu.add(item);
         }
-        menu.show(effort, 0, effort.getHeight());
+        PopupHover.clearOnClose(menu, effort).show(effort, 0, effort.getHeight());
     }
 
     private void chooseAttachments() {
@@ -1081,7 +1082,7 @@ public final class ChatPanel extends JPanel {
             });
             menu.add(item);
         }
-        menu.show(chats, 0, chats.getHeight());
+        PopupHover.clearOnClose(menu, chats).show(chats, 0, chats.getHeight());
     }
 
     /** Rechtsklick auf den Namen: Umbenennen an Ort und Stelle, Chat löschen mit Rückfrage. */
