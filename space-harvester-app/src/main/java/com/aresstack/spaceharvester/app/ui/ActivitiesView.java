@@ -403,19 +403,26 @@ public final class ActivitiesView implements View {
     }
 
     static final String STAGE_LABEL = "Vorstufe";
+    /** Bezeichnung der Angaben am Auftrag „Aussagen prüfen“ (ADR 0032, FL4). */
+    static final String CHECK_LABEL = "Prüfschritt";
+
+    /** Die Codes, deren Meldungen als Angaben am Auftrag stehen; je Code zählt die jüngste. */
+    private static final java.util.Set<String> NOTE_CODES = java.util.Set.of(
+            com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NOT_RELEASED,
+            com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NO_MODEL,
+            com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.CHECK_COSTS,
+            com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.CHECK_NOT_RELEASED);
 
     /**
      * Die Zahlen der Vorstufe „Sätze vereinfachen“ einer Aussagenanalyse für die Angaben am Auftrag (ADR 0032, FL3):
      * Seiten ohne KI-Freigabe und, getrennt davon, Seiten ohne eingestelltes Modell, jeweils ohne Vorstufe analysiert.
-     * Der Core meldet sie als Ereignisse mit Code; je Code zählt das jüngste (nach Fortsetzen).
+     * Der Core meldet sie als Ereignisse mit Code; je Code zählt das jüngste (nach Fortsetzen). Ebenso beim Auftrag
+     * „Aussagen prüfen“ (FL4) die Bilanz des Prüfschritts und die Seiten ohne KI-Freigabe.
      */
     static List<String> stageNotes(List<JobEvent> events) {
         java.util.Map<String, String> notes = new java.util.LinkedHashMap<>();
         for (JobEvent event : events) {
-            if (com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NOT_RELEASED
-                    .equals(event.code())
-                    || com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NO_MODEL
-                    .equals(event.code())) {
+            if (event.code() != null && NOTE_CODES.contains(event.code())) {
                 notes.put(event.code(), event.message());
             }
         }
@@ -618,7 +625,7 @@ public final class ActivitiesView implements View {
             facts.add("Bewusst ausgelassen", String.valueOf(skipped(status)));
         }
         for (String note : stageNotes) {
-            facts.add(STAGE_LABEL, note);
+            facts.add(status.type() == JobType.STATEMENT_CHECK ? CHECK_LABEL : STAGE_LABEL, note);
         }
         facts.add("Auftrags-ID", status.id());
         if (status.error() != null) {

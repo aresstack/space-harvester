@@ -28,6 +28,19 @@ class ActivitiesStageNotesTest {
         assertThat(ActivitiesView.stageNotes(List.of(event(1, null, "ohne Vorstufe gestartet")))).isEmpty();
     }
 
+    /** Am Auftrag „Aussagen prüfen“ (FL4): Bilanz und Seiten ohne KI-Freigabe, je die jüngste. */
+    @Test
+    void theCheckShowsItsBalanceAndThePagesWithoutRelease() {
+        List<JobEvent> events = List.of(
+                event(1, StatementAnalysisJobs.CHECK_COSTS, "Prüfschritt: 3 Seiten ermittelt"),
+                event(2, StatementAnalysisJobs.CHECK_NOT_RELEASED, "1 Seiten ohne KI-Freigabe nicht geprüft"),
+                event(3, StatementAnalysisJobs.CHECK_COSTS, "Prüfschritt: 5 Seiten ermittelt"),
+                event(4, StatementAnalysisJobs.CHECK_UNAVAILABLE, "kein Modell"));
+
+        assertThat(ActivitiesView.stageNotes(events)).containsExactly("Prüfschritt: 5 Seiten ermittelt",
+                "1 Seiten ohne KI-Freigabe nicht geprüft");
+    }
+
     private static JobEvent event(long sequence, String code, String message) {
         return new JobEvent("job-1", sequence, Instant.parse("2026-11-17T03:00:00Z"), JobType.STATEMENT_ANALYSIS,
                 "wiki", "DEV", JobEvent.Severity.INFO, JobEvent.Category.JOB, StatementAnalysisJobs.COMPONENT,
