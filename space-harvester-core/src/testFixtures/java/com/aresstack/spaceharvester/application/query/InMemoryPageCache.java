@@ -86,6 +86,23 @@ public final class InMemoryPageCache implements PageCacheReader {
                 .findFirst();
     }
 
+    @Override
+    public List<PageHeader> children(String sourceId, String spaceKey, String parentPageId, int limit) {
+        return spaces.entrySet().stream()
+                .filter(entry -> entry.getKey().startsWith(sourceId + "\n"))
+                .flatMap(entry -> entry.getValue().headers().values().stream())
+                .filter(header -> parentPageId == null
+                        ? header.metadata().parentPageId() == null && header.metadata().partitionKey().equals(spaceKey)
+                        : parentPageId.equals(header.metadata().parentPageId()))
+                .limit(limit)
+                .toList();
+    }
+
+    @Override
+    public boolean hasChildren(String sourceId, String pageId) {
+        return !children(sourceId, null, pageId, 1).isEmpty();
+    }
+
     // Testdaten
 
     public static CacheGeneration confirmed(String id) {

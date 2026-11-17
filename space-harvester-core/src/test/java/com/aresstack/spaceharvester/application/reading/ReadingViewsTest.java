@@ -90,6 +90,39 @@ class ReadingViewsTest {
     }
 
     @Test
+    void theCachedViewNeverAsksTheSourceAndIsEmptyUntilAViewWasFetched() {
+        ReadingViews views = views((context, scope, kind) -> AccessDecision.ALLOW);
+
+        assertThat(views.cached(CALLER, "wiki", "100")).isEmpty();
+        views.view(CALLER, "wiki", "100", false);
+        source.unreachable = true;
+
+        ReadingView cached = views.cached(CALLER, "wiki", "100").orElseThrow();
+        assertThat(cached.stored()).isTrue();
+        assertThat(cached.version()).isEqualTo("3");
+        assertThat(cached.html()).contains("Kinderseite");
+        assertThat(source.reads).isEqualTo(1);
+        // Auch aus der Ablage allein, ohne Speicher: ein neuer Dienst über derselben Ablage.
+        assertThat(views((context, scope, kind) -> AccessDecision.ALLOW).cached(CALLER, "wiki", "100")).isPresent();
+        assertThatThrownBy(() -> views((context, scope, kind) -> AccessDecision.DENY).cached(CALLER, "wiki", "100"))
+                .isInstanceOf(com.aresstack.spaceharvester.application.access.AccessDeniedException.class);
+    }
+
+    @Test
+    void prefetchFetchesTheViewsInTheBackgroundSoThatTheCachedViewIsThere() throws InterruptedException {
+        ReadingViews views = views((context, scope, kind) -> AccessDecision.ALLOW);
+
+        views.prefetch(CALLER, "wiki", List.of("100", "100"));
+
+        long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        while (views.cached(CALLER, "wiki", "100").isEmpty() && System.nanoTime() < until) {
+            Thread.sleep(20);
+        }
+        assertThat(views.cached(CALLER, "wiki", "100")).isPresent();
+        assertThat(source.reads).isEqualTo(1);
+    }
+
+    @Test
     void includedContentNeedsTheWholeSourceAndIsFetchedEveryTime() {
         ReadingView restricted = views((context, scope, kind) -> AccessDecision.ALLOW).view(CALLER, "wiki", "101",
                 false);
@@ -124,12 +157,18 @@ class ReadingViewsTest {
         assertThat(views.view(CALLER, "wiki", "100", false).stored()).isTrue();
 
         enrichments.removeAll(new PageKey("wiki", "100"));
-        assertThatThrownBy(() -> views.view(CALLER, "wiki", "100", false)).isInstanceOf(SourceAccessException.class);
+        // Im Speicher liegt sie noch zur selben Payload; ohne Speicher und Ablage scheitert es.
+        assertThat(views.view(CALLER, "wiki", "100", false).stored()).isTrue();
+        assertThatThrownBy(() -> views((context, scope, kind) -> AccessDecision.ALLOW).view(CALLER, "wiki", "100",
+                false)).isInstanceOf(SourceAccessException.class);
 
         source.unreachable = false;
         source.version = "4";
-        // Nur zur geprüften Version 3; die Neuprüfung braucht die Quelle, ohne Anbindung scheitert sie.
-        assertThatThrownBy(() -> views.view(CALLER, "wiki", "100", false)).isInstanceOf(RuntimeException.class);
+        // Nur zur geprüften Version 3; die Neuprüfung braucht die Quelle, ohne Anbindung scheitert sie. Der Speicher
+        // hält nur die Ansicht zur Payload von Version 3 und zeigt nie Version 4.
+        assertThat(views.view(CALLER, "wiki", "100", false).version()).isEqualTo("3");
+        assertThatThrownBy(() -> views((context, scope, kind) -> AccessDecision.ALLOW).view(CALLER, "wiki", "100",
+                false)).isInstanceOf(RuntimeException.class);
         assertThat(enrichments.find(new PageKey("wiki", "100"))).isEmpty();
     }
 

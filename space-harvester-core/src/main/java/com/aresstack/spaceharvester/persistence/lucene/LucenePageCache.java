@@ -552,6 +552,14 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
                 .build(), limit);
     }
 
+    /** Ob der Cache direkte Kinder der Seite kennt, über alle Spaces der Quelle. */
+    public boolean hasChildren(PageKey parent) {
+        Objects.requireNonNull(parent, "parent");
+        Query query = pages(parent.sourceId()).add(exact(PageCacheSchema.PARENT_ID, parent.pageId()),
+                BooleanClause.Occur.FILTER).build();
+        return read(searcher -> searcher.count(query) > 0);
+    }
+
     /** Seiten eines Space ohne Elternseite nach aktuellen Kopfdaten, nach Seiten-ID; ohne Payload. */
     public List<CachedPageHeader> rootPages(String sourceId, String spaceKey, int limit) {
         return headers(pages(sourceId)
