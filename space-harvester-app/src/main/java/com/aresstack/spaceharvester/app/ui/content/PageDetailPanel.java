@@ -113,6 +113,7 @@ public final class PageDetailPanel extends JPanel {
     /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
     private static final String SOURCE_CARD = "source";
     private static final String SOURCE_TEXT_CARD = "source-text";
+    private static final String SOURCE_PROPERTIES_CARD = "source-properties";
     static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
     /** Die übrigen Reiter der Quellenseite bleiben leer, bis sie Quelleninhalte zeigen; kein Hinweistext. */
     static final String EMPTY_SOURCE = " ";
@@ -141,6 +142,8 @@ public final class PageDetailPanel extends JPanel {
     private final SourceUpdatesView sourceView;
     /** Quellenseite: unter „Text“ die Updates mit ihren Änderungen (Angelo, 17.11.2026). */
     private final SourceUpdatesView sourceChanges;
+    /** „Eigenschaften“ der Quellenseite: Kennzahlen und Einstellungen der Quelle. */
+    private final SourcePropertiesView sourceProperties;
     private final JLabel state = Comic.muted(" ");
     /** Schließt das Seiteninfo-Popup, sobald die Maus Überschrift und Popup verlassen hat. */
     private final javax.swing.Timer detailsWatch = new javax.swing.Timer(120, e -> hideDetailsWhenLeft());
@@ -286,6 +289,13 @@ public final class PageDetailPanel extends JPanel {
         // Beide Reiter zeigen dasselbe Update: Wer es in einem wählt, sieht es im anderen auch.
         sourceView.onSelected(sourceChanges::select);
         sourceChanges.onSelected(sourceView::select);
+        this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
+                : context.runtime().workspace(), context::settings);
+        sourceProperties.onEdit(id -> {
+            if (context.navigator() != null) {
+                context.navigator().editSource(id);
+            }
+        });
         this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace());
         this.export = new ExportPanel(context);
@@ -483,6 +493,7 @@ public final class PageDetailPanel extends JPanel {
         deck.add(chat, CHAT_CARD);
         deck.add(sourceView, SOURCE_CARD);
         deck.add(sourceChanges, SOURCE_TEXT_CARD);
+        deck.add(sourceProperties, SOURCE_PROPERTIES_CARD);
         add(deck, BorderLayout.CENTER);
         clear();
     }
@@ -589,6 +600,7 @@ public final class PageDetailPanel extends JPanel {
             // Keine Quellenseite mehr: Anmeldung beim Änderungsprotokoll endet, die leere Karte nennt wieder die Seite.
             sourceView.source(null, null);
             sourceChanges.source(null, null);
+            sourceProperties.source(null);
             empty.setText(EMPTY_PAGE);
         }
         pageCard = card;
@@ -600,10 +612,12 @@ public final class PageDetailPanel extends JPanel {
         // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
         sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected));
         sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected));
+        sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && PROPERTIES.equals(selected));
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
             // Quellenseite: „Leseansicht“ die KI-Zusammenfassung, „Text“ die Updates; die übrigen Reiter noch leer.
-            page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD : EMPTY;
+            page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD
+                    : PROPERTIES.equals(selected) ? SOURCE_PROPERTIES_CARD : EMPTY;
         }
         cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD : page);
     }
@@ -627,6 +641,8 @@ public final class PageDetailPanel extends JPanel {
         empty.setText(EMPTY_SOURCE);
         sourceView.source(sourceId, spaceKey, shownTitle);
         sourceChanges.source(sourceId, spaceKey, shownTitle);
+        // Kennzahlen und Einstellungen gibt es vorerst nur für die ganze Quelle.
+        sourceProperties.source(spaceKey == null ? sourceId : null);
         pageCard = SOURCE_CARD;
         showDeck();
     }
@@ -649,6 +665,10 @@ public final class PageDetailPanel extends JPanel {
     /** Der Reiter „Analysen › Graph“; die Auswahl links grenzt ihn ein (ADR 0029). */
     SourceUpdatesView sourceChanges() {
         return sourceChanges;
+    }
+
+    SourcePropertiesView sourceProperties() {
+        return sourceProperties;
     }
 
     SourceUpdatesView sourceView() {
@@ -2033,7 +2053,7 @@ public final class PageDetailPanel extends JPanel {
      * links davon die Werkzeuge der Updates (keine eigene Leiste, Angelo 17.11.2026).
      */
     JComponent headerActions() {
-        return Comic.row(sourceView.tools(), sourceChanges.tools(), star, more);
+        return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), star, more);
     }
 
     /** Zurück und Vor für die Statuszeile des Hauptfensters. */

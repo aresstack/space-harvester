@@ -312,10 +312,21 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
         onEdt(() -> {
+            view.detail().tabs().select("Eigenschaften");
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().sourceProperties().isVisible())).as("„Eigenschaften“: die Quelle")
+                .isTrue();
+        assertThat(onEdt(() -> view.detail().sourceProperties().sourceId())).isEqualTo("handbuch");
+        assertThat(onEdt(() -> view.detail().sourceProperties().tools().isVisible())).isTrue();
+        assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isFalse();
+        onEdt(() -> {
             view.detail().tabs().select("Erweitert");
             return null;
         });
         assertThat(onEdt(() -> view.detail().sourceView().isVisible())).as("übrige Reiter leer").isFalse();
+        assertThat(onEdt(() -> view.detail().sourceProperties().isVisible())).isFalse();
+        assertThat(onEdt(() -> view.detail().sourceProperties().tools().isVisible())).isFalse();
         assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).isFalse();
         assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
         onEdt(() -> {
@@ -340,6 +351,8 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().sourceView().spaceKey())).isEqualTo(space);
         assertThat(onEdt(() -> view.detail().sourceChanges().spaceKey())).isEqualTo(space);
         assertThat(onEdt(() -> view.shownSource())).as("„Nach dem Update“ öffnet nur die ganze Quelle").isNull();
+        assertThat(onEdt(() -> view.detail().sourceProperties().sourceId())).as("Eigenschaften nur für die Quelle")
+                .isNull();
         assertThat(onEdt(() -> view.detail().tabs().button("Leseansicht").getToolTipText())).isEqualTo("Leseansicht");
         assertThat(onEdt(() -> barIcons(view.detail()))).containsExactly(bar);
     }
