@@ -275,6 +275,8 @@ public final class ContentView implements View {
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
         detail.standing().selection(selection);
+        // Eine Seite zeigt unter „Analysen“ ihre eigenen Analysen, jede weitere Ebene den Stand der Auswahl.
+        detail.wide(selection == null || selection.global() || !selection.page());
         // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind.
         if (selection != null && !selection.global()) {
             // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite

@@ -99,10 +99,14 @@ class AnalysisTabsScreenshotTest {
     }
 
     static void write(JComponent component, Path file) {
+        write(component, file, 420);
+    }
+
+    static void write(JComponent component, Path file, int height) {
         JPanel surface = new JPanel(new BorderLayout());
         surface.setBackground(com.aresstack.spaceharvester.app.ui.Comic.SURFACE);
         surface.add(component, BorderLayout.CENTER);
-        surface.setSize(1280, 420);
+        surface.setSize(1280, height);
         layout(surface);
         // Umbrechende Texte kennen erst nach dem ersten Auslegen ihre echte Breite; im Fenster legt Swing danach neu
         // aus (WrappedText.setBounds), hier ohne Fenster von Hand: zwischengespeicherte Größen verwerfen.
