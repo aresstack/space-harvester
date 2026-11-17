@@ -182,35 +182,16 @@ public class TermRelations {
         if (search.limit() < 1 || search.limit() > MAX_LIMIT) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
         }
-        if (search.sourceId() != null && catalog.find(search.sourceId()).isEmpty()) {
-            throw new UnknownSourceException(search.sourceId());
-        }
-        String term = search.term() == null || search.term().isBlank() ? null : TermText.normalize(search.term());
         String after = search.cursor() == null ? null : decode(search.cursor());
-        String prefix = search.startsWith() == null || search.startsWith().isBlank() ? null
-                : TermText.normalize(search.startsWith());
-        Visibility visibility = new Visibility(caller);
-        if (search.pages() != null && index == null) {
-            throw new IllegalStateException("Ohne Begriffsindex keine Suche je Seitenmenge");
-        }
-        Occurrences occurrences = search.pages() == null ? null : new Occurrences(caller, search.pages());
         List<TermRelation> sorted = new ArrayList<>(store.all());
         sorted.sort(Comparator.comparing(TermRelation::key, TermIndex.ORDER));
+        Matching matching = new Matching(caller, search);
         List<TermRelation> found = new ArrayList<>();
         for (TermRelation relation : sorted) {
-            if (after != null && TermIndex.ORDER.compare(relation.key(), after) <= 0
-                    || term != null && !relation.touches(term)
-                    || prefix != null && !relation.sortTerm().startsWith(prefix)
-                    || search.type() != null && relation.type() != search.type()
-                    || search.origin() != null && relation.origin() != search.origin()
-                    || (search.status() == null ? relation.status() == ReviewStatus.REJECTED
-                    : relation.status() != search.status())
-                    || search.sourceId() != null && !relation.scope().global()
-                    && !search.sourceId().equals(relation.scope().sourceId())
-                    || occurrences != null && !occurrences.covered(relation)) {
+            if (after != null && TermIndex.ORDER.compare(relation.key(), after) <= 0) {
                 continue;
             }
-            Optional<TermRelation> visible = visibility.visible(relation);
+            Optional<TermRelation> visible = matching.visible(relation);
             if (visible.isEmpty()) {
                 continue;
             }
@@ -220,6 +201,63 @@ public class TermRelations {
             found.add(visible.get());
         }
         return new RelationList(found, null);
+    }
+
+    /**
+     * Wie viele Beziehungen {@link #relations} für diese Suche insgesamt liefert, je Art (BG1b); {@code limit} und
+     * {@code cursor} zählen nicht. Dieselben Filter, Vorgabe „ohne abgelehnte“ und Sichtbarkeit.
+     *
+     * @return Zahl je Art; Arten ohne Beziehung fehlen
+     * @throws UnknownSourceException bei unbekannter {@code sourceId}
+     */
+    public Map<RelationType, Integer> counts(AccessContext caller, RelationSearch search) {
+        Objects.requireNonNull(search, "search");
+        Matching matching = new Matching(caller, search);
+        Map<RelationType, Integer> counts = new java.util.EnumMap<>(RelationType.class);
+        for (TermRelation relation : store.all()) {
+            matching.visible(relation).ifPresent(visible -> counts.merge(visible.type(), 1, Integer::sum));
+        }
+        return Map.copyOf(counts);
+    }
+
+    /** Filter und Sichtbarkeit einer {@link RelationSearch}, gemeinsam für {@link #relations} und {@link #counts}. */
+    private final class Matching {
+
+        private final RelationSearch search;
+        private final String term;
+        private final String prefix;
+        private final Visibility visibility;
+        private final Occurrences occurrences;
+
+        Matching(AccessContext caller, RelationSearch search) {
+            if (search.sourceId() != null && catalog.find(search.sourceId()).isEmpty()) {
+                throw new UnknownSourceException(search.sourceId());
+            }
+            if (search.pages() != null && index == null) {
+                throw new IllegalStateException("Ohne Begriffsindex keine Suche je Seitenmenge");
+            }
+            this.search = search;
+            this.term = search.term() == null || search.term().isBlank() ? null : TermText.normalize(search.term());
+            this.prefix = search.startsWith() == null || search.startsWith().isBlank() ? null
+                    : TermText.normalize(search.startsWith());
+            this.visibility = new Visibility(caller);
+            this.occurrences = search.pages() == null ? null : new Occurrences(caller, search.pages());
+        }
+
+        Optional<TermRelation> visible(TermRelation relation) {
+            if (term != null && !relation.touches(term)
+                    || prefix != null && !relation.sortTerm().startsWith(prefix)
+                    || search.type() != null && relation.type() != search.type()
+                    || search.origin() != null && relation.origin() != search.origin()
+                    || (search.status() == null ? relation.status() == ReviewStatus.REJECTED
+                    : relation.status() != search.status())
+                    || search.sourceId() != null && !relation.scope().global()
+                    && !search.sourceId().equals(relation.scope().sourceId())
+                    || occurrences != null && !occurrences.covered(relation)) {
+                return Optional.empty();
+            }
+            return visibility.visible(relation);
+        }
     }
 
     /**
