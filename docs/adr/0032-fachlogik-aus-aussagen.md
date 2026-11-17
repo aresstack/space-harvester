@@ -112,3 +112,24 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   Objekt unsicheres Objekt, sonst verworfen.
 - Mehrteilige Namen mit Bindestrich (`compound`) und `flat` bilden Kopfform und Grundform („Batch-Job“, „Load Balancer“).
 - Gespeicherte Analysen mit rules-6 gelten als veraltet (Analyzer-Version).
+
+## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
+- Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
+  [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).
+- Stand je Aussage: Entscheidung des Menschen > Vorstufe (KI), wenn die Merkmale aus dem vereinfachten Satz stammen und
+  der Zeitbezug nichts Eigenes sagt > Zeitbezug (früher und verworfen beide überholt, Grund getrennt) > unklar. Die Seite
+  (Label, eigener Titel, Titel eines Vorfahren, Entscheidung zur Seite) zieht nur Aussagen, deren „gilt“ der stille
+  Vorgabewert ist (Zeitbezug GILT, Kennzeichen Tatsache oder Bedingung): überholt →
+  überholt, Entwurf → unklar; Geplantes auf einer überholten Seite wird unklar. Verneinung und Verbindlichkeit ändern
+  den Stand nie und gehen an jedem Eintrag mit.
+- Ob eine Aussage zählt und mit welcher Stufe, beantwortet nur `StandingRules#effectiveQuality` (FL4 hängt dort ein):
+  ungültige und abgelehnte fehlen, unsichere erscheinen gekennzeichnet und zählen nicht für die Seite. Stand je Seite =
+  Zahlen je Stand, Etikett aus der Mehrheit der sicheren Aussagen, bei Gleichstand unklar.
+- Entscheidungen des Menschen je Seite (über Fassungen hinweg) und je Aussage (genau diese Fassung, sonst „veraltet“) in
+  `standing-decisions/v1` mit Revision und Protokoll wie geprüfte Fakten; lesen wie die Seite, ändern mit `sync`;
+  gelöscht mit der Quelle; Änderungen per Beobachter.
+- Reine Auswertung, abbrechbar, speichert nichts; nur Kopfdaten aus dem Bestand. Laufzeit: 3000 erzeugte Seiten mit
+  60 000 Aussagen rund 0,1 s im Container.
+- Wortlisten (FL6 Teil 1b): einzige Stelle `StandingSettings` (`space-harvester.statements.standing.outdated-words`,
+  `.draft-words`), beide Loader und `ConfigurationParityTest`; fehlend oder leer heißt Vorgabe. Entscheidungen bleiben
+  beim Entfernen einer Seite aus dem Bestand stehen wie ihre Analyse und geprüfte Fakten, sie fallen mit der Quelle.

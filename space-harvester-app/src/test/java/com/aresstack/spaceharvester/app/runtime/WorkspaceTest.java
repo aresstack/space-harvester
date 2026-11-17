@@ -318,8 +318,9 @@ class WorkspaceTest {
     }
 
     /**
-     * Die Aufträge „Zusammenfassen“ gehören dem Aufrufer der App, nicht dem Core-Eigentümer der Abgleiche. Über den
-     * Workspace findet die Leseansicht sie, hört ihr Ende und bricht sie ab (Fehler bis #843: BusyOverlay blieb stehen).
+     * Die Aufträge „Zusammenfassen“ gehören dem Aufrufer der App, nicht dem Core-Eigentümer der Abgleiche. Über die
+     * allgemeinen Wege des Workspace (#846) findet die Leseansicht sie, hört ihr Ende und bricht sie ab (Fehler bis
+     * #843: BusyOverlay blieb stehen).
      */
     @Test
     void theSummaryJobIsFoundHeardAndCancelledThroughTheWorkspace() throws Exception {
@@ -363,18 +364,18 @@ class WorkspaceTest {
 
             java.util.concurrent.BlockingQueue<JobStatus> changes = new java.util.concurrent.LinkedBlockingQueue<>();
             try (com.aresstack.spaceharvester.application.observe.Subscription subscription =
-                         workspace.subscribeSummaryJobs(new com.aresstack.spaceharvester.application.jobs.JobListener() {
+                         workspace.subscribeJobs(new com.aresstack.spaceharvester.application.jobs.JobListener() {
                              @Override
                              public void changed(JobStatus status) {
                                  changes.add(status);
                              }
                          })) {
                 JobStatus started = workspace.summarizeUpdate("handbuch", update.id(), null);
-                assertThat(workspace.summaryJob(started.id()).id()).as("über den Eigentümer der App gefunden")
+                assertThat(workspace.job(started.id()).id()).as("über den allgemeinen Weg gefunden")
                         .isEqualTo(started.id());
                 assertThat(asked.await(20, java.util.concurrent.TimeUnit.SECONDS)).as("Modell gefragt").isTrue();
 
-                assertThat(workspace.cancelSummary(started.id()).cancelRequested()).isTrue();
+                assertThat(workspace.cancelJob(started.id()).cancelRequested()).isTrue();
                 release.countDown();
 
                 JobStatus ended = null;
@@ -385,10 +386,10 @@ class WorkspaceTest {
                         ended = next;
                     }
                 }
-                assertThat(ended).as("Ende über subscribeSummaryJobs gemeldet").isNotNull();
-                // Der Abbruch wirkt nach der laufenden Modellanfrage; scheitert sie (hier HTTP 500), endet der Auftrag
-                // als gescheitert. Entscheidend ist, dass das Ende über den Workspace ankommt und nichts entstand.
-                assertThat(ended.state()).isIn(JobState.CANCELLED, JobState.FAILED);
+                assertThat(ended).as("Ende über subscribeJobs gemeldet").isNotNull();
+                // Der Abbruch wirkt nach der laufenden Modellanfrage; scheitert sie danach (hier HTTP 500), zählt der
+                // Core das als Abbruch, nicht als Fehler.
+                assertThat(ended.state()).isEqualTo(JobState.CANCELLED);
                 assertThat(workspace.changeSummary("handbuch", update.id(), null)).isEmpty();
             }
         } finally {

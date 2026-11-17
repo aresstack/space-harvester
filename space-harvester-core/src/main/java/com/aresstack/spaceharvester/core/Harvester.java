@@ -350,6 +350,7 @@ public final class Harvester implements AutoCloseable {
     private final Simplifications simplifications;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
     private final StatementAnalysisJobs statementAnalysisJobs;
     private final KnowledgeGraphExportUseCase knowledgeGraphExport;
     private final SourceQueryExports sourceQueryExports;
@@ -942,6 +943,12 @@ public final class Harvester implements AutoCloseable {
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            // ADR 0032, FL6: Stand und Status-quo-Sicht aus gespeicherten Aussagen; Entscheidungen als Nutzerdaten.
+            this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
+                    cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
+                    builder.dataDirectory.resolve("standing")), access,
+                    () -> com.aresstack.spaceharvester.application.standing.StandingWords.of(
+                            this.settings.standing()), clock);
             this.statementAnalysisJobs = new StatementAnalysisJobs(jobs, new StatementAnalysisJobs.Discovery() {
                 @Override
                 public PageNavigation.Children children(AccessContext who, String sourceId, String spaceKey,
@@ -1034,6 +1041,7 @@ public final class Harvester implements AutoCloseable {
                     .glossary(glossary)
                     .factEdits(factEditStore, clock)
                     .knowledgeGraph(graphStore, graph::forgetInputs)
+                    .standing(statusQuo)
                     .inventoryLog(inventoryLog)
                     .build(), sourceId -> catalog.config(sourceId).isPresent(),
                     sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
@@ -1656,6 +1664,11 @@ public final class Harvester implements AutoCloseable {
      */
     public KnowledgeGraph knowledgeGraph() {
         return knowledgeGraph;
+    }
+
+    /** Stand und Status-quo-Sicht (ADR 0032, FL6). */
+    public com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo() {
+        return statusQuo;
     }
 
     /**
