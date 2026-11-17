@@ -338,7 +338,11 @@ Core selbst.
   gewählte Seiten gehen ganz mit, sonst sucht die progressive Suche des Core, ADR 0017, nur in den gewählten Seiten
   und die besten acht Treffer kommen als Absatz samt Nachbarn oder Lesetext-Auszug mit; Kontextblock wie
   `PromptContextAssembler` des EAC mit nummerierten Auszügen, Quelle, Ort und dem Hinweis, dass Auszüge Daten sind;
-  24 000 Zeichen), dann der Stream des Chat-Modells in die Antwortblase, der Verlauf ohne abgebrochene Antworten;
+  24 000 Zeichen; die Systemnachricht nennt dem Modell immer den gewählten Bereich wie die Zeile „Wissen:“ und
+  verbietet ihm, nach Links oder Dateien zu fragen; findet die Suche keinen Auszug, etwa bei „Worum geht es hier?“,
+  bekommt das Modell die Startseiten des Bereichs als Überblick, eine Titelliste der größten Teilbäume und den Text
+  der ersten Startseiten, Angelo 17.11.2026), dann der Stream des Chat-Modells in die Antwortblase, der Verlauf ohne
+  abgebrochene Antworten;
   der Knopf heißt solange **Stopp**, die Statuszeile „Wissen wird gesucht …“ und „Antwort wird geschrieben · n
   Auszüge aus dem Bestand“. Fehler stehen lesbar in der Blase (Art, Status, technische Ursache) und werden nicht
   gespeichert; ein Abbruch behält den Teiltext mit „Abgebrochen“. Ohne Laufzeit oder Chat-Modell sagt die Statuszeile

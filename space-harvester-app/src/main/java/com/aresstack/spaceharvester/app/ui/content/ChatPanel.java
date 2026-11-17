@@ -561,7 +561,23 @@ public final class ChatPanel extends JPanel {
         if (selection == null) {
             return NO_SELECTION;
         }
-        StringBuilder text = new StringBuilder("Wissen: ");
+        StringBuilder text = new StringBuilder("Wissen: ").append(areaText(selection, counts));
+        if (!complete) {
+            // Ein Space ohne Inventur: der Cache kennt nur einzeln geladene Seiten, Unterseiten fehlen womöglich.
+            text.append(" · ").append(ExportPanel.INCOMPLETE);
+        }
+        if (!allowed) {
+            text.append(" · ").append(NOT_ALLOWED);
+        }
+        return text.toString();
+    }
+
+    /** Der gewählte Bereich in Worten, für die Zeile „Wissen:“ und die Systemnachricht; {@code null} ohne Auswahl. */
+    static String areaText(Selection selection, HoldingCounts counts) {
+        if (selection == null) {
+            return null;
+        }
+        StringBuilder text = new StringBuilder();
         if (selection.global()) {
             text.append("alle Wissensquellen");
         } else if (selection.pageId() != null) {
@@ -580,13 +596,6 @@ public final class ChatPanel extends JPanel {
             if (missing > 0) {
                 text.append(" · ").append(missing).append(" davon nicht geladen");
             }
-        }
-        if (!complete) {
-            // Ein Space ohne Inventur: der Cache kennt nur einzeln geladene Seiten, Unterseiten fehlen womöglich.
-            text.append(" · ").append(ExportPanel.INCOMPLETE);
-        }
-        if (!allowed) {
-            text.append(" · ").append(NOT_ALLOWED);
         }
         return text.toString();
     }
@@ -845,7 +854,8 @@ public final class ChatPanel extends JPanel {
         TurnListener listener = new TurnListener(target, targetNode, answering);
         listening = listener;
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, resolved,
-                listener, SwingUtilities::invokeLater);
+                areaText(selection, resolved == null ? null : resolved.counts()), listener,
+                SwingUtilities::invokeLater);
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());
