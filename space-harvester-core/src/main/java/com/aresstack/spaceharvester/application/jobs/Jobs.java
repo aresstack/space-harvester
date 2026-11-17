@@ -1548,7 +1548,9 @@ public class Jobs implements AutoCloseable {
             Instant now = clock.instant();
             if (cause == null) {
                 job.finish(JobState.COMPLETED, null, now);
-            } else if (cause instanceof JobCancelledException) {
+            } else if (cause instanceof JobCancelledException || job.cancelRequested) {
+                // Auch wenn der Schritt nach dem angeforderten Abbruch anders scheitert, etwa eine abgebrochene
+                // Modellanfrage: Der Benutzer hat abgebrochen oder angehalten, ein Fehler war es nicht.
                 job.finish(job.pauseRequested ? JobState.PAUSED : JobState.CANCELLED, null, now);
             } else {
                 job.finish(JobState.FAILED, errorOf(cause), now);
