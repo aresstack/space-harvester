@@ -64,12 +64,57 @@ final class GermanTagCorrections {
     private static final Set<String> HINZU_STEMS = Set.of("füg", "zieh", "komm", "rechn", "zähl", "kauf", "verdien",
             "lern", "gewinn", "tret", "denk", "schreib", "hol", "ruf", "schalt", "buch", "wähl", "misch", "erwerb");
 
+    /** Stämme der nominalisierten Adjektive (Zielform ohne „e“), längere zuerst (ADR 0032, rules-15). */
+    private static final List<String> NOMINALIZED_STEMS = nominalizedStems();
+    /** Beugungsendungen eines nominalisierten Adjektivs. */
+    private static final List<String> ADJECTIVE_ENDINGS = List.of("e", "er", "en", "em", "es");
+
     private GermanTagCorrections() {
+    }
+
+    /**
+     * Grundform eines nominalisierten Adjektivs aus der geschlossenen Liste {@code nominalisierte-adjektive.tsv}: Trägt
+     * die Form am Wortende einen Listenstamm mit Beugungsendung, auch als Ende einer Zusammensetzung, ist die Grundform
+     * Vorderglied + Zielform (schwache Form, Nominativ Einzahl, klein: „Bevollmächtigter“ → „bevollmächtigte“,
+     * „Datenschutzbeauftragten“ → „datenschutzbeauftragte“); sonst {@code null}.
+     */
+    static String nominalizedAdjective(String form) {
+        if (form == null || form.isEmpty() || !Character.isUpperCase(form.charAt(0))) {
+            return null;
+        }
+        String lower = form.toLowerCase(Locale.ROOT);
+        for (String stem : NOMINALIZED_STEMS) {
+            for (String ending : ADJECTIVE_ENDINGS) {
+                if (lower.endsWith(stem + ending)) {
+                    return lower.substring(0, lower.length() - stem.length() - ending.length()) + stem + "e";
+                }
+            }
+        }
+        return null;
+    }
+
+    private static List<String> nominalizedStems() {
+        try (InputStream input = GermanTagCorrections.class.getResourceAsStream("nominalisierte-adjektive.tsv")) {
+            if (input == null) {
+                throw new IllegalStateException("nominalisierte-adjektive.tsv fehlt");
+            }
+            return java.util.Arrays.stream(new String(input.readAllBytes(), StandardCharsets.UTF_8).split("\\r?\\n"))
+                    .map(String::strip).filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                    .map(word -> word.substring(0, word.length() - 1)).distinct()
+                    .sorted(Comparator.comparingInt(String::length).reversed()).toList();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     /** Korrigiert die Wortarten an Ort und Stelle; {@code upos[i]} gehört zu {@code forms[i]}. */
     static void correctTags(String[] forms, String[] upos) {
         for (int i = 0; i < forms.length; i++) {
+            // Nominalisiertes Adjektiv der Liste ist nie ein Eigenname („Der Bevollmächtigte“, rules-15)
+            if ("PROPN".equals(upos[i]) && nominalizedAdjective(forms[i]) != null) {
+                upos[i] = "NOUN";
+                continue;
+            }
             if (!VERBAL.contains(upos[i])) {
                 continue;
             }
@@ -103,6 +148,12 @@ final class GermanTagCorrections {
      * wird ihre Grundform nicht aus der Form gebildet.
      */
     static String lemma(String form, String upos, String lemma, boolean sentenceStart) {
+        if ("NOUN".equals(upos)) {
+            String nominalized = nominalizedAdjective(form);
+            if (nominalized != null) {
+                return nominalized;
+            }
+        }
         if (!sentenceStart && !form.isEmpty() && Character.isUpperCase(form.charAt(0))
                 && (lemma == null || lemma.equalsIgnoreCase(form))) {
             return lemma;
