@@ -48,6 +48,9 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
 | `space-harvester.search.semantic` | `false` | Voreinstellung des Hakens „semantisch“ für Clients (wirkt nur mit Embedding-Modell); die Relevanzsuche selbst folgt dem Embedding-Modell |
 | `space-harvester.search.rerank` | `true` | Treffer über das Rerank-Modell umordnen, wenn eines eingestellt ist |
 | `space-harvester.search.prefetch-hits` | `true` | Treffer der nativen Quellensuche zuerst in den Cache laden |
+| `space-harvester.statements.simplification.mode` | `where-needed` | Vorstufe „Sätze vereinfachen“ der Aussagenanalyse (ADR 0032): `where-needed` nur Stichpunkte, Kennungszeilen und Sätze ohne sichere Aussage, `always` alle Sätze mit Verb. Läuft nur im ausdrücklich gestarteten Auftrag und nur für Seiten mit KI-Freigabe |
+| `space-harvester.statements.simplification.parallel` | `2` | so viele Abschnitte einer Seite höchstens zugleich beim Modell, mindestens 1 |
+| `space-harvester.statements.simplification.model` | leer | eigenes Chat-Modell für die Vorstufe; leer heißt `ai.chat-model` (Dienst und Schlüssel bleiben dieselben). Wirkt beim nächsten Aufruf |
 
 - `GET /api/v1/configuration`: wirksame Version, `activatedAt` und die Werte. Vom API-Key und vom Proxy-Passwort
   steht nur `apiKeySet` bzw. `passwordSet`; Adressen ohne Query.
