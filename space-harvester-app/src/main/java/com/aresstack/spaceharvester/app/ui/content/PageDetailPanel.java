@@ -200,21 +200,32 @@ public final class PageDetailPanel extends JPanel {
     private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position shownPosition;
     /** Die Überschrift für die Zeile der Bereichsanzeige ({@link #headerTitle()}): mittig, nie breiter als ihr Text. */
     private final JPanel heading = new JPanel(null) {
+        /** Die Seitenüberschrift oder, im Reiter Chat, „Chat: ‹Name› ▾“ (Angelo, 17.11.2026): das sichtbare Kind. */
+        private java.awt.Component shown() {
+            for (java.awt.Component child : getComponents()) {
+                if (child.isVisible()) {
+                    return child;
+                }
+            }
+            return title;
+        }
+
         @Override
         public void doLayout() {
-            java.awt.Dimension t = title.getPreferredSize();
+            java.awt.Component shown = shown();
+            java.awt.Dimension t = shown.getPreferredSize();
             int width = Math.min(t.width, getWidth());
-            title.setBounds((getWidth() - width) / 2, (getHeight() - t.height) / 2, width, t.height);
+            shown.setBounds((getWidth() - width) / 2, (getHeight() - t.height) / 2, width, t.height);
         }
 
         @Override
         public java.awt.Dimension getPreferredSize() {
-            return title.getPreferredSize();
+            return shown().getPreferredSize();
         }
 
         @Override
         public java.awt.Dimension getMinimumSize() {
-            return new java.awt.Dimension(0, title.getPreferredSize().height);
+            return new java.awt.Dimension(0, shown().getPreferredSize().height);
         }
     };
     /** Weitere Aktionen zur Seite hinter einem Dreieck neben dem Stern, wie im Audio Studio (Angelo, 16.11.2026). */
@@ -518,6 +529,9 @@ public final class PageDetailPanel extends JPanel {
         // Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
         heading.setOpaque(false);
         heading.add(title);
+        heading.add(chat.header());
+        chat.header().setVisible(false);
+        chat.headerActions().setVisible(false);
         more.addActionListener(e -> PopupHover.clearOnClose(moreMenu(), more)
                 .show(more, 0, more.getHeight()));
         header.add(feedback, BorderLayout.SOUTH);
@@ -657,6 +671,13 @@ public final class PageDetailPanel extends JPanel {
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && PROPERTIES.equals(selected));
         readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
         standingHelp.setVisible(STAND.equals(selected));
+        // Im Reiter Chat steht mittig der Chat statt der Seitenüberschrift, rechts Neuer Chat und Chat löschen.
+        boolean chatTab = CHAT.equals(selected);
+        title.setVisible(!chatTab);
+        chat.header().setVisible(chatTab);
+        chat.headerActions().setVisible(chatTab);
+        heading.revalidate();
+        heading.repaint();
         standing.shown(STAND.equals(selected));
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
@@ -2196,7 +2217,7 @@ public final class PageDetailPanel extends JPanel {
      */
     JComponent headerActions() {
         return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp,
-                standingHelp, star, more);
+                standingHelp, chat.headerActions(), star, more);
     }
 
     /** Zurück und Vor für die Statuszeile des Hauptfensters. */

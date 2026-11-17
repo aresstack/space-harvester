@@ -310,10 +310,13 @@ Core selbst.
 - **Chat** (Angelo, 13. und 16.11.2026, `ChatPanel`, Paket `app.chat`) nach `ChatShellPanel`, `ChatComposerPanel`,
   `ChatServiceBinding` und `ChatHistoryBinding` des Enterprise AI Client im Design von Space Harvester; der Chat lebt
   nur in der App (ADR 0012), der Core gibt nur den Chat-Port des KI-Dienstes (`Workspace.aiChat`, eigene SPI `AiChat`, streamend über den
-  unveränderten `OpenAiCompatibleChatAdapter`, Route, TLS und Frist wie alle anderen Aufrufe). Kopfzeile links
-  **Chat: ‹Name›** mit dem durchsichtigen Pfeil, der die Chats dieses Bereichs anbietet (zuletzt geänderte zuerst, der
-  aktuelle mit Haken), rechts **Neuer Chat**; Rechtsklick auf den Namen: **Umbenennen** an Ort und Stelle (Enter
-  übernimmt, Esc verwirft, leer heißt wieder die Kennung) und **Chat löschen** („Diesen Chat wirklich löschen?“, Ja/Nein).
+  unveränderten `OpenAiCompatibleChatAdapter`, Route, TLS und Frist wie alle anderen Aufrufe). Der Reiter hat keine
+  eigene Kopfzeile mehr (Angelo, 17.11.2026): In der Zeile der Bereichsanzeige steht mittig statt der Seitenüberschrift
+  **Chat: ‹Name›** (mit „…“ gekürzt, wenn der Platz nicht reicht) mit dem durchsichtigen Pfeil, der die Chats dieses
+  Bereichs anbietet (zuletzt geänderte zuerst, der aktuelle mit Haken); rechts neben Stern und Dreieck die Symbole
+  **Neuer Chat** (Plus) und **Chat löschen** (Papierkorb, nur bei einem gespeicherten Chat und nicht während einer
+  Antwort; „Diesen Chat wirklich löschen?“, Ja/Nein), nur im Reiter Chat sichtbar. Rechtsklick auf den Namen:
+  **Umbenennen** an Ort und Stelle (Enter übernimmt, Esc verwirft, leer heißt wieder die Kennung) und **Chat löschen**.
   Chats sind keine globale Liste: Sie gehören zum Bereich, der links gewählt ist (Quelle, Space oder Seite samt
   Unterseiten, `ChatNode`), und liegen je Bereich im Datenordner unter `chats/<Quelle>/<Space>/<Seite>/<UUID>.json`
   (`ChatStore`, atomar geschrieben, leere Chats ohne Datei; Kennungen mit Sonderzeichen bekommen einen kurzen Hash).

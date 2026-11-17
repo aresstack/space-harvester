@@ -20,6 +20,8 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Downloads;
 import com.aresstack.spaceharvester.app.ui.Feedback;
+import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection;
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
@@ -132,7 +134,12 @@ public final class ChatPanel extends JPanel {
     /** Nur der Pfeil, durchsichtig: öffnet die Chats dieses Bereichs. */
     private final ComposerButton chats = ComposerButton.iconButton(ComposerIcons.chevronDown(),
             "Chats dieses Bereichs");
-    private final ComposerButton newChat = Comic.button(NEW_CHAT, "Einen neuen Chat beginnen");
+    /** Oben rechts in der Kopfzeile des Inhaltsbereichs, als Symbole (Angelo, 17.11.2026): Plus und Papierkorb. */
+    private final IconButton newChat = new IconButton(ComposerIcons.plus(16), NEW_CHAT).compact();
+    private final IconButton deleteChat = new IconButton(Glyph.TRASH, DELETE).compact();
+    /** „Chat: ‹Name› ▾“ für die Mitte der Kopfzeile; der Name kürzt sich mit „…“, wenn der Platz nicht reicht. */
+    private final JPanel header = new JPanel(new BorderLayout(6, 0));
+    private final JPanel headerActions = Comic.row(newChat, deleteChat);
     private final ChatStore store;
     /** Der Bereich der Chats: die Auswahl links als Knoten; {@code null} ohne Auswahl. */
     private ChatNode node;
@@ -242,16 +249,15 @@ public final class ChatPanel extends JPanel {
         chats.setOpaque(false);
         chats.addActionListener(e -> showChatsMenu());
         newChat.addActionListener(e -> newChat());
-        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        left.setOpaque(false);
-        left.add(heading);
-        left.add(nameHolder);
-        left.add(chats);
-        JPanel top = new JPanel(new BorderLayout(8, 0));
-        top.setOpaque(false);
-        top.add(left, BorderLayout.CENTER);
-        top.add(newChat, BorderLayout.EAST);
-        add(top, BorderLayout.NORTH);
+        newChat.getAccessibleContext().setAccessibleName(NEW_CHAT);
+        deleteChat.addActionListener(e -> deleteChat());
+        deleteChat.getAccessibleContext().setAccessibleName(DELETE);
+        // Die Zeile gehört in die Kopfzeile des Inhaltsbereichs (Angelo, 17.11.2026): mittig statt der
+        // Seitenüberschrift; hier oben steht nichts mehr.
+        header.setOpaque(false);
+        header.add(heading, BorderLayout.WEST);
+        header.add(nameHolder, BorderLayout.CENTER);
+        header.add(chats, BorderLayout.EAST);
         showChatName();
 
         transcript.setLayout(new BoxLayout(transcript, BoxLayout.Y_AXIS));
@@ -859,6 +865,7 @@ public final class ChatPanel extends JPanel {
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());
+        updateHeaderActions();
         send.setToolTipText("Antwort abbrechen");
         turn.start();
     }
@@ -968,6 +975,7 @@ public final class ChatPanel extends JPanel {
             status.setText(note);
             send.setText(SEND);
             send.setIcon(ComposerIcons.send());
+            updateHeaderActions();
             send.setToolTipText("Senden (Enter)");
             showChatName();
         }
@@ -1070,6 +1078,23 @@ public final class ChatPanel extends JPanel {
     private void showChatName() {
         chatName.setText(chat.title());
         chats.setEnabled(node != null);
+        updateHeaderActions();
+    }
+
+    /** Löschen geht nur bei einem gespeicherten Chat (einer mit Nachrichten) und nicht während einer Antwort. */
+    private void updateHeaderActions() {
+        newChat.setEnabled(node != null);
+        deleteChat.setEnabled(node != null && !chat.isEmpty() && turn == null);
+    }
+
+    /** „Chat: ‹Name› ▾“ für die Mitte der Kopfzeile des Inhaltsbereichs. */
+    public JComponent header() {
+        return header;
+    }
+
+    /** Neuer Chat und Chat löschen als Symbole für die Kopfzeile des Inhaltsbereichs, rechts. */
+    public JComponent headerActions() {
+        return headerActions;
     }
 
     /** Der Pfeil: die Chats dieses Bereichs, zuletzt geänderte zuerst, der aktuelle mit Haken. */
