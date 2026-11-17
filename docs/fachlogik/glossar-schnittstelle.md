@@ -29,8 +29,9 @@ Einträge, Einordnung, Wichtigkeit, Belege und Zahlen kommen fertig aus dem Core
 | `explanation` | Erläuterung, schreibt nur der Mensch |
 | `revision` | für optimistisches Sperren: bei jeder Änderung mitgeben |
 
-Regel `ROLE_OF_PERSON`: Ein Begriff ist `ROLLE`, wenn er Rollennomen einer Ist-Beziehung der Art `ROLLE` oder
-`BESTIMMUNG` ist (nie bei bestimmtem Artikel, nie bei `KEIN` oder einem anderen Begleiter) und der Träger mit einer
+Regel `ROLE_OF_PERSON`: Ein Begriff ist `ROLLE`, wenn er Rollennomen einer Ist-Beziehung der Art `ROLLE` ist, also
+nur ohne Artikel (nie mit unbestimmtem oder bestimmtem Artikel, nie bei `KEIN` oder einem anderen Begleiter; dort
+entscheidet die KI) und der Träger mit einer
 Anrede aus der geschlossenen Liste Frau, Herr, Herrn beginnt, gefolgt von mindestens einem weiteren Wort („Herr Klein
 ist Sachbearbeiter“). Erkennt eine Wortliste den Begriff (Technik oder Rolle), gewinnt die Wortliste. Sie zählt als
 bestimmte Regel.

@@ -307,6 +307,7 @@ class GlossaryDerivationTest {
         PageBuilder first = new PageBuilder("1");
         personRole(first, "Herr Kranich", "Kranich", "Fallbetreuer", ParsedStatements.Article.OHNE);
         personRole(first, "Frau Amsel", "Amsel", "Vertrauensperson", ParsedStatements.Article.UNBESTIMMT);
+        personRole(first, "Herr Zaunkönig", "Zaunkönig", "Glückspilz", ParsedStatements.Article.UNBESTIMMT);
         personRole(first, "Frau Drossel", "Drossel", "Schlüsselträgerin", ParsedStatements.Article.BESTIMMT);
         personRole(first, "Herrn Fink", "Fink", "Kassenwart", ParsedStatements.Article.KEIN);
         personRole(first, "Herr Specht", "Specht", "Mitglied", ParsedStatements.Article.SONSTIGER);
@@ -323,8 +324,10 @@ class GlossaryDerivationTest {
         assertThat(result.term("Fallbetreuer").rule()).as("ohne Artikel")
                 .isEqualTo(GlossaryDerivation.CategoryRule.ROLE_OF_PERSON);
         assertThat(result.term("Fallbetreuer").category()).isEqualTo(GlossaryDerivation.Category.ROLLE);
-        assertThat(result.term("Vertrauensperson").rule()).as("unbestimmter Artikel")
-                .isEqualTo(GlossaryDerivation.CategoryRule.ROLE_OF_PERSON);
+        assertThat(result.term("Vertrauensperson").rule()).as("unbestimmter Artikel: die KI entscheidet")
+                .isEqualTo(GlossaryDerivation.CategoryRule.NONE);
+        assertThat(result.term("Glückspilz").category()).as("Person ist ein + Bewertung bleibt UNKLAR")
+                .isEqualTo(GlossaryDerivation.Category.UNKLAR);
         assertThat(result.term("Schlüsselträgerin").rule()).as("nie bei bestimmtem Artikel")
                 .isEqualTo(GlossaryDerivation.CategoryRule.NONE);
         assertThat(result.term("Kassenwart")).as("kein: keine Beziehung").isNull();

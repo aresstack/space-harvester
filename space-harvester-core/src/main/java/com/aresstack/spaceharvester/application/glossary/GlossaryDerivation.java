@@ -143,7 +143,7 @@ public final class GlossaryDerivation {
         /** Kopf in der Wortliste der Rollen und Stellen ({@value #RULES_RESOURCE}, {@code rolle}, {@code rolle-wort}). */
         ROLE_HEAD,
         /**
-         * Rollennomen einer Ist-Beziehung ohne bestimmten Artikel, deren Träger mit der Anrede „Frau“ oder „Herr“
+         * Rollennomen einer Ist-Beziehung ohne Artikel (Art {@code ROLLE}), deren Träger mit der Anrede „Frau“ oder „Herr“
          * beginnt („Herr Klein ist Sachbearbeiter“); nur, wenn keine Wortliste greift.
          */
         ROLE_OF_PERSON,
@@ -547,7 +547,7 @@ public final class GlossaryDerivation {
                 Builder noun = builder(TermText.normalize(roleNoun));
                 noun.forms.putIfAbsent(roleNoun, 0);
                 bearer.isA.add(noun.normalized, ParsedStatements.Origin.ORIGINAL, false, relation, evidence);
-                if ((relation == Relation.ROLLE || relation == Relation.BESTIMMUNG) && salutated(mention)) {
+                if (relation == Relation.ROLLE && salutated(mention)) {
                     noun.personRole++;
                 }
                 noun.instances.add(bearer.normalized, ParsedStatements.Origin.ORIGINAL, false, relation, evidence);

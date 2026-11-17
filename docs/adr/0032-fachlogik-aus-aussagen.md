@@ -216,10 +216,12 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 
 ## Umsetzung FL5d (Rolle einer Person)
 
-- `CategoryRule.ROLE_OF_PERSON`: Rollennomen einer Ist-Beziehung (Art ROLLE oder BESTIMMUNG), deren Träger in
+- `CategoryRule.ROLE_OF_PERSON`: Rollennomen einer Ist-Beziehung nur ohne Artikel (Art ROLLE; mit unbestimmtem Artikel steht bei Personen oft eine
+  Bewertung, dort entscheidet die KI), deren Träger in
   `Mention.text` mit Frau, Herr oder Herrn und einem weiteren Wort beginnt; am Parser nichts geändert. Nur wenn keine
   Wortliste greift; bestimmte Regel (Rang 3).
-- Gemessen: Kontrollsatz FALSCH bleibt 0; Entwicklungssätze erfunden im Unit-Test.
+- Gemessen: Kontrollsatz FALSCH bleibt 0 (das Plus bei richtig ist kein unabhängiger Beleg); Entwicklungssätze
+  erfunden im Unit-Test.
 
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
