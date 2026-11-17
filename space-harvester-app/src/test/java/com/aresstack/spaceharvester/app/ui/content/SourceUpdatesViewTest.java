@@ -39,15 +39,22 @@ class SourceUpdatesViewTest {
     private static final Instant SECOND = Instant.parse("2026-11-16T18:30:00Z");
 
     private final FakeActions actions = new FakeActions();
-    private final SourceUpdatesView view = new SourceUpdatesView(() -> actions, new SyncRunner());
+    /** „Text“: die Änderungen nach Art. */
+    private final SourceUpdatesView view = new SourceUpdatesView(() -> actions, new SyncRunner(),
+            SourceUpdatesView.Mode.CHANGES);
+    /** „Leseansicht“: die KI-Zusammenfassung. */
+    private final SourceUpdatesView summary = new SourceUpdatesView(() -> actions, new SyncRunner(),
+            SourceUpdatesView.Mode.SUMMARY);
     private final List<ReportedPage> opened = new ArrayList<>();
     private final List<String> status = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
-        view.zone(ZoneOffset.UTC);
-        view.onOpen(opened::add);
-        view.onStatus(status::add);
+        for (SourceUpdatesView each : List.of(view, summary)) {
+            each.zone(ZoneOffset.UTC);
+            each.onOpen(opened::add);
+            each.onStatus(status::add);
+        }
     }
 
     @Test
@@ -60,6 +67,24 @@ class SourceUpdatesViewTest {
         assertThat(view.counts(actions.initial())).isEqualTo("Erstbefüllung · 340 Seiten");
         assertThat(view.selectedUpdate()).as("das neueste gewählt").isEqualTo(ChangeUpdate.OPEN);
         assertThat(view.subscribed()).isTrue();
+    }
+
+    @Test
+    void theUpdatesAreCloudsOnTopWithTheNewestMarkedAndAClickMovesTheMark() {
+        view.source("wiki", "Confluence HaVdB");
+
+        assertThat(view.sky().isVisible()).isTrue();
+        assertThat(view.sky().navigation().chapters()).extracting(Navigation.Section::label)
+                .as("das älteste links, das jüngste rechts")
+                .containsExactly("10.11.2026, 08:00 · angelo", "16.11.2026, 18:30 · angelo", "Seit dem letzten Update");
+        assertThat(view.markedUpdate()).as("standardmäßig die letzte Änderung").isEqualTo(ChangeUpdate.OPEN);
+
+        assertThat(view.clickUpdate("16.11.2026, 18:30 · angelo")).isTrue();
+        assertThat(view.markedUpdate()).isEqualTo(view.selectedUpdate()).isNotEqualTo(ChangeUpdate.OPEN);
+
+        summary.source("wiki", "Confluence HaVdB");
+        summary.select(view.selectedUpdate());
+        assertThat(summary.markedUpdate()).as("die andere Ansicht markiert mit").isEqualTo(view.selectedUpdate());
     }
 
     @Test
@@ -159,54 +184,55 @@ class SourceUpdatesViewTest {
 
     @Test
     void anUpdateWithoutSummaryOffersToSummarizeButNotTheInitialFill() {
-        view.source("wiki", "Confluence HaVdB");
-        view.clickUpdate("16.11.2026, 18:30 · angelo");
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("16.11.2026, 18:30 · angelo");
 
-        assertThat(view.summarizeOffered()).isTrue();
-        assertThat(view.summarizeLabel()).isEqualTo(SourceUpdatesView.SUMMARIZE);
-        assertThat(view.summarizeTip()).isEqualTo(SourceUpdatesView.SUMMARIZE_TIP);
-        assertThat(view.summarizeEntryShown()).as("sichtbarer Einstieg im Bericht").isTrue();
-        assertThat(view.reportTexts()).doesNotContain("Zusammenfassung");
+        assertThat(summary.summarizeOffered()).isTrue();
+        assertThat(summary.summarizeLabel()).isEqualTo(SourceUpdatesView.SUMMARIZE);
+        assertThat(summary.summarizeTip()).isEqualTo(SourceUpdatesView.SUMMARIZE_TIP);
+        assertThat(summary.summarizeEntryShown()).as("sichtbarer Einstieg im Bericht").isTrue();
+        assertThat(summary.reportTexts()).doesNotContain("Zusammenfassung");
 
-        view.clickUpdate("10.11.2026, 08:00 · angelo");
-        assertThat(view.summarizeOffered()).as("Erstbefüllung").isFalse();
-        assertThat(view.summarizeEntryShown()).isFalse();
+        summary.clickUpdate("10.11.2026, 08:00 · angelo");
+        assertThat(summary.summarizeOffered()).as("Erstbefüllung").isFalse();
+        assertThat(summary.summarizeEntryShown()).isFalse();
         assertThat(actions.summarizeCalls).as("nie von selbst").isZero();
     }
 
     @Test
     void summarizingRunsAsAJobAndShowsTheSummaryAboveTheKindsWithLinksToItsPages() throws Exception {
-        view.source("wiki", "Confluence HaVdB");
-        view.clickUpdate("16.11.2026, 18:30 · angelo");
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("16.11.2026, 18:30 · angelo");
 
-        view.clickSummarizeEntry();
+        summary.clickSummarizeEntry();
 
         assertThat(actions.summarizeCalls).isEqualTo(1);
-        assertThat(view.busy()).as("BusyOverlay über dem Bericht").isTrue();
-        assertThat(view.summarizeEntryShown()).isFalse();
-        assertThat(view.summarizeOffered()).as("nie zwei zugleich").isFalse();
+        assertThat(summary.busy()).as("BusyOverlay über dem Bericht").isTrue();
+        assertThat(summary.summarizeEntryShown()).isFalse();
+        assertThat(summary.summarizeOffered()).as("nie zwei zugleich").isFalse();
         assertThat(status).contains(SourceUpdatesView.SUMMARIZING);
-        view.clickUpdate("10.11.2026, 08:00 · angelo");
-        assertThat(view.busy()).as("nur über dem Update, das zusammengefasst wird").isFalse();
-        view.clickUpdate("16.11.2026, 18:30 · angelo");
-        assertThat(view.busy()).isTrue();
+        summary.clickUpdate("10.11.2026, 08:00 · angelo");
+        assertThat(summary.busy()).as("nur über dem Update, das zusammengefasst wird").isFalse();
+        summary.clickUpdate("16.11.2026, 18:30 · angelo");
+        assertThat(summary.busy()).isTrue();
 
         actions.finish(JobState.COMPLETED);
 
-        assertThat(view.busy()).isFalse();
-        List<String> texts = view.reportTexts();
+        assertThat(summary.busy()).isFalse();
+        List<String> texts = summary.reportTexts();
         assertThat(texts).containsSubsequence("Zusammenfassung", "Erstellt am 16.11.2026, 19:00 mit gpt-test",
-                "Das Betriebshandbuch wurde überarbeitet.", "→ Betriebshandbuch", "Geändert (1)");
-        assertThat(view.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
-        assertThat(view.summarizeTip()).isEqualTo(SourceUpdatesView.RESUMMARIZE_TIP);
-        assertThat(view.summarizeEntryShown()).as("mit Zusammenfassung nur noch das Werkzeug oben").isFalse();
+                "Das Betriebshandbuch wurde überarbeitet.", "→ Betriebshandbuch");
+        assertThat(texts).as("die Änderungen stehen unter „Text“").doesNotContain("Geändert (1)");
+        assertThat(summary.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
+        assertThat(summary.summarizeTip()).isEqualTo(SourceUpdatesView.RESUMMARIZE_TIP);
+        assertThat(summary.summarizeEntryShown()).as("mit Zusammenfassung nur noch das Werkzeug oben").isFalse();
         assertThat(status).last().isEqualTo("Zusammenfassung erstellt");
-        assertThat(view.copyText()).contains("Zusammenfassung (Erstellt am").contains("überarbeitet");
+        assertThat(summary.copyText()).contains("Zusammenfassung (Erstellt am").contains("überarbeitet");
 
-        assertThat(view.clickSummaryLink("Betriebshandbuch")).isTrue();
+        assertThat(summary.clickSummaryLink("Betriebshandbuch")).isTrue();
         assertThat(opened).singleElement().satisfies(page -> assertThat(page.pageId()).isEqualTo("11"));
-        assertThat(view.clickSummaryLink("Alte Seite")).as("entfernte Seiten öffnen nichts").isFalse();
-        assertThat(view.clickSummaryLink("Kurzbeschreibung DATENH")).as("ohne Titel: Titel aus dem Bericht").isTrue();
+        assertThat(summary.clickSummaryLink("Alte Seite")).as("entfernte Seiten öffnen nichts").isFalse();
+        assertThat(summary.clickSummaryLink("Kurzbeschreibung DATENH")).as("ohne Titel: Titel aus dem Bericht").isTrue();
     }
 
     @Test
@@ -214,52 +240,75 @@ class SourceUpdatesViewTest {
         actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, "Eine neue Seite.", List.of(
                 new SummaryStatement("Eine neue Seite.", List.of(new SummaryPage("20", "Neue Seite")))), "gpt-test",
                 SECOND, 2, true);
-        view.source("wiki", "Confluence HaVdB");
+        summary.source("wiki", "Confluence HaVdB");
 
-        assertThat(view.reportTexts()).contains("Eine neue Seite.", "→ Neue Seite",
+        assertThat(summary.reportTexts()).contains("Eine neue Seite.", "→ Neue Seite",
                 "Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht alles.",
                 "2 Änderungen durfte die KI nicht lesen; sie fehlen in der Zusammenfassung.");
-        assertThat(view.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
-        assertThat(view.counts(summarized(actions.second()))).endsWith(" · zusammengefasst");
+        assertThat(summary.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
+        assertThat(summary.counts(summarized(actions.second()))).endsWith(" · zusammengefasst");
     }
 
     @Test
     void cancellingEndsTheJobAndKeepsThePreviousSummary() throws Exception {
-        view.source("wiki", "Confluence HaVdB");
-        view.clickUpdate("16.11.2026, 18:30 · angelo");
-        view.clickSummarize();
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("16.11.2026, 18:30 · angelo");
+        summary.clickSummarize();
 
-        view.cancelRunningSummary();
+        summary.cancelRunningSummary();
 
         assertThat(actions.cancelled).isEqualTo("job-1");
-        assertThat(view.busy()).isFalse();
-        assertThat(view.reportTexts()).doesNotContain("Zusammenfassung");
+        assertThat(summary.busy()).isFalse();
+        assertThat(summary.reportTexts()).doesNotContain("Zusammenfassung");
         assertThat(status).last().isEqualTo("Abgebrochen; die bisherige Zusammenfassung bleibt.");
-        assertThat(view.summarizeOffered()).isTrue();
+        assertThat(summary.summarizeOffered()).isTrue();
     }
 
     @Test
     void aFailedJobSaysWhyAndOffersItAgain() throws Exception {
-        view.source("wiki", "Confluence HaVdB");
-        view.clickUpdate("16.11.2026, 18:30 · angelo");
-        view.clickSummarize();
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("16.11.2026, 18:30 · angelo");
+        summary.clickSummarize();
 
         actions.finish(JobState.FAILED);
 
         assertThat(status).last().isEqualTo("Zusammenfassung fehlgeschlagen: Modell nicht erreichbar");
-        assertThat(view.busy()).isFalse();
-        assertThat(view.summarizeOffered()).isTrue();
+        assertThat(summary.busy()).isFalse();
+        assertThat(summary.summarizeOffered()).isTrue();
     }
 
     @Test
     void withoutAChatModelSummarizingIsNotOffered() {
         actions.available = false;
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("16.11.2026, 18:30 · angelo");
+
+        assertThat(summary.summarizeOffered()).isFalse();
+        assertThat(summary.summarizeTip()).isEqualTo(SourceUpdatesView.NO_MODEL);
+        assertThat(summary.summarizeEntryShown()).isFalse();
+    }
+
+    @Test
+    void theChangesViewNeverOffersOrShowsASummary() {
+        actions.stored = actions.summaryOf();
         view.source("wiki", "Confluence HaVdB");
         view.clickUpdate("16.11.2026, 18:30 · angelo");
 
         assertThat(view.summarizeOffered()).isFalse();
-        assertThat(view.summarizeTip()).isEqualTo(SourceUpdatesView.NO_MODEL);
-        assertThat(view.summarizeEntryShown()).isFalse();
+        assertThat(view.reportTexts()).contains("Geändert (1)").doesNotContain("Zusammenfassung",
+                "Das Betriebshandbuch wurde überarbeitet.");
+        assertThat(view.copyText()).doesNotContain("Zusammenfassung");
+    }
+
+    @Test
+    void choosingAnUpdateInOneViewIsReported() {
+        List<String> chosen = new ArrayList<>();
+        view.onSelected(chosen::add);
+        view.source("wiki", "Confluence HaVdB");
+
+        view.clickUpdate("16.11.2026, 18:30 · angelo");
+
+        assertThat(chosen).containsExactly(actions.second().id());
     }
 
     /** Bildschirmfoto der Quellenseite zur Sichtprüfung; nur mit der Umgebungsvariable {@code SCREENSHOTS_DIR}. */
@@ -271,13 +320,16 @@ class SourceUpdatesViewTest {
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             view.source("wiki", "Confluence HaVdB");
             view.clickUpdate("16.11.2026, 18:30 · angelo");
-            AnalysisTabsScreenshotTest.write(view, out.resolve("quellenseite-einstieg.png"));
-            view.clickSummarize();
-            AnalysisTabsScreenshotTest.write(view, out.resolve("quellenseite-zusammenfassen.png"));
+            AnalysisTabsScreenshotTest.write(view, out.resolve("quellenseite-text.png"));
+            summary.source("wiki", "Confluence HaVdB");
+            summary.clickUpdate("16.11.2026, 18:30 · angelo");
+            AnalysisTabsScreenshotTest.write(summary, out.resolve("quellenseite-einstieg.png"));
+            summary.clickSummarize();
+            AnalysisTabsScreenshotTest.write(summary, out.resolve("quellenseite-zusammenfassen.png"));
             actions.finishNow(JobState.COMPLETED);
         });
-        javax.swing.SwingUtilities.invokeAndWait(() -> AnalysisTabsScreenshotTest.write(view,
-                out.resolve("quellenseite-updates.png")));
+        javax.swing.SwingUtilities.invokeAndWait(() -> AnalysisTabsScreenshotTest.write(summary,
+                out.resolve("quellenseite-lesen.png")));
     }
 
     private static ChangeUpdate summarized(ChangeUpdate u) {

@@ -27,7 +27,6 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
-import javax.swing.border.Border;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Cursor;
@@ -47,20 +46,22 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Die Quellenseite (ADR 0030, Stufe 4): Wird im Explorer eine Wissensquelle gewählt, zeigt der erste Hauptreiter, dann
- * „Updates“ genannt, ihre Updates. Links die Updates (das offene „seit dem letzten Update“ zuerst, dann je manueller Synchronisierung), rechts
- * die Änderungen des gewählten Updates nach Art; ein Klick auf eine Seite öffnet sie. Neue Zeilen und Marken meldet der
- * Core (ADR 0027), die Ansicht fragt nie in Abständen nach.
+ * Die Quellenseite (ADR 0030): Wird im Explorer eine Wissensquelle gewählt, zeigen „Leseansicht“ und „Text“ ihre
+ * Updates. Links die Updates (das offene „seit dem letzten Update“ zuerst, dann je manueller Synchronisierung), rechts
+ * je nach {@link Mode} die KI-Zusammenfassung oder die Änderungen des gewählten Updates nach Art; ein Klick auf eine
+ * Seite öffnet sie. Neue Zeilen und Marken meldet der Core (ADR 0027), die Ansicht fragt nie in Abständen nach.
  */
 final class SourceUpdatesView extends JPanel {
 
     /** Kein Hinweistext in der Ansicht; wie Updates entstehen, steht hinter dem ?-Knopf. */
     static final String NO_UPDATES = "Noch keine Updates.";
+    static final String NO_SUMMARY = "Noch keine Zusammenfassung.";
     static final String NO_PAGES = "In diesem Update gibt es keine Änderung, die du sehen darfst.";
     static final String NOT_RUNNING = "Die Updates erscheinen, sobald der Dienst läuft.";
     static final String HELP = "Ein Update entsteht mit jeder manuellen Synchronisierung und umfasst alles, was sich in "
-            + "der Quelle seit der vorigen geändert hat, auch was im Hintergrund geholt wurde. Oben in der Liste steht, "
-            + "was seit dem letzten Update dazugekommen ist; es zählt zum nächsten. Ein Klick auf eine Seite öffnet "
+            + "der Quelle seit der vorigen geändert hat, auch was im Hintergrund geholt wurde. Die Updates stehen als Wolken "
+            + "oben, das jüngste ganz rechts und vorgewählt; „Seit dem letzten Update“ ist, was danach dazugekommen ist, "
+            + "es zählt zum nächsten. Ein Klick auf eine Seite öffnet "
             + "sie.\n\n"
             + "„Zusammenfassen“ lässt das eingestellte Chat-Modell das gewählte Update in wenigen Sätzen "
             + "zusammenfassen. Es liest nur Seiten, die für die KI freigegeben sind; die Zusammenfassung bleibt "
@@ -80,7 +81,11 @@ final class SourceUpdatesView extends JPanel {
      * Kopfzeile links neben dem Favoritenstern (Angelo, 17.11.2026).
      */
     private final JPanel tools = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
-    private final JPanel list = new JPanel();
+    /**
+     * Die Updates als eine waagrechte Wolkenreihe oben, dasselbe Steuerelement wie das Inhaltsverzeichnis über dem
+     * Reiter „Text“ der Seiten (Angelo, 17.11.2026): je Update eine Wolke, das älteste links, das jüngste rechts.
+     */
+    private final DocumentNavigationSky sky = new DocumentNavigationSky();
     private final ScrollColumn report = new ScrollColumn(new BorderLayout());
     private final JPanel reportBody = new JPanel();
     private final JComponent reportScroll;
@@ -110,24 +115,36 @@ final class SourceUpdatesView extends JPanel {
     private boolean available = true;
     private int generation;
 
-    SourceUpdatesView(Supplier<Workspace> workspace) {
+    /**
+     * Was die Ansicht vom gewählten Update zeigt (Angelo, 17.11.2026): unter „Leseansicht“ die KI-Zusammenfassung,
+     * unter „Text“ die Änderungen nach Art, maschinennah und Grundlage der Zusammenfassung.
+     */
+    enum Mode { SUMMARY, CHANGES }
+
+    private final Mode mode;
+    private Consumer<String> onSelected = id -> { };
+
+    SourceUpdatesView(Supplier<Workspace> workspace, Mode mode) {
         this(() -> Actions.of(workspace.get()), new Runner() {
             @Override
             public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
                 Background.run(work, onSuccess, onFailure);
             }
-        });
+        }, mode);
     }
 
-    SourceUpdatesView(Supplier<Actions> actions, Runner runner) {
+    SourceUpdatesView(Supplier<Actions> actions, Runner runner, Mode mode) {
         super(new BorderLayout(12, 8));
         this.actions = Objects.requireNonNull(actions, "actions");
         this.runner = Objects.requireNonNull(runner, "runner");
+        this.mode = Objects.requireNonNull(mode, "mode");
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         // Keine Hinweistexte in der Ansicht: die Erklärung steht hinter dem ?-Knopf oben rechts.
         tools.setOpaque(false);
-        tools.add(summarize);
+        if (mode == Mode.SUMMARY) {
+            tools.add(summarize);
+        }
         tools.add(new com.aresstack.spaceharvester.app.ui.controls.CopyButton(this::copyText));
         summarize.addActionListener(e -> summarize());
         summarizeEntry.setFont(Comic.semiBold(13f));
@@ -138,25 +155,27 @@ final class SourceUpdatesView extends JPanel {
                 summarizeEntry);
         tools.add(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
 
-        list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-        list.setOpaque(false);
-        JPanel listTop = new JPanel(new BorderLayout());
-        listTop.setOpaque(false);
-        listTop.add(list, BorderLayout.NORTH);
-        JComponent listScroll = Comic.scroll(listTop);
-        listScroll.setPreferredSize(new Dimension(270, 200));
+        sky.setName("updates.sky");
+        sky.setListener(section -> {
+            select(section.id());
+            onSelected.accept(section.id());
+        });
 
         reportBody.setLayout(new BoxLayout(reportBody, BoxLayout.Y_AXIS));
         reportBody.setOpaque(false);
         report.setOpaque(false);
         report.add(reportBody, BorderLayout.NORTH);
 
-        add(listScroll, BorderLayout.WEST);
         reportScroll = Comic.scroll(report);
         busy = new BusyOverlay(reportScroll);
         busy.onCancel(this::cancelSummary);
-        add(busy, BorderLayout.CENTER);
+        add(new SkyLayer(busy, sky, report), BorderLayout.CENTER);
         source(null, null);
+    }
+
+    /** {@code listener} erfährt, welches Update der Benutzer gewählt hat (die andere Ansicht folgt). */
+    void onSelected(Consumer<String> listener) {
+        onSelected = Objects.requireNonNull(listener, "listener");
     }
 
     /** Die Werkzeuge für die gemeinsame Kopfzeile. */
@@ -189,7 +208,7 @@ final class SourceUpdatesView extends JPanel {
         summary = null;
         forgetRun();
         offerSummary();
-        list.removeAll();
+        renderList();
         if (id == null) {
             message(" ");
             return;
@@ -274,8 +293,9 @@ final class SourceUpdatesView extends JPanel {
         renderList();
         offerSummary();
         int mine = ++generation;
-        runner.run(() -> new Loaded(current.report(id, updateId), current.summary(id, updateId),
-                current.summariesAvailable()), found -> {
+        boolean summaries = mode == Mode.SUMMARY;
+        runner.run(() -> new Loaded(current.report(id, updateId), summaries ? current.summary(id, updateId) : null,
+                summaries && current.summariesAvailable()), found -> {
             if (mine != generation) {
                 return;
             }
@@ -316,7 +336,7 @@ final class SourceUpdatesView extends JPanel {
                 : entry(updates, selected);
         boolean possible = sourceId != null && update != null && !update.initial() && update.pages() > 0;
         String tip = !available ? NO_MODEL : summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP;
-        summarize.setVisible(sourceId != null);
+        summarize.setVisible(mode == Mode.SUMMARY && sourceId != null);
         summarize.setEnabled(possible && available && running == null);
         summarize.setToolTipText(tip);
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SUMMARIZE : RESUMMARIZE);
@@ -436,30 +456,57 @@ final class SourceUpdatesView extends JPanel {
         }
     }
 
+    /** Die Wolkenreihe der Updates; die Auswahl ist markiert und steht in der Mitte. */
     private void renderList() {
-        list.removeAll();
-        for (ChangeUpdate update : updates) {
-            list.add(updateRow(update));
-            list.add(Box.createVerticalStrut(6));
+        List<Navigation.Section> clouds = new ArrayList<>();
+        for (ChangeUpdate update : updates.reversed()) {
+            clouds.add(new Navigation.Section(update.id(), heading(update), Navigation.Origin.HEADING, 1, 0, -1, "",
+                    null, List.of()));
         }
-        list.revalidate();
-        list.repaint();
+        // Erst die Auswahl, dann die Reihe: so steht sie ohne Umweg über die erste Wolke gleich in der Mitte.
+        if (selected != null) {
+            sky.setActive(selected, null);
+        }
+        sky.setNavigation(clouds.isEmpty() ? null
+                : new Navigation(Navigation.State.CURRENT, Navigation.Analysis.HEADINGS, "", clouds));
+        if (selected != null) {
+            sky.setActive(selected, null);
+        }
     }
 
-    private JPanel updateRow(ChangeUpdate update) {
-        boolean chosen = update.id().equals(selected);
-        JLabel when = new JLabel(heading(update));
-        when.setFont(Comic.semiBold(13f));
-        when.setForeground(Comic.INK);
-        WrappedText counts = Comic.wrapped(counts(update), Comic.MUTED, 12f);
-        JPanel row = new JPanel(new BorderLayout(0, 2));
-        row.setOpaque(false);
-        row.setBorder(border(chosen));
-        row.add(when, BorderLayout.NORTH);
-        row.add(counts, BorderLayout.CENTER);
-        row.setAlignmentX(LEFT_ALIGNMENT);
-        clickable(() -> select(update.id()), "Änderungen dieses Updates zeigen", row, when, counts);
-        return row;
+    /**
+     * Bericht unten, die Wolkenreihe als durchsichtige Ebene darüber wie über dem Lesetext der Seiten
+     * ({@link NavigableDocumentPage}); oben bekommt der Bericht so viel Platz, wie die Reihe meldet.
+     */
+    private static final class SkyLayer extends javax.swing.JLayeredPane {
+
+        private final JComponent content;
+        private final DocumentNavigationSky sky;
+
+        SkyLayer(JComponent content, DocumentNavigationSky sky, JComponent padded) {
+            this.content = content;
+            this.sky = sky;
+            setLayout(null);
+            add(content, javax.swing.JLayeredPane.DEFAULT_LAYER);
+            add(sky, javax.swing.JLayeredPane.PALETTE_LAYER);
+            sky.addPropertyChangeListener(DocumentNavigationSky.TOP_INSET_PROPERTY, event -> {
+                Object value = sky.getClientProperty(DocumentNavigationSky.TOP_INSET_PROPERTY);
+                int inset = value instanceof Integer pixels ? Math.max(0, pixels) : 0;
+                padded.setBorder(BorderFactory.createEmptyBorder(inset, 0, 0, 0));
+                padded.revalidate();
+            });
+        }
+
+        @Override
+        public void doLayout() {
+            content.setBounds(0, 0, getWidth(), getHeight());
+            sky.setBounds(0, 0, getWidth(), getHeight());
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            return content.getPreferredSize();
+        }
     }
 
     private int reportRenders;
@@ -473,15 +520,16 @@ final class SourceUpdatesView extends JPanel {
         title.setForeground(Comic.INK);
         add(reportBody, title);
         add(reportBody, Comic.wrapped(period(update), Comic.MUTED, 12.5f));
+        // Was früher in der Liste unter dem Datum stand; die Wolke oben trägt nur Datum und Benutzer.
+        add(reportBody, Comic.wrapped(counts(update), Comic.MUTED, 12.5f));
         if (update.mark() != null && update.mark().failedSyncs() > 0) {
             add(reportBody, Comic.wrapped(update.mark().failedSyncs() == 1 ? "Ein Abgleich ist dabei gescheitert."
                     : update.mark().failedSyncs() + " Abgleiche sind dabei gescheitert.", Comic.RED, 12.5f));
         }
         reportBody.add(Box.createVerticalStrut(10));
-        if (summary != null) {
-            renderSummary(found);
-        } else {
-            add(reportBody, summarizeEntry);
+        if (mode == Mode.SUMMARY) {
+            renderSummaryPage(found);
+            return;
         }
         if (update.initial()) {
             add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
@@ -514,7 +562,26 @@ final class SourceUpdatesView extends JPanel {
         reportBody.repaint();
     }
 
-    /** Die Zusammenfassung über den Arten; jede Aussage verweist auf ihre Seiten. */
+    /** „Leseansicht“: die Zusammenfassung, sonst der Einstieg „Zusammenfassen“; die Änderungen stehen unter „Text“. */
+    private void renderSummaryPage(ChangeReport found) {
+        ChangeUpdate update = found.update();
+        if (summary != null) {
+            renderSummary(found);
+        } else if (update.initial()) {
+            add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand.",
+                    Comic.TEXT, 13.5f));
+        } else if (found.pages().isEmpty()) {
+            add(reportBody, Comic.wrapped(NO_PAGES, Comic.MUTED, 13.5f));
+        } else {
+            add(reportBody, Comic.wrapped(NO_SUMMARY, Comic.MUTED, 13.5f));
+            reportBody.add(Box.createVerticalStrut(8));
+            add(reportBody, summarizeEntry);
+        }
+        reportBody.revalidate();
+        reportBody.repaint();
+    }
+
+    /** Die Zusammenfassung; jede Aussage verweist auf ihre Seiten. */
     private void renderSummary(ChangeReport found) {
         JLabel title = new JLabel("Zusammenfassung");
         title.setFont(Comic.semiBold(14f));
@@ -716,12 +783,6 @@ final class SourceUpdatesView extends JPanel {
         column.add(part);
     }
 
-    private static Border border(boolean chosen) {
-        return BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(chosen ? Comic.INK : Comic.LINE, chosen ? 2 : 1, true),
-                BorderFactory.createEmptyBorder(chosen ? 5 : 6, chosen ? 9 : 10, chosen ? 5 : 6, chosen ? 9 : 10));
-    }
-
     private static void clickable(Runnable action, String tip, Component... parts) {
         MouseAdapter click = new MouseAdapter() {
             @Override
@@ -745,9 +806,12 @@ final class SourceUpdatesView extends JPanel {
             return "";
         }
         StringBuilder text = new StringBuilder(heading(shown.update())).append('\n').append(period(shown.update()));
-        if (summary != null) {
-            text.append("\n\nZusammenfassung (").append(summaryMeta(summary)).append(')');
-            text.append("\n").append(summary.text());
+        if (mode == Mode.SUMMARY) {
+            if (summary != null) {
+                text.append("\n\nZusammenfassung (").append(summaryMeta(summary)).append(')');
+                text.append("\n").append(summary.text());
+            }
+            return text.toString();
         }
         if (shown.update().initial()) {
             text.append('\n').append("Erstbefüllung: ").append(pages(shown.update().pages()));
@@ -953,7 +1017,24 @@ final class SourceUpdatesView extends JPanel {
 
     /** Klickt das Update mit dieser Überschrift an. */
     boolean clickUpdate(String heading) {
-        return click(list, heading);
+        sky.doLayout();
+        for (int i = 0; i < updates.size(); i++) {
+            ChangeUpdate update = updates.reversed().get(i);
+            if (heading.equals(heading(update))) {
+                sky.clickChapterForTest(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Die markierte Wolke der Reihe. */
+    String markedUpdate() {
+        return sky.activeChapterId();
+    }
+
+    DocumentNavigationSky sky() {
+        return sky;
     }
 
     private static boolean click(java.awt.Container container, String text) {
