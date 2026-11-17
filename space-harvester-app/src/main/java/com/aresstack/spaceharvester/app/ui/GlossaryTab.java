@@ -1161,7 +1161,7 @@ final class GlossaryTab {
     }
 
     /**
-     * „fachlich · nach Regel (kein Technik- oder Rollenwort)“, „Rolle · von Hand“, „unklar · von der KI“; ohne
+     * „unklar · nach Regel (kein Technik- oder Rollenwort)“, „fachlich · von Hand“, „Rolle · von der KI“; ohne
      * Einordnung „unklar (noch nicht eingeordnet)“.
      */
     static String categorized(GlossaryDerivation.Category category,

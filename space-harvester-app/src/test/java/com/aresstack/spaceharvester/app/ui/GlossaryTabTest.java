@@ -390,10 +390,15 @@ class GlossaryTabTest {
                 .doesNotContain("→").doesNotContain("rule:glossary").doesNotContain("USER:");
         assertThat(GlossaryTab.categorized(GlossaryDerivation.Category.UNKLAR, null))
                 .isEqualTo("unklar (noch nicht eingeordnet)");
+        // Die Regel vergibt nur Technik und Rolle; sonst bleibt der Begriff „unklar“ (fachlich nur von Hand/KI).
+        assertThat(GlossaryTab.categorized(GlossaryDerivation.Category.UNKLAR, new com.aresstack.spaceharvester
+                .application.glossary.GlossaryEntry.Classification(GlossaryDerivation.Category.UNKLAR,
+                com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy.RULE, null)))
+                .isEqualTo("unklar · nach Regel (kein Technik- oder Rollenwort)");
         assertThat(GlossaryTab.categorized(GlossaryDerivation.Category.FACHLICH, new com.aresstack.spaceharvester
                 .application.glossary.GlossaryEntry.Classification(GlossaryDerivation.Category.FACHLICH,
-                com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy.RULE, null)))
-                .isEqualTo("fachlich · nach Regel (kein Technik- oder Rollenwort)");
+                com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy.MANUAL, null)))
+                .isEqualTo("fachlich · von Hand");
         assertThat(GlossaryTab.actorText("ai:glossary")).isEqualTo("von der KI");
         assertThat(GlossaryTab.invalidTerm("  ")).isEqualTo("Den Fachbegriff angeben.");
         assertThat(GlossaryTab.invalidTerm("RSL")).isNull();
