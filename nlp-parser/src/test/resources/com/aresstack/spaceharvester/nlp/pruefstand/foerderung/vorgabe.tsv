@@ -93,3 +93,13 @@ E22	E	3	förderfähig	Maßnahme	-	-	nein	-	GILT	Zustand im ob-Satz
 # F11/F12 (17.11.2026): Entwicklungssätze zu Bauarten, die beim Bau aus Kontrollzeilen kamen (Reihung von Eigenschaften, Partizip unter „werden“); festgelegt vor dem Lauf.
 F11	F	11	einwandfrei	Abrechnung	-	-	nein	-	GILT	Zustand; Reihung „fachlich und rechtlich“, eine Aussage
 F12	F	12	einziehen	-	Rate	-	nein	-	GILT	Gegenprobe: Vorgangspassiv, „per Lastschrift“ ist Mittel
+# Text G (17.11.2026, FL): Entwicklungssätze Zeitformen nach Festlegung AT, von Hand festgelegt BEVOR die Kette darüber lief. Präteritum und Plusquamperfekt FRUEHER, Perfekt GILT, Konjunktiv II nie FRUEHER.
+G01	G	1	prüfen	Bewilligungsstelle	Antrag	-	nein	-	FRUEHER	Präteritum schwach
+G02	G	2	versenden	Sachbearbeiter	Bescheid	-	nein	-	GILT	Perfekt bleibt GILT
+G03	G	3	auszahlen	Kasse	Zuschuss	-	nein	-	FRUEHER	Präteritum mit abgetrennter Partikel
+G04	G	4	zurückgeben	Antragsteller	Unterlagen	-	nein	-	FRUEHER	Präteritum stark mit Partikel
+G05	G	5	vollständig	Antrag	-	-	nein	-	GILT	Zustand; Konjunktiv II „wäre“ ist nicht FRUEHER
+G06	G	6	ändern	-	Richtlinie	-	nein	-	FRUEHER	Passiv Präteritum „wurde“
+G07	G	7	ablehnen	Bewilligungsstelle	Antrag	-	nein	-	GILT	Konjunktiv II „würde“: weder FRUEHER noch GEPLANT
+G08	G	8	abrufen	Zuwendungsempfänger	Mittel	-	nein	-	FRUEHER	Plusquamperfekt
+G09	G	9	nachfordern	Stelle	Antrag	-	nein	KANN	GILT	Konjunktiv II „könnte“: KANN, nicht FRUEHER

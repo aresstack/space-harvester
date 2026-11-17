@@ -33,7 +33,7 @@ public final class StatementFeatures {
         GILT,
         /** Geplant oder beabsichtigt („künftig“, Futur, „soll“ mit Zeitangabe). */
         GEPLANT,
-        /** Früher (Präteritum von Hilfsverb oder Kopula, „damals“, „früher“). */
+        /** Früher: Präteritum und Plusquamperfekt im Indikativ (Hilfsverb, Kopula, Vollverb), „damals“, „früher“; Perfekt und Konjunktiv II nie. */
         FRUEHER,
         /** Im selben Satz als verworfen oder entfallen bezeichnet. */
         VERWORFEN
@@ -206,12 +206,14 @@ public final class StatementFeatures {
                     token.lemma() == null ? token.form() : token.lemma())) || hasNumber(sentence, token))) {
                 timeExpression = true;
             }
-            // Futur: „wird … prüfen“ (werden als aux mit Infinitiv, kein Passiv)
+            // Futur: „wird … prüfen“ (werden als aux mit Infinitiv, kein Passiv); „würde“ ist Konjunktiv II
             if ("aux".equals(token.deprel()) && token.lemma() != null && "werden".equals(lower(token.lemma()))
+                    && !CONDITIONAL_FORMS.contains(form)
                     && verb.form().equalsIgnoreCase(verb.lemma() == null ? "" : verb.lemma())) {
                 future = true;
             }
         }
+        past |= preterite(sentence, verb);
         if (discarded) {
             return Temporality.VERWORFEN;
         }
@@ -222,6 +224,73 @@ public final class StatementFeatures {
             return Temporality.GEPLANT;
         }
         return Temporality.GILT;
+    }
+
+    /** Konjunktiv II von werden („würde … ablehnen“): weder Futur noch Präteritum. */
+    private static final Set<String> CONDITIONAL_FORMS = Set.of("würde", "würdest", "würden", "würdet");
+    /** Präteritum starker und gemischter Verben nach Grundform ({@code praeteritum.tsv}). */
+    private static final Map<String, String> STRONG_PRETERITE = strongPreterite();
+
+    /**
+     * Ob das Vollverb selbst im Präteritum Indikativ steht („prüfte“, „zahlte … aus“, „gab … zurück“): ohne Hilfsverb,
+     * schwach an der Endung {@code -te}/{@code -ete} am Stamm der Grundform, stark und gemischt nach {@code
+     * praeteritum.tsv}, auch mit Vorsilbe („vergab“). Ist die Grundform nur aus der Wortform erzeugt, bleibt es beim
+     * Standard (nicht raten). Schwacher Konjunktiv II ist am Wort nicht vom Präteritum zu unterscheiden; starker
+     * Konjunktiv II („gäbe“) und Hilfs-/Modalverben im Konjunktiv II („wäre“, „könnte“) sind nie Präteritum.
+     */
+    static boolean preterite(Sentence sentence, Token verb) {
+        if (!verb.hasUpos("VERB") || verb.lemma() == null || "Form".equals(verb.feats().get(Token.LEMMA_FROM))
+                || sentence.dependents(verb.id()).stream().anyMatch(t -> "aux".equals(t.baseRelation()))) {
+            return false;
+        }
+        String form = lower(verb.form());
+        String lemma = lower(verb.lemma());
+        if (form.equals(lemma)) {
+            return false;
+        }
+        String stem = lemma.endsWith("en") ? lemma.substring(0, lemma.length() - 2)
+                : lemma.endsWith("n") ? lemma.substring(0, lemma.length() - 1) : null;
+        if (stem != null && stem.length() >= 2) {
+            for (String ending : List.of("te", "test", "ten", "tet", "ete", "etest", "eten", "etet")) {
+                if (form.equals(stem + ending)) {
+                    return true;
+                }
+            }
+        }
+        for (Map.Entry<String, String> entry : STRONG_PRETERITE.entrySet()) {
+            String base = entry.getKey();
+            if (!lemma.endsWith(base)) {
+                continue;
+            }
+            String prefix = lemma.substring(0, lemma.length() - base.length());
+            String past = entry.getValue();
+            for (String ending : past.endsWith("e") ? List.of("", "st", "n", "t") : List.of("", "st", "en", "t")) {
+                if (form.equals(prefix + past + ending) || form.equals(past + ending)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static Map<String, String> strongPreterite() {
+        Map<String, String> result = new HashMap<>();
+        try (java.io.InputStream input = StatementFeatures.class.getResourceAsStream("praeteritum.tsv")) {
+            if (input == null) {
+                throw new IllegalStateException("praeteritum.tsv fehlt");
+            }
+            for (String line : new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                    .split("\\R")) {
+                if (line.isBlank() || line.startsWith("#")) {
+                    continue;
+                }
+                String[] fields = line.split("\t");
+                result.put(fields[0].strip(), fields[1].strip());
+            }
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        return Map.copyOf(result);
     }
 
     private static boolean hasNumber(Sentence sentence, Token token) {
