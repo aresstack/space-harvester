@@ -122,6 +122,20 @@ public final class DocumentNavigationSky extends JPanel {
         this.listener = listener;
     }
 
+    /** Blasse Wolken, etwa für Einträge ohne Bedeutung in der gewählten Ebene; {@code null}: keine. */
+    private java.util.function.Predicate<Navigation.Section> pale = section -> false;
+
+    /** Legt fest, welche Wolken blass gezeichnet werden; anklickbar bleiben sie. {@code null}: keine. */
+    public void setPale(java.util.function.Predicate<Navigation.Section> value) {
+        pale = value == null ? section -> false : value;
+        repaint();
+    }
+
+    /** Ob die Wolke {@code index} der Kapitelreihe blass gezeichnet wird. */
+    boolean paleForTest(int index) {
+        return index >= 0 && index < chapters.size() && pale.test(chapters.get(index));
+    }
+
     /** Ersetzt den Tooltip der Wolken, etwa um Zahlen zu ergänzen; {@code null}: die ganze Bezeichnung. */
     public void setTooltips(java.util.function.Function<Navigation.Section, String> value) {
         tooltips = value == null ? DocumentNavigationSky::tooltipFor : value;
@@ -807,6 +821,10 @@ public final class DocumentNavigationSky extends JPanel {
                     Graphics2D cloud = (Graphics2D) g2.create(x, chip.y, chip.width, chip.height);
                     try {
                         Navigation.Section section = sections.get(i);
+                        if (pale.test(section) && !section.id().equals(active) && i != hovered) {
+                            cloud.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER,
+                                    0.45f));
+                        }
                         paintCloud(cloud, section, texts.get(i), chip.width, chip.height, i == hovered,
                                 section.id().equals(active));
                     } finally {

@@ -156,6 +156,11 @@ final class SourceUpdatesView extends JPanel {
         tools.add(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
 
         sky.setName("updates.sky");
+        // Erstbefüllung und Updates ohne Änderung bleiben wählbar, treten aber zurück.
+        sky.setPale(section -> {
+            ChangeUpdate update = entry(updates, section.id());
+            return update != null && (update.initial() || update.pages() == 0);
+        });
         // In der Wolke Datum und Benutzer, im Tooltip auch die Zahl der Änderungen (Architekt, 17.11.2026).
         sky.setTooltips(section -> {
             ChangeUpdate update = entry(updates, section.id());
@@ -252,7 +257,7 @@ final class SourceUpdatesView extends JPanel {
             ChangeUpdate before = entry(updates, selected);
             updates = fresh;
             String keep = updates.stream().map(ChangeUpdate::id).filter(u -> u.equals(selected)).findFirst()
-                    .orElse(updates.isEmpty() ? null : updates.getFirst().id());
+                    .orElse(preselected(updates));
             if (keep == null) {
                 selected = null;
                 shown = null;
@@ -277,6 +282,15 @@ final class SourceUpdatesView extends JPanel {
                 message("Updates nicht geladen: " + Problems.describe(failure).title());
             }
         });
+    }
+
+    /**
+     * Vorgewählt ist das jüngste abgeschlossene Update; nur wenn es noch keines gibt, „Seit dem letzten Update“
+     * (ADR-0030-Nachtrag, offener Punkt 2, gilt bis Angelo widerspricht).
+     */
+    private static String preselected(List<ChangeUpdate> in) {
+        return in.stream().filter(update -> !update.open()).findFirst()
+                .or(() -> in.stream().findFirst()).map(ChangeUpdate::id).orElse(null);
     }
 
     /** Wählt ein Update und lädt seinen Bericht. */
@@ -465,8 +479,10 @@ final class SourceUpdatesView extends JPanel {
     private void renderList() {
         List<Navigation.Section> clouds = new ArrayList<>();
         for (ChangeUpdate update : updates.reversed()) {
-            clouds.add(new Navigation.Section(update.id(), heading(update), Navigation.Origin.HEADING, 1, 0, -1, "",
-                    null, List.of()));
+            // „Seit dem letzten Update“ ist noch kein Update: gestrichelt wie ein erkannter Abschnitt (ADR-0030-Nachtrag).
+            clouds.add(new Navigation.Section(update.id(), heading(update),
+                    update.open() ? Navigation.Origin.TOPIC : Navigation.Origin.HEADING, 1, 0, -1, "", null,
+                    List.of()));
         }
         // Erst die Auswahl, dann die Reihe: so steht sie ohne Umweg über die erste Wolke gleich in der Mitte.
         if (selected != null) {
@@ -1040,6 +1056,18 @@ final class SourceUpdatesView extends JPanel {
 
     DocumentNavigationSky sky() {
         return sky;
+    }
+
+    /** Die Überschriften der blassen Wolken, von links nach rechts. */
+    List<String> paleClouds() {
+        List<String> pale = new ArrayList<>();
+        List<ChangeUpdate> clouds = updates.reversed();
+        for (int i = 0; i < clouds.size(); i++) {
+            if (sky.paleForTest(i)) {
+                pale.add(heading(clouds.get(i)));
+            }
+        }
+        return pale;
     }
 
     /** Der Tooltip der Wolke dieses Updates. */

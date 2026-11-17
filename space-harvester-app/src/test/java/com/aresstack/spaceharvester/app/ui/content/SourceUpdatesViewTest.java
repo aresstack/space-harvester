@@ -65,7 +65,7 @@ class SourceUpdatesViewTest {
                 "10.11.2026, 08:00 · angelo");
         assertThat(view.counts(actions.open())).startsWith("noch nicht abgeschlossen").contains("1 neu");
         assertThat(view.counts(actions.initial())).isEqualTo("Erstbefüllung · 340 Seiten");
-        assertThat(view.selectedUpdate()).as("das neueste gewählt").isEqualTo(ChangeUpdate.OPEN);
+        assertThat(view.selectedUpdate()).as("das jüngste abgeschlossene gewählt").isEqualTo(actions.second().id());
         assertThat(view.subscribed()).isTrue();
     }
 
@@ -77,12 +77,16 @@ class SourceUpdatesViewTest {
         assertThat(view.sky().navigation().chapters()).extracting(Navigation.Section::label)
                 .as("das älteste links, das jüngste rechts")
                 .containsExactly("10.11.2026, 08:00 · angelo", "16.11.2026, 18:30 · angelo", "Seit dem letzten Update");
-        assertThat(view.markedUpdate()).as("standardmäßig die letzte Änderung").isEqualTo(ChangeUpdate.OPEN);
+        assertThat(view.markedUpdate()).as("standardmäßig das jüngste abgeschlossene Update")
+                .isEqualTo(actions.second().id());
+        assertThat(view.sky().navigation().chapters().get(2).isGenerated()).as("„Seit dem letzten Update“ gestrichelt")
+                .isTrue();
+        assertThat(view.paleClouds()).as("Erstbefüllung blass").containsExactly("10.11.2026, 08:00 · angelo");
         assertThat(view.cloudTooltip("16.11.2026, 18:30 · angelo")).as("der Tooltip nennt auch die Zahlen")
                 .isEqualTo("16.11.2026, 18:30 · angelo · " + view.counts(actions.second()));
 
-        assertThat(view.clickUpdate("16.11.2026, 18:30 · angelo")).isTrue();
-        assertThat(view.markedUpdate()).isEqualTo(view.selectedUpdate()).isNotEqualTo(ChangeUpdate.OPEN);
+        assertThat(view.clickUpdate("Seit dem letzten Update")).isTrue();
+        assertThat(view.markedUpdate()).isEqualTo(view.selectedUpdate()).isEqualTo(ChangeUpdate.OPEN);
 
         summary.source("wiki", "Confluence HaVdB");
         summary.select(view.selectedUpdate());
@@ -147,6 +151,7 @@ class SourceUpdatesViewTest {
     @Test
     void aMessageRereadsTheOpenUpdateButRedrawsOnlyWhenItChanged() throws Exception {
         view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("Seit dem letzten Update");
         int reports = actions.reportCalls;
         int renders = view.reportRenders();
 
