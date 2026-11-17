@@ -112,3 +112,20 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   Objekt unsicheres Objekt, sonst verworfen.
 - Mehrteilige Namen mit Bindestrich (`compound`) und `flat` bilden Kopfform und Grundform („Batch-Job“, „Load Balancer“).
 - Gespeicherte Analysen mit rules-6 gelten als veraltet (Analyzer-Version).
+
+## Umsetzung FL5a (Begriffe ableiten, reine Auswertung)
+- `application.glossary.GlossaryDerivation`: rechnet auf Anfrage über die lesbaren, aktuellen Analysen
+  (`KnowledgeGraph#analysed`), abbrechbar, schreibt nichts. Je Begriff: Wichtigkeit als offene Teilzahlen (Seiten,
+  Erwähnungen, als Handelnder, als Betroffenes, als Träger; nur Original), Verhalten (Verben als Handelnder und als
+  Betroffenes, Vorstufe und verneinte getrennt), Eigenschaften und Ist-Beziehungen (nur Ist-Zustand: bejaht, ohne
+  Modalverb, `GILT`, kein `STATE_CHANGE`, nur `ORIGINAL`, sicherer Träger), Belege als Position (Satzspanne,
+  Eingabe-Hash), Einordnung nach Regeln.
+- `application.knowledge.CountedStatements`: die eine Stelle, ob eine Aussage zählt und mit welcher Stufe (vom
+  Menschen abgelehnte nie); FL4 und FL6 hängen sich dort ein.
+- Schlüssel: `GlossaryDerivation#keyOf` = Grundform in der Schreibung des Textes (`spelling`: Großschreibung aus dem
+  Text, „ss“ des Textes statt „ß“ der alten Rechtschreibung), normalisiert wie das Glossar.
+- Einordnung: technisch (Schreibweise; Kopf-Wortliste), Rolle/Stelle (Kopf-Wortliste), sonst `UNKLAR`. Wortlisten an
+  einer Stelle: `glossar-regeln.tsv`. Ist-Beziehungen ordnen noch nicht ein und geben keinen Definitionsvorschlag, bis
+  der Parser den Artikel am Rollennomen festhält (Strang FL).
+- Messung: `GlossarBerichtTest` gegen von Hand vorab festgelegte `begriffe.tsv`/`beziehungen.tsv` je Textsatz
+  (Bericht `build/reports/pruefstand/glossar.md`, kein Pin; beim Kontrollsatz nur Zahlen und Kennungen).
