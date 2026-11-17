@@ -1,0 +1,98 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/I@heute
+# sent_id = 1
+# text = Der Transport verursacht hohe Kosten.
+1	Der	der	DET	_	_	2	det	_	_
+2	Transport	transport	NOUN	_	_	3	nsubj	_	_
+3	verursacht	verursachen	VERB	_	_	0	root	_	_
+4	hohe	hoch	ADJ	_	_	5	amod	_	_
+5	Kosten	kosten	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Die Kostenstelle trägt die Ausgaben.
+1	Die	der	DET	_	_	2	det	_	_
+2	Kostenstelle	kostenstelle	NOUN	_	_	3	nsubj	_	_
+3	trägt	tragen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Ausgaben	ausgabe	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Der Preisindex bestimmt den Aufschlag.
+1	Der	der	DET	_	_	2	det	_	_
+2	Preisindex	preisindex	PROPN	_	_	3	nsubj	_	_
+3	bestimmt	bestimmen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Aufschlag	aufschlag	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 4
+# text = Das Punktesystem gewichtet den Preis.
+1	Das	der	DET	_	_	2	det	_	_
+2	Punktesystem	punktesystem	NOUN	_	_	3	nsubj	_	_
+3	gewichtet	gewichten	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Preis	preis	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 5
+# text = Der Monatsreport nennt alle offenen Bestellungen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Monatsreport	monatsreport	NOUN	_	_	3	nsubj	_	_
+3	nennt	nennen	VERB	_	_	0	root	_	_
+4	alle	alle	DET	_	_	6	det	_	_
+5	offenen	offen	ADJ	_	_	6	amod	_	_
+6	Bestellungen	bestellung	NOUN	_	_	3	obj	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 6
+# text = Die Poststelle nimmt die Pakete an.
+1	Die	der	DET	_	_	2	det	_	_
+2	Poststelle	poststelle	NOUN	_	_	3	nsubj	_	_
+3	nimmt	nehmen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Pakete	paket	NOUN	_	_	3	obj	_	_
+6	an	an	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 7
+# text = Das Lieferantennetzwerk umfasst zwanzig Firmen.
+1	Das	der	DET	_	_	2	det	_	_
+2	Lieferantennetzwerk	lieferantennetzwerk	NOUN	_	_	3	nsubj	_	_
+3	umfasst	umfassen	VERB	_	_	0	root	_	_
+4	zwanzig	zwanzig	NUM	_	_	5	nummod	_	_
+5	Firmen	firma	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 8
+# text = Der Stammkunde erhält einen Rabatt.
+1	Der	der	DET	_	_	2	det	_	_
+2	Stammkunde	stammkunde	NOUN	_	_	3	nsubj	_	_
+3	erhält	erhalten	VERB	_	_	0	root	_	_
+4	einen	ein	DET	_	_	5	det	_	_
+5	Rabatt	rabatt	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Der Export der Ware braucht eine Genehmigung.
+1	Der	der	DET	_	_	2	det	_	_
+2	Export	export	NOUN	_	_	5	nsubj	_	_
+3	der	der	DET	_	_	4	det	_	_
+4	Ware	ware	NOUN	_	_	2	nmod	_	_
+5	braucht	brauchen	VERB	_	_	0	root	_	_
+6	eine	ein	DET	_	_	7	det	_	_
+7	Genehmigung	genehmigung	NOUN	_	_	5	obj	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 10
+# text = Der Sachgebietsleiter zeichnet die Rechnung ab.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachgebietsleiter	sachgebietsleiter	NOUN	_	_	3	nsubj	_	_
+3	zeichnet	zeichnen	VERB	_	_	0	root	_	_
+4	die	der	PRON	_	_	5	nsubj	_	_
+5	Rechnung	rechnung	NOUN	_	_	3	obj	_	_
+6	ab	ab	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+

@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationManag
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
+import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
@@ -133,7 +134,8 @@ class ConfigurationManagerConfiguration {
                 TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, EnrichmentSettings.DOCUMENTS_ENABLED,
                 EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, ChangeLogSettings.RETENTION,
                 ChangeLogSettings.SHOW_AFTER_UPDATE, SimplificationSettings.MODE, SimplificationSettings.PARALLEL,
-                SimplificationSettings.MODEL, GlossaryRuleSettings.MAX_TERMS)) {
+                SimplificationSettings.MODEL, CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL,
+                GlossaryRuleSettings.MAX_TERMS)) {
             binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
                     .ifBound(value -> properties.setProperty(key, value));
         }
@@ -159,7 +161,8 @@ class ConfigurationManagerConfiguration {
         return base.withSync(read.sync()).withSearch(read.search()).withLocalFiles(read.localFiles())
                 .withExport(read.export()).withTerms(read.terms()).withEnrichment(read.enrichment())
                 .withChangeLog(read.changeLog()).withSimplification(read.simplification())
-                .withStanding(read.standing());
+                .withStanding(read.standing())
+                .withCheck(read.check());
     }
 
     private static final Bindable<Map<String, Map<String, String>>> SOURCE_RULES = Bindable.of(

@@ -140,6 +140,7 @@ public final class Texts {
             case METADATA_EXPORT -> "Confluence-Metadaten";
             case ANALYTICS_EXPORT -> "Analytics";
             case UPDATE_SUMMARY -> "Zusammenfassen";
+            case STATEMENT_CHECK -> "Aussagen prüfen";
         };
     }
 

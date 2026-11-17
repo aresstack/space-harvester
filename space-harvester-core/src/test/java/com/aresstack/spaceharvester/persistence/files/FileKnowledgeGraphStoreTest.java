@@ -145,6 +145,38 @@ class FileKnowledgeGraphStoreTest {
     }
 
     @Test
+    void theArticleOfARoleNounSurvivesARestartAndIsMissingWithoutOne() throws IOException {
+        PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
+        ParsedStatements.Statement s = base.result().statements().get(0);
+        ParsedStatements.Features features = new ParsedStatements.Features(ParsedStatements.Negation.NEGATED,
+                ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT, ParsedStatements.Article.KEIN);
+        ParsedStatements.Statement withArticle = new ParsedStatements.Statement(s.id(), s.sentence(), s.start(),
+                s.end(), s.predicateText(), s.predicateLemma(), s.voice(), s.clause(), s.core(), s.arguments(),
+                s.findings(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
+                features);
+        new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
+                List.of(withArticle))));
+
+        assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements()
+                .get(0).features().article()).isEqualTo(ParsedStatements.Article.KEIN);
+
+        ParsedStatements.Statement without = new ParsedStatements.Statement(s.id(), s.sentence(), s.start(),
+                s.end(), s.predicateText(), s.predicateLemma(), s.voice(), s.clause(), s.core(), s.arguments(),
+                s.findings(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
+                new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE,
+                        ParsedStatements.Temporality.GILT));
+        new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
+                List.of(without))));
+        Path file;
+        try (Stream<Path> files = Files.list(directory.resolve(FileKnowledgeGraphStore.PAGES))) {
+            file = files.findFirst().orElseThrow();
+        }
+        assertThat(Files.readString(file, StandardCharsets.UTF_8)).doesNotContain("\"article\"");
+        assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements())
+                .containsExactly(without);
+    }
+
+    @Test
     void originFlagAndSimplifiedSentenceOfTheStageSurviveARestartAndOriginalsWriteNothing() throws IOException {
         PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
         ParsedStatements.Statement s = base.result().statements().get(0);
