@@ -66,7 +66,7 @@ import java.util.function.UnaryOperator;
  */
 public class Jobs implements AutoCloseable {
 
-    static final String INTERRUPTED = "INTERRUPTED";
+    static final String INTERRUPTED = JobLifecycleState.INTERRUPTED;
     static final String TIMEOUT = "TIMEOUT";
     static final String UNEXPECTED = "UNEXPECTED";
     static final String SHUTDOWN = "SHUTDOWN";
@@ -1299,7 +1299,8 @@ public class Jobs implements AutoCloseable {
         for (JobStatus status : store.all()) {
             if (!status.state().terminal()) {
                 store.save(status.interrupted(new JobError(INTERRUPTED, "Der Dienst wurde während des Auftrags "
-                        + "beendet; der Auftrag wird nicht fortgesetzt und muss neu gestartet werden"), now));
+                        + "beendet" + (status.type().resumable() ? "; Fortsetzen macht dort weiter, wo er stand"
+                        : "; der Auftrag muss neu gestartet werden")), now));
                 // Nach der höchsten Nummer, nicht nach der Anzahl: gelöschte Ereignisse hinterlassen Lücken.
                 long next = events.events(status.id()).stream().mapToLong(JobEvent::sequence).max().orElse(0) + 1;
                 appendQuietly(new JobEvent(status.id(), next, now, status.type(),

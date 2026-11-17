@@ -1369,6 +1369,9 @@ public final class Workspace {
         return switch (status.type()) {
             case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
             case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
+            // Metadaten und Analytics: ein neuer Lauf im selben Eintrag, auch nach einem Neustart (Angelo 17.11.2026).
+            case METADATA_EXPORT, ANALYTICS_EXPORT -> harvester.jobActions().perform(jobId, Harvester.OWNER,
+                    JobAction.RESUME);
             default -> harvester.resumeExport(jobId);
         };
     }
