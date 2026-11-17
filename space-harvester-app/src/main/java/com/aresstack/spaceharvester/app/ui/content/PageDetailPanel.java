@@ -10,8 +10,10 @@ import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Facts;
 import com.aresstack.spaceharvester.app.ui.Feedback;
+import com.aresstack.spaceharvester.app.ui.GlossaryTab;
 import com.aresstack.spaceharvester.app.ui.PillTabs;
 import com.aresstack.spaceharvester.app.ui.Problems;
+import com.aresstack.spaceharvester.app.ui.TermGraphView;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
@@ -148,6 +150,11 @@ public final class PageDetailPanel extends JPanel {
     static final String OVERVIEW_TERMS = "Begriffe der Auswahl";
     /** Ob die Begriffe der Auswahl gerade zu sehen sind (Analysen ohne Seite, Reiter „Begriffe“). */
     private boolean overviewTermsShown;
+    /** Fachglossar und Graph der Auswahl, hinten in der Reiterzeile von Analysen ohne Seite (BG2c). */
+    private final GlossaryTab overviewGlossary;
+    private final TermGraphView overviewGraph;
+    /** Schlüssel der Statuszeile für das Fachglossar der Auswahl. */
+    static final String OVERVIEW_GLOSSARY = "Fachglossar der Auswahl";
     /** Anmeldungen beim Bestand der Auswahl (ADR 0027): ändert er sich, zählen die Begriffe neu. */
     private final List<com.aresstack.spaceharvester.application.observe.Subscription> overviewHoldings =
             new ArrayList<>();
@@ -378,6 +385,9 @@ public final class PageDetailPanel extends JPanel {
         this.standing = new StandingTab(context::runtime);
         this.analysisView = new AnalysisView(context, true);
         this.wideAnalysis = new AnalysisView(context, false);
+        this.overviewGlossary = new GlossaryTab(context, () -> context.runtime() == null
+                ? java.util.Optional.empty() : context.runtime().workspace().glossary());
+        this.overviewGraph = new TermGraphView(context);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
         title.setFont(Comic.semiBold(15f));
@@ -593,7 +603,7 @@ public final class PageDetailPanel extends JPanel {
         // Begriffe vorn in der Reiterzeile des Stands, wie auf der Seite; keine zweite Reiterebene (AT 17.11.2026).
         standing.terms(overviewTerms, visible -> {
             overviewTermsShown = visible;
-            standingHelp.setVisible(standingShown() && !visible);
+            standingHelp.setVisible(standingShown() && standing.ownTabSelected());
             if (visible) {
                 loadOverviewTerms();
                 if (overviewRecount) {
@@ -604,6 +614,21 @@ public final class PageDetailPanel extends JPanel {
         });
         overviewTerms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
         overviewTerms.onStatus(text -> tabStatus(OVERVIEW_TERMS, text));
+        // Fachglossar und Graph hinten in derselben Reiterzeile (BG2c, aus dem früheren Bereich „Begriffe“): dieselben
+        // Ansichten, ihre Werkzeuge oben rechts nur auf ihrem Reiter, beide nach der Auswahl links.
+        standing.tab(StandingTab.GLOSSARY, overviewGlossary.component(), visible -> {
+            standingHelp.setVisible(standingShown() && standing.ownTabSelected());
+            if (visible) {
+                overviewGlossary.shown();
+            }
+        }, overviewGlossary.tools(), overviewGlossary.addButton(), overviewGlossary.detectButton());
+        overviewGlossary.onStatus(text -> tabStatus(OVERVIEW_GLOSSARY, text));
+        standing.tab(StandingTab.GRAPH, overviewGraph.component(), visible -> {
+            standingHelp.setVisible(standingShown() && standing.ownTabSelected());
+            if (visible) {
+                overviewGraph.shown();
+            }
+        }, overviewGraph.tools());
         deck.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
@@ -740,7 +765,7 @@ public final class PageDetailPanel extends JPanel {
         // Unterreitern „Aussagen“, „Zuerst lesen“, „Mögliche Widersprüche“ (Angelo 17.11.2026, kein eigenes Symbol).
         boolean standingShown = standingShown();
         standing.shown(standingShown);
-        standingHelp.setVisible(standingShown && !StandingTab.TERMS.equals(standing.tabs().selected()));
+        standingHelp.setVisible(standingShown && standing.ownTabSelected());
         // Im Reiter Chat steht mittig der Chat statt der Seitenüberschrift, rechts Neuer Chat und Chat löschen.
         boolean chatTab = CHAT.equals(selected);
         title.setVisible(!chatTab);
@@ -841,6 +866,9 @@ public final class PageDetailPanel extends JPanel {
         tabStatus(OVERVIEW_TERMS, " ");
         AppRuntime runtime = context.runtime();
         watchOverviewHoldings(runtime, selection);
+        overviewGlossary.selection(selection);
+        overviewGraph.pages(selection == null || runtime == null || selection.global() ? null
+                : () -> runtime.workspace().resolveSelection(selection.toCore(runtime)).pages());
         wideAnalysis.scope(selection == null || runtime == null ? null : new AnalysisView.Scope() {
             @Override
             public PageSet pages() {
@@ -956,6 +984,15 @@ public final class PageDetailPanel extends JPanel {
     /** Die Begriffe der Auswahl im Reiter „Begriffe“ unter Analysen ohne Seite. */
     TermsTab overviewTerms() {
         return overviewTerms;
+    }
+
+    /** Fachglossar und Graph der Auswahl unter Analysen ohne Seite. */
+    GlossaryTab overviewGlossary() {
+        return overviewGlossary;
+    }
+
+    TermGraphView overviewGraph() {
+        return overviewGraph;
     }
 
 
@@ -2737,7 +2774,11 @@ public final class PageDetailPanel extends JPanel {
     String selectedTab() {
         String main = tabs.selected();
         if (ANALYSES.equals(main) && wide) {
-            return StandingTab.TERMS.equals(standing.tabs().selected()) ? OVERVIEW_TERMS : STAND;
+            return switch (java.util.Objects.requireNonNullElse(standing.tabs().selected(), "")) {
+                case StandingTab.TERMS -> OVERVIEW_TERMS;
+                case StandingTab.GLOSSARY -> OVERVIEW_GLOSSARY;
+                default -> STAND;
+            };
         }
         return ANALYSES.equals(main) ? analysisTabs.selected() : main;
     }

@@ -739,7 +739,13 @@ public final class TermsView implements View {
 
         /** Ohne Kopfzeile: Suche und Filter stehen in der Reiterzeile (Fachglossar). */
         void withoutHead() {
-            remove(head);
+            // Der Kopf steht in der oberen Zeile (über Buchstabenleiste und Chips), nicht direkt im Verzeichnis.
+            top.remove(head);
+        }
+
+        /** Ob die Kopfzeile mit Überschrift und eigenem Suchfeld zu sehen ist (Tests). */
+        boolean showsHead() {
+            return head.getParent() != null;
         }
 
         /** Spaltenköpfe über der Tabelle, wenn sich die Werte nicht von selbst erklären. */
