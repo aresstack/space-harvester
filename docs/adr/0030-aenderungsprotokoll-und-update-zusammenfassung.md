@@ -118,8 +118,8 @@ Baum zeigen jeden Seitenabruf mit Inhalt, gleich welcher Weg ihn auslöst.
 
 ### 5. Zusammenfassung je Quelle und Update
 
-- Eine Zusammenfassung gehört zu genau einer Quelle und einem Update. Sie entsteht **nur auf Wunsch** als Auftrag
-  („Zusammenfassen“), nach dem Muster der Aussagenanalyse (ADR 0024): Der Core ruft das eingestellte Chat-Modell mit
+- Eine Zusammenfassung gehört zu genau einer Quelle und einem Update. Sie entsteht als Auftrag („Zusammenfassen“),
+  von Hand oder beim Öffnen der Leseansicht (siehe unten), nach dem Muster der Aussagenanalyse (ADR 0024): Der Core ruft das eingestellte Chat-Modell mit
   dem Änderungsbericht und legt das Ergebnis neben dem Protokoll ab. Das ist eine Auswertung, kein Chat; Gespräche,
   Agenten und Recherche bleiben außerhalb des Core.
 - Das Modell bekommt nur den Bericht in fester, knapper Form: Zeitraum, Zähler, je Seite Art, Titel, Pfad und den
@@ -134,6 +134,28 @@ Baum zeigen jeden Seitenabruf mit Inhalt, gleich welcher Weg ihn auslöst.
   sie gültig. Sie lässt sich neu erstellen.
 - Aufbewahrt werden Zusammenfassungen so lange wie die Zeilen ihres Updates.
 
+**Leseansicht (Angelo, 17.11.2026).** Die Leseansicht zeigt immer die KI-Zusammenfassung des gewählten Updates und
+der gewählten Ebene (Quelle oder Space). Fehlt sie, stößt die Leseansicht den Core-Auftrag „Zusammenfassen“ selbst
+an, sobald sie sichtbar ist, und zeigt währenddessen „Zusammenfassung wird erstellt …“. Die Updates selbst stehen
+unter „Text“.
+
+Grenzen, die bleiben:
+- Zusammengefasst wird nur beim Öffnen der Leseansicht, nie im Hintergrund, nie nach einem Abgleich und nie für
+  verdeckte Reiter. Es gibt weiterhin keinen Pop-up-Zwang.
+- Je Update und Ebene höchstens ein selbst angestoßener Auftrag. Nach einem Fehlschlag wird nicht von selbst
+  wiederholt; die Ansicht bietet den Einstieg zum erneuten Versuch.
+- Eine vorhandene, inzwischen veraltete Zusammenfassung (offenes Update mit neuen Änderungen) wird nicht von selbst
+  neu erstellt; die Ansicht nennt, dass sie veraltet ist, „Zusammenfassen“ erstellt sie neu.
+- Erstbefüllung und Updates ohne Änderung bekommen keine Zusammenfassung; ohne eingestelltes Chat-Modell sagt die
+  Ansicht, warum keine da ist.
+- Die Freigabegrenze bleibt im Core: Nur KI-freigegebene Seiten gehen ans Modell (ADR 0028). Namen von Bearbeitern
+  gehen nie ans Modell (ADR 0031).
+- Ein selbst angestoßener Auftrag, der noch nicht begonnen hat, wird abgebrochen, wenn der Benutzer Update oder
+  Ebene wechselt, bevor er läuft. So löst das Durchklicken im Baum keine Reihe von Modellaufrufen aus. Ein
+  laufender Auftrag läuft zu Ende, sein Ergebnis bleibt gespeichert.
+- Der Core startet für dasselbe Update und dieselbe Ebene keinen zweiten Auftrag, solange einer läuft oder wartet;
+  der Aufruf liefert den vorhandenen.
+
 ### 6. Oberfläche
 
 - **Einstellungen › Cache:** die Aufbewahrung (Punkt 2) und ein Knopf, der einen Dialog „Änderungsprotokoll“ öffnet:
@@ -145,7 +167,8 @@ Baum zeigen jeden Seitenabruf mit Inhalt, gleich welcher Weg ihn auslöst.
   auf die Seite und die Zusammenfassung, sofern erstellt, sonst die Aktion „Zusammenfassen“. Frühere Updates bleiben
   nachlesbar.
 - **Nach einem Update** geschieht von selbst nichts. Eine Einstellung „Nach dem Update Änderungen anzeigen“
-  (Standard aus) öffnet die Updates der Quelle; sie erstellt nie von selbst eine Zusammenfassung.
+  (Standard aus) öffnet die Updates der Quelle; zusammengefasst wird erst, wenn die Leseansicht geöffnet ist
+  (Punkt 5).
 - Lange Vorgänge mit BusyOverlay, Teilergebnisse sofort, Abbrechen lässt Ergebnisse stehen.
 
 ### 7. Nicht Teil dieser Entscheidung
