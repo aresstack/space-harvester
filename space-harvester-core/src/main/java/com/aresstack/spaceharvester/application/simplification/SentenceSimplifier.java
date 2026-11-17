@@ -237,6 +237,10 @@ public final class SentenceSimplifier {
         if (a.equals(b)) {
             return true;
         }
+        if (Character.isUpperCase(word.charAt(0)) && agent(a) && !agent(b)) {
+            // „Prüfer“ nur, wenn im Abschnitt selbst eine Form auf -er steht, nicht schon bei „prüfen“/„Prüfung“
+            return false;
+        }
         boolean verbs = Character.isLowerCase(word.charAt(0)) && Character.isLowerCase(known.charAt(0));
         for (String x : variants(a)) {
             for (String y : variants(b)) {
@@ -247,6 +251,12 @@ public final class SentenceSimplifier {
         }
         // abgetrennter Verbzusatz („stellt … fest“) zu einer Verbform mit diesem Zusatz („feststellt“)
         return verbs && PARTICLES.contains(a) && b.startsWith(a) && b.length() >= a.length() + 3;
+    }
+
+    /** Ob ein Wort auf -er, -ers, -ern, -erin oder -erinnen endet (etwa ein Handelnder: „Prüfer“, „Prüferin“). */
+    private static boolean agent(String word) {
+        return word.length() >= 5 && (word.endsWith("er") || word.endsWith("ers") || word.endsWith("ern")
+                || word.endsWith("erin") || word.endsWith("erinnen"));
     }
 
     /** Das Wort und, nach einem trennbaren Verbzusatz, ohne eingeschobenes „ge“ oder „zu“ („festgestellt“ → „feststellt“). */
@@ -268,24 +278,31 @@ public final class SentenceSimplifier {
         List<String> words = new ArrayList<>();
         Matcher matcher = WORD.matcher(text);
         while (matcher.find()) {
-            words.add(matcher.group().toLowerCase(Locale.GERMAN));
+            words.add(matcher.group());
         }
-        if (words.stream().noneMatch(DUTY::contains)) {
+        if (words.stream().noneMatch(word -> DUTY.contains(word.toLowerCase(Locale.GERMAN)))) {
             return false;
         }
         for (int i = 0; i < words.size(); i++) {
-            String word = words.get(i);
-            if ("zu".equals(word) && i + 1 < words.size() && words.get(i + 1).endsWith("en")) {
+            String word = words.get(i).toLowerCase(Locale.GERMAN);
+            if ("zu".equals(word) && i + 1 < words.size() && infinitive(words.get(i + 1))) {
                 return true;
             }
             for (String particle : PARTICLES) {
-                if (word.startsWith(particle + "zu") && word.endsWith("en")
+                if (word.startsWith(particle + "zu") && infinitive(words.get(i))
                         && word.length() - particle.length() - 2 >= 4) {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /** Ein Infinitiv nach „zu“: klein geschrieben, kein Funktionswort, mindestens fünf Buchstaben, auf -en. */
+    private static boolean infinitive(String raw) {
+        String word = raw.toLowerCase(Locale.GERMAN);
+        return Character.isLowerCase(raw.charAt(0)) && word.length() >= 5 && word.endsWith("en")
+                && !FUNCTION_WORDS.contains(word);
     }
 
     private static boolean negation(String word) {

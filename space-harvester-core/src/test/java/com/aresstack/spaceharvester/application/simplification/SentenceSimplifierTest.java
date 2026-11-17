@@ -116,6 +116,28 @@ class SentenceSimplifierTest {
     }
 
     @Test
+    void anInventedActorFromAVerbIsDiscarded() {
+        SimplificationSection section = new SimplificationSection(List.of(), List.of(new SimplificationSection
+                .Sentence(0, "Die Unterlagen werden geprüft.")));
+        SentenceSimplifier.Parsed parsed = SentenceSimplifier.parse(section, "1|T|Der Prüfer prüft die Unterlagen.\n");
+        assertThat(parsed.sentences().get(0)).isEmpty();
+        assertThat(parsed.added()).isEqualTo(1);
+        assertThat(SentenceSimplifier.related("Prüfers", "Prüfer")).as("Form auf -er im Abschnitt").isTrue();
+    }
+
+    @Test
+    void zuBeforeANounOrFunctionWordIsNoDuty() {
+        SimplificationSection opening = new SimplificationSection(List.of(), List.of(new SimplificationSection
+                .Sentence(0, "Der Zugang zum Lager ist zu den Geschäftszeiten möglich.")));
+        assertThat(SentenceSimplifier.parse(opening,
+                "1|T|Der Zugang zum Lager muss zu den Geschäftszeiten möglich sein.\n").added()).isEqualTo(1);
+        SimplificationSection access = new SimplificationSection(List.of(), List.of(new SimplificationSection
+                .Sentence(0, "Der Techniker hat Zugang zu allen Pumpen.")));
+        assertThat(SentenceSimplifier.parse(access, "1|T|Der Techniker muss Zugang zu allen Pumpen haben.\n")
+                .added()).isEqualTo(1);
+    }
+
+    @Test
     void anOrderAdverbNeedsTheMatchingConjunction() {
         SimplificationSection after = new SimplificationSection(List.of(), List.of(new SimplificationSection
                 .Sentence(0, "Der Techniker prüft die Pumpe, nachdem das Lager sie geliefert hat.")));
