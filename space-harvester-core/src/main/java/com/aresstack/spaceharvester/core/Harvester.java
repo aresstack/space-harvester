@@ -25,6 +25,10 @@ import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
 import com.aresstack.spaceharvester.application.changelog.TextContentDiffer;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
+import com.aresstack.spaceharvester.application.changelog.topics.ChangeTopics;
+import com.aresstack.spaceharvester.application.changelog.topics.ChangeTopicsQuery;
+import com.aresstack.spaceharvester.application.changelog.topics.ChangeUnitVectors;
+import com.aresstack.spaceharvester.application.changelog.topics.TopicWeights;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
@@ -332,6 +336,7 @@ public final class Harvester implements AutoCloseable {
     /** Seiten-Cache samt Änderungsprotokoll und Update-Marken (ADR 0030). */
     private final LucenePageCache pageCache;
     private final ChangeLog changeLog;
+    private final ChangeTopics changeTopics;
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
@@ -474,11 +479,14 @@ public final class Harvester implements AutoCloseable {
             EmbeddingProcessor embedding = null;
             ExecutorService background = null;
             Swappable<EmbeddingGeneration> model = null;
+            // ADR 0030, Nachtrag: Vektoren der Änderungseinheiten über denselben Dienst wie die Seiten.
+            Supplier<EmbeddingProvider> topicEmbeddings = () -> null;
             if (builder.embeddingProvider == null && liveAi) {
                 // ADR 0015: die Kette steht immer, das Modell wechselt mit der Konfiguration oder fehlt (aus).
                 Swappable<EmbeddingGeneration> current = Swappable.of(new EmbeddingGeneration(
                         embeddingModel(builder.ai, catalog, trustBundles, builder.userAgent), builder.ai));
                 model = current;
+                topicEmbeddings = () -> current.get().provider().orElse(null);
                 // Freigabe aus denselben Einstellungen wie das Modell: Neu freigegebene Inhalte gehen nie an den
                 // Endpunkt einer früheren Generation.
                 embedding = new EmbeddingProcessor(() -> current.get().provider().orElse(null),
@@ -489,11 +497,13 @@ public final class Harvester implements AutoCloseable {
                 // ADR 0011: über den externen Dienst oder das Modell des Programms (#188), im Hintergrund, nur für
                 // freigegebene Quellen.
                 AiServiceSettings ai = builder.ai;
+                EmbeddingProvider fixed = builder.embeddingProvider != null ? builder.embeddingProvider
+                        : RemoteAi.of(ai, catalog, trustBundles, builder.userAgent).embeddings();
+                topicEmbeddings = () -> fixed;
                 embedding = builder.embeddingProvider != null
                         ? new EmbeddingProcessor(builder.embeddingProvider, builder.maxChunkChars,
                                 KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences), builder.embeddingSources)
-                        : new EmbeddingProcessor(RemoteAi.of(ai, catalog, trustBundles, builder.userAgent)
-                                .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
+                        : new EmbeddingProcessor(fixed, builder.maxChunkChars, KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
                                 ai::mayProcessExternally);
             }
             // #181: Satzgrenzen für Absätze; mit Modell je semantischem Absatz ein Embedding (withPassages, ADR 0020).
@@ -835,6 +845,10 @@ public final class Harvester implements AutoCloseable {
                             () -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles, builder.userAgent),
                             summaryRelease::mayProcess, clock));
             opened.add(changeLog);
+            // ADR 0030, Nachtrag Abschnitt 4: Themen nur im Auftrag „Zusammenfassen“, nur freigegebene Einheiten.
+            this.changeTopics = new ChangeTopics(changeLog::report, summaryRelease::mayProcess, sentences,
+                    topicEmbeddings, ChangeUnitVectors.Cache.inMemory(), TopicWeights.DEFAULT,
+                    ChangeTopics.DEFAULT_BUDGET);
             start.step("Änderungsprotokoll");
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
@@ -1908,6 +1922,14 @@ public final class Harvester implements AutoCloseable {
     /** Änderungsprotokoll und Updates je Quelle (ADR 0030), mit den Rechten des Aufrufers je Seite. */
     public ChangeLog changeLog() {
         return changeLog;
+    }
+
+    /**
+     * Themenvorschläge eines Updates (ADR 0030, Nachtrag Abschnitt 4); nur im Auftrag „Zusammenfassen“ mit dessen
+     * Aufrufer aufrufen, nie beim Öffnen einer Ansicht.
+     */
+    public ChangeTopicsQuery changeTopics() {
+        return changeTopics;
     }
 
     /** Die Zeilen des Änderungsprotokolls einer Quelle (ADR 0030) ohne Rechteprüfung, für Tests. */
