@@ -13,7 +13,8 @@ Unbekannte Typen, fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen ver
 werden gemeinsam gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
 **Registrierung:** `ConfiguredSourceCatalog.DEFAULT_ADAPTERS` enthält die Typen ohne eigenen Ordner:
-`ConfluenceSourceAdapter` (`confluence`), `LocalFilesSourceAdapter` (`files`), aus `EacSourceAdapters` `ftp()`,
+`ConfluenceSourceAdapter` (`confluence`), `LocalFilesSourceAdapter` (`files`),
+`BscwSourceAdapter` (`bscw`), aus `EacSourceAdapters` `ftp()`,
 `jes()`, `ndv()`, `sharePoint()`, `betaView()` und `outlook()` sowie `MediaWikiSources.adapter()` (`mediawiki`);
 `ConfiguredSourceCatalog.TYPES` sind deren Typnamen. `git` braucht einen Ordner für die Kopien der Repositorys und
 fehlt deshalb in der Liste: `Harvester.builder()` hängt `new GitSourceAdapter(<dataDirectory>/git)` an, der Dienst
@@ -26,6 +27,7 @@ eine `SourceAdapter`-Bean (`SourceConfiguration`), der Katalog bekommt alle Bean
 |---|---|---|---|---|---|---|
 | `confluence` | `ConfluenceSourceAdapter` | – (`base-url`) | `none`, `basic`, `pat` | nicht erlaubt, dafür `auth` | ja | ja (`pkcs12`, `windows-my`) |
 | `files` | `LocalFilesSourceAdapter` | `directory` | `none` | – | Fehler | Fehler |
+| `bscw` | `BscwSourceAdapter` | `rootUrl` | `basic` | nicht erlaubt, dafür `auth` | Fehler | Fehler |
 | `ftp` | `EacSourceAdapters.ftp()` | `host` | `none`, `basic` | eigener Verweis bei `none` | Fehler | Fehler |
 | `jes` | `EacSourceAdapters.jes()` | `host` | `none`, `basic`; Anmeldung Pflicht | eigener Verweis bei `none` | Fehler | Fehler |
 | `ndv` | `EacSourceAdapters.ndv()` | `host` | `none`, `basic`; Anmeldung Pflicht | eigener Verweis bei `none` | Fehler | Fehler |

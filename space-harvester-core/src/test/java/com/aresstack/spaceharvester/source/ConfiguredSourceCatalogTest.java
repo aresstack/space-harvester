@@ -61,7 +61,7 @@ class ConfiguredSourceCatalogTest {
                         "sources[0] (id=Bad Id): id fehlt oder ist ungültig (erlaubt: Kleinbuchstaben, Ziffern, "
                                 + "Bindestrich; z. B. 'confluence')",
                         // Ohne bekannten Typ gibt es keine typeigenen Prüfungen (base-url gehört zu confluence).
-                        "sources[1] (id=wiki): type fehlt oder ist unbekannt (bekannt: confluence, files, ftp, jes, ndv, "
+                        "sources[1] (id=wiki): type fehlt oder ist unbekannt (bekannt: confluence, files, bscw, ftp, jes, ndv, "
                                 + "sharepoint, betaview, outlook, mediawiki)",
                         "sources[2] (id=basic): auth.type basic braucht auth.username und auth.password",
                         "sources[3] (id=pat): auth.username/auth.password passen nicht zu auth.type pat",

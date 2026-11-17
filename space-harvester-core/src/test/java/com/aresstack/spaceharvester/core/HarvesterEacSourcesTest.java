@@ -56,6 +56,7 @@ class HarvesterEacSourcesTest {
                     .containsExactly(
                             tuple("confluence", "Confluence", false, null, false),
                             tuple("files", "Ordner", false, "directory", false),
+                            tuple("bscw", "BSCW Classic (WebDAV)", false, "rootUrl", false),
                             tuple("ftp", "FTP", false, "host", false),
                             tuple("jes", "JES", true, "host", false),
                             tuple("ndv", "NDV", true, "host", false),
