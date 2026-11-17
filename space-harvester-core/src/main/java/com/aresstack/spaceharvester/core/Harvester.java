@@ -907,7 +907,8 @@ public final class Harvester implements AutoCloseable {
             // ADR 0032, FL3: Vorstufe „Sätze vereinfachen“ nur auf Auftrag, an das Modell nur Seiten mit KI-Freigabe;
             // ihre Ablage zählt als Seiteninhalt und fällt mit der Seite, der Quelle und der Freigabe.
             this.simplifications = new Simplifications(new ChatSimplificationModel(
-                    () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog, trustBundles, builder.userAgent),
+                    () -> liveAi ? this.settings.ai() : startAi,
+                    () -> this.settings.simplification().model(), catalog, trustBundles, builder.userAgent),
                     new SimplificationStore(enrichmentStore, clock), withdrawn::mayProcess);
             Simplifications simplified = this.simplifications;
             releaseRecomputation.withdrawal(pages -> {
