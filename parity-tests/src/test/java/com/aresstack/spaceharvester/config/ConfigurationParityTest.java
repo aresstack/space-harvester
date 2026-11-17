@@ -108,6 +108,7 @@ class ConfigurationParityTest {
                   max-terms: 300
                   max-embedded-terms: 100
                   max-judged-pairs: 50
+                  automatic: false
               glossary:
                 rules:
                   max-terms: 200
@@ -196,6 +197,7 @@ class ConfigurationParityTest {
                 HarvesterConfiguration.DEFAULT, binder);
         SynonymBudget budget = service2.terms().synonyms();
         assertThat(app.terms().synonyms()).isEqualTo(budget);
+        assertThat(budget.automatic()).as("SY1: automatic aus beiden Loadern").isFalse();
         // ADR 0032, FL5b: Regeln der Begriffsableitung, als YAML-Liste und als Text mit Kommas.
         com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings rules =
                 com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.DEFAULT.withMaxTerms(200)
@@ -204,7 +206,7 @@ class ConfigurationParityTest {
                         .with(com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.Kind
                                 .ROLE_WORDS, java.util.List.of("sachgebiet", "amt"), java.util.List.of());
         assertThat(app.terms().glossaryRules()).isEqualTo(service2.terms().glossaryRules()).isEqualTo(rules);
-        assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
+        assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50, false));
 
         // ADR 0030: Aufbewahrung des Änderungsprotokolls, beim Dienst über withSyncRules.
         assertThat(app.cache().changeLog()).isEqualTo(service2.changeLog())

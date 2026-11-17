@@ -464,6 +464,7 @@ public final class ConfigFileEditor {
      * Der Entwurf {@code base} mit neuem Budget der Synonymerkennung ({@code space-harvester.terms.synonyms.*},
      * #336), dieselben Schlüssel wie im Dienst; nur der Block {@code synonyms} unter {@code terms} ändert sich.
      * {@code max-judged-pairs} über 0 schaltet die Prüfung der Kandidatenpaare durch das Text-Modell zu.
+     * {@code automatic} steht nur in der Datei, wenn es von der Vorgabe (an) abweicht.
      *
      * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
      */
@@ -473,7 +474,9 @@ public final class ConfigFileEditor {
             return indent + "synonyms:\n"
                     + inner + SynonymBudget.MAX_TERMS + ": " + budget.maxTerms() + "\n"
                     + inner + SynonymBudget.MAX_EMBEDDED_TERMS + ": " + budget.maxEmbeddedTerms() + "\n"
-                    + inner + SynonymBudget.MAX_JUDGED_PAIRS + ": " + budget.maxJudgedPairs() + "\n";
+                    + inner + SynonymBudget.MAX_JUDGED_PAIRS + ": " + budget.maxJudgedPairs() + "\n"
+                    + (budget.automatic() == SynonymBudget.DEFAULT.automatic() ? ""
+                    : inner + SynonymBudget.AUTOMATIC + ": " + budget.automatic() + "\n");
         });
         AppSettings settings = loader.read(file, text);
         List<String> before = loader.read(file, base.text()).problems();

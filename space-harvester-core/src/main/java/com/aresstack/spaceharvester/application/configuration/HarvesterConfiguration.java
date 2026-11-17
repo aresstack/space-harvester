@@ -398,7 +398,8 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             terms = new TermSettings(new SynonymBudget(
                     read.integer(TermSettings.SYNONYMS_MAX_TERMS, SynonymBudget.DEFAULT.maxTerms()),
                     read.integer(TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, SynonymBudget.DEFAULT.maxEmbeddedTerms()),
-                    read.integer(TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, SynonymBudget.DEFAULT.maxJudgedPairs())));
+                    read.integer(TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, SynonymBudget.DEFAULT.maxJudgedPairs()),
+                    read.bool(TermSettings.SYNONYMS_AUTOMATIC, SynonymBudget.DEFAULT.automatic())));
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(TermSettings.SYNONYMS_MAX_TERMS, e.getMessage()));
         }

@@ -15,6 +15,7 @@ public record TermSettings(SynonymBudget synonyms, GlossaryRuleSettings glossary
     public static final String SYNONYMS_MAX_TERMS = "terms.synonyms." + SynonymBudget.MAX_TERMS;
     public static final String SYNONYMS_MAX_EMBEDDED_TERMS = "terms.synonyms." + SynonymBudget.MAX_EMBEDDED_TERMS;
     public static final String SYNONYMS_MAX_JUDGED_PAIRS = "terms.synonyms." + SynonymBudget.MAX_JUDGED_PAIRS;
+    public static final String SYNONYMS_AUTOMATIC = "terms.synonyms." + SynonymBudget.AUTOMATIC;
 
     public static final TermSettings DEFAULT = new TermSettings(SynonymBudget.DEFAULT, GlossaryRuleSettings.DEFAULT);
 

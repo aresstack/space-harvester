@@ -154,6 +154,36 @@ public class SynonymCandidates {
     }
 
     /** Ob ein Embedding-Modell eingestellt ist (Stufe B); ohne bleiben nur die Regeln. */
+    /**
+     * Stand einer Quelle für den automatischen Lauf (SY1): Fingerabdruck über die Einträge ihrer Seiten im
+     * Begriffsindex (Schlüssel und Eingabe-Hash), die Freigabe der Quelle und ob ein Embedding-Modell da ist. Gleicher
+     * Stand heißt, ein Lauf fände nichts Neues. Nur Hashes, keine Begriffe.
+     */
+    public String state(String sourceId) {
+        java.security.MessageDigest digest;
+        try {
+            digest = java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 fehlt", e);
+        }
+        digest.update((released.test(sourceId) + "|" + embeddingAvailable() + "|").getBytes(
+                java.nio.charset.StandardCharsets.UTF_8));
+        TermIndex.Filter filter = new TermIndex.Filter(Set.of(sourceId), null, null, null, processorVersion);
+        String from = null;
+        while (true) {
+            List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
+            for (TermPosting posting : batch) {
+                digest.update((posting.sortKey() + '\u0001' + posting.inputSha256() + '\u0002')
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            if (batch.size() < TermIndex.MAX_BATCH) {
+                break;
+            }
+            from = batch.get(batch.size() - 1).sortKey();
+        }
+        return java.util.HexFormat.of().formatHex(digest.digest());
+    }
+
     public boolean embeddingAvailable() {
         try {
             return embeddings.get().isPresent();

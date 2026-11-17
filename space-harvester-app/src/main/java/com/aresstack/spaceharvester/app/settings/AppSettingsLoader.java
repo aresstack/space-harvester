@@ -464,8 +464,10 @@ public final class AppSettingsLoader {
                 prefix + SynonymBudget.MAX_EMBEDDED_TERMS, problems);
         int maxJudged = integer(get(synonyms, SynonymBudget.MAX_JUDGED_PAIRS), fallback.maxJudgedPairs(),
                 prefix + SynonymBudget.MAX_JUDGED_PAIRS, problems);
+        boolean automatic = flag(get(synonyms, SynonymBudget.AUTOMATIC), fallback.automatic(),
+                prefix + SynonymBudget.AUTOMATIC, problems);
         try {
-            return new TermSettings(new SynonymBudget(maxTerms, maxEmbedded, maxJudged));
+            return new TermSettings(new SynonymBudget(maxTerms, maxEmbedded, maxJudged, automatic));
         } catch (IllegalArgumentException e) {
             problems.add(prefix + "*: " + e.getMessage());
             return TermSettings.DEFAULT;

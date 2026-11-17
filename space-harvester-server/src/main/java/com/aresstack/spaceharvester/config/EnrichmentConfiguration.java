@@ -39,6 +39,7 @@ import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
@@ -172,11 +173,20 @@ class EnrichmentConfiguration {
     EnrichmentsAfterSync enrichmentsAfterSync(Enrichments enrichments, ObjectProvider<SnapshotRepository> snapshots,
                                               ObjectProvider<Jobs> jobs, ObjectProvider<PageTextIndexing> texts,
                                               ObjectProvider<AcronymRelationRule> acronymRule,
+                                              ObjectProvider<SynonymDiscovery> synonyms,
                                               ObjectProvider<DocumentEnrichments> documents) {
         // Eigener Auftrag ENRICHMENT: Abgleich und Export warten nicht auf die Anreicherung; er hält auch den
         // Volltextindex nach (#180) und danach die Regelvorschläge der Begriffsbeziehungen (#120).
         AcronymRelationRule rule = acronymRule.getIfAvailable();
-        List<Consumer<String>> followUps = rule == null ? List.of() : List.of(rule::refresh);
+        List<Consumer<String>> followUps = new java.util.ArrayList<>();
+        if (rule != null) {
+            followUps.add(rule::refresh);
+        }
+        // SY1: danach der automatische Synonymlauf der Quelle als eigener Auftrag.
+        SynonymDiscovery discovery = synonyms.getIfAvailable();
+        if (discovery != null) {
+            followUps.add(discovery::automatic);
+        }
         return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable(),
                 texts.getIfAvailable(), followUps, documents.getIfAvailable());
     }

@@ -150,7 +150,15 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
 10. Synonymerkennung (#336) auf Knopfdruck, `Harvester.synonymDiscovery()` → `SynonymDiscovery`, REST
    `POST /api/v1/term-relations/refresh` mit `kind=synonyms` (`sourceId=*` alle Quellen, sonst die Quelle, mit
    `spaceKey` der Space; `maxJudgedPairs` je Lauf), in der App der Knopf „Synonyme vorschlagen“ im
-   Synonym-Reiter. Nie beim Start, Abgleich, Suchen oder Öffnen einer Seite.
+   Synonym-Reiter. Nie beim Start, Suchen oder Öffnen einer Seite.
+   - Nicht mehr nur auf Klick (SY1, Angelo 2026-11-17): `SynonymDiscovery.automatic(sourceId)` läuft je Quelle als
+     eigener Auftrag `ENRICHMENT` (ohne Besitzer) als Folgeschritt nach der Anreicherung der Quelle
+     (`EnrichmentsAfterSync`, neben der Akronymregel) und bei neuer KI-Freigabe einer Seite
+     (`PageReleases.subscribe` → `releasesChanged`). Kein Zeitgeber. Höchstens ein wartender Lauf je Quelle; ohne
+     Änderung kein Lauf (`SynonymCandidates.state`: SHA-256 über Schlüssel und Eingabe-Hash der Einträge, Freigabe
+     und ob ein Embedding-Modell da ist). Ohne Modell oder Freigabe nur Regeln, kein Fehler. Der Abgleich lässt
+     Bestätigtes und Abgelehntes stehen und zieht nicht mehr gestützte Vorschläge zurück. Schalter
+     `space-harvester.terms.synonyms.automatic`, Standard an. Der Knopf bleibt.
    - Drei Stufen, alle begrenzt (`SynonymBudget`, Schlüssel `space-harvester.terms.synonyms.max-terms`,
      `max-embedded-terms`, `max-judged-pairs`, in Dienst und App dieselben; Laufzeit begrenzt `jobs.max-runtime`):
      A `SynonymCandidates` sammelt deterministisch aus dem Begriffsindex Kandidatenpaare (Schreibvarianten über
