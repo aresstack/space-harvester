@@ -95,6 +95,18 @@ public class SourceQueryExports {
 
         /** Alle im Bestand bekannten Seiten einer Wurzel, die der Aufrufer sehen darf, in stabiler Reihenfolge. */
         List<String> pages(AccessContext caller, Selection.Root root);
+
+        /**
+         * Titel und Adresse einer Seite aus dem Bestand, damit eine Meldung die Seite nennt statt nur ihre ID
+         * (Angelo 17.11.2026); {@code null}, wenn der Bestand sie nicht kennt. Die Adresse steht nur in der Datei.
+         */
+        default PageName name(String sourceId, String pageId) {
+            return null;
+        }
+    }
+
+    /** Wie der Bestand eine Seite nennt: Titel und Adresse in der Quelle, beide auch leer. */
+    public record PageName(String title, String url) {
     }
 
     private final Jobs jobs;
@@ -250,6 +262,7 @@ public class SourceQueryExports {
         long written = 0;
         long failed = 0;
         ContentViews views = null;
+        String failedPagesSummary = "";
         try {
             Files.createDirectories(directory);
             // Ein neuer Lauf im selben Eintrag übernimmt, was der vorige schon hat: aus der Teildatei, sonst aus der
@@ -278,6 +291,7 @@ public class SourceQueryExports {
             }
             Instant now = clock.instant();
             List<String> deferred = new ArrayList<>();
+            List<String> failedPages = new ArrayList<>();
             try (BufferedWriter partOut = type == JobType.METADATA_EXPORT ? Files.newBufferedWriter(part,
                     StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND) : null) {
                 int unanswered = 0;
@@ -331,6 +345,7 @@ public class SourceQueryExports {
                     } else {
                         failed++;
                         context.failed(1);
+                        failedPages.add(reportFailedPage(context, root.sourceId(), pageId, sections));
                     }
                 }
                 if (!deferred.isEmpty()) {
@@ -351,9 +366,11 @@ public class SourceQueryExports {
                     } else {
                         failed++;
                         context.failed(1);
+                        failedPages.add(reportFailedPage(context, root.sourceId(), pageId, sections));
                     }
                 }
             }
+            failedPagesSummary = summary(failedPages);
             context.checkpoint();
             try (OutputStream out = Files.newOutputStream(temp);
                  JsonGenerator json = RestJson.JSON.createGenerator(out, JsonEncoding.UTF8)) {
@@ -421,9 +438,54 @@ public class SourceQueryExports {
         if (failed > 0) {
             context.incomplete();
             context.record(JobEvent.Draft.warning(JobEvent.Category.SOURCE, COMPONENT, "PAGES_FAILED",
-                    failed + " von " + pages.size() + " Seiten ohne Antwort; Gründe stehen in der Datei"));
+                    failed + " von " + pages.size() + " Seiten ohne Antwort"
+                            + (failedPagesSummary.isEmpty() ? "" : ": " + failedPagesSummary)
+                            + "; je Seite eine Meldung PAGE_FAILED, Gründe auch in der Datei"));
         }
         context.record(JobEvent.Draft.info(COMPONENT, name + ": " + written + " Seiten exportiert"));
+    }
+
+    /** So viele gescheiterte Seiten nennt die Sammelmeldung mit Namen; der Rest steht je Seite in PAGE_FAILED. */
+    static final int NAMED_FAILURES = 10;
+
+    /**
+     * Meldet eine Seite, bei der keine Abfrage antwortete, mit Titel und dem Fehler je Abfrage, damit
+     * niemand die Datei öffnen muss (Angelo 17.11.2026); liefert den Namen für die Sammelmeldung.
+     */
+    private String reportFailedPage(JobContext context, String sourceId, String pageId,
+                                    Map<String, RestJson.Result> sections) {
+        PageName name = scopes.name(sourceId, pageId);
+        String title = name == null || name.title() == null || name.title().isBlank() ? null : name.title();
+        String label = "Seite " + pageId + (title == null ? "" : " „" + title + "“");
+        // Keine Adresse: Diagnosetexte maskieren URL-Pfade (Redaction); die Seiten-ID genügt zum Nachschlagen.
+        StringBuilder message = new StringBuilder(label).append(" ohne Antwort:");
+        Integer httpStatus = null;
+        for (Map.Entry<String, RestJson.Result> section : sections.entrySet()) {
+            RestJson.Result result = section.getValue();
+            message.append("\n").append(section.getKey()).append(": ").append(result.reason())
+                    .append(result.message() == null || result.message().isBlank() ? "" : " – " + result.message());
+            if (httpStatus == null && result.message() != null) {
+                httpStatus = httpStatus(result.message());
+            }
+        }
+        context.record(new JobEvent.Draft(JobEvent.Severity.WARNING, JobEvent.Category.SOURCE, COMPONENT,
+                "PAGE_FAILED", message.toString(), httpStatus, null, null));
+        return label;
+    }
+
+    /** Der HTTP-Status aus einer Meldung wie „Confluence antwortet mit HTTP 500“, sonst {@code null}. */
+    static Integer httpStatus(String message) {
+        java.util.regex.Matcher match = java.util.regex.Pattern.compile("HTTP (\\d{3})").matcher(message);
+        return match.find() ? Integer.valueOf(match.group(1)) : null;
+    }
+
+    private static String summary(List<String> failedPages) {
+        if (failedPages.isEmpty()) {
+            return "";
+        }
+        List<String> named = failedPages.subList(0, Math.min(NAMED_FAILURES, failedPages.size()));
+        return String.join(", ", named) + (failedPages.size() > named.size() ? " und "
+                + (failedPages.size() - named.size()) + " weitere" : "");
     }
 
     /** Eine abgelegte Seite: ob sie Daten hat und ihr Eintrag als JSON-Text, wie er in die Datei kommt. */
