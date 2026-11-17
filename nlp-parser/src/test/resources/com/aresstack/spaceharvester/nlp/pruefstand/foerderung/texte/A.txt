@@ -1,0 +1,12 @@
+Der Antragsteller reicht einen Förderantrag ein.
+Die Bewilligungsstelle prüft den Antrag.
+Der Sachbearbeiter fordert fehlende Unterlagen an.
+Die Bewilligungsstelle erlässt einen Zuwendungsbescheid.
+Der Zuwendungsbescheid legt die Fördersumme fest.
+Der Zuwendungsempfänger ruft die Mittel ab.
+Die Kasse zahlt die Mittel aus.
+Der Zuwendungsempfänger legt einen Verwendungsnachweis vor.
+Der Prüfer kontrolliert den Verwendungsnachweis.
+Die Bewilligungsstelle fordert nicht verwendete Mittel zurück.
+Ein Förderprogramm umfasst mehrere Fördermaßnahmen.
+Jeder Antrag gehört zu genau einem Förderprogramm.

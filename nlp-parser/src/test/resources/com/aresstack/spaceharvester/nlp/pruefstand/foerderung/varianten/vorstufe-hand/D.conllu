@@ -1,0 +1,110 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/D@vorstufe-hand
+# sent_id = 1
+# text = Die Bewilligungsstelle prüft jeden Antrag innerhalb von vier Wochen.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	jeden	jeder	DET	_	_	5	det	_	_
+5	Antrag	antrag	NOUN	_	_	3	obj	_	_
+6	innerhalb	innerhalb	ADP	_	_	9	case	_	_
+7	von	von	ADP	_	_	9	case	_	_
+8	vier	vier	NUM	_	_	9	nummod	_	_
+9	Wochen	woche	NOUN	_	_	3	obl	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Die Vollständigkeit der Unterlagen wird geprüft.
+1	Die	der	DET	_	_	2	det	_	_
+2	Vollständigkeit	vollständigkeit	NOUN	_	_	6	nsubj:pass	_	_
+3	der	der	DET	_	_	4	det	_	_
+4	Unterlagen	unterlage	NOUN	_	_	2	nmod	_	_
+5	wird	werden	AUX	_	_	6	aux:pass	_	_
+6	geprüft	prüfen	VERB	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 3
+# text = Die Förderfähigkeit wird festgestellt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Förderfähigkeit	förderfähigkeit	NOUN	_	_	4	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	4	aux:pass	_	_
+4	festgestellt	feststellen	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 4
+# text = Der Bescheid wird erstellt.
+1	Der	der	DET	_	_	2	det	_	_
+2	Bescheid	bescheid	NOUN	_	_	4	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	4	aux:pass	_	_
+4	erstellt	erstellen	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 5
+# text = Der Bescheid wird versendet.
+1	Der	der	DET	_	_	2	det	_	_
+2	Bescheid	bescheid	NOUN	_	_	4	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	4	aux:pass	_	_
+4	versendet	versenden	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 6
+# text = Im Jahr 2023 sollte die Prüfung vollständig automatisiert werden.
+1-2	Im	_	_	_	_	_	_	_	_
+1	In	in	ADP	_	_	3	case	_	_
+2	dem	der	DET	_	_	3	det	_	_
+3	Jahr	jahr	NOUN	_	_	9	obl	_	_
+4	2023	2023	NUM	_	_	3	nmod	_	_
+5	sollte	sollen	AUX	_	_	9	aux	_	_
+6	die	der	DET	_	_	7	det	_	_
+7	Prüfung	prüfung	NOUN	_	_	9	nsubj:pass	_	_
+8	vollständig	vollständig	ADJ	_	_	9	advmod	_	_
+9	automatisiert	automatisieren	VERB	_	_	0	root	_	_
+10	werden	werden	AUX	_	_	9	aux:pass	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	9	punct	_	_
+
+# sent_id = 7
+# text = Diese Überlegung wurde verworfen.
+1	Diese	dieser	DET	_	_	2	det	_	_
+2	Überlegung	überlegung	NOUN	_	_	4	nsubj:pass	_	_
+3	wurde	werden	AUX	_	_	4	aux:pass	_	_
+4	verworfen	verwerfen	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 8
+# text = Der Sachbearbeiter prüft die Förderfähigkeit aktuell manuell.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Förderfähigkeit	förderfähigkeit	NOUN	_	_	7	nsubj	_	_
+6	aktuell	aktuell	ADJ	_	_	7	advmod	_	_
+7	manuell	manuell	ADJ	_	_	3	xcomp	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Ein Regelwerk soll die Förderfähigkeit künftig vorab bewerten.
+1	Ein	ein	DET	_	_	2	det	_	_
+2	Regelwerk	regelwerk	NOUN	_	_	8	nsubj	_	_
+3	soll	sollen	AUX	_	_	8	aux	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Förderfähigkeit	förderfähigkeit	NOUN	_	_	8	obj	_	_
+6	künftig	künftig	ADJ	_	_	8	advmod	_	_
+7	vorab	vorab	ADV	_	_	8	advmod	_	_
+8	bewerten	bewerten	VERB	_	_	0	root	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	8	punct	_	_
+
+# sent_id = 10
+# text = Die Schnittstelle zum Kassensystem ist noch nicht abgestimmt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Schnittstelle	schnittstelle	NOUN	_	_	9	nsubj:pass	_	_
+3-4	zum	_	_	_	_	_	_	_	_
+3	zu	zu	ADP	_	_	5	case	_	_
+4	dem	der	DET	_	_	5	det	_	_
+5	Kassensystem	kassensystem	NOUN	_	_	2	nmod	_	_
+6	ist	sein	AUX	_	_	9	aux:pass	_	_
+7	noch	noch	ADV	_	_	8	advmod	_	_
+8	nicht	nicht	PART	_	_	9	advmod	_	_
+9	abgestimmt	abstimmen	VERB	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+

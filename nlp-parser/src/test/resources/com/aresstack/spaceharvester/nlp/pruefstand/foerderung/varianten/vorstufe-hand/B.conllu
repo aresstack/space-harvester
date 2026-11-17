@@ -1,0 +1,182 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/B@vorstufe-hand
+# sent_id = 1
+# text = Die Bewilligungsstelle prüft den Förderantrag auf Vollständigkeit.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Förderantrag	förderantrag	NOUN	_	_	3	obj	_	_
+6	auf	auf	ADP	_	_	7	case	_	_
+7	Vollständigkeit	vollständigkeit	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Der Sachbearbeiter fordert fehlende Unterlagen beim Antragsteller an.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	fordert	fordern	VERB	_	_	0	root	_	_
+4	fehlende	fehlend	ADJ	_	_	5	amod	_	_
+5	Unterlagen	unterlage	NOUN	_	_	3	obj	_	_
+6-7	beim	_	_	_	_	_	_	_	_
+6	bei	bei	ADP	_	_	8	case	_	_
+7	dem	der	DET	_	_	8	det	_	_
+8	Antragsteller	antragsteller	NOUN	_	_	5	nmod	_	_
+9	an	an	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Die Bewilligungsstelle erlässt den Zuwendungsbescheid nach Abschluss der Prüfung.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	erlässt	erlassen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Zuwendungsbescheid	zuwendungsbescheid	NOUN	_	_	3	obj	_	_
+6	nach	nach	ADP	_	_	7	case	_	_
+7	Abschluss	abschluß	NOUN	_	_	5	nmod	_	_
+8	der	der	DET	_	_	9	det	_	_
+9	Prüfung	prüfung	NOUN	_	_	7	nmod	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 4
+# text = Der Zuwendungsempfänger ruft die Mittel ab.
+1	Der	der	DET	_	_	2	det	_	_
+2	Zuwendungsempfänger	zuwendungsempfänger	NOUN	_	_	3	nsubj	_	_
+3	ruft	rufen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Mittel	mittel	NOUN	_	_	3	obj	_	_
+6	ab	ab	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 5
+# text = Die Kasse zahlt die Mittel innerhalb von zehn Tagen aus.
+1	Die	der	DET	_	_	2	det	_	_
+2	Kasse	kasse	NOUN	_	_	3	nsubj	_	_
+3	zahlt	zahlen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Mittel	mittel	NOUN	_	_	3	obj	_	_
+6	innerhalb	innerhalb	ADP	_	_	9	case	_	_
+7	von	von	ADP	_	_	9	case	_	_
+8	zehn	zehn	NUM	_	_	9	nummod	_	_
+9	Tagen	tag	NOUN	_	_	3	obl	_	_
+10	aus	aus	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 6
+# text = Die Mittel werden erst nach Vorlage des Mittelabrufs ausgezahlt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Mittel	mittel	NOUN	_	_	9	nsubj:pass	_	_
+3	werden	werden	AUX	_	_	9	aux:pass	_	_
+4	erst	erst	ADV	_	_	9	advmod	_	_
+5	nach	nach	ADP	_	_	6	case	_	_
+6	Vorlage	vorlage	NOUN	_	_	9	obl	_	_
+7	des	der	DET	_	_	8	det	_	_
+8	Mittelabrufs	mittelabruf	NOUN	_	_	6	nmod	_	_
+9	ausgezahlt	auszahlen	VERB	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+
+# sent_id = 7
+# text = Der Zuwendungsempfänger muss den Verwendungsnachweis spätestens sechs Monate nach Ende des Bewilligungszeitraums vorlegen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Zuwendungsempfänger	zuwendungsempfänger	NOUN	_	_	13	nsubj	_	_
+3	muss	müssen	AUX	_	_	13	aux	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Verwendungsnachweis	verwendungsnachweis	NOUN	_	_	13	nsubj	_	_
+6	spätestens	spätestens	ADV	_	_	7	advmod	_	_
+7	sechs	sechs	NUM	_	_	8	nummod	_	_
+8	Monate	monat	NOUN	_	_	13	obj	_	_
+9	nach	nach	ADP	_	_	10	case	_	_
+10	Ende	ende	NOUN	_	_	13	obl	_	_
+11	des	der	DET	_	_	12	det	_	_
+12	Bewilligungszeitraums	bewilligungszeitraums	NOUN	_	_	10	nmod	_	_
+13	vorlegen	vorlegen	VERB	_	_	0	root	_	SpaceAfter=No
+14	.	.	PUNCT	_	_	13	punct	_	_
+
+# sent_id = 8
+# text = Der Prüfer stellt Mängel fest.
+1	Der	der	DET	_	_	2	det	_	_
+2	Prüfer	prüfer	NOUN	_	_	3	nsubj	_	_
+3	stellt	stellen	VERB	_	_	0	root	_	_
+4	Mängel	mangel	PROPN	_	_	3	obj	_	_
+5	fest	fest	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Dann fordert die Bewilligungsstelle die Mittel zurück.
+1	Dann	dann	ADV	_	_	2	advmod	_	_
+2	fordert	fordern	VERB	_	_	0	root	_	_
+3	die	der	DET	_	_	4	det	_	_
+4	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	2	nsubj	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Mittel	mittel	NOUN	_	_	2	obj	_	_
+7	zurück	zurück	ADV	_	_	2	compound:prt	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 10
+# text = Dann setzt die Bewilligungsstelle Zinsen fest.
+1	Dann	dann	ADV	_	_	2	advmod	_	_
+2	setzt	setzen	VERB	_	_	0	root	_	_
+3	die	der	DET	_	_	4	det	_	_
+4	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	2	nsubj	_	_
+5	Zinsen	zinse	PROPN	_	_	4	appos	_	_
+6	fest	fest	ADV	_	_	2	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 11
+# text = Die Bewilligungsstelle kann den Bescheid widerrufen.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	6	nsubj	_	_
+3	kann	können	AUX	_	_	6	aux	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Bescheid	bescheid	NOUN	_	_	6	obj	_	_
+6	widerrufen	widerrufen	VERB	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 12
+# text = Der Zuwendungsempfänger erfüllt Auflagen nicht.
+1	Der	der	DET	_	_	2	det	_	_
+2	Zuwendungsempfänger	zuwendungsempfänger	NOUN	_	_	3	nsubj	_	_
+3	erfüllt	erfüllen	VERB	_	_	0	root	_	_
+4	Auflagen	auflage	NOUN	_	_	3	obj	_	_
+5	nicht	nicht	PART	_	_	3	advmod	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 13
+# text = Die Entscheidung wird dem Antragsteller schriftlich mitgeteilt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Entscheidung	entscheidung	NOUN	_	_	7	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	7	aux:pass	_	_
+4	dem	der	DET	_	_	5	det	_	_
+5	Antragsteller	antragsteller	NOUN	_	_	7	obl:arg	_	_
+6	schriftlich	schriftlich	ADJ	_	_	7	advmod	_	_
+7	mitgeteilt	mitteilen	VERB	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 14
+# text = Der Sachbearbeiter erfasst den Mittelabruf.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	erfasst	erfassen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Mittelabruf	mittelabruf	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 15
+# text = Der Sachbearbeiter prüft den Mittelabruf.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Mittelabruf	mittelabruf	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 16
+# text = Der Sachbearbeiter genehmigt den Mittelabruf.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	genehmigt	genehmigen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Mittelabruf	mittelabruf	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
