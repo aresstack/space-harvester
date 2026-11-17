@@ -112,6 +112,13 @@ final class StandingTab extends JPanel {
     static final String STALE_WORD = "veraltet";
     static final String DELETE_ANALYSES_TITLE = "Aussagen-Analysen löschen?";
     static final String DELETE_ANALYSES_TIP = "Aussagen-Analysen löschen";
+    /** Im Menü neben dem Papierkorb (Angelo 17.11.2026): auch die KI-Urteile des Prüfschritts löschen. */
+    static final String DELETE_EVERYTHING = "Alles löschen";
+    static final String DELETE_EVERYTHING_TITLE = "Alles löschen?";
+    static final String DELETE_EVERYTHING_TIP = "Aussagen-Analysen samt den KI-Urteilen aus „Aussagen prüfen“ löschen";
+    static final String DELETE_EVERYTHING_MISSING = "Noch nicht möglich: Der Core kann die KI-Urteile noch nicht "
+            + "löschen";
+    static final String MORE_DELETE_TIP = "Weitere Löschaktionen";
     static final String STALE_TIP = "Aussagen aus veralteten Analysen einblenden; sie zählen nirgends mit";
     static final String STALE_HIDE_TIP = "Aussagen aus veralteten Analysen wieder ausblenden";
     static final String NO_CONFLICTS = "Keine möglichen Widersprüche";
@@ -179,6 +186,18 @@ final class StandingTab extends JPanel {
 
         /** Meldet sich, nachdem Aussagen-Analysen gelöscht wurden (Beobachter, kein Zeitgeber). */
         Subscription subscribeAnalyses(Runnable listener);
+
+        /** Ob der Core auch die KI-Urteile des Prüfschritts löschen kann („Alles löschen“). */
+        default boolean canDeleteEverything() {
+            return false;
+        }
+
+        /**
+         * Wie {@link #deleteAnalyses}, dazu die KI-Urteile des Prüfschritts derselben Seiten; nie auf dem EDT.
+         */
+        default int deleteEverything(ExportPanel.Selection selection) {
+            throw new UnsupportedOperationException(DELETE_EVERYTHING_MISSING);
+        }
 
         static Actions of(AppRuntime runtime) {
             if (runtime == null) {
@@ -288,8 +307,12 @@ final class StandingTab extends JPanel {
     private final IconButton bearer = new IconButton(Glyph.NEIGHBOURS, BY_BEARER_TIP);
     /** „Aussagen-Analysen löschen“ absteigend ab dem gewählten Knoten (Angelo 17.11.2026); die Seiten bleiben. */
     private final IconButton deleteAnalyses = new IconButton(Glyph.TRASH, DELETE_ANALYSES_TIP);
-    private Predicate<String> confirmDelete = question -> Dialogs.confirm(this, DELETE_ANALYSES_TITLE,
-            question);
+    /** Rechts neben dem Papierkorb das Dreieck wie neben dem Besen der Aufträge (Angelo 17.11.2026). */
+    private final IconButton moreDelete = new IconButton(
+            new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), MORE_DELETE_TIP);
+    private Predicate<String> confirmDelete = question -> Dialogs.confirm(this,
+            question.startsWith(EVERYTHING_PREFIX) ? DELETE_EVERYTHING_TITLE : DELETE_ANALYSES_TITLE, question);
+    private static final String EVERYTHING_PREFIX = "Wirklich alles ";
     private boolean deleting;
     /** Ergebnis des letzten Löschens; steht vor der Zählung in der Statuszeile, bis eine andere Auswahl kommt. */
     private String deletedNotice;
@@ -468,7 +491,9 @@ final class StandingTab extends JPanel {
         conflictScroll.getViewport().addChangeListener(e -> fetchSentences(conflictList, conflictModel));
         tabs.tab(CONFLICTS, conflictScroll);
         deleteAnalyses.addActionListener(e -> deleteAnalyses());
-        tabs.actions(counts, filter, bearer, field, topic, deleteAnalyses);
+        moreDelete.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
+                moreDeleteMenu(), moreDelete).show(moreDelete, 0, moreDelete.getHeight()));
+        tabs.actions(counts, filter, bearer, field, topic, deleteAnalyses, moreDelete);
         // Zahlen, Filter und Suche gehören zu „Aussagen“, das Themenfeld zu „Zuerst lesen“; anderswo stünden sie
         // ohne Wirkung da.
         tabs.onSelect(name -> {
@@ -479,6 +504,7 @@ final class StandingTab extends JPanel {
             topic.setVisible(READING.equals(name));
             // Die Begriffe bringen ihre Kennzahlen und ihr Filterfeld selbst mit; rechts steht dort nichts.
             deleteAnalyses.setVisible(!TERMS.equals(name));
+            moreDelete.setVisible(!TERMS.equals(name));
             popup.setVisible(false);
             reading.shown(shown && READING.equals(name));
             termsShown.accept(shown && TERMS.equals(name));
@@ -823,24 +849,59 @@ final class StandingTab extends JPanel {
                 + "bleiben.";
     }
 
+    /** Die Rückfrage vor „Alles löschen“: Analysen und KI-Urteile. */
+    static String deleteEverythingQuestion(ExportPanel.Selection selection) {
+        String where = selection.global() ? "aller Wissensquellen" : "von „" + selection.title() + "“ samt Unterseiten";
+        return EVERYTHING_PREFIX + where + " löschen, also die Aussagen-Analysen und die KI-Urteile aus „Aussagen "
+                + "prüfen“? Die Seiten bleiben.";
+    }
+
+    /** Das Menü hinter dem Dreieck neben dem Papierkorb. */
+    javax.swing.JPopupMenu moreDeleteMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        Actions current = actions.get();
+        boolean possible = current != null && current.canDeleteEverything();
+        javax.swing.JMenuItem everything = new javax.swing.JMenuItem(DELETE_EVERYTHING, Glyph.TRASH);
+        everything.setFont(Comic.regular(13f));
+        everything.setToolTipText(possible ? DELETE_EVERYTHING_TIP : DELETE_EVERYTHING_MISSING);
+        everything.setEnabled(possible && selection != null && !deleting);
+        everything.addActionListener(e -> deleteEverything());
+        menu.add(everything);
+        return menu;
+    }
+
     /**
      * „Aussagen-Analysen löschen“: nach der Rückfrage im Hintergrund unter dem Ladekreis, absteigend ab dem gewählten
-     * Knoten (Wissensquellen-Kopf, Quelle, Space, Ordner). Danach liest der Reiter über den Beobachter neu.
+     * Knoten (Wissensquellen-Kopf, Quelle, Space, Ordner). Danach liest der Reiter über den Beobachter neu. Die
+     * KI-Urteile des Prüfschritts bleiben.
      */
     void deleteAnalyses() {
+        delete(false);
+    }
+
+    /** „Alles löschen“ im Menü neben dem Papierkorb: wie {@link #deleteAnalyses}, dazu die KI-Urteile. */
+    void deleteEverything() {
+        delete(true);
+    }
+
+    private void delete(boolean everything) {
         Actions current = actions.get();
         ExportPanel.Selection chosen = selection;
-        if (current == null || chosen == null || deleting || !confirmDelete.test(deleteQuestion(chosen))) {
+        if (current == null || chosen == null || deleting || everything && !current.canDeleteEverything()
+                || !confirmDelete.test(everything ? deleteEverythingQuestion(chosen) : deleteQuestion(chosen))) {
             return;
         }
         watch(current);
         deleting = true;
         deleteAnalyses.setEnabled(false);
-        busy.setText("Aussagen-Analysen werden gelöscht …");
+        moreDelete.setEnabled(false);
+        busy.setText(everything ? "Aussagen-Analysen und KI-Urteile werden gelöscht …"
+                : "Aussagen-Analysen werden gelöscht …");
         busy.setBusy(true);
-        runner.run(() -> current.deleteAnalyses(chosen), deleted -> {
+        runner.run(() -> everything ? current.deleteEverything(chosen) : current.deleteAnalyses(chosen), deleted -> {
             deleting = false;
             deleteAnalyses.setEnabled(true);
+            moreDelete.setEnabled(true);
             busy.setText(BUSY);
             busy.setBusy(false);
             if (!chosen.equals(selection)) {
@@ -855,6 +916,7 @@ final class StandingTab extends JPanel {
         }, failure -> {
             deleting = false;
             deleteAnalyses.setEnabled(true);
+            moreDelete.setEnabled(true);
             busy.setText(BUSY);
             busy.setBusy(false);
             onStatus.accept("Aussagen-Analysen nicht gelöscht: " + failure.getClass().getSimpleName());
@@ -868,6 +930,10 @@ final class StandingTab extends JPanel {
 
     IconButton deleteAnalysesButton() {
         return deleteAnalyses;
+    }
+
+    IconButton moreDeleteButton() {
+        return moreDelete;
     }
 
     /**

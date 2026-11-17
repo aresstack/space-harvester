@@ -60,6 +60,9 @@ final class StatementsTab extends JPanel {
     static final String DELETE_TIP = "Aussagen-Analyse dieser Seite löschen";
     static final String DELETE_QUESTION = "Wirklich die Aussagen-Analyse dieser Seite samt Anhängen löschen? Die Seite "
             + "bleibt.";
+    /** Im Menü neben dem Papierkorb (Angelo 17.11.2026): auch die KI-Urteile des Prüfschritts löschen. */
+    static final String DELETE_EVERYTHING_QUESTION = "Wirklich alles zu dieser Seite löschen, also die "
+            + "Aussagen-Analyse samt Anhängen und die KI-Urteile aus „Aussagen prüfen“? Die Seite bleibt.";
     static final String CANCEL = "Abbrechen";
     static final String NOT_ANALYSED = "Noch nicht analysiert. „" + ANALYZE + "“ zerlegt die Sätze dieser Seite "
             + "lokal; beim ersten Mal wird das Modell geladen (einige Sekunden).";
@@ -107,8 +110,12 @@ final class StatementsTab extends JPanel {
             "Lässt das Chat-Modell die Aussagen dieser Seite beurteilen; nur für Seiten mit KI-Freigabe");
     /** „Aussagen-Analyse löschen“ für die offene Seite (Angelo 17.11.2026); nur mit gespeicherter Analyse. */
     private final IconButton delete = new IconButton(Glyph.TRASH, DELETE_TIP);
-    private Predicate<String> confirmDelete = question -> Dialogs.confirm(this, "Aussagen-Analyse löschen?",
-            question);
+    /** Rechts neben dem Papierkorb das Dreieck wie neben dem Besen der Aufträge; darin „Alles löschen“. */
+    private final IconButton moreDelete = new IconButton(
+            new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), StandingTab.MORE_DELETE_TIP);
+    private Predicate<String> confirmDelete = question -> Dialogs.confirm(this,
+            question.equals(DELETE_EVERYTHING_QUESTION) ? StandingTab.DELETE_EVERYTHING_TITLE
+                    : "Aussagen-Analyse löschen?", question);
     /** Ob eine Analyse gespeichert ist (aktuell oder veraltet): nur dann lässt sie sich löschen. */
     private boolean stored;
     /** Ob die angezeigte Analyse aktuell ist: nur dann lässt sie sich prüfen. */
@@ -166,10 +173,12 @@ final class StatementsTab extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         simplify.setToolTipText(SIMPLIFY_TIP);
-        head.badge("Experimentell", Comic.PETROL).action(progress, cancel, analyze, delete)
+        head.badge("Experimentell", Comic.PETROL).action(progress, cancel, analyze, delete, moreDelete)
                 .copy(copyText::toString);
         analyze.addActionListener(e -> analyze());
         delete.addActionListener(e -> deleteAnalysis());
+        moreDelete.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
+                moreDeleteMenu(), moreDelete).show(moreDelete, 0, moreDelete.getHeight()));
         delete.setEnabled(false);
         check.addActionListener(e -> check());
         check.setEnabled(false);
@@ -551,14 +560,40 @@ final class StatementsTab extends JPanel {
      * Dateien; die Seite bleibt. Danach zeigt der Reiter „Nicht analysiert“, Graph und Stand lesen neu.
      */
     void deleteAnalysis() {
+        delete(false);
+    }
+
+    /** „Alles löschen“ im Menü neben dem Papierkorb: wie {@link #deleteAnalysis}, dazu die KI-Urteile der Seite. */
+    void deleteEverything() {
+        delete(true);
+    }
+
+    /** Das Menü hinter dem Dreieck neben dem Papierkorb. */
+    javax.swing.JPopupMenu moreDeleteMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        Actions actions = workspace.get();
+        boolean possible = actions != null && actions.canDeleteEverything();
+        javax.swing.JMenuItem everything = new javax.swing.JMenuItem(StandingTab.DELETE_EVERYTHING, Glyph.TRASH);
+        everything.setFont(Comic.regular(13f));
+        everything.setToolTipText(possible ? StandingTab.DELETE_EVERYTHING_TIP : StandingTab.DELETE_EVERYTHING_MISSING);
+        everything.setEnabled(possible && snapshot != null && running == null);
+        everything.addActionListener(e -> deleteEverything());
+        menu.add(everything);
+        return menu;
+    }
+
+    private void delete(boolean everything) {
         Actions actions = workspace.get();
         PageSnapshot page = snapshot;
-        if (actions == null || page == null || running != null || !stored || !confirmDelete.test(DELETE_QUESTION)) {
+        if (actions == null || page == null || running != null || !everything && !stored
+                || everything && !actions.canDeleteEverything()
+                || !confirmDelete.test(everything ? DELETE_EVERYTHING_QUESTION : DELETE_QUESTION)) {
             return;
         }
         delete.setEnabled(false);
         int mine = generation;
-        runner.run(() -> actions.deleteAnalysis(page.key()), deleted -> {
+        runner.run(() -> everything ? actions.deleteEverything(page.key()) : actions.deleteAnalysis(page.key()),
+                deleted -> {
             if (mine != generation) {
                 return;
             }
@@ -582,6 +617,10 @@ final class StatementsTab extends JPanel {
 
     IconButton deleteButton() {
         return delete;
+    }
+
+    IconButton moreDeleteButton() {
+        return moreDelete;
     }
 
     private void status(String message) {
@@ -1088,6 +1127,16 @@ final class StatementsTab extends JPanel {
          */
         default int deleteAnalysis(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
             return 0;
+        }
+
+        /** Ob der Core auch die KI-Urteile des Prüfschritts löschen kann („Alles löschen“). */
+        default boolean canDeleteEverything() {
+            return false;
+        }
+
+        /** Wie {@link #deleteAnalysis}, dazu die KI-Urteile der Seite. */
+        default int deleteEverything(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+            throw new UnsupportedOperationException(StandingTab.DELETE_EVERYTHING_MISSING);
         }
 
         /** „Aussagen prüfen“: Das Modell beurteilt die Aussagen der gespeicherten, aktuellen Analyse der Seite. */
