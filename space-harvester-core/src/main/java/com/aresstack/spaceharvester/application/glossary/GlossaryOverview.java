@@ -67,20 +67,41 @@ public final class GlossaryOverview {
      * @param q          Suchtext: Präfix des Begriffs oder eines seiner Wörter, oder {@code null}
      * @param categories Einordnungen oder {@code null} für alle; ohne Einordnung zählt {@code UNKLAR}. Der Reiter
      *                   fragt standardmäßig {@link #WITHOUT_TECHNICAL}
-     * @param status     Prüfstatus oder {@code null} für Vorschläge und bestätigte (ohne abgelehnte)
+     * @param statuses   gezeigte Prüfstatus (Umschalter wie die Einordnung); {@code null} oder leer heißt
+     *                   {@link #WITHOUT_REJECTED}: Vorschläge und bestätigte, ohne abgelehnte
      */
-    public record Query(String q, Set<GlossaryDerivation.Category> categories, ReviewStatus status) {
+    public record Query(String q, Set<GlossaryDerivation.Category> categories, Set<ReviewStatus> statuses) {
 
         /** Standard des Reiters: ohne {@code TECHNISCH}. */
         public static final Set<GlossaryDerivation.Category> WITHOUT_TECHNICAL = Set.of(
                 GlossaryDerivation.Category.FACHLICH, GlossaryDerivation.Category.ROLLE,
                 GlossaryDerivation.Category.UNKLAR);
 
+        /** Standard des Reiters beim Status: Vorschläge und bestätigte, ohne abgelehnte. */
+        public static final Set<ReviewStatus> WITHOUT_REJECTED = Set.of(ReviewStatus.PROPOSED,
+                ReviewStatus.CONFIRMED);
+
         /** Alles außer abgelehnten, ohne {@code TECHNISCH}. */
-        public static final Query DEFAULT = new Query(null, WITHOUT_TECHNICAL, null);
+        public static final Query DEFAULT = new Query(null, WITHOUT_TECHNICAL, WITHOUT_REJECTED);
 
         public Query {
             categories = categories == null ? null : Set.copyOf(categories);
+            statuses = statuses == null || statuses.isEmpty() ? WITHOUT_REJECTED : Set.copyOf(statuses);
+        }
+
+        /** Frühere Form mit einem Status oder {@code null} für Vorschläge und bestätigte. */
+        public Query(String q, Set<GlossaryDerivation.Category> categories, ReviewStatus status) {
+            this(q, categories, status == null ? null : Set.of(status));
+        }
+
+        /**
+         * Frühere Form: der eine gewählte Status, {@code null} beim Standard oder bei mehreren.
+         *
+         * @deprecated {@link #statuses()} lesen
+         */
+        @Deprecated
+        public ReviewStatus status() {
+            return statuses.size() == 1 && !statuses.equals(WITHOUT_REJECTED) ? statuses.iterator().next() : null;
         }
     }
 
@@ -193,8 +214,7 @@ public final class GlossaryOverview {
         List<ViewRow> rows = new ArrayList<>();
         for (GlossaryEntry entry : entries) {
             GlossaryDerivation.Category category = Glossary.categoryOf(entry);
-            boolean statusFits = query.status() == null ? entry.status() != ReviewStatus.REJECTED
-                    : entry.status() == query.status();
+            boolean statusFits = query.statuses().contains(entry.status());
             boolean categoryFits = query.categories() == null || query.categories().contains(category);
             if (statusFits) {
                 byCategory.merge(category, 1, Integer::sum);
