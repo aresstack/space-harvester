@@ -102,23 +102,30 @@ public class TermRelations {
      * @param status   nur dieser Status; {@code null} heißt Vorschläge und bestätigte, ohne abgelehnte
      * @param origin   nur diese Herkunft oder {@code null}
      * @param sourceId nur globale und für diese Quelle geltende oder {@code null} für alle
-     * @param limit    1 bis {@link #MAX_LIMIT}
-     * @param cursor   {@code nextCursor} der vorigen Antwort oder {@code null}
-     * @param pages    nur Beziehungen, von denen mindestens ein Begriff auf einer Seite der Menge vorkommt und deren
-     *                 Geltungsbereich diese Seite deckt, etwa eine Quelle oder ein Space samt Unterseiten (BG1, ADR
-     *                 0029); {@code null} ohne diese Grenze. Für genau eine Seite wie {@link #forTerms}.
+     * @param limit      1 bis {@link #MAX_LIMIT}
+     * @param cursor     {@code nextCursor} der vorigen Antwort oder {@code null}
+     * @param startsWith nur Beziehungen, deren Sortierbegriff ({@link TermRelation#sortTerm()}) so beginnt
+     *                   (normalisiert, etwa ein Buchstabe der A–Z-Leiste), oder {@code null}
+     * @param pages      nur Beziehungen, von denen mindestens ein Begriff auf einer Seite der Menge vorkommt und
+     *                   deren Geltungsbereich diese Seite deckt, etwa eine Quelle oder ein Space samt Unterseiten
+     *                   (BG1, ADR 0029); {@code null} ohne diese Grenze. Für genau eine Seite wie {@link #forTerms}.
      */
     public record RelationSearch(String term, RelationType type, ReviewStatus status, RelationOrigin origin,
-                                 String sourceId, int limit, String cursor, PageSet pages) {
+                                 String sourceId, int limit, String cursor, String startsWith, PageSet pages) {
 
         public RelationSearch(String term, RelationType type, ReviewStatus status, RelationOrigin origin,
                               String sourceId, int limit, String cursor) {
-            this(term, type, status, origin, sourceId, limit, cursor, null);
+            this(term, type, status, origin, sourceId, limit, cursor, null, null);
+        }
+
+        public RelationSearch(String term, RelationType type, ReviewStatus status, RelationOrigin origin,
+                              String sourceId, int limit, String cursor, String startsWith) {
+            this(term, type, status, origin, sourceId, limit, cursor, startsWith, null);
         }
 
         /** Dieselbe Suche, begrenzt auf diese Seiten. */
         public RelationSearch within(PageSet pages) {
-            return new RelationSearch(term, type, status, origin, sourceId, limit, cursor, pages);
+            return new RelationSearch(term, type, status, origin, sourceId, limit, cursor, startsWith, pages);
         }
     }
 
@@ -180,6 +187,8 @@ public class TermRelations {
         }
         String term = search.term() == null || search.term().isBlank() ? null : TermText.normalize(search.term());
         String after = search.cursor() == null ? null : decode(search.cursor());
+        String prefix = search.startsWith() == null || search.startsWith().isBlank() ? null
+                : TermText.normalize(search.startsWith());
         Visibility visibility = new Visibility(caller);
         if (search.pages() != null && index == null) {
             throw new IllegalStateException("Ohne Begriffsindex keine Suche je Seitenmenge");
@@ -191,6 +200,7 @@ public class TermRelations {
         for (TermRelation relation : sorted) {
             if (after != null && TermIndex.ORDER.compare(relation.key(), after) <= 0
                     || term != null && !relation.touches(term)
+                    || prefix != null && !relation.sortTerm().startsWith(prefix)
                     || search.type() != null && relation.type() != search.type()
                     || search.origin() != null && relation.origin() != search.origin()
                     || (search.status() == null ? relation.status() == ReviewStatus.REJECTED

@@ -29,6 +29,7 @@ import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 
 import java.awt.BorderLayout;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
@@ -60,10 +61,8 @@ public final class TermsView implements View {
     static final String NO_RUNTIME = "Die Laufzeit ist noch nicht gestartet.";
     /** Einträge je Abfrage; mehr zeigt die Suche. */
     static final int LIMIT = TermQueries.MAX_LIMIT;
-    /** Höchstens so viele Beziehungen je Status lädt die Liste ({@code TermRelations.relations}). */
+    /** Beziehungen je Seite ({@code TermRelations.relations}); die nächste Seite lädt beim Scrollen ans Ende. */
     static final int RELATION_LIMIT = TermRelations.MAX_LIMIT;
-    static final String MORE_RELATIONS = "Es gibt weitere Beziehungen; gezeigt werden die ersten " + RELATION_LIMIT
-            + " je Status. Ein Suchbegriff grenzt die Liste ein.";
     /** „Synonyme vorschlagen“ (#336): nur auf Klick, Umfang und Budget im Dialog, Lauf mit Fortschritt und Abbrechen. */
     static final String PROPOSE_SYNONYMS = "Synonyme vorschlagen";
     static final String PROPOSING = "Synonyme werden vorgeschlagen …";
@@ -105,7 +104,7 @@ public final class TermsView implements View {
     private String glossaryStatus = " ";
     private int acronymRequest;
     private int identifierRequest;
-    private IdentifierPager identifierPager;
+    private Pager<TermQueries.TermSummary> identifierPager;
     private boolean identifierLoading;
 
     /** @param context Laufzeit für den Begriffsindex; {@code null} zeigt nur das Gerüst (Tests) */
@@ -132,7 +131,10 @@ public final class TermsView implements View {
                 .tab(SYNONYMS, createSynonymOverlay())
                 .tab(GLOSSARY, glossaryTab.component())
                 .tab(GRAPH, graph.component())
-                .actions(proposeSynonyms, glossaryTab.tools(), glossaryTab.addButton(), glossaryTab.detectButton());
+                .actions(relationTab.createButton(), synonymTab.createButton(), proposeSynonyms, glossaryTab.tools(),
+                        glossaryTab.addButton(), glossaryTab.detectButton());
+        relationTab.createButton().setVisible(false);
+        synonymTab.createButton().setVisible(false);
         proposeSynonyms.setVisible(false);
         proposeSynonyms.setEnabled(context != null);
         proposeSynonyms.addActionListener(e -> askSynonymRun());
@@ -206,6 +208,8 @@ public final class TermsView implements View {
         relationTab.forgetRemoved();
         synonymTab.forgetRemoved();
         // Die Knöpfe der Reiterzeile gelten nur auf ihrem Reiter; auf den anderen bleibt die Reiterzeile frei.
+        relationTab.createButton().setVisible(RELATIONS.equals(name));
+        synonymTab.createButton().setVisible(SYNONYMS.equals(name));
         proposeSynonyms.setVisible(SYNONYMS.equals(name));
         glossaryTab.tools().setVisible(GLOSSARY.equals(name));
         glossaryTab.addButton().setVisible(GLOSSARY.equals(name));
@@ -373,11 +377,6 @@ public final class TermsView implements View {
             + "bestätigte gelten für die Suche.";
     static final String CONFLICT = "Die Beziehung wurde inzwischen geändert; die Liste ist neu geladen.";
 
-    /** Hinweis unter der Liste: {@code notice} und, wenn der Core mehr hat, {@link #MORE_RELATIONS}. */
-    static String relationsMessage(String notice, boolean more) {
-        return notice == null ? more ? MORE_RELATIONS : null : more ? notice + " " + MORE_RELATIONS : notice;
-    }
-
     /** {@code null}, wenn die Eingaben taugen, sonst der Grund in Worten. */
     static String invalidNewRelation(String from, String to) {
         if (from == null || from.isBlank() || to == null || to.isBlank()) {
@@ -429,7 +428,9 @@ public final class TermsView implements View {
 
     /**
      * Bezeichner (Nomen, Nominalgruppen, Kennungen), Schreibweisen, Fundstellen: seitenweise je {@link #LIMIT}, die
-     * nächste Seite lädt beim Scrollen ans Ende; ein gewählter Anfangsbuchstabe grenzt zusätzlich ein.
+     * nächste Seite lädt beim Scrollen ans Ende; ein gewählter Anfangsbuchstabe grenzt zusätzlich ein. Die Arten Nomen
+     * und Kennung führt der {@link Pager} alphabetisch zusammen, jede mit eigenem Cursor des Core; den
+     * Anfangsbuchstaben grenzt der Core ein ({@code TermSearch.startsWith}).
      */
     private void loadIdentifiers() {
         int request = ++identifierRequest;
@@ -439,23 +440,34 @@ public final class TermsView implements View {
             identifiers.show(List.of(), NO_RUNTIME);
             return;
         }
-        identifierPager = new IdentifierPager((kind, cursor) -> context.runtime().workspace().terms(
-                new TermQueries.TermSearch(null, null, kind, q.isEmpty() ? null : q, false, LIMIT, cursor,
-                        letter)));
+        Workspace workspace = context.runtime().workspace();
+        identifierPager = new Pager<>(Comparator.comparing(TermQueries.TermSummary::normalized),
+                List.of(List.of(identifierFetch(workspace, TermKind.NOUN, q, letter),
+                        identifierFetch(workspace, TermKind.IDENTIFIER, q, letter))));
         identifierLoading = false;
         moreIdentifiers(request, true, q.isEmpty() && letter == null ? EMPTY : NO_MATCH);
     }
 
+    /** Eine Seite Begriffe der Art {@code kind} zur Suche {@code q} und zum Anfangsbuchstaben {@code letter}. */
+    static Pager.Fetch<TermQueries.TermSummary> identifierFetch(Workspace workspace, TermKind kind, String q,
+                                                                String letter) {
+        return cursor -> {
+            TermQueries.TermList list = workspace.terms(new TermQueries.TermSearch(null, null, kind,
+                    q.isEmpty() ? null : q, false, LIMIT, cursor, letter));
+            return new Pager.Page<>(list.terms(), list.nextCursor());
+        };
+    }
+
     /** Die nächste Seite Bezeichner, wenn noch welche da sind und gerade keine lädt. */
     private void moreIdentifiers() {
-        IdentifierPager pager = identifierPager;
+        Pager<TermQueries.TermSummary> pager = identifierPager;
         if (pager != null && !identifierLoading && pager.hasMore()) {
             moreIdentifiers(identifierRequest, false, NO_MATCH);
         }
     }
 
     private void moreIdentifiers(int request, boolean first, String emptyHint) {
-        IdentifierPager pager = identifierPager;
+        Pager<TermQueries.TermSummary> pager = identifierPager;
         identifierLoading = true;
         Background.run(() -> pager.next(LIMIT), terms -> {
             if (request != identifierRequest) {
@@ -474,69 +486,6 @@ public final class TermsView implements View {
                 identifiers.message("Begriffe nicht lesbar: " + failure.getMessage());
             }
         });
-    }
-
-    /**
-     * Führt die Seiten der Arten Nomen und Kennung alphabetisch zusammen, jede mit eigenem Cursor des Core.
-     * Den Anfangsbuchstaben grenzt der Core ein ({@code TermSearch.startsWith}).
-     */
-    static final class IdentifierPager {
-
-        interface Fetch {
-            TermQueries.TermList fetch(TermKind kind, String cursor) throws Exception;
-        }
-
-        private final Fetch fetch;
-        private final List<Stream> streams = List.of(new Stream(TermKind.NOUN), new Stream(TermKind.IDENTIFIER));
-
-        IdentifierPager(Fetch fetch) {
-            this.fetch = fetch;
-        }
-
-        synchronized List<TermQueries.TermSummary> next(int count) throws Exception {
-            List<TermQueries.TermSummary> page = new ArrayList<>(count);
-            while (page.size() < count) {
-                Stream smallest = null;
-                for (Stream stream : streams) {
-                    stream.fill();
-                    if (!stream.buffer.isEmpty() && (smallest == null || stream.buffer.peekFirst().normalized()
-                            .compareTo(smallest.buffer.peekFirst().normalized()) < 0)) {
-                        smallest = stream;
-                    }
-                }
-                if (smallest == null) {
-                    break;
-                }
-                page.add(smallest.buffer.pollFirst());
-            }
-            return page;
-        }
-
-        synchronized boolean hasMore() {
-            return streams.stream().anyMatch(stream -> !stream.buffer.isEmpty() || !stream.done);
-        }
-
-        private final class Stream {
-            private final TermKind kind;
-            private final java.util.ArrayDeque<TermQueries.TermSummary> buffer = new java.util.ArrayDeque<>();
-            private String cursor;
-            private boolean done;
-
-            Stream(TermKind kind) {
-                this.kind = kind;
-            }
-
-            void fill() throws Exception {
-                while (buffer.isEmpty() && !done) {
-                    TermQueries.TermList list = fetch.fetch(kind, cursor);
-                    for (TermQueries.TermSummary term : list.terms()) {
-                        buffer.addLast(term);
-                    }
-                    cursor = list.nextCursor();
-                    done = cursor == null;
-                }
-            }
-        }
     }
 
     private List<TermQueries.TermSummary> query(TermKind kind, String q) {
@@ -707,6 +656,11 @@ public final class TermsView implements View {
         private Consumer<String> onSearch;
         private final JPanel south = new JPanel(new BorderLayout(0, 6));
         private final JPanel head = new JPanel(new BorderLayout(12, 0));
+        /** Kopfzeile und darunter, wenn die Breite nicht reicht, die Buchstabenleiste. */
+        private final JPanel top = new JPanel(new BorderLayout());
+        private JPanel lettersPanel;
+        private JPanel lettersEast;
+        private boolean lettersBelow;
         private javax.swing.JScrollPane scroll;
         private final java.util.Map<String, ComposerToggleButton> letterButtons = new java.util.LinkedHashMap<>();
         private String letter;
@@ -732,7 +686,9 @@ public final class TermsView implements View {
             head.add(lines, BorderLayout.CENTER);
             head.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(search), BorderLayout.EAST);
 
-            add(head, BorderLayout.NORTH);
+            top.setOpaque(false);
+            top.add(head, BorderLayout.NORTH);
+            add(top, BorderLayout.NORTH);
             scroll = Comic.scroll(table);
             scroll.getVerticalScrollBar().addAdjustmentListener(e -> {
                 if (!e.getValueIsAdjusting()) {
@@ -773,7 +729,8 @@ public final class TermsView implements View {
         }
 
         /**
-         * Buchstabenleiste A–Z in zwei Reihen mittig zwischen Überschrift und Suchfeld; ein zweiter Klick auf den
+         * Buchstabenleiste A–Z in zwei Reihen mittig zwischen Überschrift und Suchfeld; reicht die Breite dafür nicht
+         * (960 px), rückt sie unter die Kopfzeile, damit nichts abgeschnitten wird. Ein zweiter Klick auf den
          * gewählten Buchstaben oder „Alle“ hebt die Auswahl auf. {@code listener} erhält den Buchstaben oder
          * {@code null}.
          */
@@ -807,6 +764,53 @@ public final class TermsView implements View {
             east.add(center, BorderLayout.CENTER);
             east.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(search), BorderLayout.EAST);
             head.add(east, BorderLayout.EAST);
+            lettersPanel = center;
+            lettersEast = east;
+            placeLetters();
+        }
+
+        /** Jede neue Breite entscheidet, wo die Buchstabenleiste steht (auch ohne Bildschirm, für Bilder). */
+        @Override
+        public void setBounds(int x, int y, int width, int height) {
+            super.setBounds(x, y, width, height);
+            placeLetters();
+        }
+
+        /** Die Buchstabenleiste neben die Überschrift, wenn sie dort hinpasst, sonst darunter. */
+        private void placeLetters() {
+            if (lettersPanel == null || getWidth() == 0) {
+                return;
+            }
+            int needed = lettersPanel.getPreferredSize().width + 2 * 12;
+            for (java.awt.Component part : head.getComponents()) {
+                if (part != lettersEast) {
+                    needed += part.getPreferredSize().width;
+                }
+            }
+            needed += search.getParent().getPreferredSize().width;
+            boolean below = needed > getWidth();
+            if (below == lettersBelow) {
+                return;
+            }
+            lettersBelow = below;
+            if (below) {
+                lettersEast.remove(lettersPanel);
+                JPanel left = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+                left.setOpaque(false);
+                left.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+                left.add(lettersPanel);
+                top.add(left, BorderLayout.SOUTH);
+            } else {
+                top.remove(((BorderLayout) top.getLayout()).getLayoutComponent(BorderLayout.SOUTH));
+                lettersEast.add(lettersPanel, BorderLayout.CENTER);
+            }
+            top.revalidate();
+            top.repaint();
+        }
+
+        /** Ob die Buchstabenleiste unter der Kopfzeile steht, weil sie daneben nicht passt (Tests). */
+        boolean lettersBelow() {
+            return lettersBelow;
         }
 
         static final String ALL = "Alle";
@@ -848,6 +852,11 @@ public final class TermsView implements View {
             updateCount();
         }
 
+        /** Ersetzt die Zeile, deren Zelle {@code column} gleich {@code key} ist, an Ort und Stelle (Auswahl bleibt). */
+        void replace(int column, String key, List<String> row) {
+            model.replace(column, key, row);
+        }
+
         private void updateCount() {
             if (model.getRowCount() > 0) {
                 hint.setText(Texts.count(model.getRowCount(), "Eintrag", "Einträge")
@@ -861,6 +870,13 @@ public final class TermsView implements View {
             }
             javax.swing.JScrollBar bar = scroll.getVerticalScrollBar();
             if (bar.getValue() + bar.getVisibleAmount() >= bar.getMaximum() - 4 * table.getRowHeight()) {
+                onScrolledToEnd.run();
+            }
+        }
+
+        /** Lädt die nächste Seite, als wäre ans Ende gescrollt (Tests). */
+        void loadMore() {
+            if (more && onScrolledToEnd != null) {
                 onScrolledToEnd.run();
             }
         }
@@ -984,6 +1000,22 @@ public final class TermsView implements View {
         void set(List<List<String>> rows) {
             all = List.copyOf(rows);
             filter(query);
+        }
+
+        void replace(int column, String key, List<String> row) {
+            List<List<String>> joined = new ArrayList<>(all);
+            joined.replaceAll(r -> column < r.size() && key.equals(r.get(column)) ? row : r);
+            all = List.copyOf(joined);
+            for (int i = 0; i < visible.size(); i++) {
+                List<String> r = visible.get(i);
+                if (column < r.size() && key.equals(r.get(column))) {
+                    List<List<String>> changed = new ArrayList<>(visible);
+                    changed.set(i, row);
+                    visible = changed;
+                    fireTableRowsUpdated(i, i);
+                    return;
+                }
+            }
         }
 
         void filter(String text) {

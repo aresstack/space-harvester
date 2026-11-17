@@ -173,8 +173,17 @@ public final class Workspace {
 
     /** Wie {@link #termRelations(String, ReviewStatus, int)}, nur Beziehungen der Art {@code type} ({@code null}: alle). */
     public TermRelations.RelationList termRelations(String term, RelationType type, ReviewStatus status, int limit) {
+        return termRelations(term, type, status, null, limit, null);
+    }
+
+    /**
+     * Wie {@link #termRelations(String, RelationType, ReviewStatus, int)}, zum Blättern: {@code startsWith} grenzt auf
+     * den Anfang des Sortierbegriffs ein (Buchstabenleiste), {@code cursor} ist der {@code nextCursor} der vorigen Seite.
+     */
+    public TermRelations.RelationList termRelations(String term, RelationType type, ReviewStatus status,
+                                                    String startsWith, int limit, String cursor) {
         return harvester.termRelations().relations(caller, new TermRelations.RelationSearch(term, type, status, null,
-                null, limit, null));
+                null, limit, cursor, startsWith));
     }
 
     /**

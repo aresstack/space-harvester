@@ -90,8 +90,8 @@ class RelationsWithinPagesTest {
     }
 
     private List<String> within(PageSet pages) {
-        return relations.relations(CALLER, new TermRelations.RelationSearch(null, null, null, null, null, 200, null,
-                pages)).relations().stream().map(TermRelation::id).toList();
+        return relations.relations(CALLER, new TermRelations.RelationSearch(null, null, null, null, null, 200, null)
+                .within(pages)).relations().stream().map(TermRelation::id).toList();
     }
 
     private static PageSet pages(PageKey... keys) {
