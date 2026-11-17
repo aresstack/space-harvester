@@ -445,6 +445,8 @@ final class OverallProgress {
             case ENRICHMENT, KNOWLEDGE_GRAPH_EXPORT -> 0.05;
             case PURGE -> 0.2;
             case STATEMENT_ANALYSIS -> 1;
+            // Je Seite ein Modellaufruf je Aussage gegen ihren Originalsatz: langsamer als die Analyse.
+            case STATEMENT_CHECK -> 2;
             case GLOSSARY -> 2;
             default -> 0.5;
         };
@@ -457,6 +459,7 @@ final class OverallProgress {
             case ENRICHMENT -> 2000;
             case GLOSSARY -> 100;
             case PURGE -> 10;
+            case STATEMENT_ANALYSIS, STATEMENT_CHECK -> 200;
             default -> 200;
         };
     }

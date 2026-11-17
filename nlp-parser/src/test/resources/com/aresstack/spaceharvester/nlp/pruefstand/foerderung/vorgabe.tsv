@@ -125,3 +125,8 @@ R05	R	5	Bewilligungsstelle	Prüfstelle	-	-	ja	-	GILT	Zustand; „nicht die“: v
 R06	R	6	Partner	Kammer	-	-	nein	-	GILT	Zustand; „unser“: SONSTIGER
 R07	R	7	Sachbearbeiter	Klein|Herr Klein	-	-	nein	-	GILT	Zustand; Rollennomen ohne Artikel
 R08	R	8	Träger	Bewilligungsstelle	-	-	nein	-	GILT	Zustand; Rollennomen mit „der“
+S01	S	1	Referentin	Berger|Frau Berger	-	-	nein	-	GILT	Zustand; Rollennomen ohne Artikel, Angabe „beim Landesamt“ danach
+S02	S	2	Poststelle	Kanzlei	-	-	nein	-	GILT	Zustand; Rollennomen mit „die“, Angabe „im Ministerium“ davor
+S03	S	3	Dienstleister	Rechenzentrum	-	-	nein	-	GILT	Zustand; Rollennomen ohne Artikel, Angabe „für die Behörde“ danach
+# S, Satz 4 („Die Sitzung ist am Montag.“): ausdrücklich keine Aussage erwartet; nur Präpositionalgruppe ist keine Zustandsaussage (gewollte Lücke, AT)
+S05	S	5	Vertreter	Roth|Herr Roth	-	-	nein	-	GILT	Zustand; Rollennomen ohne Artikel mit Genitiv „des Leiters“, Angabe „im Urlaub“ danach

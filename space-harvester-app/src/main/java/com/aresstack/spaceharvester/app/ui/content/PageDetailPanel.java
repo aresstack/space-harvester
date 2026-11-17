@@ -461,6 +461,11 @@ public final class PageDetailPanel extends JPanel {
         sourceView.onStatus(text -> tabStatus(READING, text));
         standing.onStatus(text -> tabStatus(STAND, text));
         standing.onJump(this::openAt);
+        // Nach jedem (Neu-)Start, etwa nach dem Speichern der Wörter für den Stand, liest „Stand“ neu (Beobachter, kein
+        // Zeitgeber); verdeckt erst beim nächsten Zeigen.
+        if (context != null) {
+            context.onChange(ignored -> standing.settingsChanged());
+        }
         sourceChanges.onStatus(text -> tabStatus(READ, text));
         graphView.onStatus(text -> tabStatus(GRAPH, text));
         // Lauf-, Erfolgs- und Infomeldungen gehen in die Statuszeile des Hauptfensters; die Platte zeigt nur Probleme.

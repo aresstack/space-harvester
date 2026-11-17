@@ -125,6 +125,10 @@ public final class StatementFeatures {
 
     /** Der erste Begleiter ({@code det}) am Rollennomen; ohne einen {@link Article#OHNE}. */
     static Article article(Sentence sentence, Token noun) {
+        // Präposition am Nomen („im“, „beim“, „zur“ …): nie ein Begleiter im Sinn des Merkmals (AT, rules-14)
+        if (!sentence.dependents(noun.id(), "case").isEmpty()) {
+            return Article.SONSTIGER;
+        }
         Token determiner = sentence.dependents(noun.id()).stream()
                 .filter(t -> "det".equals(t.baseRelation()) && t.id() < noun.id()).findFirst().orElse(null);
         if (determiner == null) {

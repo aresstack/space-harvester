@@ -366,6 +366,8 @@ final class SetupWizard {
                 judged == 0 ? "aus" : judged + " " + AiSettingsPanel.JUDGED_PAIRS_UNIT);
         // Vorstufe der Aussagenanalyse (ADR 0032), einstellbar im Schritt „Modelle“.
         summary.add(AiSettingsPanel.SIMPLIFY_LABEL, AiSettingsPanel.simplificationSummary(settings.simplification()));
+        // Einstellbar unter Einstellungen › Modelle › Wörter für den Stand (ADR 0032).
+        summary.add(StandingWordsEditor.HEADING, StandingWordsEditor.summary(settings.standing()));
         summary.add(AiSettingsPanel.CHECK_SCOPE_LABEL, AiSettingsPanel.checkSummary(settings.check()));
         summary.add("Embedding-Modell", blank(settings.ai().embeddingModel()));
         summary.add("Rerank-Modell", blank(settings.ai().rerankModel()));

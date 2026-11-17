@@ -1,0 +1,64 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/S@heute
+# sent_id = 1
+# text = Frau Berger ist Referentin beim Landesamt.
+1	Frau	frau	NOUN	_	_	2	compound	_	_
+2	Berger	berger	PROPN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Referentin	referentin	NOUN	_	_	0	root	_	_
+5-6	beim	_	_	_	_	_	_	_	_
+5	bei	bei	ADP	_	_	7	case	_	_
+6	dem	der	DET	_	_	7	det	_	_
+7	Landesamt	landesamt	NOUN	_	_	4	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 2
+# text = Die Kanzlei ist im Ministerium die Poststelle.
+1	Die	der	DET	_	_	2	det	_	_
+2	Kanzlei	kanzlei	NOUN	_	_	8	nsubj	_	_
+3	ist	sein	AUX	_	_	8	cop	_	_
+4-5	im	_	_	_	_	_	_	_	_
+4	in	in	ADP	_	_	6	case	_	_
+5	dem	der	DET	_	_	6	det	_	_
+6	Ministerium	ministerium	PROPN	_	_	8	nmod	_	_
+7	die	der	DET	_	_	8	det	_	_
+8	Poststelle	poststelle	NOUN	_	_	0	root	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	8	punct	_	_
+
+# sent_id = 3
+# text = Das Rechenzentrum ist Dienstleister für die Behörde.
+1	Das	der	DET	_	_	2	det	_	_
+2	Rechenzentrum	rechenzentrum	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Dienstleister	dienstleister	NOUN	_	_	0	root	_	_
+5	für	für	ADP	_	_	7	case	_	_
+6	die	der	DET	_	_	7	det	_	_
+7	Behörde	behörde	NOUN	_	_	4	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 4
+# text = Die Sitzung ist am Montag.
+1	Die	der	DET	_	_	2	det	_	_
+2	Sitzung	sitzung	NOUN	_	_	6	nsubj	_	_
+3	ist	sein	AUX	_	_	6	cop	_	_
+4-5	am	_	_	_	_	_	_	_	_
+4	an	an	ADP	_	_	6	case	_	_
+5	dem	der	DET	_	_	6	det	_	_
+6	Montag	montag	PROPN	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 5
+# text = Herr Roth ist Vertreter des Leiters im Urlaub.
+1	Herr	herr	NOUN	_	_	2	compound	_	_
+2	Roth	roth	PROPN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Vertreter	vertreter	NOUN	_	_	0	root	_	_
+5	des	der	DET	_	_	6	det	_	_
+6	Leiters	leiter	NOUN	_	_	4	nmod	_	_
+7-8	im	_	_	_	_	_	_	_	_
+7	in	in	ADP	_	_	9	case	_	_
+8	dem	der	DET	_	_	9	det	_	_
+9	Urlaub	urlaub	NOUN	_	_	4	nmod	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	4	punct	_	_
+

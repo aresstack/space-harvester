@@ -1,4 +1,4 @@
-# Erfundene Gold-Analysen zum Begleiter des Rollennomens (ADR 0032, rules-13).
+# Erfundene Gold-Analysen zum Begleiter des Rollennomens (ADR 0032, rules-13, Präpositionalgruppe rules-14; Satz 13 mit absichtlich falscher Anbindung).
 # sent_id = 1
 # text = Die Stelle ist eine Behörde.
 1	Die	der	DET	_	_	2	det	_	_
@@ -78,3 +78,53 @@
 5	Antrag	Antrag	NOUN	_	_	3	obj	_	SpaceAfter=No
 6	.	.	PUNCT	_	_	3	punct	_	_
 
+# sent_id = 10
+# text = Herr Klein ist Sachbearbeiter im Referat.
+1	Herr	herr	NOUN	_	_	2	compound	_	_
+2	Klein	klein	PROPN	_	_	7	nsubj	_	_
+3	ist	sein	AUX	_	_	7	cop	_	_
+4	Sachbearbeiter	sachbearbeiter	PROPN	_	_	7	nsubj	_	_
+5-6	im	_	_	_	_	_	_	_	_
+5	in	in	ADP	_	_	7	case	_	_
+6	dem	der	DET	_	_	7	det	_	_
+7	Referat	referat	NOUN	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 11
+# text = Herr Roth ist Vertreter des Leiters im Urlaub.
+1	Herr	herr	NOUN	_	_	2	compound	_	_
+2	Roth	roth	PROPN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Vertreter	vertreter	NOUN	_	_	0	root	_	_
+5	des	der	DET	_	_	6	det	_	_
+6	Leiters	leiter	NOUN	_	_	4	nmod	_	_
+7-8	im	_	_	_	_	_	_	_	_
+7	in	in	ADP	_	_	9	case	_	_
+8	dem	der	DET	_	_	9	det	_	_
+9	Urlaub	urlaub	NOUN	_	_	4	nmod	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 12
+# text = Die Sitzung ist am Montag.
+1	Die	der	DET	_	_	2	det	_	_
+2	Sitzung	sitzung	NOUN	_	_	6	nsubj	_	_
+3	ist	sein	AUX	_	_	6	cop	_	_
+4-5	am	_	_	_	_	_	_	_	_
+4	an	an	ADP	_	_	6	case	_	_
+5	dem	der	DET	_	_	6	det	_	_
+6	Montag	montag	PROPN	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 13
+# text = Herr Roth ist Vertreter des Leiters im Urlaub.
+1	Herr	herr	NOUN	_	_	2	compound	_	_
+2	Roth	roth	PROPN	_	_	9	nsubj	_	_
+3	ist	sein	AUX	_	_	9	cop	_	_
+4	Vertreter	vertreter	NOUN	_	_	6	nmod	_	_
+5	des	der	DET	_	_	6	det	_	_
+6	Leiters	leiter	NOUN	_	_	9	obl	_	_
+7-8	im	_	_	_	_	_	_	_	_
+7	in	in	ADP	_	_	9	case	_	_
+8	dem	der	DET	_	_	9	det	_	_
+9	Urlaub	urlaub	NOUN	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_

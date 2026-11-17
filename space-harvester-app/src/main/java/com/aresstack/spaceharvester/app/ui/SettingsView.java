@@ -101,6 +101,7 @@ public final class SettingsView implements View {
     private final AiSettingsPanel ai;
     /** Platte „Dateizugriff“ unter Allgemein: freigegebene Ordner für Ordner-Quellen. */
     final FileAccessEditor fileAccess;
+    final StandingWordsEditor standingWords;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
     private final Facts runtime = new Facts();
@@ -153,6 +154,7 @@ public final class SettingsView implements View {
         this.context = context;
         this.ai = new AiSettingsPanel(context);
         this.fileAccess = new FileAccessEditor(context);
+        this.standingWords = new StandingWordsEditor(context);
         this.keePass = new KeePassPairingPanel(context);
         this.releases = new PageReleasesPanel(context);
         keePass.onChange(() -> {
@@ -250,7 +252,9 @@ public final class SettingsView implements View {
                 Comic.plate("Diagnose", Comic.DARK, diagnosis),
                 Comic.plate(CONSOLE_TITLE, Comic.DARK, consoleRows)));
         page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
-        page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
+        // Die Wörter für den Stand gehören zur Aussagenanalyse, deren Vorstufe unter „Modelle“ steht (ADR 0032).
+        page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent()),
+                Comic.plate(null, Comic.PETROL, standingWords.component())));
         page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
                 withButtons(network, proxy, tls)),
                 Comic.plate(SettingDialogs.RETRY_TITLE, Comic.PETROL, withButtons(retry, editRetry))));
@@ -278,6 +282,7 @@ public final class SettingsView implements View {
         context.onChange(ignored -> {
             render();
             fileAccess.render();
+            standingWords.render();
             keePass.render();
             // Eingaben in den offenen Bereichen „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
             // neue Stand.

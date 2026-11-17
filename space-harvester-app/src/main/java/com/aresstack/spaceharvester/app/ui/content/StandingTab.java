@@ -489,6 +489,13 @@ final class StandingTab extends JPanel {
         }
     }
 
+    /** Die Einstellungen wurden neu geladen (etwa die Wörter für den Stand): beim nächsten Zeigen neu lesen. */
+    void settingsChanged() {
+        if (selection != null) {
+            changed();
+        }
+    }
+
     /** Liest die Sicht neu, etwa nach einer Entscheidung oder dem Ende einer Aussagenanalyse. */
     private void changed() {
         dirty = true;
@@ -601,14 +608,14 @@ final class StandingTab extends JPanel {
                 break;
             }
         }
-        StringBuilder text = new StringBuilder(subject).append(' ').append(situation.predicate());
+        // Die Teile mit „ · “ getrennt, damit Handelnder, Verb und Beteiligte als Teile lesbar bleiben.
+        StringBuilder text = new StringBuilder(subject).append(" · ").append(situation.predicate());
         for (com.aresstack.spaceharvester.application.standing.Situation.Participant other : situation.others()) {
-            text.append(' ').append(other.marker() == null ? "" : other.marker() + " ").append(other.key());
+            text.append(" · ").append(other.marker() == null ? "" : other.marker() + " ").append(other.key());
         }
         return text.toString();
     }
 
-    /** Beide Sätze im Wortlaut: für die (wenigen) Einträge der Hinweise den Originalsatz auf einmal holen. */
     /** Erst anmelden, dann lesen (ADR 0027): Entscheidungen und das Ende von „Aussagen analysieren“. */
     private void watch(Actions current) {
         if (current == watched) {
