@@ -947,7 +947,8 @@ public final class Harvester implements AutoCloseable {
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
-                    () -> com.aresstack.spaceharvester.application.standing.StandingWords.DEFAULT, clock);
+                    () -> com.aresstack.spaceharvester.application.standing.StandingWords.of(
+                            this.settings.standing()), clock);
             this.statementAnalysisJobs = new StatementAnalysisJobs(jobs, new StatementAnalysisJobs.Discovery() {
                 @Override
                 public PageNavigation.Children children(AccessContext who, String sourceId, String spaceKey,

@@ -112,6 +112,11 @@ class ConfigurationParityTest {
                   mode: always
                   parallel: 3
                   model: step-model
+                standing:
+                  outdated-words:
+                    - Archiv
+                    - abgelöst
+                  draft-words: Entwurf, idee
             """;
 
     private static final String TOKEN = "parity-token";
@@ -190,6 +195,11 @@ class ConfigurationParityTest {
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
                         com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 3,
                         "step-model"));
+
+        // ADR 0032, FL6: Wörter des Stands, als YAML-Liste und als Text mit Kommas.
+        assertThat(app.standing()).isEqualTo(service2.standing())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.StandingSettings(
+                        java.util.List.of("archiv", "abgelöst"), java.util.List.of("entwurf", "idee")));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder

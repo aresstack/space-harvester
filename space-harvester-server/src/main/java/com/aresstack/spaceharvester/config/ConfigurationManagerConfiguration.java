@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
@@ -138,13 +139,19 @@ class ConfigurationManagerConfiguration {
         binder.bind(HarvesterConfiguration.PREFIX + ExportSettings.ATTACHMENTS_MEDIA_TYPES,
                 Bindable.listOf(String.class)).ifBound(types ->
                 properties.setProperty(ExportSettings.ATTACHMENTS_MEDIA_TYPES, String.join(",", types)));
+        // Stand (ADR 0032, FL6): Wortlisten als Text mit Kommas oder als YAML-Liste.
+        for (String key : List.of(StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS)) {
+            binder.bind(HarvesterConfiguration.PREFIX + key, Bindable.listOf(String.class)).ifBound(words ->
+                    properties.setProperty(key, String.join(",", words)));
+        }
         binder.bind(HarvesterConfiguration.PREFIX + SyncSettings.SOURCES, SOURCE_RULES).ifBound(rules ->
                 rules.forEach((id, fields) -> fields.forEach((field, value) ->
                         properties.setProperty(SourceSyncOverride.key(id, field), value))));
         HarvesterConfiguration read = HarvesterConfiguration.fromProperties(properties).orThrow();
         return base.withSync(read.sync()).withSearch(read.search()).withLocalFiles(read.localFiles())
                 .withExport(read.export()).withTerms(read.terms()).withEnrichment(read.enrichment())
-                .withChangeLog(read.changeLog()).withSimplification(read.simplification());
+                .withChangeLog(read.changeLog()).withSimplification(read.simplification())
+                .withStanding(read.standing());
     }
 
     private static final Bindable<Map<String, Map<String, String>>> SOURCE_RULES = Bindable.of(
