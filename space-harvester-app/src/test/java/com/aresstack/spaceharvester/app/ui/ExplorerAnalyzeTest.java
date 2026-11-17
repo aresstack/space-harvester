@@ -112,15 +112,15 @@ class ExplorerAnalyzeTest {
         useFakes();
         // „Favorit“ und „Änderungen nachholen“ stehen hinter Herunterladen, auch an der Quelle (Angelo, 16.11.2026).
         assertThat(labels(LEAF)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
-                Explorer.ANALYZE, Explorer.PAGE_ONLY);
+                Explorer.ANALYZE, Explorer.CHECK, Explorer.PAGE_ONLY);
         assertThat(labels(PARENT)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
-                Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.PAGE_ONLY);
+                Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.CHECK, Explorer.CHECK_PAGE, Explorer.PAGE_ONLY);
         assertThat(labels(UNKNOWN)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
-                Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.PAGE_ONLY);
+                Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.CHECK, Explorer.CHECK_PAGE, Explorer.PAGE_ONLY);
         assertThat(labels(SPACE)).containsExactly("Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
-                Explorer.ANALYZE);
+                Explorer.ANALYZE, Explorer.CHECK);
         assertThat(labels(SOURCE)).containsExactly("Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
-                Explorer.ANALYZE);
+                Explorer.ANALYZE, Explorer.CHECK);
         assertThat(labels(new Explorer.MoreItem("c"))).isEmpty();
         assertThat(labels(new Explorer.Note(Explorer.LOADING))).isEmpty();
         assertThat(entry(PARENT, Explorer.ANALYZE).isEnabled()).isTrue();
@@ -155,6 +155,57 @@ class ExplorerAnalyzeTest {
         assertThat(only.isEnabled()).isFalse();
         assertThat(only.getToolTipText()).isEqualTo(Explorer.ANALYZE_UNAVAILABLE);
         assertThat(entry(PARENT, "Herunterladen").isEnabled()).isTrue();
+    }
+
+    @Test
+    void checkingStartsAtOnceForOnePageAndAsksWithYesOrNoForMore() throws Exception {
+        useFakes();
+        List<String> questions = new CopyOnWriteArrayList<>();
+        boolean[] yes = {false};
+        SwingUtilities.invokeAndWait(() -> explorer.checkConfirmation((parent, title, question) -> {
+            assertThat(title).isEqualTo(Explorer.CHECK);
+            questions.add(question);
+            return yes[0];
+        }));
+
+        clickLater(LEAF, Explorer.CHECK);
+        await(() -> !shownJobs.isEmpty());
+        assertThat(analyses.checks).containsExactly(new Check(new Scope.SinglePage("wiki", "OPS", "p1"),
+                StatementAnalysisJobs.CheckOptions.of(Explorer.ANALYSIS_LIMIT,
+                        com.aresstack.spaceharvester.application.configuration.CheckSettings.DEFAULT)));
+        assertThat(questions).as("eine Seite ohne Rückfrage").isEmpty();
+        clickLater(PARENT, Explorer.CHECK_PAGE);
+        await(() -> analyses.checks.size() == 2);
+        assertThat(analyses.checks.get(1).scope()).isEqualTo(new Scope.SinglePage("wiki", "OPS", "p2"));
+
+        analyses.estimate = scope -> new StatementAnalysisJobs.Estimate(scope, 12, false, false);
+        clickLater(SPACE, Explorer.CHECK);
+        await(() -> !questions.isEmpty());
+        assertThat(questions.getFirst()).startsWith("Die Aussagen von 12 Seiten wirklich prüfen?")
+                .contains("nur Seiten mit KI-Freigabe");
+        assertThat(analyses.checks).as("„Nein“ startet nichts").hasSize(2);
+
+        yes[0] = true;
+        analyses.estimate = scope -> new StatementAnalysisJobs.Estimate(scope, Explorer.ANALYSIS_LIMIT + 1, true,
+                false);
+        clickLater(SPACE, Explorer.CHECK);
+        await(() -> analyses.checks.size() == 3);
+        assertThat(questions.getLast()).startsWith("Die Aussagen von mehr als ").contains("wirklich prüfen?");
+        assertThat(analyses.checks.get(2)).isEqualTo(new Check(new Scope.Space("wiki", "OPS"),
+                StatementAnalysisJobs.CheckOptions.of(0,
+                        com.aresstack.spaceharvester.application.configuration.CheckSettings.DEFAULT)));
+        assertThat(analyses.started).as("nie eine Analyse als Folge").isEmpty();
+    }
+
+    @Test
+    void checkingIsDisabledWithItsOwnReasonWithoutAModel() throws Exception {
+        analyses.checkUnavailable = Explorer.CHECK_NO_MODEL;
+        useFakes();
+        JMenuItem check = entry(PARENT, Explorer.CHECK);
+        assertThat(check.isEnabled()).isFalse();
+        assertThat(check.getToolTipText()).isEqualTo(Explorer.CHECK_NO_MODEL);
+        assertThat(entry(PARENT, Explorer.CHECK_PAGE).isEnabled()).isFalse();
+        assertThat(entry(PARENT, Explorer.ANALYZE).isEnabled()).as("Analysieren braucht kein Chat-Modell").isTrue();
     }
 
     @Test
@@ -271,16 +322,34 @@ class ExplorerAnalyzeTest {
     private record Started(Scope scope, StatementAnalysisJobs.Options options) {
     }
 
+    private record Check(Scope scope, StatementAnalysisJobs.CheckOptions options) {
+    }
+
     private static final class FakeAnalyses implements Explorer.Analyses {
         volatile String unavailable;
         volatile java.util.function.Function<Scope, StatementAnalysisJobs.Estimate> estimate =
                 scope -> new StatementAnalysisJobs.Estimate(scope, 1, false, false);
         final List<Scope> estimated = new CopyOnWriteArrayList<>();
         final List<Started> started = new CopyOnWriteArrayList<>();
+        volatile String checkUnavailable;
+        final List<Check> checks = new CopyOnWriteArrayList<>();
 
         @Override
         public String unavailable() {
             return unavailable;
+        }
+
+        @Override
+        public String checkUnavailable() {
+            return checkUnavailable;
+        }
+
+        @Override
+        public JobStatus startCheck(Scope scope, StatementAnalysisJobs.CheckOptions options) {
+            checks.add(new Check(scope, options));
+            return new JobStatus("check-" + checks.size(), JobType.STATEMENT_CHECK, scope.sourceId(),
+                    scope.spaceKey(), "local", JobState.QUEUED, new JobProgress(0, 0, 0, 0), null, false,
+                    Instant.now(), null, null);
         }
 
         @Override
