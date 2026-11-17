@@ -1,0 +1,115 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/D@vorstufe-hand
+# sent_id = 1
+# text = Der Lagerist prüft jede Lieferung am Tag des Eingangs.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	jede	jeder	DET	_	_	5	det	_	_
+5	Lieferung	lieferung	NOUN	_	_	3	obj	_	_
+6-7	am	_	_	_	_	_	_	_	_
+6	an	an	ADP	_	_	8	case	_	_
+7	dem	der	DET	_	_	8	det	_	_
+8	Tag	tag	NOUN	_	_	5	nmod	_	_
+9	des	der	DET	_	_	10	det	_	_
+10	Eingangs	eingangs	NOUN	_	_	8	nmod	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Der Lieferschein wird mit der Bestellung abgeglichen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lieferschein	lieferschein	NOUN	_	_	7	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	7	aux:pass	_	_
+4	mit	mit	ADP	_	_	6	case	_	_
+5	der	der	DET	_	_	6	det	_	_
+6	Bestellung	bestellung	NOUN	_	_	7	obl	_	_
+7	abgeglichen	abgegichen	VERB	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 3
+# text = Die Ware wird auf Schäden geprüft.
+1	Die	der	DET	_	_	2	det	_	_
+2	Ware	ware	NOUN	_	_	6	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	6	aux:pass	_	_
+4	auf	auf	ADP	_	_	5	case	_	_
+5	Schäden	schaden	NOUN	_	_	6	obl	_	_
+6	geprüft	prüfen	VERB	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 4
+# text = Der Wareneingang wird gebucht.
+1	Der	der	DET	_	_	2	det	_	_
+2	Wareneingang	wareneingang	NOUN	_	_	4	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	4	aux:pass	_	_
+4	gebucht	buchen	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 5
+# text = Der Lagerplatz wird zugewiesen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerplatz	lagerplatz	NOUN	_	_	4	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	4	aux:pass	_	_
+4	zugewiesen	zuweisen	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 6
+# text = Im Jahr 2022 sollten die Lagerplätze automatisch vergeben werden.
+1-2	Im	_	_	_	_	_	_	_	_
+1	In	in	ADP	_	_	3	case	_	_
+2	dem	der	DET	_	_	3	det	_	_
+3	Jahr	jahr	NOUN	_	_	9	obl	_	_
+4	2022	2022	NUM	_	_	3	nmod	_	_
+5	sollten	sollen	AUX	_	_	9	aux	_	_
+6	die	der	DET	_	_	7	det	_	_
+7	Lagerplätze	lagerplätze	NOUN	_	_	9	nsubj:pass	_	_
+8	automatisch	automatisch	ADJ	_	_	9	advmod	_	_
+9	vergeben	vergeben	VERB	_	_	0	root	_	_
+10	werden	werden	AUX	_	_	9	aux:pass	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	9	punct	_	_
+
+# sent_id = 7
+# text = Dieser Plan wurde aufgegeben.
+1	Dieser	dieser	DET	_	_	2	det	_	_
+2	Plan	plan	NOUN	_	_	4	nsubj:pass	_	_
+3	wurde	werden	AUX	_	_	4	aux:pass	_	_
+4	aufgegeben	aufgeben	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 8
+# text = Der Lagerleiter vergibt die Lagerplätze derzeit von Hand.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerleiter	lagerleiter	NOUN	_	_	3	nsubj	_	_
+3	vergibt	vergeben	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Lagerplätze	lagerplätze	NOUN	_	_	3	obj	_	_
+6	derzeit	derzeit	ADV	_	_	8	advmod	_	_
+7	von	von	ADP	_	_	8	case	_	_
+8	Hand	hand	NOUN	_	_	3	obl	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Ein Scanner soll die Lieferscheine ab 2027 erfassen.
+1	Ein	ein	DET	_	_	2	det	_	_
+2	Scanner	scanner	NOUN	_	_	8	nsubj	_	_
+3	soll	sollen	AUX	_	_	8	aux	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Lieferscheine	lieferscheine	NOUN	_	_	8	obj	_	_
+6	ab	ab	ADP	_	_	7	case	_	_
+7	2027	2027	NUM	_	_	8	obl	_	_
+8	erfassen	erfassen	VERB	_	_	0	root	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	8	punct	_	_
+
+# sent_id = 10
+# text = Die Anbindung an die Buchhaltung ist noch nicht geklärt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Anbindung	anbindung	NOUN	_	_	9	nsubj:pass	_	_
+3	an	an	ADP	_	_	5	case	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Buchhaltung	buchhaltung	NOUN	_	_	2	nmod	_	_
+6	ist	sein	AUX	_	_	9	aux:pass	_	_
+7	noch	noch	ADV	_	_	8	advmod	_	_
+8	nicht	nicht	PART	_	_	9	advmod	_	_
+9	geklärt	klären	VERB	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+

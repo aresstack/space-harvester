@@ -1,0 +1,179 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/E@vorstufe-hand
+# sent_id = 1
+# text = Der Lagerist bestätigt die Vollständigkeit der Lieferung.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	bestätigt	bestätigen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Vollständigkeit	vollständigkeit	NOUN	_	_	3	obj	_	_
+6	der	der	DET	_	_	7	det	_	_
+7	Lieferung	lieferung	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Der Besteller löst eine Bestellung aus.
+1	Der	der	DET	_	_	2	det	_	_
+2	Besteller	besteller	NOUN	_	_	3	nsubj	_	_
+3	löst	lösen	VERB	_	_	0	root	_	_
+4	eine	ein	DET	_	_	5	det	_	_
+5	Bestellung	bestellung	NOUN	_	_	3	obj	_	_
+6	aus	aus	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Der Besteller erhält eine Auftragsnummer.
+1	Der	der	DET	_	_	2	det	_	_
+2	Besteller	besteller	NOUN	_	_	3	nsubj	_	_
+3	erhält	erhalten	VERB	_	_	0	root	_	_
+4	eine	ein	DET	_	_	5	det	_	_
+5	Auftragsnummer	auftragsnummer	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 4
+# text = Der Einkäufer entscheidet über die Nachbestellung eines Artikels.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
+3	entscheidet	entscheiden	VERB	_	_	0	root	_	_
+4	über	über	ADP	_	_	6	case	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Nachbestellung	nachbestellung	NOUN	_	_	3	obl	_	_
+7	eines	ein	DET	_	_	8	det	_	_
+8	Artikels	artikel	NOUN	_	_	6	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 5
+# text = Die Buchhaltung prüft die Rechnung.
+1	Die	der	DET	_	_	2	det	_	_
+2	Buchhaltung	buchhaltung	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	die	der	PRON	_	_	5	nmod	_	_
+5	Rechnung	rechnung	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 6
+# text = Der Lagerist verpackt die Ware.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	verpackt	verpacken	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Ware	ware	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 7
+# text = Der Lagerist übergibt die Ware dem Fahrer.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	übergibt	übergeben	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Ware	ware	NOUN	_	_	3	obj	_	_
+6	dem	der	DET	_	_	7	det	_	_
+7	Fahrer	fahrer	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 8
+# text = Der Einkäufer holt Angebote ein.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
+3	holt	holen	VERB	_	LemmaFrom=Form	0	root	_	_
+4	Angebote	angebot	NOUN	_	_	3	obj	_	_
+5	ein	ein	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Der Einkäufer vergleicht die Preise.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
+3	vergleicht	vergleichen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Preise	preis	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 10
+# text = Der Einkäufer vergibt den Auftrag.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
+3	vergibt	vergeben	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Auftrag	auftrag	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 11
+# text = Der Lagerist bucht den Wareneingang.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	bucht	buchen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Wareneingang	wareneingang	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 12
+# text = Danach bezahlt die Buchhaltung die Rechnung.
+1	Danach	danach	ADV	_	_	2	advmod	_	_
+2	bezahlt	bezahlen	VERB	_	_	0	root	_	_
+3	die	der	DET	_	_	4	det	_	_
+4	Buchhaltung	buchhaltung	NOUN	_	_	2	nsubj	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Rechnung	rechnung	NOUN	_	_	2	obj	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 13
+# text = Die Einhaltung der Lieferfrist durch den Lieferanten wird geprüft.
+1	Die	der	DET	_	_	2	det	_	_
+2	Einhaltung	einhaltung	NOUN	_	_	9	nsubj:pass	_	_
+3	der	der	DET	_	_	4	det	_	_
+4	Lieferfrist	lieferfrist	NOUN	_	_	2	nmod	_	_
+5	durch	durch	ADP	_	_	7	case	_	_
+6	den	der	DET	_	_	7	det	_	_
+7	Lieferanten	lieferant	NOUN	_	_	2	nmod	_	_
+8	wird	werden	AUX	_	_	9	aux:pass	_	_
+9	geprüft	prüfen	VERB	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+
+# sent_id = 14
+# text = Der Lagerist beanstandet Ware.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	beanstandet	beanstanden	VERB	_	_	0	root	_	_
+4	Ware	ware	NOUN	_	_	3	obj	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 15
+# text = Der Lieferant muss diese Ware ersetzen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lieferant	lieferant	NOUN	_	_	6	nsubj	_	_
+3	muss	müssen	AUX	_	_	6	aux	_	_
+4	diese	dieser	DET	_	_	5	det	_	_
+5	Ware	ware	NOUN	_	_	6	nsubj	_	_
+6	ersetzen	ersetzen	VERB	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 16
+# text = Der Fahrer quittiert die Übernahme.
+1	Der	der	DET	_	_	2	det	_	_
+2	Fahrer	fahrer	NOUN	_	_	3	nsubj	_	_
+3	quittiert	quittieren	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Übernahme	übernahme	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 17
+# text = Dann bucht das Lagersystem den Abgang.
+1	Dann	dann	ADV	_	_	2	advmod	_	_
+2	bucht	buchen	VERB	_	_	0	root	_	_
+3	das	der	PRON	_	_	2	nsubj	_	_
+4	Lagersystem	lagersystem	NOUN	_	_	2	obj	_	_
+5	den	der	DET	_	_	6	det	_	_
+6	Abgang	abgang	NOUN	_	_	4	nmod	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 18
+# text = Das Lagersystem druckt den Lieferschein.
+1	Das	der	DET	_	_	2	det	_	_
+2	Lagersystem	lagersystem	NOUN	_	_	3	nsubj	_	_
+3	druckt	drucken	VERB	_	LemmaFrom=Form	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Lieferschein	lieferschein	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+

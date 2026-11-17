@@ -1,0 +1,16 @@
+1|T|Der Kostenstellenleiter gibt die Bestellanforderung frei.
+2|T|Der Lagerist prüft die Ware auf Beschädigungen.
+3|T|Die Rechnung wird durch Überweisung beglichen.
+4|T|Der Lagerist sondert beschädigte Artikel aus.
+4|T|Die beschädigten Artikel werden innerhalb von zwei Wochen zurückgesendet.
+5|T|Der Lagerleiter muss die Inventur einmal jährlich durchführen.
+6|B|Der Mindestbestand wird unterschritten.
+6|T|Dann löst das Lagersystem eine Nachbestellung aus.
+6|T|Dann benachrichtigt das Lagersystem den Einkäufer.
+7|T|Der Einkäufer darf den Auftrag nicht vergeben.
+7|B|Die Freigabe fehlt.
+8|T|Der Lagerist erscheint zur Inventur.
+8|T|Der Lagerist zählt den Bestand.
+9|T|Der Einkäufer vergleicht die Angebote.
+9|T|Der Einkäufer bewertet die Angebote.
+10|T|Der Auftrag wird dem Lieferanten schriftlich erteilt.

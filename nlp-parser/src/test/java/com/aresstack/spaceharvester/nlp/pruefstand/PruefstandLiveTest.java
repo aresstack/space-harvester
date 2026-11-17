@@ -94,6 +94,8 @@ class PruefstandLiveTest {
         int saetze = 0;
         int aussagen = 0;
         int ohneAussage = 0;
+        int vereinfacht = 0;
+        int abschnitte = 0;
         long started = System.nanoTime();
         for (Path seite : seiten) {
             ParsedDocument document = kette.analyze(new DocumentRef("seiten", "s", "1"), Files.readString(seite));
@@ -109,6 +111,12 @@ class PruefstandLiveTest {
             for (boolean b : mitAussage) {
                 ohneAussage += b ? 0 : 1;
             }
+            var auswahl = com.aresstack.spaceharvester.nlp.extraction.SimplificationSelection.select(document,
+                    analysis, com.aresstack.spaceharvester.nlp.extraction.SimplificationSelection.Mode.WHERE_NEEDED);
+            vereinfacht += (int) auswahl.values().stream()
+                    .filter(com.aresstack.spaceharvester.nlp.extraction.SimplificationSelection::simplify).count();
+            abschnitte += com.aresstack.spaceharvester.nlp.extraction.SimplificationSelection
+                    .sections(document, auswahl).size();
         }
         StringBuilder out = new StringBuilder("Echte Seiten (nur Zahlen): ");
         out.append(seiten.size()).append(" Seiten, ").append(saetze).append(" Sätze, ").append(aussagen)
@@ -120,6 +128,8 @@ class PruefstandLiveTest {
             out.append(level).append(' ').append(n).append(String.format(java.util.Locale.GERMAN, " (%.0f %%) ",
                     aussagen == 0 ? 0.0 : 100.0 * n / aussagen));
         }
+        out.append("; Vorstufe „nur wo nötig“: gewählt ").append(vereinfacht).append(" von ").append(saetze)
+                .append(" Sätzen, ").append(abschnitte).append(" Abschnitte mit Modellaufruf");
         out.append("; ").append((System.nanoTime() - started) / 1_000_000).append(" ms");
         Path report = Path.of("build", "reports", "pruefstand", "seiten.txt");
         Files.createDirectories(report.getParent());
