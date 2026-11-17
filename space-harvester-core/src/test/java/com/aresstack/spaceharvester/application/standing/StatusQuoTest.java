@@ -72,6 +72,28 @@ class StatusQuoTest {
     }
 
     @Test
+    void staleAnalysesAreShownButNeverCountedAsCurrent() {
+        pages.add(page("1", "Aktuell", 'a')
+                .action("Kasse", "zahlt", "Zuschuss", features(Temporality.GILT)).build());
+        StandingFixtures.PageBuilder old = page("2", "Alt", 'b')
+                .action("Kasse", "zahlt", "Zuschuss", features(Negation.NEGATED, Modality.NONE, Temporality.GILT))
+                .state("Antrag", "vollständig", Features.UNKNOWN);
+        old.state = PageStatements.State.STALE;
+        pages.add(old.build());
+
+        StatusQuoView view = statusQuo.view(EDITOR, key -> true);
+
+        assertThat(view.entries()).hasSize(3);
+        assertThat(view.staleEntries()).isEqualTo(2);
+        assertThat(view.counts()).containsEntry(Standing.GILT, 1).containsEntry(Standing.UNKLAR, 0);
+        assertThat(view.certainCounts()).containsEntry(Standing.GILT, 1);
+        assertThat(view.states()).as("Zustände nur aus aktuellen Analysen").isEmpty();
+        assertThat(view.pages()).filteredOn(standing -> standing.page().key().pageId().equals("2")).singleElement()
+                .satisfies(standing -> assertThat(standing.counts().values()).allMatch(count -> count == 0));
+        assertThat(StatementConflicts.of(view).contradictions()).as("veraltete Einträge nie verglichen").isEmpty();
+    }
+
+    @Test
     void negationAndModalityTravelWithTheEntry() {
         pages.add(page("1", "Förderung", 'a')
                 .action("Kasse", "prüft", "Beleg", features(Negation.NEGATED, Modality.MUSS, Temporality.GILT))

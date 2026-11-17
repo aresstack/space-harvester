@@ -119,9 +119,11 @@ class ReadingAdviceTest {
         ReadingList.Recommendation only = advice.recommend(EDITOR, key -> true, null, () -> false).pages()
                 .getFirst();
 
-        assertThat(only.parts()).extracting(ReadingList.Part::reason, ReadingList.Part::points).contains(
+        assertThat(only.parts()).extracting(ReadingList.Part::reason, ReadingList.Part::points).containsExactly(
                 tuple(ReadingReason.PAGE_DRAFT, ReadingAdvice.PAGE_DRAFT),
                 tuple(ReadingReason.STALE_ANALYSIS, ReadingAdvice.STALE_ANALYSIS));
+        assertThat(advice.recommend(EDITOR, key -> true, "Kasse", () -> false).pages())
+                .as("veraltete Analyse gibt kein Thema her").isEmpty();
     }
 
     @Test
