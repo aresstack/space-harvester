@@ -249,6 +249,128 @@ class StandingTabTest {
     }
 
     @Test
+    void theOverlaySetsTheStandingByHandWithFourWordPills() {
+        Fixture fixture = new Fixture(view());
+        StandingTab tab = fixture.shownTab();
+        int first = indexOf(tab, "Der Sachbearbeiter prüft");
+
+        tab.click(first);
+        assertThat(Standing.values()).allSatisfy(standing ->
+                assertThat(tab.decisionChip(standing).getText()).isEqualTo(StandingTab.word(standing)));
+        assertThat(tab.decisionChip(Standing.GILT).isSelected()).as("ohne Entscheidung keine gefüllt").isFalse();
+        assertThat(tab.overlayButton(StandingTab.CLEAR_TIP).isEnabled()).as("nichts zu löschen").isFalse();
+
+        tab.decisionChip(Standing.GEPLANT).doClick();
+
+        assertThat(fixture.writes).containsExactly("decide 1 wiki/1@h#s1.v1 GEPLANT 0");
+        assertThat(fixture.status.get()).isEqualTo("Stand von Hand gesetzt: „geplant“");
+    }
+
+    @Test
+    void aConflictRereadsAndSaysSo() {
+        Fixture fixture = new Fixture(view());
+        fixture.conflict = true;
+        StandingTab tab = fixture.shownTab();
+        tab.click(indexOf(tab, "Der Sachbearbeiter prüft"));
+
+        tab.decisionChip(Standing.UEBERHOLT).doClick();
+
+        assertThat(fixture.reads.get()).isEqualTo(2);
+        assertThat(fixture.status.get()).isEqualTo("5 Aussagen auf 2 Seiten");
+        assertThat(fixture.writes).hasSize(1);
+    }
+
+    @Test
+    void aDecisionIsClearedOnlyAfterYes() {
+        StandingDecision decided = new StandingDecision(new PageKey("wiki", "1"), "wiki/1@h#s1.v1", Standing.UNKLAR,
+                3, "angelo", Instant.parse("2026-11-16T10:00:00Z"), "angelo", Instant.parse("2026-11-16T11:00:00Z"));
+        StatusQuoView base = view();
+        StatusQuoEntry first = base.entries().get(0);
+        List<StatusQuoEntry> entries = new ArrayList<>(base.entries());
+        entries.set(0, new StatusQuoEntry(first.page(), first.statement(), first.kind(), first.subject(),
+                first.subjectKey(), null, first.quality(), new StatementStanding(Standing.UNKLAR,
+                StandingBasis.DECISION, StandingReason.DECISION), decided, false));
+        Fixture fixture = new Fixture(new StatusQuoView(entries, base.states(), base.pages(), base.counts(),
+                base.certainCounts(), List.of()));
+        StandingTab tab = fixture.shownTab();
+        int line = -1;
+        for (int i = 0; i < tab.rows().size(); i++) {
+            if (tab.rows().get(i) instanceof StandingTab.Line l && l.entry().decision() != null) {
+                line = i;
+            }
+        }
+        tab.click(line);
+        assertThat(tab.decisionChip(Standing.UNKLAR).isSelected()).isTrue();
+        assertThat(tab.popup().bodyText()).contains("Von Hand: unklar · angelo");
+
+        tab.confirmClear(() -> false);
+        tab.overlayButton(StandingTab.CLEAR_TIP).doClick();
+        assertThat(fixture.writes).isEmpty();
+
+        tab.click(line);
+        tab.confirmClear(() -> true);
+        tab.overlayButton(StandingTab.CLEAR_TIP).doClick();
+        assertThat(fixture.writes).containsExactly("clear 1 wiki/1@h#s1.v1 3");
+        assertThat(StandingTab.CLEAR_QUESTION).startsWith("Wirklich");
+    }
+
+    @Test
+    void theHistoryReplacesTheDetailsInTheSameOverlay() {
+        StandingTab tab = new Fixture(view()).shownTab();
+        tab.click(indexOf(tab, "Der Sachbearbeiter prüft"));
+
+        tab.overlayButton(StandingTab.HISTORY_TIP).doClick();
+
+        assertThat(tab.popup().titleText()).isEqualTo("Protokoll");
+        assertThat(tab.popup().bodyText()).contains("angelo · „geplant“ gesetzt");
+    }
+
+    @Test
+    void aDecisionWithoutStatementNamesThePageByTitle() {
+        StandingDecision known = new StandingDecision(new PageKey("wiki", "2"), "wiki/2@old#s1.v1", Standing.GILT, 1,
+                "angelo", Instant.parse("2026-11-16T10:00:00Z"), "angelo", Instant.parse("2026-11-16T11:00:00Z"));
+        StandingDecision gone = new StandingDecision(new PageKey("wiki", "77"), "wiki/77@old#s1.v1", Standing.GILT, 1,
+                "angelo", Instant.parse("2026-11-16T10:00:00Z"), "angelo", Instant.parse("2026-11-16T11:00:00Z"));
+        StatusQuoView base = view();
+        StandingTab tab = new Fixture(new StatusQuoView(base.entries(), base.states(), base.pages(), base.counts(),
+                base.certainCounts(), List.of(known, gone))).shownTab();
+
+        tab.click(1);
+        assertThat(tab.popup().bodyText()).contains("Seite: Antragsverfahren");
+        assertThat(tab.overlayButton(StandingTab.CLEAR_TIP).isEnabled()).isTrue();
+        tab.click(2);
+        assertThat(tab.popup().bodyText()).as("Seite nicht mehr im Bestand: ID").contains("Seite: 77");
+    }
+
+    @Test
+    void aFailedSubscriptionIsNamedInTheStatusLine() {
+        Fixture fixture = new Fixture(view());
+        fixture.failSubscribe = true;
+
+        fixture.shownTab();
+
+        assertThat(fixture.status.get()).isEqualTo("5 Aussagen auf 2 Seiten · " + StandingTab.NOT_WATCHING);
+    }
+
+    @Test
+    void theEndOfAnAnalysisRereadsButARunningOneOrASyncDoesNot() {
+        assertThat(StandingTab.rereads(job(com.aresstack.spaceharvester.application.jobs.JobType.STATEMENT_ANALYSIS,
+                com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED))).isTrue();
+        assertThat(StandingTab.rereads(job(com.aresstack.spaceharvester.application.jobs.JobType.STATEMENT_ANALYSIS,
+                com.aresstack.spaceharvester.application.jobs.JobState.RUNNING))).isFalse();
+        assertThat(StandingTab.rereads(job(com.aresstack.spaceharvester.application.jobs.JobType.SYNC,
+                com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED))).isFalse();
+    }
+
+    private static com.aresstack.spaceharvester.application.jobs.JobStatus job(
+            com.aresstack.spaceharvester.application.jobs.JobType type,
+            com.aresstack.spaceharvester.application.jobs.JobState state) {
+        return new com.aresstack.spaceharvester.application.jobs.JobStatus("j1", type, "wiki", "DEV", "local", state,
+                new com.aresstack.spaceharvester.application.jobs.JobProgress(1, 1, 1, 0), null, false,
+                Instant.parse("2026-11-17T05:00:00Z"), null, null, null, null, Map.of(), false, false, null, null);
+    }
+
+    @Test
     void theCountChipAlwaysShowsItsWordAndSaysWhatAClickDoes() {
         CountChip chip = new CountChip("gilt", Comic.STANDING_CURRENT);
         chip.count(12);
@@ -270,6 +392,9 @@ class StandingTabTest {
         final List<StandingTab.Target> jumps = new ArrayList<>();
         final Map<String, SentenceText> sentences = new java.util.HashMap<>();
         final List<Integer> sentenceCalls = new ArrayList<>();
+        final List<String> writes = new ArrayList<>();
+        boolean conflict;
+        boolean failSubscribe;
         final StandingTab tab;
 
         Fixture(StatusQuoView view) {
@@ -289,7 +414,36 @@ class StandingTabTest {
 
                 @Override
                 public Subscription subscribeJobs(JobListener listener) {
+                    if (failSubscribe) {
+                        throw new IllegalStateException("kein Core");
+                    }
                     return Subscription.NONE;
+                }
+
+                @Override
+                public StandingDecision decide(PageKey page, String statementId, Standing standing,
+                                               long expectedRevision) {
+                    writes.add("decide " + page.pageId() + " " + statementId + " " + standing + " " + expectedRevision);
+                    if (conflict) {
+                        throw new com.aresstack.spaceharvester.application.standing.StandingConflictException(
+                                expectedRevision + 1);
+                    }
+                    return new StandingDecision(page, statementId, standing, expectedRevision + 1, "angelo",
+                            Instant.parse("2026-11-17T05:00:00Z"), "angelo", Instant.parse("2026-11-17T05:00:00Z"));
+                }
+
+                @Override
+                public boolean clear(PageKey page, String statementId, long expectedRevision) {
+                    writes.add("clear " + page.pageId() + " " + statementId + " " + expectedRevision);
+                    return true;
+                }
+
+                @Override
+                public List<com.aresstack.spaceharvester.application.standing.StandingDecisionStore.AuditEntry> history(
+                        PageKey page, String statementId) {
+                    return List.of(new com.aresstack.spaceharvester.application.standing.StandingDecisionStore
+                            .AuditEntry(new StandingDecision.Target(page, statementId), "set", "angelo",
+                            Instant.parse("2026-11-16T10:00:00Z"), Standing.GEPLANT, 1));
                 }
 
                 @Override

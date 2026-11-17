@@ -1621,6 +1621,24 @@ public final class Workspace {
         return harvester.statusQuo().sentences(caller, entries);
     }
 
+    /** Setzt den Stand einer Aussage ({@code statementId}) oder Seite ({@code null}) von Hand (ADR 0032). */
+    public com.aresstack.spaceharvester.application.standing.StandingDecision decideStanding(
+            PageKey page, String statementId, com.aresstack.spaceharvester.application.standing.Standing standing,
+            long expectedRevision) {
+        return harvester.statusQuo().decide(caller, page, statementId, standing, expectedRevision);
+    }
+
+    /** Löscht eine Entscheidung zum Stand; danach gelten wieder die Regeln. */
+    public boolean clearStanding(PageKey page, String statementId, long expectedRevision) {
+        return harvester.statusQuo().clear(caller, page, statementId, expectedRevision);
+    }
+
+    /** Das Protokoll der Entscheidungen zu Aussage oder Seite, älteste zuerst. */
+    public List<com.aresstack.spaceharvester.application.standing.StandingDecisionStore.AuditEntry> standingHistory(
+            PageKey page, String statementId) {
+        return harvester.statusQuo().history(caller, page, statementId);
+    }
+
     /** Meldet Entscheidungen zum Stand (ADR 0027), auf dem Zustell-Thread des Core; danach die Sicht neu lesen. */
     public Subscription subscribeStanding(Runnable listener) {
         return harvester.statusQuo().subscribe(Objects.requireNonNull(listener, "listener"));
