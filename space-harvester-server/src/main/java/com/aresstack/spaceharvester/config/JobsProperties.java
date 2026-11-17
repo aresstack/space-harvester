@@ -8,7 +8,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * Konfiguration unter {@code space-harvester.jobs}: Grenzen für asynchrone Aufträge (Ernte, Sync, Export).
  *
- * @param maxConcurrent höchstens gleichzeitig laufende Aufträge (Standard 2)
+ * @param maxConcurrent ohne Wirkung (#944: keine festen Auftragsplätze; alle Aufträge nach parallel-preparations/-downloads)
  * @param maxQueued     höchstens wartende Aufträge, darüber wird ein neuer abgelehnt (Standard 20)
  * @param maxRunTime    Laufzeitgrenze je Auftrag (Standard 6 Stunden)
  * @param retention     wie lange beendete Aufträge abrufbar bleiben (Standard 7 Tage)

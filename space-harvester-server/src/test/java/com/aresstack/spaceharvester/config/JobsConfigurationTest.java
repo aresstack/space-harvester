@@ -76,7 +76,7 @@ class JobsConfigurationTest {
     void closingTheContextStopsTheJobs() {
         Jobs[] jobs = new Jobs[1];
         JobStatus[] waiting = new JobStatus[1];
-        context.withPropertyValues("space-harvester.jobs.max-concurrent=1").run(app -> {
+        context.withPropertyValues("space-harvester.jobs.parallel-preparations=1").run(app -> {
             jobs[0] = app.getBean(Jobs.class);
             jobs[0].submit(JobType.EXPORT, "confluence", "A", "client-a", context -> new CompletableFuture<>());
             waiting[0] = jobs[0].submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));

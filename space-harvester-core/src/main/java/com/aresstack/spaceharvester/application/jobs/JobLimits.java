@@ -6,7 +6,10 @@ import java.util.Objects;
 /**
  * Grenzen für Aufträge.
  *
- * @param maxConcurrent höchstens gleichzeitig laufende Aufträge (und damit gleichzeitige Quellzugriffe aus Aufträgen)
+ * @param maxConcurrent ohne Wirkung auf die Plätze (#944, Angelo 17.11.2026: keine festen Auftragsplätze mehr); alle
+ *                      Aufträge laufen nach den Einstellungen „Vorbereitung“ ({@link #parallelPreparations()}) und
+ *                      „Downloads“. Die kurzen Konstruktoren ohne eigene Vorbereitung übernehmen den Wert als
+ *                      Vorbereitung.
  * @param maxQueued     höchstens wartende Aufträge; darüber hinaus wird ein neuer Auftrag abgelehnt
  * @param maxRunTime    Laufzeitgrenze je Auftrag ab Start; wird an jedem {@link JobContext#checkpoint()} geprüft
  * @param retention     wie lange ein beendeter Auftrag ab seinem Ende abrufbar bleibt
@@ -52,11 +55,11 @@ public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, D
         this(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, RetrySettings.DEFAULT);
     }
 
-    /** Mit den Standardgrenzen für Downloads ({@link #DEFAULT_PARALLEL_DOWNLOADS}). */
+    /** Vorbereitung = {@code maxConcurrent} (begrenzt), Downloads {@link #DEFAULT_PARALLEL_DOWNLOADS}. */
     public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention, int maxOpenPerOwner,
                      RetrySettings retry) {
-        this(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, DEFAULT_PARALLEL_PREPARATIONS,
-                DEFAULT_PARALLEL_DOWNLOADS);
+        this(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry,
+                Math.max(1, Math.min(maxConcurrent, MAX_PARALLEL_PREPARATIONS)), DEFAULT_PARALLEL_DOWNLOADS);
     }
 
     /** Mit den Standardverbindungen je Download ({@link #DEFAULT_DOWNLOAD_CONNECTIONS}). */
