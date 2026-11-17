@@ -1,0 +1,59 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/L@heute
+# sent_id = 1
+# text = Herr Voss ist Prokurist der Handelsgesellschaft.
+1	Herr	herr	NOUN	_	_	2	compound	_	_
+2	Voss	voss	PROPN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Prokurist	prokurist	NOUN	_	_	0	root	_	_
+5	der	der	DET	_	_	6	det	_	_
+6	Handelsgesellschaft	handelsgesellschaft	NOUN	_	_	4	nmod	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 2
+# text = Frau Albers ist Springerin in der Kommissionierung.
+1	Frau	frau	NOUN	_	_	2	compound	_	_
+2	Albers	albers	PROPN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Springerin	springerin	NOUN	_	_	0	root	_	_
+5	in	in	ADP	_	_	7	case	_	_
+6	der	der	DET	_	_	7	det	_	_
+7	Kommissionierung	kommissionierung	NOUN	_	_	4	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 3
+# text = Herr Menzel ist ein Engpass in der Rechnungsprüfung.
+1	Herr	herr	NOUN	_	_	2	compound	_	_
+2	Menzel	menzel	PROPN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	ein	ein	DET	_	_	5	det	_	_
+5	Engpass	engpass	NOUN	_	_	0	root	_	_
+6	in	in	ADP	_	_	8	case	_	_
+7	der	der	DET	_	_	8	det	_	_
+8	Rechnungsprüfung	rechnungsprüfung	NOUN	_	_	5	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 4
+# text = Frau Keller ist ein Kostenrisiko für die Ausschreibung.
+1	Frau	frau	NOUN	_	_	2	compound	_	_
+2	Keller	keller	PROPN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	ein	ein	DET	_	_	5	det	_	_
+5	Kostenrisiko	kostenrisiko	NOUN	_	_	0	root	_	_
+6	für	für	ADP	_	_	8	case	_	_
+7	die	der	DET	_	_	8	det	_	_
+8	Ausschreibung	ausschreibung	NOUN	_	_	5	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 5
+# text = Die Bestellnummer ist Pflichtangabe auf dem Lieferschein.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bestellnummer	bestellnummer	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Pflichtangabe	pflichtangabe	NOUN	_	_	0	root	_	_
+5	auf	auf	ADP	_	_	7	case	_	_
+6	dem	der	DET	_	_	7	det	_	_
+7	Lieferschein	lieferschein	NOUN	_	_	4	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	4	punct	_	_
+
