@@ -51,6 +51,7 @@ class SourceUpdatesViewTest {
             SourceUpdatesView.Mode.SUMMARY);
     private final List<ReportedPage> opened = new ArrayList<>();
     private final List<String> status = new ArrayList<>();
+    private boolean visible = true;
 
     @BeforeEach
     void setUp() {
@@ -58,6 +59,7 @@ class SourceUpdatesViewTest {
             each.zone(ZoneOffset.UTC);
             each.onOpen(opened::add);
             each.onStatus(status::add);
+            each.showingForTest(() -> visible);
         }
     }
 
@@ -126,6 +128,7 @@ class SourceUpdatesViewTest {
                 });
             }
         }, SourceUpdatesView.Mode.CHANGES);
+        slow.showingForTest(() -> true);
         actions.textLimit = 2;
         slow.source("wiki", "Confluence HaVdB");
         while (!waiting.isEmpty()) {
@@ -144,6 +147,68 @@ class SourceUpdatesViewTest {
 
         assertThat(slow.reportTexts()).as("die Antwort nach der Meldung gilt").contains("Alte Seite")
                 .doesNotContain("Weitere 1 Seite laden");
+    }
+
+    @Test
+    void messagesDuringARunGiveExactlyOneFollowUp() throws Exception {
+        List<Runnable> waiting = new ArrayList<>();
+        SourceUpdatesView slow = new SourceUpdatesView(() -> actions, new SourceUpdatesView.Runner() {
+            @Override
+            public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
+                waiting.add(() -> {
+                    try {
+                        onSuccess.accept(work.call());
+                    } catch (Exception e) {
+                        onFailure.accept(e);
+                    }
+                });
+            }
+        }, SourceUpdatesView.Mode.CHANGES);
+        slow.showingForTest(() -> true);
+        slow.source("wiki", "Confluence HaVdB");
+        while (!waiting.isEmpty()) {
+            waiting.remove(0).run();
+        }
+        slow.clickUpdate("Seit dem letzten Update");
+        waiting.remove(0).run();
+        int updates = actions.updateCalls;
+
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(waiting).as("ein Lauf").hasSize(1);
+        actions.listener.changed("wiki");
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(waiting).as("kein zweiter Lauf, solange einer läuft").hasSize(1);
+
+        waiting.remove(0).run();
+        assertThat(waiting).as("das offene Update wird im selben Lauf neu gelesen").hasSize(1);
+        waiting.remove(0).run();
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(waiting).as("genau ein Nachlauf").hasSize(1);
+        while (!waiting.isEmpty()) {
+            waiting.remove(0).run();
+            javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        }
+        assertThat(actions.updateCalls).isEqualTo(updates + 2);
+    }
+
+    @Test
+    void aHiddenTabReadsNothingAndCatchesUpOnceWhenShown() throws Exception {
+        view.source("wiki", "Confluence HaVdB");
+        int updates = actions.updateCalls;
+        visible = false;
+
+        actions.listener.changed("wiki");
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(actions.updateCalls).as("verdeckt wird nicht gelesen").isEqualTo(updates);
+
+        visible = true;
+        view.becameVisible();
+        assertThat(actions.updateCalls).isEqualTo(updates + 1);
+        view.becameVisible();
+        assertThat(actions.updateCalls).as("nur einmal nachholen").isEqualTo(updates + 1);
     }
 
     @Test
