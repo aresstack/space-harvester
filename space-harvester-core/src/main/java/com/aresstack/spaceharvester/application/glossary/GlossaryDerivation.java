@@ -142,6 +142,11 @@ public final class GlossaryDerivation {
         TECHNICAL_HEAD,
         /** Kopf in der Wortliste der Rollen und Stellen ({@value #RULES_RESOURCE}, {@code rolle}, {@code rolle-wort}). */
         ROLE_HEAD,
+        /**
+         * Rollennomen einer Ist-Beziehung ohne Artikel (Art {@code ROLLE}), deren Träger mit der Anrede „Frau“ oder „Herr“
+         * beginnt („Herr Klein ist Sachbearbeiter“); nur, wenn keine Wortliste greift.
+         */
+        ROLE_OF_PERSON,
         /** Keine Regel greift. */
         NONE
     }
@@ -391,9 +396,18 @@ public final class GlossaryDerivation {
     public static Category categoryOf(CategoryRule rule) {
         return switch (rule) {
             case TECHNICAL_HEAD, TECHNICAL_SHAPE -> Category.TECHNISCH;
-            case ROLE_HEAD -> Category.ROLLE;
+            case ROLE_HEAD, ROLE_OF_PERSON -> Category.ROLLE;
             case NONE -> Category.UNKLAR;
         };
+    }
+
+    /** Anreden, die einen Träger als Person ausweisen; nur vor einem Namen (mindestens zwei Wörter). */
+    private static final Set<String> SALUTATIONS = Set.of("Frau", "Herr", "Herrn");
+
+    /** Ob die Erwähnung mit einer Anrede und einem Namen beginnt („Frau Weber“), nicht irgendein Eigenname. */
+    static boolean salutated(ParsedStatements.Mention mention) {
+        String[] words = mention.text().strip().split("\\s+");
+        return words.length >= 2 && SALUTATIONS.contains(words[0]);
     }
 
     /** Ob eine Zustandsaussage einen Ist-Zustand beschreibt (ADR 0032, Auflage des Architekten). */
@@ -533,6 +547,9 @@ public final class GlossaryDerivation {
                 Builder noun = builder(TermText.normalize(roleNoun));
                 noun.forms.putIfAbsent(roleNoun, 0);
                 bearer.isA.add(noun.normalized, ParsedStatements.Origin.ORIGINAL, false, relation, evidence);
+                if (relation == Relation.ROLLE && salutated(mention)) {
+                    noun.personRole++;
+                }
                 noun.instances.add(bearer.normalized, ParsedStatements.Origin.ORIGINAL, false, relation, evidence);
             }
         }
@@ -646,6 +663,8 @@ public final class GlossaryDerivation {
         int asActor;
         int asAffected;
         int asBearer;
+        /** Wie oft der Begriff Rollennomen eines Trägers mit Anrede war (ohne bestimmten Artikel). */
+        int personRole;
         final Uses acts = new Uses();
         final Uses undergoes = new Uses();
         final Uses properties = new Uses();
@@ -675,6 +694,9 @@ public final class GlossaryDerivation {
         Term build(Map<String, Builder> all, Rules rules) {
             String term = display();
             CategoryRule rule = ruleFor(term, rules);
+            if (rule == CategoryRule.NONE && personRole > 0) {
+                rule = CategoryRule.ROLE_OF_PERSON;
+            }
             UnaryOperator<String> same = lemma -> lemma;
             UnaryOperator<String> shown = key -> all.get(key).display();
             return new Term(term, normalized, proper * 2 > mentions, new Importance(pages, mentions, asActor,
