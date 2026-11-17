@@ -131,3 +131,13 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Reine Auswertung, abbrechbar, speichert nichts; nur Kopfdaten aus dem Bestand. Laufzeit: 3000 erzeugte Seiten mit
   60 000 Aussagen rund 0,1 s im Container.
 
+## Umsetzung FL6 Teil 2 (Leseempfehlung, Core)
+- `Harvester#readingAdvice()`: Seiten einer Auswahl, wahlweise zu einem Thema, nach Summe offener Teilzahlen mit Grund
+  (`ReadingReason`, Punkte als Konstanten in `ReadingAdvice`; Tabelle in
+  [stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md)). Keine verdeckte Formel, keine KI.
+- Grundlage: Status-quo-Sicht (sichere Aussagen „gilt“/„überholt“, Seite überholt/Entwurf), Begriffe aus den
+  gespeicherten Erwähnungen (Nomen und Eigennamen), Änderungsprotokoll nur gelesen (neu oder Inhalt geändert, 90 Tage).
+- Verweise zwischen Seiten und Aufrufe zählen noch nicht, weil der Core dafür keinen Bestand hat.
+- Reine Auswertung, abbrechbar, speichert nichts. Laufzeit: 3000 erzeugte Seiten mit 60 000 Aussagen rund 0,16 s im
+  Container (mit Thema 0,12 s).
+
