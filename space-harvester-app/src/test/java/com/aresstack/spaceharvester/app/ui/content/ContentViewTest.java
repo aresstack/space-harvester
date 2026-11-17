@@ -303,11 +303,20 @@ class ContentViewTest {
                 .containsExactly(bar);
         assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
                 .isTrue();
+        assertThat(onEdt(() -> view.detail().sourceChanges().sourceId())).isEqualTo("handbuch");
+        onEdt(() -> {
+            view.detail().tabs().select("Text");
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).as("„Text“: die Updates").isTrue();
+        assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isTrue();
+        assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
         onEdt(() -> {
             view.detail().tabs().select("Erweitert");
             return null;
         });
         assertThat(onEdt(() -> view.detail().sourceView().isVisible())).as("übrige Reiter leer").isFalse();
+        assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).isFalse();
         assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
         onEdt(() -> {
             view.detail().tabs().select("Leseansicht");
@@ -328,6 +337,7 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().shownPage())).isNull();
         assertThat(onEdt(() -> view.detail().showsSource())).as("ein Space hat keine Quellenseite").isFalse();
         assertThat(onEdt(() -> view.detail().sourceView().sourceId())).as("Anmeldung beendet").isNull();
+        assertThat(onEdt(() -> view.detail().sourceChanges().sourceId())).isNull();
         assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
         assertThat(onEdt(() -> view.detail().tabs().button("Leseansicht").getToolTipText())).isEqualTo("Leseansicht");
         assertThat(onEdt(() -> barIcons(view.detail()))).containsExactly(bar);

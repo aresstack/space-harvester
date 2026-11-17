@@ -78,6 +78,8 @@ public final class DocumentNavigationSky extends JPanel {
     private final HierarchyRows rows = new HierarchyRows();
     private final JScrollPane rowsScroll;
     private Listener listener;
+    /** Tooltip einer Wolke; Standard die ganze Bezeichnung (FA-14). */
+    private java.util.function.Function<Navigation.Section, String> tooltips = DocumentNavigationSky::tooltipFor;
     private Navigation navigation;
     private List<Navigation.Section> chapters = Collections.emptyList();
     private String activeChapterId;
@@ -118,6 +120,16 @@ public final class DocumentNavigationSky extends JPanel {
 
     public void setListener(Listener listener) {
         this.listener = listener;
+    }
+
+    /** Ersetzt den Tooltip der Wolken, etwa um Zahlen zu ergänzen; {@code null}: die ganze Bezeichnung. */
+    public void setTooltips(java.util.function.Function<Navigation.Section, String> value) {
+        tooltips = value == null ? DocumentNavigationSky::tooltipFor : value;
+    }
+
+    /** Der Tooltip der Wolke {@code index} der Kapitelreihe. */
+    String tooltipForTest(int index) {
+        return index < 0 || index >= chapters.size() ? null : tooltips.apply(chapters.get(index));
     }
 
     /** Zeigt die Navigation (leer: kein Banner). Das aktive Kapitel bleibt, wenn es noch existiert. EDT. */
@@ -775,7 +787,7 @@ public final class DocumentNavigationSky extends JPanel {
         @Override
         public String getToolTipText(MouseEvent event) {
             int index = indexAt(event.getX(), event.getY());
-            return index < 0 || index >= sections.size() ? null : tooltipFor(sections.get(index));
+            return index < 0 || index >= sections.size() ? null : tooltips.apply(sections.get(index));
         }
 
         @Override
