@@ -291,6 +291,9 @@ public final class PageDetailPanel extends JPanel {
         sourceChanges.onSelected(sourceView::select);
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
+        sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,
+                entry, context.secrets().has(entry), context.vault().has(entry.id(),
+                        com.aresstack.spaceharvester.app.runtime.AppRuntime.SessionSecrets.login(entry))));
         sourceProperties.onEdit(id -> {
             if (context.navigator() != null) {
                 context.navigator().editSource(id);

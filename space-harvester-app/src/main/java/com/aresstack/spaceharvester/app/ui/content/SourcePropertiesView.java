@@ -118,6 +118,10 @@ final class SourcePropertiesView extends JPanel {
 
     private final Supplier<Actions> actions;
     private final Supplier<AppSettings> settings;
+    /** Woher Passwort bzw. Token kommen; ohne Sitzung und Tresor nur aus der Datei ({@link #secretState}). */
+    private java.util.function.BiFunction<AppSettings, AppSettings.SourceEntry,
+            com.aresstack.spaceharvester.app.ui.SecretState> secretState =
+            (current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current, entry, false, false);
     private final Runner runner;
     private final JPanel tools = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
     private final IconButton edit = new IconButton(Glyph.PENCIL, EDIT_TIP);
@@ -155,6 +159,12 @@ final class SourcePropertiesView extends JPanel {
                 Background.run(work, onSuccess, onFailure);
             }
         });
+    }
+
+    /** Wie Quellenverwaltung und Sicherheit: mit Sitzung und Tresor der App, damit überall dasselbe steht. */
+    void secretState(java.util.function.BiFunction<AppSettings, AppSettings.SourceEntry,
+            com.aresstack.spaceharvester.app.ui.SecretState> state) {
+        this.secretState = Objects.requireNonNull(state, "state");
     }
 
     SourcePropertiesView(Supplier<Actions> actions, Supplier<AppSettings> settings, Runner runner) {
@@ -424,8 +434,9 @@ final class SourcePropertiesView extends JPanel {
         }
         settingsFacts.add("Anmeldung", Texts.auth(config.auth()));
         if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
+            com.aresstack.spaceharvester.app.ui.SecretState secret = secretState.apply(current, entry);
             settingsFacts.add(config.auth().type() == SourceSettingsConfig.AuthType.PAT ? "Token" : "Passwort",
-                    entry.secretMissing() ? "fehlt" : "gesetzt", entry.secretMissing() ? Comic.RED : Comic.INK);
+                    secret.text(), secret.color());
         }
         settingsFacts.add("Client-Zertifikat", config.clientCertificate().enabled() ? "an" : "aus");
     }

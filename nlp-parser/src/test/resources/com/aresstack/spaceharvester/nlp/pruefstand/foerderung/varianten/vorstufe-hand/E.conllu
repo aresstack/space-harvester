@@ -1,0 +1,181 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/E@vorstufe-hand
+# sent_id = 1
+# text = Die Bewilligungsstelle bestätigt die Vollständigkeit des Antrags.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	bestätigt	bestätigen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Vollständigkeit	vollständigkeit	NOUN	_	_	3	obj	_	_
+6	des	der	DET	_	_	7	det	_	_
+7	Antrags	antrags	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Der Antragsteller stellt einen Antrag.
+1	Der	der	DET	_	_	2	det	_	_
+2	Antragsteller	antragsteller	NOUN	_	_	3	nsubj	_	_
+3	stellt	stellen	VERB	_	_	0	root	_	_
+4	einen	ein	DET	_	_	5	det	_	_
+5	Antrag	antrag	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Der Antragsteller erhält eine Eingangsbestätigung.
+1	Der	der	DET	_	_	2	det	_	_
+2	Antragsteller	antragsteller	NOUN	_	_	3	nsubj	_	_
+3	erhält	erhalten	VERB	_	_	0	root	_	_
+4	eine	ein	DET	_	_	5	det	_	_
+5	Eingangsbestätigung	eingangsbestätigung	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 4
+# text = Der Sachbearbeiter entscheidet über die Förderfähigkeit der Maßnahme.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	entscheidet	entscheiden	VERB	_	_	0	root	_	_
+4	über	über	ADP	_	_	6	case	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Förderfähigkeit	förderfähigkeit	NOUN	_	_	3	obl	_	_
+7	der	der	DET	_	_	8	det	_	_
+8	Maßnahme	maßnahme	NOUN	_	_	6	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 5
+# text = Der Antragsteller muss die Unterlagen einreichen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Antragsteller	antragsteller	NOUN	_	_	6	nsubj	_	_
+3	muss	müssen	AUX	_	_	6	aux	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Unterlagen	unterlage	NOUN	_	_	6	obj	_	_
+6	einreichen	einreichen	VERB	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 6
+# text = Der Sachbearbeiter prüft den Antrag.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Antrag	antrag	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 7
+# text = Der Sachbearbeiter leitet den Antrag an die Kasse weiter.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	leitet	leiten	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Antrag	antrag	NOUN	_	_	3	obj	_	_
+6	an	an	ADP	_	_	8	case	_	_
+7	die	der	DET	_	_	8	det	_	_
+8	Kasse	kasse	NOUN	_	_	5	nmod	_	_
+9	weiter	weiter	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 8
+# text = Die Bewilligungsstelle prüft den Antrag.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Antrag	antrag	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Die Bewilligungsstelle fordert Unterlagen nach.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	PROPN	_	_	3	nsubj	_	_
+3	fordert	fordern	VERB	_	_	0	root	_	_
+4	Unterlagen	unterlagen	NOUN	_	_	3	obj	_	_
+5	nach	nach	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 10
+# text = Die Bewilligungsstelle erlässt den Bescheid.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	erlässt	erlassen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Bescheid	bescheid	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 11
+# text = Die Bewilligungsstelle prüft den Antrag.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Antrag	antrag	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 12
+# text = Danach erhält der Antragsteller den Bescheid.
+1	Danach	danach	ADV	_	_	2	advmod	_	_
+2	erhält	erhalten	VERB	_	_	0	root	_	_
+3	der	der	DET	_	_	4	det	_	_
+4	Antragsteller	antragsteller	NOUN	_	_	2	nsubj	_	_
+5	den	der	DET	_	_	6	det	_	_
+6	Bescheid	bescheid	NOUN	_	_	2	obj	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 13
+# text = Die Erfüllung der Voraussetzungen durch den Antragsteller wird geprüft.
+1	Die	der	DET	_	_	2	det	_	_
+2	Erfüllung	erfüllung	NOUN	_	_	9	obj	_	_
+3	der	der	DET	_	_	4	det	_	_
+4	Voraussetzungen	voraussetzung	NOUN	_	_	2	nmod	_	_
+5	durch	durch	ADP	_	_	7	case	_	_
+6	den	der	DET	_	_	7	det	_	_
+7	Antragsteller	antragsteller	NOUN	_	_	9	obl	_	_
+8	wird	werden	AUX	_	_	9	aux:pass	_	_
+9	geprüft	prüfen	VERB	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+
+# sent_id = 14
+# text = Der Prüfer beanstandet Punkte.
+1	Der	der	DET	_	_	2	det	_	_
+2	Prüfer	prüfer	NOUN	_	_	3	nsubj	_	_
+3	beanstandet	beanstanden	VERB	_	_	0	root	_	_
+4	Punkte	punkt	NOUN	_	_	3	obj	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 15
+# text = Der Zuwendungsempfänger muss diese Punkte nachbessern.
+1	Der	der	DET	_	_	2	det	_	_
+2	Zuwendungsempfänger	zuwendungsempfänger	NOUN	_	_	6	nsubj	_	_
+3	muss	müssen	AUX	_	_	6	aux	_	_
+4	diese	dieser	DET	_	_	5	det	_	_
+5	Punkte	punkt	NOUN	_	_	6	obj	_	_
+6	nachbessern	nachbessern	VERB	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 16
+# text = Der Mittelabruf liegt vor.
+1	Der	der	DET	_	_	2	det	_	_
+2	Mittelabruf	mittelabruf	NOUN	_	_	3	nsubj	_	_
+3	liegt	liegen	VERB	_	_	0	root	_	_
+4	vor	vor	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 17
+# text = Dann zahlt die Kasse die Mittel aus.
+1	Dann	dann	ADV	_	_	2	advmod	_	_
+2	zahlt	zahlen	VERB	_	_	0	root	_	_
+3	die	der	DET	_	_	4	det	_	_
+4	Kasse	kasse	NOUN	_	_	2	nsubj	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Mittel	mittel	NOUN	_	_	2	obj	_	_
+7	aus	aus	ADP	_	_	2	compound:prt	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 18
+# text = Die Kasse informiert den Zuwendungsempfänger.
+1	Die	der	DET	_	_	2	det	_	_
+2	Kasse	kasse	NOUN	_	_	3	nsubj	_	_
+3	informiert	informieren	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Zuwendungsempfänger	zuwendungsempfänger	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+

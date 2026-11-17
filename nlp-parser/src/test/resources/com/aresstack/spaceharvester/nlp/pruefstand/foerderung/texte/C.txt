@@ -1,0 +1,8 @@
+Das Fachverfahren speichert die Anträge in einer relationalen Datenbank.
+Der Antragsservice stellt eine REST-Schnittstelle bereit.
+Die Schnittstelle liefert die Antragsdaten im JSON-Format.
+Ein Batch-Job überträgt die Auszahlungsdaten nachts an das Kassensystem.
+Das Kassensystem bestätigt den Empfang über eine Nachrichtenwarteschlange.
+Der Load Balancer verteilt die Anfragen auf drei Instanzen.
+Die Authentifizierung erfolgt über OAuth 2.0.
+Das Portal ruft den Antragsservice über HTTPS auf.

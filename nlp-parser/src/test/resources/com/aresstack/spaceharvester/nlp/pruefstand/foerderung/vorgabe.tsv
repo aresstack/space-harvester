@@ -1,0 +1,78 @@
+# Handvorgabe Textsatz „foerderung“ (erfundene Texte, Messung Strang AT 17.11.2026, bewertung.md).
+# Je erwartete Aussage eine Zeile; gleiche ID in mehreren Zeilen = alternative Lesart (eine genügt).
+# satz: Originalsatz ab 1 (Überschriften und Stichpunkte zählen als eigene Sätze).
+# Rollen (Handelnder, Betroffenes, Empfänger): „-“ nichts ausgedrückt; mehrere Beteiligte mit „,“.
+#   A|B   gleichbedeutende Formen (z. B. Nominalisierung durch eine Vorstufe), eine genügt
+#   ?X    vertretbar ergänzt: darf fehlen oder X sein; „streng“ verlangt, dass es fehlt
+#   §v    Teilsatz als Beteiligter, v = Grundform des Kopfs des Teilsatzes (Aussage verweist auf Aussage)
+#   ~X    darf statt in der Rolle auch als beliebige andere Ergänzung der Aussage stehen
+# verneint: ja/nein · verbindlichkeit: - MUSS SOLL KANN DARF · zeitbezug: GILT GEPLANT FRUEHER VERWORFEN
+# id	text	satz	verb	handelnder	betroffenes	empfaenger	verneint	verbindlichkeit	zeitbezug	bemerkung
+A01	A	1	einreichen	Antragsteller	Förderantrag	-	nein	-	GILT	
+A02	A	2	prüfen	Bewilligungsstelle	Antrag	-	nein	-	GILT	
+A03	A	3	anfordern	Sachbearbeiter	Unterlagen	-	nein	-	GILT	
+A04	A	4	erlassen	Bewilligungsstelle	Zuwendungsbescheid	-	nein	-	GILT	
+A05	A	5	festlegen	Zuwendungsbescheid	Fördersumme	-	nein	-	GILT	
+A06	A	6	abrufen	Zuwendungsempfänger	Mittel	-	nein	-	GILT	
+A07	A	7	auszahlen	Kasse	Mittel	-	nein	-	GILT	
+A08	A	8	vorlegen	Zuwendungsempfänger	Verwendungsnachweis	-	nein	-	GILT	
+A09	A	9	kontrollieren	Prüfer	Verwendungsnachweis	-	nein	-	GILT	
+A10	A	10	zurückfordern	Bewilligungsstelle	Mittel	-	nein	-	GILT	„nicht verwendete“ verneint nur das Attribut
+A11	A	11	umfassen	Förderprogramm	Fördermaßnahmen	-	nein	-	GILT	
+A12	A	12	gehören	Antrag	-	-	nein	-	GILT	„zu … Förderprogramm“ ist Ergänzung
+B01	B	1	prüfen	Bewilligungsstelle	Förderantrag	-	nein	-	GILT	Passiv mit von-Gruppe
+B02	B	2	anfordern	Sachbearbeiter	Unterlagen	-	nein	-	GILT	
+B03	B	3	erlassen	Bewilligungsstelle	Zuwendungsbescheid	-	nein	-	GILT	„durch“ im Passiv ist Handelnder
+B04	B	4	abrufen	Zuwendungsempfänger	Mittel	-	nein	-	GILT	Relativpronomen „die“ = Mittel
+B05	B	4	auszahlen	Kasse	Mittel	-	nein	-	GILT	
+B06	B	5	erfolgen	Auszahlung	-	-	nein	-	GILT	Nominalstil
+B06	B	5	auszahlen	-	Mittel	-	nein	-	GILT	Lesart nach Auflösen des Nominalstils
+B07	B	6	vorlegen	Zuwendungsempfänger	Verwendungsnachweis	-	nein	MUSS	GILT	„ist … vorzulegen“
+B08	B	7	feststellen	Prüfer	Mängel	-	nein	-	GILT	Bedingung (wenn)
+B09	B	7	zurückfordern	Bewilligungsstelle	Mittel	-	nein	-	GILT	
+B10	B	7	festsetzen	Bewilligungsstelle	Zinsen	-	nein	-	GILT	
+B11	B	8	widerrufen	Bewilligungsstelle	Bescheid	-	nein	KANN	GILT	
+B12	B	8	erfüllen	Zuwendungsempfänger	Auflagen	-	ja	-	GILT	Bedingung (sofern)
+B13	B	9	mitteilen	-	Entscheidung	Antragsteller	nein	-	GILT	
+B14	B	10	erfassen	Sachbearbeiter	Mittelabruf	-	nein	-	GILT	gemeinsames Objekt der Reihung
+B15	B	10	prüfen	Sachbearbeiter	Mittelabruf	-	nein	-	GILT	gemeinsames Objekt der Reihung
+B16	B	10	genehmigen	Sachbearbeiter	Mittelabruf	-	nein	-	GILT	
+C01	C	1	speichern	Fachverfahren	Anträge	-	nein	-	GILT	
+C02	C	2	bereitstellen	Antragsservice	REST-Schnittstelle	-	nein	-	GILT	
+C03	C	3	liefern	Schnittstelle	Antragsdaten	-	nein	-	GILT	
+C04	C	4	übertragen	Batch-Job	Auszahlungsdaten	-	nein	-	GILT	
+C05	C	5	bestätigen	Kassensystem	Empfang	-	nein	-	GILT	
+C06	C	6	verteilen	Load Balancer	Anfragen	-	nein	-	GILT	
+C07	C	7	erfolgen	Authentifizierung	-	-	nein	-	GILT	
+C08	C	8	aufrufen	Portal	Antragsservice	-	nein	-	GILT	
+D01	D	2	prüfen	Bewilligungsstelle	Antrag	-	nein	-	GILT	Kennung „Zuständigkeit:“
+D02	D	4	prüfen	?Bewilligungsstelle	Vollständigkeit	-	nein	-	GILT	Stichpunkt
+D03	D	5	feststellen	?Bewilligungsstelle	Förderfähigkeit	-	nein	-	GILT	Stichpunkt
+D04	D	6	erstellen	?Bewilligungsstelle	Bescheid	-	nein	-	GILT	Stichpunkt
+D05	D	6	versenden	?Bewilligungsstelle	Bescheid	-	nein	-	GILT	Stichpunkt
+D06	D	7	planen	-	§automatisieren	-	nein	-	FRUEHER	„Stand 2023: Es war geplant“
+D07	D	7	automatisieren	-	Prüfung	-	nein	-	FRUEHER	verworfen erst durch Satz 8 (satzübergreifend)
+D08	D	8	verwerfen	-	Überlegung	-	nein	-	FRUEHER	
+D09	D	9	prüfen	Sachbearbeiter	Förderfähigkeit	-	nein	-	GILT	„Aktuell“
+D10	D	10	bewerten	Regelwerk	Förderfähigkeit	-	nein	SOLL	GEPLANT	„Künftig soll“
+D11	D	12	abstimmen	-	Schnittstelle	-	ja	-	GILT	„noch nicht abgestimmt“
+E01	E	1	bestätigen	Bewilligungsstelle	§vollständig|Antrag|Vollständigkeit	-	nein	-	GILT	dass-Satz als Subjekt
+E02	E	2	stellen	Wer|Antragsteller	Antrag	-	nein	-	GILT	
+E03	E	2	erhalten	§stellen|Antragsteller	Eingangsbestätigung	-	nein	-	GILT	wer-Satz als Subjekt
+E04	E	3	entscheiden	Sachbearbeiter	§förderfähig|~Förderfähigkeit	-	nein	-	GILT	ob-Satz als Objekt
+E05	E	4	einreichen	?Antragsteller	Unterlagen	-	nein	-	GILT	Infinitivgruppe
+E06	E	4	obliegen	§einreichen|Einreichen	-	Antragsteller	nein	-	GILT	Infinitivgruppe als Subjekt
+E07	E	5	prüfen	Sachbearbeiter	Antrag	-	nein	-	GILT	
+E08	E	5	weiterleiten	Sachbearbeiter	Antrag	-	nein	-	GILT	Pronomen „ihn“ = Antrag
+E09	E	6	prüfen	Bewilligungsstelle	Antrag	-	nein	-	GILT	
+E10	E	6	nachfordern	Bewilligungsstelle	Unterlagen	-	nein	-	GILT	
+E11	E	6	erlassen	Bewilligungsstelle	Bescheid	-	nein	-	GILT	
+E12	E	7	erhalten	Antragsteller	Bescheid	-	nein	-	GILT	
+E13	E	7	prüfen	Bewilligungsstelle	Antrag	-	nein	-	GILT	nachdem-Satz
+E14	E	8	prüfen	-	§erfüllen|Voraussetzungen|Erfüllung	-	nein	-	GILT	ob-Satz als Subjekt im Passiv
+E15	E	8	erfüllen	Antragsteller	Voraussetzungen	-	nein	-	GILT	
+E16	E	9	beanstanden	Prüfer	Was|Punkte	-	nein	-	GILT	
+E17	E	9	nachbessern	Zuwendungsempfänger	§beanstanden|Punkte|Beanstandung	-	nein	MUSS	GILT	was-Satz als Objekt
+E18	E	10	auszahlen	Kasse	Mittel	-	nein	-	GILT	
+E19	E	10	vorliegen	Mittelabruf	-	-	nein	-	GILT	sobald-Satz
+E20	E	10	informieren	Kasse	Zuwendungsempfänger	-	nein	-	GILT	gemeinsames Subjekt über den Nebensatz hinweg

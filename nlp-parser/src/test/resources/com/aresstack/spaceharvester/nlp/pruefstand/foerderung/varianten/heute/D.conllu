@@ -1,0 +1,115 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/D@heute
+# sent_id = 1
+# text = Antragsprüfung
+1	Antragsprüfung	antragsprüfung	NOUN	_	_	0	root	_	_
+
+# sent_id = 2
+# text = Zuständigkeit: Die Bewilligungsstelle prüft jeden Antrag innerhalb von vier Wochen.
+1	Zuständigkeit	zuständigkeit	NOUN	_	_	0	root	_	SpaceAfter=No
+2	:	:	PUNCT	_	_	5	punct	_	_
+3	Die	der	DET	_	_	4	det	_	_
+4	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	5	nsubj	_	_
+5	prüft	prüfen	VERB	_	_	1	parataxis	_	_
+6	jeden	jeder	DET	_	_	7	det	_	_
+7	Antrag	antrag	NOUN	_	_	5	nsubj	_	_
+8	innerhalb	innerhalb	ADP	_	_	11	case	_	_
+9	von	von	ADP	_	_	11	case	_	_
+10	vier	vier	NUM	_	_	11	nummod	_	_
+11	Wochen	woche	NOUN	_	_	5	obl	_	SpaceAfter=No
+12	.	.	PUNCT	_	_	1	punct	_	_
+
+# sent_id = 3
+# text = Prüfschritte:
+1	Prüfschritte	prüfschritte	NOUN	_	_	0	root	_	SpaceAfter=No
+2	:	:	PUNCT	_	_	1	punct	_	_
+
+# sent_id = 4
+# text = - Vollständigkeit der Unterlagen prüfen
+1	-	-	PUNCT	_	_	2	punct	_	_
+2	Vollständigkeit	vollständigkeit	NOUN	_	_	0	root	_	_
+3	der	der	DET	_	_	4	det	_	_
+4	Unterlagen	unterlage	NOUN	_	_	2	nmod	_	_
+5	prüfen	prüfen	VERB	_	_	2	dep	_	_
+
+# sent_id = 5
+# text = - Förderfähigkeit feststellen
+1	-	-	PUNCT	_	_	2	punct	_	_
+2	Förderfähigkeit	förderfähigkeit	NOUN	_	_	0	root	_	_
+3	feststellen	feststellen	VERB	_	_	2	dep	_	_
+
+# sent_id = 6
+# text = - Bescheid erstellen und versenden
+1	-	-	PUNCT	_	_	2	punct	_	_
+2	Bescheid	bescheid	NOUN	_	_	3	obl	_	_
+3	erstellen	erstellen	VERB	_	_	0	root	_	_
+4	und	und	CCONJ	_	_	5	cc	_	_
+5	versenden	versenden	VERB	_	_	3	conj	_	_
+
+# sent_id = 7
+# text = Stand 2023: Es war geplant, die Prüfung vollständig zu automatisieren.
+1	Stand	stand	NOUN	_	_	2	dep	_	_
+2	2023	2023	VERB	_	_	0	root	_	SpaceAfter=No
+3	:	:	PUNCT	_	_	6	punct	_	_
+4	Es	es	PRON	_	_	6	nsubj	_	_
+5	war	sein	AUX	_	_	6	cop	_	_
+6	geplant	planen	ADJ	_	_	2	parataxis	_	SpaceAfter=No
+7	,	,	PUNCT	_	_	12	punct	_	_
+8	die	der	PRON	_	_	12	nsubj	_	_
+9	Prüfung	prüfung	NOUN	_	_	12	obj	_	_
+10	vollständig	vollständig	ADJ	_	_	12	advmod	_	_
+11	zu	zu	PART	_	_	12	mark	_	_
+12	automatisieren	automatisieren	VERB	_	_	6	xcomp	_	SpaceAfter=No
+13	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 8
+# text = Diese Überlegung wurde verworfen.
+1	Diese	dieser	DET	_	_	2	det	_	_
+2	Überlegung	überlegung	NOUN	_	_	4	nsubj:pass	_	_
+3	wurde	werden	AUX	_	_	4	aux:pass	_	_
+4	verworfen	verwerfen	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 9
+# text = Aktuell prüft der Sachbearbeiter die Förderfähigkeit manuell.
+1	Aktuell	aktuell	ADJ	_	_	2	advmod	_	_
+2	prüft	prüfen	VERB	_	_	0	root	_	_
+3	der	der	DET	_	_	4	det	_	_
+4	Sachbearbeiter	sachbearbeiter	NOUN	_	_	2	nsubj	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Förderfähigkeit	förderfähigkeit	NOUN	_	_	7	nsubj	_	_
+7	manuell	manuell	ADJ	_	_	2	xcomp	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 10
+# text = Künftig soll ein Regelwerk die Förderfähigkeit vorab bewerten.
+1	Künftig	künftig	ADJ	_	_	8	advmod	_	_
+2	soll	sollen	AUX	_	_	8	aux	_	_
+3	ein	ein	DET	_	_	4	det	_	_
+4	Regelwerk	regelwerk	NOUN	_	_	8	nsubj	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Förderfähigkeit	förderfähigkeit	NOUN	_	_	8	obj	_	_
+7	vorab	vorab	ADV	_	_	8	advmod	_	_
+8	bewerten	bewerten	VERB	_	_	0	root	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	8	punct	_	_
+
+# sent_id = 11
+# text = Offene Punkte
+1	Offene	offen	ADJ	_	_	2	amod	_	_
+2	Punkte	punkt	NOUN	_	_	0	root	_	_
+
+# sent_id = 12
+# text = Die Schnittstelle zum Kassensystem ist noch nicht abgestimmt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Schnittstelle	schnittstelle	NOUN	_	_	9	nsubj:pass	_	_
+3-4	zum	_	_	_	_	_	_	_	_
+3	zu	zu	ADP	_	_	5	case	_	_
+4	dem	der	DET	_	_	5	det	_	_
+5	Kassensystem	kassensystem	NOUN	_	_	2	nmod	_	_
+6	ist	sein	AUX	_	_	9	aux:pass	_	_
+7	noch	noch	ADV	_	_	8	advmod	_	_
+8	nicht	nicht	PART	_	_	9	advmod	_	_
+9	abgestimmt	abstimmen	VERB	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+

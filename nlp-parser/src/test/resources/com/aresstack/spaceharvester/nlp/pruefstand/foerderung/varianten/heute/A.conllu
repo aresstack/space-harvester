@@ -1,0 +1,121 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/A@heute
+# sent_id = 1
+# text = Der Antragsteller reicht einen Förderantrag ein.
+1	Der	der	DET	_	_	2	det	_	_
+2	Antragsteller	antragsteller	NOUN	_	_	3	nsubj	_	_
+3	reicht	reichen	VERB	_	_	0	root	_	_
+4	einen	ein	DET	_	_	5	det	_	_
+5	Förderantrag	förderantrag	NOUN	_	_	3	obj	_	_
+6	ein	ein	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Die Bewilligungsstelle prüft den Antrag.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Antrag	antrag	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Der Sachbearbeiter fordert fehlende Unterlagen an.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	fordert	fordern	VERB	_	_	0	root	_	_
+4	fehlende	fehlend	ADJ	_	_	5	amod	_	_
+5	Unterlagen	unterlage	NOUN	_	_	3	obj	_	_
+6	an	an	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 4
+# text = Die Bewilligungsstelle erlässt einen Zuwendungsbescheid.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	erlässt	erlassen	VERB	_	_	0	root	_	_
+4	einen	ein	DET	_	_	5	det	_	_
+5	Zuwendungsbescheid	zuwendungsbescheid	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 5
+# text = Der Zuwendungsbescheid legt die Fördersumme fest.
+1	Der	der	DET	_	_	2	det	_	_
+2	Zuwendungsbescheid	zuwendungsbescheid	NOUN	_	_	3	nsubj	_	_
+3	legt	legen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Fördersumme	fördersumme	NOUN	_	_	3	obj	_	_
+6	fest	fest	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 6
+# text = Der Zuwendungsempfänger ruft die Mittel ab.
+1	Der	der	DET	_	_	2	det	_	_
+2	Zuwendungsempfänger	zuwendungsempfänger	NOUN	_	_	3	nsubj	_	_
+3	ruft	rufen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Mittel	mittel	NOUN	_	_	3	obj	_	_
+6	ab	ab	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 7
+# text = Die Kasse zahlt die Mittel aus.
+1	Die	der	DET	_	_	2	det	_	_
+2	Kasse	kasse	NOUN	_	_	3	nsubj	_	_
+3	zahlt	zahlen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Mittel	mittel	NOUN	_	_	3	obj	_	_
+6	aus	aus	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 8
+# text = Der Zuwendungsempfänger legt einen Verwendungsnachweis vor.
+1	Der	der	DET	_	_	2	det	_	_
+2	Zuwendungsempfänger	zuwendungsempfänger	NOUN	_	_	3	nsubj	_	_
+3	legt	legen	VERB	_	_	0	root	_	_
+4	einen	ein	DET	_	_	5	det	_	_
+5	Verwendungsnachweis	verwendungsnachweis	NOUN	_	_	3	obj	_	_
+6	vor	vor	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Der Prüfer kontrolliert den Verwendungsnachweis.
+1	Der	der	DET	_	_	2	det	_	_
+2	Prüfer	prüfer	NOUN	_	_	3	nsubj	_	_
+3	kontrolliert	kontrollieren	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Verwendungsnachweis	verwendungsnachweis	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 10
+# text = Die Bewilligungsstelle fordert nicht verwendete Mittel zurück.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	fordert	fordern	VERB	_	_	0	root	_	_
+4	nicht	nicht	PART	_	_	5	advmod	_	_
+5	verwendete	verwandt	ADJ	_	_	6	amod	_	_
+6	Mittel	mittel	NOUN	_	_	3	obj	_	_
+7	zurück	zurück	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 11
+# text = Ein Förderprogramm umfasst mehrere Fördermaßnahmen.
+1	Ein	ein	DET	_	_	2	det	_	_
+2	Förderprogramm	förderprogramm	NOUN	_	_	3	nsubj	_	_
+3	umfasst	umfassen	VERB	_	_	0	root	_	_
+4	mehrere	mehr	DET	_	_	5	det	_	_
+5	Fördermaßnahmen	fördermaßnahme	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 12
+# text = Jeder Antrag gehört zu genau einem Förderprogramm.
+1	Jeder	jeder	DET	_	_	2	det	_	_
+2	Antrag	antrag	NOUN	_	_	3	nsubj	_	_
+3	gehört	gehören	VERB	_	_	0	root	_	_
+4	zu	zu	ADP	_	_	7	case	_	_
+5	genau	genau	ADJ	_	_	7	amod	_	_
+6	einem	ein	DET	_	_	7	det	_	_
+7	Förderprogramm	förderprogramm	NOUN	_	_	3	obl	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+

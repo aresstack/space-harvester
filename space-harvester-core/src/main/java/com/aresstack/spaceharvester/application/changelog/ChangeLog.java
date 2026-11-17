@@ -61,6 +61,8 @@ public final class ChangeLog implements AutoCloseable {
     private final Listeners<ChangeLogListener> listeners = new Listeners<>("Änderungsprotokoll");
     private final Coalescer<String, String> coalescer;
     private final Summaries summaries;
+    /** Entscheidungen „Erstbefüllung“ je Quelle, Marke und Seitenzahl; ändern sich erst mit neuen Seiten. */
+    private final Map<String, Boolean> inventories = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Was „Zusammenfassen“ braucht (ADR 0030, Abschnitt 5).
@@ -186,10 +188,12 @@ public final class ChangeLog implements AutoCloseable {
                 next++;
             }
             List<ChangeEntry> rows = entries.subList(first, next);
-            if (span.mark() == null && rows.isEmpty()) {
+            ChangeUpdate update = consolidate(span, rows).update();
+            if (span.mark() == null && update.pages() == 0) {
+                // Seit der letzten Marke keine Änderung der Quelle: kein offenes Update, auch wenn Inhalte nachgeladen
+                // wurden (die zählen nur als Zahl, ADR 0030).
                 continue;
             }
-            ChangeUpdate update = consolidate(span, rows).update();
             if (summarized.contains(update.id()) && store.summary(sourceId, update.id(), spaceKey)
                     .filter(stored -> valid(stored, visible)).isPresent()) {
                 update = update.withSummarized();
@@ -552,11 +556,48 @@ public final class ChangeLog implements AutoCloseable {
         List<Span> spans = new ArrayList<>();
         Instant previous = null;
         for (UpdateMark mark : marks) {
-            spans.add(new Span(id(mark.at()), sourceId, previous, mark.at(), mark, mark.initial()));
+            spans.add(new Span(id(mark.at()), sourceId, previous, mark.at(), mark,
+                    mark.initial() && inventory(sourceId, mark.at())));
             previous = mark.at();
         }
-        spans.add(new Span(ChangeUpdate.OPEN, sourceId, previous, null, null, marks.isEmpty()));
+        spans.add(new Span(ChangeUpdate.OPEN, sourceId, previous, null, null,
+                marks.isEmpty() && inventory(sourceId, null)));
         return spans;
+    }
+
+    /**
+     * Ob das erste Update wirklich die Erstbefüllung war (ADR 0030, Folgen): Die meisten Seiten, die es bis zu seiner
+     * Marke im Bestand gab, kamen darin als {@code NEW}. Stand die Quelle schon im Bestand, als das Protokoll begann,
+     * ist das erste Update ein gewöhnliches mit den Änderungen seither. Seiten, die erst nach der Marke neu kamen,
+     * zählen nicht, damit späteres Wachstum die Entscheidung nicht kippt.
+     *
+     * @param at die erste Marke, {@code null} solange es keine gibt
+     */
+    private boolean inventory(String sourceId, Instant at) {
+        long pages = store.pageCount(sourceId);
+        if (pages < 0) {
+            return true;
+        }
+        String key = sourceId + '\u001f' + at + '\u001f' + pages;
+        Boolean known = inventories.get(key);
+        if (known != null) {
+            return known;
+        }
+        Set<String> before = new HashSet<>();
+        Set<String> after = new HashSet<>();
+        ChangeQuery created = new ChangeQuery(Set.of(sourceId), Set.of(ChangeKind.NEW), Set.of(), null, null, null,
+                false, null, false, false);
+        for (ChangeEntry entry : store.changeEntries(created, entry -> entry, 0, Integer.MAX_VALUE).entries()) {
+            (at == null || !entry.at().isAfter(at) ? before : after).add(entry.pageId());
+        }
+        after.removeAll(before);
+        long atMark = pages - after.size();
+        boolean inventory = atMark <= 0 || before.size() * 2L >= atMark;
+        if (inventories.size() > 64) {
+            inventories.clear();
+        }
+        inventories.put(key, inventory);
+        return inventory;
     }
 
     private static String id(Instant at) {

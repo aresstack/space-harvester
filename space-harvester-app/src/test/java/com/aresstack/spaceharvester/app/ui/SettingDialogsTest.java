@@ -445,7 +445,7 @@ class SettingDialogsTest {
     }
 
     /** Ein Passwortspeicher wie KeePass im Speicher: Titel, Adresse, Passwort. */
-    static final class FakeKeePass implements com.aresstack.enterpriseai.adyton.SecretVault {
+    static class FakeKeePass implements com.aresstack.enterpriseai.adyton.SecretVault {
         final Map<String, String[]> entries = new java.util.LinkedHashMap<>();
 
         @Override

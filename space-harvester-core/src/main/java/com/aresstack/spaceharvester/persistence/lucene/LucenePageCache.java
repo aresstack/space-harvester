@@ -560,6 +560,13 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
                 .build(), limit);
     }
 
+    /** Anzahl der bekannten Seiten einer Quelle nach aktuellen Kopfdaten. */
+    @Override
+    public long pageCount(String sourceId) {
+        Query query = pages(sourceId).build();
+        return read(searcher -> searcher.count(query));
+    }
+
     /** Anzahl der bekannten Seiten eines Space nach aktuellen Kopfdaten. */
     public int countSpacePages(String sourceId, String spaceKey) {
         Query query = pages(sourceId).add(exact(PageCacheSchema.SPACE_KEY, spaceKey), BooleanClause.Occur.FILTER)
