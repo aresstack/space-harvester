@@ -19,6 +19,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
@@ -114,7 +115,12 @@ public final class ReadingAdvice {
                 .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry::getKey))
                 .limit(TOP_TERMS).map(Map.Entry::getKey).toList();
         Instant since = clock.instant().minus(RECENT);
-        Map<PageKey, Instant> recent = changes.since(caller, since, cancelled);
+        Map<String, Set<String>> spaces = new TreeMap<>();
+        for (PageStanding standing : view.pages()) {
+            spaces.computeIfAbsent(standing.page().key().sourceId(), ignored -> new HashSet<>())
+                    .add(standing.page().spaceKey());
+        }
+        Map<PageKey, Instant> recent = spaces.isEmpty() ? Map.of() : changes.since(caller, spaces, since, cancelled);
         List<ReadingList.Recommendation> recommendations = new ArrayList<>();
         for (PageStanding standing : view.pages()) {
             check(cancelled);

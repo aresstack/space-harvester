@@ -162,6 +162,9 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Grundlage: Status-quo-Sicht (sichere Aussagen „gilt“/„überholt“, Seite überholt/Entwurf), Begriffe aus den
   gespeicherten Erwähnungen (Nomen und Eigennamen), Änderungsprotokoll nur gelesen (neu oder Inhalt geändert, 90 Tage).
 - Verweise zwischen Seiten und Aufrufe zählen noch nicht, weil der Core dafür keinen Bestand hat.
+- Das Protokoll liest nur die Quellen der Auswahl (bei genau einem Space nur diesen), je Quelle in einem Gang durch den
+  Index (`ChangeLog#latestContentChanges`), ohne Zeilen vorzuhalten. Gemessen mit 72 000 Zeilen: 83 ms für einen Space,
+  283 ms für eine ganze Quelle.
 - Reine Auswertung, abbrechbar, speichert nichts. Laufzeit: 3000 erzeugte Seiten mit 60 000 Aussagen rund 0,16 s im
   Container (mit Thema 0,12 s).
 

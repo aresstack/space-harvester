@@ -35,11 +35,13 @@ class ReadingAdviceTest {
     private final List<KnowledgeGraph.AnalysedPage> pages = new ArrayList<>();
     private final Map<PageKey, PageHeader> headers = new HashMap<>();
     private final Map<PageKey, Instant> changes = new HashMap<>();
+    private final List<Map<String, java.util.Set<String>>> asked = new ArrayList<>();
     private final StatusQuo statusQuo = new StatusQuo(caller -> List.copyOf(pages),
             key -> Optional.ofNullable(headers.get(key)), StandingDecisionStore.inMemory(),
             new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), () -> StandingWords.DEFAULT, CLOCK);
     private final ReadingAdvice advice = new ReadingAdvice(statusQuo, caller -> List.copyOf(pages),
-            (caller, from, cancelled) -> {
+            (caller, spaces, from, cancelled) -> {
+                asked.add(spaces);
                 Map<PageKey, Instant> recent = new HashMap<>();
                 changes.forEach((key, at) -> {
                     if (!at.isBefore(from)) {
@@ -129,6 +131,11 @@ class ReadingAdviceTest {
 
         assertThat(advice.recommend(EDITOR, key -> key.pageId().equals("2"), null, () -> false).pages())
                 .extracting(r -> r.page().key().pageId()).containsExactly("2");
+        assertThat(asked).as("Protokoll nur für Quelle und Space der Auswahl")
+                .containsExactly(Map.of("wiki", java.util.Set.of("FOE")));
+        asked.clear();
+        advice.recommend(EDITOR, key -> false, null, () -> false);
+        assertThat(asked).as("leere Auswahl fragt das Protokoll nicht").isEmpty();
         assertThatThrownBy(() -> advice.recommend(EDITOR, key -> true, null, () -> true))
                 .isInstanceOf(CancellationException.class);
     }

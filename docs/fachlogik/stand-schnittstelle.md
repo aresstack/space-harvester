@@ -127,5 +127,10 @@ Die Punkte stehen als Konstanten in `ReadingAdvice`; die Anzeige zeigt jede Teil
 Mausklick auf die Summe), nie nur die Summe. Verweise zwischen Seiten und Aufrufe (Analytics) zählen noch nicht: Der
 Core hat dafür keinen abgelegten Bestand.
 
+Bekannte Schwäche bis zur Einordnung durch FL5: Unter den häufigsten Begriffen (`topTerms`, `TOP_TERMS`) stehen auch
+Allerweltsnomen (etwa „Seite“, „Fall“). Schlüssel und Rangfolge der Begriffe kommen künftig aus der einen Zählstelle
+von FL5 (`GlossaryDerivation`), sobald diese auf main ist. Das Änderungsprotokoll wird nur für die Quellen der Auswahl
+gelesen, und nur für ihren Space, wenn die Auswahl einer Quelle in genau einem Space liegt.
+
 Vorschlag für die Oberfläche: Unterreiter „Leseempfehlung“ neben der Status-quo-Sicht, Themenfeld mit ✕ oben rechts
 (Vorschläge aus `topTerms`), Liste mit Titel, Summe und Stand; Klick öffnet die Seite.
