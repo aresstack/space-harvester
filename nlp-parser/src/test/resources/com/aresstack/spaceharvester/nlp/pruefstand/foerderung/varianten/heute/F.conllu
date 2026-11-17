@@ -102,3 +102,24 @@
 7	Landes	land	NOUN	_	_	5	nmod	_	SpaceAfter=No
 8	.	.	PUNCT	_	_	5	punct	_	_
 
+# sent_id = 11
+# text = Die Abrechnung ist fachlich und rechtlich einwandfrei.
+1	Die	der	DET	_	_	2	det	_	_
+2	Abrechnung	abrechnung	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	fachlich	fachlich	ADJ	_	_	0	root	_	_
+5	und	und	CCONJ	_	_	7	cc	_	_
+6	rechtlich	rechtlich	ADJ	_	_	7	advmod	_	_
+7	einwandfrei	einwandfrei	ADJ	_	_	4	conj	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 12
+# text = Die Rate wird per Lastschrift eingezogen.
+1	Die	der	DET	_	_	2	det	_	_
+2	Rate	rate	NOUN	_	_	6	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	6	aux:pass	_	_
+4	per	per	ADP	_	_	5	case	_	_
+5	Lastschrift	lastschrift	NOUN	_	_	6	obl	_	_
+6	eingezogen	einziehen	VERB	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+

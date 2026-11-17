@@ -65,6 +65,14 @@ class StateStatementTest {
     }
 
     @Test
+    void aLeadingAdjectiveAsHeadOfTheCoordinationLeavesOneStatementOnTheLast() {
+        Statement state = only(8);
+        assertEquals("machbar", state.predicate().lemma());
+        assertEquals("Die Wartung", Gold.text(ANALYSIS, state.core(Role.BEARER)));
+        assertEquals(Statement.Clause.MAIN, state.clause());
+    }
+
+    @Test
     void aSubjectAfterThePredicateNounIsOnlyUncertain() {
         Statement state = only(6);
         assertTrue(state.has(Finding.HEURISTIC_PARTICIPANT));

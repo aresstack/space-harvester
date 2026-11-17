@@ -138,3 +138,36 @@
 7	richtig	richtig	ADJ	_	_	0	root	_	SpaceAfter=No
 8	.	.	PUNCT	_	_	7	punct	_	_
 
+# sent_id = 14
+# text = Der Lieferschein ist formal und inhaltlich korrekt.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lieferschein	lieferschein	PROPN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	formal	formal	ADJ	_	_	0	root	_	_
+5	und	und	CCONJ	_	_	7	cc	_	_
+6	inhaltlich	inhaltlich	ADJ	_	_	7	advmod	_	_
+7	korrekt	korrekt	ADJ	_	_	4	conj	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 15
+# text = Der Vertrag ist bereits geschlossen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Vertrag	vertrag	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	bereits	bereits	ADV	_	_	5	advmod	_	_
+5	geschlossen	eschloßsn	ADJ	_	_	0	root	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 16
+# text = Die Lieferfrist ist kurz und die Ware ist teuer.
+1	Die	der	DET	_	_	2	det	_	_
+2	Lieferfrist	lieferfrist	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	kurz	kurz	ADJ	_	_	0	root	_	_
+5	und	und	CCONJ	_	_	9	cc	_	_
+6	die	der	DET	_	_	7	det	_	_
+7	Ware	ware	NOUN	_	_	9	nsubj	_	_
+8	ist	sein	AUX	_	_	9	cop	_	_
+9	teuer	teuer	ADJ	_	_	4	conj	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	4	punct	_	_
+

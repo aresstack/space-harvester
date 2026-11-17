@@ -75,3 +75,14 @@
 9	ist	sein	AUX	_	_	8	cop	_	_
 10	.	.	PUNCT	_	_	3	punct	_	_
 
+# sent_id = 9
+# text = Die Wartung ist zeitlich und technisch machbar.
+1	Die	der	DET	_	_	2	det	_	_
+2	Wartung	Wartung	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	zeitlich	zeitlich	ADJ	_	_	0	root	_	_
+5	und	und	CCONJ	_	_	7	cc	_	_
+6	technisch	technisch	ADJ	_	_	7	advmod	_	_
+7	machbar	machbar	ADJ	_	_	4	conj	_	_
+8	.	.	PUNCT	_	_	4	punct	_	_
+

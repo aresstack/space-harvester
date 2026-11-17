@@ -87,3 +87,9 @@ F07	F	7	freigeben	-	Schnittstelle	-	ja	-	GILT	Gegenprobe: Zustandspassiv bleibt 
 F08	F	8	gültig	Zusage	-	-	nein	-	GILT	Zustand; „bleiben“
 F09	F	9	bestandskräftig	Bescheid	-	-	nein	-	GILT	Zustand; „werden“ mit Eigenschaft (Zustandswechsel)
 F10	F	10	Förderung	Zuschuss	-	-	nein	-	GILT	Zustand; Begriffsbestimmung „ist eine“
+# E21/E22 (17.11.2026, AT): Zustand im dass-/ob-Satz bekommt eine eigene Zeile, gleiche Regel wie Vollverben im Teilsatz (E15).
+E21	E	1	vollständig	Antrag	-	-	nein	-	GILT	Zustand im dass-Satz
+E22	E	3	förderfähig	Maßnahme	-	-	nein	-	GILT	Zustand im ob-Satz
+# F11/F12 (17.11.2026): Entwicklungssätze zu Bauarten, die beim Bau aus Kontrollzeilen kamen (Reihung von Eigenschaften, Partizip unter „werden“); festgelegt vor dem Lauf.
+F11	F	11	einwandfrei	Abrechnung	-	-	nein	-	GILT	Zustand; Reihung „fachlich und rechtlich“, eine Aussage
+F12	F	12	einziehen	-	Rate	-	nein	-	GILT	Gegenprobe: Vorgangspassiv, „per Lastschrift“ ist Mittel

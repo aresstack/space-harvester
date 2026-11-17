@@ -103,10 +103,16 @@ final class PrimaryRelationExtraction {
         }
         Token copula = null;
         Token holder = token;
-        // „ist sachlich und rechnerisch richtig“: der Parser hängt Kopula und Subjekt gern an das vorangestellte
-        // Adjektiv ({@code advmod}); Prädikat bleibt das letzte Adjektiv
+        // Gereihte Adjektive vor der Eigenschaft („ist fachlich und rechtlich einwandfrei“, Entwicklungssatz
+        // foerderung F11): der Parser hängt Kopula und Subjekt gern an ein vorangestelltes Adjektiv, als advmod der
+        // Eigenschaft oder als Kopf, an dem die Eigenschaft gereiht hängt; Prädikat bleibt das letzte Adjektiv
         List<Token> carriers = new ArrayList<>(List.of(token));
         sentence.dependents(token.id(), "advmod").stream().filter(t -> t.hasUpos("ADJ")).forEach(carriers::add);
+        Token coordinatedHead = sentence.head(token);
+        if (token.hasUpos("ADJ") && "conj".equals(token.deprel()) && coordinatedHead != null
+                && coordinatedHead.hasUpos("ADJ") && modifiedByCoordination(sentence, coordinatedHead, token)) {
+            carriers.add(coordinatedHead);
+        }
         for (Token carrier : carriers) {
             for (Token dependent : sentence.dependents(carrier.id(), "cop")) {
                 if (copula == null && dependent.lemma() != null
@@ -131,7 +137,9 @@ final class PrimaryRelationExtraction {
             return null;
         }
         if (holder != token && holder.hasUpos("ADJ")) {
-            holder = token;
+            // Teilsatz und Relativsatz bestimmt das höhere der beiden Adjektive im Baum
+            Token head = sentence.head(token);
+            holder = head != null && head.id() == holder.id() ? holder : token;
         }
         Set<Finding> findings = EnumSet.noneOf(Finding.class);
         findings.add(token.hasUpos("ADJ") ? Finding.STATE_PROPERTY : Finding.STATE_ROLE_NOUN);
@@ -187,18 +195,32 @@ final class PrimaryRelationExtraction {
 
     /**
      * Ein prädikatives Adjektiv steht unflektiert, Grundform und Wortform sind gleich. Weicht die Grundform ab
-     * („geplant“ → {@code planen}, „beglichen“ → {@code beglich}), ist es ein Partizip, das der Parser als Adjektiv
-     * markiert: Zustands- oder Vorgangspassiv, also eine Verblesung und keine Zustandsaussage.
+     * („Es war geplant“ → {@code planen}, Entwicklungssatz foerderung D, Satz 7), ist es ein Partizip, das der Parser als
+     * Adjektiv markiert: Zustands- oder Vorgangspassiv, also eine Verblesung und keine Zustandsaussage.
      */
     private static boolean participle(Token token) {
         return token.hasUpos("ADJ") && token.lemma() != null
                 && !token.lemma().equalsIgnoreCase(token.form());
     }
 
-    /** Ein Adjektiv als {@code advmod} eines anderen Adjektivs („sachlich … richtig“) ist nie selbst das Prädikat. */
+    /**
+     * Ein Adjektiv, das nur die Eigenschaft näher bestimmt, ist nie selbst das Prädikat: als {@code advmod} eines
+     * anderen Adjektivs oder als Kopf einer Reihung, deren letztes Glied ein solches {@code advmod} trägt („fachlich und
+     * rechtlich einwandfrei“, foerderung F11).
+     */
     private static boolean modifierOfAState(Sentence sentence, Token token) {
         Token head = sentence.head(token);
-        return token.hasUpos("ADJ") && "advmod".equals(token.deprel()) && head != null && head.hasUpos("ADJ");
+        if (token.hasUpos("ADJ") && "advmod".equals(token.deprel()) && head != null && head.hasUpos("ADJ")) {
+            return true;
+        }
+        return token.hasUpos("ADJ") && sentence.dependents(token.id(), "conj").stream()
+                .anyMatch(conjunct -> conjunct.hasUpos("ADJ") && modifiedByCoordination(sentence, token, conjunct));
+    }
+
+    /** Ob {@code conjunct} rechts von {@code head} ein vorangestelltes Adjektiv als {@code advmod} hat. */
+    private static boolean modifiedByCoordination(Sentence sentence, Token head, Token conjunct) {
+        return conjunct.id() > head.id() && sentence.dependents(conjunct.id(), "advmod").stream()
+                .anyMatch(t -> t.hasUpos("ADJ") && t.id() > head.id() && t.id() < conjunct.id());
     }
 
     static String id(ParsedDocument document, int sentence, int verb) {

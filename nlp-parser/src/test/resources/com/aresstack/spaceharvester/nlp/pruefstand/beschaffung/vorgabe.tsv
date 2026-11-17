@@ -80,3 +80,18 @@ F10	F	10	gültig	Angebot	-	-	nein	-	GILT	Zustand; „bleiben“
 F11	F	11	sichtbar	Auftragsnummer	-	-	nein	-	GILT	Zustand; „werden“ mit Eigenschaft (Zustandswechsel)
 F12	F	12	Begleitpapier	Lieferschein	-	-	nein	-	GILT	Zustand; Begriffsbestimmung „ist ein“
 F13	F	13	richtig	Rechnung	-	-	nein	-	GILT	Zustand; eine Aussage trotz Reihung „sachlich und rechnerisch“
+E22	E	1	vollständig	Lieferung	-	-	nein	-	GILT	Zustand im dass-Satz; nachgetragen 17.11.2026 mit den Zustandsaussagen, gleiche Regel wie E16 (Teilsatz bekommt eigene Zeile)
+# F14–F17 (17.11.2026, 04:00 MEZ): frische Zeilen, von Hand festgelegt, bevor die Kette darüber lief. F13 und B03 standen beim Bau der Zustandsregel Pate (PR #866) und gelten seitdem nicht mehr als unabhängig.
+F14	F	14	korrekt	Lieferschein	-	-	nein	-	GILT	Zustand; Reihung „formal und inhaltlich“, eine Aussage
+F15	F	15	schließen	-	Vertrag	-	nein	-	GILT	Gegenprobe: Zustandspassiv mit starkem Verb
+F16	F	16	kurz	Lieferfrist	-	-	nein	-	GILT	Zustand; zwei gereihte Hauptsätze
+F17	F	16	teuer	Ware	-	-	nein	-	GILT	Zustand; zweiter Hauptsatz
+# Text G (Zeitformen, 17.11.2026): von Hand festgelegt, BEVOR die Regel „Präteritum = FRUEHER“ gebaut war. Präteritum und Plusquamperfekt FRUEHER, Perfekt GILT, Konjunktiv II nicht FRUEHER.
+G01	G	1	prüfen	Lagerist	Lieferung	-	nein	-	FRUEHER	Präteritum Vollverb
+G02	G	2	bezahlen	Buchhaltung	Rechnung	-	nein	-	GILT	Perfekt bleibt GILT
+G03	G	3	bestellen	Einkäufer	-	-	nein	-	FRUEHER	Präteritum; „per Fax“ ist Ergänzung
+G04	G	4	ungültig	Bestellung	-	-	nein	-	GILT	Zustand; Konjunktiv II „wäre“ ist nicht FRUEHER
+G05	G	5	liefern	Lieferant	Ware	-	nein	-	FRUEHER	Präteritum Vollverb
+G06	G	6	erweitern	-	Lager	-	nein	-	FRUEHER	Passiv Präteritum „wurde“
+G07	G	7	verschieben	Lagerleiter	Inventur	-	nein	KANN	GILT	Konjunktiv II „könnte“: KANN, nicht FRUEHER
+G08	G	8	vergeben	Einkaufsabteilung	Auftrag	-	nein	-	FRUEHER	Plusquamperfekt
