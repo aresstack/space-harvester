@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -155,5 +156,52 @@ class ChangeSyncTest {
         assertThat(source.lastWithin).isEqualTo(ChangeSync.OVERLAP);
         assertThat(fetched).containsExactly("1");
         assertThat(next.confirmed().generation()).isEqualTo(2);
+    }
+
+    @Test
+    void synchronisingTheCacheReloadsPagesLeftOutdatedByAnEarlierCatalogOnlyRun() {
+        cached("1");
+        cached("3");
+        source.change("1", "4", 50);
+        SpaceSync.SyncRun catalogued = changes.run("wiki", "DOC", AN_HOUR_AGO, applier, SyncListener.NONE,
+                SyncMode.CATALOG_ONLY);
+        assertThat(catalogued.confirmed().stalePageIds()).containsExactly("1");
+        assertThat(fetched).isEmpty();
+
+        SpaceSync.SyncRun synced = changes.run("wiki", "DOC", null, applier, SyncListener.NONE,
+                SyncMode.SYNC_CACHE);
+
+        assertThat(source.lastWithin).isEqualTo(ChangeSync.OVERLAP);
+        assertThat(fetched).containsExactly("1");
+        assertThat(repository.find(new PageKey("wiki", "1")).orElseThrow().metadata().version()).isEqualTo("4");
+        assertThat(synced.confirmed().stalePageIds()).isEmpty();
+        assertThat(synced.summary().contentChanged()).isEqualTo(1);
+    }
+
+    @Test
+    void anOutdatedPageTheSourceCannotDeliverNowStaysOutdated() {
+        cached("1");
+        source.change("1", "4", 50);
+        changes.run("wiki", "DOC", AN_HOUR_AGO, applier, SyncListener.NONE, SyncMode.CATALOG_ONLY);
+        source.failSinglePage("1", SourceAccessException.Reason.UNAVAILABLE);
+
+        SpaceSync.SyncRun synced = changes.run("wiki", "DOC", null, applier, SyncListener.NONE,
+                SyncMode.SYNC_CACHE);
+
+        assertThat(fetched).isEmpty();
+        assertThat(synced.confirmed().stalePageIds()).containsExactly("1");
+    }
+
+    @Test
+    void aCatalogOnlyRunLeavesOutdatedPagesAlone() {
+        cached("1");
+        source.change("1", "4", 50);
+        changes.run("wiki", "DOC", AN_HOUR_AGO, applier, SyncListener.NONE, SyncMode.CATALOG_ONLY);
+
+        SpaceSync.SyncRun again = changes.run("wiki", "DOC", null, applier, SyncListener.NONE,
+                SyncMode.CATALOG_ONLY);
+
+        assertThat(fetched).isEmpty();
+        assertThat(again.confirmed().stalePageIds()).containsExactly("1");
     }
 }
