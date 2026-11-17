@@ -349,6 +349,67 @@ public class TermQueries {
     }
 
     /**
+     * Zahl der Begriffe je Art für eine Suche (BG1b), etwa für die Kennzahlen des Reiters „Begriffe“ auf Ordner,
+     * Space, Quelle und „Wissensquellen“.
+     *
+     * @param byKind Zahl der verschiedenen Begriffe (Suchwert) je Art; Arten ohne Begriff fehlen
+     */
+    public record TermTotals(Map<TermKind, Integer> byKind) {
+
+        public TermTotals {
+            byKind = Map.copyOf(byKind);
+        }
+
+        public int of(TermKind kind) {
+            return byKind.getOrDefault(kind, 0);
+        }
+
+        public int total() {
+            return byKind.values().stream().mapToInt(Integer::intValue).sum();
+        }
+    }
+
+    /**
+     * Wie viele Begriffe {@link #terms} für diese Suche insgesamt liefert, je Art; {@code limit} und {@code cursor}
+     * zählen nicht. Dieselben Rechte und dieselbe Sichtbarkeit, ein Durchgang über die Einträge, nur Zählen.
+     *
+     * @throws UnknownSourceException bei unbekannter {@code sourceId}
+     */
+    public TermTotals totals(AccessContext caller, TermSearch search) {
+        Objects.requireNonNull(search, "search");
+        String q = search.q() == null || search.q().isBlank() ? null : TermText.normalize(search.q());
+        String startsWith = search.startsWith() == null || search.startsWith().isBlank() ? null
+                : TermText.normalize(search.startsWith());
+        Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey()), search.pages());
+        TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), search.exact() ? q : null,
+                search.exact() ? null : q, processorVersion, startsWith, search.origin(), search.pages());
+        Visibility visibility = new Visibility(caller, search.spaceKey());
+        Map<TermKind, Integer> counts = new java.util.EnumMap<>(TermKind.class);
+        String group = null;
+        boolean counted = false;
+        String from = null;
+        while (true) {
+            List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
+            for (TermPosting posting : batch) {
+                if (!posting.groupKey().equals(group)) {
+                    group = posting.groupKey();
+                    counted = false;
+                }
+                // Ein Begriff zählt, sobald er auf einer sichtbaren Seite oder in einem ihrer Dokumente vorkommt.
+                if (!counted && visibility.current(posting).isPresent()) {
+                    counted = true;
+                    counts.merge(posting.kind(), 1, Integer::sum);
+                }
+            }
+            if (batch.size() < TermIndex.MAX_BATCH) {
+                break;
+            }
+            from = batch.get(batch.size() - 1).sortKey();
+        }
+        return new TermTotals(counts);
+    }
+
+    /**
      * Fundstellen eines Begriffs.
      *
      * @throws UnknownSourceException bei unbekannter {@code sourceId}
