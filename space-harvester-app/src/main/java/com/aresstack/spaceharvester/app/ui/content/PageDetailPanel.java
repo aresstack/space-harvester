@@ -1206,6 +1206,11 @@ public final class PageDetailPanel extends JPanel {
     /**
      * Lädt die Leseansicht (#192) über den Core: HTML aus dem Bestand oder live, Bilder aus dem AssetStore bzw. einmalig
      * abgelegt. Wie die Anhänge gilt das Ergebnis nur für die Seite, für die es angefordert wurde.
+     *
+     * <p>Liegt ein Stand im Cache, erscheint er sofort ({@code Workspace.cachedReadingView}); die Prüfung bei der Quelle
+     * läuft danach im Hintergrund. Hat sie eine andere Version, bleibt der gezeigte Stand stehen und oben steht „Es gibt
+     * N Updates seit Ihrem letzten Besuch – Seite neu laden“; der Klick zeigt den schon geladenen Stand sofort (Angelo,
+     * 17.11.2026). Ohne Cache-Stand wartet die Ansicht wie bisher.
      */
     private void loadReading() {
         AppRuntime runtime = context.runtime();
@@ -1217,28 +1222,82 @@ public final class PageDetailPanel extends JPanel {
         String source = sourceId;
         String id = pageId;
         DeliveredPage shown = page;
+        Background.run(() -> runtime.workspace().cachedReadingView(source, id)
+                .map(view -> new ShownView(view, prepare(runtime, view))), cached -> {
+            if (shown != page) {
+                return;
+            }
+            if (cached.isEmpty()) {
+                loadLiveReading(runtime, source, id, shown, null);
+                return;
+            }
+            showReading(cached.get().prepared());
+            loadLiveReading(runtime, source, id, shown, cached.get().view().version());
+        }, error -> {
+            if (shown == page) {
+                loadLiveReading(runtime, source, id, shown, null);
+            }
+        });
+    }
+
+    /** Eine Leseansicht und ihre vorbereitete Darstellung. */
+    private record ShownView(com.aresstack.spaceharvester.application.reading.ReadingView view,
+                             ReadingPane.Prepared prepared) {
+    }
+
+    private static ReadingPane.Prepared prepare(AppRuntime runtime,
+                                                com.aresstack.spaceharvester.application.reading.ReadingView view) {
+        return ReadingPane.prepare(view, image -> runtime.workspace().viewDiagramVector(view, image),
+                image -> image(runtime, view, image),
+                diagram -> runtime.workspace().mermaid(view, diagram).orElse(null), ReadingPane.screenScale());
+    }
+
+    /**
+     * Holt die Leseansicht bei der Quelle ({@code refresh=false}). Ohne gezeigten Stand ({@code cachedVersion} null)
+     * erscheint sie; sonst nur der Hinweis auf den neueren Stand, wenn die Version abweicht.
+     */
+    private void loadLiveReading(AppRuntime runtime, String source, String id, DeliveredPage shown,
+                                 String cachedVersion) {
+        boolean waiting = cachedVersion == null;
         Background.run(() -> {
             var view = runtime.workspace().readingView(source, id, false);
-            return ReadingPane.prepare(view, image -> runtime.workspace().viewDiagramVector(view, image),
-                    image -> image(runtime, view, image),
-                    diagram -> runtime.workspace().mermaid(view, diagram).orElse(null), ReadingPane.screenScale());
-        }, prepared -> {
-            if (shown == page) {
-                readingPane.show(prepared);
-                renderDetails();
-                String anchor = pendingAnchor;
-                pendingAnchor = null;
-                if (anchor != null) {
-                    javax.swing.SwingUtilities.invokeLater(() -> readingPane.scrollToAnchor(anchor));
-                }
+            if (!waiting && java.util.Objects.equals(view.version(), cachedVersion)) {
+                return java.util.Optional.<ShownView>empty();
             }
+            return java.util.Optional.of(new ShownView(view, prepare(runtime, view)));
+        }, fresh -> {
+            if (shown != page || fresh.isEmpty()) {
+                return;
+            }
+            if (waiting) {
+                showReading(fresh.get().prepared());
+                return;
+            }
+            ReadingPane.Prepared newer = fresh.get().prepared();
+            readingPane.offerUpdate(ReadingPane.updateSentence(cachedVersion, fresh.get().view().version()), () -> {
+                if (shown == page) {
+                    readingPane.showKeepingPosition(newer);
+                    renderDetails();
+                }
+            });
         }, error -> {
-            if (shown != page) {
+            if (shown != page || !waiting) {
+                // Mit gezeigtem Stand aus dem Cache bleibt der stehen; die Prüfung ist dann still gescheitert.
                 return;
             }
             readingLoaded = false;
             readingPane.clear("Leseansicht nicht geladen: " + Problems.describe(error).title());
         });
+    }
+
+    private void showReading(ReadingPane.Prepared prepared) {
+        readingPane.show(prepared);
+        renderDetails();
+        String anchor = pendingAnchor;
+        pendingAnchor = null;
+        if (anchor != null) {
+            javax.swing.SwingUtilities.invokeLater(() -> readingPane.scrollToAnchor(anchor));
+        }
     }
 
     // ------------------------------------------------------------------ Links, Zurück/Vor

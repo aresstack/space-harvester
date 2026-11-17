@@ -206,6 +206,10 @@ public final class Explorer {
     static final class Node extends DefaultMutableTreeNode {
         boolean loaded;
         boolean loading;
+        /** Die gezeigten Kinder kommen aus dem Cache; die Abfrage bei der Quelle steht noch aus oder ist gescheitert. */
+        boolean fromCache;
+        /** Seit dem ersten Stapel der laufenden Abfrage von der Quelle bestätigte Kinder; {@code null} ohne. */
+        java.util.Set<String> confirmed;
         /** Läuft einmal, sobald die Kinder geladen sind (siehe {@link #reveal}). */
         Runnable then;
 
@@ -377,16 +381,10 @@ public final class Explorer {
         tree.getSelectionModel().setSelectionMode(
                 javax.swing.tree.TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION);
         tree.addTreeSelectionListener(e -> {
-            // Ein gewählter Knoten löst die globale Auswahl ab.
-            if (global && tree.getSelectionCount() > 0) {
-                global = false;
-                paintHead();
+            // Während eines Abgleichs stellt der Baum die Auswahl selbst wieder her; die Mitte sieht nichts davon.
+            if (!merging) {
+                selectionChanged();
             }
-            if (!revealing) {
-                scopeListener.accept(scopes());
-            }
-            // Der Export folgt auch einer Auswahl, die ein geöffneter Treffer oder Auftrag gesetzt hat.
-            selectionListener.accept(selection());
         });
         MouseAdapter mouse = new MouseAdapter() {
             @Override
@@ -985,7 +983,28 @@ public final class Explorer {
         return node;
     }
 
-    /** Lädt die Kinder eines Knotens beim ersten Aufklappen; nach einem Fehler beim nächsten erneut. */
+    /** Ob gerade ein Abgleich läuft ({@link #keepingView}); Auswahl-Ereignisse gehen dann nicht an die Mitte. */
+    private boolean merging;
+
+    private void selectionChanged() {
+        // Ein gewählter Knoten löst die globale Auswahl ab.
+        if (global && tree.getSelectionCount() > 0) {
+            global = false;
+            paintHead();
+        }
+        if (!revealing) {
+            scopeListener.accept(scopes());
+        }
+        // Der Export folgt auch einer Auswahl, die ein geöffneter Treffer oder Auftrag gesetzt hat.
+        selectionListener.accept(selection());
+    }
+
+    /**
+     * Lädt die Kinder eines Knotens beim ersten Aufklappen; nach einem Fehler beim nächsten erneut. Seiten erscheinen
+     * zuerst aus dem Cache (sofort, nach Titel geordnet), dann fragt der Baum die Quelle und gleicht nach Seiten-ID ab,
+     * ohne Aufklappung und Auswahl darunter zu verlieren; danach lädt der Core die Leseansichten der Kinder vor
+     * (Angelo, 17.11.2026). Ist im Cache nichts, bleibt „Lädt …“ bis zur Antwort der Quelle.
+     */
     private void load(Node node) {
         if (node.loaded || node.loading) {
             return;
@@ -1001,12 +1020,40 @@ public final class Explorer {
         } else if (item instanceof PageItem page) {
             states.open(page.sourceId(), page.spaceKey());
         }
-        Background.run(() -> children(runtime, item, null), batch -> {
+        if (node.fromCache || !(item instanceof SpaceItem || item instanceof PageItem)) {
+            loadLive(runtime, node);
+            return;
+        }
+        Background.run(() -> cachedChildren(runtime, item), cached -> {
+            if (!cached.nodes().isEmpty()) {
+                // Noch steht nur „Lädt …“ darunter: Neuaufbau dieses Knotens verliert nichts.
+                node.removeAllChildren();
+                append(node, cached);
+                node.fromCache = true;
+                model.nodeStructureChanged(node);
+            }
+            loadLive(runtime, node);
+        }, error -> loadLive(runtime, node));
+    }
+
+    /** Fragt die Kinder bei der Quelle ab; über einem Stand aus dem Cache per Abgleich, sonst wie bisher. */
+    private void loadLive(AppRuntime runtime, Node node) {
+        Item item = node.item();
+        Background.run(() -> {
+            Batch batch = children(runtime, item, null);
+            prefetch(runtime, item, batch);
+            return batch;
+        }, batch -> {
             node.loading = false;
             node.loaded = true;
-            node.removeAllChildren();
-            append(node, batch);
-            model.nodeStructureChanged(node);
+            if (node.fromCache) {
+                node.fromCache = false;
+                merge(node, batch, true);
+            } else {
+                node.removeAllChildren();
+                append(node, batch);
+                model.nodeStructureChanged(node);
+            }
             // Neue Spaces im Baum zählen für den Gesamtstand der Kopfzeile.
             if (item instanceof SourceItem) {
                 statesChanged();
@@ -1019,10 +1066,56 @@ public final class Explorer {
         }, error -> {
             node.loading = false;
             node.then = null;
+            if (node.fromCache) {
+                // Der Stand aus dem Cache bleibt stehen; beim nächsten Aufklappen fragt der Baum die Quelle erneut.
+                note.setText("Nicht geladen: " + Problems.describe(error).title());
+                return;
+            }
             node.removeAllChildren();
             node.add(new Node(new Note("Nicht geladen: " + Problems.describe(error).title())));
             model.nodeStructureChanged(node);
         });
+    }
+
+    /** Höchstens so viele Leseansichten lädt der Core je aufgeklapptem Knoten vor. */
+    static final int PREFETCH_LIMIT = 25;
+
+    /** Lässt den Core die Leseansichten der eben geholten Kindseiten vorladen; still, wenn das nicht geht. */
+    private static void prefetch(AppRuntime runtime, Item item, Batch batch) {
+        String sourceId = switch (item) {
+            case SpaceItem space -> space.sourceId();
+            case PageItem page -> page.sourceId();
+            default -> null;
+        };
+        if (sourceId == null) {
+            return;
+        }
+        List<String> pageIds = batch.nodes().stream().map(Node::item)
+                .filter(PageItem.class::isInstance).map(child -> ((PageItem) child).pageId())
+                .limit(PREFETCH_LIMIT).toList();
+        if (pageIds.isEmpty()) {
+            return;
+        }
+        try {
+            runtime.workspace().prefetchReadingViews(sourceId, pageIds);
+        } catch (RuntimeException ignored) {
+            // Vorladen ist nur eine Beschleunigung.
+        }
+    }
+
+    /** Die Kindseiten aus dem Cache, ohne die Quelle zu fragen; leer, wenn dort nichts liegt oder es nicht geht. */
+    static Batch cachedChildren(AppRuntime runtime, Item item) {
+        try {
+            return switch (item) {
+                case SpaceItem space -> nodes(space.sourceId(),
+                        runtime.workspace().cachedChildren(space.sourceId(), space.spaceKey(), null));
+                case PageItem page -> nodes(page.sourceId(),
+                        runtime.workspace().cachedChildren(page.sourceId(), page.spaceKey(), page.pageId()));
+                default -> new Batch(List.of(), null);
+            };
+        } catch (RuntimeException notCached) {
+            return new Batch(List.of(), null);
+        }
     }
 
     /** Ein Klick: Seite öffnen bzw. den nächsten Stapel holen. */
@@ -1050,6 +1143,14 @@ public final class Explorer {
         model.nodeChanged(moreNode);
         Background.run(() -> children(runtime, parent.item(), more.cursor()), batch -> {
             parent.loading = false;
+            if (parent.confirmed != null) {
+                // Über einem Stand aus dem Cache: auch die weiteren Stapel gleichen ab statt anzuhängen.
+                merge(parent, batch, false);
+                if (then != null) {
+                    then.run();
+                }
+                return;
+            }
             // Nur einfügen und entfernen, nicht den Knoten neu aufbauen: das ließe die Auswahl darunter (und damit den
             // Suchbereich) fallen.
             model.removeNodeFromParent(moreNode);
@@ -1118,7 +1219,7 @@ public final class Explorer {
         node.loading = true;
         Background.run(() -> children(runtime, item, null), batch -> {
             node.loading = false;
-            merge(node, batch);
+            merge(node, batch, true);
         }, error -> node.loading = false);
     }
 
@@ -1131,24 +1232,47 @@ public final class Explorer {
         };
     }
 
-    /** Gleicht die Kinder von {@code parent} mit dem frischen Stapel ab, mit einzelnen Modell-Ereignissen statt Neuaufbau. */
-    private void merge(Node parent, Batch batch) {
+    /**
+     * Gleicht die Kinder von {@code parent} mit einem frischen Stapel der Quelle ab, mit einzelnen Modell-Ereignissen
+     * statt Neuaufbau. {@code first}: der erste Stapel einer Abfrage. Bestätigte Kinder stehen in der Reihenfolge der
+     * Quelle vorn; solange ein Cursor offen ist, bleiben unbestätigte (etwa aus dem Cache) dahinter stehen, erst der
+     * letzte Stapel entfernt, was die Quelle nicht mehr kennt (AT zu #861). Auswahl, aufgeklappte Pfade und
+     * Rollposition bleiben; die Mitte sieht keinen Auswahlwechsel, solange die Auswahl erhalten bleibt.
+     */
+    void merge(Node parent, Batch batch, boolean first) {
+        keepingView(parent, () -> mergeNodes(parent, batch, first));
+    }
+
+    private void mergeNodes(Node parent, Batch batch, boolean first) {
+        if (first || parent.confirmed == null) {
+            parent.confirmed = new java.util.LinkedHashSet<>();
+        }
         java.util.Map<String, Node> existing = new java.util.LinkedHashMap<>();
         for (int i = parent.getChildCount() - 1; i >= 0; i--) {
             Node child = (Node) parent.getChildAt(i);
             String key = key(child.item());
             if (key == null) {
                 model.removeNodeFromParent(child);
-            } else {
+            }
+        }
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            Node child = (Node) parent.getChildAt(i);
+            String key = key(child.item());
+            // Schon bestätigte Kinder früherer Stapel stehen vorn und bleiben.
+            if (!parent.confirmed.contains(key)) {
                 existing.put(key, child);
             }
         }
         List<Node> kept = new ArrayList<>();
-        int index = 0;
+        int index = parent.confirmed.size();
         for (Node fresh : batch.nodes()) {
-            Node current = existing.remove(key(fresh.item()));
+            String key = key(fresh.item());
+            if (key == null || !parent.confirmed.add(key)) {
+                continue;
+            }
+            Node current = existing.remove(key);
             if (current == null) {
-                model.insertNodeInto(fresh, parent, index);
+                model.insertNodeInto(fresh, parent, Math.min(index, parent.getChildCount()));
             } else {
                 if (!current.item().equals(fresh.item())) {
                     current.setUserObject(fresh.item());
@@ -1168,10 +1292,13 @@ public final class Explorer {
             }
             index++;
         }
-        for (Node gone : existing.values()) {
-            model.removeNodeFromParent(gone);
-        }
-        if (batch.nextCursor() != null) {
+        if (batch.nextCursor() == null) {
+            // Letzter Stapel: Was die Quelle nicht bestätigt hat, gibt es nicht mehr.
+            for (Node gone : existing.values()) {
+                model.removeNodeFromParent(gone);
+            }
+            parent.confirmed = null;
+        } else {
             model.insertNodeInto(new Node(new MoreItem(batch.nextCursor())), parent, parent.getChildCount());
         }
         if (parent.getChildCount() == 0) {
@@ -1182,6 +1309,57 @@ public final class Explorer {
         for (Node child : kept) {
             reread(child);
         }
+    }
+
+    /**
+     * Führt eine Änderung unter {@code parent} aus und stellt danach Auswahl, aufgeklappte Pfade und Rollposition
+     * wieder her. Auswahl-Ereignisse währenddessen erreichen die Mitte nicht; fehlt danach ein gewählter Knoten, meldet
+     * der Baum die neue Auswahl einmal.
+     */
+    private void keepingView(Node parent, Runnable change) {
+        TreePath[] selected = tree.getSelectionPaths();
+        List<TreePath> expanded = new ArrayList<>();
+        Enumeration<TreePath> open = tree.getExpandedDescendants(new TreePath(parent.getPath()));
+        if (open != null) {
+            expanded.addAll(java.util.Collections.list(open));
+        }
+        java.awt.Point position = viewPosition();
+        merging = true;
+        try {
+            change.run();
+            for (TreePath path : expanded) {
+                if (attached(path)) {
+                    tree.expandPath(path);
+                }
+            }
+            List<TreePath> still = new ArrayList<>();
+            if (selected != null) {
+                for (TreePath path : selected) {
+                    if (attached(path)) {
+                        still.add(path);
+                    }
+                }
+            }
+            tree.setSelectionPaths(still.toArray(TreePath[]::new));
+            if (position != null && tree.getParent() instanceof javax.swing.JViewport viewport) {
+                viewport.setViewPosition(position);
+            }
+        } finally {
+            merging = false;
+        }
+        if (selected != null && tree.getSelectionCount() != selected.length) {
+            selectionChanged();
+        }
+    }
+
+    private java.awt.Point viewPosition() {
+        return tree.getParent() instanceof javax.swing.JViewport viewport ? viewport.getViewPosition() : null;
+    }
+
+    /** Ob alle Knoten des Pfads noch im Baum hängen. */
+    private boolean attached(TreePath path) {
+        Object last = path.getLastPathComponent();
+        return last instanceof Node node && node.getRoot() == top;
     }
 
     static Batch children(AppRuntime runtime, Item item, String cursor) {
@@ -1206,6 +1384,10 @@ public final class Explorer {
             }
             throw e;
         }
+        return nodes(sourceId, children);
+    }
+
+    private static Batch nodes(String sourceId, PageNavigation.Children children) {
         List<Node> nodes = new ArrayList<>();
         for (HarvestSource.PageNode page : children.pages()) {
             PageItem item = new PageItem(sourceId, page.partitionKey() == null ? children.spaceKey()
