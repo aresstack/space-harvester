@@ -19,8 +19,9 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 
 /**
- * Die Vorstufe „Sätze vereinfachen“ für eine Seite (ADR 0032, FL3): je Abschnitt ein Modellaufruf für die gewählten
- * Sätze, die noch nicht in der Ablage stehen; Abschnitte laufen parallel bis zur Obergrenze. Welche Sätze gewählt sind
+ * Die Vorstufe „Sätze vereinfachen“ für eine Seite (ADR 0032, FL3): je Abschnitt ein Modellaufruf, sobald einer seiner
+ * gewählten Sätze nicht in der Ablage steht, dann immer für den ganzen Abschnitt; Abschnitte laufen parallel bis zur
+ * Obergrenze. Welche Sätze gewählt sind
  * und wie die Ergebnisse mit dem Original zusammengehen, entscheidet der Satzanalysator; hier liegen nur Freigabe,
  * Modellaufruf, strenges Lesen und Ablage.
  *
@@ -106,25 +107,32 @@ public final class Simplifications {
         int chosen = 0;
         int fromStore = 0;
         for (SimplificationSection section : sections) {
-            List<String> context = section.context().stream().map(SimplificationSection.Sentence::text).toList();
-            List<SimplificationSection.Sentence> missing = new ArrayList<>();
+            // Das Ergebnis eines Satzes hängt an seinen Nachbarn (Pronomen, Stichpunkt aus dem Satz davor): Schlüssel
+            // ist der Satz samt allen übrigen Zeilen des Aufrufs, und fehlt einer, geht der ganze Abschnitt neu hinaus.
             Map<Integer, String> sectionKeys = new LinkedHashMap<>();
+            Map<Integer, List<SimplificationStore.Line>> hits = new LinkedHashMap<>();
             for (SimplificationSection.Sentence sentence : section.sentences()) {
                 chosen++;
-                String key = SimplificationStore.key(sentence.text(), context);
+                List<String> others = new ArrayList<>();
+                section.lines().forEach(line -> {
+                    if (line.index() != sentence.index()) {
+                        others.add(line.text());
+                    }
+                });
+                String key = SimplificationStore.key(sentence.text(), others);
                 keys.add(key);
                 sectionKeys.put(sentence.index(), key);
-                List<SimplificationStore.Line> lines = stored.get(key);
-                if (lines == null) {
-                    missing.add(sentence);
-                } else {
-                    fromStore++;
-                    sentences.put(sentence.index(), lines.stream()
-                            .map(line -> new SimplifiedSentence(sentence.index(), line.flag(), line.text())).toList());
+                List<SimplificationStore.Line> found = stored.get(key);
+                if (found != null) {
+                    hits.put(sentence.index(), found);
                 }
             }
-            if (!missing.isEmpty()) {
-                pending.add(new Pending(new SimplificationSection(section.context(), missing), sectionKeys));
+            if (hits.size() == section.sentences().size()) {
+                fromStore += hits.size();
+                hits.forEach((index, found) -> sentences.put(index, found.stream()
+                        .map(line -> new SimplifiedSentence(index, line.flag(), line.text())).toList()));
+            } else {
+                pending.add(new Pending(section, sectionKeys));
             }
         }
         AtomicInteger rejected = new AtomicInteger();

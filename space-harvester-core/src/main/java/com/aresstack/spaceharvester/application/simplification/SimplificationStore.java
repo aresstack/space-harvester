@@ -27,10 +27,10 @@ import tools.jackson.databind.node.ObjectNode;
  * Prozessor-ID {@link Enrichments#SIMPLIFICATIONS} bei der Seite in der Ablage der Anreicherungen, hat deren Rechte und
  * fällt mit der Seite und mit der Quelle weg; den Entzug der KI-Freigabe nimmt {@link #remove} zurück (ADR 0028).
  *
- * <p>Schlüssel eines Eintrags ist {@link #key}: Hash aus Satztext und Abschnittskontext (Überschriften und
- * Kennungszeilen), ohne Seitenfassung; Modell und {@link SentenceSimplifier#PROMPT_VERSION} stehen als Version am
- * Ergebnis der Seite. So laufen nach einer Änderung der Seite nur geänderte Sätze neu, nach einem Wechsel von Modell
- * oder Anweisung alle. Inhalte gehen nie in Logs oder Ausnahmen.
+ * <p>Schlüssel eines Eintrags ist {@link #key}: Hash aus dem Satz und allen übrigen Zeilen seines Aufrufs (das
+ * Ergebnis hängt an den Nachbarn), ohne Seitenfassung und Satznummer; Modell und {@link SentenceSimplifier#PROMPT_VERSION}
+ * stehen als Version am Ergebnis der Seite. So läuft nach einer Änderung der Seite nur der Abschnitt mit dem geänderten
+ * Satz neu, nach einem Wechsel von Modell oder Anweisung alles. Inhalte gehen nie in Logs oder Ausnahmen.
  */
 public final class SimplificationStore {
 
@@ -46,8 +46,8 @@ public final class SimplificationStore {
     }
 
     /**
-     * Schlüssel eines Satzes: SHA-256 über den Abschnittskontext und den Satztext, unabhängig von Satznummer und
-     * Seitenfassung.
+     * Schlüssel eines Satzes: SHA-256 über die übrigen Zeilen seines Aufrufs (in Textreihenfolge) und den Satztext,
+     * unabhängig von Satznummer und Seitenfassung.
      */
     public static String key(String sentence, Collection<String> context) {
         StringBuilder basis = new StringBuilder();

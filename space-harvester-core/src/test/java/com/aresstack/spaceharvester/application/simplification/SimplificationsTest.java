@@ -41,7 +41,7 @@ class SimplificationsTest {
     private static final Function<String, String> ECHO = input -> {
         StringBuilder out = new StringBuilder();
         for (String line : input.split("\n")) {
-            String[] parts = line.split("\\|", 2);
+            String[] parts = line.split(" ", 2);
             out.append(parts[0]).append("|T|").append(parts[1]).append('\n');
         }
         return out.toString();
@@ -87,22 +87,44 @@ class SimplificationsTest {
     }
 
     @Test
-    void aSecondRunCallsTheModelOnlyForChangedSentences() {
+    void aSecondRunCallsTheModelOnlyForSectionsWithAChangedLine() {
         FakeModel model = new FakeModel();
         Simplifications simplifications = new Simplifications(model, store, page -> true);
-        simplifications.simplify(PAGE, "sha", List.of(section(0, 1, 2)), 1, () -> false);
-        // Seitenfassung geändert: Satz 2 rückt auf 3 vor (gleicher Text bleibt gespeichert), neu ist Satz 4.
-        List<SimplificationSection.Sentence> moved = List.of(
-                new SimplificationSection.Sentence(1, "Der Techniker prüft die Pumpe 1."),
-                new SimplificationSection.Sentence(3, "Der Techniker prüft die Pumpe 2."),
-                new SimplificationSection.Sentence(4, "Der Techniker prüft die Pumpe 4."));
-        SimplificationSection changed = new SimplificationSection(
-                List.of(new SimplificationSection.Sentence(0, "Wartung 0")), moved);
-        Simplifications.Result result = simplifications.simplify(PAGE, "sha2", List.of(changed), 1, () -> false);
+        simplifications.simplify(PAGE, "sha", List.of(section(0, 1, 2), section(5, 6)), 1, () -> false);
         assertThat(model.calls).hasValue(2);
-        assertThat(model.inputs.get(1)).isEqualTo("1|Wartung 0\n5|Der Techniker prüft die Pumpe 4.\n");
+        // Neue Seitenfassung: Der erste Abschnitt rückt um eine Zeile vor (gleiche Texte), im zweiten ändert sich ein
+        // Satz. Nur der zweite Abschnitt geht hinaus, und zwar ganz.
+        SimplificationSection moved = new SimplificationSection(
+                List.of(new SimplificationSection.Sentence(1, "Wartung 0")),
+                List.of(new SimplificationSection.Sentence(2, "Der Techniker prüft die Pumpe 1."),
+                        new SimplificationSection.Sentence(3, "Der Techniker prüft die Pumpe 2.")));
+        SimplificationSection changed = new SimplificationSection(
+                List.of(new SimplificationSection.Sentence(6, "Wartung 5")),
+                List.of(new SimplificationSection.Sentence(7, "Der Techniker prüft die Pumpe 6."),
+                        new SimplificationSection.Sentence(8, "Der Techniker prüft die Pumpe 8.")));
+        Simplifications.Result result = simplifications.simplify(PAGE, "sha2", List.of(moved, changed), 1,
+                () -> false);
+        assertThat(model.calls).hasValue(3);
+        assertThat(model.inputs.get(2)).isEqualTo(
+                "1 Wartung 5\n2 Der Techniker prüft die Pumpe 6.\n3 Der Techniker prüft die Pumpe 8.\n");
         assertThat(result.costs().fromStore()).isEqualTo(2);
+        assertThat(result.costs().modelCalls()).isEqualTo(1);
         assertThat(result.sentences().get(3)).extracting(SimplifiedSentence::sentence).containsExactly(3);
+        assertThat(result.sentences().get(8)).extracting(SimplifiedSentence::text)
+                .containsExactly("Der Techniker prüft die Pumpe 8.");
+    }
+
+    @Test
+    void aChangedNeighbourComputesTheSentenceAgain() {
+        FakeModel model = new FakeModel();
+        Simplifications simplifications = new Simplifications(model, store, page -> true);
+        simplifications.simplify(PAGE, "sha", List.of(section(0, 1)), 1, () -> false);
+        SimplificationSection neighbour = new SimplificationSection(
+                List.of(new SimplificationSection.Sentence(0, "Wartung 0"),
+                        new SimplificationSection.Sentence(2, "Der Techniker wechselt die Pumpe.")),
+                List.of(new SimplificationSection.Sentence(1, "Der Techniker prüft die Pumpe 1.")));
+        simplifications.simplify(PAGE, "sha", List.of(neighbour), 1, () -> false);
+        assertThat(model.calls).as("anderer Nachbar, anderer Schlüssel").hasValue(2);
     }
 
     @Test
