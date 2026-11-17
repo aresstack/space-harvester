@@ -1404,17 +1404,15 @@ public final class Explorer {
     }
 
     /**
-     * Quellen ohne Live-Seitenbaum (etwa Ordner): der Seitenbaum des Space aus dem Bestand, sonst aus den Metadaten
-     * der Quelle, auf einmal.
+     * Quellen ohne Live-Seitenbaum (etwa Ordner): der Seitenbaum des Space aus den Metadaten der Quelle, auf einmal;
+     * nur wenn die Quelle nicht antwortet, aus dem Bestand. Der Bestand kann unvollständig sein (die
+     * Hintergrundbefüllung legt Seite für Seite ab), darum ist er nur der Ausweich und nie die erste Wahl: sonst
+     * zeigte der Baum zeitweise nur die schon abgelegten Seiten.
      */
     private static Batch wholeSpace(AppRuntime runtime, String sourceId, String spaceKey) {
         Map<String, String> titles = new HashMap<>();
         PageTree pageTree;
         try {
-            SpaceTree stock = runtime.workspace().tree(sourceId, spaceKey);
-            stock.pages().forEach((id, page) -> titles.put(id, page.header().metadata().title()));
-            pageTree = stock.tree();
-        } catch (RuntimeException notStocked) {
             Map<String, TreeEntry> entries = new LinkedHashMap<>();
             String next = null;
             do {
@@ -1427,6 +1425,17 @@ public final class Explorer {
                 next = entries.size() >= TREE_LIMIT ? null : listing.nextCursor();
             } while (next != null);
             pageTree = PageTreeBuilder.build(entries.values());
+        } catch (RuntimeException unreachable) {
+            SpaceTree stock;
+            try {
+                stock = runtime.workspace().tree(sourceId, spaceKey);
+            } catch (RuntimeException notStocked) {
+                unreachable.addSuppressed(notStocked);
+                throw unreachable;
+            }
+            titles.clear();
+            stock.pages().forEach((id, page) -> titles.put(id, page.header().metadata().title()));
+            pageTree = stock.tree();
         }
         List<Node> nodes = new ArrayList<>();
         for (PageTree.Node child : pageTree.roots()) {
