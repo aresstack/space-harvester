@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.ui.Background;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
@@ -40,6 +41,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -101,6 +103,9 @@ final class ReadingPane extends JPanel {
     private String html = "";
     /** Was ein angeklickter Link auslöst; ohne Abnehmer öffnet er im Browser. */
     private java.util.function.Consumer<URL> links = ReadingPane::browse;
+    /** Farben des Bildbetrachters beim nächsten Öffnen, aus der Einstellung; ohne Angabe die Vorgabe. */
+    private java.util.function.Supplier<ImageViewer.Look> viewerLook =
+            () -> Comic.viewerLook(ViewerBackground.DEFAULT);
 
     ReadingPane() {
         super(new BorderLayout(0, 6));
@@ -635,7 +640,13 @@ final class ReadingPane extends JPanel {
                 .map(entry -> new ImageViewer.Picture(entry.getValue(), labels.get(entry.getKey()),
                         vectors.get(entry.getKey())))
                 .toList();
-        Dialogs.viewSized(this, "Bilder der Seite", new ImageViewer(pictures, index), "reading.images", 0.8);
+        Dialogs.viewSized(this, "Bilder der Seite", new ImageViewer(pictures, index, viewerLook.get()),
+                "reading.images", 0.8);
+    }
+
+    /** Woher der Bildbetrachter seine Farben nimmt; gelesen bei jedem Öffnen, damit die Einstellung sofort gilt. */
+    void onViewerLook(java.util.function.Supplier<ImageViewer.Look> look) {
+        this.viewerLook = Objects.requireNonNull(look, "look");
     }
 
     /** Titel der Bilder (Alternativtext) je eigener Bildadresse, aus dem gezeigten HTML. */

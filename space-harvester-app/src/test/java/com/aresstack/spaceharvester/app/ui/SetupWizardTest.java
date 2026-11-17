@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SecretVaultTest;
@@ -132,16 +133,28 @@ class SetupWizardTest {
             assertThat(items).containsExactly("Aus", "Fehler", "Warnungen", "Informationen", "Alles");
             assertThat(view[0].console.getSelectedItem()).as("ohne Angabe still").isEqualTo("Aus");
             view[0].console.setSelectedItem("Warnungen");
+            // Angelo 17.11.2026: Platte „Darstellung“ unter Allgemein, Hintergrund des Bildbetrachters.
+            java.util.List<String> backgrounds = new java.util.ArrayList<>();
+            for (int i = 0; i < view[0].viewer.getItemCount(); i++) {
+                backgrounds.add(view[0].viewer.getItemAt(i));
+            }
+            assertThat(backgrounds).containsExactly("Wie die App", "Weiß", "Grau", "Dunkel", "Schwarz");
+            assertThat(view[0].viewer.getSelectedItem()).as("ohne Angabe wie die App").isEqualTo("Wie die App");
+            view[0].viewer.setSelectedItem("Schwarz");
         });
         await(() -> context.settings().consoleOutput() == ConsoleOutput.WARN);
+        await(() -> context.settings().viewerBackground() == ViewerBackground.BLACK);
         assertThat(Files.readString(config, StandardCharsets.UTF_8))
-                .contains("logging:\n  threshold:\n    console: \"warn\"\n", "# Kommentar bleibt stehen");
+                .contains("logging:\n  threshold:\n    console: \"warn\"\n", "# Kommentar bleibt stehen",
+                        "  viewer:\n    background: black\n");
         SetupWizard[] wizard = new SetupWizard[1];
         SwingUtilities.invokeAndWait(() -> {
             assertThat(view[0].console.getSelectedItem()).isEqualTo("Warnungen");
+            assertThat(view[0].viewer.getSelectedItem()).isEqualTo("Schwarz");
             wizard[0] = new SetupWizard(context);
             wizard[0].show(SetupWizard.SUMMARY);
-            assertThat(texts(wizard[0].summary)).containsSubsequence(SettingsView.CONSOLE_TITLE, "Warnungen");
+            assertThat(texts(wizard[0].summary)).containsSubsequence(SettingsView.CONSOLE_TITLE, "Warnungen",
+                    SettingsView.VIEWER_TITLE, "Schwarz");
         });
     }
 

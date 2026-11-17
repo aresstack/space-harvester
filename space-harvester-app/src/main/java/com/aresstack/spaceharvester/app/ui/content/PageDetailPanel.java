@@ -496,6 +496,9 @@ public final class PageDetailPanel extends JPanel {
         recompute.addActionListener(e -> recompute());
         recomputeReader.addActionListener(e -> recompute());
         readingPane.onLink(this::linkActivated);
+        readingPane.onViewerLook(() -> Comic.viewerLook(context.settings() == null
+                ? com.aresstack.spaceharvester.app.settings.ViewerBackground.DEFAULT
+                : context.settings().viewerBackground()));
         backButton.addActionListener(e -> back());
         forwardButton.addActionListener(e -> forward());
         updateNavigation();
