@@ -110,6 +110,36 @@ class GlossaryTabScreenshotTest {
             layout(popup);
             Screenshots.write(popup, out.resolve("fachglossar-overlay.png"));
         });
+        // Eine Einordnung durch die KI mit Grund: „fachlich · von der KI (fachlicher Ablauf)“.
+        SwingUtilities.invokeAndWait(() -> {
+            Entry entry = entry("5", "Antragsprüfung", "wiki", "DH", RelationOrigin.RULE, ReviewStatus.PROPOSED, 2,
+                    false, null);
+            GlossaryAccess.Row row = new GlossaryAccess.Row(entry, new GlossaryDerivation.Importance(5, 8, 0, 3, 0),
+                    GlossaryDerivation.Category.FACHLICH, new com.aresstack.spaceharvester.application.glossary
+                    .GlossaryEntry.Classification(GlossaryDerivation.Category.FACHLICH, com.aresstack.spaceharvester
+                    .application.glossary.GlossaryEntry.ClassifiedBy.AI, "DOMAIN_PROCESS"), null);
+            com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin original =
+                    com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin.ORIGINAL;
+            GlossaryDerivation.Term term = new GlossaryDerivation.Term("Antragsprüfung", "antragsprüfung", false,
+                    row.importance(), List.of(), List.of(new GlossaryDerivation.Use("abschließen", original, false, 3,
+                    List.of())), List.of(), List.of(), List.of(), GlossaryDerivation.Category.FACHLICH,
+                    GlossaryDerivation.CategoryRule.NONE);
+            com.aresstack.spaceharvester.app.ui.controls.InfoPopup popup =
+                    new com.aresstack.spaceharvester.app.ui.controls.InfoPopup();
+            popup.text(entry.term(), GlossaryTab.overlayText(entry, row, term, List.of(
+                    "1. Antragsverfahren: … die Antragsprüfung ist innerhalb von vier Wochen abzuschließen …",
+                    "2. Ablauf: … nach der Antragsprüfung folgt der Bescheid …"), List.of(
+                    new GlossaryAccess.History("propose", "rule:glossary", T, ReviewStatus.PROPOSED),
+                    new GlossaryAccess.History("categorize", "ai:glossary", T.plusSeconds(600),
+                            ReviewStatus.PROPOSED))));
+            popup.controls(tab[0].overlayControls(popup, entry, row, null));
+            popup.link("Zu Beleg 1", () -> { }).link("Zu Beleg 2", () -> { });
+            java.awt.Dimension size = popup.sizeFor(600);
+            popup.setSize(size);
+            popup.doLayout();
+            layout(popup);
+            Screenshots.write(popup, out.resolve("fachglossar-overlay-ki.png"));
+        });
     }
 
     private static void layout(java.awt.Container container) {

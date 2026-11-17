@@ -1161,8 +1161,8 @@ final class GlossaryTab {
     }
 
     /**
-     * „unklar · nach Regel (kein Technik- oder Rollenwort)“, „fachlich · von Hand“, „Rolle · von der KI“; ohne
-     * Einordnung „unklar (noch nicht eingeordnet)“.
+     * „unklar · nach Regel (kein Technik- oder Rollenwort)“, „fachlich · von Hand“, „fachlich · von der KI
+     * (Rechtsbegriff)“; ohne Einordnung „unklar (noch nicht eingeordnet)“. Eine unbekannte Kennung steht ohne Klammer.
      */
     static String categorized(GlossaryDerivation.Category category,
                               com.aresstack.spaceharvester.application.glossary.GlossaryEntry.Classification
@@ -1170,15 +1170,43 @@ final class GlossaryTab {
         if (classification == null) {
             return categoryWord(GlossaryDerivation.Category.UNKLAR) + " (noch nicht eingeordnet)";
         }
+        String reason = classification.reason();
         return categoryWord(category) + " · " + switch (classification.by()) {
             case MANUAL -> "von Hand";
-            case AI -> "von der KI";
-            case RULE -> "nach Regel (" + switch (String.valueOf(classification.reason())) {
-                case "TECHNICAL_HEAD" -> "Technikwort am Wortende";
-                case "TECHNICAL_SHAPE" -> "Schreibweise eines Bezeichners";
-                case "ROLE_HEAD" -> "Rollenwort am Wortende";
-                default -> "kein Technik- oder Rollenwort";
-            } + ")";
+            case AI -> "von der KI" + bracketed(aiReason(reason));
+            case RULE -> "nach Regel" + bracketed(ruleReason(category, reason));
+        };
+    }
+
+    private static String bracketed(String text) {
+        return text == null ? "" : " (" + text + ")";
+    }
+
+    /** Der Grund der Regel in Worten; {@code null} bei einer unbekannten Kennung (dann ohne Klammer). */
+    static String ruleReason(GlossaryDerivation.Category category, String reason) {
+        return switch (String.valueOf(reason)) {
+            case "TECHNICAL_HEAD" -> "Technikwort am Wortende";
+            case "TECHNICAL_SHAPE" -> "Schreibweise eines Bezeichners";
+            case "ROLE_HEAD" -> "Rollenwort am Wortende";
+            case "ROLE_OF_PERSON" -> "als Rolle einer Person genannt";
+            // Nur ein unklarer Begriff hat keinen Grund der Regel; bei Technik oder Rolle nie diesen Satz.
+            default -> category == GlossaryDerivation.Category.UNKLAR ? "kein Technik- oder Rollenwort" : null;
+        };
+    }
+
+    /** Der Grund der KI in Worten; {@code null} bei einer unbekannten Kennung (dann ohne Klammer). */
+    static String aiReason(String reason) {
+        return switch (String.valueOf(reason)) {
+            case "DOMAIN_OBJECT" -> "fachlicher Gegenstand";
+            case "DOMAIN_PROCESS" -> "fachlicher Ablauf";
+            case "LEGAL_TERM" -> "Rechtsbegriff";
+            case "PERSON_ROLE" -> "Rolle einer Person";
+            case "ORGANISATION" -> "Stelle oder Organisation";
+            case "SYSTEM_COMPONENT" -> "technisches System";
+            case "DATA_FORMAT" -> "Datenformat";
+            case "GENERIC_WORD" -> "allgemeines Wort";
+            case "CONTEXT_UNCLEAR" -> "aus den Belegen nicht zu entscheiden";
+            default -> null;
         };
     }
 
