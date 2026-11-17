@@ -247,6 +247,24 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.export().selection().sourceId())).isEqualTo("handbuch");
+        // „Wissensquellen“ (Angelo 17.11.2026): keine alte Quelle in der Mitte, die Gesamtsicht unter Eigenschaften,
+        // die Bereichsanzeige ohne Quelle; danach wieder eine Quelle.
+        onEdt(() -> {
+            view.selection(ExportPanel.Selection.ALL);
+            return null;
+        });
+        List<String> all = context.runtime().workspace().sources().stream()
+                .map(com.aresstack.spaceharvester.application.sources.HarvestSource::id).toList();
+        assertThat(onEdt(() -> detail.showsAllSources(all))).isTrue();
+        assertThat(onEdt(() -> detail.sourceProperties().allIds())).contains("handbuch", "notizen");
+        assertThat(onEdt(() -> detail.showsAllSources(List.of("handbuch")))).as("andere Quellenliste").isFalse();
+        assertThat(onEdt(view::crumbs)).isEqualTo(ContentView.ALL_SOURCES);
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.sourceProperties().showsAll())).isFalse();
+        assertThat(onEdt(view::crumbs)).isEqualTo("handbuch");
         // „Stand“ (ADR 0032) zeigt wie „Export“ seine eigene Karte zur Auswahl, mit Hilfe als ?-Knopf oben rechts.
         onEdt(() -> {
             detail.tabs().select("Stand");

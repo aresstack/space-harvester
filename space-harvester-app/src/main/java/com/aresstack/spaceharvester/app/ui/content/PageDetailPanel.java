@@ -708,9 +708,9 @@ public final class PageDetailPanel extends JPanel {
         showDeck();
     }
 
-    /** Ob gerade die Gesamtsicht über alle Wissensquellen gezeigt wird. */
-    boolean showsAllSources() {
-        return showsSource() && sourceProperties.showsAll();
+    /** Ob gerade die Gesamtsicht über genau diese Wissensquellen gezeigt wird. */
+    boolean showsAllSources(List<String> sourceIds) {
+        return showsSource() && sourceProperties.showsAll() && sourceProperties.allIds().equals(sourceIds);
     }
 
     /** Zeigt den Reiter „Updates“ der Quellenseite (Doppelklick auf eine Quelle). */

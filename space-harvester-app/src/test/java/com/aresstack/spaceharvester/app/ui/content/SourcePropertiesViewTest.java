@@ -118,14 +118,40 @@ class SourcePropertiesViewTest {
                 "Confluence · Personal Access Token · aktiv", "archiv", "aktiv");
         assertThat(texts).doesNotContain("Einstellungen", "Token");
 
+        // Eine Quelle ohne Space im Bestand (nie geladen) steht in Orange mit Zusatz, auch bei den Kennzahlen.
+        actions.empty.add("leer");
+        view.all(List.of("wiki", "leer"));
+        texts = view.texts();
+        assertThat(texts).containsSubsequence("Spaces", "2 Spaces, davon 1 mit Inventur · 1 Quelle "
+                + SourcePropertiesView.NOT_LOADED, SourcePropertiesView.ALL_SOURCES, "leer",
+                "aktiv · " + SourcePropertiesView.NOT_LOADED);
+
         // Eine Meldung einer der Quellen liest neu; eine einzelne Quelle beendet die Gesamtsicht.
         int reads = actions.reads;
-        actions.changes.changed("archiv");
+        actions.changes.changed("leer");
         SwingUtilities.invokeAndWait(() -> { });
         assertThat(actions.reads).isGreaterThan(reads);
         view.source("wiki");
         assertThat(view.showsAll()).isFalse();
         assertThat(view.texts()).contains("Einstellungen").doesNotContain("archiv › CLUK");
+    }
+
+    /**
+     * Architekt 17.11.2026: Ohne abgeschlossenes Update heißt die Zeile „Seit Beginn der Aufzeichnung“; ist das offene
+     * Update die Erstbefüllung, entfällt sie (Erstladen ist keine Änderung, ADR 0030).
+     */
+    @Test
+    void withoutAFinishedUpdateTheOpenOneCountsSinceTheStartAndTheInitialFillNotAtAll() {
+        actions.openOnly.add("wiki");
+        view.source("wiki");
+        assertThat(view.texts()).containsSubsequence("Updates", "noch keines", SourcePropertiesView.SINCE_START,
+                "2 geänderte Seiten").doesNotContain("Seit dem letzten Update");
+
+        actions.initialOnly.add("wiki");
+        view.source(null);
+        view.source("wiki");
+        assertThat(view.texts()).contains("noch keines").doesNotContain(SourcePropertiesView.SINCE_START,
+                "Seit dem letzten Update");
     }
 
     @Test
@@ -271,10 +297,18 @@ class SourcePropertiesViewTest {
         int reads;
         int closed;
         int subscriptions;
+        /** Quellen ohne Space im Bestand. */
+        final Set<String> empty = new java.util.HashSet<>();
+        /** Quellen mit nur dem offenen Update, bzw. nur der offenen Erstbefüllung. */
+        final Set<String> openOnly = new java.util.HashSet<>();
+        final Set<String> initialOnly = new java.util.HashSet<>();
 
         @Override
         public List<SpaceSummary> spaces(String sourceId) {
             reads++;
+            if (empty.contains(sourceId)) {
+                return List.of();
+            }
             return List.of(
                     new SpaceSummary(sourceId, "DEV", new CacheGeneration("g0", CacheState.INCOMPLETE, null, null),
                             new HoldingCounts(20, 5, 1, 0)),
@@ -284,6 +318,14 @@ class SourcePropertiesViewTest {
 
         @Override
         public List<ChangeUpdate> updates(String sourceId) {
+            if (initialOnly.contains(sourceId)) {
+                return List.of(new ChangeUpdate(ChangeUpdate.OPEN, sourceId, SYNCED, null, null, true,
+                        Map.of(ChangeKind.NEW, 2), Map.of("CLUK", 2), 2, 0, 0, false));
+            }
+            if (openOnly.contains(sourceId)) {
+                return List.of(new ChangeUpdate(ChangeUpdate.OPEN, sourceId, SYNCED, null, null, false,
+                        Map.of(ChangeKind.NEW, 2), Map.of("CLUK", 2), 2, 0, 0, false));
+            }
             return List.of(
                     new ChangeUpdate(ChangeUpdate.OPEN, "wiki", SYNCED, null, null, false, Map.of(ChangeKind.NEW, 2),
                             Map.of("CLUK", 2), 2, 0, 0, false),

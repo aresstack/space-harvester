@@ -291,6 +291,14 @@ final class SourcePropertiesView extends JPanel {
         return !allIds.isEmpty();
     }
 
+    /** Die Quellen der Gesamtsicht, leer für eine einzelne oder keine. */
+    List<String> allIds() {
+        return allIds;
+    }
+
+    static final String NOT_LOADED = "noch nicht geladen";
+    static final String SINCE_START = "Seit Beginn der Aufzeichnung";
+
     private void unsubscribe() {
         holdings.close();
         changes.close();
@@ -414,7 +422,7 @@ final class SourcePropertiesView extends JPanel {
         note.setText(message == null ? "" : message);
         note.setVisible(message != null && !message.isBlank());
         if (found != null) {
-            fillFigures(found);
+            fillFigures(found, 0);
             fillSpaces(found.spaces(), Map.of());
             fillSettings(found);
         }
@@ -433,17 +441,24 @@ final class SourcePropertiesView extends JPanel {
         List<ChangeUpdate> allUpdates = new ArrayList<>();
         Map<String, String> titles = new java.util.HashMap<>();
         List<SourceType> types = List.of();
+        int notLoaded = 0;
         for (Map.Entry<String, Loaded> entry : loaded.entrySet()) {
             allSpaces.addAll(entry.getValue().spaces());
             allUpdates.addAll(entry.getValue().updates());
             titles.put(entry.getKey(), sourceTitle(entry.getKey()));
             types = entry.getValue().types();
+            if (entry.getValue().spaces().isEmpty()) {
+                notLoaded++;
+            }
         }
-        fillFigures(new Loaded(allSpaces, allUpdates, true, types));
+        fillFigures(new Loaded(allSpaces, allUpdates, true, types), notLoaded);
         fillSpaces(allSpaces, titles);
         for (Map.Entry<String, Loaded> entry : loaded.entrySet()) {
-            settingsFacts.add(titles.get(entry.getKey()), sourceLine(entry.getKey(), entry.getValue()),
-                    entry.getValue().enabled() ? Comic.INK : Comic.ORANGE, null, "ID " + entry.getKey());
+            // Eine Quelle ohne Space im Bestand ist nie geladen: Zusatz in Orange, wie beim Export (Architekt 17.11.).
+            boolean empty = entry.getValue().spaces().isEmpty();
+            settingsFacts.add(titles.get(entry.getKey()), sourceLine(entry.getKey(), entry.getValue())
+                    + (empty ? " · " + NOT_LOADED : ""),
+                    empty || !entry.getValue().enabled() ? Comic.ORANGE : Comic.INK, null, "ID " + entry.getKey());
         }
         finishShow(true, !allSpaces.isEmpty());
     }
@@ -493,7 +508,8 @@ final class SourcePropertiesView extends JPanel {
                 .findFirst().orElse(null);
     }
 
-    private void fillFigures(Loaded found) {
+    /** @param notLoaded in der Gesamtsicht die Quellen ohne Space im Bestand */
+    private void fillFigures(Loaded found, int notLoaded) {
         HoldingCounts total = HoldingCounts.ZERO;
         int inventoried = 0;
         Instant asOf = null;
@@ -505,9 +521,11 @@ final class SourcePropertiesView extends JPanel {
             }
         }
         int spaceCount = found.spaces().size();
-        figures.add("Spaces", spaceCount == 0 ? "noch keiner im Bestand"
+        String spacesText = spaceCount == 0 ? "noch keiner im Bestand"
                 : Texts.count(spaceCount, "Space", "Spaces") + (inventoried == spaceCount ? ""
-                : inventoried == 0 ? ", keiner mit Inventur" : ", davon " + inventoried + " mit Inventur"));
+                : inventoried == 0 ? ", keiner mit Inventur" : ", davon " + inventoried + " mit Inventur");
+        figures.add("Spaces", notLoaded == 0 ? spacesText : spacesText + " · "
+                + Texts.count(notLoaded, "Quelle", "Quellen") + " " + NOT_LOADED, notLoaded == 0 ? Comic.INK : Comic.ORANGE);
         figures.add("Seiten", String.valueOf(total.pages()));
         figures.add("Lokal", total.local() + " aktuell, " + total.outdated() + " veraltet",
                 total.outdated() > 0 ? Comic.ORANGE : Comic.INK, null, total.outdated() > 0 ? Texts.OUTDATED_WHY : null);
@@ -515,14 +533,17 @@ final class SourcePropertiesView extends JPanel {
         figures.add("Gesperrt", String.valueOf(total.locked()), total.locked() > 0 ? Comic.RED : Comic.INK);
         figures.add("Stand vom", asOf == null ? "keine Inventur" : when(asOf));
         List<ChangeUpdate> done = found.updates().stream().filter(update -> !update.open()).toList();
-        // In der Gesamtsicht je Quelle ein offenes Update: die geänderten Seiten zählen zusammen.
-        List<ChangeUpdate> open = found.updates().stream().filter(ChangeUpdate::open).toList();
+        // In der Gesamtsicht je Quelle ein offenes Update: die geänderten Seiten zählen zusammen. Die Erstbefüllung ist
+        // keine Änderung (ADR 0030) und zählt nicht; ohne abgeschlossenes Update zählt es seit Beginn der Aufzeichnung.
+        List<ChangeUpdate> open = found.updates().stream().filter(ChangeUpdate::open)
+                .filter(update -> !update.initial()).toList();
         figures.add("Updates", done.isEmpty() ? "noch keines" : String.valueOf(done.size()));
         done.stream().map(ChangeUpdate::to).filter(Objects::nonNull).max(Comparator.naturalOrder())
                 .ifPresent(last -> figures.add("Letztes Update", when(last)));
         if (!open.isEmpty()) {
-            figures.add("Seit dem letzten Update", Texts.count(open.stream().mapToInt(ChangeUpdate::pages).sum(),
-                    "geänderte Seite", "geänderte Seiten"));
+            figures.add(done.isEmpty() ? SINCE_START : "Seit dem letzten Update",
+                    Texts.count(open.stream().mapToInt(ChangeUpdate::pages).sum(), "geänderte Seite",
+                            "geänderte Seiten"));
         }
     }
 
