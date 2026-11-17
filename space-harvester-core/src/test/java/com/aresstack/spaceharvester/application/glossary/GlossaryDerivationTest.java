@@ -19,6 +19,7 @@ import com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Quali
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Role;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Voice;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.terms.RelationEvidence;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -223,7 +224,7 @@ class GlossaryDerivationTest {
         assertThat(antrag.evidence()).extracting(item -> item.pageId()).contains("1", "2");
         assertThat(antrag.classification()).isEqualTo(new GlossaryEntry.Classification(Category.UNKLAR,
                 GlossaryEntry.ClassifiedBy.RULE, null));
-        assertThat(antrag.definition()).as("erst mit dem Artikel-Merkmal").isNull();
+        assertThat(antrag.definition()).as("nur aus „ist ein“").isNull();
 
         GlossaryDerivation.Result all = GlossaryDerivation.of(pages(), () -> false);
         assertThat(GlossaryRuleProposals.classification(all.term("Prüfer"))).isEqualTo(
@@ -270,6 +271,63 @@ class GlossaryDerivationTest {
         assertThat(result.term("Bescheid").properties()).as("Zustandswechsel").isEmpty();
         assertThat(result.term("Amt").properties()).as("Merkmale unbestimmt").isEmpty();
         assertThat(result.terms()).allSatisfy(term -> assertThat(term.importance().asBearer()).isZero());
+    }
+
+    private static ParsedStatements.Features with(ParsedStatements.Article article) {
+        return new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE,
+                ParsedStatements.Temporality.GILT, article);
+    }
+
+    private static void role(PageBuilder page, String bearer, String noun, ParsedStatements.Article article) {
+        int sentence = page.sentence(40);
+        page.statement(sentence, noun, Voice.ACTIVE, Quality.PLAUSIBLE, null, with(article),
+                Set.of(ParsedStatements.Statement.STATE_ROLE_NOUN), sure(Role.BEARER, page.noun(sentence, bearer)));
+    }
+
+    @Test
+    void theArticleOfTheRoleNounGivesTheKindOfIsRelationAndTheDefinitionProposal() {
+        PageBuilder first = new PageBuilder("1");
+        role(first, "Prüfstelle", "Amt", ParsedStatements.Article.UNBESTIMMT);
+        role(first, "Prüfstelle", "Behörde", ParsedStatements.Article.UNBESTIMMT);
+        role(first, "Referent", "Ansprechpartner", ParsedStatements.Article.OHNE);
+        role(first, "Bewilligungsstelle", "Träger", ParsedStatements.Article.BESTIMMT);
+        role(first, "Darlehen", "Förderung", ParsedStatements.Article.KEIN);
+        role(first, "Kammer", "Partner", ParsedStatements.Article.SONSTIGER);
+        role(first, "Zuschuss", "Leistung", null);
+        PageBuilder second = new PageBuilder("2");
+        role(second, "Prüfstelle", "Behörde", ParsedStatements.Article.UNBESTIMMT);
+        List<KnowledgeGraph.AnalysedPage> pages = List.of(first.build(PageStatements.State.CURRENT),
+                second.build(PageStatements.State.CURRENT));
+
+        GlossaryDerivation.Result result = GlossaryDerivation.of(pages, () -> false);
+
+        assertThat(result.term("Prüfstelle").isA()).extracting(GlossaryDerivation.Use::lemma,
+                        GlossaryDerivation.Use::relation, GlossaryDerivation.Use::pages)
+                .containsExactlyInAnyOrder(tuple("Behörde", GlossaryDerivation.Relation.BESTIMMUNG, 2),
+                        tuple("Amt", GlossaryDerivation.Relation.BESTIMMUNG, 1));
+        assertThat(result.term("Referent").isA()).extracting(GlossaryDerivation.Use::relation)
+                .containsExactly(GlossaryDerivation.Relation.ROLLE);
+        assertThat(result.term("Bewilligungsstelle").isA()).extracting(GlossaryDerivation.Use::relation)
+                .containsExactly(GlossaryDerivation.Relation.GLEICHSETZUNG);
+        assertThat(result.term("Träger").instances()).extracting(GlossaryDerivation.Use::relation)
+                .containsExactly(GlossaryDerivation.Relation.GLEICHSETZUNG);
+        assertThat(result.term("Zuschuss").isA()).as("Analyse vor rules-13").extracting(
+                GlossaryDerivation.Use::relation).containsExactly(GlossaryDerivation.Relation.UNBEKANNT);
+        assertThat(result.term("Darlehen").isA()).as("kein").isEmpty();
+        assertThat(result.term("Kammer").isA()).as("anderer Begleiter").isEmpty();
+        assertThat(result.term("Förderung")).isNull();
+        assertThat(result.notPresent()).isEqualTo(2);
+
+        GlossaryRuleProposals.Batch batch = GlossaryRuleProposals.of(pages, 500, () -> false);
+        Glossary.Proposal pruefstelle = batch.proposals().stream().filter(p -> p.term().equals("Prüfstelle"))
+                .findFirst().orElseThrow();
+        assertThat(pruefstelle.definition()).as("BESTIMMUNG mit den meisten Seiten")
+                .isEqualTo(new RelationEvidence("wiki", "1", 41, 81, "sha256:" + "a".repeat(64)));
+        assertThat(batch.proposals()).filteredOn(p -> !p.term().equals("Prüfstelle"))
+                .as("nur BESTIMMUNG, nie Rolle, Gleichsetzung oder unbekannt").allSatisfy(
+                        p -> assertThat(p.definition()).isNull());
+        assertThat(batch.proposals()).extracting(Glossary.Proposal::term).as("Gleichsetzung führt nichts zusammen")
+                .contains("Bewilligungsstelle", "Träger");
     }
 
     @Test
