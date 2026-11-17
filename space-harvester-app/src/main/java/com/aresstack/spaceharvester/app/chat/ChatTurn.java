@@ -4,6 +4,8 @@ import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiChatException;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.holdings.HoldingState;
+import com.aresstack.spaceharvester.application.holdings.PageHolding;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.passages.PagePassages;
 import com.aresstack.spaceharvester.application.passages.PassageLookup;
@@ -70,6 +72,8 @@ public final class ChatTurn {
     private final List<ChatRecord.Message> history;
     private final String question;
     private final PageSelection scope;
+    /** Der gewählte Bereich in Worten für die Systemnachricht; {@code null} ohne Auswahl. */
+    private final String area;
     private final Listener listener;
     private final Executor ui;
     private final StringBuilder received = new StringBuilder();
@@ -79,8 +83,8 @@ public final class ChatTurn {
     private volatile ProgressiveSearch search;
 
     public ChatTurn(Workspace workspace, AiChat port, String model, String effort,
-                    List<ChatRecord.Message> history, String question, PageSelection scope, Listener listener,
-                    Executor ui) {
+                    List<ChatRecord.Message> history, String question, PageSelection scope, String area,
+                    Listener listener, Executor ui) {
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.port = Objects.requireNonNull(port, "port");
         this.model = Objects.requireNonNull(model, "model");
@@ -88,6 +92,7 @@ public final class ChatTurn {
         this.history = List.copyOf(history);
         this.question = Objects.requireNonNull(question, "question");
         this.scope = scope;
+        this.area = area;
         this.listener = Objects.requireNonNull(listener, "listener");
         this.ui = Objects.requireNonNull(ui, "ui");
     }
@@ -127,8 +132,7 @@ public final class ChatTurn {
         ChatKnowledge.Context chosen = context;
         onUi(() -> listener.context(chosen));
         List<AiChat.Message> messages = new ArrayList<>();
-        messages.add(AiChat.Message.system(context.isEmpty() ? ChatKnowledge.SYSTEM_PROMPT
-                : ChatKnowledge.SYSTEM_PROMPT + "\n\n" + context.text()));
+        messages.add(AiChat.Message.system(ChatKnowledge.systemMessage(area, context)));
         for (ChatRecord.Message message : history) {
             if (message.text().isBlank()) {
                 continue;
@@ -182,7 +186,67 @@ public final class ChatTurn {
             return ChatKnowledge.Context.EMPTY;
         }
         List<ChatKnowledge.Excerpt> excerpts = scope.size() <= WHOLE_PAGES ? wholePages() : searched();
+        if (excerpts.isEmpty()) {
+            // Überblicksfragen („Worum geht es hier?“) treffen kein Schlagwort: dann die Startseiten des Bereichs.
+            excerpts = overview();
+        }
         return ChatKnowledge.assemble(excerpts);
+    }
+
+    /** Höchstens so viele Titel im Überblick über den Bereich. */
+    static final int OVERVIEW_TITLES = 40;
+
+    /**
+     * Der Überblick über den Bereich, wenn die Suche nichts fand: die Startseiten (Seiten der Auswahl, deren Eltern
+     * nicht dazugehören), die größten Teilbäume zuerst, als Titelliste und mit dem Text der ersten Startseiten.
+     */
+    private List<ChatKnowledge.Excerpt> overview() {
+        List<Root> roots = new ArrayList<>();
+        for (var space : scope.spaces()) {
+            Map<String, PageHolding> pages;
+            try {
+                pages = workspace.holdings(space.sourceId(), space.spaceKey()).pages();
+            } catch (RuntimeException gone) {
+                continue;
+            }
+            for (PageHolding page : pages.values()) {
+                boolean stored = page.state() == HoldingState.LOCAL || page.state() == HoldingState.OUTDATED;
+                boolean root = page.parentPageId() == null || !scope.contains(space.sourceId(), page.parentPageId());
+                if (stored && root && scope.contains(space.sourceId(), page.pageId())) {
+                    roots.add(new Root(space.sourceId(), page.pageId(), page.subtree().pages()));
+                }
+            }
+        }
+        roots.sort((a, b) -> Integer.compare(b.size(), a.size()));
+        List<ChatKnowledge.Excerpt> excerpts = new ArrayList<>();
+        StringBuilder titles = new StringBuilder();
+        int listed = 0;
+        for (Root root : roots) {
+            ChatKnowledge.Excerpt excerpt = page(root.sourceId(), root.pageId(), null, ChatKnowledge.MAX_HIT_CHARS);
+            if (excerpt == null) {
+                continue;
+            }
+            if (listed < OVERVIEW_TITLES) {
+                titles.append("- ").append(excerpt.title() == null ? root.pageId() : excerpt.title());
+                if (root.size() > 1) {
+                    titles.append(" (").append(root.size()).append(" Seiten)");
+                }
+                titles.append('\n');
+                listed++;
+            }
+            if (excerpts.size() < ChatKnowledge.MAX_SOURCES - 1) {
+                excerpts.add(excerpt);
+            }
+        }
+        if (titles.length() > 0) {
+            String sourceId = roots.get(0).sourceId();
+            excerpts.add(0, new ChatKnowledge.Excerpt("Überblick: Startseiten des gewählten Bereichs ("
+                    + scope.size() + " Seiten)", sourceId, null, titles.toString()));
+        }
+        return excerpts;
+    }
+
+    private record Root(String sourceId, String pageId, int size) {
     }
 
     private List<ChatKnowledge.Excerpt> wholePages() {

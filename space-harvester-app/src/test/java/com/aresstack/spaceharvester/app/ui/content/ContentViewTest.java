@@ -136,7 +136,10 @@ class ContentViewTest {
             titleLabel.setText("Sehr langer Titel ".repeat(40));
             heading.setSize(300, heading.getPreferredSize().height);
             heading.doLayout();
-            return heading.getComponentCount() == 1 && titleLabel.getWidth() == 300;
+            // Neben der Überschrift liegt nur noch der (unsichtbare) Chat-Kopf; sichtbar ist allein die Überschrift.
+            long visible = java.util.Arrays.stream(heading.getComponents()).filter(java.awt.Component::isVisible)
+                    .count();
+            return visible == 1 && titleLabel.isVisible() && titleLabel.getWidth() == 300;
         })).isTrue();
         // Eine Kopfzeile (Angelo, 16.11.2026): Überschrift, Stern und das Dreieck stehen in der Zeile der
         // Bereichsanzeige; „Lesezeichen kopieren“ und „Im Browser öffnen“ liegen im Menü am Dreieck.
@@ -419,6 +422,16 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(chat::isVisible)).isTrue();
+        // Kopfzeile im Reiter Chat (Angelo, 17.11.2026): mittig „Chat: ‹Name› ▾“ statt der Seitenüberschrift, rechts
+        // Neuer Chat und Chat löschen als Symbole neben dem Stern; Löschen erst bei einem gespeicherten Chat.
+        assertThat(onEdt(() -> chat.header().isVisible() && chat.header().getParent() == detail.titleLabel().getParent()
+                && !detail.titleLabel().isVisible() && chat.headerActions().isVisible()
+                && javax.swing.SwingUtilities.isDescendingFrom(chat.headerActions(),
+                        detail.starButton().getParent()))).isTrue();
+        List<String> actions = onEdt(() -> find((java.awt.Container) chat.headerActions(),
+                javax.swing.AbstractButton.class).stream()
+                .map(button -> button.getAccessibleContext().getAccessibleName() + ":" + button.isEnabled()).toList());
+        assertThat(actions).containsExactly(ChatPanel.NEW_CHAT + ":true", ChatPanel.DELETE + ":false");
         // Den Text zeigt der Chat schon vor dem Auflösen der Auswahl; Senden geht erst danach.
         await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
         // Senden ohne Chat-Modell: nichts geht ab, die Statuszeile sagt, was fehlt; Text und Anhang bleiben stehen.
@@ -451,6 +464,9 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Text");
         assertThat(onEdt(() -> detail.tabs().button("Text").isSelected())).isTrue();
+        // In jedem anderen Reiter steht die Seitenüberschrift wieder, die Chat-Symbole sind weg.
+        assertThat(onEdt(() -> detail.titleLabel().isVisible() && !chat.header().isVisible()
+                && !chat.headerActions().isVisible())).isTrue();
         onEdt(() -> {
             detail.tabs().select("Leseansicht");
             return null;
@@ -652,6 +668,19 @@ class ContentViewTest {
 
     private static boolean shown(PageDetailPanel detail, String pageId) {
         return detail.shownPage() != null && pageId.equals(detail.shownPage().header().metadata().pageId());
+    }
+
+    private static <T> List<T> find(java.awt.Container container, Class<T> type) {
+        List<T> found = new java.util.ArrayList<>();
+        for (java.awt.Component component : container.getComponents()) {
+            if (type.isInstance(component)) {
+                found.add(type.cast(component));
+            }
+            if (component instanceof java.awt.Container inner) {
+                found.addAll(find(inner, type));
+            }
+        }
+        return found;
     }
 
     private static String labelText(java.awt.Container container) {

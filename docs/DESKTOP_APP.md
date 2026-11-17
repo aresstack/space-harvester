@@ -310,10 +310,13 @@ Core selbst.
 - **Chat** (Angelo, 13. und 16.11.2026, `ChatPanel`, Paket `app.chat`) nach `ChatShellPanel`, `ChatComposerPanel`,
   `ChatServiceBinding` und `ChatHistoryBinding` des Enterprise AI Client im Design von Space Harvester; der Chat lebt
   nur in der App (ADR 0012), der Core gibt nur den Chat-Port des KI-Dienstes (`Workspace.aiChat`, eigene SPI `AiChat`, streamend über den
-  unveränderten `OpenAiCompatibleChatAdapter`, Route, TLS und Frist wie alle anderen Aufrufe). Kopfzeile links
-  **Chat: ‹Name›** mit dem durchsichtigen Pfeil, der die Chats dieses Bereichs anbietet (zuletzt geänderte zuerst, der
-  aktuelle mit Haken), rechts **Neuer Chat**; Rechtsklick auf den Namen: **Umbenennen** an Ort und Stelle (Enter
-  übernimmt, Esc verwirft, leer heißt wieder die Kennung) und **Chat löschen** („Diesen Chat wirklich löschen?“, Ja/Nein).
+  unveränderten `OpenAiCompatibleChatAdapter`, Route, TLS und Frist wie alle anderen Aufrufe). Der Reiter hat keine
+  eigene Kopfzeile mehr (Angelo, 17.11.2026): In der Zeile der Bereichsanzeige steht mittig statt der Seitenüberschrift
+  **Chat: ‹Name›** (mit „…“ gekürzt, wenn der Platz nicht reicht) mit dem durchsichtigen Pfeil, der die Chats dieses
+  Bereichs anbietet (zuletzt geänderte zuerst, der aktuelle mit Haken); rechts neben Stern und Dreieck die Symbole
+  **Neuer Chat** (Plus) und **Chat löschen** (Papierkorb, nur bei einem gespeicherten Chat und nicht während einer
+  Antwort; „Diesen Chat wirklich löschen?“, Ja/Nein), nur im Reiter Chat sichtbar. Rechtsklick auf den Namen:
+  **Umbenennen** an Ort und Stelle (Enter übernimmt, Esc verwirft, leer heißt wieder die Kennung) und **Chat löschen**.
   Chats sind keine globale Liste: Sie gehören zum Bereich, der links gewählt ist (Quelle, Space oder Seite samt
   Unterseiten, `ChatNode`), und liegen je Bereich im Datenordner unter `chats/<Quelle>/<Space>/<Seite>/<UUID>.json`
   (`ChatStore`, atomar geschrieben, leere Chats ohne Datei; Kennungen mit Sonderzeichen bekommen einen kurzen Hash).
@@ -338,7 +341,11 @@ Core selbst.
   gewählte Seiten gehen ganz mit, sonst sucht die progressive Suche des Core, ADR 0017, nur in den gewählten Seiten
   und die besten acht Treffer kommen als Absatz samt Nachbarn oder Lesetext-Auszug mit; Kontextblock wie
   `PromptContextAssembler` des EAC mit nummerierten Auszügen, Quelle, Ort und dem Hinweis, dass Auszüge Daten sind;
-  24 000 Zeichen), dann der Stream des Chat-Modells in die Antwortblase, der Verlauf ohne abgebrochene Antworten;
+  24 000 Zeichen; die Systemnachricht nennt dem Modell immer den gewählten Bereich wie die Zeile „Wissen:“ und
+  verbietet ihm, nach Links oder Dateien zu fragen; findet die Suche keinen Auszug, etwa bei „Worum geht es hier?“,
+  bekommt das Modell die Startseiten des Bereichs als Überblick, eine Titelliste der größten Teilbäume und den Text
+  der ersten Startseiten, Angelo 17.11.2026), dann der Stream des Chat-Modells in die Antwortblase, der Verlauf ohne
+  abgebrochene Antworten;
   der Knopf heißt solange **Stopp**, die Statuszeile „Wissen wird gesucht …“ und „Antwort wird geschrieben · n
   Auszüge aus dem Bestand“. Fehler stehen lesbar in der Blase (Art, Status, technische Ursache) und werden nicht
   gespeichert; ein Abbruch behält den Teiltext mit „Abgebrochen“. Ohne Laufzeit oder Chat-Modell sagt die Statuszeile

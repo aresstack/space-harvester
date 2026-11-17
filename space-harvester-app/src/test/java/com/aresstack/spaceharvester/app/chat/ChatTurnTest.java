@@ -78,7 +78,7 @@ class ChatTurnTest {
         List<ChatRecord.Message> history = List.of(ChatRecord.Message.user("Hallo", 1),
                 ChatRecord.Message.assistant("abgebrochen", true, 2), ChatRecord.Message.assistant("Hi", false, 3));
         ChatTurn turn = new ChatTurn(workspace, port, "modell", "low", history, "Was hat jedes Datenprodukt?", scope,
-                events, Runnable::run);
+                "Handbuch · alle Spaces · 1 Seite", events, Runnable::run);
         turn.start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
 
@@ -91,7 +91,8 @@ class ChatTurnTest {
         assertThat(request.reasoningEffort()).isEqualTo("low");
         List<AiChat.Message> messages = request.messages();
         assertThat(messages.get(0).text()).startsWith(ChatKnowledge.SYSTEM_PROMPT)
-                .contains("[1] ").contains("Berechtigungsmanagement");
+                .contains("Gewählter Bereich: Handbuch · alle Spaces · 1 Seite")
+                .contains("[1] ").contains("Berechtigungsmanagement").doesNotContain(ChatKnowledge.NO_CONTEXT);
         assertThat(messages).extracting(AiChat.Message::text)
                 .containsSubsequence("Hallo", "Hi", "Was hat jedes Datenprodukt?").doesNotContain("abgebrochen");
     }
@@ -109,13 +110,59 @@ class ChatTurnTest {
         FakeAiChat port = new FakeAiChat(List.of(),
                 new AiChatException(AiChatException.Kind.TRANSPORT, 503, "HTTP 503", null));
         Events events = new Events();
-        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", null, events, Runnable::run).start();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", null, null, events, Runnable::run).start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(events.context.isEmpty()).isTrue();
-        assertThat(port.lastRequest.messages().get(0).text()).isEqualTo(ChatKnowledge.SYSTEM_PROMPT);
+        assertThat(port.lastRequest.messages().get(0).text()).startsWith(ChatKnowledge.SYSTEM_PROMPT)
+                .endsWith(ChatKnowledge.NO_CONTEXT).doesNotContain("Gewählter Bereich");
         assertThat(port.lastRequest.reasoningEffort()).isNull();
         assertThat(events.failed).startsWith("Der KI-Dienst ist nicht erreichbar. (Status 503)")
                 .contains("Technische Ursache: HTTP 503");
+    }
+
+    @Test
+    void anOverviewQuestionWithoutHitsGetsTheStartPagesOfTheArea() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        for (int i = 1; i <= 5; i++) {
+            Files.writeString(files.resolve("kapitel-" + i + ".md"), "# Kapitel " + i + "\n\nInhalt des Kapitels "
+                    + i + " über das Datenhaus.\n");
+        }
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        Workspace workspace = context.runtime().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        workspace.startSync("handbuch", space, SyncMode.FULL);
+        PageSelection scope = await(() -> {
+            PageSelection resolved = workspace.resolveSelection(Selection.of(Selection.Root.space("handbuch", space)));
+            return resolved.counts().stored() >= 5 ? resolved : null;
+        });
+
+        FakeAiChat port = new FakeAiChat(List.of("Ein Handbuch."), null);
+        Events events = new Events();
+        // Mehr als drei Seiten: die Suche läuft, findet zu „xyzzy“ aber nichts; dann kommt der Überblick.
+        new ChatTurn(workspace, port, "modell", null, List.of(), "xyzzy?", scope, "Space " + space, events,
+                Runnable::run).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+        assertThat(events.context.accepted()).isNotEmpty();
+        assertThat(events.context.accepted().get(0).title()).startsWith("Überblick: Startseiten");
+        assertThat(events.context.accepted().get(0).text()).contains("kapitel-1.md").contains("kapitel-5.md");
+        String system = port.lastRequest.messages().get(0).text();
+        assertThat(system).contains("Gewählter Bereich: Space " + space).contains("Inhalt des Kapitels")
+                .doesNotContain(ChatKnowledge.NO_CONTEXT);
     }
 
     /** Chat-Modell für Tests (wie {@code FakeChatCompletionPort} im Client): Deltas oder ein Fehler, Anfrage gemerkt. */
