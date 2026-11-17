@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.standing.BearerStates;
 import com.aresstack.spaceharvester.application.standing.PageMark;
 import com.aresstack.spaceharvester.application.standing.PageStanding;
+import com.aresstack.spaceharvester.application.standing.SentenceText;
 import com.aresstack.spaceharvester.application.standing.Standing;
 import com.aresstack.spaceharvester.application.standing.StandingBasis;
 import com.aresstack.spaceharvester.application.standing.StandingDecision;
@@ -186,6 +187,68 @@ class StandingTabTest {
     }
 
     @Test
+    void theOriginalSentenceIsShownWithTheMarkBeforeItAndTheJumpMarksTheWholeSentence() {
+        Fixture fixture = new Fixture(view());
+        fixture.sentences.put("wiki/1@h#s1.v1", new SentenceText("Der Sachbearbeiter prüft\n den Antrag.", null, 20,
+                56, 39, 44, false));
+        StandingTab tab = fixture.shownTab();
+        int line = indexOf(tab, "Der Sachbearbeiter prüft den Antrag.");
+
+        assertThat(fixture.sentenceCalls).as("einmal für den sichtbaren Ausschnitt").containsExactly(5);
+        tab.click(line);
+        assertThat(tab.popup().bodyText()).contains("Originalsatz: „Der Sachbearbeiter prüft den Antrag.“");
+        tab.doubleClick(line);
+        assertThat(fixture.jumps).containsExactly(new StandingTab.Target("wiki", "1", 20, 56));
+    }
+
+    @Test
+    void theSameSearchGivesTheSameLinesBeforeAndAfterScrolling() {
+        // „Antrag“ steht nur im Originalsatz und als Beteiligter in der Sachlage: gefunden über die Sachlage, die an
+        // jedem Eintrag liegt, nie über den nachgeladenen Satz.
+        StatusQuoView base = view();
+        StatusQuoEntry first = base.entries().get(0);
+        StatusQuoEntry withObject = new StatusQuoEntry(first.page(), first.statement(), first.kind(), first.subject(),
+                first.subjectKey(), new com.aresstack.spaceharvester.application.standing.Situation(first.kind(),
+                "sachbearbeiter", "prüfen", List.of(new com.aresstack.spaceharvester.application.standing.Situation
+                .Participant(ParsedStatements.Role.AFFECTED_OBJECT, null, "antrag"))), first.quality(),
+                first.standing(), null, false);
+        List<StatusQuoEntry> entries = new ArrayList<>(base.entries());
+        entries.set(0, withObject);
+        StatusQuoView view = new StatusQuoView(entries, base.states(), base.pages(), base.counts(),
+                base.certainCounts(), List.of());
+        Fixture before = new Fixture(view);
+        StandingTab unscrolled = before.tab;
+        unscrolled.searchField().setText("nachweis");
+        unscrolled.shown(true);
+        unscrolled.selection(SPACE);
+        assertThat(lines(unscrolled)).isEmpty();
+        unscrolled.searchField().setText("antrag");
+        List<String> found = lines(unscrolled).stream().map(entry -> entry.statement().id()).toList();
+
+        Fixture after = new Fixture(view);
+        after.sentences.put("wiki/1@h#s1.v1", new SentenceText("Der Sachbearbeiter prüft den Antrag und den Nachweis.",
+                null, 0, 50, 19, 24, false));
+        StandingTab scrolled = after.shownTab();
+        scrolled.searchField().setText("nachweis");
+        assertThat(lines(scrolled)).as("nur im Originalsatz: nicht gesucht").isEmpty();
+        scrolled.searchField().setText("antrag");
+
+        assertThat(lines(scrolled).stream().map(entry -> entry.statement().id()).toList()).isEqualTo(found)
+                .containsExactly("wiki/1@h#s1.v1", "wiki/2@h#s1.v3");
+    }
+
+    @Test
+    void withoutAFittingTextTheLineKeepsItsReplacementAndSaysWhy() {
+        StatusQuoEntry current = view().entries().get(0);
+        SentenceText stale = new SentenceText(null, null, -1, -1, 4, 10, true);
+
+        assertThat(StandingTab.text(current, stale)).isEqualTo("Der Sachbearbeiter prüft");
+        assertThat(StandingTab.details(current, stale))
+                .contains("Originalsatz: nicht mehr ermittelbar, der Text der Seite hat sich geändert.");
+        assertThat(StandingTab.text(current, null)).isEqualTo("Der Sachbearbeiter prüft");
+    }
+
+    @Test
     void theCountChipAlwaysShowsItsWordAndSaysWhatAClickDoes() {
         CountChip chip = new CountChip("gilt", Comic.STANDING_CURRENT);
         chip.count(12);
@@ -205,6 +268,8 @@ class StandingTabTest {
         final AtomicReference<Runnable> standingListener = new AtomicReference<>();
         final AtomicReference<String> status = new AtomicReference<>();
         final List<StandingTab.Target> jumps = new ArrayList<>();
+        final Map<String, SentenceText> sentences = new java.util.HashMap<>();
+        final List<Integer> sentenceCalls = new ArrayList<>();
         final StandingTab tab;
 
         Fixture(StatusQuoView view) {
@@ -225,6 +290,19 @@ class StandingTabTest {
                 @Override
                 public Subscription subscribeJobs(JobListener listener) {
                     return Subscription.NONE;
+                }
+
+                @Override
+                public Map<String, SentenceText> sentences(java.util.Collection<StatusQuoEntry> entries) {
+                    sentenceCalls.add(entries.size());
+                    Map<String, SentenceText> found = new java.util.HashMap<>();
+                    for (StatusQuoEntry entry : entries) {
+                        SentenceText text = Fixture.this.sentences.get(entry.statement().id());
+                        if (text != null) {
+                            found.put(entry.statement().id(), text);
+                        }
+                    }
+                    return found;
                 }
             };
             tab = new StandingTab(() -> actions, new StandingTab.Runner() {
@@ -272,7 +350,8 @@ class StandingTabTest {
     private static int indexOf(StandingTab tab, String text) {
         List<StandingTab.Row> rows = tab.rows();
         for (int i = 0; i < rows.size(); i++) {
-            if (rows.get(i) instanceof StandingTab.Line line && StandingTab.text(line.entry()).equals(text)) {
+            if (rows.get(i) instanceof StandingTab.Line line && (StandingTab.text(line.entry()).equals(text)
+                    || line.entry().statement().id().equals("wiki/1@h#s1.v1") && text.startsWith("Der Sachbearbeiter prüft "))) {
                 return i;
             }
         }
