@@ -80,6 +80,45 @@ class PageNavigationTest {
     }
 
     @Test
+    void cachedChildrenFollowTheOrderTheSourceDeliveredLastAndPutUnknownChildrenBehindByTitle() {
+        com.aresstack.spaceharvester.application.query.InMemoryPageCache cache =
+                new com.aresstack.spaceharvester.application.query.InMemoryPageCache();
+        cache.publish("wiki", "DEV", com.aresstack.spaceharvester.application.query.InMemoryPageCache.confirmed("g1"),
+                List.of(com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "100", null),
+                        com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "101", "100"),
+                        com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "102", "100"),
+                        com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "105", "100"),
+                        com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "106", "100")));
+        PageNavigation live = new PageNavigation(catalog, cache, new AccessGuard(policy));
+
+        // Ohne bekannte Reihenfolge nach Titel („Seite 101“ …).
+        assertThat(live.cachedChildren(CLIENT, "wiki", null, "100").pages()).extracting(PageNode::pageId)
+                .containsExactly("101", "102", "105", "106");
+
+        // Erster Stapel der Quelle: 102, (103 gesperrt), 101; die übrigen nach Titel dahinter.
+        live.children(CLIENT, "wiki", null, "100", null);
+        assertThat(live.cachedChildren(CLIENT, "wiki", null, "100").pages()).extracting(PageNode::pageId)
+                .containsExactly("102", "101", "105", "106");
+        assertThat(cache.childOrder("wiki", null, "100")).containsExactly("102", "103", "101");
+
+        // Zweiter und letzter Stapel hängt an; 106 kennt die Quelle nicht mehr und kommt nach Titel dahinter.
+        live.children(CLIENT, "wiki", null, "100", "weiter");
+        assertThat(cache.childOrder("wiki", null, "100")).containsExactly("102", "103", "101", "105");
+        assertThat(live.cachedChildren(CLIENT, "wiki", null, "100").pages()).extracting(PageNode::pageId)
+                .containsExactly("102", "101", "105", "106");
+
+        // Dieselbe Reihenfolge erneut: kein neuer Schreibzugriff.
+        int writes = cache.childOrderWrites;
+        live.children(CLIENT, "wiki", null, "100", null);
+        live.children(CLIENT, "wiki", null, "100", "weiter");
+        assertThat(cache.childOrderWrites).isEqualTo(writes);
+
+        // Wurzelseiten je Space.
+        live.children(CLIENT, "wiki", "DEV", null, null);
+        assertThat(cache.childOrder("wiki", "DEV", null)).containsExactly("100");
+    }
+
+    @Test
     void childrenKeepTheOrderOfTheSourceAndLeaveOutLockedPagesWithoutTrace() {
         PageNavigation.Children children = navigation.children(CLIENT, "wiki", null, "100", null);
 
@@ -198,6 +237,9 @@ class PageNavigationTest {
         public ChildPages children(String partitionKey, String parentPageId, String cursor) {
             if (parentPageId == null) {
                 return new ChildPages(partitionKey, List.of(new PageNode("100", "Start", partitionKey, true)), null);
+            }
+            if ("weiter".equals(cursor)) {
+                return new ChildPages("DEV", List.of(new PageNode("105", "Anhang", "DEV", false)), null);
             }
             return new ChildPages("DEV", List.of(new PageNode("102", "Zweite", "DEV", true),
                     new PageNode("103", "Gesperrt", "DEV", false), new PageNode("101", "Erste", "DEV", false)),

@@ -42,6 +42,7 @@ public final class InMemoryPageCache implements PageCacheReader {
     /** Leert den Cache, etwa zwischen Tests mit gemeinsamem Spring-Kontext. */
     public void clear() {
         spaces.clear();
+        childOrders.clear();
     }
 
     /** Neue Kopfdaten ohne neue Payload, wie sie die Synchronisierung schreibt; auch für Seiten ohne Payload. */
@@ -101,6 +102,25 @@ public final class InMemoryPageCache implements PageCacheReader {
     @Override
     public boolean hasChildren(String sourceId, String pageId) {
         return !children(sourceId, null, pageId, 1).isEmpty();
+    }
+
+    private final Map<String, List<String>> childOrders = new ConcurrentHashMap<>();
+    /** Wie oft eine Reihenfolge der Kinder geschrieben wurde. */
+    public int childOrderWrites;
+
+    @Override
+    public List<String> childOrder(String sourceId, String spaceKey, String parentPageId) {
+        return childOrders.getOrDefault(childOrderKey(sourceId, spaceKey, parentPageId), List.of());
+    }
+
+    @Override
+    public void rememberChildOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds) {
+        childOrderWrites++;
+        childOrders.put(childOrderKey(sourceId, spaceKey, parentPageId), List.copyOf(pageIds));
+    }
+
+    private static String childOrderKey(String sourceId, String spaceKey, String parentPageId) {
+        return sourceId + "\n" + (parentPageId == null ? "space:" + spaceKey : "page:" + parentPageId);
     }
 
     // Testdaten

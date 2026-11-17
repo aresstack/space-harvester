@@ -73,20 +73,42 @@ public final class Dialogs {
      * @return {@code null} ohne Bestätigung, sonst ob das Feld angekreuzt war
      */
     public static Boolean confirm(Component parent, String title, String text, String option, String action) {
-        Boolean[] result = {null};
+        boolean[] chosen = confirm(parent, title, text, List.of(option), action);
+        return chosen == null ? null : chosen[0];
+    }
+
+    /**
+     * Wie {@link #confirm} mit mehreren Ankreuzfeldern {@code options} (anfangs leer) untereinander unter dem Text.
+     *
+     * @return {@code null} ohne Bestätigung, sonst je Feld, ob es angekreuzt war
+     */
+    public static boolean[] confirm(Component parent, String title, String text, List<String> options,
+                                    String action) {
+        boolean[][] result = {null};
         JDialog dialog = dialog(parent, title);
-        javax.swing.JCheckBox box = Comic.checkBox(option);
+        List<javax.swing.JCheckBox> boxes = options.stream().map(Comic::checkBox).toList();
         ComposerButton yes = Comic.danger(action, null);
         ComposerButton no = Comic.button("Abbrechen", null);
         yes.addActionListener(e -> {
-            result[0] = box.isSelected();
+            boolean[] chosen = new boolean[boxes.size()];
+            for (int i = 0; i < chosen.length; i++) {
+                chosen[i] = boxes.get(i).isSelected();
+            }
+            result[0] = chosen;
             dialog.dispose();
         });
         no.addActionListener(e -> dialog.dispose());
+        JPanel column = new JPanel();
+        column.setOpaque(false);
+        column.setLayout(new javax.swing.BoxLayout(column, javax.swing.BoxLayout.Y_AXIS));
+        for (javax.swing.JCheckBox box : boxes) {
+            box.setAlignmentX(Component.LEFT_ALIGNMENT);
+            column.add(box);
+        }
         JPanel body = new JPanel(new BorderLayout(0, 10));
         body.setOpaque(false);
         body.add(Comic.note(text), BorderLayout.CENTER);
-        body.add(box, BorderLayout.SOUTH);
+        body.add(column, BorderLayout.SOUTH);
         show(dialog, title, body, no, yes);
         return result[0];
     }

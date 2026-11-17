@@ -57,6 +57,19 @@ public final class Comic {
     public static final Color GREEN = ResearchUiPalette.WAVE_GREEN;
     public static final Color DARK = ResearchUiPalette.SECONDARY_SURFACE;
     public static final Color LINE = ResearchUiPalette.LIGHT_CONTROL_BORDER;
+    /** Fläche einer Meldungsplatte mit Hinweis (helles Gelb, Rand {@link #YELLOW}). */
+    public static final Color NOTICE = new Color(0xFFF6D5);
+    /** Markierung eines neuen Absatzes in der Leseansicht (wie bei Git grün). */
+    public static final Color CHANGE_ADDED = new Color(0xDFF5E1);
+    /** Markierung eines geänderten Absatzes in der Leseansicht (blau). */
+    public static final Color CHANGE_CHANGED = new Color(0xDCEBFB);
+    /** Markierung eines entfernten Absatzes in der Leseansicht (rot, durchgestrichen). */
+    public static final Color CHANGE_REMOVED = new Color(0xFADBD8);
+
+    /** Eine Farbe als CSS-Wert {@code #rrggbb}, etwa für HTML der Leseansicht. */
+    public static String css(Color color) {
+        return String.format("#%02X%02X%02X", color.getRed(), color.getGreen(), color.getBlue());
+    }
 
     private Comic() {
     }

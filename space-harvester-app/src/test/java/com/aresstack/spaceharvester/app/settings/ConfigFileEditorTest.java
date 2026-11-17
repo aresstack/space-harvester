@@ -587,6 +587,39 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theSimplificationStageGoesUnderStatementsSimplificationAndKeepsTheOtherKeys() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: where-needed\n"
+                + "      model: alt\n  jobs:\n    max-concurrent: 3\n");
+        var always = new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
+                com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 4,
+                "gemma4:12b");
+        editor.save(file, editor.withSimplification(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                always));
+        editor.save(file, editor.withSimplification(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                always));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("    simplification:\n      mode: always\n      parallel: 4\n"
+                + "      model: \"gemma4:12b\"\n", "max-concurrent: 3").doesNotContain("model: alt");
+        assertThat(text.indexOf("simplification:")).as("zweimal gespeichert, ein Block")
+                .isEqualTo(text.lastIndexOf("simplification:"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.simplification()).isEqualTo(always);
+        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        var plain = new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
+                com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.WHERE_NEEDED, 1,
+                null);
+        editor.save(file, editor.withSimplification(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                plain));
+        assertThat(Files.readString(file)).as("ohne eigenes Modell kein Schlüssel model").doesNotContain("model:");
+        assertThat(loader.load(file).simplification()).as("Block ohne statements neu angelegt").isEqualTo(plain);
+    }
+
+    @Test
     void retriesGoUnderJobsRetryAndKeepTheOtherJobLimits() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");

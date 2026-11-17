@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
+import com.aresstack.spaceharvester.app.ui.controls.MessagePlate;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.diagrams.VectorDiagram;
@@ -81,10 +82,15 @@ final class ReadingPane extends JPanel {
 
     private final JEditorPane pane = new JEditorPane();
     private final JLabel hint = Comic.muted(" ");
+    /** Hinweis oben, wenn die Quelle einen neueren Stand hat als der gezeigte aus dem Cache (Angelo, 17.11.2026). */
+    private final MessagePlate update = new MessagePlate();
+    /** Text des Links im Hinweis auf einen neueren Stand. */
+    static final String RELOAD = "Seite neu laden";
     /** Oberer Innenabstand der Ansicht ohne Wolkenbanner. */
     private static final int PADDING_TOP = 10;
     /** Die Ansicht mit den Inhaltswolken der Dokumentnavigation darüber, wie unter „Text“. */
-    private final NavigableDocumentPage page = new NavigableDocumentPage(Comic.scroll(pane), pane, PADDING_TOP);
+    private final javax.swing.JScrollPane scroll = Comic.scroll(pane);
+    private final NavigableDocumentPage page = new NavigableDocumentPage(scroll, pane, PADDING_TOP);
     /** Drehender Ring über dem Text, solange die Leseansicht lädt; statt eines Hinweistexts oben. */
     private final BusyOverlay overlay = new BusyOverlay(page);
     private String details = "";
@@ -130,9 +136,70 @@ final class ReadingPane extends JPanel {
         });
         overlay.setHighlight(Comic.BLUE);
         overlay.setVeilColor(Comic.SURFACE);
-        add(hint, BorderLayout.NORTH);
+        JPanel top = new JPanel();
+        top.setOpaque(false);
+        top.setLayout(new javax.swing.BoxLayout(top, javax.swing.BoxLayout.Y_AXIS));
+        update.setAlignmentX(LEFT_ALIGNMENT);
+        hint.setAlignmentX(LEFT_ALIGNMENT);
+        top.add(update);
+        top.add(hint);
+        add(top, BorderLayout.NORTH);
         add(overlay, BorderLayout.CENTER);
         clear(" ");
+    }
+
+    /**
+     * Der Satz über einen neueren Stand: „Es gibt N Updates seit Ihrem letzten Besuch –“, N aus den Versionsnummern
+     * (neu minus gezeigt); sind es keine Zahlen oder ist die Differenz nicht positiv, ohne Zahl.
+     */
+    static String updateSentence(String shownVersion, String freshVersion) {
+        long count = 0;
+        try {
+            count = Long.parseLong(freshVersion.trim()) - Long.parseLong(shownVersion.trim());
+        } catch (RuntimeException notNumbers) {
+            count = 0;
+        }
+        if (count == 1) {
+            return "Es gibt 1 Update seit Ihrem letzten Besuch –";
+        }
+        return "Es gibt " + (count > 1 ? count + " " : "") + "Updates seit Ihrem letzten Besuch –";
+    }
+
+    /**
+     * Zeigt oben den Hinweis auf einen neueren Stand (Meldungsplatte mit ✕); „Seite neu laden“ führt {@code reload} aus
+     * und blendet ihn aus.
+     */
+    void offerUpdate(String sentence, Runnable reload) {
+        update.show(sentence, RELOAD, java.util.Objects.requireNonNull(reload, "reload"));
+    }
+
+    private void hideUpdate() {
+        update.dismiss();
+    }
+
+    /** Für Tests: der Satz des Hinweises auf einen neueren Stand, leer ohne Hinweis. */
+    String updateOffer() {
+        return update.sentence();
+    }
+
+    /** Für Tests: die Meldungsplatte des Hinweises. */
+    MessagePlate updatePlate() {
+        return update;
+    }
+
+    /**
+     * Zeigt einen neueren Stand derselben Seite an derselben Rollposition (nach „Seite neu laden“): Die Ansicht springt
+     * nicht an den Anfang.
+     */
+    void showKeepingPosition(Prepared prepared) {
+        java.awt.Point position = scroll.getViewport().getViewPosition();
+        show(prepared);
+        javax.swing.SwingUtilities.invokeLater(() -> scroll.getViewport().setViewPosition(position));
+    }
+
+    /** Ein Klick auf „Seite neu laden“ (auch für Tests). */
+    void clickUpdate() {
+        update.clickAction();
     }
 
     /**
@@ -174,6 +241,7 @@ final class ReadingPane extends JPanel {
 
     /** Leert die Ansicht und zeigt {@code text} als Hinweis. */
     void clear(String text) {
+        hideUpdate();
         overlay.setBusy(false);
         originals = Map.of();
         vectors = Map.of();
@@ -210,6 +278,7 @@ final class ReadingPane extends JPanel {
      * Seitendetails (ⓘ); über dem Text nur, wenn etwas nicht darstellbar ist oder es keinen Text gibt.
      */
     void show(Prepared prepared) {
+        hideUpdate();
         overlay.setBusy(false);
         originals = prepared.originals();
         vectors = prepared.vectors();
@@ -252,6 +321,11 @@ final class ReadingPane extends JPanel {
     /** Vorbereitete Ansicht: HTML mit eigenen Bildadressen, die Bilder dazu und was fehlt. */
     record Prepared(String html, Map<String, Image> scaled, Map<String, BufferedImage> originals,
                     Map<String, VectorDiagram> vectors, int images, int missing, String note) {
+
+        /** Dieselbe Ansicht mit anderem HTML, etwa mit markierten Änderungen ({@link ReadingChanges}). */
+        Prepared withHtml(String changed) {
+            return new Prepared(changed, scaled, originals, vectors, images, missing, note);
+        }
     }
 
     /**

@@ -83,6 +83,73 @@ class StatementsTabTest {
     }
 
     @Test
+    void aStatementOfTheSimplificationStageShowsOriginFlagAndSimplifiedSentenceNextToTheOriginal() {
+        ParsedStatements result = analysed().analysis().result();
+        ParsedStatements.Statement original = result.statements().getFirst();
+        ParsedStatements.Statement staged = new ParsedStatements.Statement(original.id(), original.sentence(),
+                original.start(), original.end(), original.predicateText(), original.predicateLemma(),
+                original.voice(), original.clause(), original.core(), original.arguments(), original.findings(),
+                original.paragraph(), original.quality(), original.qualityReasons(), original.review(),
+                original.features(), ParsedStatements.Derivation.vorstufe(ParsedStatements.StageFlag.PLANNING,
+                        "Der Sachbearbeiter übermittelt den Beleg."));
+        Map<String, ParsedStatements.Mention> mentions = new java.util.LinkedHashMap<>();
+        result.mentions().forEach(mention -> mentions.put(mention.id(), mention));
+
+        List<String> body = StatementsTab.describe(staged, result, mentions, TEXT);
+
+        assertThat(body).containsSubsequence(
+                "Herkunft: Vorstufe „Sätze vereinfachen“ · Kennzeichen: Planung oder Absicht",
+                "Beleg (Originalsatz): „" + TEXT + "“",
+                "Vereinfachter Satz: „Der Sachbearbeiter übermittelt den Beleg.“");
+        assertThat(StatementsTab.describe(staged, result, mentions, null)).as("veraltet: ohne Beleg, mit Satz")
+                .contains("Vereinfachter Satz: „Der Sachbearbeiter übermittelt den Beleg.“")
+                .noneMatch(line -> line.startsWith("Beleg"));
+        assertThat(StatementsTab.describe(original, result, mentions, TEXT)).as("Original ohne Herkunftszeile")
+                .noneMatch(line -> line.startsWith("Herkunft") || line.startsWith("Vereinfachter Satz"));
+    }
+
+    @Test
+    void thePageSaysWhetherTheStageWasUsedAndWhyAWithdrawnOneIsStale() {
+        PageStatements plain = analysed();
+        assertThat(StatementsTab.hint(plain)).contains(", ohne Vorstufe. Grammatische Zuordnung");
+        PageStatements staged = new PageStatements(PageStatements.State.CURRENT, null,
+                plain.analysis().withStage("where-needed|gemma4:12b|prompt-1"));
+        assertThat(StatementsTab.hint(staged))
+                .contains(", mit Vorstufe „Sätze vereinfachen“ (nur wo nötig, gemma4:12b prompt-1). Grammatische");
+        assertThat(StatementsTab.stage("always|m|prompt-1")).startsWith("mit Vorstufe „Sätze vereinfachen“ (immer, ");
+        PageStatements withdrawn = new PageStatements(PageStatements.State.STALE, PageStatements.STAGE_WITHDRAWN,
+                plain.analysis().withStage(
+                        com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis.STAGE_WITHDRAWN));
+        assertThat(StatementsTab.hint(withdrawn)).startsWith(StatementsTab.STAGE_WITHDRAWN)
+                .contains("KI-Freigabe", "neu ohne Vorstufe rechnen");
+    }
+
+    @Test
+    void theStageRunsOnlyWhenTickedAndSaysWhyItCouldNot() {
+        List<String> status = new ArrayList<>();
+        tab.onStatus(status::add);
+        tab.page(page("1"), text());
+        runner.runAll();
+
+        tab.clickAnalyze();
+        runner.runAll();
+        assertThat(actions.simplified).as("ohne Haken keine Vorstufe").isZero();
+
+        tab.simplify(true);
+        tab.clickAnalyze();
+        runner.runAll();
+        assertThat(actions.simplified).isEqualTo(1);
+        assertThat(status.getLast()).doesNotContain("lief nicht");
+
+        actions.stageUnavailable = Optional.of("NOT_RELEASED");
+        tab.clickAnalyze();
+        runner.runAll();
+        assertThat(actions.simplified).isEqualTo(2);
+        assertThat(status.getLast()).endsWith(StatementsTab.SIMPLIFY_NOT_RELEASED);
+        assertThat(StatementsTab.stageNote("NO_MODEL")).isEqualTo(StatementsTab.SIMPLIFY_NO_MODEL);
+    }
+
+    @Test
     void aLateResultOfALeftPageIsDiscardedAndTheRunIsCancelled() {
         tab.page(page("1"), text());
         runner.runAll();
@@ -301,6 +368,19 @@ class StatementsTabTest {
         RuntimeException failure;
         int analyses;
         BooleanSupplier lastCancelled = () -> false;
+        int simplified;
+        Optional<String> stageUnavailable = Optional.empty();
+
+        @Override
+        public PageStatements analyzeSimplified(PageSnapshot page, BooleanSupplier cancelled) {
+            simplified++;
+            return analyzeStatements(page, cancelled);
+        }
+
+        @Override
+        public Optional<String> simplificationUnavailable(PageKey key) {
+            return stageUnavailable;
+        }
 
         @Override
         public PageStatements statements(PageSnapshot page) {

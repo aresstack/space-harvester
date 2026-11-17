@@ -84,8 +84,62 @@ public class PageNavigation {
             access.requireConcealed(caller, ResourceScope.page(sourceId, batch.partitionKey(), parentPageId),
                     AccessKind.METADATA);
         }
+        rememberOrder(sourceId, batch.partitionKey(), parentPageId, cursor, batch);
         return new Children(sourceId, batch.partitionKey(), parentPageId, visible(caller, sourceId, batch.pages()),
                 batch.nextCursor());
+    }
+
+    /** Höchstens so viele Knoten merkt sich die Navigation, deren Kinder die Quelle noch stapelweise liefert. */
+    static final int MAX_OPEN_LISTINGS = 256;
+
+    /** Je Knoten die Seiten-IDs der bisher gelieferten Stapel, bis der letzte Stapel da ist. */
+    private final Map<String, List<String>> listings = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Schreibt die Reihenfolge der Quelle für {@link #cachedChildren} fort: der erste Stapel beginnt sie neu, jeder
+     * weitere hängt an. Solange Stapel ausstehen, folgen die vorher bekannten, noch nicht gelieferten Kinder in ihrer
+     * alten Reihenfolge; mit dem letzten Stapel gilt genau das Gelieferte. Unveränderte Reihenfolgen schreibt sie nicht
+     * neu. Scheitert der Cache, bleibt es still: die Navigation selbst darf daran nicht scheitern.
+     */
+    private void rememberOrder(String sourceId, String spaceKey, String parentPageId, String cursor,
+                               HarvestSource.ChildPages batch) {
+        if (cache == null || parentPageId == null && spaceKey == null) {
+            return;
+        }
+        String node = sourceId + '\n' + (parentPageId == null ? "space:" + spaceKey : "page:" + parentPageId);
+        List<String> delivered = batch.pages().stream().map(PageNode::pageId).toList();
+        List<String> seen;
+        if (cursor == null) {
+            seen = new java.util.ArrayList<>(delivered);
+        } else {
+            List<String> before = listings.get(node);
+            if (before == null) {
+                return;
+            }
+            seen = new java.util.ArrayList<>(before);
+            delivered.stream().filter(pageId -> !seen.contains(pageId)).forEach(seen::add);
+        }
+        if (batch.nextCursor() == null) {
+            listings.remove(node);
+        } else {
+            if (listings.size() >= MAX_OPEN_LISTINGS) {
+                listings.clear();
+            }
+            listings.put(node, List.copyOf(seen));
+        }
+        try {
+            List<String> known = cache.childOrder(sourceId, spaceKey, parentPageId);
+            List<String> order = new java.util.ArrayList<>(seen);
+            if (batch.nextCursor() != null) {
+                Set<String> placed = new java.util.HashSet<>(seen);
+                known.stream().filter(pageId -> !placed.contains(pageId)).forEach(order::add);
+            }
+            if (!order.equals(known)) {
+                cache.rememberChildOrder(sourceId, spaceKey, parentPageId, order);
+            }
+        } catch (RuntimeException e) {
+            // Nur ein Hinweis für die Anzeige; ohne ihn ordnet cachedChildren nach Titel.
+        }
     }
 
     /** Höchstens so viele Kinder liefert {@link #cachedChildren} je Knoten. */
@@ -93,9 +147,10 @@ public class PageNavigation {
 
     /**
      * Kindseiten, wie sie der Cache kennt, ohne die Quelle zu fragen: für den Baum, der zuerst diesen Stand zeigt und
-     * {@link #children} danach im Hintergrund holt (Angelo 17.11.2026). Ein Stapel ohne Cursor, nach Titel geordnet,
-     * weil der Cache die Reihenfolge der Quelle nicht kennt; {@code hasChildren} ist {@code true}, wenn der Cache Kinder
-     * kennt, sonst unbekannt. Rechte wie bei {@link #children}.
+     * {@link #children} danach im Hintergrund holt (Angelo 17.11.2026). Ein Stapel ohne Cursor in der Reihenfolge, in
+     * der die Quelle die Kinder zuletzt lieferte (von {@link #children} gemerkt), damit der Baum nach ihrer Antwort nicht
+     * umsortiert; Kinder ohne bekannte Position folgen nach Titel. {@code hasChildren} ist {@code true}, wenn der Cache
+     * Kinder kennt, sonst unbekannt. Rechte wie bei {@link #children}.
      *
      * @return leer ohne Cache oder wenn der Cache keine Kinder kennt
      */
@@ -119,11 +174,21 @@ public class PageNavigation {
             access.requireConcealed(caller, ResourceScope.page(sourceId, partition, parentPageId),
                     AccessKind.METADATA);
         }
+        Map<String, Integer> positions = new HashMap<>();
+        try {
+            List<String> order = cache.childOrder(sourceId, spaceKey, parentPageId);
+            for (int i = 0; i < order.size(); i++) {
+                positions.putIfAbsent(order.get(i), i);
+            }
+        } catch (RuntimeException e) {
+            // Ohne bekannte Reihenfolge ordnet der Titel.
+        }
         List<PageNode> nodes = headers.stream()
                 .map(header -> header.metadata())
-                .sorted(java.util.Comparator.comparing((com.aresstack.spaceharvester.application.sources.PageMetadata
-                        page) -> page.title().toLowerCase(java.util.Locale.ROOT)).thenComparing(
-                        com.aresstack.spaceharvester.application.sources.PageMetadata::pageId))
+                .sorted(java.util.Comparator.comparingInt((com.aresstack.spaceharvester.application.sources.PageMetadata
+                        page) -> positions.getOrDefault(page.pageId(), Integer.MAX_VALUE))
+                        .thenComparing(page -> page.title().toLowerCase(java.util.Locale.ROOT))
+                        .thenComparing(com.aresstack.spaceharvester.application.sources.PageMetadata::pageId))
                 .map(page -> new PageNode(page.pageId(), page.title(), page.partitionKey(),
                         cache.hasChildren(sourceId, page.pageId()) ? Boolean.TRUE : null))
                 .toList();

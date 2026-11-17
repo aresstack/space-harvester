@@ -23,7 +23,7 @@ import java.util.Objects;
  * statt einer je Seite. Gefragt wird nur nach Summen, nie nach den Namen der Leser.
  *
  * @param space        Abfragen einmal je Space, je eine Antwort (Space-Details, Aktivität je Datum)
- * @param contentViews die Seitenliste des Space, geblättert über {@code nextPageToken}
+ * @param contentViews die Seitenliste des Space, geblättert über {@code pageToken} (das {@code nextPageToken} der vorigen Antwort)
  * @param days         Zeitraum bis heute, in Tagen
  */
 public record AnalyticsQueries(List<Query> space, Query contentViews, int days) {
@@ -42,16 +42,16 @@ public record AnalyticsQueries(List<Query> space, Query contentViews, int days) 
     public static final String DEFAULT_ACTIVITY_BY_DATE = ROOT + "space/activityByDate?spaceKey={spaceKey}&" + PERIOD;
     /**
      * Name und Vorgabe der Seitenliste mit Aufrufen je Seite. Der Platzhalter {@value #TOKEN_PLACEHOLDER} bekommt
-     * beim Blättern das {@code nextPageToken} der vorigen Antwort; der Parameter, der ihn trägt, steht in der Vorlage
-     * (hier {@code nextPageToken}) und lässt sich dort umbenennen, denn der Mitschnitt der Oberfläche enthält ihn
-     * nicht. Für die erste Listenseite entfällt der ganze Parameter.
+     * beim Blättern das {@code nextPageToken} der vorigen Antwort; der Parameter, der ihn trägt, heißt in der Oberfläche
+     * {@code pageToken} (Mitschnitt des Reiters „Inhalt“, Angelo 17.11.2026), steht in der Vorlage und lässt sich dort
+     * umbenennen. Für die erste Listenseite entfällt der ganze Parameter.
      */
     public static final String CONTENT_VIEWS = "contentViews";
     public static final String TOKEN_PLACEHOLDER = "{nextPageToken}";
     public static final String DEFAULT_CONTENT_VIEWS = ROOT + "space/paginated/contentViews?spaceKey={spaceKey}&"
-            + PERIOD + "&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100&nextPageToken=" + TOKEN_PLACEHOLDER;
+            + PERIOD + "&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100&pageToken=" + TOKEN_PLACEHOLDER;
     /** Der Parameter, den eine Vorlage ohne Platzhalter für die nächste Listenseite bekommt. */
-    public static final String PAGE_TOKEN = "nextPageToken";
+    public static final String PAGE_TOKEN = "pageToken";
 
     /** Die Vorgabe: die Pfade der Analytics-Oberfläche, 365 Tage. */
     public static final AnalyticsQueries DEFAULT = new AnalyticsQueries(

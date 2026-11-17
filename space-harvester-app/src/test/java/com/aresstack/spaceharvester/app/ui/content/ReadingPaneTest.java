@@ -190,4 +190,37 @@ class ReadingPaneTest {
         ImageIO.write(new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "png", out);
         return out.toByteArray();
     }
+
+    /** Angelo, 17.11.2026: Neuerer Stand der Quelle über einem Stand aus dem Cache → Hinweis oben, Klick lädt sofort. */
+    @Test
+    void aNewerVersionIsOfferedAboveTheCachedViewAndShownOnClick() throws Exception {
+        assertThat(ReadingPane.updateSentence("4", "7")).isEqualTo("Es gibt 3 Updates seit Ihrem letzten Besuch –");
+        assertThat(ReadingPane.updateSentence("4", "5")).isEqualTo("Es gibt 1 Update seit Ihrem letzten Besuch –");
+        assertThat(ReadingPane.updateSentence("a1b2", "c3d4")).isEqualTo("Es gibt Updates seit Ihrem letzten Besuch –");
+        assertThat(ReadingPane.updateSentence("7", "4")).isEqualTo("Es gibt Updates seit Ihrem letzten Besuch –");
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            ReadingPane pane = new ReadingPane();
+            int[] reloads = new int[1];
+            assertThat(pane.updateOffer()).isEmpty();
+            pane.offerUpdate(ReadingPane.updateSentence("1", "3"), () -> reloads[0]++);
+            assertThat(pane.updateOffer()).isEqualTo("Es gibt 2 Updates seit Ihrem letzten Besuch –");
+            pane.clickUpdate();
+            assertThat(reloads[0]).isEqualTo(1);
+            assertThat(pane.updateOffer()).as("der Hinweis verschwindet mit dem Klick").isEmpty();
+            pane.offerUpdate("x", () -> reloads[0]++);
+            pane.updatePlate().clickClose();
+            assertThat(pane.updateOffer()).as("✕ blendet ihn aus, ohne neu zu laden").isEmpty();
+            assertThat(reloads[0]).isEqualTo(1);
+            pane.offerUpdate("x", () -> reloads[0]++);
+            assertThat(pane.updatePlate().actionFocusable()).as("per Tastatur erreichbar").isTrue();
+            pane.updatePlate().pressEnterOnAction();
+            assertThat(reloads[0]).isEqualTo(2);
+            pane.offerUpdate("x", () -> reloads[0]++);
+            pane.updatePlate().pressEscapeOnAction();
+            assertThat(pane.updateOffer()).isEmpty();
+            pane.offerUpdate("x", () -> reloads[0]++);
+            pane.clear(" ");
+            assertThat(pane.updateOffer()).as("eine andere Seite nimmt den Hinweis mit").isEmpty();
+        });
+    }
 }

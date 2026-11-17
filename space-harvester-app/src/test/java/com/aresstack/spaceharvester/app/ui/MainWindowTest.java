@@ -492,8 +492,9 @@ class MainWindowTest {
             JPanel surface = new MainWindow(context).content(() -> { }, () -> { });
             surface.setSize(1280, 820);
             Screenshots.write(surface, home.resolve("window.png"));
-            assertThat(find(surface, ComicWindowCloseButton.class)).as("Hauptfenster: Ring bleibt rund")
-                    .singleElement().satisfies(MainWindowTest::isSquare);
+            // Nur sichtbare: Ausgeblendete Meldungsplatten (MessagePlate) tragen ihr eigenes ✕.
+            assertThat(find(surface, ComicWindowCloseButton.class).stream().filter(MainWindowTest::shown).toList())
+                    .as("Hauptfenster: Ring bleibt rund").singleElement().satisfies(MainWindowTest::isSquare);
 
             JPanel dialog = Dialogs.surface("Wissensquelle hinzufügen", new JPanel(), () -> { });
             dialog.setSize(660, 560);
@@ -563,6 +564,16 @@ class MainWindowTest {
     private static void isSquare(Component button) {
         assertThat(button.getWidth()).isEqualTo(24);
         assertThat(button.getHeight()).isEqualTo(24);
+    }
+
+    /** Ob die Komponente und alle ihre Eltern sichtbar sind (ohne angezeigtes Fenster). */
+    private static boolean shown(Component component) {
+        for (Component c = component; c != null; c = c.getParent()) {
+            if (!c.isVisible()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static <T> List<T> find(Container container, Class<T> type) {

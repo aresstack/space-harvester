@@ -378,7 +378,14 @@ class StatementAnalysisJobsTest {
                 "Vorstufe „nur wo nötig“: 1 Seiten, 1 Sätze gewählt, 1 Abschnitte mit Modellaufruf, 0 Sätze aus der "
                         + "Ablage, 1 Antwortzeilen verworfen, 0 Sätze mit ergänzten Wörtern verworfen, 0 unvollständig, "
                         + "0 wegen verlorener Verneinung oder Modalverb verworfen; "
-                        + "1 Seiten ohne Vorstufe (kein Modell oder keine KI-Freigabe)"));
+                        + "1 Seiten ohne KI-Freigabe und 0 Seiten ohne Modell ohne Vorstufe"));
+        assertThat(jobs.events(done.id())).filteredOn(event -> event.code() != null
+                        && event.code().startsWith("STAGE_"))
+                .as("ohne KI-Freigabe einzeln und mit Code, getrennt von „kein Modell“").singleElement()
+                .satisfies(event -> {
+                    assertThat(event.code()).isEqualTo(StatementAnalysisJobs.STAGE_NOT_RELEASED);
+                    assertThat(event.message()).isEqualTo("1 Seiten ohne KI-Freigabe, ohne Vorstufe analysiert");
+                });
 
         // Fortsetzen oder zweiter Lauf: gleicher Text, Analysator und Stand der Vorstufe, also übersprungen
         int parsed = parser.calls.get();

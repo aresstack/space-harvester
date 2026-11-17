@@ -239,8 +239,8 @@ public final class SettingsView implements View {
         analyticsRows.add("Aktivität je Datum", analyticsActivity, "Anlagen, Änderungen und Aufrufe des Space im "
                 + "Zeitraum. " + ANALYTICS_HINT);
         analyticsRows.add("Seitenliste", analyticsContentViews, "Aufrufe, Leser und letzter Aufruf je Seite; wird "
-                + "zu Ende geblättert: {nextPageToken} ist das Token der vorigen Antwort, der Parameter davor heißt an "
-                + "manchen Instanzen anders. " + ANALYTICS_HINT);
+                + "zu Ende geblättert: {nextPageToken} ist das Token der vorigen Antwort, der Parameter davor (pageToken) "
+                + "kann je Instanz anders heißen. " + ANALYTICS_HINT);
         page(GENERAL, Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
