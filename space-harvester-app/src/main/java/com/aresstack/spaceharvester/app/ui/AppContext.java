@@ -106,6 +106,11 @@ public final class AppContext {
         default void openSource(String sourceId, String title) {
         }
 
+        /** Zeigt eine Quelle unter Quellen zum Bearbeiten; ohne eigene Umsetzung nur die Quellen. */
+        default void editSource(String sourceId) {
+            show(Section.SOURCES);
+        }
+
         /**
          * Zeigt Inhalte › Export für einen Space bzw. eine Startseite samt Unterseiten (Angelo, 13.11.2026): wählt
          * sie zuerst im Explorer, dann den Reiter; ohne eigene Umsetzung nur den Space.

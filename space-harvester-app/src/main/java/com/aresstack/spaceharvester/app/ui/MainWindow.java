@@ -493,6 +493,12 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
+    public void editSource(String sourceId) {
+        show(AppContext.Section.SOURCES);
+        sources.select(sourceId);
+    }
+
+    @Override
     public void openExport(String sourceId, String spaceKey, String rootPageId) {
         show(AppContext.Section.CONTENT);
         if (rootPageId == null) {
