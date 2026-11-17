@@ -138,6 +138,12 @@ final class SourcePropertiesView extends JPanel {
     private Subscription holdings = Subscription.NONE;
     private Subscription changes = Subscription.NONE;
     private Loaded shown;
+    /** Höchstens ein Lauf gleichzeitig; Meldungen währenddessen oder bei verdecktem Reiter merken einen Nachlauf vor. */
+    private boolean running;
+    private boolean pending;
+    private java.util.function.BooleanSupplier showing = this::isShowing;
+    /** Die Quellentypen ändern sich zur Laufzeit nicht; einmal gelesen. */
+    private volatile List<SourceType> types;
 
     SourcePropertiesView(Supplier<Workspace> workspace, Supplier<AppSettings> settings) {
         this(() -> {
@@ -181,6 +187,12 @@ final class SourcePropertiesView extends JPanel {
         top.setOpaque(false);
         top.add(column, BorderLayout.NORTH);
         add(Comic.scroll(top), BorderLayout.CENTER);
+        // Beim Sichtbarwerden einmal nachholen, was verdeckt gemeldet wurde.
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                becameVisible();
+            }
+        });
         source(null);
     }
 
@@ -192,6 +204,16 @@ final class SourcePropertiesView extends JPanel {
     /** {@code listener} öffnet die Quelle zum Bearbeiten. */
     void onEdit(Consumer<String> listener) {
         onEdit = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Tests: ob der Reiter als sichtbar gilt (sonst {@link #isShowing()}). */
+    void showingForTest(java.util.function.BooleanSupplier visible) {
+        showing = Objects.requireNonNull(visible, "visible");
+    }
+
+    /** Tests: ob ein Nachlauf vorgemerkt ist. */
+    boolean pendingForTest() {
+        return pending;
     }
 
     /** Die gezeigte Quelle, {@code null} für keine: meldet sich an Bestand und Änderungsprotokoll an und liest. */
@@ -245,26 +267,59 @@ final class SourcePropertiesView extends JPanel {
         });
     }
 
-    /** Liest Kennzahlen und Einstellungen neu; zeichnet nur, wenn sich etwas geändert hat. */
+    /**
+     * Liest Kennzahlen und Einstellungen neu; zeichnet nur, wenn sich etwas geändert hat. Gelesen wird nur, solange
+     * der Reiter sichtbar ist, und höchstens ein Lauf gleichzeitig; sonst wird ein Nachlauf vorgemerkt.
+     */
     void reload() {
         Actions current = actions.get();
         String id = sourceId;
         if (current == null || id == null) {
+            pending = false;
             return;
         }
+        if (running || !showing.getAsBoolean()) {
+            pending = true;
+            return;
+        }
+        pending = false;
+        running = true;
         int mine = ++generation;
-        runner.run(() -> new Loaded(List.copyOf(current.spaces(id)), List.copyOf(current.updates(id)),
-                current.enabled(id), List.copyOf(current.types())), found -> {
+        runner.run(() -> {
+            List<SourceType> known = types;
+            if (known == null) {
+                known = List.copyOf(current.types());
+                types = known;
+            }
+            return new Loaded(List.copyOf(current.spaces(id)), List.copyOf(current.updates(id)),
+                    current.enabled(id), known);
+        }, found -> {
+            finished();
             if (mine != generation || found.equals(shown)) {
                 return;
             }
             shown = found;
             show(found, null);
         }, failure -> {
+            finished();
             if (mine == generation) {
                 show(null, "Eigenschaften nicht geladen: " + Problems.describe(failure).title());
             }
         });
+    }
+
+    /** Der Reiter ist sichtbar geworden: einmal nachholen, falls verdeckt etwas gemeldet wurde. */
+    void becameVisible() {
+        if (pending) {
+            reload();
+        }
+    }
+
+    private void finished() {
+        running = false;
+        if (pending) {
+            SwingUtilities.invokeLater(this::reload);
+        }
     }
 
     private void show(Loaded found, String message) {
@@ -359,16 +414,13 @@ final class SourcePropertiesView extends JPanel {
         settingsFacts.add("Typ", type == null ? Texts.sourceType(config.type()) : type.displayName());
         settingsFacts.add("Anzeigename", config.title());
         if (config.baseUrl() != null) {
-            settingsFacts.add("Adresse", config.baseUrl().toString());
+            settingsFacts.add("Adresse", withoutUser(config.baseUrl()));
         }
         for (Map.Entry<String, String> option : new java.util.TreeMap<>(config.options()).entrySet()) {
             SourceField field = type == null ? null : type.fields().stream()
                     .filter(candidate -> candidate.key().equals(option.getKey())).findFirst().orElse(null);
-            String value = option.getValue();
-            if (field != null && field.kind() == SourceField.Kind.FLAG) {
-                value = Boolean.parseBoolean(value) ? "ja" : "nein";
-            }
-            settingsFacts.add(field == null ? option.getKey() : field.label(), value);
+            settingsFacts.add(field == null ? option.getKey() : field.label(),
+                    optionText(field, option.getValue(), entry.placeholderOptions().get(option.getKey())));
         }
         settingsFacts.add("Anmeldung", Texts.auth(config.auth()));
         if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
@@ -376,6 +428,36 @@ final class SourcePropertiesView extends JPanel {
                     entry.secretMissing() ? "fehlt" : "gesetzt", entry.secretMissing() ? Comic.RED : Comic.INK);
         }
         settingsFacts.add("Client-Zertifikat", config.clientCertificate().enabled() ? "an" : "aus");
+    }
+
+    /**
+     * Der angezeigte Wert einer Option. Was in der Datei als {@code ${VAR}} steht, erscheint nie aufgelöst, sondern als
+     * Platzhalter; ein Zugangsverweis nur als Verweis.
+     */
+    static String optionText(SourceField field, String value, String placeholder) {
+        if (placeholder != null) {
+            return placeholder;
+        }
+        if (field != null && field.kind() == SourceField.Kind.SECRET_REF) {
+            return value == null || value.isBlank() ? "kein Verweis" : "Verweis " + value;
+        }
+        if (field != null && field.kind() == SourceField.Kind.FLAG) {
+            return Boolean.parseBoolean(value) ? "ja" : "nein";
+        }
+        return value;
+    }
+
+    /** Die Adresse ohne Benutzer-Teil ({@code user:pass@}). */
+    static String withoutUser(java.net.URI address) {
+        if (address.getRawUserInfo() == null) {
+            return address.toString();
+        }
+        try {
+            return new java.net.URI(address.getScheme(), null, address.getHost(), address.getPort(),
+                    address.getPath(), address.getQuery(), address.getFragment()).toString();
+        } catch (java.net.URISyntaxException e) {
+            return address.getScheme() + "://" + address.getHost();
+        }
     }
 
     /** Alle Kennzahlen und Einstellungen als Text für die Zwischenablage. */
