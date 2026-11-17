@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.standing;
 
+import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -14,11 +15,13 @@ import java.util.stream.Collectors;
  */
 public record StandingWords(Set<String> outdated, Set<String> draft) {
 
-    /** Vorgabe. */
-    public static final StandingWords DEFAULT = new StandingWords(
-            Set.of("archiv", "archiviert", "veraltet", "obsolet", "obsolete", "deprecated", "abgelöst", "historie",
-                    "historisch"),
-            Set.of("entwurf", "draft", "konzept", "planung", "vorschlag"));
+    /** Vorgabe aus {@link StandingSettings#DEFAULT}, der einzigen Stelle der Wortlisten. */
+    public static final StandingWords DEFAULT = of(StandingSettings.DEFAULT);
+
+    /** Die Wörter aus der Einstellung {@code space-harvester.statements.standing.*}. */
+    public static StandingWords of(StandingSettings settings) {
+        return new StandingWords(Set.copyOf(settings.outdatedWords()), Set.copyOf(settings.draftWords()));
+    }
 
     public StandingWords {
         outdated = normalized(Objects.requireNonNull(outdated, "outdated"));

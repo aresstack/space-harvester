@@ -37,11 +37,13 @@ import java.util.regex.Pattern;
  * @param enrichment Analysen je Anhang und enthaltener Datei (ADR 0026, AP9a)
  * @param changeLog Änderungsprotokoll (ADR 0030)
  * @param simplification Vorstufe „Sätze vereinfachen“ der Aussagenanalyse (ADR 0032, FL3)
+ * @param standing Wörter für überholte Seiten und Entwürfe der Status-quo-Sicht (ADR 0032, FL6)
  */
 public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
                                      NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles,
                                      ExportSettings export, TermSettings terms, EnrichmentSettings enrichment,
-                                     ChangeLogSettings changeLog, SimplificationSettings simplification) {
+                                     ChangeLogSettings changeLog, SimplificationSettings simplification,
+                                     StandingSettings standing) {
 
     /** Präfix aller Properties in Server und App. */
     public static final String PREFIX = "space-harvester.";
@@ -50,7 +52,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     public static final HarvesterConfiguration DEFAULT = new HarvesterConfiguration(AiServiceSettings.NONE,
             SearchSettings.DEFAULT, SyncSettings.DEFAULT, NetworkSettings.DEFAULT, StorageSettings.DEFAULT,
             LocalFileSettings.DEFAULT, ExportSettings.DEFAULT, TermSettings.DEFAULT, EnrichmentSettings.DEFAULT,
-            ChangeLogSettings.DEFAULT, SimplificationSettings.DEFAULT);
+            ChangeLogSettings.DEFAULT, SimplificationSettings.DEFAULT, StandingSettings.DEFAULT);
 
     /** Ohne freigegebene Ordner ({@link LocalFileSettings#DEFAULT}); {@link #withLocalFiles} ergänzt sie. */
     public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
@@ -94,6 +96,15 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 SimplificationSettings.DEFAULT);
     }
 
+    /** Mit den Vorgabewörtern des Stands ({@link StandingSettings#DEFAULT}); {@link #withStanding}. */
+    public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
+                                  NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles,
+                                  ExportSettings export, TermSettings terms, EnrichmentSettings enrichment,
+                                  ChangeLogSettings changeLog, SimplificationSettings simplification) {
+        this(ai, search, sync, network, storage, localFiles, export, terms, enrichment, changeLog, simplification,
+                StandingSettings.DEFAULT);
+    }
+
     public HarvesterConfiguration {
         ai = ai == null ? AiServiceSettings.NONE : ai;
         search = search == null ? SearchSettings.DEFAULT : search;
@@ -106,6 +117,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         enrichment = enrichment == null ? EnrichmentSettings.DEFAULT : enrichment;
         changeLog = changeLog == null ? ChangeLogSettings.DEFAULT : changeLog;
         simplification = simplification == null ? SimplificationSettings.DEFAULT : simplification;
+        standing = standing == null ? StandingSettings.DEFAULT : standing;
     }
 
     /** Ob die semantische Suche tatsächlich läuft: Haken gesetzt und Embedding-Modell eingestellt. */
@@ -140,57 +152,62 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
 
     public HarvesterConfiguration withAi(AiServiceSettings value) {
         return new HarvesterConfiguration(value, search, sync, network, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification);
+                changeLog, simplification, standing);
     }
 
     public HarvesterConfiguration withSearch(SearchSettings value) {
         return new HarvesterConfiguration(ai, value, sync, network, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification);
+                changeLog, simplification, standing);
     }
 
     public HarvesterConfiguration withSync(SyncSettings value) {
         return new HarvesterConfiguration(ai, search, value, network, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification);
+                changeLog, simplification, standing);
     }
 
     public HarvesterConfiguration withNetwork(NetworkSettings value) {
         return new HarvesterConfiguration(ai, search, sync, value, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification);
+                changeLog, simplification, standing);
     }
 
     public HarvesterConfiguration withStorage(StorageSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, value, localFiles, export, terms, enrichment,
-                changeLog, simplification);
+                changeLog, simplification, standing);
     }
 
     public HarvesterConfiguration withLocalFiles(LocalFileSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, value, export, terms, enrichment,
-                changeLog, simplification);
+                changeLog, simplification, standing);
     }
 
     public HarvesterConfiguration withExport(ExportSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, value, terms, enrichment,
-                changeLog, simplification);
+                changeLog, simplification, standing);
     }
 
     public HarvesterConfiguration withTerms(TermSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, value, enrichment,
-                changeLog, simplification);
+                changeLog, simplification, standing);
     }
 
     public HarvesterConfiguration withChangeLog(ChangeLogSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, enrichment,
-                value, simplification);
+                value, simplification, standing);
     }
 
     public HarvesterConfiguration withSimplification(SimplificationSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, enrichment,
-                changeLog, value);
+                changeLog, value, standing);
+    }
+
+    public HarvesterConfiguration withStanding(StandingSettings value) {
+        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, enrichment,
+                changeLog, simplification, value);
     }
 
     public HarvesterConfiguration withEnrichment(EnrichmentSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, value,
-                changeLog, simplification);
+                changeLog, simplification, standing);
     }
 
     /**
@@ -395,8 +412,21 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             problems.add(new ConfigurationProblem(e.getMessage().startsWith("Erwartet") ? SimplificationSettings.MODE
                     : SimplificationSettings.PARALLEL, e.getMessage()));
         }
+        StandingSettings standing = StandingSettings.DEFAULT;
+        try {
+            standing = new StandingSettings(words(read, StandingSettings.OUTDATED_WORDS,
+                    StandingSettings.DEFAULT_OUTDATED_WORDS), standing.draftWords());
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(StandingSettings.OUTDATED_WORDS, e.getMessage()));
+        }
+        try {
+            standing = new StandingSettings(standing.outdatedWords(), words(read, StandingSettings.DRAFT_WORDS,
+                    StandingSettings.DEFAULT_DRAFT_WORDS));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(StandingSettings.DRAFT_WORDS, e.getMessage()));
+        }
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
-                storage, localFiles, export, terms, enrichment, changeLog, simplification);
+                storage, localFiles, export, terms, enrichment, changeLog, simplification, standing);
         problems.addAll(configuration.validate());
         List<ConfigurationProblem> all = problems.stream().distinct().toList();
         return new Parsed(all.isEmpty() ? configuration : null, all);
@@ -493,6 +523,12 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             return new ConfigurationProblem(key, "Der Wert " + rest);
         }
         return new ConfigurationProblem("ai", message);
+    }
+
+    /** Eine Wortliste; fehlt sie oder ist sie leer, gilt die Vorgabe. */
+    private static List<String> words(Reader read, String key, List<String> fallback) {
+        List<String> words = read.list(key);
+        return words.isEmpty() ? fallback : words;
     }
 
     private record Reader(Properties properties, List<ConfigurationProblem> problems) {
