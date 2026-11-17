@@ -44,14 +44,14 @@
 4	die	der	PRON	_	_	7	obj	_	_
 5	der	der	DET	_	_	6	det	_	_
 6	Lagerist	lagerist	NOUN	_	_	7	nsubj	_	_
-7	aussondert	aussondern	VERB	_	_	2	acl:relcl	_	SpaceAfter=No
+7	aussondert	aussondern	VERB	_	LemmaFrom=Form	2	acl:relcl	_	SpaceAfter=No
 8	,	,	PUNCT	_	_	7	punct	_	_
 9	werden	werden	AUX	_	_	14	aux:pass	_	_
 10	innerhalb	innerhalb	ADP	_	_	13	case	_	_
 11	von	von	ADP	_	_	13	case	_	_
 12	zwei	zwei	NUM	_	_	13	nummod	_	_
 13	Wochen	woche	NOUN	_	_	14	obl	_	_
-14	zurückgesendet	zurücksenden	VERB	_	_	0	root	_	SpaceAfter=No
+14	zurückgesendet	zurücksenden	VERB	_	LemmaFrom=Form	0	root	_	SpaceAfter=No
 15	.	.	PUNCT	_	_	14	punct	_	_
 
 # sent_id = 5

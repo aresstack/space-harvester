@@ -61,16 +61,17 @@ public final class StatementFeatures {
             "können", Modality.KANN, "dürfen", Modality.DARF);
     /** Formen der Modalverben, falls die Grundform fehlt oder abweicht (Konjunktiv II). */
     private static final Map<String, Modality> MODAL_FORMS = modalForms();
-    /** Präteritum der Hilfsverben und der Kopula. */
+    /** Präteritum der Hilfsverben, der Kopula und von müssen/können/dürfen („sollte“ ist meist Konjunktiv). */
     private static final Set<String> PAST_AUXILIARIES = Set.of("war", "warst", "waren", "wart", "wurde", "wurdest",
-            "wurden", "wurdet", "hatte", "hattest", "hatten", "hattet");
+            "wurden", "wurdet", "hatte", "hattest", "hatten", "hattet", "musste", "musstest", "mussten", "musstet",
+            "konnte", "konntest", "konnten", "konntet", "durfte", "durftest", "durften", "durftet");
     private static final Set<String> PAST_WORDS = Set.of("früher", "damals", "ehemals", "einst", "seinerzeit",
             "vormals", "ursprünglich");
     private static final Set<String> FUTURE_WORDS = Set.of("künftig", "zukünftig", "später", "demnächst",
             "perspektivisch", "langfristig", "mittelfristig");
     private static final Set<String> CURRENT_WORDS = Set.of("aktuell", "derzeit", "zurzeit", "momentan", "heute",
             "gegenwärtig", "inzwischen", "mittlerweile");
-    private static final Set<String> DISCARDED_WORDS = Set.of("verworfen", "entfällt", "entfallen", "eingestellt",
+    private static final Set<String> DISCARDED_WORDS = Set.of("verworfen", "entfällt", "entfallen",
             "abgelöst", "aufgegeben", "gestrichen", "überholt", "hinfällig", "obsolet");
 
     /** Relationen, unter denen ein zu-Infinitiv die Merkmale seines regierenden Prädikats teilt. */

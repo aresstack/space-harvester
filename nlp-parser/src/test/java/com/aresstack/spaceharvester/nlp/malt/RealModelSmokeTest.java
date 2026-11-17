@@ -125,6 +125,7 @@ class RealModelSmokeTest {
     void datenhFixtureIsThePinnedPipelineOutput() throws IOException {
         // Zwischenstand der Ursachenmatrix (DatenhRegressionTest) gegen die echte Kette: weicht die Ausgabe ab,
         // muss datenh.conllu neu erzeugt und die Abweichung im Test begründet werden.
+        // Seit ADR 0032 (FL2) trägt eine erzeugte Grundform das Merkmal LemmaFrom=Form („bereitzustellen“).
         String text = resource("datenh.txt").stripTrailing();
         List<String> actual = analysisLines(ConllU.write(analyze(text)));
         List<String> expected = analysisLines(resource("datenh.conllu"));

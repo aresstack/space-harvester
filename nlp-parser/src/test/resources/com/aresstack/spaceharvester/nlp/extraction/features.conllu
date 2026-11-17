@@ -113,3 +113,20 @@
 4	verworfen	verwerfen	VERB	VVPP	_	0	root	_	_
 5	.	.	PUNCT	$.	_	4	punct	_	_
 
+# sent_id = 11
+# text = Die Stelle musste den Antrag prüfen.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Stelle	Stelle	NOUN	NN	_	6	nsubj	_	_
+3	musste	müssen	AUX	VMFIN	_	6	aux	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Antrag	Antrag	NOUN	NN	_	6	obj	_	_
+6	prüfen	prüfen	VERB	VVINF	_	0	root	_	_
+7	.	.	PUNCT	$.	_	6	punct	_	_
+
+# sent_id = 12
+# text = Die Stelle wird eingestellt.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Stelle	Stelle	NOUN	NN	_	4	nsubj:pass	_	_
+3	wird	werden	AUX	VAFIN	_	4	aux:pass	_	_
+4	eingestellt	einstellen	VERB	VVPP	_	0	root	_	_
+5	.	.	PUNCT	$.	_	4	punct	_	_

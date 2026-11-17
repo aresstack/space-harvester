@@ -76,5 +76,11 @@ class GermanTagCorrectionsTest {
         assertEquals("zurücksenden", GermanTagCorrections.lemma("zurückgesendet", "VERB", "zurückgesenden"));
         assertEquals("angegeben", GermanTagCorrections.lemma("angegeben", "VERB", "angegeben"));
         assertEquals("Maßnahme", GermanTagCorrections.lemma("Maßnahme", "NOUN", "Maßnahme"), "kein ß→ss");
+        // Gegenproben: im Zweifel die Form lassen statt ein Wort zu erfinden
+        for (String form : java.util.List.of("gibt", "gilt", "nimmt", "misst", "gebucht", "gehört")) {
+            assertEquals(form, GermanTagCorrections.lemma(form, "VERB", form), form);
+        }
+        assertEquals("bilden", GermanTagCorrections.lemma("bildet", "VERB", "bildet"));
+        assertEquals("liefern", GermanTagCorrections.lemma("liefert", "VERB", "liefert"));
     }
 }

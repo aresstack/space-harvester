@@ -128,7 +128,7 @@ final class GermanTagCorrections {
     static String finite(String form, String lemma) {
         String lower = form.toLowerCase(Locale.ROOT);
         if (lower.length() < 4 || !lower.endsWith("t") || lower.endsWith("en") || lower.matches(".*[äöü].*")
-                || !lower.matches("\\p{L}+")) {
+                || !lower.matches("\\p{L}+") || lower.startsWith("ge") || strongVowel(lower)) {
             return lemma;
         }
         String stem = lower.substring(0, lower.length() - 1);
@@ -139,6 +139,23 @@ final class GermanTagCorrections {
             return stem.substring(0, stem.length() - 1) + "en";
         }
         return stem + "en";
+    }
+
+    /**
+     * Im Zweifel die Form lassen: Partizipien auf „ge-“ („gebucht“, „gehört“) und ein einzelnes „i“ als letzter Vokal
+     * vor „-t“/„-st“ (starke Verben mit e → i: „gibt“, „gilt“, „nimmt“, „misst“) außer bei „-et“/„-ert“/„-elt“
+     * („bildet“, „liefert“). Lieber keine Grundform als eine erfundene („giben“).
+     */
+    private static boolean strongVowel(String lower) {
+        if (lower.endsWith("et") || lower.endsWith("ert") || lower.endsWith("elt")) {
+            return false;
+        }
+        Matcher vowels = Pattern.compile("[aeiouy]+").matcher(lower);
+        String last = null;
+        while (vowels.find()) {
+            last = vowels.group();
+        }
+        return "i".equals(last);
     }
 
     private static String zuInfinitive(String form, String lemma) {

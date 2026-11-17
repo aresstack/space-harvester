@@ -72,7 +72,7 @@
 # text = Der Einkäufer holt Angebote ein, vergleicht die Preise und vergibt den Auftrag.
 1	Der	der	DET	_	_	2	det	_	_
 2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
-3	holt	holen	VERB	_	_	0	root	_	_
+3	holt	holen	VERB	_	LemmaFrom=Form	0	root	_	_
 4	Angebote	angebot	NOUN	_	_	3	obj	_	_
 5	ein	ein	ADV	_	_	3	compound:prt	_	SpaceAfter=No
 6	,	,	PUNCT	_	_	7	punct	_	_
@@ -145,7 +145,7 @@
 12	quittiert	quittieren	VERB	_	_	3	advcl	_	SpaceAfter=No
 13	,	,	PUNCT	_	_	15	punct	_	_
 14	und	und	CCONJ	_	_	15	cc	_	_
-15	druckt	drucken	VERB	_	_	12	conj	_	_
+15	druckt	drucken	VERB	_	LemmaFrom=Form	12	conj	_	_
 16	den	der	DET	_	_	17	det	_	_
 17	Lieferschein	lieferschein	NOUN	_	_	15	obj	_	SpaceAfter=No
 18	.	.	PUNCT	_	_	3	punct	_	_

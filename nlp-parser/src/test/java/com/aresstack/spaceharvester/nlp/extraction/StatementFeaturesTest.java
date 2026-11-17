@@ -51,4 +51,10 @@ class StatementFeaturesTest {
         assertEquals(Temporality.FRUEHER, features(9, "löschen").temporality(), "xcomp teilt „früher“ von „bat“");
         assertEquals(Temporality.GILT, features(9, "sparen").temporality(), "um … zu bleibt eigen");
     }
+
+    @Test
+    void pastOfMustCanMayIsFrueherButEingestelltIsNotDiscarded() {
+        assertEquals(Temporality.FRUEHER, features(11, "prüfen").temporality(), "musste … prüfen");
+        assertEquals(Temporality.GILT, features(12, "einstellen").temporality(), "wird eingestellt: kein Verwerfen");
+    }
 }

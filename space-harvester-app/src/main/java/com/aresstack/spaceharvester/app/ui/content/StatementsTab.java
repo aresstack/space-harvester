@@ -727,6 +727,7 @@ final class StatementsTab extends JPanel {
             case "SUBJECT_OF_INFINITIVE" -> "Infinitivgruppe ohne eigenes Subjekt";
             case "AGENT_FROM_DURCH" -> "Handelnder aus der durch-Gruppe abgeleitet (unsicher)";
             case "AGENT_FROM_VON" -> "Handelnder aus der von-Gruppe bei „ist … zu“ abgeleitet (unsicher)";
+            case "LEMMA_FROM_FORM" -> "Grundform des Verbs aus der Wortform erzeugt";
             default -> code;
         };
     }

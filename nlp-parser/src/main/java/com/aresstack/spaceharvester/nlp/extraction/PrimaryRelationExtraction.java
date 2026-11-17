@@ -70,6 +70,9 @@ final class PrimaryRelationExtraction {
 
     private static Statement statement(ParsedDocument document, Mentions mentions, Sentence sentence, Token verb) {
         Set<Finding> findings = EnumSet.noneOf(Finding.class);
+        if ("Form".equals(verb.feats().get(Token.LEMMA_FROM))) {
+            findings.add(Finding.LEMMA_FROM_FORM);
+        }
         Token subject = firstOf(sentence, verb.id(), "nsubj", "nsubj:pass");
         // Eine zu-Infinitivgruppe ohne Hilfsverb hat kein Subjekt; der Parser hängt dort gern das Objekt an.
         Token infinitiveSubject = null;
