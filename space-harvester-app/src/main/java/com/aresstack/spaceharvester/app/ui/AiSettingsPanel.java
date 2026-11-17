@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
+import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 
 import javax.swing.JComponent;
@@ -129,14 +130,14 @@ final class AiSettingsPanel {
     final ComposerButton pickVision = Comic.button("▾", "Vision-Modell aus der Liste des Dienstes wählen");
     /** Klappt Abschnittsgröße und Überlappung auf; sie sind keine Modelle, sondern gehören zur Zerlegung. */
     final javax.swing.JButton advanced = Comic.disclosure("Erweitert",
-            "Dimension, Abschnittsgröße und Überlappung für Embeddings");
+            "Dimension, Abschnittsgröße und Überlappung für Embeddings; Abschnitte zugleich beim Vereinfachen");
     /** Stand des MaltParser-Modells (ADR 0024); nur lesbar, der Knopf steht im Feld. */
     final JTextField parserStatus = Comic.field(24);
     /**
      * Paare je Synonymlauf, die zusätzlich das Text-Modell prüft ({@code space-harvester.terms.synonyms.
      * max-judged-pairs}, #336); 0 lässt die Prüfung aus. Zahl mit Einheit, kein Freitext.
      */
-    final JSpinner judgedPairs = countSpinner(SynonymRunForm.MAX_PAIRS, 10);
+    final JSpinner judgedPairs = countSpinner(0, SynonymRunForm.MAX_PAIRS, 10);
     final HelpButton judgedPairsHelp = new HelpButton(Dialogs.CLOSE_SIZE, JUDGED_PAIRS_LABEL, JUDGED_PAIRS_HELP);
     static final String JUDGED_PAIRS_LABEL = "Synonymprüfung";
     static final String JUDGED_PAIRS_UNIT = "Paare je Lauf";
@@ -148,6 +149,32 @@ final class AiSettingsPanel {
             + "Der Wert ist die Vorbelegung des Startdialogs „Synonyme vorschlagen“ und lässt sich dort je Lauf "
             + "ändern. Er gilt ohne Neustart beim nächsten Lauf. Schlüssel in der Konfigurationsdatei: "
             + "space-harvester.terms.synonyms.max-judged-pairs.";
+    /**
+     * Vorstufe „Sätze vereinfachen“ der Aussagenanalyse ({@code space-harvester.statements.simplification.*},
+     * ADR 0032): Betriebsart, Abschnitte zugleich und das Modell nur für diesen Schritt.
+     */
+    final JComboBox<String> simplifyMode = Comic.combo();
+    final JSpinner simplifyParallel = countSpinner(1, MAX_SIMPLIFY_PARALLEL, 1);
+    final JTextField simplifyModel = Comic.field(24);
+    final ComposerButton pickSimplify = Comic.button("▾",
+            "Modell zum Vereinfachen aus der Liste des Dienstes wählen");
+    final HelpButton simplifyHelp = new HelpButton(Dialogs.CLOSE_SIZE, SIMPLIFY_LABEL, SIMPLIFY_HELP);
+    static final String SIMPLIFY_LABEL = "Sätze vereinfachen";
+    static final String SIMPLIFY_WHERE_NEEDED = "nur wo nötig";
+    static final String SIMPLIFY_ALWAYS = "immer";
+    static final String SIMPLIFY_PARALLEL_UNIT = "Abschnitte zugleich";
+    static final String SIMPLIFY_PARALLEL_LABEL = "Vereinfachen parallel";
+    static final String SIMPLIFY_MODEL_LABEL = "Vereinfachungs-Modell";
+    static final int MAX_SIMPLIFY_PARALLEL = 16;
+    static final String SIMPLIFY_HELP = "Vorstufe der Aussagenanalyse: Ein Chat-Modell formt Sätze vor dem "
+            + "MaltParser zu einfachen Hauptsätzen um. Sie läuft nur, wenn sie beim Start der Analyse angekreuzt "
+            + "ist, und nur für Seiten mit KI-Freigabe; alle anderen Seiten werden ohne Vorstufe analysiert.\n\n"
+            + "„" + SIMPLIFY_WHERE_NEEDED + "“ vereinfacht nur Stichpunkte, Kennungszeilen und Sätze ohne sichere "
+            + "Aussage. „" + SIMPLIFY_ALWAYS + "“ vereinfacht alle Sätze mit Verb.\n\n"
+            + "Ohne eigenes „" + SIMPLIFY_MODEL_LABEL + "“ gilt das Text-Modell. Unter „Erweitert“ steht, wie viele "
+            + "Abschnitte einer Seite höchstens gleichzeitig beim Modell sind.\n\n"
+            + "Die Werte gelten ohne Neustart beim nächsten Lauf. Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.statements.simplification.mode, .parallel und .model.";
     final ComposerButton parserInstall = Comic.button(ParserModelSetup.INSTALL,
             "Lädt das freigegebene deutsche MaltParser-Modell aus dem GitHub-Release, prüft die Prüfsumme und "
                     + "entpackt es ins Datenverzeichnis");
@@ -217,6 +244,13 @@ final class AiSettingsPanel {
                 + "lässt die Prüfung aus");
         modelRows.add(JUDGED_PAIRS_LABEL, Comic.row(judgedPairs, Comic.text(JUDGED_PAIRS_UNIT), judgedPairsHelp),
                 null);
+        simplifyMode.addItem(SIMPLIFY_WHERE_NEEDED);
+        simplifyMode.addItem(SIMPLIFY_ALWAYS);
+        simplifyMode.setToolTipText("Welche Sätze die Vorstufe der Aussagenanalyse vereinfacht");
+        simplifyParallel.setToolTipText("Höchstens so viele Abschnitte einer Seite sind gleichzeitig beim Modell");
+        modelRows.add(SIMPLIFY_LABEL, Comic.row(simplifyMode, simplifyHelp), null);
+        modelRows.add(SIMPLIFY_MODEL_LABEL, Comic.fieldWithButton(simplifyModel, pickSimplify),
+                "Nur für „" + SIMPLIFY_LABEL + "“; leer: das Text-Modell");
         modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
@@ -247,14 +281,19 @@ final class AiSettingsPanel {
                     + "leer: 350; wirkt nach Neustart");
             modelRows.add("Überlappung", chunkOverlap, "So viele Sätze wiederholen sich zwischen Abschnitten; leer: 1; "
                     + "wirkt nach Neustart");
+            modelRows.add(SIMPLIFY_PARALLEL_LABEL, Comic.row(simplifyParallel, Comic.text(SIMPLIFY_PARALLEL_UNIT)),
+                    "„" + SIMPLIFY_LABEL + "“: so viele Abschnitte einer Seite sind höchstens gleichzeitig beim "
+                            + "Modell; Vorgabe " + SimplificationSettings.DEFAULT_PARALLEL);
             advanced.addActionListener(e -> advanced(!advancedOpen()));
             advanced(false);
         }
         pickChat.setEnabled(false);
+        pickSimplify.setEnabled(false);
         pickEmbedding.setEnabled(false);
         pickRerank.setEnabled(false);
         pickVision.setEnabled(false);
         loadModels.addActionListener(e -> loadModels());
+        pickSimplify.addActionListener(e -> pick(pickSimplify, simplifyModel, AiModel.CHAT));
         pickChat.addActionListener(e -> pick(pickChat, chatModel, AiModel.CHAT));
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
@@ -312,9 +351,15 @@ final class AiSettingsPanel {
         visionModel.setText(current.visionModel() == null ? "" : current.visionModel());
         chatMaxTokens.setText(current.chatMaxTokens() == null ? "" : current.chatMaxTokens());
         judgedPairs.setValue(Math.min(savedBudget(settings).maxJudgedPairs(), SynonymRunForm.MAX_PAIRS));
+        SimplificationSettings simplification = savedSimplification(settings);
+        simplifyMode.setSelectedItem(simplification.mode() == SimplificationSettings.Mode.ALWAYS ? SIMPLIFY_ALWAYS
+                : SIMPLIFY_WHERE_NEEDED);
+        simplifyParallel.setValue(Math.min(simplification.parallel(), MAX_SIMPLIFY_PARALLEL));
+        simplifyModel.setText(simplification.model() == null ? "" : simplification.model());
         chunkTokens.setText(current.chunkTokens() == null ? "" : current.chunkTokens());
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
-        advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null);
+        advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null
+                || savedSimplification(settings).parallel() != SimplificationSettings.DEFAULT_PARALLEL);
         timeout = current.timeout();
         releasedIds = current.externalProcessingSources();
         renderReleased(settings, releasedIds);
@@ -626,7 +671,8 @@ final class AiSettingsPanel {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess)
-                || judgedPairs() != savedBudget(settings).maxJudgedPairs();
+                || judgedPairs() != savedBudget(settings).maxJudgedPairs()
+                || !simplification().equals(savedSimplification(settings));
     }
 
     /** Ob gerade gespeichert wird (Assistent: Übernehmen beim Schrittwechsel). */
@@ -679,8 +725,10 @@ final class AiSettingsPanel {
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         AiAccess chosen = accessDraft();
         int judged = judgedPairs();
+        SimplificationSettings simplification = simplification();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)
-                && judged == savedBudget(settings).maxJudgedPairs()) {
+                && judged == savedBudget(settings).maxJudgedPairs()
+                && simplification.equals(savedSimplification(settings))) {
             if (!quiet) {
                 feedback.info("Nichts geändert", null);
             }
@@ -743,7 +791,7 @@ final class AiSettingsPanel {
                 try {
                     Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
                             false);
-                    store(context, measured.draft(), new char[0], chosen, judged);
+                    store(context, measured.draft(), new char[0], chosen, judged, simplification);
                     return measured;
                 } finally {
                     if (resolved != null) {
@@ -752,7 +800,7 @@ final class AiSettingsPanel {
                 }
             }
             Measured measured = measure(context, runtime, draft, key, true);
-            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged);
+            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, simplification);
             return measured;
         }, measured -> {
             if (!chosen.fromKeePass() && !vault && key.length > 0) {
@@ -837,6 +885,15 @@ final class AiSettingsPanel {
      */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs)
             throws IOException {
+        store(context, draft, key, access, judgedPairs, null);
+    }
+
+    /**
+     * Wie {@link #store(AppContext, AiDraft, char[], AiAccess, Integer)}, dazu die Vorstufe „Sätze vereinfachen“
+     * ({@code statements.simplification.*}); {@code null} oder unverändert lässt den Block {@code statements} in Ruhe.
+     */
+    static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
+                      SimplificationSettings simplification) throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
@@ -846,6 +903,9 @@ final class AiSettingsPanel {
         SynonymBudget budget = savedBudget(context.settings());
         if (judgedPairs != null && judgedPairs != budget.maxJudgedPairs()) {
             written = editor.withSynonymBudget(context.configFile(), written, budget.withMaxJudgedPairs(judgedPairs));
+        }
+        if (simplification != null && !simplification.equals(savedSimplification(context.settings()))) {
+            written = editor.withSimplification(context.configFile(), written, simplification);
         }
         boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
         if (key.length == 0) {
@@ -876,14 +936,33 @@ final class AiSettingsPanel {
         return settings == null ? SynonymBudget.DEFAULT : settings.terms().synonyms();
     }
 
+    /** Die Vorstufe „Sätze vereinfachen“ aus der Datei; ohne Datei die Vorgabe des Core. */
+    static SimplificationSettings savedSimplification(AppSettings settings) {
+        return settings == null ? SimplificationSettings.DEFAULT : settings.simplification();
+    }
+
+    /** Die eingestellte Vorstufe „Sätze vereinfachen“. */
+    SimplificationSettings simplification() {
+        return new SimplificationSettings(SIMPLIFY_ALWAYS.equals(simplifyMode.getSelectedItem())
+                ? SimplificationSettings.Mode.ALWAYS : SimplificationSettings.Mode.WHERE_NEEDED,
+                ((Number) simplifyParallel.getValue()).intValue(), simplifyModel.getText());
+    }
+
+    /** Die Vorstufe in einer Zeile, für Abschlussseite und Übersichten. */
+    static String simplificationSummary(SimplificationSettings simplification) {
+        return (simplification.mode() == SimplificationSettings.Mode.ALWAYS ? SIMPLIFY_ALWAYS : SIMPLIFY_WHERE_NEEDED)
+                + " · " + simplification.parallel() + " " + SIMPLIFY_PARALLEL_UNIT + " · "
+                + (simplification.model() == null ? "mit dem Text-Modell" : "Modell " + simplification.model());
+    }
+
     /** Die eingestellten Paare je Synonymlauf für das Text-Modell; 0 = Prüfung aus. */
     int judgedPairs() {
         return ((Number) judgedPairs.getValue()).intValue();
     }
 
-    /** Ein Zahlenfeld von 0 bis {@code maximum} im Stil der Dauer-Felder dieser App. */
-    private static JSpinner countSpinner(int maximum, int step) {
-        JSpinner spinner = new JSpinner(new SpinnerNumberModel(0, 0, maximum, step));
+    /** Ein Zahlenfeld von {@code minimum} bis {@code maximum} im Stil der Dauer-Felder dieser App. */
+    private static JSpinner countSpinner(int minimum, int maximum, int step) {
+        JSpinner spinner = new JSpinner(new SpinnerNumberModel(minimum, minimum, maximum, step));
         spinner.setFont(Comic.regular(13f));
         if (spinner.getEditor() instanceof JSpinner.DefaultEditor editor) {
             Comic.style(editor.getTextField());
@@ -1159,6 +1238,7 @@ final class AiSettingsPanel {
         modelsRequest++;
         loadModels.setEnabled(true);
         pickChat.setEnabled(false);
+        pickSimplify.setEnabled(false);
         pickEmbedding.setEnabled(false);
         pickRerank.setEnabled(false);
         pickVision.setEnabled(false);
@@ -1193,6 +1273,7 @@ final class AiSettingsPanel {
         modelRows.visible(dimensions, open);
         modelRows.visible(chunkTokens, open);
         modelRows.visible(chunkOverlap, open);
+        modelRows.visible(simplifyParallel, open);
         Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();
@@ -1223,6 +1304,7 @@ final class AiSettingsPanel {
         preselectIfPresent(visionModel, "vision");
         preselectIfPresent(rerankModel, "rerank");
         pickChat.setEnabled(!choices(AiModel.CHAT).isEmpty());
+        pickSimplify.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
         pickRerank.setEnabled(!choices(null).isEmpty());
         pickVision.setEnabled(!choices(AiModel.VISION).isEmpty());
