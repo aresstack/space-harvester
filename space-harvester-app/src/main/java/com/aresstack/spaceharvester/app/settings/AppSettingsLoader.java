@@ -688,10 +688,16 @@ public final class AppSettingsLoader {
             }
         }
         Map<String, String> options = new TreeMap<>();
+        Map<String, String> placeholderOptions = new TreeMap<>();
         for (Map.Entry<?, ?> option : map(get(source, "options")).entrySet()) {
             String value = text(option.getValue(), problems);
             if (value != null) {
-                options.put(String.valueOf(option.getKey()), value);
+                String key = String.valueOf(option.getKey());
+                options.put(key, value);
+                String shown = placeholderForm(option.getValue());
+                if (shown != null) {
+                    placeholderOptions.put(key, shown);
+                }
             }
         }
 
@@ -725,7 +731,23 @@ public final class AppSettingsLoader {
         }
         SourceSettingsConfig config = new SourceSettingsConfig(id.trim(), type.trim(), text(get(source, "title"),
                 problems), baseUrl, credentials, options, clientCertificate, text(get(source, "trust-bundle"), problems));
-        return new AppSettings.SourceEntry(config, secret.missing(), secret.variable());
+        return new AppSettings.SourceEntry(config, secret.missing(), secret.variable(), placeholderOptions);
+    }
+
+    /**
+     * Die Schreibweise eines Werts mit Platzhaltern, wie sie die Oberfläche zeigen darf: {@code ${NAME}} ohne
+     * Vorgabewert, der übrige Text bleibt. {@code null}, wenn der Wert keinen Platzhalter enthält. Aufgelöste Werte aus
+     * der Umgebung zeigt die Oberfläche nie (Geheimnisse nur als {@code ${VAR}}).
+     */
+    static String placeholderForm(Object raw) {
+        if (raw == null || raw instanceof Map<?, ?> || raw instanceof List<?>) {
+            return null;
+        }
+        Matcher placeholder = PLACEHOLDER.matcher(String.valueOf(raw));
+        if (!placeholder.find()) {
+            return null;
+        }
+        return placeholder.reset().replaceAll(match -> Matcher.quoteReplacement("${" + match.group(1).strip() + "}"));
     }
 
     private ProxySettings proxy(Map<?, ?> proxy, List<String> problems) {
