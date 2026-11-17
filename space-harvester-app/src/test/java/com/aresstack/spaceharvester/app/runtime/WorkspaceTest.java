@@ -219,6 +219,68 @@ class WorkspaceTest {
         assertThat(workspace.jobs()).extracting(JobStatus::id).contains(global.id());
     }
 
+    /**
+     * Ein laufender Auftrag des Aufrufers kommt per Abo in der Auftragsliste an, endet dort, und die Knöpfe „Alle
+     * anhalten“ und „Alle abbrechen“ nehmen ihn mit (AT nach #846).
+     */
+    @Test
+    void aRunningJobOfTheCallerArrivesByTheSubscriptionAndTheGlobalButtonsReachIt() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        // Den Eigentümer der App liefert ein Synonymlauf, der dem Aufrufer gehört.
+        JobStatus synonyms = workspace.startSynonymDiscovery(
+                new com.aresstack.spaceharvester.application.terms.SynonymScope("handbuch", null), 10);
+        String owner = workspace.job(synonyms.id()).owner();
+        assertThat(owner).isNotEqualTo(com.aresstack.spaceharvester.core.Harvester.OWNER);
+
+        java.util.concurrent.CountDownLatch running = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.BlockingQueue<JobStatus> changes = new java.util.concurrent.LinkedBlockingQueue<>();
+        try (com.aresstack.spaceharvester.application.observe.Subscription subscription = workspace.subscribeJobs(
+                new com.aresstack.spaceharvester.application.jobs.JobListener() {
+                    @Override
+                    public void changed(JobStatus status) {
+                        changes.add(status);
+                    }
+                })) {
+            JobStatus job = started.harvester().jobs().submit(JobType.UPDATE_SUMMARY, "handbuch", space, owner,
+                    com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+                        running.countDown();
+                        long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+                        while (!context.cancelRequested() && System.nanoTime() < until) {
+                            Thread.sleep(20);
+                        }
+                        if (context.cancelRequested()) {
+                            throw new com.aresstack.spaceharvester.application.jobs.JobCancelledException("summary");
+                        }
+                    }));
+            assertThat(running.await(20, java.util.concurrent.TimeUnit.SECONDS)).as("läuft").isTrue();
+            JobStatus seen = workspace.job(job.id());
+            assertThat(AllJobs.toPause(workspace.jobs())).as("„Alle anhalten“ nimmt ihn mit")
+                    .extracting(JobStatus::id).contains(job.id());
+            assertThat(AllJobs.toCancel(workspace.jobs())).extracting(JobStatus::id).contains(job.id());
+            assertThat(seen.state()).isEqualTo(JobState.RUNNING);
+
+            assertThat(workspace.cancelAllJobs().changed()).as("„Alle abbrechen“ erreicht ihn").isPositive();
+
+            JobStatus ended = null;
+            boolean arrived = false;
+            long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+            while (ended == null && System.nanoTime() < until) {
+                JobStatus next = changes.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                if (next != null && next.id().equals(job.id())) {
+                    arrived = true;
+                    if (next.state().terminal()) {
+                        ended = next;
+                    }
+                }
+            }
+            assertThat(arrived).as("per Abo gemeldet").isTrue();
+            assertThat(ended).as("Ende per Abo gemeldet").isNotNull();
+            assertThat(ended.state()).isEqualTo(JobState.CANCELLED);
+        }
+    }
+
     @Test
     void jobChangesArriveWithoutAskingAgain() throws Exception {
         Workspace workspace = start().workspace();

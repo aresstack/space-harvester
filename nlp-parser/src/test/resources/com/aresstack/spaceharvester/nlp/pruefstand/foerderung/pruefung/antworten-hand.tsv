@@ -90,3 +90,14 @@ G	6	ändern(B=Richtlinie) PLAUSIBLE	STIMMT
 G	7	ablehnen(H=Bewilligungsstelle, B=Antrag) PLAUSIBLE	STIMMT
 G	8	abrufen(H=Zuwendungsempfänger, B=Mittel) PLAUSIBLE	STIMMT
 G	9	nachfordern(H=Stelle, B=Antrag) PLAUSIBLE	STIMMT
+W	2	regeln(H=Rechtssystem, B=Rückforderung) PLAUSIBLE	STIMMT
+W	3	fördern(B=Import) PLAUSIBLE	STIMMT
+W	4	beraten(H=Support) PLAUSIBLE	FALSCH
+W	6	liegen(H=Haltestelle) PLAUSIBLE	STIMMT
+W	7	bestimmen(H=Aktienindex, B=Zinssatz) PLAUSIBLE	STIMMT
+W	8	gehören(H=Studienmodul) PLAUSIBLE	STIMMT
+W	9	prüfen(H=Bauleiter, B=Leistungsverzeichnis) PLAUSIBLE	STIMMT
+W	10	fördern(B=Ehrenamt) PLAUSIBLE	STIMMT
+W	11	enthalten(H=Aktenordner, B=Ausbildungszertifikat) PLAUSIBLE	STIMMT
+W	12	übernehmen(H=Krankenkasse, B=Kosten) PLAUSIBLE	STIMMT
+W	13	fördern(B=Wärmespeicher) PLAUSIBLE	STIMMT

@@ -1,0 +1,57 @@
+# Erwartete Einordnung der Begriffe (Kontrollsatz „beschaffung“, Strang AT 17.11.2026, 04:20 MEZ), für FL5.
+# Von Hand festgelegt, BEVOR die Ableitung über die Texte lief; nur messen. Einordnung = was ein Mensch sagt, nicht was die Regel kann.
+# Gezählt wird je Begriff: richtig, UNKLAR gelassen, FALSCH eingeordnet. Nicht gelistete Begriffe zählen nicht.
+# begriff	einordnung
+Besteller	ROLLE
+Einkaufsabteilung	ROLLE
+Einkäufer	ROLLE
+Lieferant	ROLLE
+Lagerist	ROLLE
+Buchhaltung	ROLLE
+Lagerleiter	ROLLE
+Kostenstellenleiter	ROLLE
+Fahrer	ROLLE
+Abteilungsleiter	ROLLE
+Lagersystem	TECHNISCH
+Datenbank	TECHNISCH
+Bestelldienst	TECHNISCH
+Schnittstelle	TECHNISCH
+Scanner	TECHNISCH
+Druckserver	TECHNISCH
+Message Broker	TECHNISCH
+Single Sign-on	TECHNISCH
+Bestellportal	TECHNISCH
+HTTPS	TECHNISCH
+Bestellanforderung	FACHLICH
+Angebot	FACHLICH
+Ware	FACHLICH
+Wareneingang	FACHLICH
+Rechnung	FACHLICH
+Lagerplatz	FACHLICH
+Inventur	FACHLICH
+Mindestbestand	FACHLICH
+Nachbestellung	FACHLICH
+Auftrag	FACHLICH
+Freigabe	FACHLICH
+Bestand	FACHLICH
+Lieferschein	FACHLICH
+Lieferung	FACHLICH
+Bestellung	FACHLICH
+Lieferfrist	FACHLICH
+Rahmenvereinbarung	FACHLICH
+Vertrag	FACHLICH
+Kennzahl	FACHLICH
+Begleitpapier	FACHLICH
+# Nachtrag Text I (17.11.2026, 04:40 MEZ), festgelegt, bevor die Ableitung über Text I lief.
+Transport	FACHLICH
+Kostenstelle	FACHLICH
+Preisindex	FACHLICH
+Punktesystem	FACHLICH
+Monatsreport	FACHLICH
+Lieferantennetzwerk	FACHLICH
+Export	FACHLICH
+Rabatt	FACHLICH
+Genehmigung	FACHLICH
+Poststelle	ROLLE
+Stammkunde	ROLLE
+Sachgebietsleiter	ROLLE

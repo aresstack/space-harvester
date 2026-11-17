@@ -254,7 +254,8 @@ public final class AppRuntime implements AutoCloseable {
                 NetworkSettings.DEFAULT, new StorageSettings(settings.storage().dataDirectory()))
                 .withLocalFiles(settings.localFiles()).withTerms(settings.terms())
                 .withEnrichment(settings.enrichment()).withChangeLog(settings.cache().changeLog())
-                .withSimplification(settings.simplification()).withCheck(settings.check());
+                .withSimplification(settings.simplification()).withStanding(settings.standing())
+                .withCheck(settings.check());
     }
 
     /**

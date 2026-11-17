@@ -1,0 +1,14 @@
+# Erwartete Ist-Beziehungen (Kontrollsatz „beschaffung“, Strang AT 17.11.2026, 04:20 MEZ), für FL5.
+# Von Hand festgelegt, BEVOR die Ableitung lief. art: BESTIMMUNG (X ist ein Y, Vorschlag für die Begriffsbestimmung), ROLLE (X ist Y ohne Artikel),
+# GLEICHSETZUNG (X ist der/die/das Y), KEINE (darf weder Beziehung noch Vorschlag ergeben; Grund in der Bemerkung).
+# zeile	traeger	nomen	art	bemerkung
+F12	Lieferschein	Begleitpapier	BESTIMMUNG	
+H01	Rahmenvereinbarung	Vertrag	BESTIMMUNG	
+H06	Mindestbestand	Kennzahl	BESTIMMUNG	
+F03	Einkäufer	Ansprechpartner	ROLLE	
+H02	Lagerleiter	Vertreter	ROLLE	
+H05	Lieferant	Vertragspartner	ROLLE	
+H03	Einkaufsabteilung	Vergabestelle	GLEICHSETZUNG	
+H04	Angebot	Bestellung	KEINE	verneint
+H08	Außenlager	Werkstatt	KEINE	früher, gilt nicht mehr
+H09	Einkäufer	Leiter	KEINE	Zustandswechsel, kein Ist-Zustand

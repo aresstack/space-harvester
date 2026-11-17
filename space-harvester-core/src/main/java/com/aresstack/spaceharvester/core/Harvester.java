@@ -354,6 +354,7 @@ public final class Harvester implements AutoCloseable {
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
+    private final com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice;
     private final StatementAnalysisJobs statementAnalysisJobs;
     private final KnowledgeGraphExportUseCase knowledgeGraphExport;
     private final SourceQueryExports sourceQueryExports;
@@ -960,7 +961,11 @@ public final class Harvester implements AutoCloseable {
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
-                    () -> com.aresstack.spaceharvester.application.standing.StandingWords.DEFAULT, clock);
+                    () -> com.aresstack.spaceharvester.application.standing.StandingWords.of(
+                            this.settings.standing()), clock);
+            this.readingAdvice = new com.aresstack.spaceharvester.application.standing.ReadingAdvice(statusQuo,
+                    knowledgeGraph::analysed,
+                    new com.aresstack.spaceharvester.application.standing.ChangeLogRecentChanges(changeLog), clock);
             this.statementAnalysisJobs = new StatementAnalysisJobs(jobs, new StatementAnalysisJobs.Discovery() {
                 @Override
                 public PageNavigation.Children children(AccessContext who, String sourceId, String spaceKey,
@@ -1686,6 +1691,11 @@ public final class Harvester implements AutoCloseable {
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */
     public com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo() {
         return statusQuo;
+    }
+
+    /** Leseempfehlung je Auswahl und Thema (ADR 0032, FL6). */
+    public com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice() {
+        return readingAdvice;
     }
 
     /**
