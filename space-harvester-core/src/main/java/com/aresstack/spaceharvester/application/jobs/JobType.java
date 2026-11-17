@@ -87,17 +87,21 @@ public enum JobType {
     STATEMENT_CHECK;
 
     /**
+     * Lädt von der Quelle herunter: Bilder, Anhänge und die Exporte aus der Quelle (Confluence-Metadaten, Analytics;
+     * #944). Erst Vorbereitung (Seiten aus dem Bestand bestimmen, ohne Quelle), dann Download, mit je eigener Grenze
+     * ({@link JobStage}): Vorbereitung {@code jobs.parallel-preparations}, Download {@code jobs.parallel-downloads},
+     * in der App die Auswahl „Vorbereitung“ und „Downloads“ der Auftragsliste. Belegt keinen der Plätze für Abgleiche
+     * und Exporte ({@code jobs.max-concurrent}). Die Verbindungen je Download („Verbindungen“) teilen nur Bilder und
+     * Anhänge unter sich auf; ein Export aus der Quelle fragt mit einer Verbindung, Seite für Seite.
+     */
+    public boolean download() {
+        return this == ASSETS || this == ATTACHMENTS || this == METADATA_EXPORT || this == ANALYTICS_EXPORT;
+    }
+
+    /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
      * alle Plätze.
      */
-    /**
-     * Lädt Dateien herunter (Bilder, Anhänge): erst Vorbereitung, dann Download, mit je eigener Grenze
-     * ({@link JobStage}); belegt keinen der Plätze für Abgleiche und Exporte.
-     */
-    public boolean download() {
-        return this == ASSETS || this == ATTACHMENTS;
-    }
-
     public boolean followUp() {
         return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS || this == GLOSSARY || this == REREAD
                 || this == UPDATE_SUMMARY;

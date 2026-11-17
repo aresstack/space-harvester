@@ -1891,7 +1891,10 @@ public final class Harvester implements AutoCloseable {
     }
 
     /** Alle Aufträge dieses Harvesters. */
-    /** Wie viele Bilder- und Anhängeaufträge höchstens gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
+    /**
+     * Wie viele Downloads (Bilder, Anhänge, Exporte aus der Quelle) höchstens gleichzeitig vorbereiten
+     * ({@code jobs.parallel-preparations}).
+     */
     public int parallelPreparations() {
         return jobs.parallelPreparations();
     }
@@ -1901,14 +1904,17 @@ public final class Harvester implements AutoCloseable {
         jobs.parallelPreparations(value);
     }
 
-    /** Wie viele Bilder- und Anhängeaufträge höchstens gleichzeitig laden ({@code jobs.parallel-downloads}). */
+    /**
+     * Wie viele Downloads (Bilder, Anhänge, Exporte aus der Quelle) höchstens gleichzeitig laden
+     * ({@code jobs.parallel-downloads}).
+     */
     public int parallelDownloads() {
         return jobs.parallelDownloads();
     }
 
     /**
      * Ändert {@link #parallelDownloads()} sofort (0 bis {@value JobLimits#MAX_PARALLEL_DOWNLOADS}); bei 0 bereiten
-     * Bilder- und Anhängeaufträge nur vor und warten dann, bis wieder geladen werden darf.
+     * Downloads nur vor und warten dann, bis wieder geladen werden darf.
      */
     public void parallelDownloads(int value) {
         jobs.parallelDownloads(value);

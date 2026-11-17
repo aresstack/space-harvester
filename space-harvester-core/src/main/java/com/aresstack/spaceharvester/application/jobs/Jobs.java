@@ -1486,7 +1486,10 @@ public class Jobs implements AutoCloseable {
         }
     }
 
-    /** Wie viele Bilder- und Anhängeaufträge gerade laden (höchstens {@link #parallelDownloads()}, bis auf Restläufer). */
+    /**
+     * Wie viele Downloads ({@link JobType#download()}) gerade laden (höchstens {@link #parallelDownloads()}, bis auf
+     * Restläufer).
+     */
     public int downloadingNow() {
         synchronized (lock) {
             return downloading;

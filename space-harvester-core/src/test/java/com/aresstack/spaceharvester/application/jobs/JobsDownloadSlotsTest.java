@@ -130,6 +130,97 @@ class JobsDownloadSlotsTest {
         await(job.id(), status -> status.state() == JobState.COMPLETED);
     }
 
+    /**
+     * #944: Exporte aus der Quelle (Confluence-Metadaten, Analytics) laden auf den eingestellten Download-Plätzen, nicht
+     * auf den beiden Plätzen für Abgleiche und Exporte; ein frei werdender Platz geht an den nächsten, nach Erfolg,
+     * Fehler und Abbruch.
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2, 4})
+    void exportsFromTheSourceLoadOnTheConfiguredDownloadSlots(int downloads) throws InterruptedException {
+        Jobs lanes = new Jobs(new InMemoryJobStore(), new InMemoryJobEventStore(), sourceId -> Optional.empty(),
+                executor, new JobLimits(2, 20, Duration.ofHours(1), Duration.ofDays(30)).withParallel(8, downloads),
+                clock);
+        java.util.Map<String, CountDownLatch> ends = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.Set<String> fails = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            CountDownLatch end = new CountDownLatch(1);
+            JobType type = i % 2 == 0 ? JobType.METADATA_EXPORT : JobType.ANALYTICS_EXPORT;
+            JobStatus job = lanes.submit(type, "wiki", "S" + i, "client-a", JobTask.blocking(context -> {
+                context.discovered(10);
+                context.awaitDownloadSlot();
+                try {
+                    ends.get(context.jobId()).await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                context.checkpoint();
+                if (fails.contains(context.jobId())) {
+                    throw new IllegalStateException("Quelle antwortet falsch");
+                }
+            }));
+            ends.put(job.id(), end);
+            ids.add(job.id());
+        }
+        for (int i = 0; i < 8; i++) {
+            runInBackground();
+        }
+
+        awaitLanes(lanes, ids, downloads, 8 - downloads);
+
+        // Erfolg, Fehler und Abbruch geben je einen Platz frei; der nächste vorbereitete lädt.
+        String done = loading(lanes, ids);
+        ends.get(done).countDown();
+        awaitState(lanes, done, JobState.COMPLETED);
+        awaitLanes(lanes, ids, Math.min(downloads, 7), Math.max(0, 7 - downloads));
+
+        String failing = loading(lanes, ids);
+        fails.add(failing);
+        ends.get(failing).countDown();
+        awaitState(lanes, failing, JobState.FAILED);
+        awaitLanes(lanes, ids, Math.min(downloads, 6), Math.max(0, 6 - downloads));
+
+        String cancelled = loading(lanes, ids);
+        lanes.cancel(cancelled, "client-a");
+        ends.get(cancelled).countDown();
+        awaitState(lanes, cancelled, JobState.CANCELLED);
+        awaitLanes(lanes, ids, Math.min(downloads, 5), Math.max(0, 5 - downloads));
+        // Die Plätze für Abgleiche und Exporte bleiben frei: ein Export startet sofort.
+        JobStatus export = lanes.submit(JobType.EXPORT, "andere", "X", "client-b", JobTask.blocking(context -> { }));
+        assertThat(lanes.status(export.id()).state()).isEqualTo(JobState.RUNNING);
+
+        ends.values().forEach(CountDownLatch::countDown);
+    }
+
+    private static String loading(Jobs lanes, List<String> ids) {
+        return ids.stream().filter(id -> lanes.status(id).stage() == JobStage.DOWNLOADING).findFirst().orElseThrow();
+    }
+
+    private static void awaitLanes(Jobs lanes, List<String> ids, int loading, int waiting) throws InterruptedException {
+        for (int i = 0; i < 200; i++) {
+            long nowLoading = ids.stream().filter(id -> lanes.status(id).stage() == JobStage.DOWNLOADING).count();
+            long nowWaiting = ids.stream().filter(id -> lanes.status(id).stage() == JobStage.PREPARED).count();
+            if (nowLoading == loading && nowWaiting == waiting) {
+                assertThat(lanes.downloadingNow()).isEqualTo(loading);
+                return;
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("Erwartet " + loading + " ladend und " + waiting + " wartend: "
+                + ids.stream().map(id -> String.valueOf(lanes.status(id).stage())).toList());
+    }
+
+    private static void awaitState(Jobs lanes, String id, JobState state) throws InterruptedException {
+        for (int i = 0; i < 200; i++) {
+            if (lanes.status(id).state() == state) {
+                return;
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("Zustand " + state + " nicht erreicht: " + lanes.status(id));
+    }
+
     @Test
     void theSettingsAreChecked() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> jobs.parallelDownloads(-1))
