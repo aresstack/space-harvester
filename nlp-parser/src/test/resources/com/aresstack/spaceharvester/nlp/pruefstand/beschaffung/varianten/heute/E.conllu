@@ -113,7 +113,7 @@
 7	Lieferant	lieferant	NOUN	_	_	10	nsubj	_	_
 8	die	der	DET	_	_	9	det	_	_
 9	Lieferfrist	lieferfrist	NOUN	_	_	10	obj	_	_
-10	einhält	einhält	VERB	_	_	3	csubj:pass	_	SpaceAfter=No
+10	einhält	einhalten	VERB	_	LemmaFrom=Form	3	csubj:pass	_	SpaceAfter=No
 11	.	.	PUNCT	_	_	3	punct	_	_
 
 # sent_id = 9

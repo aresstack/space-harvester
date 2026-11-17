@@ -69,7 +69,7 @@ class GermanTagCorrectionsTest {
         assertEquals("sammeln", GermanTagCorrections.lemma("sammelt", "VERB", "sammelt"));
         assertEquals("ändert", GermanTagCorrections.lemma("ändert", "VERB", "ändert"), "mit Umlaut: bleibt");
         assertEquals("arbeiten", GermanTagCorrections.lemma("arbeitet", "VERB", "arbeitet"));
-        assertEquals("einhält", GermanTagCorrections.lemma("einhält", "VERB", "einhält"), "starkes Verb: unsicher");
+        assertEquals("einhalten", GermanTagCorrections.lemma("einhält", "VERB", "einhält"), "starkes Verb aus der Tabelle");
         assertEquals("prüft", GermanTagCorrections.lemma("prüft", "NOUN", "prüft"), "nur Verben");
         assertEquals("erfassen", GermanTagCorrections.lemma("erfasst", "VERB", "erfassen"), "Grundform bleibt");
         assertNull(GermanTagCorrections.lemma("holt", "VERB", null), "ohne Grundform nichts erfinden");
@@ -77,10 +77,28 @@ class GermanTagCorrectionsTest {
         assertEquals("angegeben", GermanTagCorrections.lemma("angegeben", "VERB", "angegeben"));
         assertEquals("Maßnahme", GermanTagCorrections.lemma("Maßnahme", "NOUN", "Maßnahme"), "kein ß→ss");
         // Gegenproben: im Zweifel die Form lassen statt ein Wort zu erfinden
-        for (String form : java.util.List.of("gibt", "gilt", "nimmt", "misst", "gebucht", "gehört")) {
+        for (String form : java.util.List.of("gebucht", "gehört")) {
             assertEquals(form, GermanTagCorrections.lemma(form, "VERB", form), form);
         }
         assertEquals("bilden", GermanTagCorrections.lemma("bildet", "VERB", "bildet"));
         assertEquals("liefern", GermanTagCorrections.lemma("liefert", "VERB", "liefert"));
+    }
+
+    @Test
+    void strongVerbsWithVowelChangeInThePresentFromTheTable() {
+        java.util.Map<String, String> strong = java.util.Map.of("hält", "halten", "fährt", "fahren", "trägt", "tragen",
+                "lässt", "lassen", "gibt", "geben", "gilt", "gelten", "nimmt", "nehmen", "liest", "lesen", "sieht",
+                "sehen", "hältst", "halten");
+        strong.forEach((form, lemma) -> assertEquals(lemma, GermanTagCorrections.lemma(form, "VERB", form), form));
+        assertEquals("einhalten", GermanTagCorrections.lemma("einhält", "VERB", "einhält"), "mit Verbzusatz");
+        assertEquals("erhalten", GermanTagCorrections.lemma("erhält", "VERB", "erhält"), "mit untrennbarer Vorsilbe");
+        assertEquals("entsprechen", GermanTagCorrections.lemma("entspricht", "VERB", "entspricht"));
+        // Gegenproben: regelmäßige Verben mit Umlaut bleiben, Nicht-Verben bleiben, vorhandene Grundformen bleiben
+        for (String form : java.util.List.of("zählt", "wählt", "klärt", "ändert")) {
+            assertEquals(form, GermanTagCorrections.lemma(form, "VERB", form), form);
+        }
+        assertEquals("Tritt", GermanTagCorrections.lemma("Tritt", "NOUN", "Tritt"), "Nomen, kein Verb");
+        assertEquals("halten", GermanTagCorrections.lemma("hält", "VERB", "halten"));
+        assertEquals("hielt", GermanTagCorrections.lemma("hielt", "VERB", "hielt"), "kein Präteritum");
     }
 }

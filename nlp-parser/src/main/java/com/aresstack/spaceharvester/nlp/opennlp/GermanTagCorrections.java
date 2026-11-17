@@ -1,6 +1,12 @@
 package com.aresstack.spaceharvester.nlp.opennlp;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -32,9 +38,16 @@ final class GermanTagCorrections {
     private static final Set<String> NOMINAL_FOLLOWERS = Set.of("NOUN", "PROPN", "ADJ", "NUM");
 
     /** Abtrennbare Verbzusätze, die im zu-Infinitiv vor {@code zu} stehen ({@code bereitzustellen}). */
+    /** Form → Grundform der starken Verben (ADR 0032). */
+    private static final Map<String, String> STRONG = strongVerbs();
     private static final List<String> PARTICLES = List.of("ab", "an", "auf", "aus", "bei", "bereit", "dar", "ein",
             "fest", "fort", "frei", "her", "heraus", "herein", "hin", "hinaus", "hinzu", "los", "mit", "nach", "nieder",
             "sicher", "statt", "teil", "vor", "voran", "voraus", "vorbei", "weg", "weiter", "zu", "zurück", "zusammen");
+    /** Verbzusätze und untrennbare Vorsilben vor einer starken Präsensform, längere zuerst. */
+    private static final List<String> PREFIXES = java.util.stream.Stream.concat(PARTICLES.stream(),
+                    java.util.stream.Stream.of("be", "emp", "ent", "er", "ge", "miss", "ver", "zer", "über", "unter",
+                            "durch", "wider", "hinter", "um"))
+            .distinct().sorted(Comparator.comparingInt(String::length).reversed()).toList();
     /**
      * Verbzusatz + {@code zu} + Infinitiv. Längere Zusätze zuerst, damit {@code hinzuzufügen} als {@code hinzu} +
      * {@code zu} + {@code fügen} gelesen wird.
@@ -93,7 +106,14 @@ final class GermanTagCorrections {
         }
         // Grundform aus der Form nur, wenn OpenNLP die Form unverändert als Grundform liefert (ADR 0032, FL2)
         Matcher zu = ZU_INFINITIVE.matcher(form.toLowerCase(Locale.ROOT));
-        return zu.matches() ? zuInfinitive(form, lemma) : lemma == null ? null : finite(form, lemma);
+        if (zu.matches()) {
+            return zuInfinitive(form, lemma);
+        }
+        if (lemma == null) {
+            return null;
+        }
+        String strong = strong(form);
+        return strong != null ? strong : finite(form, lemma);
     }
 
     /**
@@ -133,7 +153,9 @@ final class GermanTagCorrections {
         }
         String stem = lower.substring(0, lower.length() - 1);
         if (stem.endsWith("er") || stem.endsWith("el")) {
-            return stem + "n";
+            // „sammelt“, „ändert“: Konsonant vor -el/-er; „hielt“, „fiel“ (Vokal davor) sind keine solchen Formen
+            char before = stem.length() > 2 ? stem.charAt(stem.length() - 3) : 'a';
+            return "aeiouy".indexOf(before) >= 0 ? lemma : stem + "n";
         }
         if (stem.endsWith("de") || stem.endsWith("te")) {
             return stem.substring(0, stem.length() - 1) + "en";
@@ -156,6 +178,49 @@ final class GermanTagCorrections {
             last = vowels.group();
         }
         return "i".equals(last);
+    }
+
+    /**
+     * Präsens eines starken oder unregelmäßigen Verbs mit Vokalwechsel aus {@code starke-verben.tsv} („hält“ →
+     * „halten“), auch mit Verbzusatz oder untrennbarer Vorsilbe davor („einhält“ → „einhalten“, „erhält“ →
+     * „erhalten“); sonst {@code null}.
+     */
+    static String strong(String form) {
+        String lower = form.toLowerCase(Locale.ROOT);
+        String direct = STRONG.get(lower);
+        if (direct != null) {
+            return direct;
+        }
+        for (String prefix : PREFIXES) {
+            if (lower.length() > prefix.length() + 2 && lower.startsWith(prefix)) {
+                String base = STRONG.get(lower.substring(prefix.length()));
+                if (base != null) {
+                    return prefix + base;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Map<String, String> strongVerbs() {
+        Map<String, String> forms = new HashMap<>();
+        try (InputStream input = GermanTagCorrections.class.getResourceAsStream("starke-verben.tsv")) {
+            if (input == null) {
+                throw new IllegalStateException("starke-verben.tsv fehlt");
+            }
+            for (String line : new String(input.readAllBytes(), StandardCharsets.UTF_8).split("\\r?\\n")) {
+                if (line.isBlank() || line.startsWith("#")) {
+                    continue;
+                }
+                String[] columns = line.split("\t");
+                for (int i = 1; i < columns.length; i++) {
+                    forms.putIfAbsent(columns[i].strip(), columns[0].strip());
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return Map.copyOf(forms);
     }
 
     private static String zuInfinitive(String form, String lemma) {
