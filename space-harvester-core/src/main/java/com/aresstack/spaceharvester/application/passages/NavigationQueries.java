@@ -30,13 +30,16 @@ public final class NavigationQueries {
     }
 
     /**
-     * Die Navigation einer Seite.
+     * Die Navigation einer Seite, zum Text im Cache: liegt die Seite lokal, ohne Prüfung bei der Quelle (die Leseansicht
+     * hat die Seite dann schon geprüft oder prüft sie selbst im Hintergrund, Angelo 17.11.2026); sonst wie
+     * {@link PageQueries#page}.
      *
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wie {@link PageQueries#page}
      * @throws com.aresstack.spaceharvester.application.query.CacheMissException     wie {@link PageQueries#page}
      */
     public DocumentNavigationView page(AccessContext caller, String sourceId, String pageId) {
-        DeliveredPage page = pages.page(caller, sourceId, pageId, false);
+        DeliveredPage page = pages.cached(caller, sourceId, pageId)
+                .orElseGet(() -> pages.page(caller, sourceId, pageId, false));
         PageText text = text(page);
         DocumentNavigationView navigation = read(page, text);
         if (text == null || navigation.state() == PagePassages.State.CURRENT

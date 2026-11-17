@@ -772,6 +772,31 @@ class ConfigFileEditorTest {
         assertThat(Files.readString(file)).isEqualTo(original);
     }
 
+    /** Angelo 17.11.2026: der Hintergrund des Bildbetrachters steht nur in der Datei, wenn er von der Vorgabe abweicht. */
+    @Test
+    void theViewerBackgroundIsWrittenUnderTheAppRootAndRemovedForTheDefault() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester-app:\n  output-directory: D:\\out   # bleibt\nspace-harvester:\n"
+                + "  sources: []\n");
+        editor.save(file, editor.withViewerBackground(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                ViewerBackground.BLACK));
+        String text = Files.readString(file);
+        assertThat(text).contains("  output-directory: D:\\out   # bleibt\n", "  viewer:\n    background: black\n");
+        assertThat(loader.load(file).viewerBackground()).isEqualTo(ViewerBackground.BLACK);
+
+        editor.save(file, editor.withViewerBackground(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                ViewerBackground.GREY));
+        text = Files.readString(file);
+        assertThat(text).contains("  viewer:\n    background: grey\n").doesNotContain("black");
+        assertThat(text.split("viewer:", -1)).hasSize(2);
+
+        editor.save(file, editor.withViewerBackground(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                ViewerBackground.THEME));
+        text = Files.readString(file);
+        assertThat(text).doesNotContain("viewer").contains("  output-directory: D:\\out   # bleibt\n", "sources: []");
+        assertThat(loader.load(file).viewerBackground()).isEqualTo(ViewerBackground.THEME);
+    }
+
     @Test
     void theAnalyticsExportIsWrittenAsABlockUnderTheAppRootAndRemovedWhenAllIsDefault() throws Exception {
         Path file = home.resolve("app.yml");

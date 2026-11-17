@@ -231,7 +231,33 @@ public final class AppSettingsLoader {
                 enrichment(map(get(root, "enrichment")), problems), analytics(map(get(app, "analytics")), problems),
                 simplification(map(get(map(get(root, "statements")), "simplification")), problems),
                 standing(map(get(map(get(root, "statements")), "standing")), problems),
-                check(map(get(map(get(root, "statements")), "check")), problems));
+                check(map(get(map(get(root, "statements")), "check")), problems),
+                viewerBackground(get(map(get(app, "viewer")), "background"), problems));
+    }
+
+    /**
+     * {@code space-harvester-app.viewer.background}: Hintergrund des Bildbetrachters (Angelo 17.11.2026). Ohne Angabe
+     * oder bei einem unbekannten Wert gilt {@link ViewerBackground#DEFAULT}, die Oberfläche der App.
+     */
+    private ViewerBackground viewerBackground(Object raw, List<String> problems) {
+        if (raw == null) {
+            return ViewerBackground.DEFAULT;
+        }
+        if (raw instanceof Map<?, ?> || raw instanceof List<?>) {
+            problems.add(ViewerBackground.KEY + " ist ein einzelner Wert: " + ViewerBackground.keys());
+            return ViewerBackground.DEFAULT;
+        }
+        String text = text(raw, problems);
+        if (text == null || text.isBlank()) {
+            // Ein ungelöster Platzhalter steht schon unter den Problemen.
+            return ViewerBackground.DEFAULT;
+        }
+        ViewerBackground background = ViewerBackground.parse(text);
+        if (background == null) {
+            problems.add(ViewerBackground.KEY + " kennt nur " + ViewerBackground.keys() + ", nicht " + text.strip());
+            return ViewerBackground.DEFAULT;
+        }
+        return background;
     }
 
     /**

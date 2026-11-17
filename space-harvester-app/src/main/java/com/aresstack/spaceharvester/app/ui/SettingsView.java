@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.ui.controls.DurationField;
 import com.aresstack.spaceharvester.application.metadata.AnalyticsQueries;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -30,7 +31,7 @@ import java.util.Objects;
  * Einstellungen und Diagnose in Bereichen wie im AskAI-Client: Die Bereiche stehen untereinander im linken Drawer
  * ({@link #drawer()}, an Stelle des Explorers, solange die Einstellungen offen sind), rechts nur der gewählte Bereich.
  * „Allgemein“ (welche Datei gilt, was daran nicht stimmt, wo die Daten liegen, welche Ordner gelesen werden dürfen,
- * Versionen, was im Terminal erscheint), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle
+ * Versionen, was im Terminal erscheint, Darstellung: Hintergrund des Bildbetrachters), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle
  * Quellen), „Netzwerk“ (Proxy, Serverzertifikate und Wiederholungen), „Cache“ (Aktualisierung gespeicherter Seiten,
  * Frist für gesperrte Seiten) und „Sicherheit“
  * (KeePass-Kopplung für KI-Dienst und Quellen, Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“;
@@ -127,6 +128,19 @@ public final class SettingsView implements View {
     private ConsoleOutput shownConsole;
     /** Während {@link #renderConsole} die Auswahl setzt, ist das keine Wahl des Benutzers. */
     private boolean showingConsole;
+    /** Platte „Darstellung“ unter Allgemein (Angelo 17.11.2026). */
+    static final String DISPLAY_TITLE = "Darstellung";
+    /** Zeile der Platte „Darstellung“ und Zeile auf der Abschlussseite des Assistenten. */
+    static final String VIEWER_TITLE = "Hintergrund des Bildbetrachters";
+    static final String VIEWER_HINT = "Die Fläche hinter dem Bild in „Bilder der Seite“. Gilt beim nächsten Öffnen, "
+            + "ohne Neustart.";
+    /** Auswahl „Hintergrund des Bildbetrachters“, {@code space-harvester-app.viewer.background}; Einträge in der
+     * Reihenfolge von {@link ViewerBackground}. */
+    final JComboBox<String> viewer = Comic.combo();
+    /** Was die Auswahl zeigt; eine Wahl desselben Werts schreibt nichts. */
+    private ViewerBackground shownViewer;
+    /** Während {@link #renderViewer} die Auswahl setzt, ist das keine Wahl des Benutzers. */
+    private boolean showingViewer;
     /** Platte „Analytics-Export“ unter Allgemein und Zeile auf der Abschlussseite des Assistenten. */
     static final String ANALYTICS_TITLE = "Analytics-Export";
     static final String ANALYTICS_HINT = "Leer heißt Vorgabe: der Pfad, den die Analytics-Oberfläche von Confluence "
@@ -187,6 +201,11 @@ public final class SettingsView implements View {
         }
         console.setToolTipText("Welche Meldungen im Terminal erscheinen, aus dem die App gestartet wurde");
         console.addActionListener(e -> chooseConsole());
+        for (ViewerBackground background : ViewerBackground.values()) {
+            viewer.addItem(background.label());
+        }
+        viewer.setToolTipText("Farbe der Fläche hinter dem Bild im Bildbetrachter");
+        viewer.addActionListener(e -> chooseViewer());
         analyticsPeriod.onChange(this::saveAnalytics);
         for (PlaceholderField field : List.of(analyticsDetails, analyticsActivity, analyticsContentViews)) {
             field.setToolTipText("Pfad relativ zur Confluence der Quelle, unter /rest/");
@@ -236,6 +255,8 @@ public final class SettingsView implements View {
         diagnosis.add(Comic.row(about), BorderLayout.SOUTH);
         SettingDialogs.Rows consoleRows = new SettingDialogs.Rows();
         consoleRows.add("Anzeigen", console, CONSOLE_HINT);
+        SettingDialogs.Rows displayRows = new SettingDialogs.Rows();
+        displayRows.add(VIEWER_TITLE, viewer, VIEWER_HINT);
         SettingDialogs.Rows analyticsRows = new SettingDialogs.Rows();
         analyticsRows.add("Zeitraum", analyticsPeriod, "Bis heute zurück; Analytics bewahrt standardmäßig 12 Monate "
                 + "auf.");
@@ -248,6 +269,7 @@ public final class SettingsView implements View {
         page(GENERAL, Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
+                Comic.plate(DISPLAY_TITLE, Comic.BLUE, displayRows),
                 Comic.plate(ANALYTICS_TITLE, Comic.PETROL, analyticsRows),
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate(FileAccessEditor.HEADING, Comic.ORANGE, fileAccess.component()),
@@ -603,6 +625,7 @@ public final class SettingsView implements View {
         }
         renderSecurity(settings);
         renderConsole(settings);
+        renderViewer(settings);
         renderAnalytics(settings);
         retry.reset();
         if (settings != null) {
@@ -743,6 +766,23 @@ public final class SettingsView implements View {
         shownConsole = current;
     }
 
+    /** Zeigt den Hintergrund des Bildbetrachters aus der Datei; eine offene Liste bleibt unberührt. */
+    private void renderViewer(AppSettings settings) {
+        ViewerBackground current = settings == null ? ViewerBackground.DEFAULT : settings.viewerBackground();
+        if (viewer.isPopupVisible()) {
+            return;
+        }
+        showingViewer = true;
+        try {
+            if (viewer.getSelectedIndex() != current.ordinal()) {
+                viewer.setSelectedIndex(current.ordinal());
+            }
+        } finally {
+            showingViewer = false;
+        }
+        shownViewer = current;
+    }
+
     /** Zeigt den Export „Analytics“ aus der Datei; ein Feld, in dem gerade getippt wird, bleibt unberührt. */
     private void renderAnalytics(AppSettings settings) {
         AnalyticsSettings current = settings == null ? AnalyticsSettings.DEFAULT : settings.analytics();
@@ -813,6 +853,21 @@ public final class SettingsView implements View {
         }
         shownConsole = chosen;
         context.consoleOutput(chosen, () -> feedback.success(CONSOLE_TITLE + ": " + chosen.label()),
+                feedback::problem);
+    }
+
+    /** Speichert den gewählten Hintergrund des Bildbetrachters in der Datei, ohne Neustart der Laufzeit. */
+    private void chooseViewer() {
+        int index = viewer.getSelectedIndex();
+        if (showingViewer || index < 0) {
+            return;
+        }
+        ViewerBackground chosen = ViewerBackground.values()[index];
+        if (chosen == shownViewer) {
+            return;
+        }
+        shownViewer = chosen;
+        context.viewerBackground(chosen, () -> feedback.success(VIEWER_TITLE + ": " + chosen.label()),
                 feedback::problem);
     }
 
