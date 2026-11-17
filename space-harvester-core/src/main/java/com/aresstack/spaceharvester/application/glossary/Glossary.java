@@ -506,8 +506,8 @@ public class Glossary {
     }
 
     /**
-     * „Daten bereinigen“ einer Quelle, ohne Rechteprüfung: KI-Einträge mit Geltungsbereich in dieser Quelle entfallen,
-     * manuelle bleiben (sie stammen vom Bearbeiter), alle übrigen verlieren ihre Belege aus dieser Quelle.
+     * „Daten bereinigen“ einer Quelle, ohne Rechteprüfung: KI- und Regel-Einträge mit Geltungsbereich in dieser Quelle
+     * entfallen, manuelle bleiben (sie stammen vom Bearbeiter), alle übrigen verlieren ihre Belege aus dieser Quelle.
      *
      * @return Anzahl der entfernten Einträge
      */
@@ -524,7 +524,8 @@ public class Glossary {
             if (!scoped && !evidenced) {
                 continue;
             }
-            if (scoped && entry.origin() == RelationOrigin.AI) {
+            if (scoped && entry.origin() != RelationOrigin.MANUAL) {
+                // Vorschläge eines Laufs (KI und Regel) gehören zur Quelle und fallen mit ihr.
                 removed.add(entry.id());
                 audit.add(new GlossaryStore.AuditEntry(entry.id(), "purge", actor, now, null, entry.revision() + 1));
             } else {
@@ -660,8 +661,9 @@ public class Glossary {
                 return Optional.empty();
             }
             List<RelationEvidence> evidence = entry.evidence().stream().filter(this::readable).toList();
-            // Vorschläge eines Laufs (KI und Regel) ohne lesbaren Beleg verraten nichts und bleiben verborgen.
-            if (entry.origin() != RelationOrigin.MANUAL && !entry.evidence().isEmpty() && evidence.isEmpty()) {
+            // Einträge eines Laufs (KI und Regel) ohne lesbaren Beleg verraten nichts und bleiben verborgen, auch wenn
+            // sie gar keinen Beleg mehr haben.
+            if (entry.origin() != RelationOrigin.MANUAL && evidence.isEmpty()) {
                 return Optional.empty();
             }
             RelationEvidence definition = entry.definitionProposal() != null && readable(entry.definitionProposal())

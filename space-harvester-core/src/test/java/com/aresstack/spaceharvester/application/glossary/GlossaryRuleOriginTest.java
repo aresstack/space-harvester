@@ -247,6 +247,33 @@ class GlossaryRuleOriginTest {
     }
 
     @Test
+    void removingASourceDropsItsRuleEntriesAndGlobalManualEntriesOnlyLoseTheirEvidence() {
+        ruleRun(rule("Datenbank", RULE_TECH, on("1", 0)));
+        aiRun(new Glossary.Proposal("Haushaltsverfahren", List.of(on("2", 0))));
+        GlossaryEntry global = glossary.add(EDITOR, new Glossary.NewEntry("Zuschuss", RelationScope.GLOBAL,
+                "Eigene Erklärung", List.of(on("1", 0))));
+        GlossaryEntry local = glossary.add(EDITOR, new Glossary.NewEntry("Bewilligung", WIKI, null, List.of()));
+
+        assertThat(glossary.removeSource("wiki", "bereinigen")).isEqualTo(2);
+
+        assertThat(stored("Datenbank")).as("Regel-Eintrag fällt mit der Quelle").isEmpty();
+        assertThat(stored("Haushaltsverfahren")).isEmpty();
+        GlossaryEntry kept = store.find(global.id()).orElseThrow();
+        assertThat(kept.evidence()).isEmpty();
+        assertThat(kept.explanation()).isEqualTo("Eigene Erklärung");
+        assertThat(store.find(local.id())).as("manuell bleibt").isPresent();
+    }
+
+    @Test
+    void runEntriesWithoutAnyEvidenceAreNeverVisible() {
+        ruleRun(rule("Datenbank", RULE_TECH, on("1", 0)));
+        GlossaryEntry entry = entry("Datenbank");
+        store.write(List.of(entry.withoutEvidenceOf("wiki", T0)), List.of(), List.of());
+
+        assertThat(terms(null)).isEmpty();
+    }
+
+    @Test
     void reasonsAreIdentifiersNeverFreeText() {
         assertThatThrownBy(() -> new Classification(Category.FACHLICH, ClassifiedBy.AI,
                 "Weil auf Seite 3 steht: Der Zuschuss"))
