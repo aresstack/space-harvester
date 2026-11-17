@@ -136,6 +136,16 @@ final class PrimaryRelationExtraction {
         if (subject == null) {
             return null;
         }
+        if (!token.hasUpos("ADJ") && !sentence.dependents(token.id(), "case").isEmpty()) {
+            // Das Rollennomen ist nie das Nomen einer Präpositionalgruppe („ist Sachbearbeiter im Referat“: der Parser
+            // hängt die Kopula an „Referat“). Steht hinter der Kopula ein Nomen ohne Präposition, ist das das
+            // Rollennomen, die Präpositionalgruppe bleibt Angabe; sonst keine Zustandsaussage (AT, rules-14)
+            Token roleNoun = roleNounBesidePrepositionalGroup(sentence, token, copula, subject);
+            if (roleNoun == null) {
+                return null;
+            }
+            token = roleNoun;
+        }
         if (holder != token && holder.hasUpos("ADJ")) {
             // Teilsatz und Relativsatz bestimmt das höhere der beiden Adjektive im Baum
             Token head = sentence.head(token);
@@ -191,6 +201,32 @@ final class PrimaryRelationExtraction {
         Statement statement = new Statement(id(document, sentence.index(), token.id()), sentence.index(), predicate,
                 Voice.ACTIVE, clause, List.of(), Set.of());
         return statement.with(arguments, withPronouns(mentions, arguments, findings));
+    }
+
+    /**
+     * Das erste Nomen ohne Präposition hinter der Kopula, das der Parser an das Nomen einer Präpositionalgruppe gehängt
+     * hat (als zweites Subjekt, Apposition oder Objekt), nicht das Subjekt selbst und nie ein Genitiv-Attribut („ist
+     * Vertreter des Leiters im Urlaub“: nicht „Leiters“); sonst {@code null}.
+     */
+    private static Token roleNounBesidePrepositionalGroup(Sentence sentence, Token prepositional, Token copula,
+                                                          Token subject) {
+        return sentence.dependents(prepositional.id()).stream()
+                .filter(t -> t.id() != subject.id() && t.id() > copula.id() && t.hasUpos("NOUN", "PROPN"))
+                .filter(t -> ROLE_NOUN_RELATIONS.contains(t.baseRelation()))
+                .filter(t -> sentence.dependents(t.id(), "case").isEmpty() && !genitiveAttribute(sentence, t))
+                .min(java.util.Comparator.comparingInt(Token::id)).orElse(null);
+    }
+
+    /** Beziehungen, mit denen der Parser das eigentliche Rollennomen an das Nomen der Präpositionalgruppe hängt. */
+    private static final Set<String> ROLE_NOUN_RELATIONS = Set.of("nsubj", "appos", "obj", "obl");
+
+    /** Genitiv-Begleiter, die nie am Rollennomen selbst stehen. */
+    private static final Set<String> GENITIVE_DETERMINERS = Set.of("des", "eines", "keines", "dieses", "jedes");
+
+    /** Nominales Attribut ({@code nmod}) oder Nomen mit eindeutigem Genitiv-Begleiter. */
+    private static boolean genitiveAttribute(Sentence sentence, Token noun) {
+        return "nmod".equals(noun.baseRelation()) || sentence.dependents(noun.id(), "det").stream()
+                .anyMatch(d -> GENITIVE_DETERMINERS.contains(d.form().toLowerCase(Locale.ROOT)));
     }
 
     /**
