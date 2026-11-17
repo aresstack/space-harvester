@@ -113,7 +113,13 @@ final class StandingTab extends JPanel {
             + "Ein Klick auf eine Zeile zeigt Grund und Herkunft, ein Doppelklick springt an die Stelle im Lesetext. "
             + "Die Suche findet Handelnde, Träger, Prädikate, die übrigen Beteiligten in Grundform, Seitentitel und "
             + "vereinfachte Sätze, nicht aber Wörter, die nur im Originalsatz stehen. "
-            + "Die Zahlen oben zählen alle Aussagen der Auswahl; ein Klick filtert auf den Stand.";
+            + "Die Zahlen oben zählen alle Aussagen der Auswahl; ein Klick filtert auf den Stand.\n\n"
+            + "„Mögliche Widersprüche“ ist nur ein Hinweis: sichere Aussagen derselben Sachlage, die beide gelten, "
+            + "mit gleicher Verbindlichkeit, eine bejaht, eine verneint. Setzt man eine davon von Hand auf "
+            + "„überholt“, verschwindet der Hinweis. „Ablösungen“ stehen getrennt darunter und sind kein Konflikt: "
+            + "eine geltende und eine überholte Aussage, anders verneint oder mit anderem Handelnden. Nie verglichen "
+            + "werden unsichere Aussagen, Nebensätze, Zustandswechsel, Bedingungen und Original und Vorstufe "
+            + "desselben Satzes.";
     private static final int ROW_HEIGHT = 46;
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY)
             .withZone(ZoneId.systemDefault());
