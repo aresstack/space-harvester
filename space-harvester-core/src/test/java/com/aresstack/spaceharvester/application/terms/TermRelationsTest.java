@@ -144,6 +144,31 @@ class TermRelationsTest {
     }
 
     @Test
+    void startsWithNarrowsToTheSortTermAndPagesByCursor() {
+        relations.add(EDITOR, new TermRelations.NewRelation("Zahlung", "Auszahlung", RelationType.SYNONYM,
+                RelationScope.GLOBAL, null, List.of()));
+        relations.add(EDITOR, new TermRelations.NewRelation("Antrag", "Anträge", RelationType.VARIANT,
+                RelationScope.GLOBAL, null, List.of()));
+        relations.add(EDITOR, new TermRelations.NewRelation("BMF", "Bundesministerium der Finanzen",
+                RelationType.ABBREVIATION, RelationScope.GLOBAL, null, List.of()));
+
+        // Ungerichtet sortiert das kleinere Ende: „Zahlung ↔ Auszahlung“ steht unter A, nicht unter Z.
+        TermRelations.RelationList a = relations.relations(READER, new TermRelations.RelationSearch(null, null,
+                null, null, null, 1, null, "a"));
+        assertThat(a.relations()).extracting(TermRelation::sortTerm).containsExactly("antrag");
+        assertThat(a.nextCursor()).isNotNull();
+        TermRelations.RelationList rest = relations.relations(READER, new TermRelations.RelationSearch(null, null,
+                null, null, null, 1, a.nextCursor(), "A"));
+        assertThat(rest.relations()).extracting(TermRelation::fromTerm).containsExactly("Zahlung");
+        assertThat(rest.relations().get(0).sortTerm()).isEqualTo("auszahlung");
+        assertThat(rest.nextCursor()).isNull();
+        assertThat(relations.relations(READER, new TermRelations.RelationSearch(null, null, null, null, null, 10,
+                null, "z")).relations()).isEmpty();
+        assertThat(relations.relations(READER, new TermRelations.RelationSearch(null, null, null, null, null, 10,
+                null, "b")).relations()).extracting(TermRelation::fromTerm).containsExactly("BMF");
+    }
+
+    @Test
     void relatedTermsNeverExpandSearch() {
         relations.add(EDITOR, new TermRelations.NewRelation("Beleg", "Kasse", RelationType.RELATED,
                 RelationScope.GLOBAL, null, List.of()));

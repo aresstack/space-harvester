@@ -84,11 +84,18 @@ public class TermRelations {
      * @param status   nur dieser Status; {@code null} heißt Vorschläge und bestätigte, ohne abgelehnte
      * @param origin   nur diese Herkunft oder {@code null}
      * @param sourceId nur globale und für diese Quelle geltende oder {@code null} für alle
-     * @param limit    1 bis {@link #MAX_LIMIT}
-     * @param cursor   {@code nextCursor} der vorigen Antwort oder {@code null}
+     * @param limit      1 bis {@link #MAX_LIMIT}
+     * @param cursor     {@code nextCursor} der vorigen Antwort oder {@code null}
+     * @param startsWith nur Beziehungen, deren Sortierbegriff ({@link TermRelation#sortTerm()}) so beginnt
+     *                   (normalisiert, etwa ein Buchstabe der A–Z-Leiste), oder {@code null}
      */
     public record RelationSearch(String term, RelationType type, ReviewStatus status, RelationOrigin origin,
-                                 String sourceId, int limit, String cursor) {
+                                 String sourceId, int limit, String cursor, String startsWith) {
+
+        public RelationSearch(String term, RelationType type, ReviewStatus status, RelationOrigin origin,
+                              String sourceId, int limit, String cursor) {
+            this(term, type, status, origin, sourceId, limit, cursor, null);
+        }
     }
 
     /** Ein Stapel Beziehungen, nach Schlüssel sortiert. */
@@ -149,6 +156,8 @@ public class TermRelations {
         }
         String term = search.term() == null || search.term().isBlank() ? null : TermText.normalize(search.term());
         String after = search.cursor() == null ? null : decode(search.cursor());
+        String prefix = search.startsWith() == null || search.startsWith().isBlank() ? null
+                : TermText.normalize(search.startsWith());
         Visibility visibility = new Visibility(caller);
         List<TermRelation> sorted = new ArrayList<>(store.all());
         sorted.sort(Comparator.comparing(TermRelation::key, TermIndex.ORDER));
@@ -156,6 +165,7 @@ public class TermRelations {
         for (TermRelation relation : sorted) {
             if (after != null && TermIndex.ORDER.compare(relation.key(), after) <= 0
                     || term != null && !relation.touches(term)
+                    || prefix != null && !relation.sortTerm().startsWith(prefix)
                     || search.type() != null && relation.type() != search.type()
                     || search.origin() != null && relation.origin() != search.origin()
                     || (search.status() == null ? relation.status() == ReviewStatus.REJECTED

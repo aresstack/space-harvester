@@ -7,8 +7,10 @@ import com.aresstack.spaceharvester.application.terms.RelationConflictException;
 import com.aresstack.spaceharvester.application.terms.RelationOrigin;
 import com.aresstack.spaceharvester.application.terms.RelationType;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
+import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermRelation;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
+import com.aresstack.spaceharvester.application.terms.TermText;
 
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -43,9 +45,14 @@ import static com.aresstack.spaceharvester.app.ui.TermsView.UNDO;
 
 /**
  * Ein Reiter mit Beziehungen zwischen Begriffen unter Begriffe (#120): „Beziehungen“ zeigt alle Arten, „Synonyme“ nur
- * Synonyme und Schreibvarianten. Liste mit Suchfeld und sortierbaren Spalten, Bestätigen, Ablehnen und Entfernen mit
- * Rückgängig sowie „Neue Beziehung …“. Die Arten grenzt der Core ein ({@code RelationSearch.type}); die App leitet
- * nichts ab. Nur auf dem EDT.
+ * Synonyme und Schreibvarianten. Liste mit Buchstabenleiste, Suchfeld und sortierbaren Spalten, Bestätigen, Ablehnen
+ * und Entfernen mit Rückgängig; „Neue Beziehung …“ ({@link #createButton()}) setzt der Einbau oben rechts in die
+ * Reiterzeile. Die Liste blättert wie die Bezeichner: Seiten von je
+ * {@link TermsView#RELATION_LIMIT} über einen {@link Pager}, die nächste beim Scrollen ans Ende; vorgeschlagene und
+ * bestätigte zuerst, danach die abgelehnten, beides in der Ordnung des Core (Schlüssel). Den Anfangsbuchstaben und die
+ * Arten grenzt der Core ein ({@code RelationSearch.startsWith}, {@code RelationSearch.type}); die App leitet nichts
+ * ab. Bei ungerichteten Arten steht in der ersten Spalte das Ende, nach dem der Core sortiert, damit die Liste
+ * alphabetisch aussieht. Nur auf dem EDT.
  */
 final class RelationTab {
 
@@ -78,6 +85,16 @@ final class RelationTab {
     private String keepSelected;
     private BiConsumer<String, Relation> onReview = (action, relation) -> { };
     private int request;
+    private Pager<TermRelation> pager;
+    private boolean loading;
+    /** Abruf einer Seite Beziehungen; Tests setzen einen eigenen, sonst liest der Reiter aus der Laufzeit. */
+    private RelationFetch fetch;
+
+    /** Eine Seite Beziehungen zu Art, Status, Suchbegriff und Anfangsbuchstaben nach {@code cursor}. */
+    interface RelationFetch {
+        TermRelations.RelationList fetch(RelationType type, ReviewStatus status, String term, String startsWith,
+                                         String cursor) throws Exception;
+    }
 
     /**
      * @param columns sichtbare Spalten; {@code cells} liefert je Beziehung genau so viele Werte
@@ -106,17 +123,37 @@ final class RelationTab {
         for (int c = 0; c < directory.table().getColumnCount(); c++) {
             directory.table().getColumnModel().getColumn(c).setCellRenderer(renderer);
         }
-        directory.middle(create);
+        // „Neue Beziehung …“ steht nicht im Kopf (dort Buchstabenleiste und Suche), sondern als Aktion des Reiters
+        // oben rechts in der Reiterzeile; wer den Reiter einbaut, setzt createButton() dorthin.
         create.addActionListener(e -> askNewRelation());
         create.setEnabled(context != null);
         directory.table().getSelectionModel().addListSelectionListener(e -> selectionChanged());
         confirm.addActionListener(e -> review(CONFIRM));
         reject.addActionListener(e -> review(REJECT));
         remove.addActionListener(e -> review(REMOVE));
+        directory.letters(letter -> load(null));
+        directory.onSearch(q -> load(null));
+        directory.onScrolledToEnd(this::more);
         if (context != null) {
-            directory.onSearch(q -> load(null));
             onReview = this::reviewInCore;
         }
+    }
+
+    /** Tests: liest Beziehungen von {@code fetch} statt aus der Laufzeit. */
+    void fetch(RelationFetch fetch) {
+        this.fetch = fetch;
+    }
+
+    private RelationFetch source() {
+        if (fetch != null) {
+            return fetch;
+        }
+        if (context == null || context.runtime() == null) {
+            return null;
+        }
+        Workspace workspace = context.runtime().workspace();
+        return (type, status, term, startsWith, cursor) -> workspace.termRelations(term, type, status, startsWith,
+                RELATION_LIMIT, cursor);
     }
 
     /** Der Bereich wird sichtbar: entfernte Zeilen sind besiegelt, die Liste lädt neu. */
@@ -133,71 +170,105 @@ final class RelationTab {
             removedCore.clear();
             show(shownRelations.stream().filter(r -> byId.containsKey(r.id()) && loaded.containsKey(r.id()))
                     .toList(), emptyHint);
+            directory.more(pager != null && pager.hasMore());
         }
     }
 
     /**
-     * Vorgeschlagene und bestätigte Beziehungen, danach die abgelehnten (sie bleiben sichtbar und kommen nicht wieder),
-     * je nach Begriff gefiltert wie im Dienst.
+     * Lädt die Liste von vorn: vorgeschlagene und bestätigte Beziehungen, danach die abgelehnten (sie bleiben sichtbar
+     * und kommen nicht wieder), je nach Suchbegriff und Anfangsbuchstabe gefiltert wie im Dienst. {@code notice} steht
+     * danach unter der Liste.
      */
     void load(String notice) {
-        if (context == null) {
-            return;
-        }
-        if (context.runtime() == null) {
-            directory.show(List.of(), NO_RUNTIME);
+        RelationFetch source = source();
+        if (source == null) {
+            if (context != null) {
+                directory.show(List.of(), NO_RUNTIME);
+            }
             return;
         }
         int current = ++request;
         String q = directory.query();
         String term = q.isEmpty() ? null : q;
-        AppRuntime runtime = context.runtime();
+        String letter = directory.letter();
         List<RelationType> queried = types.isEmpty() ? java.util.Collections.singletonList(null) : types;
-        Background.run(() -> {
-            List<TermRelation> open = new ArrayList<>();
-            List<TermRelation> rejected = new ArrayList<>();
-            boolean more = false;
-            for (RelationType type : queried) {
-                TermRelations.RelationList o = runtime.workspace().termRelations(term, type, null, RELATION_LIMIT);
-                TermRelations.RelationList r = runtime.workspace().termRelations(term, type, ReviewStatus.REJECTED,
-                        RELATION_LIMIT);
-                open.addAll(o.relations());
-                rejected.addAll(r.relations());
-                more |= o.nextCursor() != null || r.nextCursor() != null;
+        List<Pager.Fetch<TermRelation>> open = new ArrayList<>();
+        List<Pager.Fetch<TermRelation>> rejected = new ArrayList<>();
+        for (RelationType type : queried) {
+            open.add(cursor -> page(source.fetch(type, null, term, letter, cursor)));
+            rejected.add(cursor -> page(source.fetch(type, ReviewStatus.REJECTED, term, letter, cursor)));
+        }
+        // Je Art sortiert der Core nach Schlüssel; der Pager führt die Arten in derselben Ordnung zusammen.
+        pager = new Pager<>(ORDER, List.of(open, rejected));
+        loading = false;
+        more(current, true, q.isEmpty() && letter == null ? emptyHint : NO_MATCH, notice);
+    }
+
+    /** Die Ordnung des Core: Schlüssel als UTF-8-Bytes. */
+    static final Comparator<TermRelation> ORDER = Comparator.comparing(TermRelation::key, TermIndex.ORDER);
+
+    private static Pager.Page<TermRelation> page(TermRelations.RelationList list) {
+        return new Pager.Page<>(list.relations(), list.nextCursor());
+    }
+
+    /** Die nächste Seite, wenn noch eine da ist und gerade keine lädt. */
+    private void more() {
+        Pager<TermRelation> current = pager;
+        if (current != null && !loading && current.hasMore()) {
+            more(request, false, NO_MATCH, null);
+        }
+    }
+
+    private void more(int current, boolean first, String hint, String notice) {
+        Pager<TermRelation> paging = pager;
+        loading = true;
+        Background.run(() -> paging.next(RELATION_LIMIT), found -> {
+            if (current != request) {
+                return;
             }
-            if (queried.size() > 1) {
-                // Je Art sortiert der Core nach Schlüssel; zusammengeführt gilt dieselbe Ordnung.
-                open.sort(Comparator.comparing(TermRelation::key));
-                rejected.sort(Comparator.comparing(TermRelation::key));
-            }
-            List<Relation> all = new ArrayList<>();
-            Map<String, TermRelation> core = new HashMap<>();
-            for (List<TermRelation> part : List.of(open, rejected)) {
-                for (TermRelation r : part) {
-                    all.add(Relation.of(r));
-                    core.put(r.id(), r);
+            loading = false;
+            List<Relation> list = new ArrayList<>(found.size());
+            for (TermRelation relation : found) {
+                list.add(inKeyOrder(relation));
+                if (first) {
+                    loaded.remove(relation.id());
                 }
             }
-            return new Loaded(all, core, more);
-        }, found -> {
-            if (current == request) {
-                loaded.clear();
-                loaded.putAll(found.core());
-                show(found.list(), q.isEmpty() ? emptyHint : NO_MATCH);
-                // Der Core liefert je Status höchstens RELATION_LIMIT; mehr nur mit Hinweis, nicht still gekürzt.
-                String message = TermsView.relationsMessage(notice, found.more());
-                if (message != null) {
-                    directory.message(message);
-                }
+            if (first) {
+                loaded.keySet().retainAll(removedCore.keySet());
+                found.forEach(r -> loaded.put(r.id(), r));
+                show(list, hint);
+            } else {
+                found.forEach(r -> loaded.put(r.id(), r));
+                append(list);
+            }
+            directory.more(paging.hasMore());
+            if (notice != null) {
+                directory.message(notice);
             }
         }, failure -> {
             if (current == request) {
-                show(List.of(), "Beziehungen nicht lesbar: " + failure.getMessage());
+                loading = false;
+                if (first) {
+                    show(List.of(), "Beziehungen nicht lesbar: " + failure.getMessage());
+                } else {
+                    directory.message("Beziehungen nicht lesbar: " + failure.getMessage());
+                }
             }
         });
     }
 
-    private record Loaded(List<Relation> list, Map<String, TermRelation> core, boolean more) {
+    /**
+     * Die Beziehung in Worten der Oberfläche, die Enden in der Reihenfolge des Schlüssels: bei gerichteten Arten
+     * Kurzform, dann Langform; bei ungerichteten zuerst das Ende, nach dem der Core sortiert.
+     */
+    static Relation inKeyOrder(TermRelation relation) {
+        Relation plain = Relation.of(relation);
+        if (relation.type().directed() || TermText.normalize(relation.fromTerm()).equals(relation.sortTerm())) {
+            return plain;
+        }
+        return new Relation(plain.id(), relation.toTerm(), plain.type(), relation.fromTerm(), plain.status(),
+                plain.origin(), plain.revision());
     }
 
     /** Bestätigen, Ablehnen oder Entfernen mit dem gezeigten Stand; der Core prüft Rechte und Revision. */
@@ -372,6 +443,25 @@ final class RelationTab {
                 }
             }
         }
+        selectionChanged();
+    }
+
+    /** Hängt eine weitere Seite an, ohne Auswahl und entfernte Zeilen zu verlieren. */
+    void append(List<Relation> list) {
+        List<Relation> merged = new ArrayList<>(shownRelations);
+        List<List<String>> rows = new ArrayList<>(list.size());
+        for (Relation relation : list) {
+            if (byId.containsKey(relation.id())) {
+                continue;
+            }
+            merged.add(relation);
+            byId.put(relation.id(), relation);
+            List<String> row = new ArrayList<>(cells.apply(relation));
+            row.add(relation.id());
+            rows.add(List.copyOf(row));
+        }
+        shownRelations = List.copyOf(merged);
+        directory.append(rows);
         selectionChanged();
     }
 

@@ -113,7 +113,9 @@ class TermRelationsViewTest {
         int[] row = new int[1];
         SwingUtilities.invokeAndWait(() -> {
             row[0] = view[0].relations().table().getSelectedRow();
-            assertThat(view[0].relations().table().getValueAt(row[0], 0)).isEqualTo("REST");
+            // Ungerichtet stehen die Enden in Schlüsselreihenfolge: HTTP vor REST, wie der Core sortiert.
+            assertThat(view[0].relations().table().getValueAt(row[0], 0)).isEqualTo("HTTP");
+            assertThat(view[0].relations().table().getValueAt(row[0], 2)).isEqualTo("REST");
             assertThat(view[0].relations().table().getValueAt(row[0], 3)).isEqualTo("Bestätigt");
             assertThat(view[0].relations().table().getValueAt(row[0], 4)).isEqualTo("Manuell");
             view[0].reviewButtons().get(2).doClick();
@@ -140,7 +142,7 @@ class TermRelationsViewTest {
                 && view[0].relations().table().getSelectedRow() >= 0);
         SwingUtilities.invokeAndWait(() -> {
             int selected = view[0].relations().table().getSelectedRow();
-            assertThat(view[0].relations().table().getValueAt(selected, 0)).isEqualTo("REST");
+            assertThat(view[0].relations().table().getValueAt(selected, 0)).isEqualTo("HTTP");
         });
         assertThat(workspace.termRelations("REST", null, 10).relations()).hasSize(1);
         // Spaltenköpfe sortieren.
@@ -204,8 +206,10 @@ class TermRelationsViewTest {
         // Neu angelegt im Reiter Synonyme erscheint sie dort gewählt.
         SwingUtilities.invokeAndWait(() -> view[0].synonyms().createRelation("Schnittstelle", RelationType.SYNONYM,
                 "API"));
+        // Ungerichtet steht das kleinere Ende vorn: API, dann Schnittstelle.
         await("Synonym neu angelegt", () -> synonyms[0].getRowCount() == 3 && synonyms[0].getSelectedRow() >= 0
-                && "Schnittstelle".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 0)));
+                && "API".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 0))
+                && "Schnittstelle".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 1)));
 
         // #336 „Synonyme vorschlagen“: Knopf oben rechts in der Reiterzeile, nur im Reiter Synonyme sichtbar; der Lauf
         // zeigt den Wartekreis, endet ohne Chat-Modell nach der Regelstufe und meldet das in der Statuszeile.
@@ -252,14 +256,9 @@ class TermRelationsViewTest {
     }
 
     @Test
-    void theListUsesTheRelationLimitAndSaysWhenTheCoreHasMore() {
+    void theListPagesWithTheRelationLimitOfTheCore() {
         assertThat(TermsView.RELATION_LIMIT).isEqualTo(
                 com.aresstack.spaceharvester.application.terms.TermRelations.MAX_LIMIT);
-        assertThat(TermsView.relationsMessage(null, false)).isNull();
-        assertThat(TermsView.relationsMessage(null, true)).isEqualTo(TermsView.MORE_RELATIONS);
-        assertThat(TermsView.relationsMessage(TermsView.CONFLICT, true))
-                .isEqualTo(TermsView.CONFLICT + " " + TermsView.MORE_RELATIONS);
-        assertThat(TermsView.relationsMessage(TermsView.CONFLICT, false)).isEqualTo(TermsView.CONFLICT);
     }
 
     /** Wartet auf einen Zustand; 120 s sind nur die Grenze für einen Hänger (die Anreicherung dauert unter Last). */

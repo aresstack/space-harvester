@@ -78,6 +78,16 @@ public record TermRelation(String id, String fromTerm, String toTerm, RelationTy
         return key(fromTerm, toTerm, type, scope);
     }
 
+    /**
+     * Der Sortierbegriff: das erste Glied des Schlüssels, also der Suchwert von {@code fromTerm} bei gerichteten Arten
+     * und das kleinere Ende bei ungerichteten. Nach ihm ordnet {@code TermRelations.relations}, und auf ihn wirkt
+     * {@code RelationSearch.startsWith}.
+     */
+    public String sortTerm() {
+        String key = key();
+        return key.substring(0, key.indexOf('\u0000'));
+    }
+
     /** Ob die Beziehung den Begriff an einem Ende hat (verglichen über den Suchwert). */
     public boolean touches(String normalized) {
         return TermText.normalize(fromTerm).equals(normalized) || TermText.normalize(toTerm).equals(normalized);

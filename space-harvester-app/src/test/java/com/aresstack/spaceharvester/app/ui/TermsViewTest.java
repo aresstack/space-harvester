@@ -85,10 +85,15 @@ class TermsViewTest {
             seen.add(String.valueOf(SwingUtilities.isDescendingFrom(view.proposeSynonymsButton(), view.tabs())
                     && !SwingUtilities.isDescendingFrom(view.proposeSynonymsButton(), view.synonyms().directory())));
             seen.add(String.valueOf(view.synonymOverlay().content() == view.synonyms().directory()));
+            // „Neue Beziehung …“ steht ebenfalls in der Reiterzeile, je Reiter sein eigener Knopf.
+            seen.add(view.synonyms().createButton().isVisible() + " " + view.createButton().isVisible());
             view.tabs().select(TermsView.RELATIONS);
             seen.add(String.valueOf(view.proposeSynonymsButton().isVisible()));
+            seen.add(view.synonyms().createButton().isVisible() + " " + view.createButton().isVisible() + " "
+                    + SwingUtilities.isDescendingFrom(view.createButton(), view.tabs()));
         });
-        assertThat(seen).containsExactly(TermsView.PROPOSE_SYNONYMS, "false", "true", "true", "true", "false");
+        assertThat(seen).containsExactly(TermsView.PROPOSE_SYNONYMS, "false", "true", "true", "true", "true false",
+                "false", "false true true");
 
         com.aresstack.spaceharvester.application.jobs.JobStatus done = job(
                 com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED, 12, 12, 3, null);
@@ -336,7 +341,7 @@ class TermsViewTest {
                 TermKind.NOUN, List.of(List.of("alpha", "delta"), List.of("foxtrott")),
                 TermKind.IDENTIFIER, List.of(List.of("bravo", "charlie", "echo")));
         List<String> calls = new ArrayList<>();
-        TermsView.IdentifierPager pager = new TermsView.IdentifierPager((kind, cursor) -> {
+        java.util.function.Function<TermKind, Pager.Fetch<TermQueries.TermSummary>> fetch = kind -> cursor -> {
             calls.add(kind + ":" + cursor);
             int index = cursor == null ? 0 : Integer.parseInt(cursor);
             List<List<String>> kindPages = pages.get(kind);
@@ -344,8 +349,11 @@ class TermsViewTest {
             for (String term : kindPages.get(index)) {
                 terms.add(summary(term, kind));
             }
-            return new TermQueries.TermList(terms, index + 1 < kindPages.size() ? String.valueOf(index + 1) : null);
-        });
+            return new Pager.Page<>(terms, index + 1 < kindPages.size() ? String.valueOf(index + 1) : null);
+        };
+        Pager<TermQueries.TermSummary> pager = new Pager<>(
+                java.util.Comparator.comparing(TermQueries.TermSummary::normalized),
+                List.of(List.of(fetch.apply(TermKind.NOUN), fetch.apply(TermKind.IDENTIFIER))));
         List<String> first = pager.next(4).stream().map(TermQueries.TermSummary::normalized).toList();
         boolean moreAfterFirst = pager.hasMore();
         List<String> second = pager.next(4).stream().map(TermQueries.TermSummary::normalized).toList();
@@ -354,6 +362,31 @@ class TermsViewTest {
         assertThat(second).containsExactly("echo", "foxtrott");
         assertThat(pager.hasMore()).isFalse();
         assertThat(calls).containsExactly("NOUN:null", "IDENTIFIER:null", "NOUN:1");
+    }
+
+    @Test
+    void thePagerFinishesOneGroupBeforeTheNextAndSkipsEmptyPages() throws Exception {
+        List<String> calls = new ArrayList<>();
+        java.util.function.BiFunction<String, List<List<String>>, Pager.Fetch<String>> fetch = (name, pages) ->
+                cursor -> {
+                    calls.add(name + ":" + cursor);
+                    int index = cursor == null ? 0 : Integer.parseInt(cursor);
+                    return new Pager.Page<>(pages.get(index), index + 1 < pages.size() ? String.valueOf(index + 1)
+                            : null);
+                };
+        Pager<String> pager = new Pager<>(java.util.Comparator.naturalOrder(), List.of(
+                List.of(fetch.apply("open-a", List.of(List.of("b", "d"))),
+                        fetch.apply("open-b", List.of(List.of(), List.of("a", "c")))),
+                List.of(fetch.apply("rejected", List.of(List.of("a"), List.of("z"))))));
+        assertThat(pager.next(3)).containsExactly("a", "b", "c");
+        assertThat(pager.hasMore()).isTrue();
+        // Die zweite Gruppe beginnt erst, wenn die erste leer ist, auch wenn sie alphabetisch davor läge.
+        assertThat(pager.next(2)).containsExactly("d", "a");
+        assertThat(pager.hasMore()).isTrue();
+        assertThat(pager.next(5)).containsExactly("z");
+        assertThat(pager.hasMore()).isFalse();
+        assertThat(pager.next(5)).isEmpty();
+        assertThat(calls).containsExactly("open-a:null", "open-b:null", "open-b:1", "rejected:null", "rejected:1");
     }
 
     @Test
