@@ -364,6 +364,9 @@ final class SetupWizard {
         int judged = settings.terms().synonyms().maxJudgedPairs();
         summary.add(AiSettingsPanel.JUDGED_PAIRS_LABEL,
                 judged == 0 ? "aus" : judged + " " + AiSettingsPanel.JUDGED_PAIRS_UNIT);
+        // Lauf nach jedem Abgleich (SY1/SY3), einstellbar im Schritt „Modelle“ und unter Einstellungen › Modelle.
+        summary.add(AiSettingsPanel.AUTOMATIC_SYNONYMS_LABEL,
+                AiSettingsPanel.automaticSynonymsSummary(settings.terms().synonyms()));
         // Vorstufe der Aussagenanalyse (ADR 0032), einstellbar im Schritt „Modelle“.
         summary.add(AiSettingsPanel.SIMPLIFY_LABEL, AiSettingsPanel.simplificationSummary(settings.simplification()));
         // Einstellbar unter Einstellungen › Modelle › Wörter für den Stand (ADR 0032).

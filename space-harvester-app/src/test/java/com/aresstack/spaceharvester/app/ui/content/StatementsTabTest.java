@@ -70,6 +70,39 @@ class StatementsTabTest {
     }
 
     @Test
+    void theTrashDeletesTheStoredAnalysisOfThisPageAfterYes() {
+        List<String> statuses = new ArrayList<>();
+        tab.onStatus(statuses::add);
+        tab.page(page("1"), text());
+        runner.runAll();
+        assertThat(tab.deleteButton().isEnabled()).as("ohne Analyse nichts zu löschen").isFalse();
+
+        actions.stored = analysed();
+        tab.reload();
+        runner.runAll();
+        assertThat(tab.deleteButton().isEnabled()).isTrue();
+        assertThat(tab.deleteButton().getToolTipText()).isEqualTo("Aussagen-Analyse dieser Seite löschen");
+        List<String> questions = new ArrayList<>();
+        tab.confirmDeleteWith(question -> {
+            questions.add(question);
+            return false;
+        });
+        tab.deleteButton().doClick();
+        runner.runAll();
+        assertThat(questions).containsExactly("Wirklich die Aussagen-Analyse dieser Seite samt Anhängen löschen? "
+                + "Die Seite bleibt.");
+        assertThat(actions.deletions).isEmpty();
+
+        tab.confirmDeleteWith(question -> true);
+        tab.deleteButton().doClick();
+        runner.runAll();
+        assertThat(actions.deletions).containsExactly(page("1").key());
+        assertThat(statuses).contains("2 Aussagen-Analysen gelöscht");
+        assertThat(tab.stateLabel()).isEqualTo("Nicht analysiert");
+        assertThat(tab.deleteButton().isEnabled()).isFalse();
+    }
+
+    @Test
     void aClickOnAStatementJumpsToItsSentenceInTheReaderText() {
         List<List<TermsTab.Span>> jumps = new ArrayList<>();
         tab.onJump(jumps::add);
@@ -453,8 +486,17 @@ class StatementsTabTest {
         int simplified;
         Optional<String> stageUnavailable = Optional.empty();
         int checks;
+        final List<PageKey> deletions = new ArrayList<>();
         Optional<com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason> checkUnavailable =
                 Optional.empty();
+
+        @Override
+        public int deleteAnalysis(PageKey key) {
+            deletions.add(key);
+            int count = stored.analysis() == null ? 0 : 2;
+            stored = PageStatements.missing(PageStatements.NOT_ANALYSED);
+            return count;
+        }
 
         @Override
         public Optional<com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason>
