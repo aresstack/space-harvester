@@ -53,7 +53,7 @@
 4	die	der	PRON	_	_	7	obj	_	_
 5	der	der	DET	_	_	6	det	_	_
 6	Zuwendungsempfänger	zuwendungsempfänger	NOUN	_	_	7	nsubj	_	_
-7	abruft	abruft	VERB	_	_	2	acl	_	SpaceAfter=No
+7	abruft	abrufen	VERB	_	LemmaFrom=Form	2	acl	_	SpaceAfter=No
 8	,	,	PUNCT	_	_	7	punct	_	_
 9	werden	werden	AUX	_	_	17	aux:pass	_	_
 10	von	von	ADP	_	_	12	case	_	_

@@ -50,6 +50,11 @@ public enum Finding {
      */
     PREDICATIVE_PARTICLE,
     /**
+     * Die Grundform des Prädikats ist aus der Wortform erzeugt, weil OpenNLP keine eigene lieferte (ADR 0032, FL2):
+     * „abruft“ → „abrufen“. Merkmal {@code LemmaFrom=Form} am Token; reiner Hinweis, ändert die Stufe nicht.
+     */
+    LEMMA_FROM_FORM,
+    /**
      * Ein Beteiligter ist ein Teilsatz (Erwähnung der Art {@link Mention.Kind#CLAUSE}): „Wer … stellt, erhält …“,
      * „Es wird geprüft, ob …“. Er verweist auf die Aussage des Teilsatzes. Aus {@code csubj} oder nachgestelltem
      * {@code ccomp} ist das Parserevidenz; ein vorangestellter dass-/ob-Satz ({@code advcl}) oder eine Infinitivgruppe

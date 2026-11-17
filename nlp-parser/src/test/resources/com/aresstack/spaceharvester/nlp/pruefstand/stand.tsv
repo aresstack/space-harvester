@@ -1,7 +1,8 @@
 # Stand des Prüfstands (ADR 0032), genau festgehalten: schlechter = Rückschritt, besser = im selben PR anheben.
-# (PruefstandTest nennt die neuen Werte.)
-# Textsatz	Variante	vollständig richtig	streng	falsch trotz PLAUSIBLE
-foerderung	heute	58	58	3
-foerderung	vorstufe-hand	60	59	4
-foerderung	vorstufe-gemma4-12b	57	53	6
-beschaffung	heute	49	49	5
+# (PruefstandTest nennt die neuen Werte.) Merkmale = Verneinung + Verbindlichkeit + Zeitbezug, gemessen an allen
+# Erwartungen mit gefundenem Verb: richtig bei vorgegebenem Merkmal, fälschlich gesetzt bei den übrigen.
+# Textsatz	Variante	vollständig richtig	streng	falsch trotz PLAUSIBLE	Merkmale richtig	Merkmale fälschlich
+foerderung	heute	58	58	3	9	0
+foerderung	vorstufe-hand	60	59	4	8	2
+foerderung	vorstufe-gemma4-12b	57	53	6	6	0
+beschaffung	heute	50	50	4	9	0

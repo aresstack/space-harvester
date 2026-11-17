@@ -43,6 +43,8 @@ class PruefstandTest {
                 vergleiche(key, "vollständig richtig", ist.richtig, soll[0], true, verstoesse, besser);
                 vergleiche(key, "streng", ist.streng, soll[1], true, verstoesse, besser);
                 vergleiche(key, "falsch trotz PLAUSIBLE", ist.plausibelFalsch, soll[2], false, verstoesse, besser);
+                vergleiche(key, "Merkmale richtig", ist.merkmaleRichtig(), soll[3], true, verstoesse, besser);
+                vergleiche(key, "Merkmale fälschlich", ist.merkmaleFaelschlich(), soll[4], false, verstoesse, besser);
             }
         }
         Path report = Path.of("build", "reports", "pruefstand", "bericht.md");
@@ -87,7 +89,7 @@ class PruefstandTest {
         }
     }
 
-    /** {@code stand.tsv}: Textsatz, Variante, richtig (min), streng (min), falsch trotz PLAUSIBLE (max). */
+    /** {@code stand.tsv}: Textsatz, Variante, richtig, streng, falsch trotz PLAUSIBLE, Merkmale richtig und fälschlich gesetzt (je Summe der drei). */
     private static Map<String, int[]> stand() {
         Map<String, int[]> result = new java.util.LinkedHashMap<>();
         for (String line : Textsatz.resource(Textsatz.BASIS + "stand.tsv").split("\r?\n")) {
@@ -96,7 +98,7 @@ class PruefstandTest {
             }
             String[] f = line.split("\t");
             result.put(f[0] + "\t" + f[1], new int[] {Integer.parseInt(f[2]), Integer.parseInt(f[3]),
-                    Integer.parseInt(f[4])});
+                    Integer.parseInt(f[4]), Integer.parseInt(f[5]), Integer.parseInt(f[6])});
         }
         return result;
     }

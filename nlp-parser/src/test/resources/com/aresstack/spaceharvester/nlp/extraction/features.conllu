@@ -1,0 +1,132 @@
+# Erfundene Gold-Analysen zu den Merkmalen einer Aussage (ADR 0032, FL2), Konventionen von UD German GSD.
+# sent_id = 1
+# text = Der Prüfer erfüllt die Auflage nicht.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Prüfer	Prüfer	NOUN	NN	_	3	nsubj	_	_
+3	erfüllt	erfüllen	VERB	VVFIN	_	0	root	_	_
+4	die	der	DET	ART	_	5	det	_	_
+5	Auflage	Auflage	NOUN	NN	_	3	obj	_	_
+6	nicht	nicht	PART	PTKNEG	_	3	advmod	_	_
+7	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 2
+# text = Die Stelle muss den Antrag prüfen.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Stelle	Stelle	NOUN	NN	_	6	nsubj	_	_
+3	muss	müssen	AUX	VMFIN	_	6	aux	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Antrag	Antrag	NOUN	NN	_	6	obj	_	_
+6	prüfen	prüfen	VERB	VVINF	_	0	root	_	_
+7	.	.	PUNCT	$.	_	6	punct	_	_
+
+# sent_id = 3
+# text = Künftig soll das Amt die Daten erfassen.
+1	Künftig	künftig	ADV	ADJD	_	7	advmod	_	_
+2	soll	sollen	AUX	VMFIN	_	7	aux	_	_
+3	das	der	DET	ART	_	4	det	_	_
+4	Amt	Amt	NOUN	NN	_	7	nsubj	_	_
+5	die	der	DET	ART	_	6	det	_	_
+6	Daten	Datum	NOUN	NN	_	7	obj	_	_
+7	erfassen	erfassen	VERB	VVINF	_	0	root	_	_
+8	.	.	PUNCT	$.	_	7	punct	_	_
+
+# sent_id = 4
+# text = Früher erfasste das Amt die Daten.
+1	Früher	früher	ADV	ADV	_	2	advmod	_	_
+2	erfasste	erfassen	VERB	VVFIN	_	0	root	_	_
+3	das	der	DET	ART	_	4	det	_	_
+4	Amt	Amt	NOUN	NN	_	2	nsubj	_	_
+5	die	der	DET	ART	_	6	det	_	_
+6	Daten	Datum	NOUN	NN	_	2	obj	_	_
+7	.	.	PUNCT	$.	_	2	punct	_	_
+
+# sent_id = 5
+# text = Das Amt prüft nicht nur den Antrag, sondern auch den Beleg.
+1	Das	der	DET	ART	_	2	det	_	_
+2	Amt	Amt	NOUN	NN	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	VVFIN	_	0	root	_	_
+4	nicht	nicht	PART	PTKNEG	_	5	advmod	_	_
+5	nur	nur	ADV	ADV	_	7	advmod	_	_
+6	den	der	DET	ART	_	7	det	_	_
+7	Antrag	Antrag	NOUN	NN	_	3	obj	_	_
+8	,	,	PUNCT	$,	_	12	punct	_	_
+9	sondern	sondern	CCONJ	KON	_	12	cc	_	_
+10	auch	auch	ADV	ADV	_	12	advmod	_	_
+11	den	der	DET	ART	_	12	det	_	_
+12	Beleg	Beleg	NOUN	NN	_	7	conj	_	_
+13	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 6
+# text = Der Antrag ist vorzulegen.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Antrag	Antrag	NOUN	NN	_	4	nsubj	_	_
+3	ist	sein	AUX	VAFIN	_	4	aux	_	_
+4	vorzulegen	vorlegen	VERB	VVIZU	_	0	root	_	_
+5	.	.	PUNCT	$.	_	4	punct	_	_
+
+# sent_id = 7
+# text = Es war vorgesehen, die Daten zu löschen.
+1	Es	es	PRON	PPER	_	3	nsubj	_	_
+2	war	sein	AUX	VAFIN	_	3	cop	_	_
+3	vorgesehen	vorsehen	ADJ	VVPP	_	0	root	_	_
+4	,	,	PUNCT	$,	_	8	punct	_	_
+5	die	der	DET	ART	_	6	det	_	_
+6	Daten	Datum	NOUN	NN	_	8	obj	_	_
+7	zu	zu	PART	PTKZU	_	8	mark	_	_
+8	löschen	löschen	VERB	VVINF	_	3	advcl	_	_
+9	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 8
+# text = Die Stelle erfasst keine Daten.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Stelle	Stelle	NOUN	NN	_	3	nsubj	_	_
+3	erfasst	erfassen	VERB	VVFIN	_	0	root	_	_
+4	keine	kein	DET	PIAT	_	5	det	_	_
+5	Daten	Datum	NOUN	NN	_	3	obj	_	_
+6	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 9
+# text = Früher bat das Amt die Stelle, die Daten zu löschen, um Kosten zu sparen.
+1	Früher	früher	ADV	ADV	_	2	advmod	_	_
+2	bat	bitten	VERB	VVFIN	_	0	root	_	_
+3	das	der	DET	ART	_	4	det	_	_
+4	Amt	Amt	NOUN	NN	_	2	nsubj	_	_
+5	die	der	DET	ART	_	6	det	_	_
+6	Stelle	Stelle	NOUN	NN	_	2	obj	_	_
+7	,	,	PUNCT	$,	_	11	punct	_	_
+8	die	der	DET	ART	_	9	det	_	_
+9	Daten	Datum	NOUN	NN	_	11	obj	_	_
+10	zu	zu	PART	PTKZU	_	11	mark	_	_
+11	löschen	löschen	VERB	VVINF	_	2	xcomp	_	_
+12	,	,	PUNCT	$,	_	17	punct	_	_
+13	um	um	ADP	KOUI	_	17	mark	_	_
+14	Kosten	Kosten	NOUN	NN	_	17	obj	_	_
+15	zu	zu	PART	PTKZU	_	17	mark	_	_
+16	sparen	sparen	VERB	VVINF	_	2	advcl	_	_
+17	.	.	PUNCT	$.	_	2	punct	_	_
+
+# sent_id = 10
+# text = Die Prüfung wurde verworfen.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Prüfung	Prüfung	NOUN	NN	_	4	nsubj:pass	_	_
+3	wurde	werden	AUX	VAFIN	_	4	aux:pass	_	_
+4	verworfen	verwerfen	VERB	VVPP	_	0	root	_	_
+5	.	.	PUNCT	$.	_	4	punct	_	_
+
+# sent_id = 11
+# text = Die Stelle musste den Antrag prüfen.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Stelle	Stelle	NOUN	NN	_	6	nsubj	_	_
+3	musste	müssen	AUX	VMFIN	_	6	aux	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Antrag	Antrag	NOUN	NN	_	6	obj	_	_
+6	prüfen	prüfen	VERB	VVINF	_	0	root	_	_
+7	.	.	PUNCT	$.	_	6	punct	_	_
+
+# sent_id = 12
+# text = Die Stelle wird eingestellt.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Stelle	Stelle	NOUN	NN	_	4	nsubj:pass	_	_
+3	wird	werden	AUX	VAFIN	_	4	aux:pass	_	_
+4	eingestellt	einstellen	VERB	VVPP	_	0	root	_	_
+5	.	.	PUNCT	$.	_	4	punct	_	_

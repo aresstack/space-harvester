@@ -95,7 +95,7 @@
 12	der	der	DET	_	_	13	det	_	_
 13	Haushaltsabteilung	haushaltsabteilung	NOUN	_	_	15	nsubj:pass	_	_
 14	zentral	zentral	ADJ	_	_	15	advmod	_	_
-15	bereitzustellen	bereitstellen	VERB	_	_	7	acl:relcl	_	SpaceAfter=No
+15	bereitzustellen	bereitstellen	VERB	_	LemmaFrom=Form	7	acl:relcl	_	SpaceAfter=No
 16	.	.	PUNCT	_	_	8	punct	_	_
 
 # sent_id = 6

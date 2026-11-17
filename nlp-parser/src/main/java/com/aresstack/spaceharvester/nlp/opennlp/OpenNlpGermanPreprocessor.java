@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.nlp.opennlp;
 
+
 import com.aresstack.spaceharvester.nlp.model.ModelUnavailableException;
 import com.aresstack.spaceharvester.nlp.model.Sha256;
 import com.aresstack.spaceharvester.nlp.syntax.Component;
@@ -142,8 +143,11 @@ public final class OpenNlpGermanPreprocessor implements GermanPreprocessor {
         String[] lemma = forms.length == 0 ? new String[0] : lemmatizer.lemmatize(forms, upos);
         List<Token> tagged = new ArrayList<>();
         for (int i = 0; i < words.size(); i++) {
-            tagged.add(words.get(i).withTags(GermanTagCorrections.lemma(forms[i], upos[i], lemma(lemma[i])), upos[i],
-                    null, Map.of()));
+            String given = lemma(lemma[i]);
+            String corrected = GermanTagCorrections.lemma(forms[i], upos[i], given);
+            // Erzeugte Grundform bekommt einen Hinweis (ADR 0032, FL2); der Parser liest nur Form und Wortart
+            tagged.add(words.get(i).withTags(corrected, upos[i], null, corrected != null && !corrected.equals(given)
+                    ? Map.of(Token.LEMMA_FROM, "Form") : Map.of()));
         }
         return new Sentence(index, sentenceStart, sentenceEnd, sentenceText, tagged, multiwords);
     }

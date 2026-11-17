@@ -204,7 +204,7 @@ public final class KnowledgeGraphJsonLd {
                 "staleReason", "analyzer",
                 "analyzerVersion", "text", "lemma", "headForm", "mentionKind", "unresolved", "lexicalKey", "start",
                 "end", "sentence", "paragraph", "predicate", "predicateLemma", "voice", "clause", "core",
-                "verificationStatus",
+                "verificationStatus", "negated", "modality", "temporality",
                 "role", "relation", "marker", "basis", "priority", "certain", "attachmentKind")) {
             json.writeStringProperty(term, "sh:" + term);
         }
@@ -382,6 +382,16 @@ public final class KnowledgeGraphJsonLd {
             json.writeStringProperty("verificationStatus", statement.review() == ParsedStatements.Review.UNREVIEWED
                     ? UNVERIFIED : statement.review().name());
             json.writeStringProperty("extractionQuality", statement.quality().name());
+            ParsedStatements.Features features = statement.features();
+            if (features.negation() != ParsedStatements.Negation.UNKNOWN) {
+                json.writeBooleanProperty("negated", features.negation() == ParsedStatements.Negation.NEGATED);
+            }
+            if (features.modality() != ParsedStatements.Modality.UNKNOWN) {
+                json.writeStringProperty("modality", features.modality().name());
+            }
+            if (features.temporality() != ParsedStatements.Temporality.UNKNOWN) {
+                json.writeStringProperty("temporality", features.temporality().name());
+            }
             if (!statement.qualityReasons().isEmpty()) {
                 json.writeName("qualityReason");
                 json.writeStartArray();

@@ -25,6 +25,9 @@ public record Token(int id, String form, int start, int end, String lemma, Strin
     /** Kopf eines noch nicht geparsten Tokens. */
     public static final int NO_HEAD = -1;
 
+    /** Merkmal ({@code LemmaFrom=Form}), wenn die Grundform aus der Wortform erzeugt ist (ADR 0032, FL2). */
+    public static final String LEMMA_FROM = "LemmaFrom";
+
     public Token {
         Objects.requireNonNull(form, "form");
         if (id < 1) {
