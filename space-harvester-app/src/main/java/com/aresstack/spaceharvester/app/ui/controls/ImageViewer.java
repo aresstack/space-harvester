@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.app.ui.controls;
 
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
+import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.application.diagrams.VectorDiagram;
 
 import javax.imageio.ImageIO;
@@ -73,6 +75,20 @@ public final class ImageViewer extends JPanel {
         }
     }
 
+    /**
+     * Farben des Betrachters (Angelo 17.11.2026): die Bildfläche {@code background} nach der Einstellung
+     * „Hintergrund des Bildbetrachters“, dazu die Knöpfe im Bild so, dass sie auf dieser Fläche lesbar bleiben:
+     * {@code control} ist die halbtransparente Pille, {@code glyph} das Symbol darauf. Vergibt
+     * {@code Comic.viewerLook}, alles aus der Palette.
+     */
+    public record Look(Color background, Color control, Color glyph) {
+        public Look {
+            Objects.requireNonNull(background, "background");
+            Objects.requireNonNull(control, "control");
+            Objects.requireNonNull(glyph, "glyph");
+        }
+    }
+
     static final String SAVED_PREFIX = "Bild gespeichert: ";
     static final String SAVE_FAILED_PREFIX = "Fehler beim Speichern: ";
     static final double STEP = 1.25;
@@ -81,7 +97,8 @@ public final class ImageViewer extends JPanel {
     private static final int ARROW_W = 48;
 
     private final List<Picture> pictures;
-    private final Canvas canvas = new Canvas();
+    private final Look look;
+    private final Canvas canvas;
     private final JLayeredPane layers = new JLayeredPane();
     private final JLabel info = new JLabel(" ", SwingConstants.CENTER);
     private final ViewerButton previous;
@@ -94,21 +111,28 @@ public final class ImageViewer extends JPanel {
     /** Meldung nach dem Speichern; gilt, bis gezoomt oder geblättert wird. */
     private String message;
 
+    /** Mit der Vorgabe der Einstellung: die Oberfläche der App als Bildfläche. */
     public ImageViewer(List<Picture> pictures, int startIndex) {
+        this(pictures, startIndex, Comic.viewerLook(ViewerBackground.DEFAULT));
+    }
+
+    public ImageViewer(List<Picture> pictures, int startIndex, Look look) {
         super(new BorderLayout(0, 4));
         if (pictures == null || pictures.isEmpty()) {
             throw new IllegalArgumentException("Keine Bilder");
         }
         this.pictures = List.copyOf(pictures);
         this.index = Math.max(0, Math.min(startIndex, this.pictures.size() - 1));
+        this.look = Objects.requireNonNull(look, "look");
+        this.canvas = new Canvas(look.background());
         setOpaque(false);
 
-        previous = new ViewerButton(new ScaledIcon(ComposerIcons.chevronLeft(), 2), "Vorheriges Bild (Pfeiltaste links)");
-        next = new ViewerButton(new ScaledIcon(ComposerIcons.chevronRight(), 2), "Nächstes Bild (Pfeiltaste rechts)");
-        save = new ViewerButton(ComposerIcons.download(), "Bild speichern");
-        zoomOut = new ViewerButton(ComposerIcons.minus(15), "Verkleinern (Minus)");
-        zoomIn = new ViewerButton(ComposerIcons.plus(15), "Vergrößern (+)");
-        zoomFit = new ViewerButton(ComposerIcons.refresh(), "Einpassen (0)");
+        previous = new ViewerButton(new ScaledIcon(ComposerIcons.chevronLeft(), 2), "Vorheriges Bild (Pfeiltaste links)", look);
+        next = new ViewerButton(new ScaledIcon(ComposerIcons.chevronRight(), 2), "Nächstes Bild (Pfeiltaste rechts)", look);
+        save = new ViewerButton(ComposerIcons.download(), "Bild speichern", look);
+        zoomOut = new ViewerButton(ComposerIcons.minus(15), "Verkleinern (Minus)", look);
+        zoomIn = new ViewerButton(ComposerIcons.plus(15), "Vergrößern (+)", look);
+        zoomFit = new ViewerButton(ComposerIcons.refresh(), "Einpassen (0)", look);
         previous.onClick(this::previous);
         next.onClick(this::next);
         save.onClick(this::saveWithChooser);
@@ -191,6 +215,16 @@ public final class ImageViewer extends JPanel {
 
     public String infoText() {
         return info.getText();
+    }
+
+    /** Die Farbe der Bildfläche. */
+    public Color background() {
+        return canvas.getBackground();
+    }
+
+    /** Die Farben der Knöpfe im Bild: Pille und Symbol. */
+    public Look look() {
+        return look;
     }
 
     /** Für Tests: Größe der Bildfläche setzen und auslegen, auch ohne Bildschirm. */
@@ -499,7 +533,10 @@ public final class ImageViewer extends JPanel {
 
     // ------------------------------------------------------------------ Teile
 
-    /** Dunkle Fläche (wie EAC und MainframeMate): einpassen, Zoom am Cursor, verschieben. */
+    /**
+     * Die Bildfläche: einpassen, Zoom am Cursor, verschieben. Ihre Farbe kommt aus der Einstellung (EAC und
+     * MainframeMate hatten sie dunkel fest im Code).
+     */
     private static final class Canvas extends JPanel {
         private BufferedImage image;
         private VectorDiagram vector;
@@ -517,8 +554,8 @@ public final class ImageViewer extends JPanel {
         /** Noch nie eingepasst, weil die Fläche noch keine Größe hatte. */
         boolean pending;
 
-        Canvas() {
-            setBackground(new Color(30, 30, 30));
+        Canvas(Color background) {
+            setBackground(background);
             addComponentListener(new ComponentAdapter() {
                 @Override
                 public void componentResized(ComponentEvent e) {
@@ -601,17 +638,19 @@ public final class ImageViewer extends JPanel {
         }
     }
 
-    /** Halbtransparenter runder Knopf mit gezeichnetem Symbol. */
+    /** Halbtransparenter runder Knopf mit gezeichnetem Symbol, in den Farben der {@link Look} zur Bildfläche. */
     private static final class ViewerButton extends JPanel {
         private Runnable action;
+        private final Look look;
 
-        ViewerButton(Icon icon, String tooltip) {
+        ViewerButton(Icon icon, String tooltip, Look look) {
             super(new BorderLayout());
+            this.look = look;
             setOpaque(false);
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(tooltip);
             JLabel label = new JLabel(icon, SwingConstants.CENTER);
-            label.setForeground(new Color(255, 255, 255, 220));
+            label.setForeground(look.glyph());
             add(label, BorderLayout.CENTER);
             addMouseListener(new MouseAdapter() {
                 @Override
@@ -633,7 +672,7 @@ public final class ImageViewer extends JPanel {
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
-                g2.setColor(Color.BLACK);
+                g2.setColor(look.control());
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             } finally {
                 g2.dispose();

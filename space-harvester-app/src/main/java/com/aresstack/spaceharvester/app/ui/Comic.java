@@ -8,6 +8,8 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ComicPalette;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiTypography;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
+import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 
 import javax.swing.BorderFactory;
@@ -73,6 +75,29 @@ public final class Comic {
     public static final Color STANDING_UNCLEAR = new Color(0xA86A12);
     /** Stand „überholt“: grau und blass, nie Rot (Rot heißt Fehler). */
     public static final Color STANDING_OUTDATED = new Color(0x8A8F98);
+
+    /**
+     * Die Farben des Bildbetrachters zur Einstellung „Hintergrund des Bildbetrachters“ (Angelo 17.11.2026), alle aus
+     * der Palette: „Wie die App“ ist die Oberfläche, „Dunkel“ die Arbeitsfläche des Enterprise AI Client. Auf hellen
+     * Flächen sind die Knöpfe im Bild Tinte mit hellem Symbol, auf dunklen helle Pillen mit dunklem Symbol.
+     */
+    public static ImageViewer.Look viewerLook(ViewerBackground background) {
+        return switch (background) {
+            case THEME -> light(SURFACE);
+            case WHITE -> light(ResearchUiPalette.SCROLL_PAPER);
+            case GREY -> light(LINE);
+            case DARK -> dark(ResearchUiPalette.WORKSPACE_SURFACE);
+            case BLACK -> dark(ResearchUiPalette.DARK_BASE);
+        };
+    }
+
+    private static ImageViewer.Look light(Color background) {
+        return new ImageViewer.Look(background, INK, ResearchUiPalette.SCROLL_PAPER);
+    }
+
+    private static ImageViewer.Look dark(Color background) {
+        return new ImageViewer.Look(background, ResearchUiPalette.TEXT_PRIMARY, ResearchUiPalette.TEXT_DARK);
+    }
 
     /** Eine Farbe als CSS-Wert {@code #rrggbb}, etwa für HTML der Leseansicht. */
     public static String css(Color color) {
