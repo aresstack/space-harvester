@@ -954,7 +954,7 @@ public final class Harvester implements AutoCloseable {
             // ADR 0032, FL5b: Teilzahlen der Begriffsableitung je Aufrufer für den Glossar-Reiter.
             this.glossaryOverview = new com.aresstack.spaceharvester.application.glossary.GlossaryOverview(
                     knowledgeGraph::analysed,
-                    () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules());
+                    () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules(), glossary);
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
