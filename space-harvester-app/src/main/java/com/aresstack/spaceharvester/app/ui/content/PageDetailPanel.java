@@ -33,6 +33,7 @@ import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageBookmark;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotWarning;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -119,6 +120,8 @@ public final class PageDetailPanel extends JPanel {
     private static final String SOURCE_CARD = "source";
     private static final String SOURCE_TEXT_CARD = "source-text";
     private static final String SOURCE_PROPERTIES_CARD = "source-properties";
+    /** Technik-Reiter ohne Seite: dieselben drei Unterreiter, unter „Analyse“ nur die Beziehungen der Auswahl. */
+    private static final String WIDE_ADVANCED_CARD = "wide-advanced";
     static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
     /** Die übrigen Reiter der Quellenseite bleiben leer, bis sie Quelleninhalte zeigen; kein Hinweistext. */
     static final String EMPTY_SOURCE = " ";
@@ -194,9 +197,12 @@ public final class PageDetailPanel extends JPanel {
     private final AssetsModel assetsModel = new AssetsModel();
     private final JTable assets = Comic.table(new JTable(assetsModel));
     private final JLabel assetsHint = Comic.muted(" ");
-    private final EnrichmentModel enrichmentModel = new EnrichmentModel();
-    private final JTable enrichments = Comic.table(new JTable(enrichmentModel));
-    private final JTextArea enrichmentResult = Comic.code();
+    /** Unterreiter „Analyse“ der Seite: Analyseschritte und Beziehungen der Seite in einer Ansicht (BG2b). */
+    private final AnalysisView analysisView;
+    /** Derselbe Unterreiter ohne Seite (Ordner, Space, Quelle, Wissensquellen): nur die Beziehungen der Auswahl. */
+    private final AnalysisView wideAnalysis;
+    private final PillTabs advancedTabs = new PillTabs();
+    private final PillTabs wideAdvanced = new PillTabs();
     private final PillTabs tabs = new PillTabs();
     /** Die Hauptreiter als quadratische Symbolknöpfe für die Icon-Leiste des Hauptfensters ({@link #tabIcons()}). */
     private final JComponent tabIcons;
@@ -365,6 +371,8 @@ public final class PageDetailPanel extends JPanel {
         this.export = new ExportPanel(context);
         this.chat = new ChatPanel(context);
         this.standing = new StandingTab(context::runtime);
+        this.analysisView = new AnalysisView(context, true);
+        this.wideAnalysis = new AnalysisView(context, false);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
         title.setFont(Comic.semiBold(15f));
@@ -418,23 +426,23 @@ public final class PageDetailPanel extends JPanel {
             }
         });
 
-        JPanel analysis = new JPanel(new BorderLayout(0, 6));
-        analysis.setOpaque(false);
-        JComponent table = Comic.scroll(enrichments);
-        table.setPreferredSize(new Dimension(300, 170));
-        analysis.add(table, BorderLayout.NORTH);
-        analysis.add(Comic.scroll(enrichmentResult), BorderLayout.CENTER);
-        enrichments.getSelectionModel().addListSelectionListener(e -> showEnrichment());
-
         PillTabs rawTabs = new PillTabs()
                 .tab("Payload", Comic.scroll(raw))
                 .tab("Storage-Format", Comic.scroll(storage));
-        PillTabs advancedTabs = new PillTabs()
-                .tab(TECHNICAL, Comic.scroll(padded(technical)))
-                .tab(ANALYSIS, analysis)
+        advancedTabs.tab(TECHNICAL, Comic.scroll(padded(technical)))
+                .tab(ANALYSIS, analysisView)
                 .tab(RAW, rawTabs);
-        // Die Aktionen stehen rechts in der Zeile der Unterreiter, nicht als eigene Knopfzeilen darüber und darunter.
-        advancedTabs.actions(refresh, saveRaw, recompute);
+        // Die Aktionen stehen rechts in der Zeile der Unterreiter, nicht als eigene Knopfzeilen darüber und darunter;
+        // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Analyse“ gewählt ist (BG2b).
+        advancedTabs.actions(analysisView.proposeButton(), analysisView.createButton(), refresh, saveRaw, recompute);
+        advancedTabs.onSelect(name -> showAdvanced());
+        // Ohne Seite: dieselben Unterreiter; „Technische Angaben“ und „Originaldaten“ bleiben dort leer.
+        wideAdvanced.tab(TECHNICAL, new JPanel())
+                .tab(ANALYSIS, wideAnalysis)
+                .tab(RAW, new JPanel())
+                .actions(wideAnalysis.proposeButton(), wideAnalysis.createButton());
+        wideAdvanced.select(ANALYSIS);
+        wideAdvanced.onSelect(name -> showAdvanced());
         JPanel advanced = new JPanel(new BorderLayout(0, 8));
         advanced.setOpaque(false);
         advanced.add(advancedTabs, BorderLayout.CENTER);
@@ -587,6 +595,7 @@ public final class PageDetailPanel extends JPanel {
         });
         overviewTerms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
         deck.add(standing, STAND_CARD);
+        deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
         deck.add(sourceChanges, SOURCE_TEXT_CARD);
         deck.add(sourceProperties, SOURCE_PROPERTIES_CARD);
@@ -622,7 +631,8 @@ public final class PageDetailPanel extends JPanel {
         acronymHint.setText(" ");
         closeAttachmentOverlay();
         assetsModel.set(null);
-        enrichmentModel.set(List.of());
+        analysisView.steps(List.of(), null);
+        analysisView.scope(null);
         properties.reset();
         technical.reset();
         raw.setText("");
@@ -736,8 +746,10 @@ public final class PageDetailPanel extends JPanel {
             page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD
                     : PROPERTIES.equals(selected) ? SOURCE_PROPERTIES_CARD : EMPTY;
         }
+        boolean wideAdvancedShown = ADVANCED.equals(selected) && wide;
         cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD
-                : standingShown ? STAND_CARD : page);
+                : standingShown ? STAND_CARD : wideAdvancedShown ? WIDE_ADVANCED_CARD : page);
+        showAdvanced();
     }
 
     /**
@@ -815,6 +827,20 @@ public final class PageDetailPanel extends JPanel {
         }
         overviewSelection = selection;
         overviewTermsDirty = true;
+        AppRuntime runtime = context.runtime();
+        wideAnalysis.scope(selection == null || runtime == null ? null : new AnalysisView.Scope() {
+            @Override
+            public PageSet pages() {
+                return selection.global() ? null
+                        : runtime.workspace().resolveSelection(selection.toCore(runtime)).pages();
+            }
+
+            @Override
+            public int relations(PageSet pages) {
+                return runtime.workspace().termRelationCounts(pages).values().stream().mapToInt(Integer::intValue)
+                        .sum();
+            }
+        });
         if (overviewTermsShown) {
             loadOverviewTerms();
         }
@@ -822,6 +848,22 @@ public final class PageDetailPanel extends JPanel {
 
     private boolean standingShown() {
         return ANALYSES.equals(tabs.selected()) && wide;
+    }
+
+    /**
+     * Der Unterreiter „Analyse“ des Technik-Reiters liest nur, solange er zu sehen ist; seine beiden Aktionen stehen
+     * nur dann in der Reiterzeile.
+     */
+    private void showAdvanced() {
+        boolean advancedShown = ADVANCED.equals(tabs.selected());
+        boolean pageAnalysis = advancedShown && !wide && ANALYSIS.equals(advancedTabs.selected());
+        boolean wideShown = advancedShown && wide && ANALYSIS.equals(wideAdvanced.selected());
+        analysisView.proposeButton().setVisible(ANALYSIS.equals(advancedTabs.selected()));
+        analysisView.createButton().setVisible(ANALYSIS.equals(advancedTabs.selected()));
+        wideAnalysis.proposeButton().setVisible(ANALYSIS.equals(wideAdvanced.selected()));
+        wideAnalysis.createButton().setVisible(ANALYSIS.equals(wideAdvanced.selected()));
+        analysisView.shown(pageAnalysis);
+        wideAnalysis.shown(wideShown);
     }
 
     private void loadOverviewTerms() {
@@ -1220,9 +1262,8 @@ public final class PageDetailPanel extends JPanel {
                     Comic.ORANGE);
         }
 
-        enrichmentModel.set(views);
-        enrichmentResult.setText(views.isEmpty() ? "Noch keine Analysen für diese Seite. Sie entstehen nach jedem "
-                + "bestätigten Abgleich oder über „Neu berechnen“." : "");
+        analysisView.steps(views, this::stepResult);
+        analysisView.scope(pageScope(snapshot.key()));
         setActionsEnabled(true);
         browse.setEnabled(metadata.url() != null && Desktop.isDesktopSupported());
     }
@@ -2435,8 +2476,7 @@ public final class PageDetailPanel extends JPanel {
             }
             Enrichments.Run run = result.run();
             views = result.views();
-            enrichmentModel.set(views);
-            enrichmentResult.setText("");
+            analysisView.steps(views, this::stepResult);
             int caret = reader.getCaretPosition();
             showReader(result.reader(), live);
             reader.setCaretPosition(Math.min(caret, reader.getDocument().getLength()));
@@ -2455,22 +2495,44 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
-    private void showEnrichment() {
-        int row = enrichments.getSelectedRow();
-        if (row < 0 || row >= views.size()) {
-            return;
+    /** Das Ergebnis eines Analyseschritts in Worten, soweit die Seite es schon gelesen hat; sonst {@code null}. */
+    private String stepResult(Enrichments.View view) {
+        ReaderDocument document = shown;
+        if (document == null) {
+            return null;
         }
-        Enrichments.View view = views.get(row);
-        StringBuilder text = new StringBuilder();
-        if (view.enrichment().errorCode() != null) {
-            text.append("Fehler: ").append(view.enrichment().errorCode()).append('\n');
+        return switch (view.enrichment().processorId()) {
+            case PageAcronyms.PROCESSOR -> document.acronyms() == null ? null
+                    : Texts.count(document.acronyms().acronyms().size(), "Akronym", "Akronyme");
+            case com.aresstack.spaceharvester.application.terms.TermPayload.PROCESSOR -> document.terms() == null
+                    ? null : Texts.count(document.terms().identifierCount(), "Bezeichner", "Bezeichner");
+            case "passages" -> document.passages() == null ? null
+                    : Texts.count(document.passages().passages().size(), "Absatz", "Absätze");
+            case "navigation" -> document.navigation() == null ? null
+                    : Texts.count(document.navigation().chapters().size(), "Themenabschnitt", "Themenabschnitte");
+            default -> null;
+        };
+    }
+
+    /** Die Beziehungen der Begriffe dieser Seite und ihre Zahl aus dem Core. */
+    private AnalysisView.Scope pageScope(PageKey key) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return null;
         }
-        for (String warning : view.enrichment().warnings()) {
-            text.append("Warnung: ").append(warning).append('\n');
-        }
-        text.append(Payloads.prettyJson(view.enrichment().payloadJson()));
-        enrichmentResult.setText(text.toString());
-        enrichmentResult.setCaretPosition(0);
+        PageSet page = PageSet.ofKeys(List.of(key));
+        return new AnalysisView.Scope() {
+            @Override
+            public PageSet pages() {
+                return page;
+            }
+
+            @Override
+            public int relations(PageSet pages) {
+                return runtime.workspace().termRelationCounts(pages).values().stream().mapToInt(Integer::intValue)
+                        .sum();
+            }
+        };
     }
 
     private void setActionsEnabled(boolean enabled) {
@@ -2752,43 +2814,6 @@ public final class PageDetailPanel extends JPanel {
                 case 3 -> entry.attachment().version();
                 case 4 -> entry.stored() == null ? "nein" : "ja, " + Texts.shortHash(entry.stored().sha256());
                 default -> Optional.ofNullable(entry.previewOf()).orElse("");
-            };
-        }
-    }
-
-    private static final class EnrichmentModel extends AbstractTableModel {
-
-        private static final String[] COLUMNS = {"Analyse", "Ergebnis", "Stand", "Berechnet"};
-        private List<Enrichments.View> rows = new ArrayList<>();
-
-        void set(List<Enrichments.View> views) {
-            rows = new ArrayList<>(views);
-            fireTableDataChanged();
-        }
-
-        @Override
-        public int getRowCount() {
-            return rows.size();
-        }
-
-        @Override
-        public int getColumnCount() {
-            return COLUMNS.length;
-        }
-
-        @Override
-        public String getColumnName(int column) {
-            return COLUMNS[column];
-        }
-
-        @Override
-        public Object getValueAt(int row, int column) {
-            Enrichments.View view = rows.get(row);
-            return switch (column) {
-                case 0 -> view.enrichment().processorId() + " " + view.enrichment().processorVersion();
-                case 1 -> view.enrichment().status().name().equals("OK") ? "ok" : "fehlgeschlagen";
-                case 2 -> view.freshness().name().equals("CURRENT") ? "aktuell" : "veraltet";
-                default -> Texts.time(view.enrichment().computedAt());
             };
         }
     }

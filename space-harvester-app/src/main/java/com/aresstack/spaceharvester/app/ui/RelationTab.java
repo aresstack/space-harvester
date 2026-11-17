@@ -71,7 +71,7 @@ import static com.aresstack.spaceharvester.app.ui.TermsView.UNDO;
  * ab. Bei ungerichteten Arten steht in der ersten Spalte das Ende, nach dem der Core sortiert, damit die Liste
  * alphabetisch aussieht. Nur auf dem EDT.
  */
-final class RelationTab {
+public final class RelationTab {
 
     private final AppContext context;
     private final TermsView.Directory directory;
@@ -120,6 +120,7 @@ final class RelationTab {
     /** Nach dem Neuladen wieder zu wählende Beziehung. */
     private String keepSelected;
     private BiConsumer<String, Relation> onReview = (action, relation) -> { };
+    private Runnable onChanged = () -> { };
     private int request;
     private Pager<TermRelation> pager;
     private boolean loading;
@@ -127,7 +128,7 @@ final class RelationTab {
     private RelationFetch fetch;
 
     /** Eine Seite Beziehungen zu Art, Status, Suchbegriff und Anfangsbuchstaben nach {@code cursor}. */
-    interface RelationFetch {
+    public interface RelationFetch {
         TermRelations.RelationList fetch(RelationType type, ReviewStatus status, String term, String startsWith,
                                          String cursor) throws Exception;
     }
@@ -233,8 +234,28 @@ final class RelationTab {
         return typeChips.get(type);
     }
 
+    /**
+     * Die Liste aller Arten mit den Spalten Begriff, Beziehung, Zu Begriff, Status, Herkunft, wie im Reiter Begriffe
+     * und im Unterreiter „Analyse“ des Technik-Reiters (BG2b).
+     */
+    public static RelationTab all(AppContext context) {
+        return new RelationTab(context, "Beziehungen zwischen Begriffen",
+                new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"},
+                r -> List.of(r.fromTerm(), Relation.typeText(r.type()), r.toTerm(), Relation.statusText(r.status()),
+                        Relation.originText(r.origin())),
+                List.of(), RelationType.ABBREVIATION, TermsView.NO_RELATIONS);
+    }
+
+    /**
+     * Meldet jede Änderung, nach der sich die Zahl der Beziehungen geändert haben kann: neu geladene Liste (auch nach
+     * Anlegen oder Synonymlauf) und jedes Urteil. Auf dem EDT.
+     */
+    public void onChanged(Runnable listener) {
+        this.onChanged = Objects.requireNonNull(listener, "listener");
+    }
+
     /** Begrenzt die Liste auf diese Seiten (Auswahl links, ADR 0029) oder mit {@code null} auf alles; lädt neu. */
-    void pages(PageSet pages) {
+    public void pages(PageSet pages) {
         this.pages = pages;
         load(null);
     }
@@ -244,17 +265,17 @@ final class RelationTab {
      * „Beziehungen zwischen Begriffen“ und „Alle berechtigten, aktuell indexierten Seiten“; mit einer Seitenmenge oder
      * einer eigenen Überschrift darüber setzt der Einbau beides passend oder entfernt den Kopf.
      */
-    void heading(String title, String subtitle) {
+    public void heading(String title, String subtitle) {
         directory.heading(title, subtitle);
     }
 
     /** Die Liste samt dem Wartekreis des Synonymlaufs; das ist das Element für den Einbau. */
-    JComponent component() {
+    public JComponent component() {
         return overlay;
     }
 
     /** Tests: liest Beziehungen von {@code fetch} statt aus der Laufzeit. */
-    void fetch(RelationFetch fetch) {
+    public void fetch(RelationFetch fetch) {
         this.fetch = fetch;
     }
 
@@ -317,14 +338,14 @@ final class RelationTab {
     }
 
     /** Der Bereich wird sichtbar: entfernte Zeilen sind besiegelt, die Liste lädt neu. */
-    void shown() {
+    public void shown() {
         removed.clear();
         removedCore.clear();
         load(null);
     }
 
     /** Ein Wechsel von Reiter oder Bereich besiegelt das Entfernen: die durchgestrichenen Zeilen verschwinden. */
-    void forgetRemoved() {
+    public void forgetRemoved() {
         if (!removed.isEmpty()) {
             removed.clear();
             removedCore.clear();
@@ -399,6 +420,7 @@ final class RelationTab {
                 loaded.keySet().retainAll(removedCore.keySet());
                 found.forEach(r -> loaded.put(r.id(), r));
                 show(list, hint);
+                onChanged.run();
             } else {
                 found.forEach(r -> loaded.put(r.id(), r));
                 append(list);
@@ -461,6 +483,7 @@ final class RelationTab {
                 removedCore.remove(relation.id());
             }
             replace(relation.id(), after.orElse(null));
+            onChanged.run();
         }, failure -> {
             if (failure instanceof RelationConflictException) {
                 reread(relation);
@@ -666,7 +689,7 @@ final class RelationTab {
         }
     }
 
-    ComposerButton proposeButton() {
+    public ComposerButton proposeButton() {
         return proposeSynonyms;
     }
 
@@ -859,7 +882,7 @@ final class RelationTab {
         return directory;
     }
 
-    ComposerButton createButton() {
+    public ComposerButton createButton() {
         return create;
     }
 
