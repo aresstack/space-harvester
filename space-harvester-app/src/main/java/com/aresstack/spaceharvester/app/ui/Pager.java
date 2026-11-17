@@ -16,18 +16,18 @@ import java.util.Objects;
  *
  * @param <T> der Eintrag
  */
-final class Pager<T> {
+public final class Pager<T> {
 
     /** Eine Seite einer Abfrage, wie sie der Core liefert. */
-    record Page<T>(List<T> items, String nextCursor) {
+    public record Page<T>(List<T> items, String nextCursor) {
 
-        Page {
+        public Page {
             items = List.copyOf(items);
         }
     }
 
     /** Holt die Seite nach {@code cursor} ({@code null}: die erste). */
-    interface Fetch<T> {
+    public interface Fetch<T> {
         Page<T> fetch(String cursor) throws Exception;
     }
 
@@ -39,7 +39,7 @@ final class Pager<T> {
      * @param order  Ordnung innerhalb einer Gruppe; sie muss der Ordnung jedes Stroms entsprechen
      * @param groups Gruppen von Strömen in der Reihenfolge, in der sie erscheinen
      */
-    Pager(Comparator<? super T> order, List<List<Fetch<T>>> groups) {
+    public Pager(Comparator<? super T> order, List<List<Fetch<T>>> groups) {
         this.order = Objects.requireNonNull(order, "order");
         for (List<Fetch<T>> fetches : groups) {
             List<Stream> streams = new ArrayList<>(fetches.size());
@@ -51,7 +51,7 @@ final class Pager<T> {
     }
 
     /** Die nächsten höchstens {@code count} Einträge; leer, wenn alle Gruppen erschöpft sind. */
-    synchronized List<T> next(int count) throws Exception {
+    public synchronized List<T> next(int count) throws Exception {
         List<T> page = new ArrayList<>(count);
         while (page.size() < count && group < groups.size()) {
             Stream smallest = null;
@@ -72,7 +72,7 @@ final class Pager<T> {
     }
 
     /** Ob noch Einträge kommen können; vor dem ersten Laden immer, solange es Ströme gibt. */
-    synchronized boolean hasMore() {
+    public synchronized boolean hasMore() {
         for (int g = group; g < groups.size(); g++) {
             for (Stream stream : groups.get(g)) {
                 if (!stream.buffer.isEmpty() || !stream.done) {

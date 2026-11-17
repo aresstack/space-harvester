@@ -133,6 +133,17 @@ public final class PageDetailPanel extends JPanel {
     private final ExportPanel export;
     private final ChatPanel chat;
     private final StandingTab standing;
+    /**
+     * „Analysen“ ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): Unterreiter „Begriffe“ (dieselbe Darstellung
+     * wie auf der Seite, über die Auswahl zusammengezählt) und „Aussagen“ (der Stand), Angelo 17.11.2026.
+     */
+    private final PillTabs overview = new PillTabs();
+    private final TermsTab overviewTerms = new TermsTab();
+    /** Die Auswahl links, deren Begriffe {@link #overviewTerms} zeigen soll; gelesen erst, wenn sie zu sehen sind. */
+    private ExportPanel.Selection overviewSelection;
+    private boolean overviewTermsDirty;
+    /** Schlüssel der Statuszeile für die Begriffe der Auswahl (getrennt von „Begriffe“ der Seite). */
+    static final String OVERVIEW_TERMS = "Begriffe der Auswahl";
     private final com.aresstack.spaceharvester.app.ui.controls.HelpButton standingHelp =
             new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, STAND, StandingTab.HELP);
     /** Wohin nach dem Laden gesprungen wird (aus „Stand“); {@code null} ohne. */
@@ -565,7 +576,13 @@ public final class PageDetailPanel extends JPanel {
         deck.add(page, PAGE);
         deck.add(export, EXPORT_CARD);
         deck.add(chat, CHAT_CARD);
-        deck.add(standing, STAND_CARD);
+        overview.tab(TERMS, overviewTerms).tab(STATEMENTS, standing);
+        overview.onSelect(name -> {
+            showDeck();
+            showTabStatus();
+        });
+        overviewTerms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
+        deck.add(overview, STAND_CARD);
         deck.add(sourceView, SOURCE_CARD);
         deck.add(sourceChanges, SOURCE_TEXT_CARD);
         deck.add(sourceProperties, SOURCE_PROPERTIES_CARD);
@@ -698,8 +715,12 @@ public final class PageDetailPanel extends JPanel {
         // Analysen ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): der Stand der Auswahl links, mit den
         // Unterreitern „Aussagen“, „Zuerst lesen“, „Mögliche Widersprüche“ (Angelo 17.11.2026, kein eigenes Symbol).
         boolean standingShown = ANALYSES.equals(selected) && wide;
-        standingHelp.setVisible(standingShown);
-        standing.shown(standingShown);
+        boolean statementsShown = standingShown && STATEMENTS.equals(overview.selected());
+        standingHelp.setVisible(statementsShown);
+        standing.shown(statementsShown);
+        if (standingShown && TERMS.equals(overview.selected())) {
+            loadOverviewTerms();
+        }
         // Im Reiter Chat steht mittig der Chat statt der Seitenüberschrift, rechts Neuer Chat und Chat löschen.
         boolean chatTab = CHAT.equals(selected);
         title.setVisible(!chatTab);
@@ -783,6 +804,36 @@ public final class PageDetailPanel extends JPanel {
     /** Der Stand der Auswahl links (ADR 0032, FL6), im Reiter „Analysen“, solange links keine Seite gewählt ist. */
     StandingTab standing() {
         return standing;
+    }
+
+    /**
+     * Die Auswahl links für „Begriffe“ unter Analysen ohne Seite; gelesen wird erst, wenn der Unterreiter zu sehen ist.
+     */
+    void overviewSelection(ExportPanel.Selection selection) {
+        if (java.util.Objects.equals(selection, overviewSelection)) {
+            return;
+        }
+        overviewSelection = selection;
+        overviewTermsDirty = true;
+        showDeck();
+    }
+
+    private void loadOverviewTerms() {
+        if (!overviewTermsDirty || overviewSelection == null || context.runtime() == null) {
+            return;
+        }
+        overviewTermsDirty = false;
+        overviewTerms.selection(new SelectionTerms(context.runtime(), overviewSelection));
+    }
+
+    /** Die Begriffe der Auswahl im Reiter „Begriffe“ unter Analysen ohne Seite. */
+    TermsTab overviewTerms() {
+        return overviewTerms;
+    }
+
+    /** Die Unterreiter von „Analysen“ ohne Seite. */
+    PillTabs overview() {
+        return overview;
     }
 
     /** Ob links mehr als eine Seite gewählt ist (Wissensquellen-Kopf, Quelle, Space, Ordner): dann Analysen = Stand. */
@@ -2543,7 +2594,7 @@ public final class PageDetailPanel extends JPanel {
     String selectedTab() {
         String main = tabs.selected();
         if (ANALYSES.equals(main) && wide) {
-            return STAND;
+            return STATEMENTS.equals(overview.selected()) ? STAND : OVERVIEW_TERMS;
         }
         return ANALYSES.equals(main) ? analysisTabs.selected() : main;
     }

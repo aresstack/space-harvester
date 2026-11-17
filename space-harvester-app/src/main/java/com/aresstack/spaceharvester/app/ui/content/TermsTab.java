@@ -2,15 +2,19 @@ package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
+import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Pager;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.Relation;
 import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.TermPayload;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
@@ -27,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
 /**
@@ -39,6 +44,53 @@ import java.util.function.Consumer;
 final class TermsTab extends JPanel {
 
     static final String NOT_YET = "–";
+    /** Kennzahl einer Auswahl, solange der Core die Gesamtzahl noch nicht geliefert hat. */
+    static final String COUNTING = "…";
+    /** So viele Begriffe bzw. Beziehungen lädt ein Schritt beim Scrollen. */
+    static final int STEP = 120;
+    static final String NO_TERMS = "In der Auswahl wurden keine Begriffe erkannt.";
+    static final String NO_MATCH = "Kein Begriff passt zum Filter.";
+
+    /**
+     * Die Begriffe einer Auswahl links (Wissensquellen, Quelle, Space, Ordner; Angelo 17.11.2026): dieselbe Darstellung
+     * wie auf der Seite, nur über die Seiten der Auswahl zusammengezählt. Jede Abfrage geht an den Core, nie auf dem
+     * EDT; die Reihenfolge ist die des Core (alphabetisch).
+     */
+    interface Selection {
+
+        /** Der Name des gewählten Knotens für die Überschrift. */
+        String title();
+
+        /** Akronyme zur Suche {@code q} (leer: alle). */
+        Pager<TermQueries.TermSummary> acronyms(String q);
+
+        /** Bezeichner (Nomen und Kennungen) zur Suche {@code q}. */
+        Pager<TermQueries.TermSummary> identifiers(String q);
+
+        /** Beziehungen, deren Sortierbegriff mit {@code q} beginnt (leer: alle). */
+        Pager<Relation> relations(String q);
+
+        /** Die Seiten mit Fundstellen eines Begriffs. */
+        TermQueries.OccurrenceList occurrences(TermQueries.TermSummary term) throws Exception;
+
+        /**
+         * Die echten Gesamtzahlen der Auswahl aus dem Core (BG1b); {@code null}: noch nicht lieferbar, die Kennzahlen
+         * bleiben auf „…“. Kann bei großen Auswahlen etwa eine Sekunde dauern, läuft daher nur im Hintergrund.
+         */
+        default Totals totals() throws Exception {
+            return null;
+        }
+    }
+
+    /** Die Gesamtzahlen einer Auswahl: Akronyme, Bezeichner (Nomen und Kennungen), Beziehungen. */
+    record Totals(int acronyms, int identifiers, int relations) {
+    }
+
+    /** Führt Arbeit im Hintergrund aus und meldet das Ergebnis auf dem EDT; in Tests sofort. */
+    interface Runner {
+        <T> void run(Callable<T> work, java.util.function.Consumer<T> onSuccess,
+                     java.util.function.Consumer<Throwable> onFailure);
+    }
 
     private final TabHeader head = new TabHeader("Begriffe dieser Seite");
     private final JLabel acronymCount = number();
@@ -55,8 +107,19 @@ final class TermsTab extends JPanel {
     private final JPanel relationLines = new JPanel();
     private final JLabel hint = Comic.muted(" ");
     private Consumer<List<Span>> onJump = spans -> { };
+    private Consumer<TermQueries.Occurrence> onOpen = occurrence -> { };
     private PageAcronyms shown;
     private PageTerms shownTerms;
+    private final JPanel analysisRow = new JPanel(new BorderLayout());
+    private final javax.swing.JScrollPane scroll;
+    private final InfoPopup popup = new InfoPopup();
+    private Runner runner = Background::run;
+    /** Die gezeigte Auswahl; {@code null} zeigt eine einzelne Seite. */
+    private Selection selection;
+    private final List<Section> sections = new ArrayList<>();
+    private int request;
+    private boolean loading;
+    private int loadedTerms;
 
     /** Eine Fundstelle im Lesetext (Zeichenpositionen wie im Core-Ergebnis). */
     record Span(int start, int end) {
@@ -75,7 +138,6 @@ final class TermsTab extends JPanel {
         counts.add(count(identifierCount, "Bezeichner"));
         counts.add(count(relationCount, "Beziehungen"));
 
-        JPanel analysisRow = new JPanel(new BorderLayout());
         analysisRow.setOpaque(false);
         analysisRow.add(analysis, BorderLayout.WEST);
         analysisRow.add(completeness, BorderLayout.EAST);
@@ -119,22 +181,29 @@ final class TermsTab extends JPanel {
         body.add(hint, BorderLayout.CENTER);
 
         add(top, BorderLayout.NORTH);
-        add(Comic.scroll(body), BorderLayout.CENTER);
+        scroll = Comic.scroll(body);
+        add(scroll, BorderLayout.CENTER);
+        // Auswahl: Nachladen, sobald das Ende der Liste in Sicht kommt (kein Zeitgeber).
+        scroll.getVerticalScrollBar().getModel().addChangeListener(e -> {
+            if (selection != null && nearEnd()) {
+                more();
+            }
+        });
 
         filter.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
-                fill();
+                filtered();
             }
 
             @Override
             public void removeUpdate(DocumentEvent e) {
-                fill();
+                filtered();
             }
 
             @Override
             public void changedUpdate(DocumentEvent e) {
-                fill();
+                filtered();
             }
         });
         show(null);
@@ -155,6 +224,7 @@ final class TermsTab extends JPanel {
      * {@code terms} {@code null}: Bezeichner unbekannt.
      */
     void show(PageAcronyms acronyms, PageTerms terms) {
+        leaveSelection();
         shown = acronyms;
         shownTerms = terms;
         PageAcronyms.State current = acronyms == null ? PageAcronyms.State.MISSING : acronyms.state();
@@ -193,6 +263,250 @@ final class TermsTab extends JPanel {
         relationTitle.setVisible(relations != null && !relations.isEmpty());
         relationLines.revalidate();
         relationLines.repaint();
+    }
+
+    /** {@code listener} öffnet eine Seite aus den Fundstellen eines Begriffs der Auswahl. */
+    void onOpen(Consumer<TermQueries.Occurrence> listener) {
+        onOpen = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Für Tests: Hintergrundarbeit sofort ausführen. */
+    void runner(Runner runner) {
+        this.runner = Objects.requireNonNull(runner, "runner");
+    }
+
+    /**
+     * Zeigt die Begriffe einer Auswahl links: Überschrift mit ihrem Namen, ohne Seitenabgleich und Plaketten; die
+     * Kennzahlen stehen auf „…“, bis {@link #totals} sie setzt. Die Listen laden im Hintergrund, Akronyme zuerst, dann
+     * Bezeichner, dann Beziehungen, und laden beim Scrollen nach.
+     */
+    void selection(Selection chosen) {
+        selection = Objects.requireNonNull(chosen, "chosen");
+        shown = null;
+        shownTerms = null;
+        head.title("Begriffe in " + chosen.title());
+        head.status(null, null);
+        analysisRow.setVisible(false);
+        totals(null, null, null);
+        query();
+        // Die Kennzahlen kommen getrennt von den Listen; die Listen warten nie auf sie.
+        runner.run(chosen::totals, counted -> {
+            if (selection == chosen && counted != null) {
+                totals(counted.acronyms(), counted.identifiers(), counted.relations());
+            }
+        }, failure -> {
+            if (selection == chosen) {
+                String unreadable = "Gesamtzahl nicht lesbar: " + failure.getClass().getSimpleName();
+                for (JLabel count : List.of(acronymCount, identifierCount, relationCount)) {
+                    count.setToolTipText(unreadable);
+                }
+            }
+        });
+    }
+
+    /** Ob gerade eine Auswahl statt einer Seite zu sehen ist. */
+    boolean showsSelection() {
+        return selection != null;
+    }
+
+    /**
+     * Die echten Gesamtzahlen der Auswahl aus dem Core; {@code null} heißt: noch nicht bekannt („…“). Nie die Zahl der
+     * geladenen Chips.
+     */
+    void totals(Integer acronyms, Integer identifiers, Integer relations) {
+        acronymCount.setText(acronyms == null ? COUNTING : String.valueOf(acronyms));
+        identifierCount.setText(identifiers == null ? COUNTING : String.valueOf(identifiers));
+        relationCount.setText(relations == null ? COUNTING : String.valueOf(relations));
+        String pending = "Die Gesamtzahl der Auswahl wird noch ermittelt";
+        acronymCount.setToolTipText(acronyms == null ? pending : null);
+        identifierCount.setToolTipText(identifiers == null ? pending : "Nomen, Nominalgruppen und Kennungen");
+        relationCount.setToolTipText(relations == null ? pending : null);
+    }
+
+    private void leaveSelection() {
+        if (selection == null) {
+            return;
+        }
+        selection = null;
+        request++;
+        loading = false;
+        sections.clear();
+        popup.setVisible(false);
+        head.title("Begriffe dieser Seite");
+        analysisRow.setVisible(true);
+    }
+
+    private void filtered() {
+        if (selection != null) {
+            query();
+        } else {
+            fill();
+        }
+    }
+
+    /** Fragt den Core neu (Auswahl oder Filter geändert); verworfen wird alles Geladene. */
+    private void query() {
+        Selection current = selection;
+        String q = filter.getText() == null ? "" : filter.getText().trim();
+        request++;
+        loading = false;
+        loadedTerms = 0;
+        popup.setVisible(false);
+        chips.removeAll();
+        identifierChips.removeAll();
+        relationLines.removeAll();
+        acronymTitle.setVisible(false);
+        identifierTitle.setVisible(false);
+        relationTitle.setVisible(false);
+        hint.setText(" ");
+        sections.clear();
+        sections.add(new Section<>(current.acronyms(q), terms -> append(chips, acronymTitle, terms)));
+        sections.add(new Section<>(current.identifiers(q), terms -> append(identifierChips, identifierTitle, terms)));
+        sections.add(new Section<>(current.relations(q), this::appendRelations));
+        for (JPanel list : List.of(chips, identifierChips, relationLines)) {
+            list.revalidate();
+            list.repaint();
+        }
+        more();
+    }
+
+    /** Lädt den nächsten Schritt des ersten Abschnitts, der noch etwas hat; nie zwei Schritte zugleich. */
+    void more() {
+        if (loading || selection == null) {
+            return;
+        }
+        for (Section<?> section : sections) {
+            if (section.pager.hasMore()) {
+                load(section);
+                return;
+            }
+        }
+        finished();
+    }
+
+    private <T> void load(Section<T> section) {
+        int mine = request;
+        loading = true;
+        runner.run(() -> section.pager.next(STEP), items -> {
+            if (mine != request) {
+                return;
+            }
+            loading = false;
+            section.append.accept(items);
+            // Erst nach dem Auslegen prüfen, ob die Fläche schon voll ist; sonst gleich weiterladen.
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                if (mine == request && nearEnd()) {
+                    more();
+                }
+            });
+        }, failure -> {
+            if (mine == request) {
+                loading = false;
+                hint.setText("Begriffe nicht lesbar: " + failure.getClass().getSimpleName());
+            }
+        });
+    }
+
+    private void finished() {
+        boolean empty = loadedTerms == 0 && relationLines.getComponentCount() == 0;
+        String q = filter.getText() == null ? "" : filter.getText().trim();
+        hint.setText(!empty ? " " : q.isEmpty() ? NO_TERMS : NO_MATCH);
+    }
+
+    private boolean nearEnd() {
+        javax.swing.BoundedRangeModel model = scroll.getVerticalScrollBar().getModel();
+        return model.getValue() + model.getExtent() >= model.getMaximum() - 200;
+    }
+
+    private void append(JPanel list, JLabel title, List<TermQueries.TermSummary> terms) {
+        for (TermQueries.TermSummary term : terms) {
+            list.add(chip(term));
+        }
+        loadedTerms += terms.size();
+        title.setVisible(list.getComponentCount() > 0);
+        list.revalidate();
+        list.repaint();
+    }
+
+    private void appendRelations(List<Relation> relations) {
+        for (Relation relation : relations) {
+            JLabel line = Comic.text(relation.line());
+            line.setAlignmentX(LEFT_ALIGNMENT);
+            relationLines.add(line);
+        }
+        relationTitle.setVisible(relationLines.getComponentCount() > 0);
+        relationLines.revalidate();
+        relationLines.repaint();
+    }
+
+    /** Ein Begriff der Auswahl: Klick zeigt die Seiten mit Fundstellen als Overlay am Begriff. */
+    private ResearchPillButton chip(TermQueries.TermSummary term) {
+        ResearchPillButton chip = chip(selectionLabel(term), selectionTooltip(term), List.of());
+        chip.setEnabled(true);
+        for (java.awt.event.ActionListener listener : chip.getActionListeners()) {
+            chip.removeActionListener(listener);
+        }
+        chip.addActionListener(e -> occurrences(term, chip));
+        return chip;
+    }
+
+    /** Wie auf der Seite: ein Akronym mit genau einer Ausschreibung als „RSL · Rückmeldeschlüssel“. */
+    static String selectionLabel(TermQueries.TermSummary term) {
+        return term.kind() == TermKind.ACRONYM && term.expansions().size() == 1
+                ? term.term() + " · " + term.expansions().get(0) : term.term();
+    }
+
+    /** „12 Fundstellen auf 4 Seiten · Klick zeigt die Seiten“; bei Akronymen davor die Ausschreibungen. */
+    static String selectionTooltip(TermQueries.TermSummary term) {
+        String counts = Texts.count(term.occurrences(), "Fundstelle", "Fundstellen") + " auf "
+                + Texts.count(term.pages(), "Seite", "Seiten") + " · Klick zeigt die Seiten";
+        return term.kind() == TermKind.ACRONYM && !term.expansions().isEmpty()
+                ? String.join(" · ", term.expansions()) + " · " + counts : counts;
+    }
+
+    private void occurrences(TermQueries.TermSummary term, ResearchPillButton chip) {
+        Selection current = selection;
+        if (current == null) {
+            return;
+        }
+        int mine = request;
+        runner.run(() -> current.occurrences(term), found -> {
+            if (mine != request) {
+                return;
+            }
+            popup.clearLinks();
+            java.util.Map<String, List<TermQueries.Occurrence>> byPage = new java.util.LinkedHashMap<>();
+            for (TermQueries.Occurrence occurrence : found.occurrences()) {
+                byPage.computeIfAbsent(occurrence.sourceId() + "/" + occurrence.pageId(),
+                        key -> new ArrayList<>()).add(occurrence);
+            }
+            popup.text("Fundstellen von „" + term.term() + "“", byPage.isEmpty() ? "Keine sichtbare Fundstelle."
+                    : Texts.count(byPage.size(), "Seite", "Seiten") + (found.nextCursor() == null ? ""
+                    : " (die ersten)") + "; ein Klick öffnet die Seite.");
+            for (List<TermQueries.Occurrence> hits : byPage.values()) {
+                TermQueries.Occurrence first = hits.get(0);
+                popup.link(first.title() + " · " + Texts.count(hits.size(), "Fundstelle", "Fundstellen"), () -> {
+                    popup.setVisible(false);
+                    onOpen.accept(first);
+                });
+            }
+            popup.showAt(chip, 0, chip.getHeight());
+        }, failure -> {
+            if (mine == request) {
+                hint.setText("Fundstellen nicht lesbar: " + failure.getClass().getSimpleName());
+            }
+        });
+    }
+
+    /** Ein Abschnitt der Auswahl mit eigenem Pager. */
+    private static final class Section<T> {
+        final Pager<T> pager;
+        final Consumer<List<T>> append;
+
+        Section(Pager<T> pager, Consumer<List<T>> append) {
+            this.pager = Objects.requireNonNull(pager, "pager");
+            this.append = Objects.requireNonNull(append, "append");
+        }
     }
 
     private void fill() {
@@ -389,6 +703,18 @@ final class TermsTab extends JPanel {
 
     String analysis() {
         return analysis.getText();
+    }
+
+    String title() {
+        return head.titleText();
+    }
+
+    boolean analysisShown() {
+        return analysisRow.isVisible();
+    }
+
+    InfoPopup occurrencePopup() {
+        return popup;
     }
 
     /** Wie {@link FlowLayout}, meldet aber die Höhe aller umbrochenen Zeilen in der Breite des Elternteils. */
