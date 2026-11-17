@@ -92,9 +92,11 @@ class SourcePropertiesViewTest {
                 "Seiten", "360", "Lokal", "305 aktuell, 6 veraltet", "Nicht lokal", "47", "Gesperrt", "2",
                 "Stand vom", "16.11.2026, 18:30", "Updates", "1", "Letztes Update", "16.11.2026, 18:30",
                 "Seit dem letzten Update", "2 geänderte Seiten");
+        // Die Zeilen in der farbigen Form des Export-Reiters (Angelo 17.11.2026), in drei Kästen.
         assertThat(texts).as("je Space eine Zeile").containsSubsequence("Spaces", "CLUK",
-                "340 Seiten · 300 lokal · 5 veraltet · 2 gesperrt · Stand 16.11.2026, 18:30", "DEV",
-                "20 Seiten · 5 lokal · 1 veraltet · keine Inventur");
+                "305 von 340 Seiten lokal · 5 veraltet · 2 gesperrt · Stand vom 16.11.2026, 18:30", "DEV",
+                "6 von 20 Seiten lokal · 1 veraltet · " + ExportPanel.INCOMPLETE);
+        assertThat(view.plateTitles()).containsExactly("Kennzahlen", "Spaces", "Einstellungen");
         assertThat(view.subscribed()).isTrue();
     }
 

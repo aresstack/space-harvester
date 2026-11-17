@@ -131,7 +131,10 @@ final class SourcePropertiesView extends JPanel {
     private final Facts spaces = new Facts();
     private final Facts settingsFacts = new Facts();
     private final List<JLabel> headings = new ArrayList<>();
-    private final JLabel spacesHeading = heading("Spaces");
+    /** Die drei Kästen (Angelo 17.11.2026): Kennzahlen, Spaces und Einstellungen, je eine Platte mit Farbstreifen. */
+    private final JComponent figuresPlate = plate("Kennzahlen", Comic.PETROL, figures);
+    private final JComponent spacesPlate = plate("Spaces", Comic.GREEN, spaces);
+    private final JComponent settingsPlate = plate("Einstellungen", Comic.BLUE, settingsFacts);
     private final com.aresstack.spaceharvester.app.ui.controls.WrappedText note =
             Comic.wrapped(" ", Comic.MUTED, 13.5f);
     private static final java.time.format.DateTimeFormatter WHEN =
@@ -188,12 +191,11 @@ final class SourcePropertiesView extends JPanel {
         column.setOpaque(false);
         column.setBorder(BorderFactory.createEmptyBorder(10, 14, 14, 14));
         add(column, note);
-        add(column, heading("Kennzahlen"));
-        add(column, figures);
-        add(column, spacesHeading);
-        add(column, spaces);
-        add(column, heading("Einstellungen"));
-        add(column, settingsFacts);
+        add(column, figuresPlate);
+        add(column, gap());
+        add(column, spacesPlate);
+        add(column, gap());
+        add(column, settingsPlate);
         JPanel top = new JPanel(new BorderLayout());
         top.setOpaque(false);
         top.add(column, BorderLayout.NORTH);
@@ -356,8 +358,7 @@ final class SourcePropertiesView extends JPanel {
         for (Facts facts : List.of(figures, spaces, settingsFacts)) {
             facts.labelWidth(labels);
         }
-        spacesHeading.setVisible(any && !found.spaces().isEmpty());
-        spaces.setVisible(any && !found.spaces().isEmpty());
+        spacesPlate.setVisible(any && !found.spaces().isEmpty());
         column.revalidate();
         column.repaint();
     }
@@ -393,22 +394,34 @@ final class SourcePropertiesView extends JPanel {
         }
     }
 
+    /**
+     * Je Space eine Zeile in der farbigen Form des Export-Reiters (Angelo 17.11.2026): „305 von 340 Seiten lokal ·
+     * 5 veraltet · 2 gesperrt · Stand vom 16.11.2026, 18:30“, grün wenn alles lokal und inventarisiert, orange
+     * sonst, grau „Noch nicht geladen“ ohne Stand ({@link ExportPanel#standTone}).
+     */
     private void fillSpaces(List<SpaceSummary> list) {
         list.stream().sorted(Comparator.comparing(SpaceSummary::spaceKey)).forEach(space -> {
             HoldingCounts counts = space.counts();
-            List<String> parts = new ArrayList<>();
-            parts.add(Texts.count(counts.pages(), "Seite", "Seiten"));
-            parts.add(counts.local() + " lokal");
-            if (counts.outdated() > 0) {
-                parts.add(counts.outdated() + " veraltet");
-            }
-            if (counts.locked() > 0) {
-                parts.add(counts.locked() + " gesperrt");
-            }
-            parts.add(space.inventoried() ? "Stand " + when(space.asOf()) : "keine Inventur");
-            spaces.add(space.spaceKey(), String.join(" · ", parts), space.inventoried() ? Comic.INK : Comic.MUTED,
-                    null, counts.outdated() > 0 ? Texts.OUTDATED_WHY : null);
+            spaces.add(space.spaceKey(), spaceText(space), ExportPanel.standTone(space, null), null,
+                    counts.outdated() > 0 ? Texts.OUTDATED_WHY : null);
         });
+    }
+
+    String spaceText(SpaceSummary space) {
+        HoldingCounts counts = space.counts();
+        if (counts.stored() == 0 && !space.inventoried()) {
+            return ExportPanel.NOT_LOADED;
+        }
+        List<String> parts = new ArrayList<>();
+        parts.add(counts.stored() + " von " + Texts.count(counts.pages(), "Seite", "Seiten") + " lokal");
+        if (counts.outdated() > 0) {
+            parts.add(counts.outdated() + " veraltet");
+        }
+        if (counts.locked() > 0) {
+            parts.add(counts.locked() + " gesperrt");
+        }
+        parts.add(space.inventoried() ? "Stand vom " + when(space.asOf()) : ExportPanel.INCOMPLETE);
+        return String.join(" · ", parts);
     }
 
     private void fillSettings(Loaded found) {
@@ -499,13 +512,19 @@ final class SourcePropertiesView extends JPanel {
         }
     }
 
-    private JLabel heading(String text) {
-        JLabel label = new JLabel(text);
-        label.setFont(Comic.semiBold(14f));
-        label.setForeground(Comic.INK);
-        label.setBorder(BorderFactory.createEmptyBorder(12, 0, 4, 0));
-        headings.add(label);
-        return label;
+    /** Ein Kasten aus der gemeinsamen Bibliothek; seine Überschrift zählt beim Kopieren als Abschnitt. */
+    private JComponent plate(String title, java.awt.Color stripe, Facts content) {
+        JComponent plate = Comic.plate(title, stripe, content);
+        for (Component child : plate.getComponents()) {
+            if (child instanceof JLabel label) {
+                headings.add(label);
+            }
+        }
+        return plate;
+    }
+
+    private static JComponent gap() {
+        return (JComponent) javax.swing.Box.createVerticalStrut(10);
     }
 
     private static void add(JPanel column, JComponent part) {
@@ -518,6 +537,12 @@ final class SourcePropertiesView extends JPanel {
     }
 
     // ---- für Tests
+
+    /** Die Überschriften der sichtbaren Kästen, von oben nach unten. */
+    List<String> plateTitles() {
+        return headings.stream().filter(label -> label.getParent() != null && label.getParent().isVisible())
+                .map(JLabel::getText).toList();
+    }
 
     void zone(java.time.ZoneId value) {
         zone = Objects.requireNonNull(value, "zone");
