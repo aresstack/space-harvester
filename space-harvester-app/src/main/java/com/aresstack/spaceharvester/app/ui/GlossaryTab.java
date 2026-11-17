@@ -151,6 +151,11 @@ final class GlossaryTab {
     private String keepSelected;
     /** Meldung unter der Tabelle nach dem nächsten Zeigen, etwa nach einer abgelehnten Änderung. */
     private String afterShow;
+    /** Fragt vor dem Entfernen mit „Wirklich …“ und Ja/Nein; Tests ersetzen die Rückfrage. */
+    private java.util.function.BiPredicate<String, String> confirm =
+            (heading, question) -> Dialogs.confirm(directory, heading, question);
+    /** Das offene Overlay, für Tests. */
+    private InfoPopup popup;
     /** Die eigenen Aufträge „Fachbegriffe ermitteln“ (je Quelle einer) mit ihrem letzten Stand; leer ohne Lauf. */
     private final Map<String, JobStatus> jobs = new LinkedHashMap<>();
     /** Der Lauf wird gerade gestartet (Aufträge noch ohne Kennung). */
@@ -173,6 +178,7 @@ final class GlossaryTab {
         this.access = access;
         directory.show(List.of(), NO_GLOSSARY);
         directory.withoutHead();
+        directory.columnHeads();
         busy.setText(BUSY);
         busy.onCancel(() -> cancelled.set(true));
         JTable table = directory.table();
@@ -180,7 +186,7 @@ final class GlossaryTab {
         for (int c = 0; c < ACTIONS_COLUMN; c++) {
             table.getColumnModel().getColumn(c).setCellRenderer(renderer);
         }
-        int[] widths = {200, 80, 90, 110, 80, 300};
+        int[] widths = {200, 100, 90, 110, 80, 300};
         for (int c = 0; c < widths.length; c++) {
             table.getColumnModel().getColumn(c).setPreferredWidth(widths[c]);
         }
@@ -515,7 +521,7 @@ final class GlossaryTab {
         }
         boolean filtered = query.q() != null || query.status() != null;
         directory.show(rows(result.rows()), filtered || !result.rows().isEmpty() ? NO_MATCH : EMPTY);
-        onStatus.accept(status(result));
+        onStatus.accept(status(selection.title(), result));
         if (afterShow != null) {
             directory.message(afterShow);
             afterShow = null;
@@ -533,9 +539,10 @@ final class GlossaryTab {
         }
     }
 
-    /** „12 Fachbegriffe · 40 Seiten ausgewertet · 3 veraltet“ für die Statuszeile. */
-    static String status(GlossaryAccess.Overview result) {
-        return Texts.count(result.rows().size(), "Fachbegriff", "Fachbegriffe") + " · "
+    /** „Datenhaus · 12 Fachbegriffe · 40 Seiten ausgewertet · 3 Analysen veraltet“ für die Statuszeile. */
+    static String status(String scope, GlossaryAccess.Overview result) {
+        return (scope == null || scope.isBlank() ? "" : scope + " · ")
+                + Texts.count(result.rows().size(), "Fachbegriff", "Fachbegriffe") + " · "
                 + Texts.count(result.pages(), "Seite", "Seiten") + " ausgewertet"
                 + (result.stalePages() == 0 ? "" : " · " + Texts.count(result.stalePages(), "Analyse", "Analysen")
                 + " veraltet");
@@ -652,8 +659,15 @@ final class GlossaryTab {
                 rejected ? new RowActions.Action(Glyph.REFRESH, RESTORE, true, () -> review(RESTORE, entry))
                         : new RowActions.Action(Glyph.CANCEL, REJECT, true, () -> review(REJECT, entry)),
                 new RowActions.Action(Glyph.PENCIL, EDIT, true, () -> askExplanation(entry)),
-                new RowActions.Action(Glyph.TRASH, manual ? REMOVE : ONLY_MANUAL, manual,
-                        () -> review(REMOVE, entry)));
+                new RowActions.Action(Glyph.TRASH, manual ? REMOVE : ONLY_MANUAL, manual, () -> {
+                    if (confirm.test(REMOVE, removeQuestion(entry))) {
+                        review(REMOVE, entry);
+                    }
+                }));
+    }
+
+    static String removeQuestion(Entry entry) {
+        return "Wirklich „" + entry.term() + "“ aus dem Fachglossar entfernen?";
     }
 
     /** Bestätigen, Ablehnen, Zurücknehmen oder Entfernen mit dem gezeigten Stand; der Core prüft Revision und Rechte. */
@@ -754,11 +768,20 @@ final class GlossaryTab {
 
     /** „Erläuterung bearbeiten“: nur der Text; Begriff und Geltungsbereich bleiben. */
     private void askExplanation(Entry entry) {
+        askExplanation(entry, null);
+    }
+
+    /**
+     * „Erläuterung bearbeiten“; mit {@code draft} liegt der Vorschlag zur Begriffsbestimmung als Entwurf im Feld,
+     * gespeichert wird erst mit „Speichern“.
+     */
+    private void askExplanation(Entry entry, String draft) {
         if (context == null || access.get().isEmpty()) {
             return;
         }
         javax.swing.JDialog dialog = Dialogs.dialog(directory, EDIT);
-        JTextArea explanation = explanationArea(entry.explanation() == null ? "" : entry.explanation());
+        JTextArea explanation = explanationArea(draft != null ? draft
+                : entry.explanation() == null ? "" : entry.explanation());
         JPanel form = new JPanel(new java.awt.GridLayout(0, 1, 0, 4));
         form.setOpaque(false);
         form.add(Comic.caption("Fachbegriff"));
@@ -909,70 +932,179 @@ final class GlossaryTab {
                 + Texts.count(processed, "geprüften Begriff", "geprüften Begriffen");
     }
 
-    // ---- Belege
+    // ---- Overlay
 
-    /** Fenster am Mausklick: Erläuterung, Herkunft und Stand, Belege mit Kontext, Links zur Seite. */
+    static final String CATEGORIZE = "Einordnen:";
+    static final String DEFINITION = "Vorschlag zur Begriffsbestimmung";
+    static final String DEFINITION_LINK = "Zum Beleg der Begriffsbestimmung";
+    static final String DRAFT = "Den Vorschlag als Entwurf ins Erläuterungsfeld legen; gespeichert wird erst mit "
+            + "„Speichern“";
+    static final String UNREADABLE = "Kontext nicht mehr lesbar (Seite geändert oder nicht im Cache)";
+
+    /**
+     * Overlay am Mausklick: Erläuterung, Einordnung mit Grund, Herkunft und Stand, Wichtigkeit, Verhalten,
+     * Eigenschaften und Ist-Beziehungen aus der gehaltenen Sicht ({@code View#term}, kein neues Rechnen; Vorstufe
+     * getrennt), Belege mit Kontext und das Protokoll. Darunter Einordnen als Pillen, der Vorschlag zur
+     * Begriffsbestimmung als eigene Zeile und die Aktionen als Icon-Knöpfe. Höchsthöhe mit Rollen im Inneren.
+     */
     private void showDetails(Entry entry, int x, int y) {
         Optional<GlossaryAccess> glossary = access.get();
         if (glossary.isEmpty()) {
             return;
         }
+        GlossaryAccess.Row row = rowById.get(entry.id());
+        Optional<GlossaryDerivation.Term> term = glossary.get().term(overview, entry.normalized());
         List<RelationEvidence> evidence = entry.evidence().stream().limit(EVIDENCE_SHOWN).toList();
+        RelationEvidence definition = row == null ? null : row.definition();
         Background.run(() -> {
             List<String> lines = new ArrayList<>();
-            List<String> titles = new ArrayList<>();
             for (RelationEvidence e : evidence) {
                 Optional<TermQueries.Snippet> snippet = glossary.get().snippet(e, SNIPPET_CHARS);
                 String title = glossary.get().pageTitle(e.sourceId(), e.pageId()).orElse(e.pageId());
-                titles.add(title);
                 lines.add((evidence.size() == 1 ? "" : (lines.size() + 1) + ". ") + title + ": "
-                        + snippet.map(GlossaryTab::snippetText)
-                        .orElse("Kontext nicht mehr lesbar (Seite geändert oder nicht im Cache)"));
+                        + snippet.map(GlossaryTab::snippetText).orElse(UNREADABLE));
             }
-            return new Details(lines, titles);
+            String sentence = definition == null ? null : glossary.get().snippet(definition, SNIPPET_CHARS)
+                    .map(GlossaryTab::snippetText).orElse(null);
+            List<GlossaryAccess.History> history = glossary.get().history(entry.id());
+            return new Details(lines, sentence, history);
         }, details -> {
             if (!directory.table().isShowing()) {
                 // Inzwischen ist ein anderer Reiter oder Bereich zu sehen; ein Fenster dort hätte keinen Anker.
                 return;
             }
-            InfoPopup popup = new InfoPopup().text(entry.term(), detailText(entry, details.lines()));
+            InfoPopup popup = new InfoPopup().text(entry.term(), overlayText(entry, row, term.orElse(null),
+                    details.lines(), details.history()));
+            popup.controls(overlayControls(popup, entry, row, details.definition()));
             for (int i = 0; i < evidence.size(); i++) {
                 RelationEvidence e = evidence.get(i);
-                // Kurze Linktexte, damit bis zu drei nebeneinander in die Breite des Fensters passen; der Titel
-                // steht in der Belegzeile darüber.
-                popup.link(evidence.size() == 1 ? "Zur Seite" : "Zu Beleg " + (i + 1),
-                        () -> context.navigator().openPage(e.sourceId(), e.pageId()));
+                // Kurze Linktexte, damit bis zu drei nebeneinander in die Breite des Fensters passen.
+                popup.link(evidence.size() == 1 ? "Zur Seite" : "Zu Beleg " + (i + 1), () -> open(e));
             }
+            if (definition != null) {
+                popup.link(DEFINITION_LINK, () -> open(definition));
+            }
+            this.popup = popup;
             popup.showAt(directory.table(), x, y);
-        }, failure -> directory.message(notice("Belege nicht lesbar: " + failure.getMessage(), Severity.ERROR)));
+        }, failure -> notice("Einzelheiten nicht lesbar: " + failure.getMessage(), Severity.ERROR));
     }
 
-    private record Details(List<String> lines, List<String> titles) {
+    private void open(RelationEvidence evidence) {
+        if (context != null && context.navigator() != null) {
+            context.navigator().openPage(evidence.sourceId(), evidence.pageId());
+        }
     }
 
-    static String snippetText(TermQueries.Snippet s) {
-        return ((s.truncatedBefore() ? "…" : "") + s.before() + s.match() + s.after()
-                + (s.truncatedAfter() ? "…" : "")).replaceAll("\\s+", " ").trim();
+    private record Details(List<String> lines, String definition, List<GlossaryAccess.History> history) {
     }
 
-    /** Der Text des Fensters: Erläuterung, Geltungsbereich, Herkunft und Stand, Belege. */
-    static String detailText(Entry entry, List<String> evidenceLines) {
+    /** Einordnen als Pillen, der Vorschlag zur Begriffsbestimmung als eigene Zeile, darunter die Aktionen. */
+    JComponent overlayControls(InfoPopup popup, Entry entry, GlossaryAccess.Row row, String definition) {
+        JPanel rows = new JPanel();
+        rows.setOpaque(false);
+        rows.setLayout(new javax.swing.BoxLayout(rows, javax.swing.BoxLayout.Y_AXIS));
+        JPanel categorize = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        categorize.setOpaque(false);
+        categorize.add(Comic.muted(CATEGORIZE));
+        GlossaryDerivation.Category current = row == null ? GlossaryDerivation.Category.UNKLAR : row.category();
+        for (GlossaryDerivation.Category category : List.of(GlossaryDerivation.Category.FACHLICH,
+                GlossaryDerivation.Category.ROLLE, GlossaryDerivation.Category.UNKLAR,
+                GlossaryDerivation.Category.TECHNISCH)) {
+            CountChip chip = CountChip.choice(categoryWord(category), categoryTone(category));
+            chip.setSelected(category == current);
+            chip.setToolTipText("Von Hand als „" + categoryWord(category) + "“ einordnen; danach ändert kein Lauf "
+                    + "die Einordnung mehr");
+            chip.addActionListener(e -> {
+                if (category == current) {
+                    chip.setSelected(true);
+                    return;
+                }
+                popup.setVisible(false);
+                categorize(entry, category);
+            });
+            categorize.add(chip);
+        }
+        categorize.setAlignmentX(Component.LEFT_ALIGNMENT);
+        rows.add(categorize);
+        if (definition != null) {
+            JPanel proposal = new JPanel(new java.awt.BorderLayout(6, 0));
+            proposal.setOpaque(false);
+            proposal.setBorder(javax.swing.BorderFactory.createEmptyBorder(6, 0, 0, 0));
+            proposal.add(Comic.wrapped(DEFINITION + ": „" + definition + "“", Comic.TEXT, 12f),
+                    java.awt.BorderLayout.CENTER);
+            IconButton draft = new IconButton(Glyph.PENCIL, DRAFT);
+            draft.addActionListener(e -> {
+                popup.setVisible(false);
+                askExplanation(entry, definition);
+            });
+            proposal.add(draft, java.awt.BorderLayout.EAST);
+            proposal.setAlignmentX(Component.LEFT_ALIGNMENT);
+            rows.add(proposal);
+        }
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        actions.setOpaque(false);
+        actions.setBorder(javax.swing.BorderFactory.createEmptyBorder(6, 0, 0, 0));
+        for (RowActions.Action action : actions(entry)) {
+            IconButton button = new IconButton(action.icon(), action.tooltip());
+            button.setEnabled(action.enabled());
+            button.addActionListener(e -> {
+                popup.setVisible(false);
+                action.run().run();
+            });
+            actions.add(button);
+        }
+        actions.setAlignmentX(Component.LEFT_ALIGNMENT);
+        rows.add(actions);
+        return rows;
+    }
+
+    /** Ordnet von Hand ein; der Core prüft Revision und Rechte. */
+    void categorize(Entry entry, GlossaryDerivation.Category category) {
+        Optional<GlossaryAccess> glossary = access.get();
+        if (glossary.isEmpty()) {
+            return;
+        }
+        keepSelected = entry.id();
+        Background.run(() -> glossary.get().categorize(entry.id(), category, entry.revision()), done -> {
+            notice("„" + entry.term() + "“ eingeordnet als „" + categoryWord(category) + "“", Severity.INFO);
+            refine();
+        }, failure -> {
+            afterShow = notice(failure instanceof GlossaryAccess.ConflictException ? CONFLICT
+                    : "Einordnen nicht möglich: " + failure.getMessage(), Severity.ERROR);
+            refine();
+        });
+    }
+
+    /** Der Text des Overlays; jede Angabe in Worten, Belege und Protokoll am Ende. */
+    static String overlayText(Entry entry, GlossaryAccess.Row row, GlossaryDerivation.Term term,
+                              List<String> evidenceLines, List<GlossaryAccess.History> history) {
         StringBuilder text = new StringBuilder();
         if (entry.explanation() != null && !entry.explanation().isBlank()) {
             text.append(entry.explanation().trim()).append("\n\n");
+        }
+        if (row != null) {
+            text.append("Einordnung: ").append(categorized(row.category(), row.classification())).append('\n');
         }
         text.append("Gilt für: ").append(scopeText(entry)).append('\n');
         text.append("Herkunft: ").append(Relation.originText(entry.origin().name()));
         if (entry.generation() != null && !entry.generation().isBlank()) {
             text.append(" (").append(entry.generation()).append(')');
         }
-        text.append(" · Stand: ").append(Relation.statusText(entry.status().name()));
+        text.append('\n');
+        text.append("Status: ").append(statusWord(entry.status()));
         if (entry.reviewedAt() != null) {
-            text.append(" am ").append(Texts.time(entry.reviewedAt()));
+            text.append(" am ").append(minute(entry.reviewedAt()));
         }
         text.append('\n');
+        if (row != null) {
+            text.append("Wichtigkeit: ").append(row.importance() == null ? "keine in der Auswahl"
+                    : importanceTip(row.importance())).append('\n');
+        }
+        if (term != null) {
+            termLines(term).forEach(line -> text.append(line).append('\n'));
+        }
         if (entry.evidence().isEmpty()) {
-            text.append("Keine Belegstellen im Begriffsindex.");
+            text.append("Keine Belegstellen.");
         } else {
             text.append(Texts.count(entry.evidence().size(), "Beleg", "Belege"));
             if (entry.evidenceStale()) {
@@ -985,7 +1117,168 @@ final class GlossaryTab {
                 text.append("\n… und ").append(entry.evidence().size() - evidenceLines.size()).append(" weitere");
             }
         }
+        if (history != null && !history.isEmpty()) {
+            text.append("\n\nProtokoll:");
+            for (GlossaryAccess.History step : history) {
+                text.append("\n• ").append(historyLine(step));
+            }
+        }
         return text.toString();
+    }
+
+    /**
+     * „fachlich · nach Regel (kein Technik- oder Rollenwort)“, „Rolle · von Hand“, „unklar · von der KI“; ohne
+     * Einordnung „unklar (noch nicht eingeordnet)“.
+     */
+    static String categorized(GlossaryDerivation.Category category,
+                              com.aresstack.spaceharvester.application.glossary.GlossaryEntry.Classification
+                                      classification) {
+        if (classification == null) {
+            return categoryWord(GlossaryDerivation.Category.UNKLAR) + " (noch nicht eingeordnet)";
+        }
+        return categoryWord(category) + " · " + switch (classification.by()) {
+            case MANUAL -> "von Hand";
+            case AI -> "von der KI";
+            case RULE -> "nach Regel (" + switch (String.valueOf(classification.reason())) {
+                case "TECHNICAL_HEAD" -> "Technikwort am Wortende";
+                case "TECHNICAL_SHAPE" -> "Schreibweise eines Bezeichners";
+                case "ROLE_HEAD" -> "Rollenwort am Wortende";
+                default -> "kein Technik- oder Rollenwort";
+            } + ")";
+        };
+    }
+
+    private static final java.time.format.DateTimeFormatter MINUTE =
+            java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
+
+    /** „10.11.2026 08:00“ in der Zeitzone des Rechners. */
+    static String minute(java.time.Instant at) {
+        return MINUTE.format(at.atZone(java.time.ZoneId.systemDefault()));
+    }
+
+    /** Wer im Protokoll gehandelt hat: „von der Regel“, „von der KI“ oder „von angelo“, nie interne Kennungen. */
+    static String actorText(String actor) {
+        if (actor == null || actor.isBlank()) {
+            return "";
+        }
+        if (actor.startsWith("rule:")) {
+            return "von der Regel";
+        }
+        if (actor.startsWith("ai:")) {
+            return "von der KI";
+        }
+        int colon = actor.indexOf(':');
+        int at = actor.indexOf('@');
+        String principal = actor.substring(colon + 1, at > colon ? at : actor.length());
+        return principal.isBlank() ? "" : "von " + principal;
+    }
+
+    /** Eine Protokollzeile: „10.11.2026 08:00 · von der Regel vorgeschlagen“. */
+    static String historyLine(GlossaryAccess.History step) {
+        String who = actorText(step.actor());
+        return minute(step.at()) + " · " + (who.isEmpty() ? "" : who + " ") + actionText(step.action());
+    }
+
+    /** Was im Protokoll geschah, in Worten. */
+    static String actionText(String action) {
+        return switch (String.valueOf(action)) {
+            case "create", "add" -> "angelegt";
+            case "confirm" -> "bestätigt";
+            case "reject" -> "abgelehnt";
+            case "restore" -> "Ablehnung zurückgenommen";
+            case "explain" -> "Erläuterung geändert";
+            case "categorize" -> "eingeordnet";
+            case "remove" -> "entfernt";
+            case "propose" -> "vorgeschlagen";
+            case "unsupport" -> "nicht mehr gestützt";
+            case "withdraw" -> "zurückgezogen";
+            case "stale" -> "als „Beleg veraltet“ markiert";
+            case "purge" -> "bereinigt";
+            default -> "geändert";
+        };
+    }
+
+    /**
+     * Verhalten, Eigenschaften und Ist-Beziehungen aus dem Original, je mit Anzahl; verneinte Verben getrennt. Was nur
+     * die Vorstufe (KI) kennt, steht getrennt darunter, denn nur das Original zählt für die Wichtigkeit.
+     */
+    static List<String> termLines(GlossaryDerivation.Term term) {
+        List<String> lines = new ArrayList<>();
+        for (ParsedStatementsOrigin origin : ParsedStatementsOrigin.values()) {
+            List<String> parts = new ArrayList<>();
+            addUses(parts, "Handelt", term.acts(), origin.value, false);
+            addUses(parts, "Handelt nicht", term.acts(), origin.value, true);
+            addUses(parts, "Ist betroffen", term.undergoes(), origin.value, false);
+            addUses(parts, "Ist nicht betroffen", term.undergoes(), origin.value, true);
+            addUses(parts, "Eigenschaften", term.properties(), origin.value, false);
+            addRelations(parts, true, term.isA(), origin.value);
+            addRelations(parts, false, term.instances(), origin.value);
+            if (parts.isEmpty()) {
+                continue;
+            }
+            if (origin == ParsedStatementsOrigin.VORSTUFE) {
+                lines.add("Aus der Vorstufe (KI), zählt nicht für die Wichtigkeit:");
+                parts.forEach(part -> lines.add("   " + part));
+            } else {
+                lines.addAll(parts);
+            }
+        }
+        return lines;
+    }
+
+    /**
+     * Ist-Beziehungen je Art: „Ist ein (Begriffsbestimmung)“, „Ist (Rolle)“, „Ist gleich (Gleichsetzung)“; eine
+     * unbekannte Art (alte Analyse) ohne Zusatz. Eine Gleichsetzung wird nur gezeigt, sie führt nichts zusammen.
+     */
+    private static void addRelations(List<String> parts, boolean isA, List<GlossaryDerivation.Use> uses,
+                                     com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin origin) {
+        Map<String, List<String>> byLabel = new LinkedHashMap<>();
+        for (GlossaryDerivation.Use use : uses) {
+            if (use.origin() != origin) {
+                continue;
+            }
+            String label = relationLabel(isA, use.relation());
+            byLabel.computeIfAbsent(label, key -> new ArrayList<>()).add(use.lemma() + " " + use.count() + "×");
+        }
+        byLabel.forEach((label, words) -> parts.add(label + ": " + String.join(", ", words)));
+    }
+
+    static String relationLabel(boolean isA, GlossaryDerivation.Relation relation) {
+        if (relation == null || relation == GlossaryDerivation.Relation.UNBEKANNT) {
+            return isA ? "Ist ein" : "Beispiele";
+        }
+        return switch (relation) {
+            case BESTIMMUNG -> isA ? "Ist ein (Begriffsbestimmung)" : "Beispiele (Begriffsbestimmung)";
+            case ROLLE -> isA ? "Ist (Rolle)" : "In dieser Rolle";
+            case GLEICHSETZUNG -> isA ? "Ist gleich (Gleichsetzung)" : "Gleichgesetzt mit";
+            case UNBEKANNT -> isA ? "Ist ein" : "Beispiele";
+        };
+    }
+
+    private enum ParsedStatementsOrigin {
+        ORIGINAL(com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin.ORIGINAL),
+        VORSTUFE(com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin.VORSTUFE);
+
+        final com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin value;
+
+        ParsedStatementsOrigin(com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin value) {
+            this.value = value;
+        }
+    }
+
+    private static void addUses(List<String> parts, String label, List<GlossaryDerivation.Use> uses,
+                                com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin origin,
+                                boolean negated) {
+        List<String> words = uses.stream().filter(use -> use.origin() == origin && use.negated() == negated)
+                .map(use -> use.lemma() + " " + use.count() + "×").toList();
+        if (!words.isEmpty()) {
+            parts.add(label + ": " + String.join(", ", words));
+        }
+    }
+
+    static String snippetText(TermQueries.Snippet s) {
+        return ((s.truncatedBefore() ? "…" : "") + s.before() + s.match() + s.after()
+                + (s.truncatedAfter() ? "…" : "")).replaceAll("\\s+", " ").trim();
     }
 
     // ---- Hilfen
@@ -1022,7 +1315,10 @@ final class GlossaryTab {
         return entryAtView(directory.table().getSelectedRow());
     }
 
-    /** Grau hinterlegt: abgelehnte; die Wichtigkeit mit allen Teilzahlen als Tooltip. Alle Spalten linksbündig. */
+    /**
+     * Grau hinterlegt: abgelehnte; blass: ohne Wichtigkeit in der Auswahl; die Wichtigkeit mit allen Teilzahlen als
+     * Tooltip. Alle Spalten linksbündig.
+     */
     private final class GlossaryRenderer extends DefaultTableCellRenderer {
 
         GlossaryRenderer() {
@@ -1035,12 +1331,14 @@ final class GlossaryTab {
             super.getTableCellRendererComponent(table, value, selected, focus, row, column);
             Entry entry = entryAtView(row);
             boolean rejected = entry != null && entry.status() == ReviewStatus.REJECTED;
-            if (!selected) {
-                setBackground(rejected ? TermsView.REJECTED_BACKGROUND : table.getBackground());
-                setForeground(rejected ? Comic.MUTED : table.getForeground());
-            }
             int modelColumn = table.convertColumnIndexToModel(column);
             GlossaryAccess.Row line = rowAtView(row);
+            // Ohne Wichtigkeit in der Auswahl blass hinten (der Core sortiert sie dorthin).
+            boolean pale = rejected || line != null && line.importance() == null;
+            if (!selected) {
+                setBackground(rejected ? TermsView.REJECTED_BACKGROUND : table.getBackground());
+                setForeground(pale ? Comic.MUTED : table.getForeground());
+            }
             setToolTipText(modelColumn == IMPORTANCE_COLUMN && line != null ? importanceTip(line.importance()) : null);
             return this;
         }
@@ -1083,6 +1381,21 @@ final class GlossaryTab {
 
     BusyOverlay busy() {
         return busy;
+    }
+
+    void confirmWith(java.util.function.BiPredicate<String, String> confirm) {
+        this.confirm = confirm;
+    }
+
+    InfoPopup popup() {
+        return popup;
+    }
+
+    void click(int viewRow) {
+        Entry entry = entryAtView(viewRow);
+        if (entry != null) {
+            showDetails(entry, 10, 10);
+        }
     }
 
     IconButton statusFilter() {

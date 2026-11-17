@@ -887,6 +887,11 @@ public final class TermsView implements View {
             remove(head);
         }
 
+        /** Spaltenköpfe über der Tabelle, wenn sich die Werte nicht von selbst erklären. */
+        void columnHeads() {
+            scroll.setColumnHeaderView(table.getTableHeader());
+        }
+
         /** Ein Element mittig zwischen Überschrift und Suchfeld. */
         void middle(JComponent component) {
             JPanel lines = (JPanel) ((BorderLayout) head.getLayout()).getLayoutComponent(BorderLayout.CENTER);

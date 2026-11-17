@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.runtime.GlossaryAccess;
 import com.aresstack.spaceharvester.app.runtime.GlossaryAccess.Entry;
 import com.aresstack.spaceharvester.application.glossary.GlossaryDerivation;
 import com.aresstack.spaceharvester.application.terms.RelationEvidence;
@@ -69,6 +70,49 @@ class GlossaryTabScreenshotTest {
                 surface.setSize(width, 460);
                 Screenshots.write(surface, out.resolve("fachglossar-" + width + ".png"));
             });
+        }
+        SwingUtilities.invokeAndWait(() -> {
+            Entry entry = tab[0].entryAtView(0);
+            GlossaryAccess.Row row = new GlossaryAccess.Row(entry, new GlossaryDerivation.Importance(14, 41, 6, 2,
+                    0), GlossaryDerivation.Category.FACHLICH, new com.aresstack.spaceharvester.application.glossary
+                    .GlossaryEntry.Classification(GlossaryDerivation.Category.FACHLICH, com.aresstack.spaceharvester
+                    .application.glossary.GlossaryEntry.ClassifiedBy.RULE, null), entry.evidence().get(0));
+            com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin original =
+                    com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin.ORIGINAL;
+            GlossaryDerivation.Term term = new GlossaryDerivation.Term("Datenprodukt", "datenprodukt", false,
+                    row.importance(), List.of(new GlossaryDerivation.Use("liefern", original, false, 6, List.of()),
+                    new GlossaryDerivation.Use("veröffentlichen", original, false, 2, List.of())),
+                    List.of(new GlossaryDerivation.Use("prüfen", original, false, 3, List.of())),
+                    List.of(new GlossaryDerivation.Use("verantwortet", original, false, 4, List.of())),
+                    List.of(new GlossaryDerivation.Use("Datenangebot", original, false, 2, List.of(),
+                            GlossaryDerivation.Relation.BESTIMMUNG, 2)), List.of(),
+                    GlossaryDerivation.Category.FACHLICH, GlossaryDerivation.CategoryRule.NONE);
+            com.aresstack.spaceharvester.app.ui.controls.InfoPopup popup =
+                    new com.aresstack.spaceharvester.app.ui.controls.InfoPopup();
+            popup.text(entry.term(), GlossaryTab.overlayText(entry, row, term, List.of(
+                    "1. Datenhaus: … jedes Datenprodukt hat einen Verantwortlichen …",
+                    "2. Katalog: … das Datenprodukt liefert Kennzahlen …"), List.of(
+                    new GlossaryAccess.History("propose", "rule:glossary", T, ReviewStatus.PROPOSED),
+                    new GlossaryAccess.History("confirm", "USER:angelo@app", T.plusSeconds(3600),
+                            ReviewStatus.CONFIRMED))));
+            popup.controls(tab[0].overlayControls(popup, entry, row,
+                    "Ein Datenprodukt ist ein verantwortetes Datenangebot des Datenhauses."));
+            popup.link("Zu Beleg 1", () -> { }).link("Zu Beleg 2", () -> { })
+                    .link(GlossaryTab.DEFINITION_LINK, () -> { });
+            java.awt.Dimension size = popup.sizeFor(600);
+            popup.setSize(size);
+            popup.doLayout();
+            layout(popup);
+            Screenshots.write(popup, out.resolve("fachglossar-overlay.png"));
+        });
+    }
+
+    private static void layout(java.awt.Container container) {
+        container.doLayout();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof java.awt.Container inner) {
+                layout(inner);
+            }
         }
     }
 
