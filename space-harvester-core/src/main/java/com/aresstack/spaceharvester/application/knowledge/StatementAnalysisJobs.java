@@ -240,7 +240,7 @@ public class StatementAnalysisJobs {
      * analysiert; beide werden gezählt. Jede Seite wird für sich ersetzt, ein Abbruch behält die fertigen Seiten, und
      * schon gelesene Urteile bleiben in der Ablage, sodass ein neuer Lauf nur fehlende fragt.
      *
-     * <p>Der Auftrag steht als {@link JobType#STATEMENT_ANALYSIS} in der Liste (eigene Phase {@value #PHASE_CHECK});
+     * <p>Der Auftrag steht als eigene Art {@link JobType#STATEMENT_CHECK} in der Liste (Phase {@value #PHASE_CHECK});
      * {@code written} zählt geprüfte Seiten. Ereignisse nennen nur Zahlen.
      *
      * @throws CheckUnavailableException ohne eingestelltes Modell
@@ -252,7 +252,7 @@ public class StatementAnalysisJobs {
         if (!analysis.checkAvailable()) {
             throw new CheckUnavailableException(CheckUnavailableException.Reason.NO_MODEL);
         }
-        return jobs.submit(JobType.STATEMENT_ANALYSIS, scope.sourceId(), scope.spaceKey(), scope.rootPageId(), owner,
+        return jobs.submit(JobType.STATEMENT_CHECK, scope.sourceId(), scope.spaceKey(), scope.rootPageId(), owner,
                 JobTask.blocking(context -> runCheck(caller, scope, options, context)));
     }
 

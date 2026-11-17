@@ -444,7 +444,7 @@ class StatementAnalysisJobsTest {
                 new StatementAnalysisJobs.CheckOptions(0,
                         com.aresstack.spaceharvester.application.check.CheckScope.ALL, 2)).id());
 
-        assertThat(done.type()).isEqualTo(JobType.STATEMENT_ANALYSIS);
+        assertThat(done.type()).isEqualTo(JobType.STATEMENT_CHECK);
         assertThat(done.state()).isEqualTo(JobState.COMPLETED);
         assertThat(done.progress()).as("ermittelt, erledigt, geprüft, gescheitert")
                 .isEqualTo(new JobProgress(3, 3, 1, 0));
