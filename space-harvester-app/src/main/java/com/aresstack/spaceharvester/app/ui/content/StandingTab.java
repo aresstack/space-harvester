@@ -19,6 +19,7 @@ import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.standing.BearerStates;
 import com.aresstack.spaceharvester.application.standing.PageMark;
+import com.aresstack.spaceharvester.application.standing.SentenceText;
 import com.aresstack.spaceharvester.application.standing.Standing;
 import com.aresstack.spaceharvester.application.standing.StandingBasis;
 import com.aresstack.spaceharvester.application.standing.StandingDecision;
@@ -95,6 +96,8 @@ final class StandingTab extends JPanel {
             + "Verneinung und Verbindlichkeit („muss nicht“) ändern den Stand nie und stehen deshalb in jeder Zeile. "
             + "„unsicher“ heißt: Der Parser ist sich nicht sicher, die Aussage zählt nicht für den Stand der Seite.\n\n"
             + "Ein Klick auf eine Zeile zeigt Grund und Herkunft, ein Doppelklick springt an die Stelle im Lesetext. "
+            + "Die Suche findet Handelnde, Träger, Prädikate, die übrigen Beteiligten in Grundform, Seitentitel und "
+            + "vereinfachte Sätze, nicht aber Wörter, die nur im Originalsatz stehen. "
             + "Die Zahlen oben zählen alle Aussagen der Auswahl; ein Klick filtert auf den Stand.";
     private static final int ROW_HEIGHT = 46;
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY)
@@ -108,6 +111,9 @@ final class StandingTab extends JPanel {
         Subscription subscribeStanding(Runnable listener);
 
         Subscription subscribeJobs(JobListener listener);
+
+        /** Der Wortlaut zu Aussagen (FL6, {@code StatusQuo#sentences}), je statementId; nie auf dem EDT. */
+        Map<String, SentenceText> sentences(java.util.Collection<StatusQuoEntry> entries);
 
         static Actions of(AppRuntime runtime) {
             if (runtime == null) {
@@ -128,6 +134,11 @@ final class StandingTab extends JPanel {
                 @Override
                 public Subscription subscribeJobs(JobListener listener) {
                     return runtime.workspace().subscribeJobs(listener);
+                }
+
+                @Override
+                public Map<String, SentenceText> sentences(java.util.Collection<StatusQuoEntry> entries) {
+                    return runtime.workspace().standingSentences(entries);
                 }
             };
         }
@@ -191,6 +202,12 @@ final class StandingTab extends JPanel {
     private Subscription standingWatch = Subscription.NONE;
     private Subscription jobWatch = Subscription.NONE;
     private Actions watched;
+    /** Wortlaut je statementId, nur für schon sichtbar gewesene Zeilen; geleert bei jedem neuen Lesen. */
+    private final Map<String, SentenceText> sentences = new java.util.HashMap<>();
+    /** Schon angefragte statementIds, auch solche ohne Ergebnis (kein Leserecht): nicht noch einmal fragen. */
+    private final java.util.Set<String> asked = new java.util.HashSet<>();
+    /** Zählt neue Sichten, damit eine späte Antwort zum Wortlaut nicht in die nächste Sicht fällt. */
+    private int sentenceGeneration;
 
     /** @param runtime die laufende App oder {@code null}, solange keine läuft */
     StandingTab(Supplier<AppRuntime> runtime) {
@@ -231,6 +248,8 @@ final class StandingTab extends JPanel {
             }
         });
         scroll = Comic.scroll(list);
+        // Den Wortlaut nur für die sichtbaren Zeilen holen, beim Rollen nach.
+        scroll.getViewport().addChangeListener(e -> fetchSentences());
         busy = new BusyOverlay(scroll);
         busy.setText(BUSY);
         busy.onCancel(() -> cancelled.set(true));
@@ -353,11 +372,11 @@ final class StandingTab extends JPanel {
         AtomicBoolean stop = new AtomicBoolean();
         cancelled = stop;
         int request = ++generation;
-        ExportPanel.Selection asked = selection;
+        ExportPanel.Selection chosen = selection;
         Filter filter = filter();
         busy.setBusy(true);
         runner.run(() -> {
-            StatusQuoView read = current.view(asked, stop::get);
+            StatusQuoView read = current.view(chosen, stop::get);
             return new Loaded(read, rows(read, filter));
         }, loaded -> {
             if (request != generation) {
@@ -365,6 +384,9 @@ final class StandingTab extends JPanel {
             }
             busy.setBusy(false);
             view = loaded.view();
+            sentences.clear();
+            asked.clear();
+            sentenceGeneration++;
             counts(view);
             show(loaded.rows());
             status();
@@ -484,6 +506,45 @@ final class StandingTab extends JPanel {
         list.revalidate();
         scroll.getViewport().setViewPosition(clamp(position));
         SwingUtilities.invokeLater(() -> scroll.getViewport().setViewPosition(clamp(position)));
+        fetchSentences();
+    }
+
+    /** Wie viele Zeilen über und unter dem sichtbaren Ausschnitt der Wortlaut mitgeholt wird. */
+    private static final int SENTENCE_MARGIN = 40;
+
+    /**
+     * Holt den Originalsatz für die sichtbaren Zeilen (und einen Rand), die ihn noch nicht haben, im Hintergrund; danach
+     * zeichnet die Liste neu. Zehntausende Aussagen bleiben so billig.
+     */
+    private void fetchSentences() {
+        Actions current = actions.get();
+        if (current == null || model.isEmpty()) {
+            return;
+        }
+        int first = list.getFirstVisibleIndex();
+        int last = list.getLastVisibleIndex();
+        if (first < 0) {
+            first = 0;
+            last = Math.min(model.size() - 1, 2 * SENTENCE_MARGIN);
+        }
+        List<StatusQuoEntry> missing = new ArrayList<>();
+        for (int i = Math.max(0, first - SENTENCE_MARGIN); i <= Math.min(model.size() - 1, last + SENTENCE_MARGIN);
+             i++) {
+            if (model.get(i) instanceof Line line && asked.add(line.entry().statement().id())) {
+                missing.add(line.entry());
+            }
+        }
+        if (missing.isEmpty()) {
+            return;
+        }
+        int request = sentenceGeneration;
+        runner.run(() -> current.sentences(missing), found -> {
+            if (request != sentenceGeneration) {
+                return;
+            }
+            sentences.putAll(found);
+            list.repaint();
+        }, failure -> missing.forEach(entry -> asked.remove(entry.statement().id())));
     }
 
     private Point clamp(Point position) {
@@ -548,8 +609,19 @@ final class StandingTab extends JPanel {
         return text.isEmpty() || haystack(entry).contains(text);
     }
 
-    private static String haystack(StatusQuoEntry entry) {
+    /**
+     * Worin gesucht wird: Handelnder bzw. Träger, Prädikat, die übrigen Beteiligten (Grundform, Präposition), Seite und
+     * vereinfachter Satz. Alles liegt an jedem Eintrag; der nachgeladene Originalsatz zählt bewusst nicht, sonst hinge
+     * das Ergebnis vom Rollstand ab.
+     */
+    static String haystack(StatusQuoEntry entry) {
         StringBuilder all = new StringBuilder();
+        if (entry.situation() != null) {
+            for (com.aresstack.spaceharvester.application.standing.Situation.Participant other
+                    : entry.situation().others()) {
+                all.append(other.marker() == null ? "" : other.marker() + " ").append(other.key()).append(' ');
+            }
+        }
         all.append(entry.subject() == null ? "" : entry.subject()).append(' ')
                 .append(entry.statement().predicateText()).append(' ')
                 .append(entry.statement().predicateLemma() == null ? "" : entry.statement().predicateLemma())
@@ -595,9 +667,17 @@ final class StandingTab extends JPanel {
     }
 
     /**
-     * Die Zeile in Worten: der vereinfachte Satz der Vorstufe, sonst Handelnder bzw. Träger und Prädikat. Den
-     * Originalsatz im Wortlaut liefert der Core künftig getrennt (FL6, {@code StatusQuo#sentences}).
+     * Die Zeile in Worten: der Originalsatz im Wortlaut (FL6, {@code StatusQuo#sentences}), solange er noch zum
+     * Lesetext passt; sonst der vereinfachte Satz der Vorstufe, sonst Handelnder bzw. Träger und Prädikat.
      */
+    static String text(StatusQuoEntry entry, SentenceText sentence) {
+        if (sentence != null && sentence.original() != null && !sentence.original().isBlank()) {
+            return sentence.original().strip().replaceAll("\\s+", " ");
+        }
+        return text(entry);
+    }
+
+    /** Der Ersatz ohne Originalsatz: vereinfachter Satz der Vorstufe, sonst Handelnder bzw. Träger und Prädikat. */
     static String text(StatusQuoEntry entry) {
         String simplified = entry.statement().derivation().simplifiedSentence();
         if (entry.origin() == ParsedStatements.Origin.VORSTUFE && simplified != null && !simplified.isBlank()) {
@@ -695,8 +775,12 @@ final class StandingTab extends JPanel {
                 + (mark.kind() == PageMark.Kind.OUTDATED ? " (überholt)" : " (Entwurf)");
     }
 
-    /** Die Details einer Zeile für das Overlay. */
     static String details(StatusQuoEntry entry) {
+        return details(entry, null);
+    }
+
+    /** Die Details einer Zeile für das Overlay, mit Originalsatz, wenn er schon geholt ist. */
+    static String details(StatusQuoEntry entry, SentenceText sentence) {
         List<String> lines = new ArrayList<>();
         String mark = mark(entry);
         lines.add("Stand: " + word(entry.standing().standing()) + (mark.isEmpty() ? "" : ": " + mark + " …"));
@@ -708,6 +792,11 @@ final class StandingTab extends JPanel {
         lines.add("Art: " + (entry.kind() == StatementKind.STATE ? "Zustand" : "Handlung")
                 + (entry.subject() == null || entry.subject().isBlank() ? ""
                 : (entry.kind() == StatementKind.STATE ? " · Träger: " : " · Handelnder: ") + entry.subject()));
+        if (sentence != null && sentence.original() != null && !sentence.original().isBlank()) {
+            lines.add("Originalsatz: „" + sentence.original().strip().replaceAll("\\s+", " ") + "“");
+        } else if (sentence != null && sentence.stale()) {
+            lines.add("Originalsatz: nicht mehr ermittelbar, der Text der Seite hat sich geändert.");
+        }
         if (entry.origin() == ParsedStatements.Origin.VORSTUFE) {
             lines.add("Herkunft: Vorstufe „Sätze vereinfachen“ (KI) · Kennzeichen: " + stageFlag(entry.stageFlag()));
             String simplified = entry.statement().derivation().simplifiedSentence();
@@ -744,7 +833,7 @@ final class StandingTab extends JPanel {
         if (row instanceof Line line) {
             StatusQuoEntry entry = line.entry();
             popup.text(entry.page().title() == null ? entry.page().key().pageId() : entry.page().title(),
-                    details(entry));
+                    details(entry, sentences.get(entry.statement().id())));
             popup.link(OPEN_TEXT, () -> {
                 popup.setVisible(false);
                 jump(entry);
@@ -762,9 +851,14 @@ final class StandingTab extends JPanel {
         }
     }
 
+    /** Markiert den ganzen Satz, wenn seine Grenzen bekannt sind, sonst die Stelle der Aussage. */
     private void jump(StatusQuoEntry entry) {
+        SentenceText sentence = sentences.get(entry.statement().id());
+        boolean whole = sentence != null && !sentence.stale() && sentence.sentenceStart() >= 0
+                && sentence.sentenceEnd() > sentence.sentenceStart();
         onJump.accept(new Target(entry.page().key().sourceId(), entry.page().key().pageId(),
-                entry.statement().start(), entry.statement().end()));
+                whole ? sentence.sentenceStart() : entry.statement().start(),
+                whole ? sentence.sentenceEnd() : entry.statement().end()));
     }
 
     static String key(StatusQuoEntry entry) {
@@ -772,7 +866,7 @@ final class StandingTab extends JPanel {
     }
 
     /** Zeichnet nur, was sichtbar ist; dieselben Komponenten für jede Zeile. */
-    private static final class Renderer implements ListCellRenderer<Row> {
+    private final class Renderer implements ListCellRenderer<Row> {
         private final JPanel line = new JPanel(new BorderLayout(8, 0));
         private final JLabel badge = new JLabel();
         private final JLabel mark = new JLabel();
@@ -825,7 +919,7 @@ final class StandingTab extends JPanel {
             if (row instanceof Line l) {
                 StatusQuoEntry entry = l.entry();
                 standing = entry.standing().standing();
-                words = text(entry);
+                words = text(entry, sentences.get(entry.statement().id()));
                 markText = mark(entry);
                 metaText = meta(entry);
                 nested = l.nested();
