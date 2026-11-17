@@ -198,6 +198,27 @@ class WorkspaceTest {
         assertThat(workspace.cachedPages("handbuch", space, null, 100).pages()).hasSize(2);
     }
 
+    /**
+     * Aufträge des Aufrufers der App (hier der Synonymlauf; ebenso Zusammenfassen und Aussagenanalyse) stehen wie alle
+     * anderen im Reiter Aufträge und lassen sich dort abbrechen (Angelo: Aufträge sind global sichtbar).
+     */
+    @Test
+    void jobsOfTheCallerAppearInTheListAndCanBeCancelled() throws Exception {
+        Workspace workspace = start().workspace();
+        JobStatus started = workspace.startSynonymDiscovery(
+                new com.aresstack.spaceharvester.application.terms.SynonymScope("handbuch", null), 10);
+
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(started.id());
+        assertThat(workspace.job(started.id()).owner()).isNotEqualTo(com.aresstack.spaceharvester.core.Harvester.OWNER);
+        assertThat(workspace.cancelJob(started.id()).id()).isEqualTo(started.id());
+        // Nach dem Abbruch bleibt er sichtbar, bis man ihn löscht.
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(started.id());
+        // Auch ein quellenübergreifender Lauf erscheint.
+        JobStatus global = workspace.startSynonymDiscovery(
+                com.aresstack.spaceharvester.application.terms.SynonymScope.ALL, 10);
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(global.id());
+    }
+
     @Test
     void jobChangesArriveWithoutAskingAgain() throws Exception {
         Workspace workspace = start().workspace();
