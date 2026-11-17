@@ -209,6 +209,8 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Das Modell nennt nur eine Kennung; die Kategorie folgt aus einer festen Tabelle (`glossar-schnittstelle.md`).
 - Die KI-Einordnung trägt die Seiten ihrer Belege; Entzug (`ReleaseRecomputation`) setzt sie auf den Regelstand
   zurück (`Glossary#withdrawAi`), der nächste Lauf fragt neu. ADR 0028 entsprechend angepasst.
+- Vorrang unabhängig von der Reihenfolge: Mensch, bestimmte Regel, KI, `UNKLAR` der Regel. Frühere Vorschläge der
+  Herkunft `AI` bleiben stehen; die App schlägt über die KI keine neuen Begriffe mehr vor.
 - Die Anweisung ist ungemessen. Die Tests nutzen nur ein Fake-Modell; Handantworten prüfen Verarbeitung und Vorrang,
   nie Qualität.
 
