@@ -50,6 +50,27 @@ class AnalysisViewTest {
     }
 
     @Test
+    void aPageWithoutAnalysesSaysSoAndManyStepsScrollAfterTenRows() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            AnalysisView analysis = new AnalysisView(RelationTab.all(null), true);
+            analysis.steps(List.of(), null);
+            assertThat(analysis.showsSteps()).isFalse();
+            assertThat(analysis.stepPlaceholder()).isEqualTo(AnalysisView.NO_STEPS);
+            List<Enrichments.View> many = new ArrayList<>();
+            for (int i = 0; i < 16; i++) {
+                many.add(view("p" + i, "1", Enrichment.Status.OK, Enrichment.Freshness.CURRENT, "{}", List.of()));
+            }
+            analysis.steps(many, null);
+            assertThat(analysis.showsSteps()).isTrue();
+            assertThat(analysis.stepPlaceholder()).isNull();
+            assertThat(analysis.visibleStepRows()).isEqualTo(AnalysisView.MAX_STEP_ROWS);
+            assertThat(analysis.stepTable().getToolTipText()).isEqualTo("Klick zeigt Kennung, Version und Rohergebnis");
+            analysis.steps(many.subList(0, 3), null);
+            assertThat(analysis.visibleStepRows()).isEqualTo(3);
+        });
+    }
+
+    @Test
     void theRelationsFollowTheSelectionAndCarryTheirTotalFromTheCore() throws Exception {
         List<PageSet> asked = new ArrayList<>();
         AtomicInteger counted = new AtomicInteger();

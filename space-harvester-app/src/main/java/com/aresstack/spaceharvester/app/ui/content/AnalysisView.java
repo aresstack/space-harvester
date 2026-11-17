@@ -50,6 +50,11 @@ final class AnalysisView extends JPanel {
 
     static final String RELATIONS = "Beziehungen";
     static final String COUNTING = "…";
+    static final String NO_STEPS = "Noch keine Analysen für diese Seite. Sie entstehen nach jedem bestätigten Abgleich "
+            + "oder über „Neu berechnen“.";
+    static final String STEP_TIP = "Klick zeigt Kennung, Version und Rohergebnis";
+    /** Höchstens so viele Schritte hoch; darüber rollt die Tabelle, damit die Beziehungen Platz behalten. */
+    static final int MAX_STEP_ROWS = 10;
 
     /** Holt Werte im Hintergrund und meldet sie auf dem EDT; in Tests sofort. */
     interface Runner {
@@ -67,6 +72,8 @@ final class AnalysisView extends JPanel {
     private final StepModel model = new StepModel();
     private final JTable steps = Comic.table(new JTable(model));
     private final JScrollPane stepScroll = Comic.scroll(steps);
+    private final JLabel noSteps = Comic.muted(NO_STEPS);
+    private final JPanel stepArea = new JPanel(new BorderLayout());
     private final InfoPopup popup = new InfoPopup();
     private final RelationTab relations;
     private Runner runner = new Runner() {
@@ -97,6 +104,9 @@ final class AnalysisView extends JPanel {
         this.withSteps = withSteps;
         setOpaque(false);
         steps.setRowSelectionAllowed(true);
+        steps.setToolTipText(STEP_TIP);
+        stepArea.setOpaque(false);
+        noSteps.setBorder(BorderFactory.createEmptyBorder(4, 2, 4, 2));
         steps.getColumnModel().getColumn(2).setCellRenderer(new StandRenderer());
         steps.addMouseListener(new MouseAdapter() {
             @Override
@@ -108,7 +118,7 @@ final class AnalysisView extends JPanel {
             }
         });
         if (withSteps) {
-            add(stepScroll, BorderLayout.NORTH);
+            add(stepArea, BorderLayout.NORTH);
         }
         relations.heading(heading(), null);
         relations.onChanged(this::count);
@@ -188,10 +198,14 @@ final class AnalysisView extends JPanel {
     }
 
     private void fitSteps() {
-        stepScroll.setVisible(withSteps && model.getRowCount() > 0);
-        int rows = Math.max(1, model.getRowCount());
+        stepArea.removeAll();
+        // Ohne Analysen ein gedämpfter Satz an der Stelle der Schritte.
+        stepArea.add(model.getRowCount() > 0 ? stepScroll : noSteps, BorderLayout.CENTER);
+        int rows = Math.max(1, Math.min(MAX_STEP_ROWS, model.getRowCount()));
         int height = steps.getTableHeader().getPreferredSize().height + rows * steps.getRowHeight() + 4;
         stepScroll.setPreferredSize(new Dimension(300, height));
+        stepArea.revalidate();
+        stepArea.repaint();
         revalidate();
     }
 
@@ -285,7 +299,18 @@ final class AnalysisView extends JPanel {
     }
 
     boolean showsSteps() {
-        return stepScroll.isVisible() && stepScroll.getParent() == this;
+        return withSteps && stepScroll.getParent() == stepArea;
+    }
+
+    /** Der gedämpfte Satz einer Seite ohne Analysen, sonst {@code null}. */
+    String stepPlaceholder() {
+        return withSteps && noSteps.getParent() == stepArea ? noSteps.getText() : null;
+    }
+
+    /** Die Wunschhöhe der Schritte in Zeilen (höchstens {@link #MAX_STEP_ROWS}). */
+    int visibleStepRows() {
+        int header = steps.getTableHeader().getPreferredSize().height;
+        return (stepScroll.getPreferredSize().height - header - 4) / steps.getRowHeight();
     }
 
     String relationHeading() {
