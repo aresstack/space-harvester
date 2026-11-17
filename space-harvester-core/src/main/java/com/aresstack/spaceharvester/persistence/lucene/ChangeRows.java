@@ -34,7 +34,8 @@ final class ChangeRows {
     /** Der für das Protokoll wichtige Stand einer Seite. */
     record State(String spaceKey, String parentId, String title, String version, String metadataHash,
                  String attributesHash,
-                 boolean content, String contentVersion, String contentMetadataHash, String rawSha256) {
+                 boolean content, String contentVersion, String contentMetadataHash, String rawSha256,
+                 String editor, List<String> labels) {
 
         static State of(Document page) {
             String raw = page.get(PageCacheSchema.RAW_SHA256);
@@ -42,16 +43,34 @@ final class ChangeRows {
                     page.get(PageCacheSchema.TITLE), page.get(PageCacheSchema.VERSION_FIELD),
                     page.get(PageCacheSchema.METADATA_HASH), page.get(PageCacheSchema.ATTRIBUTES_HASH), raw != null,
                     page.get(PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD),
-                    page.get(PageCacheSchema.SNAPSHOT + PageCacheSchema.METADATA_HASH), raw);
+                    page.get(PageCacheSchema.SNAPSHOT + PageCacheSchema.METADATA_HASH), raw, null, List.of());
         }
 
         /** Aktuelle Kopfdaten mit dem gespeicherten Snapshot, {@code snapshot} {@code null} ohne Inhalt. */
         static State of(PageHeader header, PageSnapshot snapshot) {
+            return of(header, snapshot, null);
+        }
+
+        /**
+         * Mit dem Bearbeiter der gespeicherten Fassung (ADR 0031); Labels aus den Kopfdaten, Attribut
+         * {@code <quelle>.labels}, kommagetrennt.
+         */
+        static State of(PageHeader header, PageSnapshot snapshot, String editor) {
             return new State(header.metadata().partitionKey(), header.metadata().parentPageId(),
                     header.metadata().title(), header.metadata().version(), header.metadataHash(), header.attributesHash(), snapshot != null,
                     snapshot == null ? null : snapshot.metadata().version(),
                     snapshot == null ? null : snapshot.metadataHash(),
-                    snapshot == null ? null : snapshot.payload().rawSha256());
+                    snapshot == null ? null : snapshot.payload().rawSha256(), editor, labels(header));
+        }
+
+        private static List<String> labels(PageHeader header) {
+            for (Map.Entry<String, String> attribute : header.metadata().attributes().entrySet()) {
+                if (attribute.getKey().endsWith(".labels") && attribute.getValue() != null) {
+                    return java.util.Arrays.stream(attribute.getValue().split(",")).map(String::strip)
+                            .filter(label -> !label.isEmpty()).toList();
+                }
+            }
+            return List.of();
         }
     }
 
@@ -92,6 +111,12 @@ final class ChangeRows {
         }
         // Neue Version mit gleichen Bytes: ein leerer Unterschied, kein fehlender.
         return !was.contentVersion().equals(state.contentVersion());
+    }
+
+    /** Ob der Inhalt vor dem Lauf schon genau diese Bytes hatte. */
+    boolean sameContent(PageKey key, String rawSha256) {
+        State was = before.get(key);
+        return was != null && was.content() && Objects.equals(was.rawSha256(), rawSha256);
     }
 
     void present(PageKey key, State state) {
@@ -184,6 +209,7 @@ final class ChangeRows {
                 was == null ? null : was.title(), is == null ? null : is.title(),
                 was == null ? null : was.parentId(), is == null ? null : is.parentId(),
                 was == null ? null : was.spaceKey(), is == null ? null : is.spaceKey(),
-                generations.get(key.sourceId() + '\u001f' + spaceKey), pending);
+                generations.get(key.sourceId() + '\u001f' + spaceKey), pending, is == null ? null : is.editor(),
+                is == null ? List.of() : is.labels());
     }
 }

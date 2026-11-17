@@ -18,27 +18,44 @@ import java.util.Set;
  * @param at             Zeitpunkt der letzten Änderung
  * @param diff           Unterschied des Inhalts, wenn die Seite unter ihren Arten {@link ChangeKind#CONTENT_CHANGED} hat
  *                       und noch da ist und der Bericht mit Unterschieden angefordert wurde; sonst {@code null}
+ * @param editors        die bekannten Bearbeiter der Fassungen im Update, ohne Doppelte, in der Reihenfolge der Zeilen
+ *                       (ADR 0031). Personenbezug: eigenes Feld, damit es nicht ungefiltert in KI-Material gerät; an
+ *                       die KI geht höchstens ihre Zahl
+ * @param labels         die Labels der Seite nach der letzten Änderung, soweit die Quelle sie liefert
  */
 public record ReportedPage(String sourceId, String spaceKey, String pageId, ChangeKind kind, Set<ChangeKind> kinds,
                            String title, List<String> path, URI url, String oldVersion, String newVersion,
                            String oldTitle, String newTitle, String oldParentId, String newParentId,
                            String oldSpaceKey, String newSpaceKey, boolean contentPending, Instant at,
-                           ContentDiff diff) {
+                           ContentDiff diff, List<String> editors, List<String> labels) {
+
+    /** Ohne Bearbeiter und Labels. */
+    public ReportedPage(String sourceId, String spaceKey, String pageId, ChangeKind kind, Set<ChangeKind> kinds,
+                        String title, List<String> path, URI url, String oldVersion, String newVersion,
+                        String oldTitle, String newTitle, String oldParentId, String newParentId,
+                        String oldSpaceKey, String newSpaceKey, boolean contentPending, Instant at, ContentDiff diff) {
+        this(sourceId, spaceKey, pageId, kind, kinds, title, path, url, oldVersion, newVersion, oldTitle, newTitle,
+                oldParentId, newParentId, oldSpaceKey, newSpaceKey, contentPending, at, diff, List.of(), List.of());
+    }
 
     public ReportedPage {
         kinds = java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(kinds));
         path = List.copyOf(path);
+        editors = editors == null ? List.of() : List.copyOf(editors);
+        labels = labels == null ? List.of() : List.copyOf(labels);
     }
 
     /** Dieselbe Seite mit Pfad und Verweis. */
     ReportedPage withDirectory(List<String> path, URI url) {
         return new ReportedPage(sourceId, spaceKey, pageId, kind, kinds, title, path, url, oldVersion, newVersion,
-                oldTitle, newTitle, oldParentId, newParentId, oldSpaceKey, newSpaceKey, contentPending, at, diff);
+                oldTitle, newTitle, oldParentId, newParentId, oldSpaceKey, newSpaceKey, contentPending, at, diff,
+                editors, labels);
     }
 
     /** Dieselbe Seite mit dem Unterschied ihres Inhalts. */
     ReportedPage withDiff(ContentDiff diff) {
         return new ReportedPage(sourceId, spaceKey, pageId, kind, kinds, title, path, url, oldVersion, newVersion,
-                oldTitle, newTitle, oldParentId, newParentId, oldSpaceKey, newSpaceKey, contentPending, at, diff);
+                oldTitle, newTitle, oldParentId, newParentId, oldSpaceKey, newSpaceKey, contentPending, at, diff,
+                editors, labels);
     }
 }
