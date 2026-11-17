@@ -36,7 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GlossaryTabTest {
 
     private static final Instant T = Instant.parse("2026-11-10T08:00:00Z");
-    private static final String QUERY_DEFAULT = "q=null categories=[FACHLICH, ROLLE, UNKLAR] status=null";
+    private static final String QUERY_DEFAULT = "q=null categories=[FACHLICH, ROLLE, UNKLAR] status=[PROPOSED, CONFIRMED]";
 
     @Test
     void entriesComeReadyFromTheCoreAndTheToolsBelongToTheGlossaryTab() throws Exception {
@@ -115,11 +115,23 @@ class GlossaryTabTest {
             tab[0].load();
         });
         await("ein Eintrag", () -> tab[0].directory().table().getRowCount() == 1);
-        SwingUtilities.invokeAndWait(() -> tab[0].status(ReviewStatus.REJECTED).doClick());
+        SwingUtilities.invokeAndWait(() -> {
+            // Status-Chips sind Umschalter: vorgeschlagen und bestätigt sind an, abgelehnt kommt dazu.
+            assertThat(tab[0].status(ReviewStatus.PROPOSED).isSelected()).isTrue();
+            assertThat(tab[0].status(ReviewStatus.CONFIRMED).isSelected()).isTrue();
+            assertThat(tab[0].status(ReviewStatus.REJECTED).isSelected()).isFalse();
+            tab[0].status(ReviewStatus.REJECTED).doClick();
+        });
+        await("mit abgelehnten", () -> tab[0].directory().table().getRowCount() == 2);
+        SwingUtilities.invokeAndWait(() -> onlyRejected(tab[0]));
         await("Sperrliste", () -> tab[0].directory().table().getRowCount() == 1
                 && "Berechtigungsmanagement".equals(tab[0].directory().table().getValueAt(0, 0)));
         SwingUtilities.invokeAndWait(() -> {
+            // Der letzte Status aus: wieder die Vorgabe, sichtbar an den Chips.
             tab[0].status(ReviewStatus.REJECTED).doClick();
+            assertThat(tab[0].status(ReviewStatus.PROPOSED).isSelected()).isTrue();
+            assertThat(tab[0].status(ReviewStatus.CONFIRMED).isSelected()).isTrue();
+            assertThat(tab[0].status(ReviewStatus.REJECTED).isSelected()).isFalse();
             tab[0].category(GlossaryDerivation.Category.TECHNISCH).doClick();
         });
         await("mit Technik", () -> tab[0].directory().table().getRowCount() == 2);
@@ -189,16 +201,24 @@ class GlossaryTabTest {
             tab[0].buildStatusMenu();
             List<String> items = new ArrayList<>();
             for (java.awt.Component item : tab[0].statusMenu().getComponents()) {
-                items.add(((javax.swing.JMenuItem) item).getText());
+                if (item instanceof javax.swing.JMenuItem menuItem) {
+                    items.add(menuItem.getText()
+                            + (menuItem instanceof javax.swing.JCheckBoxMenuItem && menuItem.isSelected() ? " ✓" : ""));
+                }
             }
-            assertThat(items).containsExactly(GlossaryTab.OPEN_AND_CONFIRMED, "vorgeschlagen 1", "bestätigt 0",
-                    "abgelehnt 1");
-            ((javax.swing.JMenuItem) tab[0].statusMenu().getComponent(3)).doClick();
+            assertThat(items).containsExactly("vorgeschlagen 1 ✓", "bestätigt 0 ✓", "abgelehnt 1",
+                    GlossaryTab.OPEN_AND_CONFIRMED);
+            ((javax.swing.JMenuItem) tab[0].statusMenu().getComponent(2)).doClick();
         });
-        await("Sperrliste über das Menü", () -> tab[0].directory().table().getRowCount() == 1
-                && "Berechtigungsmanagement".equals(tab[0].directory().table().getValueAt(0, 0)));
-        SwingUtilities.invokeAndWait(() -> assertThat(tab[0].statusFilter().getToolTipText())
-                .endsWith("gewählt: abgelehnt"));
+        await("abgelehnte über das Menü dazu", () -> tab[0].directory().table().getRowCount() == 2);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(tab[0].statusFilter().getToolTipText())
+                    .endsWith("gezeigt: vorgeschlagen, bestätigt, abgelehnt");
+            tab[0].buildStatusMenu();
+            ((javax.swing.JMenuItem) tab[0].statusMenu().getComponent(4)).doClick();
+        });
+        await("Vorgabe über das Menü", () -> tab[0].directory().table().getRowCount() == 1
+                && !tab[0].status(ReviewStatus.REJECTED).isSelected());
     }
 
     @Test
@@ -216,7 +236,7 @@ class GlossaryTabTest {
         await("abgelehnt und weg", () -> tab[0].directory().table().getRowCount() == 0
                 && tab[0].status(ReviewStatus.REJECTED).count() == 1);
         assertThat(glossary.calls).containsExactly("reject 1@1");
-        SwingUtilities.invokeAndWait(() -> tab[0].status(ReviewStatus.REJECTED).doClick());
+        SwingUtilities.invokeAndWait(() -> onlyRejected(tab[0]));
         await("auf der Sperrliste", () -> tab[0].directory().table().getRowCount() == 1);
         SwingUtilities.invokeAndWait(() -> {
             javax.swing.JTable table = tab[0].directory().table();
@@ -229,6 +249,7 @@ class GlossaryTabTest {
         });
         await("Sperrliste leer", () -> tab[0].directory().table().getRowCount() == 0);
         assertThat(glossary.calls).containsExactly("reject 1@1", "restore 1@2");
+        // Den letzten Status aus: wieder die Vorgabe.
         SwingUtilities.invokeAndWait(() -> tab[0].status(ReviewStatus.REJECTED).doClick());
         await("wieder vorgeschlagen", () -> tab[0].directory().table().getRowCount() == 1
                 && "Vorgeschlagen".equals(tab[0].directory().table().getValueAt(0, 3)));
@@ -389,6 +410,15 @@ class GlossaryTabTest {
                 .isEqualTo("Auf 12 Seiten, 30 Erwähnungen, handelnd 4×, betroffen 1×, als Träger 2×");
     }
 
+    /** Nur die Sperrliste: abgelehnt an, vorgeschlagen und bestätigt aus, über die Chips. */
+    static void onlyRejected(GlossaryTab tab) {
+        for (ReviewStatus status : List.of(ReviewStatus.REJECTED, ReviewStatus.PROPOSED, ReviewStatus.CONFIRMED)) {
+            if (tab.status(status).isSelected() != (status == ReviewStatus.REJECTED)) {
+                tab.status(status).doClick();
+            }
+        }
+    }
+
     private static List<Object> row(javax.swing.JTable table, int row) {
         List<Object> cells = new ArrayList<>();
         for (int c = 0; c < table.getColumnCount(); c++) {
@@ -493,15 +523,15 @@ class GlossaryTabTest {
 
         static String text(GlossaryOverview.Query query) {
             return "q=" + query.q() + " categories=" + (query.categories() == null ? null
-                    : new java.util.TreeSet<>(query.categories())) + " status=" + query.status();
+                    : new java.util.TreeSet<>(query.categories())) + " status="
+                    + new java.util.TreeSet<>(query.statuses());
         }
 
         /** Wie der Core: gefiltert, gezählt, Einträge mit Wichtigkeit zuerst, sonst alphabetisch. */
         private synchronized Overview view(GlossaryOverview.Query query) {
             java.util.function.Predicate<Entry> text = e -> query.q() == null
                     || e.normalized().contains(query.q().toLowerCase(java.util.Locale.GERMAN));
-            java.util.function.Predicate<Entry> byStatus = e -> query.status() == null
-                    ? e.status() != ReviewStatus.REJECTED : e.status() == query.status();
+            java.util.function.Predicate<Entry> byStatus = e -> query.statuses().contains(e.status());
             java.util.function.Predicate<Entry> byCategory = e -> query.categories() == null
                     || query.categories().contains(category(e));
             List<Row> rows = entries.values().stream().filter(text).filter(byStatus).filter(byCategory)
