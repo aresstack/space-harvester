@@ -9,6 +9,10 @@ import com.aresstack.spaceharvester.application.changelog.SummaryPage;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
+import com.aresstack.spaceharvester.application.changelog.UpdateText;
+import com.aresstack.spaceharvester.application.changelog.ContentDiff;
+import com.aresstack.spaceharvester.application.changelog.ContentChange;
+import com.aresstack.spaceharvester.application.changelog.ParagraphChange;
 import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
@@ -88,6 +92,98 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void theTextTabShowsTheChangedParagraphsByHeadingAndLoadsLargeUpdatesInWindows() {
+        actions.textLimit = 2;
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("16.11.2026, 18:30 · angelo");
+
+        List<String> texts = view.reportTexts();
+        assertThat(texts).containsSubsequence("Betriebshandbuch", "Betrieb › Fristen", "~ Frist 10 Tage → Frist 14 Tage",
+                "+ Neu: Notfallkontakt", "− Alter Absatz");
+        assertThat(texts).as("erst zwei von drei Seiten").doesNotContain("Alte Seite").contains("Weitere 1 Seite laden");
+        assertThat(view.copyText()).as("Kopierform ist der Update-Text des Core").startsWith("# Update wiki")
+                .contains("## Betriebshandbuch").contains("weitere Seiten ab Nr. 3 von 3");
+
+        assertThat(view.clickReportLink("Weitere 1 Seite laden")).isTrue();
+        assertThat(actions.textOffsets).endsWith(0, 2);
+        assertThat(view.reportTexts()).contains("Alte Seite").doesNotContain("Weitere 1 Seite laden");
+        assertThat(view.copyText()).contains("## Alte Seite").as("die Zeile des ersten Fensters entfällt")
+                .doesNotContain("weitere Seiten ab");
+    }
+
+    @Test
+    void aMessageBetweenClickAndAnswerDoesNotDropTheNextPages() throws Exception {
+        List<Runnable> waiting = new ArrayList<>();
+        SourceUpdatesView slow = new SourceUpdatesView(() -> actions, new SourceUpdatesView.Runner() {
+            @Override
+            public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
+                waiting.add(() -> {
+                    try {
+                        onSuccess.accept(work.call());
+                    } catch (Exception e) {
+                        onFailure.accept(e);
+                    }
+                });
+            }
+        }, SourceUpdatesView.Mode.CHANGES);
+        actions.textLimit = 2;
+        slow.source("wiki", "Confluence HaVdB");
+        while (!waiting.isEmpty()) {
+            waiting.remove(0).run();
+        }
+        assertThat(slow.clickReportLink("Weitere 1 Seite laden")).isTrue();
+        assertThat(waiting).hasSize(1);
+        Runnable more = waiting.remove(0);
+
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        while (!waiting.isEmpty()) {
+            waiting.remove(0).run();
+        }
+        more.run();
+
+        assertThat(slow.reportTexts()).as("die Antwort nach der Meldung gilt").contains("Alte Seite")
+                .doesNotContain("Weitere 1 Seite laden");
+    }
+
+    @Test
+    void rereadingTheOpenUpdateKeepsThePagesLoadedSoFar() throws Exception {
+        actions.textLimit = 1;
+        actions.openGrows = true;
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("Seit dem letzten Update");
+        assertThat(view.clickReportLink("Weitere 1 Seite laden")).isTrue();
+        assertThat(view.reportTexts()).contains("Neue Seite", "Noch eine Seite");
+        int renders = view.reportRenders();
+
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+
+        assertThat(view.reportTexts()).as("nicht auf das erste Fenster zurückgefallen").contains("Neue Seite",
+                "Noch eine Seite").doesNotContain("Weitere 1 Seite laden");
+        assertThat(view.reportRenders()).as("unverändert: nichts neu gezeichnet, die Ansicht springt nicht")
+                .isEqualTo(renders);
+        assertThat(view.copyText()).doesNotContain("weitere Seiten ab");
+    }
+
+    @Test
+    void aSpaceShowsTheSameUpdatesAsAnExcerptAndSummarizesForItsLevel() {
+        summary.source("wiki", "DEV", "DEV");
+
+        assertThat(summary.spaceKey()).isEqualTo("DEV");
+        assertThat(actions.levels).as("jede Abfrage für den Space").isNotEmpty().containsOnly("DEV");
+        assertThat(summary.selectedUpdate()).as("ohne Update mit Änderungen im Space: das jüngste abgeschlossene")
+                .isEqualTo(actions.second().id());
+        assertThat(summary.paleClouds()).as("leer und Erstbefüllung blass").hasSize(2);
+
+        summary.source("wiki", "Confluence HaVdB");
+        assertThat(summary.spaceKey()).as("die ganze Quelle").isNull();
+        assertThat(actions.levels).last().isNull();
+        summary.clickSummarize();
+        assertThat(actions.summarizedLevel).isNull();
+    }
+
+    @Test
     void theUpdatesAreCloudsOnTopWithTheNewestMarkedAndAClickMovesTheMark() {
         view.source("wiki", "Confluence HaVdB");
 
@@ -124,7 +220,7 @@ class SourceUpdatesViewTest {
                 .contains("Außerdem im Bestand: 4 Inhalte erstmals lokal geladen, 1 geänderter Inhalt nachgeladen.");
         assertThat(texts).as("geladen und nachgeladen sind keine Änderungen der Quelle")
                 .noneMatch(text -> text.startsWith("Erstmals geladen") || text.startsWith("Nachgeladen"));
-        assertThat(view.copyText()).contains("Geändert\n- Betriebshandbuch");
+        assertThat(view.copyText()).as("Update-Text des Core").contains("## Betriebshandbuch");
     }
 
     @Test
@@ -440,15 +536,27 @@ class SourceUpdatesViewTest {
                     Map.of(ChangeKind.NEW, 340), spaces, 340, 0, 0, false);
         }
 
+        /** Die Ebenen der Abfragen, in Reihenfolge; {@code null} die ganze Quelle. */
+        final List<String> levels = new ArrayList<>();
+        String summarizedLevel = "nie";
+
         @Override
-        public List<ChangeUpdate> updates(String sourceId) {
+        public List<ChangeUpdate> updates(String sourceId, String spaceKey) {
             updateCalls++;
+            levels.add(spaceKey);
+            if ("DEV".equals(spaceKey)) {
+                // Im Space DEV hat das jüngste Update nichts geändert: dieselben Marken, Zähler nur für den Space.
+                ChangeUpdate s = second();
+                return List.of(new ChangeUpdate(s.id(), s.sourceId(), s.from(), s.to(), s.mark(), false, Map.of(),
+                        Map.of(), 0, 0, 0, false), initial());
+            }
             return none ? List.of() : List.of(open(), second(), initial());
         }
 
         @Override
-        public ChangeReport report(String sourceId, String updateId) {
+        public ChangeReport report(String sourceId, String updateId, String spaceKey) {
             reportCalls++;
+            levels.add(spaceKey);
             if (updateId.equals(initial().id())) {
                 return new ChangeReport(initial(), List.of());
             }
@@ -468,8 +576,51 @@ class SourceUpdatesViewTest {
                     page("13", ChangeKind.REMOVED, "Alte Seite", List.of(), null, null, null, false)));
         }
 
+        int textLimit = SourceUpdatesView.TEXT_PAGES;
+        final List<Integer> textOffsets = new ArrayList<>();
+
+        /** Wie der Core: der Bericht mit Unterschieden, seitenweise, dazu die Textform. */
         @Override
-        public UpdateSummary summary(String sourceId, String updateId) {
+        public UpdateText updateText(String sourceId, String updateId, String spaceKey, int offset, int limit) {
+            textOffsets.add(offset);
+            ChangeReport full = report(sourceId, updateId, spaceKey);
+            List<ReportedPage> pages = new ArrayList<>();
+            for (ReportedPage page : full.pages()) {
+                pages.add(page.pageId().equals("11") ? withDiff(page) : page);
+            }
+            int end = Math.min(pages.size(), offset + Math.min(limit, textLimit));
+            List<ReportedPage> window = pages.subList(Math.min(offset, end), end);
+            StringBuilder markdown = new StringBuilder(offset == 0 ? "# Update wiki\n\n" : "");
+            List<UpdateText.Section> sections = new ArrayList<>();
+            for (ReportedPage page : window) {
+                int start = markdown.length();
+                markdown.append("## ").append(page.title()).append('\n');
+                sections.add(new UpdateText.Section(page.pageId(), start, markdown.length() - start, page.kind()));
+            }
+            if (end < pages.size()) {
+                // Wie der Core: ein Fenster mit weiteren Seiten endet mit dieser Zeile.
+                markdown.append("_… weitere Seiten ab Nr. ").append(end + 1).append(" von ").append(pages.size())
+                        .append("_\n");
+            }
+            return new UpdateText(UpdateText.FORMAT, sourceId, updateId, spaceKey, pages.size(), offset,
+                    new ChangeReport(full.update(), window), markdown.toString(), sections);
+        }
+
+        private static ReportedPage withDiff(ReportedPage p) {
+            ContentDiff diff = new ContentDiff(ContentDiff.Status.AVAILABLE, List.of(new ContentChange("wiki", p.pageId(),
+                    "6", "7", SECOND, List.of(
+                    new ParagraphChange(ParagraphChange.Kind.CHANGED, "Frist 10 Tage", "Frist 14 Tage",
+                            List.of("Betrieb", "Fristen")),
+                    new ParagraphChange(ParagraphChange.Kind.ADDED, null, "Neu: Notfallkontakt",
+                            List.of("Betrieb", "Fristen")),
+                    new ParagraphChange(ParagraphChange.Kind.REMOVED, "Alter Absatz", null, List.of())), false)));
+            return new ReportedPage(p.sourceId(), p.spaceKey(), p.pageId(), p.kind(), p.kinds(), p.title(), p.path(),
+                    p.url(), p.oldVersion(), p.newVersion(), p.oldTitle(), p.newTitle(), p.oldParentId(),
+                    p.newParentId(), p.oldSpaceKey(), p.newSpaceKey(), p.contentPending(), p.at(), diff);
+        }
+
+        @Override
+        public UpdateSummary summary(String sourceId, String updateId, String spaceKey) {
             return stored;
         }
 
@@ -479,8 +630,9 @@ class SourceUpdatesViewTest {
         }
 
         @Override
-        public JobStatus summarize(String sourceId, String updateId) {
+        public JobStatus summarize(String sourceId, String updateId, String spaceKey) {
             summarizeCalls++;
+            summarizedLevel = spaceKey;
             return job(JobState.QUEUED);
         }
 

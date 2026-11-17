@@ -346,11 +346,13 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> view.detail().shownPage())).isNull();
-        assertThat(onEdt(() -> view.detail().showsSource())).as("ein Space hat keine Quellenseite").isFalse();
-        assertThat(onEdt(() -> view.detail().sourceView().sourceId())).as("Anmeldung beendet").isNull();
-        assertThat(onEdt(() -> view.detail().sourceChanges().sourceId())).isNull();
-        assertThat(onEdt(() -> view.detail().sourceProperties().sourceId())).isNull();
-        assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
+        assertThat(onEdt(() -> view.detail().showsSource())).as("ein Space hat dieselbe Seite (TZ5)").isTrue();
+        assertThat(onEdt(() -> view.detail().showsLevel("handbuch", space))).isTrue();
+        assertThat(onEdt(() -> view.detail().sourceView().spaceKey())).isEqualTo(space);
+        assertThat(onEdt(() -> view.detail().sourceChanges().spaceKey())).isEqualTo(space);
+        assertThat(onEdt(() -> view.shownSource())).as("„Nach dem Update“ öffnet nur die ganze Quelle").isNull();
+        assertThat(onEdt(() -> view.detail().sourceProperties().sourceId())).as("Eigenschaften nur für die Quelle")
+                .isNull();
         assertThat(onEdt(() -> view.detail().tabs().button("Leseansicht").getToolTipText())).isEqualTo("Leseansicht");
         assertThat(onEdt(() -> barIcons(view.detail()))).containsExactly(bar);
     }
