@@ -122,6 +122,35 @@ public final class DocumentNavigationSky extends JPanel {
         this.listener = listener;
     }
 
+    /** Blasse Wolken, etwa für Einträge ohne Bedeutung in der gewählten Ebene; {@code null}: keine. */
+    private java.util.function.Predicate<Navigation.Section> pale = section -> false;
+
+    /** Legt fest, welche Wolken blass gezeichnet werden; anklickbar bleiben sie. {@code null}: keine. */
+    public void setPale(java.util.function.Predicate<Navigation.Section> value) {
+        pale = value == null ? section -> false : value;
+        repaint();
+    }
+
+    /** Gestrichelte Wolken ohne kursive Schrift, etwa für noch Unfertiges; erkannte Abschnitte sind es immer. */
+    private java.util.function.Predicate<Navigation.Section> dashed = section -> false;
+
+    /** Legt fest, welche Wolken zusätzlich gestrichelt gezeichnet werden. {@code null}: nur erkannte Abschnitte. */
+    public void setDashed(java.util.function.Predicate<Navigation.Section> value) {
+        dashed = value == null ? section -> false : value;
+        repaint();
+    }
+
+    /** Ob die Wolke {@code index} der Kapitelreihe gestrichelt gezeichnet wird. */
+    boolean dashedForTest(int index) {
+        return index >= 0 && index < chapters.size()
+                && (chapters.get(index).isGenerated() || dashed.test(chapters.get(index)));
+    }
+
+    /** Ob die Wolke {@code index} der Kapitelreihe blass gezeichnet wird. */
+    boolean paleForTest(int index) {
+        return index >= 0 && index < chapters.size() && pale.test(chapters.get(index));
+    }
+
     /** Ersetzt den Tooltip der Wolken, etwa um Zahlen zu ergänzen; {@code null}: die ganze Bezeichnung. */
     public void setTooltips(java.util.function.Function<Navigation.Section, String> value) {
         tooltips = value == null ? DocumentNavigationSky::tooltipFor : value;
@@ -426,19 +455,23 @@ public final class DocumentNavigationSky extends JPanel {
     }
 
     private static Stroke borderFor(Navigation.Section section, boolean active) {
+        return borderFor(section.isGenerated(), active);
+    }
+
+    private static Stroke borderFor(boolean dashed, boolean active) {
         float width = active ? 1.8f : 1.2f;
-        return section.isGenerated()
+        return dashed
                 ? new BasicStroke(width, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 10f, new float[]{4f, 3f}, 0f)
                 : new BasicStroke(width);
     }
 
     /** Eine Wolke mit Bezeichnung, wie die Wolken des Himmels; aktiv mit kräftigem Rand. */
     private static void paintCloud(Graphics2D g2, Navigation.Section section, String text, int width, int height,
-                                   boolean hovered, boolean active) {
-        SkyClouds.paintCloudBase(g2, width, height, hovered || active, borderFor(section, active));
+                                   boolean hovered, boolean active, boolean dashed) {
+        SkyClouds.paintCloudBase(g2, width, height, hovered || active, borderFor(dashed, active));
         if (active) {
             g2.setColor(ResearchUiPalette.ACCENT_BLUE);
-            g2.setStroke(borderFor(section, true));
+            g2.setStroke(borderFor(dashed, true));
             g2.draw(SkyClouds.cloudShape(width, height));
         }
         g2.setFont(fontFor(section));
@@ -807,8 +840,12 @@ public final class DocumentNavigationSky extends JPanel {
                     Graphics2D cloud = (Graphics2D) g2.create(x, chip.y, chip.width, chip.height);
                     try {
                         Navigation.Section section = sections.get(i);
+                        if (pale.test(section) && !section.id().equals(active) && i != hovered) {
+                            cloud.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER,
+                                    0.45f));
+                        }
                         paintCloud(cloud, section, texts.get(i), chip.width, chip.height, i == hovered,
-                                section.id().equals(active));
+                                section.id().equals(active), section.isGenerated() || dashed.test(section));
                     } finally {
                         cloud.dispose();
                     }

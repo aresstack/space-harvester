@@ -836,6 +836,8 @@ public final class Harvester implements AutoCloseable {
             // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
             // ADR 0030, CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
             cache.contentDiffer(new TextContentDiffer(pageTexts));
+            // ADR 0031: Bearbeiter der gespeicherten Fassung in der Protokollzeile, soweit die Quelle ihn liefert.
+            cache.editors(new com.aresstack.spaceharvester.source.confluence.ConfluenceEditors());
             opened.add(ManualSyncRounds.start(jobs, cache, clock));
             // ADR 0030, Abschnitt 5: Zusammenfassen nur auf Wunsch, an das Modell nur Seiten mit KI-Freigabe.
             AiRelease summaryRelease = this.aiRelease;
