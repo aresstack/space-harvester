@@ -171,6 +171,10 @@ public final class StatementFeatures {
                 return true;
             }
         }
+        if (statement.has(Finding.STATE_ROLE_NOUN) && article(sentence, sentence.token(statement.predicate().verb()))
+                == Article.KEIN) {
+            return true; // „ist keine Förderung“: verneint, der Begleiter KEIN steht zusätzlich als Merkmal
+        }
         for (Argument argument : statement.arguments()) {
             if (argument.priority() != Priority.CORE) {
                 continue;
