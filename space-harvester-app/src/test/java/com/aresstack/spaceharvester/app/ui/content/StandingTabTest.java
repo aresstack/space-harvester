@@ -122,6 +122,31 @@ class StandingTabTest {
     }
 
     @Test
+    void otherViewsHangBehindTheStandWithTheirOwnToolsAndAreToldWhenTheyAreSeen() {
+        Fixture fixture = new Fixture(view());
+        List<Boolean> glossary = new ArrayList<>();
+        javax.swing.JButton add = new javax.swing.JButton("+");
+        fixture.tab.tab(StandingTab.GLOSSARY, new javax.swing.JPanel(), glossary::add, add);
+        StandingTab tab = fixture.shownTab();
+        assertThat(tab.tabs().names()).containsExactly(StandingTab.STATEMENTS, StandingTab.READING,
+                StandingTab.CONFLICTS, StandingTab.GLOSSARY);
+        assertThat(add.isVisible()).isFalse();
+        int reads = fixture.reads.get();
+        tab.tabs().select(StandingTab.GLOSSARY);
+        assertThat(glossary).last().isEqualTo(true);
+        assertThat(add.isVisible()).isTrue();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isFalse();
+        assertThat(tab.bearerButton().isVisible()).isFalse();
+        assertThat(tab.ownTabSelected()).isFalse();
+        tab.tabs().select(StandingTab.CONFLICTS);
+        assertThat(glossary).last().isEqualTo(false);
+        assertThat(add.isVisible()).isFalse();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isTrue();
+        assertThat(tab.ownTabSelected()).isTrue();
+        assertThat(fixture.reads.get()).isGreaterThanOrEqualTo(reads);
+    }
+
+    @Test
     void anEmptyListSaysWhyInItsArea() {
         StatusQuoView base = view();
         StandingTab none = new Fixture(new StatusQuoView(List.of(), List.of(), List.of(), Map.of(), Map.of(),

@@ -39,6 +39,14 @@ class GlossaryTabTest {
     private static final String QUERY_DEFAULT = "q=null categories=[FACHLICH, ROLLE, UNKLAR] status=[PROPOSED, CONFIRMED]";
 
     @Test
+    void theSearchStandsOnlyInTheTabRowAndNotAgainAboveTheTable() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            GlossaryTab tab = new GlossaryTab(null, java.util.Optional::empty);
+            assertThat(tab.directory().showsHead()).isFalse();
+        });
+    }
+
+    @Test
     void entriesComeReadyFromTheCoreAndTheToolsBelongToTheGlossaryTab() throws Exception {
         FakeGlossary glossary = new FakeGlossary();
         glossary.put(entry("1", "Datenprodukt", "wiki", "DH", RelationOrigin.AI, ReviewStatus.PROPOSED, 3, true),

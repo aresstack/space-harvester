@@ -69,7 +69,7 @@ import java.util.function.Supplier;
  * verknüpft, sortiert und zählt nichts selbst. Rückmeldungen gehen in die Statuszeile des Hauptfensters. Nur auf dem
  * EDT.
  */
-final class GlossaryTab {
+public final class GlossaryTab {
 
     static final String DETECT = "Fachbegriffe ermitteln";
     static final String ADD = "Fachbegriff hinzufügen …";
@@ -180,7 +180,7 @@ final class GlossaryTab {
         return context == null || context.settings() == null ? null : context.settings().terms().glossaryRules();
     }
 
-    GlossaryTab(AppContext context, Supplier<Optional<GlossaryAccess>> access) {
+    public GlossaryTab(AppContext context, Supplier<Optional<GlossaryAccess>> access) {
         this.context = context;
         this.access = access;
         directory.show(List.of(), NO_GLOSSARY);
@@ -284,7 +284,7 @@ final class GlossaryTab {
     }
 
     /** Die Suche für die Reiterzeile; die Knöpfe kommen einzeln ({@link #addButton()}), die Chips stehen im Reiter. */
-    JComponent tools() {
+    public JComponent tools() {
         return searchField;
     }
 
@@ -354,14 +354,14 @@ final class GlossaryTab {
     }
 
     /** Die Auswahl links hat sich geändert: volle Sicht, sofort wenn zu sehen, sonst beim nächsten Zeigen. */
-    void selection(ExportPanel.Selection chosen) {
+    public void selection(ExportPanel.Selection chosen) {
         selection = chosen == null ? ExportPanel.Selection.ALL : chosen;
         overview = null;
         reread(Pending.FULL);
     }
 
     /** Der Bereich wird sichtbar oder der Reiter gewählt: liest, was seit dem letzten Zeigen angefallen ist. */
-    void shown() {
+    public void shown() {
         Optional<GlossaryAccess> glossary = access.get();
         if (glossary.isEmpty()) {
             unavailable();
@@ -1416,20 +1416,20 @@ final class GlossaryTab {
         }
     }
 
-    JComponent component() {
+    public JComponent component() {
         return page;
     }
 
-    IconButton detectButton() {
+    public IconButton detectButton() {
         return detect;
     }
 
-    IconButton addButton() {
+    public IconButton addButton() {
         return add;
     }
 
     /** Der Stand für die Statuszeile des Hauptfensters (Anzahl, ausgewertete Seiten). */
-    void onStatus(java.util.function.Consumer<String> listener) {
+    public void onStatus(java.util.function.Consumer<String> listener) {
         onStatus = listener;
     }
 

@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
@@ -37,6 +38,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * Der Reiter „Graph“ unter Begriffe: ein Wissensgraph um einen Startbegriff. Begriffe sind Knoten, Beziehungen Kanten,
@@ -45,7 +48,7 @@ import java.util.Map;
  * auf einen Knoten macht ihn zur Mitte. Die Daten kommen aus einer {@link GraphSource}, außerhalb des EDT. Nur auf dem
  * EDT.
  */
-final class TermGraphView {
+public final class TermGraphView {
 
     static final String START = "Begriff eingeben und Enter drücken; ein Doppelklick auf einen Knoten macht ihn zur "
             + "Mitte.";
@@ -68,22 +71,35 @@ final class TermGraphView {
     private int request;
     private int suggestRequest;
     private boolean quiet;
+    /** Die Seiten der Auswahl links (ADR 0029), außerhalb des EDT gelesen; {@code null} heißt alle. */
+    private final AtomicReference<Supplier<PageSet>> scope;
+    private final JPanel head = new JPanel(new BorderLayout(12, 0));
+    private final JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
 
     /** @param context Laufzeit; {@code null} zeigt nur das Gerüst (Tests) */
-    TermGraphView(AppContext context) {
+    public TermGraphView(AppContext context) {
+        this(context, new AtomicReference<>(() -> null));
+    }
+
+    private TermGraphView(AppContext context, AtomicReference<Supplier<PageSet>> scope) {
         this(context, context == null ? null : GraphSource.ofRelations((term, withProposals) -> {
             AppRuntime runtime = context.runtime();
             if (runtime == null) {
                 throw new IllegalStateException(TermsView.NO_RUNTIME);
             }
             return runtime.workspace().termRelations(term, null, withProposals ? null : ReviewStatus.CONFIRMED,
-                    TermRelations.MAX_LIMIT).relations();
-        }));
+                    null, TermRelations.MAX_LIMIT, null, scope.get().get()).relations();
+        }), scope);
     }
 
     TermGraphView(AppContext context, GraphSource source) {
+        this(context, source, new AtomicReference<>(() -> null));
+    }
+
+    private TermGraphView(AppContext context, GraphSource source, AtomicReference<Supplier<PageSet>> scope) {
         this.context = context;
         this.source = source;
+        this.scope = scope;
         root.setOpaque(false);
         depth.addItem("Tiefe 1");
         depth.addItem("Tiefe 2");
@@ -97,13 +113,11 @@ final class TermGraphView {
         lines.setOpaque(false);
         lines.add(heading, BorderLayout.NORTH);
         lines.add(Comic.muted("Begriffe als Knoten, Beziehungen als Kanten"), BorderLayout.SOUTH);
-        JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         controls.setOpaque(false);
         controls.add(start);
         controls.add(depth);
         controls.add(proposals);
         controls.add(showButton);
-        JPanel head = new JPanel(new BorderLayout(12, 0));
         head.setOpaque(false);
         head.add(lines, BorderLayout.WEST);
         head.add(controls, BorderLayout.EAST);
@@ -147,12 +161,49 @@ final class TermGraphView {
         showButton.setEnabled(enabled);
     }
 
-    JComponent component() {
+    public JComponent component() {
         return root;
     }
 
+    /**
+     * Startfeld, Tiefe, Vorschläge und „Zeigen“ für die Reiterzeile oben rechts (BG2c); sie verlassen dabei den Kopf
+     * des Graphen.
+     */
+    public JComponent tools() {
+        head.remove(controls);
+        return controls;
+    }
+
+    /**
+     * Die Auswahl links (ADR 0029): Graph und Vorschläge am Startfeld kennen nur Beziehungen und Begriffe dieser
+     * Seiten. {@code pages} läuft außerhalb des EDT, höchstens einmal je Auswahl; {@code null} oder ein Ergebnis
+     * {@code null} heißt alle Seiten. Ein gezeigter Graph lädt neu.
+     */
+    public void pages(Supplier<PageSet> pages) {
+        scope.set(pages == null ? () -> null : once(pages));
+        if (root.isShowing()) {
+            reload();
+        }
+    }
+
+    private static Supplier<PageSet> once(Supplier<PageSet> pages) {
+        return new Supplier<>() {
+            private boolean done;
+            private PageSet value;
+
+            @Override
+            public synchronized PageSet get() {
+                if (!done) {
+                    value = pages.get();
+                    done = true;
+                }
+                return value;
+            }
+        };
+    }
+
     /** Der Reiter oder Bereich wird sichtbar: ein schon gezeigter Graph lädt neu, Änderungen anderer Reiter folgen. */
-    void shown() {
+    public void shown() {
         reload();
     }
 
@@ -215,8 +266,9 @@ final class TermGraphView {
             return;
         }
         AppRuntime runtime = context.runtime();
+        Supplier<PageSet> pages = scope.get();
         Background.run(() -> runtime.workspace().terms(new TermQueries.TermSearch(null, null, null, q, false,
-                SUGGESTIONS, null)).terms(), terms -> {
+                SUGGESTIONS, null, null, null, pages.get())).terms(), terms -> {
             if (current != suggestRequest || !start.isShowing()) {
                 return;
             }
