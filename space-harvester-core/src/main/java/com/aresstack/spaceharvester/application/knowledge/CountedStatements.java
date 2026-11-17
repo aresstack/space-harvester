@@ -7,8 +7,9 @@ import java.util.Optional;
  * welcher Stufe (ADR 0032). Auswertungen wie die Ableitung der Begriffe (FL5) fragen nur hier; der Prüfschritt (FL4)
  * hängt hier die wirksame Stufe ein, der Stand je Aussage (FL6) später, was nicht mehr gilt.
  *
- * <p>Heute: Eine vom Menschen abgelehnte Aussage ({@link ParsedStatements.Review#REJECTED}) zählt nie; jede andere
- * zählt mit ihrer Extraktionsqualität.
+ * <p>Heute: Eine ungültige ({@link ParsedStatements.Quality#INVALID}) oder vom Menschen abgelehnte Aussage
+ * ({@link ParsedStatements.Review#REJECTED}) zählt nie; jede andere zählt mit ihrer Extraktionsqualität. Gleich wie
+ * {@code StandingRules.effectiveQuality} (FL6), das hierher umzieht.
  */
 public final class CountedStatements {
 
@@ -17,7 +18,8 @@ public final class CountedStatements {
 
     /** Stufe, mit der die Aussage zählt, oder leer, wenn sie nicht zählt. */
     public static Optional<ParsedStatements.Quality> level(ParsedStatements.Statement statement) {
-        if (statement.review() == ParsedStatements.Review.REJECTED) {
+        if (statement.quality() == ParsedStatements.Quality.INVALID
+                || statement.review() == ParsedStatements.Review.REJECTED) {
             return Optional.empty();
         }
         return Optional.of(statement.quality());
