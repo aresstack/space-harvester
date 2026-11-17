@@ -1142,8 +1142,26 @@ public final class Workspace {
 
     /** Status eines Auftrags dieser App, unabhängig von seiner Art. */
     public JobStatus job(String jobId) {
-        JobStatus status = harvester.jobs().status(jobId, Harvester.OWNER);
+        JobStatus status = ownStatus(jobId);
         requireVisible(status, visibility(status));
+        return status;
+    }
+
+    /**
+     * Die Eigentümer, deren Aufträge die Auftragsliste zeigt (Angelo: Aufträge sind global sichtbar): der Core für
+     * Abgleiche, Exporte und Downloads, der Aufrufer der App für Zusammenfassen, Synonymlauf und Aussagenanalyse.
+     */
+    private List<String> jobOwners() {
+        String own = caller.jobOwner();
+        return own == null || own.equals(Harvester.OWNER) ? List.of(Harvester.OWNER) : List.of(Harvester.OWNER, own);
+    }
+
+    /** Stand eines Auftrags eines der {@link #jobOwners()}; ein fremder gilt als unbekannt. */
+    private JobStatus ownStatus(String jobId) {
+        JobStatus status = harvester.jobs().status(jobId);
+        if (!jobOwners().contains(status.owner())) {
+            throw new UnknownJobException(jobId);
+        }
         return status;
     }
 
@@ -1162,7 +1180,7 @@ public final class Workspace {
     public JobStatus pauseJob(String jobId) {
         JobStatus status = job(jobId);
         return status.type() == JobType.SYNC ? harvester.syncs().pause(jobId, Harvester.OWNER).status()
-                : harvester.jobs().pause(jobId, Harvester.OWNER);
+                : harvester.jobs().pause(jobId, status.owner());
     }
 
     /**
@@ -1175,6 +1193,10 @@ public final class Workspace {
      */
     public JobStatus resumeJob(String jobId) {
         JobStatus status = job(jobId);
+        if (!Harvester.OWNER.equals(status.owner())) {
+            // Aufträge des Aufrufers (Zusammenfassen, Synonymlauf, Aussagenanalyse) setzt der Core selbst fort.
+            return harvester.jobActions().perform(jobId, status.owner(), JobAction.RESUME);
+        }
         return switch (status.type()) {
             case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
             case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
@@ -1200,8 +1222,9 @@ public final class Workspace {
      *                                                                                   nicht anbietet
      */
     public JobStatus performJobAction(String jobId, JobAction action) {
-        job(jobId);
-        JobStatus status = harvester.performJobAction(jobId, action);
+        String owner = job(jobId).owner();
+        JobStatus status = Harvester.OWNER.equals(owner) ? harvester.performJobAction(jobId, action)
+                : harvester.jobActions().perform(jobId, owner, action);
         if (action == JobAction.DELETE) {
             activities.forget(jobId);
         }
@@ -1296,7 +1319,7 @@ public final class Workspace {
     /** Ob sich der Auftrag jetzt im selben Eintrag fortsetzen lässt ({@link #resumeJob}). */
     public boolean canResume(String jobId) {
         job(jobId);
-        return harvester.jobs().resumable(jobId, Harvester.OWNER);
+        return harvester.jobs().resumable(jobId, job(jobId).owner());
     }
 
     /**
@@ -1308,7 +1331,7 @@ public final class Workspace {
         for (String id : activities.ids()) {
             JobStatus status;
             try {
-                status = harvester.jobs().status(id, Harvester.OWNER);
+                status = ownStatus(id);
             } catch (UnknownJobException e) {
                 // Nur was die Auftragsablage nicht mehr kennt, fällt aus der Liste.
                 activities.forget(id);
@@ -1333,6 +1356,14 @@ public final class Workspace {
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
         // Auch die Dateien („Datei erzeugen“) gehören zu ihrem Export und gehen nie verloren.
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.CONVERSION));
+        // Aufträge des Aufrufers der App (Zusammenfassen, Synonymlauf, Aussagenanalyse) sind ebenso global sichtbar.
+        for (String owner : jobOwners()) {
+            if (!owner.equals(Harvester.OWNER)) {
+                for (JobType type : JobType.values()) {
+                    followUps.addAll(harvester.jobs().list(owner, type));
+                }
+            }
+        }
         for (JobStatus followUp : followUps) {
             if (result.stream().noneMatch(known -> known.id().equals(followUp.id()))) {
                 try {
@@ -1349,8 +1380,7 @@ public final class Workspace {
 
     /** Bricht einen eigenen Auftrag beliebiger Art ab, etwa eine Anreicherung. */
     public JobStatus cancelJob(String jobId) {
-        job(jobId);
-        return harvester.jobs().cancel(jobId, Harvester.OWNER);
+        return harvester.jobs().cancel(jobId, job(jobId).owner());
     }
 
     /**
@@ -1586,7 +1616,7 @@ public final class Workspace {
      */
     public Subscription subscribeJobs(JobListener listener) {
         Objects.requireNonNull(listener, "listener");
-        return harvester.jobs().subscribe(Harvester.OWNER, new JobListener() {
+        JobListener filtered = new JobListener() {
             @Override
             public void changed(JobStatus status) {
                 if (visible(status)) {
@@ -1596,8 +1626,7 @@ public final class Workspace {
 
             @Override
             public void removed(JobStatus last) {
-                // Alle Aufträge der App haben denselben Eigentümer; erst die Rechte am letzten Stand verbergen eine
-                // Löschung, deren Auftrag schon unsichtbar war.
+                // Erst die Rechte am letzten Stand verbergen eine Löschung, deren Auftrag schon unsichtbar war.
                 if (visible(last)) {
                     listener.removed(last);
                 }
@@ -1610,7 +1639,13 @@ public final class Workspace {
                     listener.event(event);
                 }
             }
-        });
+        };
+        // Je Eigentümer eine Anmeldung (Core und Aufrufer der App), gemeinsam abgemeldet.
+        List<Subscription> subscriptions = new ArrayList<>();
+        for (String owner : jobOwners()) {
+            subscriptions.add(harvester.jobs().subscribe(owner, filtered));
+        }
+        return () -> subscriptions.forEach(Subscription::close);
     }
 
     private boolean visible(JobStatus status) {
@@ -1635,8 +1670,7 @@ public final class Workspace {
      * laufenden bricht das vorher ab. Exportdateien, die der Benutzer gespeichert hat, und der Seitenbestand bleiben.
      */
     public void deleteJob(String jobId) {
-        job(jobId);
-        harvester.deleteJob(jobId);
+        harvester.jobs().delete(jobId, job(jobId).owner());
         activities.forget(jobId);
     }
 
@@ -1707,7 +1741,7 @@ public final class Workspace {
         for (JobStatus status : jobs()) {
             if (status.state().terminal()) {
                 try {
-                    deleted += harvester.jobs().deleteEventsBefore(status.id(), before, Harvester.OWNER);
+                    deleted += harvester.jobs().deleteEventsBefore(status.id(), before, status.owner());
                 } catch (UnknownJobException | JobStillRunningException e) {
                     // Inzwischen gelöscht oder (neu gestartet) wieder aktiv: dann bleibt er unberührt.
                 }
@@ -1777,6 +1811,11 @@ public final class Workspace {
     }
 
     private void requireVisible(JobStatus status, AccessKind kind) {
+        if (!Harvester.OWNER.equals(status.owner())) {
+            // Läufe des Aufrufers (Zusammenfassen, Synonymlauf, Aussagenanalyse) gehören ihm selbst, auch
+            // quellenübergreifende; die Rechte hat der Core schon beim Start geprüft.
+            return;
+        }
         if (!access.permits(caller, scope(status.sourceId(), status.partitionKey()), kind)) {
             throw new UnknownJobException(status.id());
         }
