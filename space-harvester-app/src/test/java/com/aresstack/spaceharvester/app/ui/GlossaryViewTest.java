@@ -91,8 +91,7 @@ class GlossaryViewTest {
                 && tab.status(com.aresstack.spaceharvester.application.terms.ReviewStatus.REJECTED).count() == 1);
         assertThat(workspace.glossary().get().search(new GlossaryAccess.Search(null, null, null, null, null, null,
                 10, null)).entries()).extracting(GlossaryAccess.Entry::term).containsExactly("Haushaltsverfahren");
-        SwingUtilities.invokeAndWait(() ->
-                tab.status(com.aresstack.spaceharvester.application.terms.ReviewStatus.REJECTED).doClick());
+        SwingUtilities.invokeAndWait(() -> GlossaryTabTest.onlyRejected(tab));
         await("Sperrliste", () -> tab.directory().table().getRowCount() == 1
                 && "Datenprodukt".equals(tab.directory().table().getValueAt(0, 0))
                 && "Abgelehnt".equals(tab.directory().table().getValueAt(0, 3)));

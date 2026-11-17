@@ -79,7 +79,7 @@ final class GlossaryTab {
             + "bestätigt";
     static final String SEARCH_TIP = "Fachbegriffe suchen: Anfang des Begriffs oder eines seiner Wörter";
     static final String STATUS_FILTER_TIP = "Nach Status filtern: vorgeschlagen, bestätigt oder abgelehnt (Sperrliste)";
-    static final String OPEN_AND_CONFIRMED = "vorgeschlagen und bestätigt";
+    static final String OPEN_AND_CONFIRMED = "Vorgabe: vorgeschlagen und bestätigt";
     static final String CONFIRM = "Bestätigen";
     static final String REJECT = "Ablehnen";
     static final String RESTORE = "Ablehnung zurücknehmen";
@@ -227,7 +227,8 @@ final class GlossaryTab {
         for (ReviewStatus status : List.of(ReviewStatus.PROPOSED, ReviewStatus.CONFIRMED, ReviewStatus.REJECTED)) {
             CountChip chip = new CountChip(statusWord(status), statusTone(status));
             chip.setToolTipText(statusTip(status));
-            chip.addActionListener(e -> chooseStatus(chip.isSelected() ? status : null));
+            chip.setSelected(GlossaryOverview.Query.WITHOUT_REJECTED.contains(status));
+            chip.addActionListener(e -> toggleStatus(status, chip.isSelected()));
             statuses.put(status, chip);
             statusChips.add(chip);
         }
@@ -287,9 +288,22 @@ final class GlossaryTab {
         return searchField;
     }
 
-    /** Ein Status zur Zeit; {@code null} hebt den Filter auf (Vorschläge und bestätigte). */
-    private void chooseStatus(ReviewStatus chosen) {
-        statuses.forEach((status, chip) -> chip.setSelected(status == chosen));
+    /**
+     * Status-Chips sind Umschalter wie die Einordnung (gefüllt = wird gezeigt). Ist keiner mehr an, gilt wieder die
+     * Vorgabe (vorgeschlagen und bestätigt), sichtbar an den Chips.
+     */
+    private void toggleStatus(ReviewStatus status, boolean on) {
+        statuses.get(status).setSelected(on);
+        if (statuses.values().stream().noneMatch(CountChip::isSelected)) {
+            defaultStatuses();
+        } else {
+            refine();
+        }
+    }
+
+    /** Die Vorgabe der Status: vorgeschlagen und bestätigt, ohne abgelehnte. */
+    private void defaultStatuses() {
+        statuses.forEach((status, chip) -> chip.setSelected(GlossaryOverview.Query.WITHOUT_REJECTED.contains(status)));
         refine();
     }
 
@@ -310,15 +324,16 @@ final class GlossaryTab {
         updateStatusFilter();
     }
 
-    /** Der Filterknopf zeigt den gewählten Status im Tooltip und ist gefüllt, solange einer gewählt ist. */
+    /** Der Filterknopf nennt die gezeigten Status im Tooltip. */
     private void updateStatusFilter() {
-        ReviewStatus chosen = query().status();
-        String tip = chosen == null ? STATUS_FILTER_TIP : STATUS_FILTER_TIP + " · gewählt: " + statusWord(chosen);
+        Set<ReviewStatus> chosen = query().statuses();
+        String tip = STATUS_FILTER_TIP + " · gezeigt: " + statuses.keySet().stream().filter(chosen::contains)
+                .map(GlossaryTab::statusWord).collect(java.util.stream.Collectors.joining(", "));
         statusFilter.setToolTipText(tip);
         statusFilter.getAccessibleContext().setAccessibleName(tip);
     }
 
-    /** Das Filtermenü mit denselben Zahlen wie die Chips; „vorgeschlagen und bestätigt“ hebt den Filter auf. */
+    /** Das Filtermenü mit denselben Zahlen wie die Chips, je Status ein Häkchen, dazu die Vorgabe. */
     private void showStatusMenu() {
         buildStatusMenu();
         statusMenu.show(statusFilter, 0, statusFilter.getHeight());
@@ -326,20 +341,16 @@ final class GlossaryTab {
 
     void buildStatusMenu() {
         statusMenu.removeAll();
-        ReviewStatus chosen = query().status();
-        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
-        javax.swing.JRadioButtonMenuItem all = new javax.swing.JRadioButtonMenuItem(OPEN_AND_CONFIRMED,
-                chosen == null);
-        all.addActionListener(e -> chooseStatus(null));
-        group.add(all);
-        statusMenu.add(all);
         statuses.forEach((status, chip) -> {
-            javax.swing.JRadioButtonMenuItem item = new javax.swing.JRadioButtonMenuItem(
-                    statusWord(status) + " " + chip.count(), status == chosen);
-            item.addActionListener(e -> chooseStatus(status));
-            group.add(item);
+            javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(
+                    statusWord(status) + " " + chip.count(), chip.isSelected());
+            item.addActionListener(e -> toggleStatus(status, item.isSelected()));
             statusMenu.add(item);
         });
+        statusMenu.addSeparator();
+        javax.swing.JMenuItem reset = new javax.swing.JMenuItem(OPEN_AND_CONFIRMED);
+        reset.addActionListener(e -> defaultStatuses());
+        statusMenu.add(reset);
     }
 
     /** Die Auswahl links hat sich geändert: volle Sicht, sofort wenn zu sehen, sonst beim nächsten Zeigen. */
@@ -394,9 +405,13 @@ final class GlossaryTab {
                 chosen.add(category);
             }
         });
-        ReviewStatus status = statuses.entrySet().stream().filter(entry -> entry.getValue().isSelected())
-                .map(Map.Entry::getKey).findFirst().orElse(null);
-        return new GlossaryOverview.Query(q.isEmpty() ? null : q, chosen.isEmpty() ? null : chosen, status);
+        Set<ReviewStatus> shown = EnumSet.noneOf(ReviewStatus.class);
+        statuses.forEach((status, chip) -> {
+            if (chip.isSelected()) {
+                shown.add(status);
+            }
+        });
+        return new GlossaryOverview.Query(q.isEmpty() ? null : q, chosen.isEmpty() ? null : chosen, shown);
     }
 
     /** Volle Sicht über die Auswahl, unter dem Wartekreis; Abbrechen lässt die bisherige Liste stehen. */
@@ -537,7 +552,8 @@ final class GlossaryTab {
             rowById.put(row.entry().id(), row);
             shown.add(row);
         }
-        boolean filtered = query.q() != null || query.status() != null;
+        boolean filtered = query.q() != null
+                || !query.statuses().equals(GlossaryOverview.Query.WITHOUT_REJECTED);
         directory.show(rows(result.rows()), filtered || !result.rows().isEmpty() ? NO_MATCH : EMPTY);
         onStatus.accept(status(selection.title(), result));
         if (afterShow != null) {
@@ -1145,7 +1161,7 @@ final class GlossaryTab {
     }
 
     /**
-     * „fachlich · nach Regel (kein Technik- oder Rollenwort)“, „Rolle · von Hand“, „unklar · von der KI“; ohne
+     * „unklar · nach Regel (kein Technik- oder Rollenwort)“, „fachlich · von Hand“, „Rolle · von der KI“; ohne
      * Einordnung „unklar (noch nicht eingeordnet)“.
      */
     static String categorized(GlossaryDerivation.Category category,

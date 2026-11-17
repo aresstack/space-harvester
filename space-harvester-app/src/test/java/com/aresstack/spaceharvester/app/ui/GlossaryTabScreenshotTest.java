@@ -33,7 +33,7 @@ class GlossaryTabScreenshotTest {
         GlossaryTabTest.FakeGlossary glossary = new GlossaryTabTest.FakeGlossary();
         glossary.put(entry("1", "Datenprodukt", "wiki", "DH", RelationOrigin.RULE, ReviewStatus.PROPOSED, 3, false,
                 "Ein fachlich abgegrenztes, verantwortetes Datenangebot des Datenhauses."),
-                GlossaryDerivation.Category.FACHLICH, new GlossaryDerivation.Importance(14, 41, 6, 2, 0));
+                GlossaryDerivation.Category.UNKLAR, new GlossaryDerivation.Importance(14, 41, 6, 2, 0));
         glossary.put(entry("2", "Haushaltsverfahren", null, null, RelationOrigin.MANUAL, ReviewStatus.CONFIRMED, 0,
                 false, "Verfahren zur Aufstellung und Bewirtschaftung des Haushalts."),
                 GlossaryDerivation.Category.FACHLICH, null);
@@ -41,8 +41,13 @@ class GlossaryTabScreenshotTest {
                 2, true, null), GlossaryDerivation.Category.ROLLE, new GlossaryDerivation.Importance(9, 23, 12, 0, 0));
         glossary.put(entry("4", "Möglichkeit", "wiki", "DH", RelationOrigin.AI, ReviewStatus.REJECTED, 1, false,
                 null), GlossaryDerivation.Category.UNKLAR, null);
-        glossary.put(entry("5", "Antragsprüfung", "wiki", "DH", RelationOrigin.AI, ReviewStatus.PROPOSED, 2, false,
+        glossary.put(entry("5", "Antragsprüfung", "wiki", "DH", RelationOrigin.RULE, ReviewStatus.PROPOSED, 2, false,
                 null), GlossaryDerivation.Category.UNKLAR, new GlossaryDerivation.Importance(5, 8, 0, 3, 0));
+        // Wie der Core ohne Modell: die meisten Begriffe bleiben nach Regel „unklar“, „fachlich“ nur von Hand/KI.
+        glossary.put(entry("7", "Zuständigkeit", "wiki", "DH", RelationOrigin.RULE, ReviewStatus.PROPOSED, 2, false,
+                null), GlossaryDerivation.Category.UNKLAR, new GlossaryDerivation.Importance(7, 11, 2, 1, 0));
+        glossary.put(entry("8", "Datenhaus", "wiki", "DH", RelationOrigin.RULE, ReviewStatus.PROPOSED, 3, false,
+                null), GlossaryDerivation.Category.UNKLAR, new GlossaryDerivation.Importance(11, 30, 4, 0, 2));
         glossary.put(entry("6", "Datenbankschema", "wiki", "DH", RelationOrigin.RULE, ReviewStatus.PROPOSED, 2,
                 false, null), GlossaryDerivation.Category.TECHNISCH, new GlossaryDerivation.Importance(3, 4, 0, 0, 0));
         GlossaryTab[] tab = new GlossaryTab[1];
@@ -56,6 +61,8 @@ class GlossaryTabScreenshotTest {
                     .tab(TermsView.GRAPH, new javax.swing.JPanel())
                     .actions(tab[0].tools(), tab[0].addButton(), tab[0].detectButton());
             tabs[0].select(TermsView.GLOSSARY);
+            // Technik einblenden, damit das Technikwort nach Regel im Bild steht (Vorgabe: aus).
+            tab[0].category(GlossaryDerivation.Category.TECHNISCH).setSelected(true);
             tab[0].load();
         });
         for (int i = 0; i < 100 && tab[0].directory().table().getRowCount() < 4; i++) {
@@ -74,8 +81,8 @@ class GlossaryTabScreenshotTest {
         SwingUtilities.invokeAndWait(() -> {
             Entry entry = tab[0].entryAtView(0);
             GlossaryAccess.Row row = new GlossaryAccess.Row(entry, new GlossaryDerivation.Importance(14, 41, 6, 2,
-                    0), GlossaryDerivation.Category.FACHLICH, new com.aresstack.spaceharvester.application.glossary
-                    .GlossaryEntry.Classification(GlossaryDerivation.Category.FACHLICH, com.aresstack.spaceharvester
+                    0), GlossaryDerivation.Category.UNKLAR, new com.aresstack.spaceharvester.application.glossary
+                    .GlossaryEntry.Classification(GlossaryDerivation.Category.UNKLAR, com.aresstack.spaceharvester
                     .application.glossary.GlossaryEntry.ClassifiedBy.RULE, null), entry.evidence().get(0));
             com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin original =
                     com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin.ORIGINAL;
@@ -86,15 +93,13 @@ class GlossaryTabScreenshotTest {
                     List.of(new GlossaryDerivation.Use("verantwortet", original, false, 4, List.of())),
                     List.of(new GlossaryDerivation.Use("Datenangebot", original, false, 2, List.of(),
                             GlossaryDerivation.Relation.BESTIMMUNG, 2)), List.of(),
-                    GlossaryDerivation.Category.FACHLICH, GlossaryDerivation.CategoryRule.NONE);
+                    GlossaryDerivation.Category.UNKLAR, GlossaryDerivation.CategoryRule.NONE);
             com.aresstack.spaceharvester.app.ui.controls.InfoPopup popup =
                     new com.aresstack.spaceharvester.app.ui.controls.InfoPopup();
             popup.text(entry.term(), GlossaryTab.overlayText(entry, row, term, List.of(
                     "1. Datenhaus: … jedes Datenprodukt hat einen Verantwortlichen …",
                     "2. Katalog: … das Datenprodukt liefert Kennzahlen …"), List.of(
-                    new GlossaryAccess.History("propose", "rule:glossary", T, ReviewStatus.PROPOSED),
-                    new GlossaryAccess.History("confirm", "USER:angelo@app", T.plusSeconds(3600),
-                            ReviewStatus.CONFIRMED))));
+                    new GlossaryAccess.History("propose", "rule:glossary", T, ReviewStatus.PROPOSED))));
             popup.controls(tab[0].overlayControls(popup, entry, row,
                     "Ein Datenprodukt ist ein verantwortetes Datenangebot des Datenhauses."));
             popup.link("Zu Beleg 1", () -> { }).link("Zu Beleg 2", () -> { })
