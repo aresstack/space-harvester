@@ -164,8 +164,8 @@ public final class ActivitiesView implements View {
     private int sweepOffset;
     /** Jüngste Phase des gewählten Auftrags aus seiner Diagnose, solange er läuft; sonst {@code null}. */
     private String phase;
-    /** Was die Vorstufe „Sätze vereinfachen“ am gewählten Auftrag ausließ ({@link #stageNotes(List)}). */
-    private List<String> stageNotes = List.of();
+    /** Angaben aus Ereignissen mit Code am gewählten Auftrag ({@link #notes(List)}). */
+    private List<Note> stageNotes = List.of();
     /** Bildlauf des Detailbereichs unter der Liste. */
     final javax.swing.JScrollPane detailScroll;
     /** Beim nächsten Zeichnen nach oben: anderer Auftrag gewählt oder Codefeld neu erschienen. */
@@ -403,23 +403,65 @@ public final class ActivitiesView implements View {
     }
 
     static final String STAGE_LABEL = "Vorstufe";
+    /** Bezeichnung der Angaben am Auftrag „Aussagen prüfen“ (ADR 0032, FL4). */
+    static final String CHECK_LABEL = "Prüfschritt";
+
+    /** Bezeichnung der Ergebniszeile der Regelphase von „Fachbegriffe ermitteln“ (ADR 0032, FL5b). */
+    static final String RESULT_LABEL = "Ergebnis";
+    /** Bezeichnung einer bewusst ausgelassenen Phase; gelb, nie rot. */
+    static final String SKIPPED_LABEL = "Bewusst ausgelassen";
+
+    /** Eine Angabe am Auftrag aus einem Ereignis mit Code; {@code skipped} zeigt sie gelb. */
+    record Note(String label, String text, boolean skipped) {
+    }
 
     /**
      * Die Zahlen der Vorstufe „Sätze vereinfachen“ einer Aussagenanalyse für die Angaben am Auftrag (ADR 0032, FL3):
      * Seiten ohne KI-Freigabe und, getrennt davon, Seiten ohne eingestelltes Modell, jeweils ohne Vorstufe analysiert.
-     * Der Core meldet sie als Ereignisse mit Code; je Code zählt das jüngste (nach Fortsetzen).
+     * Der Core meldet sie als Ereignisse mit Code; je Code zählt das jüngste (nach Fortsetzen). Ebenso beim Auftrag
+     * „Aussagen prüfen“ (FL4) die Bilanz des Prüfschritts und die Seiten ohne KI-Freigabe.
      */
     static List<String> stageNotes(List<JobEvent> events) {
-        java.util.Map<String, String> notes = new java.util.LinkedHashMap<>();
+        return notes(events).stream().map(Note::text).toList();
+    }
+
+    /**
+     * Alle Angaben am Auftrag aus Ereignissen mit Code, je Code die jüngste: Vorstufe und Prüfschritt der
+     * Aussagenanalyse, bei „Fachbegriffe ermitteln“ die ausgelassene Modellphase (gelb) und die Ergebniszeile der
+     * Regelphase. Den Text deutet die App nicht.
+     */
+    static List<Note> notes(List<JobEvent> events) {
+        java.util.Map<String, Note> notes = new java.util.LinkedHashMap<>();
         for (JobEvent event : events) {
-            if (com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NOT_RELEASED
-                    .equals(event.code())
-                    || com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NO_MODEL
-                    .equals(event.code())) {
-                notes.put(event.code(), event.message());
+            Note note = note(event.code(), event.message());
+            if (note != null) {
+                notes.put(event.code(), note);
             }
         }
         return List.copyOf(notes.values());
+    }
+
+    private static Note note(String code, String message) {
+        if (code == null) {
+            return null;
+        }
+        if (code.equals(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NOT_RELEASED)
+                || code.equals(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NO_MODEL)) {
+            return new Note(STAGE_LABEL, message, false);
+        }
+        if (code.equals(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.CHECK_COSTS)
+                || code.equals(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs
+                .CHECK_NOT_RELEASED)) {
+            return new Note(CHECK_LABEL, message, false);
+        }
+        if (code.startsWith(com.aresstack.spaceharvester.application.glossary.GlossaryClassification.MODEL_SKIPPED
+                + ":")) {
+            return new Note(SKIPPED_LABEL, message, true);
+        }
+        if (code.equals(com.aresstack.spaceharvester.application.glossary.GlossaryClassification.RULES_DONE)) {
+            return new Note(RESULT_LABEL, message, false);
+        }
+        return null;
     }
 
     /** Liest Aufträge und den gewählten Auftrag einmal; danach lesen nur die Meldungen des Core erneut. */
@@ -451,7 +493,7 @@ public final class ActivitiesView implements View {
                     current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null));
                 }
             }
-            return new Object[] {jobs, current, currentPhase, stageNotes(id == null ? List.of()
+            return new Object[] {jobs, current, currentPhase, notes(id == null ? List.of()
                     : runtime.workspace().events(id))};
         }, data -> {
             readDone();
@@ -478,7 +520,7 @@ public final class ActivitiesView implements View {
                 detail = id == null ? null : data[1];
                 phase = (String) data[2];
                 @SuppressWarnings("unchecked")
-                List<String> notes = (List<String>) data[3];
+                List<Note> notes = (List<Note>) data[3];
                 stageNotes = id == null ? List.of() : notes;
                 render();
             }
@@ -617,8 +659,8 @@ public final class ActivitiesView implements View {
         if (skipped(status) > 0) {
             facts.add("Bewusst ausgelassen", String.valueOf(skipped(status)));
         }
-        for (String note : stageNotes) {
-            facts.add(STAGE_LABEL, note);
+        for (Note note : stageNotes) {
+            facts.add(note.label(), note.text(), note.skipped() ? Comic.ORANGE : Comic.INK);
         }
         facts.add("Auftrags-ID", status.id());
         if (status.error() != null) {
@@ -1121,6 +1163,13 @@ public final class ActivitiesView implements View {
                         + " Seiten, " + p.written() + " analysiert, " + skipped + " übersprungen",
                         p.processed(), total);
             }
+            if (type == JobType.STATEMENT_CHECK) {
+                // Wie die Analyse: Seiten ohne aktuelle Analyse oder ohne KI-Freigabe zählen als übersprungen.
+                long skipped = p.processed() - p.written() - p.failed();
+                return new Step((phase == null ? "Aussagen prüfen" : phase) + " · " + p.processed() + " von " + total
+                        + " Seiten, " + p.written() + " geprüft, " + skipped + " übersprungen",
+                        p.processed(), total);
+            }
             if (type == JobType.EXPORT && phase != null && phase.startsWith("Seiten exportieren")) {
                 return new Step("Seiten exportieren · " + p.written() + " von " + total + " exportiert",
                         p.written(), total);
@@ -1175,6 +1224,7 @@ public final class ActivitiesView implements View {
                 case ASSETS -> new Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend");
                 case ATTACHMENTS -> new Counters("Anhänge", "Geprüft", "Abgelegt", "Fehlend");
                 case STATEMENT_ANALYSIS -> new Counters("Seiten", "Erledigt", "Analysiert", "Fehlgeschlagen");
+                case STATEMENT_CHECK -> new Counters("Seiten", "Erledigt", "Geprüft", "Fehlgeschlagen");
                 case PURGE -> new Counters("Ablagen", "Bearbeitet", "Geleert", "Fehlgeschlagen");
                 case KNOWLEDGE_GRAPH_EXPORT -> new Counters("Seiten mit Analyse", "Gelesen", "Exportiert",
                         "Fehlgeschlagen");
