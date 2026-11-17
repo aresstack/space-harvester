@@ -402,6 +402,28 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(TermSettings.SYNONYMS_MAX_TERMS, e.getMessage()));
         }
+        // ADR 0032, FL5b: Regeln der Begriffsableitung; eine fehlende oder leere Liste heißt „nichts“.
+        GlossaryRuleSettings glossaryRules = GlossaryRuleSettings.DEFAULT;
+        try {
+            glossaryRules = glossaryRules.withMaxTerms(read.integer(GlossaryRuleSettings.MAX_TERMS,
+                    GlossaryRuleSettings.DEFAULT_MAX_TERMS));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(GlossaryRuleSettings.MAX_TERMS, e.getMessage()));
+        }
+        for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
+            List<String> add = List.of();
+            try {
+                add = glossaryRules.with(kind, read.list(kind.addKey()), List.of()).added(kind);
+            } catch (IllegalArgumentException e) {
+                problems.add(new ConfigurationProblem(kind.addKey(), e.getMessage()));
+            }
+            try {
+                glossaryRules = glossaryRules.with(kind, add, read.list(kind.excludeKey()));
+            } catch (IllegalArgumentException e) {
+                problems.add(new ConfigurationProblem(kind.excludeKey(), e.getMessage()));
+            }
+        }
+        terms = terms.withGlossaryRules(glossaryRules);
         EnrichmentSettings enrichment = EnrichmentSettings.DEFAULT;
         try {
             enrichment = new EnrichmentSettings(read.bool(EnrichmentSettings.DOCUMENTS_ENABLED, true),

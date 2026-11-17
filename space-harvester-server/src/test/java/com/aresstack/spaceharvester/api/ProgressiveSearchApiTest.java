@@ -48,6 +48,8 @@ class ProgressiveSearchApiTest {
 
     private static final String OTHER_TOKEN = "other-token-81d0";
     private static final CountDownLatch SLOW = new CountDownLatch(1);
+    /** Die langsame Suchanfrage läuft; erst dann bricht der Test ab, sonst scheitert sie schon vor dem Start. */
+    private static final CountDownLatch SLOW_STARTED = new CountDownLatch(1);
     /** Ob die semantische Suche ein Embedding-Modell hat. */
     private static volatile boolean semanticAvailable = true;
     /** Gegen welche Anfrage die semantischen Suchanfragen gesucht haben. */
@@ -74,6 +76,7 @@ class ProgressiveSearchApiTest {
         SearchOrchestrator fixedOrchestrator() {
             VariantSearch search = (AccessContext caller, KeywordSearch.Query query, int limit) -> {
                 if (query.text().contains("langsam")) {
+                    SLOW_STARTED.countDown();
                     try {
                         SLOW.await(30, TimeUnit.SECONDS);
                     } catch (InterruptedException e) {
@@ -217,6 +220,7 @@ class ProgressiveSearchApiTest {
             String id = started.get("id").asString();
             assertThat(started.get("done").asBoolean()).isFalse();
             assertThat(started.get("reason").isNull()).isTrue();
+            assertThat(SLOW_STARTED.await(20, TimeUnit.SECONDS)).as("langsame Suchanfrage läuft").isTrue();
 
             assertThat(delete(TestClient.TOKEN, id).statusCode()).isEqualTo(204);
             JsonNode done = awaitDone(id);

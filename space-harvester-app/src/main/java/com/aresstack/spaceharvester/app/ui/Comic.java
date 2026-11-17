@@ -65,6 +65,14 @@ public final class Comic {
     public static final Color CHANGE_CHANGED = new Color(0xDCEBFB);
     /** Markierung eines entfernten Absatzes in der Leseansicht (rot, durchgestrichen). */
     public static final Color CHANGE_REMOVED = new Color(0xFADBD8);
+    /** Stand einer Aussage (ADR 0032): „gilt“ grün. Jede Marke trägt dazu ihr Wort, nie nur die Farbe. */
+    public static final Color STANDING_CURRENT = new Color(0x2E7D4F);
+    /** Stand „geplant“: blau. */
+    public static final Color STANDING_PLANNED = new Color(0x2F6DB5);
+    /** Stand „unklar“: Ocker, Aufmerksamkeit ohne Fehler. */
+    public static final Color STANDING_UNCLEAR = new Color(0xA86A12);
+    /** Stand „überholt“: grau und blass, nie Rot (Rot heißt Fehler). */
+    public static final Color STANDING_OUTDATED = new Color(0x8A8F98);
 
     /** Eine Farbe als CSS-Wert {@code #rrggbb}, etwa für HTML der Leseansicht. */
     public static String css(Color color) {
