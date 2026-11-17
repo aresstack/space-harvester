@@ -134,3 +134,38 @@ gelesen, und nur für ihren Space, wenn die Auswahl einer Quelle in genau einem 
 
 Vorschlag für die Oberfläche: Unterreiter „Leseempfehlung“ neben der Status-quo-Sicht, Themenfeld mit ✕ oben rechts
 (Vorschläge aus `topTerms`), Liste mit Titel, Summe und Stand; Klick öffnet die Seite.
+
+## Mögliche Widersprüche und Ablösungen: `StatementConflicts.of(view)` (PR 3)
+
+Reine Funktion über eine `StatusQuoView` (kein zweiter Durchlauf, speichert nichts). Ein möglicher Widerspruch ist nur
+ein Hinweis für den Menschen: Der Stand ändert sich nie. Setzt ein Mensch eine der Aussagen auf überholt, verschwindet
+der Hinweis von selbst.
+
+- `StatusQuoEntry#situation()` (neu): die Sachlage für den Vergleich, also Art, Handelnder bzw. Träger, Prädikat
+  (Grundform) und alle übrigen Beteiligten mit Rolle, Präposition und Schlüssel (`GlossaryDerivation#keyOf`). Sie ist
+  `null`, wenn ein Beteiligter fehlt, ein Pronomen mit offenem Bezug ist oder ein Teilsatz ist. Das Genus verbi gehört
+  nicht dazu.
+- `contradictions`: Liste von `PossibleContradiction(situation, modality, affirmed, negated)`. Bedingungen: dieselbe
+  Sachlage (alle übrigen Beteiligten gleich oder bei beiden fehlend), beide sicher, beide mit Stand „gilt“, dieselbe
+  bestimmte Verbindlichkeit, eine bejaht und eine verneint.
+- `replacements`: Liste von `Replacement(kind, predicate, object, current, outdated)`. Das ist nur ein Verweis, kein
+  Konflikt und keine Zahl. Es gibt zwei Arten:
+  - `NEGATION`: dieselbe Sachlage, eine Aussage gilt, die andere ist überholt, mit anderer Verneinung.
+  - `ACTOR`: dieselbe Seite, gleiches Prädikat und gleiches Betroffenes, eine Aussage gilt, die andere ist überholt,
+    mit anderem Handelnden („früher vergab das System, jetzt vergibt der Leiter“).
+  Gleicher Inhalt mit gleicher Verneinung, früher und jetzt, ist dieselbe Aussage und kein Verweis.
+- Nie verglichen werden:
+  - unsichere Aussagen
+  - Zustandswechsel
+  - Nebensätze
+  - Aussagen mit Vorstufen-Kennzeichen Bedingung
+  - zwei Aussagen aus demselben Satz derselben Seite (Original und Vorstufe)
+  - Aussagen mit Stand geplant oder unklar
+  - „muss zahlen“ gegen „zahlt nicht“ (Soll gegen Ist gehört zu FL8)
+- Jede Gruppe trägt ihre Einträge. Daraus kommen Seite, Aussage-ID und Satzposition (`statement().sentence()`,
+  `start()`, `end()`). `pages()` liefert die beteiligten Seiten. Die Gruppen sind sortiert nach der Zahl der Seiten,
+  die meisten zuerst.
+
+Vorschlag für die Oberfläche: In der Status-quo-Sicht ein Hinweis-Symbol an betroffenen Zeilen. Ein Overlay am
+Mausklick zeigt die Gegenaussagen mit Seite und springt zur Stelle. Ablösungen erscheinen als Verweis „löst ab“ bzw.
+„abgelöst durch“, nie als Warnung.

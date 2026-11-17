@@ -184,6 +184,18 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Das Protokoll liest nur die Quellen der Auswahl (bei genau einem Space nur diesen), je Quelle in einem Gang durch den
   Index (`ChangeLog#latestContentChanges`), ohne Zeilen vorzuhalten. Gemessen mit 72 000 Zeilen: 83 ms für einen Space,
   283 ms für eine ganze Quelle.
+
+## Umsetzung FL6 Teil 3 (mögliche Widersprüche und Ablösungen, Core)
+- `StatementConflicts.of(view)`: reine Funktion über die Status-quo-Sicht. Sie liefert Hinweise und ändert nie einen
+  Stand. Schnittstelle: [stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).
+- Möglicher Widerspruch: gleiche Sachlage (Art, Handelnder/Träger, Prädikat, alle übrigen Beteiligten mit Rolle,
+  Präposition und Schlüssel aus `GlossaryDerivation#keyOf`; ohne Genus verbi), beide sicher und „gilt“, gleiche
+  bestimmte Verbindlichkeit, andere Verneinung. Soll gegen Ist („muss“ gegen „nicht“) gehört zu FL8.
+- Ablösung nur als Verweis: gleiche Sachlage mit anderer Verneinung („gilt“ gegen „überholt“) oder dieselbe Seite mit
+  gleichem Prädikat und Betroffenem und anderem Handelnden.
+- Nie verglichen: unsichere Aussagen, Zustandswechsel, Nebensätze, Vorstufen-Kennzeichen Bedingung, zwei Aussagen
+  desselben Satzes derselben Seite.
+- Laufzeit an 3000 erzeugten Seiten mit 60 000 Aussagen: rund 0,13 s im Container.
 - Reine Auswertung, abbrechbar, speichert nichts. Laufzeit: 3000 erzeugte Seiten mit 60 000 Aussagen rund 0,16 s im
   Container (mit Thema 0,12 s).
 
