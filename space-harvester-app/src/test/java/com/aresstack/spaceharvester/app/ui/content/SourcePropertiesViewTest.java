@@ -105,10 +105,10 @@ class SourcePropertiesViewTest {
         List<String> texts = view.texts();
         assertThat(texts).containsSubsequence("Einstellungen", "ID", "wiki", "Aktiv", "ja", "Typ", "Confluence",
                 "Anzeigename", "Confluence HaVdB", "Adresse", "https://wiki.example.org", "Bilder laden", "ja",
-                "startPage", "4711", "Anmeldung", "Personal Access Token", "Token", "gesetzt",
+                "startPage", "4711", "Anmeldung", "Personal Access Token", "Token", "gesetzt (Property/Umgebung)",
                 "Client-Zertifikat", "aus");
         assertThat(texts).doesNotContain("tok-123");
-        assertThat(view.copyText()).contains("Kennzahlen\nSpaces: 2 Spaces").contains("Token: gesetzt")
+        assertThat(view.copyText()).contains("Kennzahlen\nSpaces: 2 Spaces").contains("Token: gesetzt (Property/Umgebung)")
                 .doesNotContain("tok-123");
     }
 

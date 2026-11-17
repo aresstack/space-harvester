@@ -37,6 +37,8 @@ public final class KeePassLink {
     private final SecretVault silent;
     private final Supplier<Boolean> pairedCheck;
     private final Runnable unpair;
+    /** Wer erfahren will, dass KeePass gerade geantwortet hat ({@link #onReachable}). */
+    private final List<Runnable> reachableListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
      * @param pairingDirectory Ordner für den Pairing-Schlüssel; lässt er sich nicht auf das eigene Konto beschränken,
@@ -49,9 +51,13 @@ public final class KeePassLink {
                 () -> OwnerOnlyDirectory.secure(pairingDirectory));
         this.pairedCheck = () -> keys.held() || java.nio.file.Files.isRegularFile(pairingFile);
         this.unpair = keys::clear;
-        this.interactive = new KeePassRpcSecretProvider(CONFIG, keys, prompt);
+        // Antwortet KeePassRPC kurz nicht (etwa beim Start der App), wiederholt die App das Lesen wie der EAC, statt
+        // die Quelle sofort ohne Zugangsdaten zu starten.
+        this.interactive = new RetryingVault(new KeePassRpcSecretProvider(CONFIG, keys, prompt),
+                RetryingVault.DELAYS_MILLIS, Thread::sleep, this::reachable);
         // Beim Start und beim Lesen des Keys nie ungefragt einen Kopplungsdialog öffnen.
-        this.silent = new KeePassRpcSecretProvider(CONFIG, keys, KeePassPairingCallback.unavailable());
+        this.silent = new RetryingVault(new KeePassRpcSecretProvider(CONFIG, keys,
+                KeePassPairingCallback.unavailable()), RetryingVault.DELAYS_MILLIS, Thread::sleep, this::reachable);
     }
 
     /** Für Tests: ein beliebiger Passwortspeicher statt KeePassRPC. */
@@ -61,8 +67,15 @@ public final class KeePassLink {
 
     /** Für Tests: wie {@link #KeePassLink(SecretVault, Supplier)}, mit dem, was „Entkoppeln“ auslöst. */
     public KeePassLink(SecretVault vault, Supplier<Boolean> paired, Runnable unpair) {
-        this.interactive = vault;
-        this.silent = vault;
+        this(vault, paired, unpair, new long[0], millis -> { });
+    }
+
+    /** Für Tests: mit Wiederholungen nach den Pausen {@code delays}, gewartet wird über {@code sleeper}. */
+    KeePassLink(SecretVault vault, Supplier<Boolean> paired, Runnable unpair, long[] delays,
+                RetryingVault.Sleeper sleeper) {
+        RetryingVault retrying = new RetryingVault(vault, delays, sleeper, this::reachable);
+        this.interactive = retrying;
+        this.silent = retrying;
         this.pairedCheck = paired;
         this.unpair = unpair;
     }
@@ -73,6 +86,27 @@ public final class KeePassLink {
      */
     public boolean paired() {
         return Boolean.TRUE.equals(pairedCheck.get());
+    }
+
+    /**
+     * Meldet {@code listener} nach jedem gelungenen Zugriff auf KeePass, im Thread des Zugriffs (also nie auf dem EDT
+     * blockieren und selbst schnell zurückkehren). So holt die App beim Start ausgebliebene Zugangsdaten nach, sobald
+     * KeePass wieder antwortet, ohne Neustart und ohne regelmäßig nachzufragen.
+     */
+    public void onReachable(Runnable listener) {
+        reachableListeners.add(listener);
+    }
+
+    private void reachable() {
+        for (Runnable listener : reachableListeners) {
+            try {
+                listener.run();
+            } catch (RuntimeException e) {
+                // Ein Beobachter darf den Zugriff nicht scheitern lassen.
+                java.util.logging.Logger.getLogger(KeePassLink.class.getName()).warning(
+                        "Beobachter von KeePass gescheitert: " + e.getClass().getSimpleName());
+            }
+        }
     }
 
     /**

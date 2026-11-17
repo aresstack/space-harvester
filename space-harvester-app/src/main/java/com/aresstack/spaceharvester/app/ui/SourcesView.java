@@ -641,15 +641,10 @@ public final class SourcesView implements View {
                 row(EditableProperty.view("Anmeldung", Texts.auth(config.auth()), Comic.INK));
             }
             if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
-                boolean session = context.secrets().has(entry);
                 boolean token = config.auth().type() == SourceSettingsConfig.AuthType.PAT;
-                row(EditableProperty.action(token ? "Token" : "Passwort",
-                        context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(entry))
-                                ? "verschlüsselt gespeichert"
-                                : session ? "für diese Sitzung eingegeben"
-                                : !entry.secretMissing() ? "gesetzt (Property/Umgebung)"
-                                : "fehlt",
-                        entry.secretMissing() && !session ? Comic.RED : Comic.INK,
+                SecretState secret = SecretState.of(context.settings(), entry, context.secrets().has(entry),
+                        context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(entry)));
+                row(EditableProperty.action(token ? "Token" : "Passwort", secret.text(), secret.color(),
                         (token ? "Token" : "Passwort") + " neu eingeben", () -> storeSecret(entry)));
             }
             if (confluence) {
