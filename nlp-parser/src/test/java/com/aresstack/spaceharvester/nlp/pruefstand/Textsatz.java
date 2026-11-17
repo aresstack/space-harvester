@@ -31,10 +31,28 @@ record Textsatz(String name, String rolle, List<Text> texte, List<Variante> vari
     record Text(String name, String art, String inhalt) {
     }
 
-    record Variante(String name, String beschreibung) {
+    /**
+     * Eine Variante. Zusammengesetzte Varianten (dritte Spalte {@code gezielt:<Vorstufe>} oder {@code immer:<Vorstufe>})
+     * haben keine eigenen Pins: sie führen die Analyse des Originals mit der einer Vorstufe je Originalsatz zusammen
+     * (ADR 0032, FL3); {@code aus} ist dann die Vorstufe.
+     */
+    record Variante(String name, String beschreibung, String art, String aus) {
+
+        Variante(String name, String beschreibung) {
+            this(name, beschreibung, null, null);
+        }
 
         boolean vorstufe() {
             return !HEUTE.equals(name);
+        }
+
+        boolean zusammengesetzt() {
+            return aus != null;
+        }
+
+        /** Variante, deren Pins und Vorstufen-Zeilen gelten. */
+        String pins() {
+            return aus == null ? name : aus;
         }
     }
 
@@ -59,7 +77,9 @@ record Textsatz(String name, String rolle, List<Text> texte, List<Variante> vari
         }
         List<Variante> varianten = new ArrayList<>();
         for (String[] row : tsv(resource(dir + "varianten.tsv"))) {
-            varianten.add(new Variante(row[0], row.length > 1 ? row[1] : ""));
+            String[] zusammen = row.length > 2 && !row[2].isBlank() ? row[2].split(":", 2) : null;
+            varianten.add(new Variante(row[0], row.length > 1 ? row[1] : "", zusammen == null ? null : zusammen[0],
+                    zusammen == null ? null : zusammen[1]));
         }
         if (varianten.isEmpty() || !HEUTE.equals(varianten.get(0).name())) {
             throw new IllegalStateException(name + ": erste Variante muss „heute“ sein");
@@ -73,7 +93,7 @@ record Textsatz(String name, String rolle, List<Text> texte, List<Variante> vari
         if (!variante.vorstufe()) {
             return null;
         }
-        String content = optionalResource(BASIS + name + "/varianten/" + variante.name() + "/" + text.name()
+        String content = optionalResource(BASIS + name + "/varianten/" + variante.pins() + "/" + text.name()
                 + ".vorstufe");
         if (content == null) {
             return null;
@@ -100,7 +120,7 @@ record Textsatz(String name, String rolle, List<Text> texte, List<Variante> vari
 
     /** Pfad der gepinnten CoNLL-U relativ zum Textsatz ({@code varianten/heute/A.conllu}). */
     String pinPfad(Variante variante, Text text) {
-        String v = vorstufe(variante, text) == null ? HEUTE : variante.name();
+        String v = vorstufe(variante, text) == null ? HEUTE : variante.pins();
         return "varianten/" + v + "/" + text.name() + ".conllu";
     }
 
