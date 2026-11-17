@@ -961,6 +961,8 @@ public final class Harvester implements AutoCloseable {
                 this.glossary.withdrawAi(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
+                // SY2: Vektoren der Synonymerkennung aus diesen Seiten und der Stand ihrer Quellen.
+                synonymDiscovery.withdrawn(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
             });
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.

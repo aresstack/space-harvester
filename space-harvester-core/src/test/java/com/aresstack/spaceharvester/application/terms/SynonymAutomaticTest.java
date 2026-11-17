@@ -316,6 +316,74 @@ class SynonymAutomaticTest {
     }
 
     @Test
+    void aWithdrawnSourceReleaseRemovesVectorsExceptForReleasedPages() {
+        provider = Optional.of(counting(vectorsByWord(Map.of("auto", 0, "kfz", 0)), "fake@1"));
+        SynonymVectorCache vectors = SynonymVectorCache.inMemory();
+        SynonymDiscovery withCache = discovery(vectors);
+        withCache.automatic("wiki");
+        assertThat(vectors.state("wiki")).isPresent();
+        int first = embedded.size();
+
+        // Seite 2 bleibt über die Seitenliste freigegeben, Seite 1 nicht.
+        PageKey listed = new PageKey("wiki", "2");
+        withCache.withdrawn(List.of(new PageKey("wiki", "1"), listed), listed::equals);
+
+        assertThat(vectors.state("wiki")).isEmpty();
+        released.clear();
+        embedded.clear();
+        SynonymCandidates candidates = candidates();
+        candidates.vectors(vectors);
+        candidates.pageReleases(listed::equals);
+        candidates.collect(SynonymScope.source("wiki"), budget, null);
+        // Kfz (Seite 2) kommt aus dem Cache, Auto (Seite 1) darf nicht mehr ans Modell.
+        assertThat(first).isGreaterThanOrEqualTo(2);
+        assertThat(embedded).isEmpty();
+    }
+
+    @Test
+    void aChangedPageLeavesNoOldVector() {
+        provider = Optional.of(counting(vectorsByWord(Map.of("auto", 0, "kfz", 0)), "fake@1"));
+        SynonymVectorCache vectors = SynonymVectorCache.inMemory();
+        SynonymDiscovery withCache = discovery(vectors);
+        withCache.automatic("wiki");
+        java.util.Set<String> before = vectorHashes(vectors);
+
+        // Seite 2 neu mit anderem Text: Kfz bekommt eine neue Eingabe.
+        PageMetadata metadata = new PageMetadata("2", "confluence:wiki/page/2", "Seite 2", "DEV", null, "2", T0,
+                null, PageMetadata.sorted(Map.of()));
+        PageSnapshot snapshot = PageSnapshot.of("wiki", metadata, new NativePayload(
+                "Das Kfz fährt schnell. Jedes Kfz hat Räder.".getBytes(StandardCharsets.UTF_8), "text/plain",
+                "test"), T0);
+        cache.put(snapshot.key(), snapshot);
+        enrichments.refresh(snapshot);
+        withCache.automatic("wiki");
+
+        java.util.Set<String> after = vectorHashes(vectors);
+        assertThat(after).hasSameSizeAs(before).isNotEqualTo(before);
+    }
+
+    /** Die Eingabe-Hashes im Cache, über die Eingaben, die an das Modell gingen. */
+    private java.util.Set<String> vectorHashes(SynonymVectorCache vectors) {
+        java.util.Set<String> found = new java.util.TreeSet<>();
+        for (String input : embedded) {
+            String hash = sha256(input);
+            if (vectors.find("fake@1", hash).isPresent()) {
+                found.add(hash);
+            }
+        }
+        return found;
+    }
+
+    private static String sha256(String text) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
     void aNewPageReleaseStartsTheRunOfItsSourceAgain() {
         discovery.automatic("wiki");
         assertThat(discovery.automatic("wiki")).isEmpty();

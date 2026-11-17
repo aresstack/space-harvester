@@ -39,6 +39,13 @@ public interface SynonymVectorCache {
     /** Vergisst alle Vektoren, deren Eingabe aus einer dieser Seiten stammt. */
     void withdraw(Collection<PageKey> pages);
 
+    /**
+     * Behält von den Vektoren, deren Seiten sämtlich zu dieser Quelle gehören, nur die eines Modells mit diesen
+     * Eingabe-Hashes, etwa nach einem vollständigen Lauf über die Quelle; geänderte Seiten hinterlassen so keine alten
+     * Vektoren.
+     */
+    void retainSource(String sourceId, String modelId, Set<String> inputSha256);
+
     /** Vergisst alle Vektoren mit Seiten dieser Quelle und ihren Stand („Daten bereinigen“, Freigabe entzogen). */
     void withdrawSource(String sourceId);
 
@@ -68,6 +75,14 @@ public interface SynonymVectorCache {
             public synchronized void withdraw(Collection<PageKey> pages) {
                 Set<PageKey> gone = Set.copyOf(pages);
                 vectors.values().removeIf(entry -> entry.pages().stream().anyMatch(gone::contains));
+            }
+
+            @Override
+            public synchronized void retainSource(String sourceId, String modelId, Set<String> inputSha256) {
+                vectors.entrySet().removeIf(entry -> !entry.getValue().pages().isEmpty()
+                        && entry.getValue().pages().stream().allMatch(page -> page.sourceId().equals(sourceId))
+                        && !(entry.getKey().startsWith(modelId + '\u0000')
+                        && inputSha256.contains(entry.getKey().substring(modelId.length() + 1))));
             }
 
             @Override

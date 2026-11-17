@@ -114,6 +114,16 @@ public final class FileSynonymVectorCache implements SynonymVectorCache {
     }
 
     @Override
+    public synchronized void retainSource(String sourceId, String modelId, Set<String> inputSha256) {
+        if (vectors.entrySet().removeIf(entry -> !entry.getValue().pages().isEmpty()
+                && entry.getValue().pages().stream().allMatch(page -> page.sourceId().equals(sourceId))
+                && !(entry.getKey().startsWith(modelId + '\u0000')
+                && inputSha256.contains(entry.getKey().substring(modelId.length() + 1))))) {
+            store();
+        }
+    }
+
+    @Override
     public synchronized void withdrawSource(String sourceId) {
         boolean changed = vectors.values().removeIf(entry -> entry.pages().stream()
                 .anyMatch(page -> page.sourceId().equals(sourceId)));

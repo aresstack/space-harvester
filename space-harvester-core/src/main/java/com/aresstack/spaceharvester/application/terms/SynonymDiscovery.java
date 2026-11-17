@@ -321,6 +321,21 @@ public class SynonymDiscovery {
         });
     }
 
+    /**
+     * Rücknahme bei entzogener Freigabe einer Quelle ({@code ReleaseRecomputation.Withdrawal}, ADR 0028): Vektoren
+     * der Seiten, die nicht mehr an den KI-Dienst dürfen, fallen weg, ebenso der Stand ihrer Quellen. Seiten, die über
+     * die Liste freigegebener Seiten weiter dürfen, behalten ihre Vektoren.
+     */
+    public void withdrawn(List<PageKey> pages, Predicate<PageKey> mayProcess) {
+        List<PageKey> gone = pages.stream().filter(page -> !mayProcess.test(page)).toList();
+        if (gone.isEmpty()) {
+            return;
+        }
+        candidates.vectors().withdraw(gone);
+        gone.stream().map(PageKey::sourceId).distinct().forEach(sourceId -> candidates.vectors().state(sourceId,
+                null));
+    }
+
     /** Ob der Auftrag von {@link #start} stammt; andere Anreicherungsaufträge gehören nicht hierher. */
     public boolean started(String jobId) {
         return jobId != null && started.contains(jobId);

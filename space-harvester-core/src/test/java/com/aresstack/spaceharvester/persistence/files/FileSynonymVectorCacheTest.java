@@ -45,6 +45,42 @@ class FileSynonymVectorCacheTest {
     }
 
     @Test
+    void unusedVectorsOfASourceFallAfterACompleteRun() throws Exception {
+        PageKey one = new PageKey("wiki", "1");
+        PageKey foreign = new PageKey("other", "1");
+        FileSynonymVectorCache cache = new FileSynonymVectorCache(directory);
+        cache.putAll("model@1", Map.of("old", new SynonymVectorCache.Entry(new float[] {1f}, Set.of(one)),
+                "new", new SynonymVectorCache.Entry(new float[] {1f}, Set.of(one)),
+                "mixed", new SynonymVectorCache.Entry(new float[] {1f}, Set.of(one, foreign))));
+        cache.putAll("model@0", Map.of("new", new SynonymVectorCache.Entry(new float[] {1f}, Set.of(one))));
+
+        cache.retainSource("wiki", "model@1", Set.of("new"));
+
+        FileSynonymVectorCache reopened = new FileSynonymVectorCache(directory);
+        assertThat(reopened.find("model@1", "new")).isPresent();
+        assertThat(reopened.find("model@1", "old")).isEmpty();
+        assertThat(reopened.find("model@0", "new")).isEmpty();
+        assertThat(reopened.find("model@1", "mixed")).as("auch aus einer anderen Quelle").isPresent();
+    }
+
+    /** Messung für den Architekten: 2.000 Vektoren mit 1.024 Dimensionen, je zwei Seiten. */
+    @Test
+    void twoThousandVectorsGiveAFileOfMeasuredSize() throws Exception {
+        FileSynonymVectorCache cache = new FileSynonymVectorCache(directory);
+        Map<String, SynonymVectorCache.Entry> entries = new java.util.HashMap<>();
+        for (int i = 0; i < 2_000; i++) {
+            float[] vector = new float[1024];
+            vector[i % 1024] = 1f;
+            entries.put(String.format("%064x", i), new SynonymVectorCache.Entry(vector,
+                    Set.of(new PageKey("wiki", "p" + i), new PageKey("wiki", "q" + i))));
+        }
+        cache.putAll("model@1", entries);
+        long bytes = Files.size(directory.resolve(FileSynonymVectorCache.FILE));
+        System.out.println("SY2-Messung: 2000 Vektoren x 1024 Dimensionen = " + bytes + " Bytes");
+        assertThat(bytes).isPositive();
+    }
+
+    @Test
     void anUnreadableFileStartsEmpty() throws Exception {
         Files.writeString(directory.resolve(FileSynonymVectorCache.FILE), "{kaputt");
 

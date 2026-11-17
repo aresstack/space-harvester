@@ -166,7 +166,9 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      Seite aus der KI-Freigabe (ADR 0028), fallen ihre Vektoren und der Stand der Quelle, und der Lauf zieht nicht mehr
      gestützte Vorschläge zurück; „Daten bereinigen“ leert Vektoren und Stand der Quelle. Der Stand je Quelle liegt in
      derselben Datei und übersteht einen Neustart; der Fingerabdruck enthält die Modellkennung, ein Modellwechsel löst
-     einen Lauf aus.
+     einen Lauf aus. Nach einem vollständigen Lauf über eine ganze Quelle fallen ihre ungenutzten Vektoren weg
+     (geänderte Seiten hinterlassen keine alten); entzieht die Konfiguration einer Quelle die Freigabe, nimmt
+     `ReleaseRecomputation.Withdrawal` Vektoren und Stand zurück, außer für Seiten auf der Liste freigegebener Seiten.
    - Drei Stufen, alle begrenzt (`SynonymBudget`, Schlüssel `space-harvester.terms.synonyms.max-terms`,
      `max-embedded-terms`, `max-judged-pairs`, in Dienst und App dieselben; Laufzeit begrenzt `jobs.max-runtime`):
      A `SynonymCandidates` sammelt deterministisch aus dem Begriffsindex Kandidatenpaare (Schreibvarianten über

@@ -212,7 +212,6 @@ public class SynonymCandidates {
         }
     }
 
-    /** Ob ein Embedding-Modell eingestellt ist (Stufe B); ohne bleiben nur die Regeln. */
     private static String sha256(String text) {
         try {
             return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
@@ -222,6 +221,7 @@ public class SynonymCandidates {
         }
     }
 
+    /** Ob ein Embedding-Modell eingestellt ist (Stufe B); ohne bleiben nur die Regeln. */
     public boolean embeddingAvailable() {
         try {
             return embeddings.get().isPresent();
@@ -662,12 +662,14 @@ public class SynonymCandidates {
             List<Term> fresh = new ArrayList<>();
             List<String> inputs = new ArrayList<>();
             List<String> hashes = new ArrayList<>();
+            List<String> used = new ArrayList<>();
             for (Term term : selected) {
                 String input = embeddingInput(term);
                 if (input == null) {
                     continue;
                 }
                 String hash = sha256(input);
+                used.add(hash);
                 Optional<float[]> cached = cache.find(modelId, hash).filter(vector -> vector.length == dimensions);
                 if (cached.isPresent()) {
                     term.vector = cached.get();
@@ -718,6 +720,10 @@ public class SynonymCandidates {
                 return false;
             }
             cache.putAll(modelId, computed);
+            // SY2: Nach einem vollständigen Lauf über eine ganze Quelle fallen ihre ungenutzten Vektoren weg.
+            if (complete && !scope.global() && scope.spaceKey() == null) {
+                cache.retainSource(scope.sourceId(), modelId, Set.copyOf(used));
+            }
             embedded = embeddable.size();
             neighbours(embeddable, dimensions, modelId);
             return true;
