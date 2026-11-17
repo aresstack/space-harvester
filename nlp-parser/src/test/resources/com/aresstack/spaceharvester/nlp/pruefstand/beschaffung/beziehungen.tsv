@@ -12,3 +12,9 @@ H03	Einkaufsabteilung	Vergabestelle	GLEICHSETZUNG
 H04	Angebot	Bestellung	KEINE	verneint
 H08	Außenlager	Werkstatt	KEINE	früher, gilt nicht mehr
 H09	Einkäufer	Leiter	KEINE	Zustandswechsel, kein Ist-Zustand
+J01	Sommer	Disponentin	ROLLE	Person als Träger; „Außenlager“ ist nie das Nomen
+J02	Hausmeister	Ansprechpartner	ROLLE	„Wareneingang“ ist nie das Nomen
+J03	Revision	Stabsstelle	BESTIMMUNG	„Vorstand“ ist nie das Nomen
+J04	Brandt	Vertreter	GLEICHSETZUNG	Person als Träger; „Urlaub“ ist nie das Nomen
+J05	Poststelle	Annahmestelle	GLEICHSETZUNG	„Erdgeschoss“ ist nie das Nomen
+J06	Pförtner	Ansprechpartner	ROLLE	„Wochenende“ ist nie das Nomen
