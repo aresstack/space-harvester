@@ -295,6 +295,113 @@ class ExportPanelTest {
                 … und 2 weitere Hinweise""");
     }
 
+    /**
+     * Angelo 17.11.2026: Auf der Quelle und bei „Wissensquellen“ ist der Export echt wie der Knopf in der Seitenleiste:
+     * je Space ein eigener Auftrag und eine getrennte Datei, die Dateiliste nennt sie je Space. Nur „Wissensquellen“
+     * fragt vorher zurück (Architekt 17.11.2026); ein Nein startet nichts.
+     */
+    @Test
+    void theRootStartsOneJobPerSpaceWithSeparateFilesAndOnlyAllSourcesAskFirst() throws Exception {
+        Path out = startTwo();
+        Workspace workspace = context.runtime().workspace();
+        ExportPanel[] panel = new ExportPanel[1];
+        List<String> asked = new java.util.ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ExportPanel(context);
+            panel[0].confirmAll((title, question) -> {
+                asked.add(question);
+                return !question.contains("Word");
+            });
+            panel[0].selection(ExportPanel.Selection.ALL);
+        });
+        await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).stream()
+                .filter(text -> text.equals(ExportPanel.NOTHING_YET)).count() == 2);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].exportBlocked("pdf")).as("Format-Knöpfe frei wie beim Space").isNull();
+            assertThat(panel[0].sourceBlocked("analytics")).as("Dateiquellen ohne REST")
+                    .isEqualTo(ExportPanel.ONLY_CONFLUENCE);
+            panel[0].output("docx");
+            assertThat(asked).hasSize(1).first().asString().contains("alle 2 Spaces aller Wissensquellen")
+                    .contains("Word-Dokument");
+            assertThat(workspace.jobs()).as("Nein startet nichts").isEmpty();
+            panel[0].output("pdf");
+            assertThat(panel[0].exportBlocked("pdf")).contains(ExportPanel.IN_PROGRESS);
+        });
+        await(() -> Files.isDirectory(out) && list(out).stream().filter(p -> p.toString().endsWith(".pdf")).count() == 2);
+        await(() -> workspace.jobs().stream().filter(job -> job.type() == JobType.CONVERSION)
+                .allMatch(job -> job.state() == JobState.COMPLETED));
+        assertThat(workspace.jobs()).filteredOn(job -> job.type() == JobType.CONVERSION).hasSize(2)
+                .extracting(JobStatus::sourceId).containsExactlyInAnyOrder("handbuch", "anhang");
+        await(() -> panel[0].exportBlocked("pdf") == null);
+        await(() -> texts(panel[0].spaces).stream().filter(text -> text.contains(".pdf")).count() == 2);
+        assertThat(texts(panel[0].spaces)).as("je Space eine Zeile mit Quellentitel")
+                .anyMatch(text -> text.startsWith("Handbuch › ")).anyMatch(text -> text.startsWith("Anhang › "));
+
+        // Eine einzelne Quelle startet ohne Rückfrage, nur für ihre Spaces.
+        asked.clear();
+        SwingUtilities.invokeAndWait(() -> panel[0].selection(new ExportPanel.Selection("anhang", null, null, "Anhang")));
+        await(() -> texts(panel[0].spaces).stream().filter(text -> text.contains(".pdf")).count() == 1);
+        SwingUtilities.invokeAndWait(() -> panel[0].output("analysis"));
+        await(() -> workspace.jobs().stream().filter(job -> job.type() == JobType.CONVERSION
+                && "analysis".equals(job.parameter(ExportConversions.FORMAT))).count() == 1);
+        assertThat(asked).isEmpty();
+        assertThat(workspace.jobs()).filteredOn(job -> job.type() == JobType.CONVERSION
+                && "analysis".equals(job.parameter(ExportConversions.FORMAT))).extracting(JobStatus::sourceId)
+                .containsExactly("anhang");
+    }
+
+    /** Zwei Quellen „handbuch“ und „anhang“ aus je einem Ordner mit einer Seite; Dateiquellen haben je einen Space. */
+    private Path startTwo() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("seite.md"), "# Seite\n\nText.\n");
+        Path more = Files.createDirectories(home.resolve("anhang"));
+        Files.writeString(more.resolve("anhang.md"), "# Anhang\n\nMehr Text.\n");
+        Path out = home.resolve("Ausgabe");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                  output-directory: "%s"
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                    - id: anhang
+                      type: files
+                      title: Anhang
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), out, files, more));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        await(() -> context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED
+                && context.connection("anhang").state() == AppContext.Connection.State.CONNECTED);
+        return out;
+    }
+
+    /** Die Texte der Werte in einer Faktenliste, Zeile für Zeile (Beschriftungen zuerst). */
+    private static List<String> texts(java.awt.Container container) {
+        List<String> texts = new java.util.ArrayList<>();
+        for (java.awt.Component component : container.getComponents()) {
+            if (!component.isVisible()) {
+                continue;
+            }
+            if (component instanceof javax.swing.JLabel label) {
+                texts.add(label.getText());
+            } else if (component instanceof javax.swing.text.JTextComponent area) {
+                texts.add(area.getText());
+            } else if (component instanceof java.awt.Container inner) {
+                texts.addAll(texts(inner));
+            }
+        }
+        return texts;
+    }
+
     private static List<Path> list(Path directory) {
         try (Stream<Path> files = Files.list(directory)) {
             return files.toList();
