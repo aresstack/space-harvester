@@ -309,7 +309,7 @@ public final class Workspace {
     }
 
     /**
-     * Das Fachglossar (#122 Stufe 2, Reiter „Fachglossar“ unter Begriffe) des Core mit den Rechten dieser App
+     * Das Fachglossar (#122 Stufe 2, Reiter „Fachglossar“ unter Analysen) des Core mit den Rechten dieser App
      * ({@code Harvester.glossary()}, {@code glossaryClassification()}); die Rückgabe bleibt {@code Optional}, damit der
      * Reiter ohne Unterbau „noch nicht verfügbar“ zeigen kann.
      */

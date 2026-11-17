@@ -76,80 +76,80 @@ class TermRelationsViewTest {
             return workspace.termRelations(null, null, 10).relations().size() == 2;
         });
 
-        TermsView[] view = new TermsView[1];
+        RelationTab[] view = new RelationTab[1];
         SwingUtilities.invokeAndWait(() -> {
-            view[0] = new TermsView(context);
+            view[0] = RelationTab.all(context);
             view[0].shown();
         });
-        await("zwei Beziehungen in der Liste", () -> view[0].relations().table().getRowCount() == 2);
+        await("zwei Beziehungen in der Liste", () -> view[0].directory().table().getRowCount() == 2);
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(view[0].relations().table().getValueAt(0, 0)).isEqualTo("API");
-            assertThat(view[0].relations().table().getValueAt(0, 1)).isEqualTo("Abkürzung für");
-            assertThat(view[0].relations().table().getValueAt(0, 3)).isEqualTo("Vorgeschlagen");
-            assertThat(view[0].relations().table().getValueAt(0, 4)).isEqualTo("Regel");
-            view[0].relations().table().setRowSelectionInterval(0, 0);
+            assertThat(view[0].directory().table().getValueAt(0, 0)).isEqualTo("API");
+            assertThat(view[0].directory().table().getValueAt(0, 1)).isEqualTo("Abkürzung für");
+            assertThat(view[0].directory().table().getValueAt(0, 3)).isEqualTo("Vorgeschlagen");
+            assertThat(view[0].directory().table().getValueAt(0, 4)).isEqualTo("Regel");
+            view[0].directory().table().setRowSelectionInterval(0, 0);
             view[0].reviewButtons().get(0).doClick();
         });
-        await("API bestätigt", () -> "Bestätigt".equals(view[0].relations().table().getValueAt(0, 3)));
+        await("API bestätigt", () -> "Bestätigt".equals(view[0].directory().table().getValueAt(0, 3)));
 
         // Abgelehnt bleibt die Beziehung sichtbar, am Ende der Liste.
         SwingUtilities.invokeAndWait(() -> {
-            view[0].relations().table().setRowSelectionInterval(1, 1);
+            view[0].directory().table().setRowSelectionInterval(1, 1);
             view[0].reviewButtons().get(1).doClick();
         });
-        await("SSO abgelehnt am Ende", () -> view[0].relations().table().getRowCount() == 2
-                && "Abgelehnt".equals(view[0].relations().table().getValueAt(1, 3)));
+        await("SSO abgelehnt am Ende", () -> view[0].directory().table().getRowCount() == 2
+                && "Abgelehnt".equals(view[0].directory().table().getValueAt(1, 3)));
         assertThat(workspace.termRelations(null, null, 10).relations()).hasSize(1);
         // Nach dem Ablehnen bleibt die Zeile gewählt, grau hinterlegt.
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(view[0].relations().table().getSelectedRow()).isEqualTo(1);
-            java.awt.Component cell = view[0].relations().table().prepareRenderer(
-                    view[0].relations().table().getCellRenderer(0, 4), 0, 4);
+            assertThat(view[0].directory().table().getSelectedRow()).isEqualTo(1);
+            java.awt.Component cell = view[0].directory().table().prepareRenderer(
+                    view[0].directory().table().getCellRenderer(0, 4), 0, 4);
             assertThat(((javax.swing.JLabel) cell).getHorizontalAlignment()).isEqualTo(javax.swing.SwingConstants.LEFT);
             view[0].createRelation("REST", com.aresstack.spaceharvester.application.terms.RelationType.RELATED,
                     "HTTP");
         });
-        await("REST angelegt (drei Zeilen)", () -> view[0].relations().table().getRowCount() == 3);
+        await("REST angelegt (drei Zeilen)", () -> view[0].directory().table().getRowCount() == 3);
         int[] row = new int[1];
         SwingUtilities.invokeAndWait(() -> {
-            row[0] = view[0].relations().table().getSelectedRow();
+            row[0] = view[0].directory().table().getSelectedRow();
             // Ungerichtet stehen die Enden in Schlüsselreihenfolge: HTTP vor REST, wie der Core sortiert.
-            assertThat(view[0].relations().table().getValueAt(row[0], 0)).isEqualTo("HTTP");
-            assertThat(view[0].relations().table().getValueAt(row[0], 2)).isEqualTo("REST");
-            assertThat(view[0].relations().table().getValueAt(row[0], 3)).isEqualTo("Bestätigt");
-            assertThat(view[0].relations().table().getValueAt(row[0], 4)).isEqualTo("Manuell");
+            assertThat(view[0].directory().table().getValueAt(row[0], 0)).isEqualTo("HTTP");
+            assertThat(view[0].directory().table().getValueAt(row[0], 2)).isEqualTo("REST");
+            assertThat(view[0].directory().table().getValueAt(row[0], 3)).isEqualTo("Bestätigt");
+            assertThat(view[0].directory().table().getValueAt(row[0], 4)).isEqualTo("Manuell");
             view[0].reviewButtons().get(2).doClick();
         });
         // Entfernt bleibt die Zeile stehen; die Schaltfläche heißt jetzt Rückgängig.
         await("REST entfernt, Rückgängig angeboten", () ->
-                TermsView.UNDO.equals(view[0].reviewButtons().get(2).getText()));
+                RelationTab.UNDO.equals(view[0].reviewButtons().get(2).getText()));
         assertThat(workspace.termRelations("REST", null, 10).relations()).isEmpty();
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(view[0].relations().table().getRowCount()).isEqualTo(3);
+            assertThat(view[0].directory().table().getRowCount()).isEqualTo(3);
             view[0].reviewButtons().get(2).doClick();
         });
         await("Rückgängig: REST wieder da und gewählt", () ->
-                TermsView.REMOVE.equals(view[0].reviewButtons().get(2).getText())
-                && view[0].relations().table().getSelectedRow() >= 0);
+                RelationTab.REMOVE.equals(view[0].reviewButtons().get(2).getText())
+                && view[0].directory().table().getSelectedRow() >= 0);
         assertThat(workspace.termRelations("REST", null, 10).relations()).hasSize(1);
         // Entfernt und neu angelegt steht sie wieder normal da, nicht durchgestrichen.
         SwingUtilities.invokeAndWait(() -> view[0].reviewButtons().get(2).doClick());
-        await("REST erneut entfernt", () -> TermsView.UNDO.equals(view[0].reviewButtons().get(2).getText()));
+        await("REST erneut entfernt", () -> RelationTab.UNDO.equals(view[0].reviewButtons().get(2).getText()));
         SwingUtilities.invokeAndWait(() -> view[0].createRelation("REST",
                 com.aresstack.spaceharvester.application.terms.RelationType.RELATED, "HTTP"));
         await("REST neu angelegt, nicht mehr entfernt", () ->
-                TermsView.REMOVE.equals(view[0].reviewButtons().get(2).getText())
-                && view[0].relations().table().getSelectedRow() >= 0);
+                RelationTab.REMOVE.equals(view[0].reviewButtons().get(2).getText())
+                && view[0].directory().table().getSelectedRow() >= 0);
         SwingUtilities.invokeAndWait(() -> {
-            int selected = view[0].relations().table().getSelectedRow();
-            assertThat(view[0].relations().table().getValueAt(selected, 0)).isEqualTo("HTTP");
+            int selected = view[0].directory().table().getSelectedRow();
+            assertThat(view[0].directory().table().getValueAt(selected, 0)).isEqualTo("HTTP");
         });
         assertThat(workspace.termRelations("REST", null, 10).relations()).hasSize(1);
         // Spaltenköpfe sortieren.
         SwingUtilities.invokeAndWait(() -> {
-            view[0].relations().table().getRowSorter().toggleSortOrder(0);
-            view[0].relations().table().getRowSorter().toggleSortOrder(0);
-            assertThat(view[0].relations().table().getValueAt(0, 0)).isEqualTo("SSO");
+            view[0].directory().table().getRowSorter().toggleSortOrder(0);
+            view[0].directory().table().getRowSorter().toggleSortOrder(0);
+            assertThat(view[0].directory().table().getValueAt(0, 0)).isEqualTo("SSO");
         });
     }
 
@@ -182,19 +182,19 @@ class TermRelationsViewTest {
                     null, null, null));
         }
 
-        TermsView[] view = new TermsView[1];
+        RelationTab[] view = new RelationTab[1];
         SwingUtilities.invokeAndWait(() -> {
-            view[0] = new TermsView(context);
+            view[0] = RelationTab.all(context);
             view[0].shown();
         });
         // Eine Liste Beziehungen mit Filter nach Art: nur Synonym und Schreibvariante entspricht dem alten Reiter
         // Synonyme; der Filter fragt den Core mit der Art.
         javax.swing.JTable[] synonyms = new javax.swing.JTable[1];
-        SwingUtilities.invokeAndWait(() -> synonyms[0] = view[0].relations().table());
+        SwingUtilities.invokeAndWait(() -> synonyms[0] = view[0].directory().table());
         await("Beziehungen geladen", () -> synonyms[0].getRowCount() == 4);
         SwingUtilities.invokeAndWait(() -> {
-            view[0].relationTab().typeChip(RelationType.SYNONYM).doClick();
-            view[0].relationTab().typeChip(RelationType.VARIANT).doClick();
+            view[0].typeChip(RelationType.SYNONYM).doClick();
+            view[0].typeChip(RelationType.VARIANT).doClick();
         });
         await("nur Synonyme und Schreibvarianten", () -> synonyms[0].getRowCount() == 2);
         SwingUtilities.invokeAndWait(() -> {
@@ -217,17 +217,13 @@ class TermRelationsViewTest {
                 && "API".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 0))
                 && "Schnittstelle".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 2)));
 
-        // #336 „Synonyme vorschlagen“: Knopf oben rechts in der Reiterzeile, nur im Reiter Beziehungen sichtbar; der
+        // #336 „Synonyme vorschlagen“: Knopf oben rechts in der Reiterzeile; der
         // Lauf zeigt den Wartekreis, endet ohne Chat-Modell nach der Regelstufe und meldet das in der Statuszeile.
         java.util.List<String> notices = new java.util.concurrent.CopyOnWriteArrayList<>();
         context.events().subscribe(com.aresstack.spaceharvester.app.event.StatusMessageEvent.class,
                 event -> notices.add(event.getPayload().getText()));
-        RelationTab tab = view[0].relationTab();
+        RelationTab tab = view[0];
         SwingUtilities.invokeAndWait(() -> {
-            view[0].tabs().select(TermsView.GLOSSARY);
-            assertThat(tab.proposeButton().isVisible()).isFalse();
-            view[0].tabs().select(TermsView.RELATIONS);
-            assertThat(tab.proposeButton().isVisible()).isTrue();
             assertThat(tab.proposeButton().isEnabled()).isTrue();
             tab.startSynonymRun(new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Request(
                     com.aresstack.spaceharvester.application.terms.SynonymScope.ALL, null));
@@ -240,31 +236,32 @@ class TermRelationsViewTest {
         assertThat(synonyms[0].getRowCount()).isEqualTo(3);
 
         // Graph: API in der Mitte, Tiefe 2 bringt auch REST; die abgelehnte Beziehung fehlt.
+        TermGraphView[] graph = new TermGraphView[1];
         SwingUtilities.invokeAndWait(() -> {
-            view[0].tabs().select(TermsView.GRAPH);
-            view[0].graph().showTerm("api");
+            graph[0] = new TermGraphView(context);
+            graph[0].showTerm("api");
         });
-        await("Graph Tiefe 2", () -> view[0].graph().canvas().labels().size() == 4);
+        await("Graph Tiefe 2", () -> graph[0].canvas().labels().size() == 4);
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(view[0].graph().canvas().labels()).containsExactly("API",
+            assertThat(graph[0].canvas().labels()).containsExactly("API",
                     "Application Programming Interface", "Schnittstelle", "REST");
-            assertThat(view[0].graph().canvas().graph().edges()).hasSize(3);
-            view[0].graph().depthChoice().setSelectedIndex(0);
+            assertThat(graph[0].canvas().graph().edges()).hasSize(3);
+            graph[0].depthChoice().setSelectedIndex(0);
         });
-        await("Graph Tiefe 1", () -> view[0].graph().canvas().labels().size() == 3);
-        assertThat(view[0].graph().centre()).isEqualTo("api");
+        await("Graph Tiefe 1", () -> graph[0].canvas().labels().size() == 3);
+        assertThat(graph[0].centre()).isEqualTo("api");
     }
 
     @Test
     void newRelationsNeedTwoDifferentTerms() {
-        assertThat(TermsView.invalidNewRelation(" ", "API")).isNotNull();
-        assertThat(TermsView.invalidNewRelation("api", "API ")).isNotNull();
-        assertThat(TermsView.invalidNewRelation("REST", "API")).isNull();
+        assertThat(RelationTab.invalidNewRelation(" ", "API")).isNotNull();
+        assertThat(RelationTab.invalidNewRelation("api", "API ")).isNotNull();
+        assertThat(RelationTab.invalidNewRelation("REST", "API")).isNull();
     }
 
     @Test
     void theListPagesWithTheRelationLimitOfTheCore() {
-        assertThat(TermsView.RELATION_LIMIT).isEqualTo(
+        assertThat(RelationTab.RELATION_LIMIT).isEqualTo(
                 com.aresstack.spaceharvester.application.terms.TermRelations.MAX_LIMIT);
     }
 
