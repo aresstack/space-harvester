@@ -321,6 +321,11 @@ final class ReadingPane extends JPanel {
     /** Vorbereitete Ansicht: HTML mit eigenen Bildadressen, die Bilder dazu und was fehlt. */
     record Prepared(String html, Map<String, Image> scaled, Map<String, BufferedImage> originals,
                     Map<String, VectorDiagram> vectors, int images, int missing, String note) {
+
+        /** Dieselbe Ansicht mit anderem HTML, etwa mit markierten Änderungen ({@link ReadingChanges}). */
+        Prepared withHtml(String changed) {
+            return new Prepared(changed, scaled, originals, vectors, images, missing, note);
+        }
     }
 
     /**
