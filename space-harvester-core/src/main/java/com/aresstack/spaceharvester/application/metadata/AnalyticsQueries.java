@@ -40,11 +40,17 @@ public record AnalyticsQueries(List<Query> space, Query contentViews, int days) 
     /** Name und Vorgabe der Aktivität des Space je Datum (Anlagen, Änderungen, Aufrufe). */
     public static final String ACTIVITY_BY_DATE = "activityByDate";
     public static final String DEFAULT_ACTIVITY_BY_DATE = ROOT + "space/activityByDate?spaceKey={spaceKey}&" + PERIOD;
-    /** Name und Vorgabe der Seitenliste mit Aufrufen je Seite; die Blätterung hängt {@code nextPageToken} an. */
+    /**
+     * Name und Vorgabe der Seitenliste mit Aufrufen je Seite. Der Platzhalter {@value #TOKEN_PLACEHOLDER} bekommt
+     * beim Blättern das {@code nextPageToken} der vorigen Antwort; der Parameter, der ihn trägt, steht in der Vorlage
+     * (hier {@code nextPageToken}) und lässt sich dort umbenennen, denn der Mitschnitt der Oberfläche enthält ihn
+     * nicht. Für die erste Listenseite entfällt der ganze Parameter.
+     */
     public static final String CONTENT_VIEWS = "contentViews";
+    public static final String TOKEN_PLACEHOLDER = "{nextPageToken}";
     public static final String DEFAULT_CONTENT_VIEWS = ROOT + "space/paginated/contentViews?spaceKey={spaceKey}&"
-            + PERIOD + "&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100";
-    /** Der Parameter, mit dem die nächste Listenseite angefordert wird (Wert aus {@code nextPageToken}). */
+            + PERIOD + "&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100&nextPageToken=" + TOKEN_PLACEHOLDER;
+    /** Der Parameter, den eine Vorlage ohne Platzhalter für die nächste Listenseite bekommt. */
     public static final String PAGE_TOKEN = "nextPageToken";
 
     /** Die Vorgabe: die Pfade der Analytics-Oberfläche, 365 Tage. */
@@ -81,7 +87,7 @@ public record AnalyticsQueries(List<Query> space, Query contentViews, int days) 
     /** Ob ein Pfad als Abfrage taugt: unter {@code /rest/}, ohne Leerzeichen und Steuerzeichen. */
     public static boolean validPath(String pathTemplate) {
         return pathTemplate != null && pathTemplate.startsWith("/rest/") && !pathTemplate.contains("#")
-                && pathTemplate.chars().allMatch(c -> c > 0x20 && c < 0x7f || c == '{' || c == '}');
+                && pathTemplate.chars().allMatch(c -> c > 0x20 && c < 0x7f);
     }
 
     /** Eine benannte Abfrage; der Name ist der Schlüssel in der Datei. */
@@ -95,16 +101,47 @@ public record AnalyticsQueries(List<Query> space, Query contentViews, int days) 
             }
         }
 
-        /** Der Pfad mit eingesetzten Werten; Werte werden URL-kodiert. */
+        /**
+         * Der Pfad mit eingesetzten Werten (URL-kodiert); ein Parameter mit {@value #TOKEN_PLACEHOLDER} entfällt,
+         * denn das ist die erste Listenseite.
+         */
         public String path(String spaceKey, Instant from, Instant to) {
-            return pathTemplate.replace("{spaceKey}", encode(spaceKey))
+            return fill(withoutTokenParameter(pathTemplate), spaceKey, from, to);
+        }
+
+        /**
+         * Wie {@link #path(String, Instant, Instant)}, mit dem Token der nächsten Listenseite: an der Stelle von
+         * {@value #TOKEN_PLACEHOLDER}, oder, hat die Vorlage keinen, als Parameter {@value #PAGE_TOKEN} hinten.
+         */
+        public String path(String spaceKey, Instant from, Instant to, String pageToken) {
+            if (pathTemplate.contains(TOKEN_PLACEHOLDER)) {
+                return fill(pathTemplate.replace(TOKEN_PLACEHOLDER, encode(pageToken)), spaceKey, from, to);
+            }
+            String path = path(spaceKey, from, to);
+            return path + (path.contains("?") ? "&" : "?") + PAGE_TOKEN + "=" + encode(pageToken);
+        }
+
+        private static String fill(String template, String spaceKey, Instant from, Instant to) {
+            return template.replace("{spaceKey}", encode(spaceKey))
                     .replace("{from}", encode(stamp(from))).replace("{to}", encode(stamp(to)));
         }
 
-        /** Wie {@link #path}, mit dem Token der nächsten Listenseite als weiterem Parameter. */
-        public String path(String spaceKey, Instant from, Instant to, String pageToken) {
-            String path = path(spaceKey, from, to);
-            return path + (path.contains("?") ? "&" : "?") + PAGE_TOKEN + "=" + encode(pageToken);
+        /** Die Vorlage ohne den Parameter, der den Platzhalter trägt, mit heilem {@code ?} bzw. {@code &}. */
+        static String withoutTokenParameter(String template) {
+            int at = template.indexOf(TOKEN_PLACEHOLDER);
+            if (at < 0) {
+                return template;
+            }
+            int start = Math.max(template.lastIndexOf('&', at), template.lastIndexOf('?', at));
+            int end = template.indexOf('&', at + TOKEN_PLACEHOLDER.length());
+            if (start < 0) {
+                return template;
+            }
+            if (end < 0) {
+                return template.substring(0, start);
+            }
+            // Der entfernte Parameter war der erste: der nächste erbt das Fragezeichen.
+            return template.substring(0, start) + template.charAt(start) + template.substring(end + 1);
         }
 
         private static String stamp(Instant instant) {

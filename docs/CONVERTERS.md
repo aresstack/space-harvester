@@ -240,12 +240,15 @@ Standard-Aufbewahrung von Analytics). Die Datei schreibt die verwendeten Vorlage
 |---|---|---|
 | `details` | `space/details?spaceKey={spaceKey}` | Name, Anlage des Space, Installation des Plugins |
 | `activity-by-date` | `space/activityByDate?spaceKey={spaceKey}&fromDate={from}&toDate={to}&type=total&period=week&timezone=UTC&content=page%2Cblog` | `activityByDate.creates/updates/views[]` je Woche |
-| `content-views` | `space/paginated/contentViews?spaceKey={spaceKey}&…&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100` | `contentViews[]` je Seite: `id`, `title`, `createdAt`, `lastModifiedAt`, `lastViewedAt`, `usersViewed`, `views`, `commentActivityCount`; `nextPageToken` |
+| `content-views` | `space/paginated/contentViews?spaceKey={spaceKey}&…&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100&nextPageToken={nextPageToken}` | `contentViews[]` je Seite: `id`, `title`, `createdAt`, `lastModifiedAt`, `lastViewedAt`, `usersViewed`, `views`, `commentActivityCount`; `nextPageToken` |
 
-Die Aufrufe je Seite kommen aus der **Seitenliste des Space**, nicht aus einer Abfrage je Seite: Sie wird über
-`nextPageToken` (als Parameter `nextPageToken`) zu Ende geblättert, so kostet ein Space wenige Anfragen. Wiederholt
-die Quelle ein Token oder dieselbe erste Seite (der Parameter heißt dort anders), endet die Liste als unvollständig
-(`contentViews.complete: false`) statt endlos. Gefragt wird nur nach Summen, nie nach den Namen der Leser.
+Die Aufrufe je Seite kommen aus der **Seitenliste des Space**, nicht aus einer Abfrage je Seite: Sie wird mit dem
+`nextPageToken` der vorigen Antwort zu Ende geblättert, so kostet ein Space wenige Anfragen. Der Parameter, der das
+Token trägt, steht in der Vorlage mit dem Platzhalter `{nextPageToken}` (Vorgabe `&nextPageToken={nextPageToken}`;
+für die erste Listenseite entfällt er) und lässt sich dort umbenennen, denn der Mitschnitt der Oberfläche enthielt
+ihn nicht; an der HaVdB ignorierte Confluence `nextPageToken` (Angelo 17.11.2026, Liste nach 100 Einträgen
+unvollständig). Wiederholt die Quelle ein Token oder dieselbe erste Seite, endet die Liste als unvollständig
+(`contentViews.complete: false`, Auftrag „unvollständig“ mit Warnung `CONTENT_VIEWS_INCOMPLETE`) statt endlos. Gefragt wird nur nach Summen, nie nach den Namen der Leser.
 
 Antwortet das Plugin auf keine der Abfragen (404: Plugin fehlt oder andere Pfade; 403: für dieses Konto gesperrt),
 scheitert der Auftrag mit `ANALYTICS_UNAVAILABLE`; alles andere in der App ist davon nicht betroffen. Je Seite der
