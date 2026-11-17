@@ -1,4 +1,8 @@
-# Variante	Beschreibung
+# Variante	Beschreibung	Zusammensetzung (gezielt|immer:<Vorstufe>, ohne eigene Pins)
 heute	Originaltext direkt in die Kette (OpenNLP + MaltParser + Regeln)
 vorstufe-hand	Vorstufe „reine Hauptsätze“ von Hand (Architekt, obere Schranke); A und C unverändert
 vorstufe-gemma4-12b	Vorstufe mit gemma4:12b, Anweisung v1, Temperatur 0 (Angelos Rechner, 17.11.2026); A und C unverändert
+gezielt-hand	Vorstufe von Hand nur für die Sätze der Auswahl „nur wo nötig“; PLAUSIBLE-Aussagen des Originals bleiben	gezielt:vorstufe-hand
+gezielt-gemma4-12b	Vorstufe gemma4:12b nur für die Sätze der Auswahl „nur wo nötig“; PLAUSIBLE-Aussagen des Originals bleiben	gezielt:vorstufe-gemma4-12b
+immer-hand	Vorstufe von Hand für alle Sätze, zusammengeführt; PLAUSIBLE-Aussagen des Originals bleiben	immer:vorstufe-hand
+immer-gemma4-12b	Vorstufe gemma4:12b für alle Sätze, zusammengeführt; PLAUSIBLE-Aussagen des Originals bleiben	immer:vorstufe-gemma4-12b

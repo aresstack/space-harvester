@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.nlp.extraction.Mention;
 import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricAnalysis;
 import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricExtraction;
 import com.aresstack.spaceharvester.nlp.extraction.Role;
+import com.aresstack.spaceharvester.nlp.extraction.SimplificationSelection;
 import com.aresstack.spaceharvester.nlp.extraction.Statement;
 import com.aresstack.spaceharvester.nlp.extraction.StatementFeatures;
 import com.aresstack.spaceharvester.nlp.extraction.StatementQuality;
@@ -115,11 +116,48 @@ final class Bewertung {
                     + vorstufe.size() + " Vorstufen-Zeilen, aber " + document.sentences().size() + " Sätze im Pin");
         }
         ObjectCentricAnalysis analysis = new ObjectCentricExtraction(ExtractionSettings.defaults()).analyze(document);
-        Map<String, Mention> mentions = StatementQuality.mentions(analysis);
+        Map<String, Mention> mentions = new java.util.HashMap<>(StatementQuality.mentions(analysis));
         List<Befund> befunde = new ArrayList<>();
         for (Statement statement : analysis.statements()) {
             int origin = vorstufe == null ? statement.sentence() + 1 : vorstufe.get(statement.sentence()).originalsatz();
             befunde.add(befund(analysis, mentions, statement, origin));
+        }
+        List<Befund> ergaenzbar = befunde;
+        if (variante.zusammengesetzt()) {
+            // Zusammenführen je Originalsatz (ADR 0032, FL3): PLAUSIBLE-Aussagen des Originals bleiben, die Vorstufe
+            // ergänzt nur Verben, die im Original fehlen oder dort nicht PLAUSIBLE sind; nur gewählte Sätze
+            ObjectCentricAnalysis heute = new ObjectCentricExtraction(ExtractionSettings.defaults()).analyze(original);
+            Map<String, Mention> heuteMentions = StatementQuality.mentions(heute);
+            mentions.putAll(heuteMentions);
+            List<Befund> ausOriginal = new ArrayList<>();
+            for (Statement statement : heute.statements()) {
+                ausOriginal.add(befund(heute, heuteMentions, statement, statement.sentence() + 1));
+            }
+            Set<Integer> gewaehlt = new HashSet<>();
+            SimplificationSelection.select(original, heute, "immer".equals(variante.art())
+                    ? SimplificationSelection.Mode.ALWAYS : SimplificationSelection.Mode.WHERE_NEEDED)
+                    .keySet().forEach(i -> gewaehlt.add(i + 1));
+            List<Befund> zusammen = new ArrayList<>();
+            List<Befund> ausVorstufe = List.copyOf(befunde);
+            ergaenzbar = new ArrayList<>();
+            for (int satzNr = 1; satzNr <= original.sentences().size(); satzNr++) {
+                int k = satzNr;
+                List<Befund> alt = ausOriginal.stream().filter(b -> b.satz() == k).toList();
+                if (vorstufe == null || !gewaehlt.contains(k)) {
+                    zusammen.addAll(alt);
+                    continue;
+                }
+                List<Befund> bleibt = alt.stream().filter(b -> b.stufe() == StatementQuality.Level.PLAUSIBLE).toList();
+                List<Befund> neu = ausVorstufe.stream().filter(b -> b.satz() == k
+                        && bleibt.stream().noneMatch(o -> gleichesVerb(o, b))).toList();
+                zusammen.addAll(bleibt);
+                zusammen.addAll(neu);
+                ergaenzbar.addAll(neu);
+                alt.stream().filter(b -> b.stufe() != StatementQuality.Level.PLAUSIBLE
+                        && neu.stream().noneMatch(n -> gleichesVerb(n, b))).forEach(zusammen::add);
+            }
+            befunde.clear();
+            befunde.addAll(zusammen);
         }
 
         Zahlen zahlen = new Zahlen();
@@ -204,9 +242,14 @@ final class Bewertung {
         }
 
         if (vorstufe != null) {
-            ergaenzungen(original, analysis, mentions, befunde, zahlen, prefix);
+            ergaenzungen(original, analysis, mentions, ergaenzbar, zahlen, prefix);
         }
         return zahlen;
+    }
+
+    private static boolean gleichesVerb(Befund a, Befund b) {
+        return a.lemma() != null && b.lemma() != null && (verbPasst(a.lemma(), b.lemma()) || verbPasst(b.lemma(),
+                a.lemma()));
     }
 
     // ---- Abgleich ----------------------------------------------------------------------------------------------

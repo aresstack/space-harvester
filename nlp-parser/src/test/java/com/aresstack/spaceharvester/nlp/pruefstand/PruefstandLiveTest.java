@@ -54,7 +54,7 @@ class PruefstandLiveTest {
         for (Textsatz satz : Textsatz.alle()) {
             for (Textsatz.Variante variante : satz.varianten()) {
                 for (Textsatz.Text text : satz.texte()) {
-                    if (variante.vorstufe() && satz.vorstufe(variante, text) == null) {
+                    if (variante.zusammengesetzt() || variante.vorstufe() && satz.vorstufe(variante, text) == null) {
                         continue;
                     }
                     String pfad = satz.pinPfad(variante, text);
