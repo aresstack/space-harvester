@@ -53,6 +53,10 @@ class UpdateSummaryTest {
     private boolean modelAvailable = true;
     private Consumer<String> recorded = ignored -> {
     };
+    private static String key(String sourceId, String updateId, String spaceKey) {
+        return sourceId + "/" + updateId + "/" + spaceKey;
+    }
+
     private final ChangeLogStore store = new ChangeLogStore() {
         @Override
         public List<ChangeEntry> changeEntries(String sourceId) {
@@ -75,16 +79,22 @@ class UpdateSummaryTest {
         }
 
         @Override
-        public Optional<StoredSummary> summary(String sourceId, String updateId) {
-            return Optional.ofNullable(summaries.get(sourceId + "/" + updateId));
+        public Optional<StoredSummary> summary(String sourceId, String updateId, String spaceKey) {
+            return Optional.ofNullable(summaries.get(key(sourceId, updateId, spaceKey)));
         }
 
         @Override
-        public Set<String> summarizedUpdates(String sourceId) {
+        public Set<String> summarizedUpdates(String sourceId, String spaceKey) {
             Set<String> found = new HashSet<>();
-            summaries.values().stream().filter(stored -> stored.sourceId().equals(sourceId))
+            summaries.values().stream().filter(stored -> stored.sourceId().equals(sourceId)
+                            && java.util.Objects.equals(stored.spaceKey(), spaceKey))
                     .forEach(stored -> found.add(stored.updateId()));
             return found;
+        }
+
+        @Override
+        public List<StoredSummary> summaries(String sourceId) {
+            return summaries.values().stream().filter(stored -> stored.sourceId().equals(sourceId)).toList();
         }
 
         @Override
@@ -95,13 +105,13 @@ class UpdateSummaryTest {
         }
 
         @Override
-        public void deleteSummary(String sourceId, String updateId) {
-            summaries.remove(sourceId + "/" + updateId);
+        public void deleteSummary(String sourceId, String updateId, String spaceKey) {
+            summaries.remove(key(sourceId, updateId, spaceKey));
         }
 
         @Override
         public void saveSummary(StoredSummary summary) {
-            summaries.put(summary.sourceId() + "/" + summary.updateId(), summary);
+            summaries.put(key(summary.sourceId(), summary.updateId(), summary.spaceKey()), summary);
             recorded.accept(summary.sourceId());
         }
     };
@@ -216,7 +226,7 @@ class UpdateSummaryTest {
         assertThat(inputs).hasSize(1);
         assertThat(inputs.getFirst()).contains("Startseite").doesNotContain("Geheimplan").doesNotContain("\"102\"")
                 .contains("\"nichtLesbar\":1").contains("Altes Vorwort", "Neues Vorwort");
-        assertThat(summaries.get("wiki/" + id).inputPages())
+        assertThat(summaries.get(key("wiki", id, null)).inputPages())
                 .containsExactly(new StoredSummary.InputPage("DEV", "100", true));
         UpdateSummary summary = log.summary(CALLER, "wiki", id).orElseThrow();
         assertThat(summary.text()).isEqualTo("Die Startseite wurde überarbeitet.");
@@ -229,7 +239,7 @@ class UpdateSummaryTest {
         assertThat(summary.createdAt()).isEqualTo(T0.plusSeconds(7200));
         assertThat(summary.stale()).isFalse();
         assertThat(log.updates(CALLER, "wiki").getFirst().summarized()).isTrue();
-        assertThat(summaries.get("wiki/" + id).at()).isEqualTo(at(30));
+        assertThat(summaries.get(key("wiki", id, null)).at()).isEqualTo(at(30));
     }
 
     @Test
@@ -271,7 +281,7 @@ class UpdateSummaryTest {
         released.add("103");
         run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN));
         assertThat(log.summary(CALLER, "wiki", ChangeUpdate.OPEN).orElseThrow().stale()).isFalse();
-        assertThat(summaries.get("wiki/" + ChangeUpdate.OPEN).at()).isEqualTo(T0.plusSeconds(7200));
+        assertThat(summaries.get(key("wiki", ChangeUpdate.OPEN, null)).at()).isEqualTo(T0.plusSeconds(7200));
 
         row(20, "103", "DEV", ChangeKind.NEW, "Nachzügler");
 
@@ -427,7 +437,7 @@ class UpdateSummaryTest {
 
         assertThat(inputs.getFirst()).contains("Anfang der Riesenänderung", "\"gekuerzt\":true");
         assertThat(inputs.getFirst().split("\"inhaltUnbekannt\":true", -1)).as("nur Seite 100").hasSize(2);
-        assertThat(summaries.get("wiki/" + id).inputPages())
+        assertThat(summaries.get(key("wiki", id, null)).inputPages())
                 .containsExactly(new StoredSummary.InputPage("DEV", "100", false),
                         new StoredSummary.InputPage("DEV", "101", true));
         assertThat(log.summary(CALLER, "wiki", id).orElseThrow().unreadableChanges()).isEqualTo(1);
@@ -495,7 +505,35 @@ class UpdateSummaryTest {
                 .isLessThanOrEqualTo(UpdateSummarizer.MAX_REQUEST_CHARS));
         assertThat(inputs).filteredOn(input -> input.contains("\"aenderungen\"")).allSatisfy(input ->
                 assertThat(input).contains("\"gekuerzt\":true"));
-        assertThat(summaries.get("wiki/" + ChangeUpdate.OPEN).statements().getFirst().pageIds())
+        assertThat(summaries.get(key("wiki", ChangeUpdate.OPEN, null)).statements().getFirst().pageIds())
                 .hasSize(UpdateSummarizer.MAX_STATEMENT_PAGES);
+    }
+
+    @Test
+    void eachLevelHasItsOwnSummaryFromOnlyThePagesOfItsSpace() {
+        String id = oneUpdate();
+
+        JobStatus dev = log.summarize(CALLER, "wiki", id, "DEV");
+        assertThat(dev.partitionKey()).isEqualTo("DEV");
+        assertThat(dev.parameters()).containsEntry(ChangeLog.SPACE_PARAMETER, "DEV");
+        assertThat(run(dev).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(inputs.getLast()).contains("Startseite").doesNotContain("\"nichtLesbar\":1");
+
+        JobStatus ops = run(log.summarize(CALLER, "wiki", id, "OPS"));
+        assertThat(ops.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(inputs.getLast()).doesNotContain("Startseite").contains("\"nichtLesbar\":1");
+
+        assertThat(log.summary(CALLER, "wiki", id, "DEV")).hasValueSatisfying(found -> {
+            assertThat(found.spaceKey()).isEqualTo("DEV");
+            assertThat(found.stale()).isFalse();
+        });
+        assertThat(log.summary(CALLER, "wiki", id, "OPS")).isPresent();
+        assertThat(log.summary(CALLER, "wiki", id)).isEmpty();
+        assertThat(log.updates(CALLER, "wiki").getFirst().summarized()).isFalse();
+
+        released.remove("100");
+        log.withdrawn(List.of(new PageKey("wiki", "100")));
+        assertThat(summaries.get(key("wiki", id, "DEV"))).isNull();
+        assertThat(summaries.get(key("wiki", id, "OPS"))).isNotNull();
     }
 }

@@ -88,6 +88,8 @@ final class ChangeLogSchema {
     private static final String S = SUMMARY + ".";
     static final String SUMMARY_SOURCE_ID = S + "sourceId";
     private static final String SUMMARY_UPDATE = S + "update";
+    /** Space der Ebene (ADR 0031); fehlt bei der ganzen Quelle. */
+    private static final String SUMMARY_SPACE = S + "space";
     private static final String SUMMARY_AT = S + "at";
     private static final String SUMMARY_JSON = S + "json";
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -400,13 +402,22 @@ final class ChangeLogSchema {
                 .build();
     }
 
-    /** Eindeutige ID einer Zusammenfassung: Quelle und Update. */
-    static Term summaryTerm(String sourceId, String updateId) {
-        return new Term(PageCacheSchema.ID, PageCacheSchema.id(SUMMARY, sourceId, updateId));
+    /**
+     * Eindeutige ID einer Zusammenfassung: Quelle, Update und Ebene; die ganze Quelle behält die ID ohne Space, die vor
+     * ADR 0031 galt.
+     */
+    static Term summaryTerm(String sourceId, String updateId, String spaceKey) {
+        return new Term(PageCacheSchema.ID, spaceKey == null ? PageCacheSchema.id(SUMMARY, sourceId, updateId)
+                : PageCacheSchema.id(SUMMARY, sourceId, updateId, spaceKey));
     }
 
     static String summaryUpdate(Document doc) {
         return doc.get(SUMMARY_UPDATE);
+    }
+
+    /** Der Space der Ebene, {@code null} für die ganze Quelle. */
+    static String summarySpace(Document doc) {
+        return doc.get(SUMMARY_SPACE);
     }
 
     static Document summary(StoredSummary summary) {
@@ -431,10 +442,11 @@ final class ChangeLogSchema {
         }
         Document doc = new Document();
         doc.add(new StringField(PageCacheSchema.TYPE, SUMMARY, Field.Store.NO));
-        doc.add(new StringField(PageCacheSchema.ID, summaryTerm(summary.sourceId(), summary.updateId()).text(),
-                Field.Store.NO));
+        doc.add(new StringField(PageCacheSchema.ID,
+                summaryTerm(summary.sourceId(), summary.updateId(), summary.spaceKey()).text(), Field.Store.NO));
         doc.add(new StringField(SUMMARY_SOURCE_ID, summary.sourceId(), Field.Store.YES));
         doc.add(new StoredField(SUMMARY_UPDATE, summary.updateId()));
+        stored(doc, SUMMARY_SPACE, summary.spaceKey());
         doc.add(new LongField(SUMMARY_AT, PageCacheSchema.nanos(summary.at()), Field.Store.NO));
         doc.add(new StoredField(SUMMARY_JSON, JSON.writeValueAsString(json)));
         return doc;
@@ -453,7 +465,8 @@ final class ChangeLogSchema {
             inputs.add(new StoredSummary.InputPage(page.path("spaceKey").asString(), page.path("pageId").asString(),
                     page.path("content").asBoolean(false)));
         }
-        return new StoredSummary(doc.get(SUMMARY_SOURCE_ID), doc.get(SUMMARY_UPDATE), json.path("text").asString(),
+        return new StoredSummary(doc.get(SUMMARY_SOURCE_ID), doc.get(SUMMARY_UPDATE), doc.get(SUMMARY_SPACE),
+                json.path("text").asString(),
                 statements, json.path("model").asString(), Instant.parse(json.path("createdAt").asString()),
                 Instant.parse(json.path("at").asString()), json.path("unreadableChanges").asInt(),
                 json.path("reportSha256").asString(), inputs);
