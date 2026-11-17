@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.release.PageReleases;
@@ -182,6 +183,29 @@ class SynonymAutomaticTest {
 
         assertThat(jobs.status(status.id()).state()).isEqualTo(JobState.COMPLETED);
         assertThat(synonyms()).isEmpty();
+    }
+
+    @Test
+    void aRunCancelledBeforeItStartsDoesNotBlockTheSource() {
+        List<Runnable> queued = new ArrayList<>();
+        Jobs held = new Jobs(new InMemoryJobStore(), queued::add, new JobLimits(1, 10, Duration.ofHours(1)),
+                Clock.fixed(T0, ZoneOffset.UTC));
+        // Ein laufender Auftrag belegt den einzigen Platz; der Synonymlauf wartet dahinter (QUEUED).
+        held.submit(JobType.ENRICHMENT, "wiki", null, "anderer", JobTask.blocking(context -> { }));
+        SynonymCandidates candidates = new SynonymCandidates(catalog, store,
+                key -> Optional.ofNullable(cache.get(key)).map(PageSnapshot::header),
+                key -> Optional.ofNullable(cache.get(key)).flatMap(PLAIN::project), relations, () -> provider,
+                released::contains, new TermProcessor().version());
+        SynonymDiscovery waiting = new SynonymDiscovery(catalog, candidates,
+                new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), relations, model,
+                ResolutionCache.inMemory(), held, () -> budget, Clock.fixed(T0, ZoneOffset.UTC));
+
+        JobStatus first = waiting.automatic("wiki").orElseThrow();
+        assertThat(held.status(first.id()).state()).isEqualTo(JobState.QUEUED);
+        assertThat(waiting.automatic("wiki")).as("ein wartender Lauf je Quelle").isEmpty();
+        held.cancel(first.id());
+
+        assertThat(waiting.automatic("wiki")).isPresent();
     }
 
     @Test

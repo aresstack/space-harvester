@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -111,8 +112,11 @@ public class SynonymDiscovery {
     private final Supplier<SynonymBudget> budget;
     private final Clock clock;
     private final Set<String> started = ConcurrentHashMap.newKeySet();
-    /** Quellen mit einem wartenden automatischen Lauf (SY1); höchstens einer je Quelle. */
-    private final Set<String> waiting = ConcurrentHashMap.newKeySet();
+    /**
+     * Wartender automatischer Lauf je Quelle (SY1), Quelle → Auftrag; höchstens einer je Quelle. Zählt nur, solange der
+     * Auftrag noch nicht gestartet ist: ein vor dem Start abgebrochener Auftrag sperrt die Quelle nicht.
+     */
+    private final Map<String, String> waiting = new ConcurrentHashMap<>();
     /** Stand je Quelle nach dem letzten vollständigen automatischen Lauf ({@link SynonymCandidates#state}). */
     private final Map<String, String> finished = new ConcurrentHashMap<>();
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
@@ -245,13 +249,19 @@ public class SynonymDiscovery {
             return Optional.empty();
         }
         String state = candidates.state(sourceId);
-        if (state.equals(finished.get(sourceId)) || !waiting.add(sourceId)) {
+        if (state.equals(finished.get(sourceId))) {
             return Optional.empty();
         }
-        SynonymScope scope = SynonymScope.source(sourceId);
-        try {
+        synchronized (waiting) {
+            String pending = waiting.get(sourceId);
+            // Der Auftrag nimmt sich beim Start selbst heraus; steht er noch hier und ist nicht beendet, wartet er.
+            if (pending != null && stillWaiting(pending)) {
+                return Optional.empty();
+            }
+            waiting.remove(sourceId);
+            SynonymScope scope = SynonymScope.source(sourceId);
             JobStatus status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, JobTask.blocking(context -> {
-                waiting.remove(sourceId);
+                waiting.remove(sourceId, context.jobId());
                 synchronized (lock(scope)) {
                     // Der Stand vor dem Lauf: Was sich währenddessen ändert, löst den nächsten Lauf aus.
                     String before = candidates.state(sourceId);
@@ -260,11 +270,23 @@ public class SynonymDiscovery {
                 }
             }));
             started.add(status.id());
+            if (!finishedState(status.state())) {
+                waiting.put(sourceId, status.id());
+            }
             LOG.log(System.Logger.Level.INFO, "Synonymerkennung für {0} automatisch eingeplant", sourceId);
             return Optional.of(status);
+        }
+    }
+
+    private static boolean finishedState(JobState state) {
+        return state == JobState.COMPLETED || state == JobState.FAILED || state == JobState.CANCELLED;
+    }
+
+    private boolean stillWaiting(String jobId) {
+        try {
+            return !finishedState(jobs.status(jobId).state());
         } catch (RuntimeException e) {
-            waiting.remove(sourceId);
-            throw e;
+            return false;
         }
     }
 
