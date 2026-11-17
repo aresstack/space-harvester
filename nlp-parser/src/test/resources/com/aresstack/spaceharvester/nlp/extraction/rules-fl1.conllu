@@ -1,0 +1,155 @@
+# Erfundene Gold-Analysen zu den Regeln aus ADR 0032 (FL1), je Regel mit Gegenprobe; Konventionen von UD German GSD.
+# sent_id = 1
+# text = Das Buch wird durch die Bibliothekarin geprüft.
+1	Das	der	DET	_	_	2	det	_	_
+2	Buch	Buch	NOUN	_	_	7	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	7	aux:pass	_	_
+4	durch	durch	ADP	_	_	6	case	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Bibliothekarin	Bibliothekarin	NOUN	_	_	7	obl	_	_
+7	geprüft	prüfen	VERB	_	_	0	root	_	_
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 2
+# text = Die Bibliothekarin prüft das Buch durch eine Stichprobe.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bibliothekarin	Bibliothekarin	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	das	der	DET	_	_	5	det	_	_
+5	Buch	Buch	NOUN	_	_	3	obj	_	_
+6	durch	durch	ADP	_	_	8	case	_	_
+7	eine	ein	DET	_	_	8	det	_	_
+8	Stichprobe	Stichprobe	NOUN	_	_	3	obl	_	_
+9	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Das Buch wird von der Leiterin durch eine Stichprobe geprüft.
+1	Das	der	DET	_	_	2	det	_	_
+2	Buch	Buch	NOUN	_	_	10	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	10	aux:pass	_	_
+4	von	von	ADP	_	_	6	case	_	_
+5	der	der	DET	_	_	6	det	_	_
+6	Leiterin	Leiterin	NOUN	_	_	10	obl:agent	_	_
+7	durch	durch	ADP	_	_	9	case	_	_
+8	eine	ein	DET	_	_	9	det	_	_
+9	Stichprobe	Stichprobe	NOUN	_	_	10	obl	_	_
+10	geprüft	prüfen	VERB	_	_	0	root	_	_
+11	.	.	PUNCT	_	_	10	punct	_	_
+
+# sent_id = 4
+# text = Das Buch ist von dem Leser zurückzugeben.
+1	Das	der	DET	_	_	2	det	_	_
+2	Buch	Buch	NOUN	_	_	7	nsubj:pass	_	_
+3	ist	sein	AUX	_	_	7	aux:pass	_	_
+4	von	von	ADP	_	_	6	case	_	_
+5	dem	der	DET	_	_	6	det	_	_
+6	Leser	Leser	NOUN	_	_	7	obl	_	_
+7	zurückzugeben	zurückgeben	VERB	_	_	0	root	_	_
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 5
+# text = Das Buch wird von dem Regal genommen.
+1	Das	der	DET	_	_	2	det	_	_
+2	Buch	Buch	NOUN	_	_	7	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	7	aux:pass	_	_
+4	von	von	ADP	_	_	6	case	_	_
+5	dem	der	DET	_	_	6	det	_	_
+6	Regal	Regal	NOUN	_	_	7	obl	_	_
+7	genommen	nehmen	VERB	_	_	0	root	_	_
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 6
+# text = Der Leser leiht und liest das Buch.
+1	Der	der	DET	_	_	2	det	_	_
+2	Leser	Leser	NOUN	_	_	3	nsubj	_	_
+3	leiht	leihen	VERB	_	_	0	root	_	_
+4	und	und	CCONJ	_	_	5	cc	_	_
+5	liest	lesen	VERB	_	_	3	conj	_	_
+6	das	der	DET	_	_	7	det	_	_
+7	Buch	Buch	NOUN	_	_	5	obj	_	_
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 7
+# text = Die Leserin zahlt, sobald die Mahnung eintrifft, und informiert die Bibliothek.
+1	Die	der	DET	_	_	2	det	_	_
+2	Leserin	Leserin	NOUN	_	_	3	nsubj	_	_
+3	zahlt	zahlen	VERB	_	_	0	root	_	_
+4	,	,	PUNCT	_	_	8	punct	_	_
+5	sobald	sobald	SCONJ	_	_	8	mark	_	_
+6	die	der	DET	_	_	7	det	_	_
+7	Mahnung	Mahnung	NOUN	_	_	8	nsubj	_	_
+8	eintrifft	eintreffen	VERB	_	_	3	advcl	_	_
+9	,	,	PUNCT	_	_	11	punct	_	_
+10	und	und	CCONJ	_	_	11	cc	_	_
+11	informiert	informieren	VERB	_	_	8	conj	_	_
+12	die	der	DET	_	_	13	det	_	_
+13	Bibliothek	Bibliothek	NOUN	_	_	11	obj	_	_
+14	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 8
+# text = Die Bibliothek bittet, das Buch zurückzugeben.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bibliothek	Bibliothek	NOUN	_	_	3	nsubj	_	_
+3	bittet	bitten	VERB	_	_	0	root	_	_
+4	,	,	PUNCT	_	_	7	punct	_	_
+5	das	der	DET	_	_	6	det	_	_
+6	Buch	Buch	NOUN	_	_	7	nsubj	_	_
+7	zurückzugeben	zurückgeben	VERB	_	_	3	ccomp	_	_
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Der Online-Katalog zeigt das Buch.
+1	Der	der	DET	_	_	4	det	_	_
+2	Online	Online	NOUN	_	_	4	compound	_	SpaceAfter=No
+3	-	-	PUNCT	_	_	4	punct	_	SpaceAfter=No
+4	Katalog	Katalog	NOUN	_	_	5	nsubj	_	_
+5	zeigt	zeigen	VERB	_	_	0	root	_	_
+6	das	der	DET	_	_	7	det	_	_
+7	Buch	Buch	NOUN	_	_	5	obj	_	_
+8	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 10
+# text = Der Load Balancer verteilt die Last.
+1	Der	der	DET	_	_	2	det	_	_
+2	Load	Load	X	_	_	4	nsubj	_	_
+3	Balancer	Balancer	X	_	_	2	flat	_	_
+4	verteilt	verteilen	VERB	_	_	0	root	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Last	Last	NOUN	_	_	4	obj	_	_
+7	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 11
+# text = Die Online Ausleihe prüft das Konto.
+1	Die	der	DET	_	_	3	det	_	_
+2	Online	Online	NOUN	_	_	3	compound	_	_
+3	Ausleihe	Ausleihe	NOUN	_	_	4	nsubj	_	_
+4	prüft	prüfen	VERB	_	_	0	root	_	_
+5	das	der	DET	_	_	6	det	_	_
+6	Konto	Konto	NOUN	_	_	4	obj	_	_
+7	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 12
+# text = Dass das Buch fehlt, meldet die Bibliothek.
+1	Dass	dass	SCONJ	_	_	4	mark	_	_
+2	das	der	DET	_	_	3	det	_	_
+3	Buch	Buch	NOUN	_	_	4	nsubj	_	_
+4	fehlt	fehlen	VERB	_	_	6	csubj	_	_
+5	,	,	PUNCT	_	_	4	punct	_	_
+6	meldet	melden	VERB	_	_	0	root	_	_
+7	die	der	DET	_	_	8	det	_	_
+8	Bibliothek	Bibliothek	NOUN	_	_	6	nsubj	_	_
+9	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 13
+# text = Der Leser, der das Buch leiht, zahlt.
+1	Der	der	DET	_	_	2	det	_	_
+2	Leser	Leser	NOUN	_	_	9	nsubj	_	_
+3	,	,	PUNCT	_	_	7	punct	_	_
+4	der	der	PRON	_	_	7	nsubj	_	_
+5	das	der	DET	_	_	6	det	_	_
+6	Buch	Buch	NOUN	_	_	7	obj	_	_
+7	leiht	leihen	VERB	_	_	2	acl	_	_
+8	,	,	PUNCT	_	_	7	punct	_	_
+9	zahlt	zahlen	VERB	_	_	0	root	_	_
+10	.	.	PUNCT	_	_	9	punct	_	_
+

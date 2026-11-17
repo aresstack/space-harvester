@@ -129,10 +129,6 @@ public final class KnowledgeGraphJsonLd {
     }
 
     /**
-     * IRI einer Erwähnung oder Aussage aus ihrer lokalen ID ({@code quelle/seite@fassung#s1.t2}): Fassung plus lokaler
-     * Teil, kollisionsfrei über Quellen, Seiten und Fassungen.
-     */
-    /**
      * Aussage, auf die ein Teilsatz-Beteiligter verweist: gleicher Satz, Prädikat am Kopf des Teilsatzes
      * ({@code …#s3.t4} → {@code …#s3.v4}), oder {@code null}, wenn der Kopf kein Vollverb ist.
      */
@@ -145,6 +141,10 @@ public final class KnowledgeGraphJsonLd {
         return result.statements().stream().anyMatch(s -> s.id().equals(candidate)) ? candidate : null;
     }
 
+    /**
+     * IRI einer Erwähnung oder Aussage aus ihrer lokalen ID ({@code quelle/seite@fassung#s1.t2}): Fassung plus lokaler
+     * Teil, kollisionsfrei über Quellen, Seiten und Fassungen.
+     */
     public static String node(PageStatementAnalysis analysis, String localId) {
         int hash = localId.lastIndexOf('#');
         String local = hash < 0 ? localId : localId.substring(hash + 1);

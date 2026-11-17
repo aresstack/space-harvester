@@ -117,6 +117,28 @@ class KnowledgeGraphTest {
     }
 
     @Test
+    void aClauseParticipantIsNeitherATermNorAMatch() {
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("handbuch", "7", "Die Buchhaltung prüft den Antrag.");
+        // Teilsatz-Beteiligter (ADR 0032, FL1) mit derselben Grundform wie ein Begriff der anderen Seite
+        PageStatementAnalysis stored = store.find(new PageKey("wiki", "1")).orElseThrow();
+        ParsedStatements result = stored.result();
+        ParsedStatements.Mention object = result.mentions().getLast();
+        ParsedStatements.Mention clause = new ParsedStatements.Mention(object.id(), object.sentence(), object.start(),
+                object.end(), "dass der Antrag fehlt", "Antrag", "Antrag", ParsedStatements.MentionKind.CLAUSE, false,
+                Set.of());
+        List<ParsedStatements.Mention> mentions = new java.util.ArrayList<>(result.mentions());
+        mentions.set(mentions.size() - 1, clause);
+        store.replace(stored.withResult(new ParsedStatements(result.sentences(), mentions, result.statements(),
+                result.attachments(), result.components(), result.conllu())));
+
+        assertThat(graph().search(CALLER, "Antrag", 10).hits())
+                .allSatisfy(hit -> assertThat(hit.page().key().sourceId()).isEqualTo("handbuch"));
+        assertThat(graph().links(CALLER, new PageKey("wiki", "1")))
+                .noneMatch(link -> link.mentions().contains(clause.id()));
+    }
+
+    @Test
     void aConfirmedTermRelationConnectsDifferentWordsAsSuch() {
         analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
         analyse("handbuch", "7", "Die Buchhaltung prüft die Quittung.");
