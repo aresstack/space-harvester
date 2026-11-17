@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SecretVaultTest;
+import com.aresstack.spaceharvester.app.ui.controls.WordTable;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -59,27 +60,39 @@ class StandingWordsEditorTest {
         StandingWordsEditor[] editor = new StandingWordsEditor[1];
         SwingUtilities.invokeAndWait(() -> {
             editor[0] = new StandingWordsEditor(context);
-            StandingWordsEditor.WordList outdated = editor[0].outdated;
+            WordTable outdated = editor[0].outdated;
             assertThat(outdated.words()).isEqualTo(StandingSettings.DEFAULT_OUTDATED_WORDS);
-            assertThat(outdated.table.getValueAt(0, StandingWordsEditor.ACTIVE)).isEqualTo(true);
+            assertThat(outdated.table().getValueAt(0, WordTable.ACTIVE)).isEqualTo(true);
             assertThat(editor[0].changed()).isFalse();
 
-            outdated.input.setText("Alt-Stand");
-            outdated.add.doClick();
-            assertThat(outdated.invalidText()).isEqualTo(StandingWordsEditor.INVALID);
-            outdated.input.setText("Altbestand");
-            outdated.add.doClick();
+            outdated.input().setText("Alt-Stand");
+            outdated.addButton().doClick();
+            assertThat(outdated.invalidText()).isEqualTo(WordTable.INVALID);
+            outdated.input().setText("Altbestand");
+            outdated.addButton().doClick();
             assertThat(outdated.words()).endsWith("altbestand");
-            assertThat(outdated.input.getText()).isEmpty();
+            assertThat(outdated.input().getText()).isEmpty();
 
             // Ein Vorgabewort lässt sich nur abhaken, nicht löschen.
             outdated.remove("archiv");
             assertThat(outdated.words()).contains("archiv");
-            outdated.table.setValueAt(false, 0, StandingWordsEditor.ACTIVE);
+            outdated.table().setValueAt(false, 0, WordTable.ACTIVE);
             assertThat(outdated.active()).doesNotContain("archiv").contains("altbestand");
 
-            editor[0].draft.allOff();
+            // „Alle aus“ fragt mit „Wirklich …“; bei Nein bleibt alles.
+            java.util.List<String> asked = new java.util.ArrayList<>();
+            editor[0].draft.confirmWith((heading, question) -> {
+                asked.add(question);
+                return false;
+            });
+            editor[0].draft.allOffButton().doClick();
+            assertThat(asked).containsExactly(WordTable.ALL_OFF_QUESTION);
+            assertThat(editor[0].draft.active()).isEqualTo(StandingSettings.DEFAULT_DRAFT_WORDS);
+            editor[0].draft.confirmWith((heading, question) -> true);
+            editor[0].draft.allOffButton().doClick();
             assertThat(editor[0].draft.active()).isEmpty();
+            assertThat(editor[0].outdated.excluded()).containsExactly("archiv");
+            assertThat(editor[0].outdated.added()).containsExactly("altbestand");
             assertThat(editor[0].changed()).isTrue();
             editor[0].save();
         });
@@ -94,7 +107,7 @@ class StandingWordsEditorTest {
         await(() -> !editor[0].changed());
         SwingUtilities.invokeAndWait(() -> {
             assertThat(editor[0].outdated.words()).as("abgehaktes Vorgabewort bleibt sichtbar").contains("archiv");
-            assertThat(editor[0].draft.table.getValueAt(0, StandingWordsEditor.ACTIVE)).isEqualTo(false);
+            assertThat(editor[0].draft.table().getValueAt(0, WordTable.ACTIVE)).isEqualTo(false);
 
             editor[0].outdated.reset();
             editor[0].draft.reset();

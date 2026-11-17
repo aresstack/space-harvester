@@ -393,6 +393,13 @@ final class StandingTab extends JPanel {
         }
     }
 
+    /** Die Einstellungen wurden neu geladen (etwa die Wörter für den Stand): beim nächsten Zeigen neu lesen. */
+    void settingsChanged() {
+        if (selection != null) {
+            changed();
+        }
+    }
+
     /** Liest die Sicht neu, etwa nach einer Entscheidung oder dem Ende einer Aussagenanalyse. */
     private void changed() {
         dirty = true;

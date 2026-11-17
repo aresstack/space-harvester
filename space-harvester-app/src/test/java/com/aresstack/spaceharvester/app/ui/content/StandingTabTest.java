@@ -343,6 +343,19 @@ class StandingTabTest {
     }
 
     @Test
+    void reloadedSettingsAreReadAgainWhenShown() {
+        Fixture fixture = new Fixture(view());
+        StandingTab tab = fixture.shownTab();
+        tab.shown(false);
+
+        tab.settingsChanged();
+        assertThat(fixture.reads.get()).as("verdeckt: erst beim Zeigen").isEqualTo(1);
+        tab.shown(true);
+
+        assertThat(fixture.reads.get()).isEqualTo(2);
+    }
+
+    @Test
     void aFailedSubscriptionIsNamedInTheStatusLine() {
         Fixture fixture = new Fixture(view());
         fixture.failSubscribe = true;
