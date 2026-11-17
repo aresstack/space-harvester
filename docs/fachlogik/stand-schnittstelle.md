@@ -202,3 +202,22 @@ Einträge aus veralteten Analysen (`StatusQuoEntry#analysisStale`, Seite `PageSt
 - `StatementConflicts.of` vergleicht sie nie;
 - in der Leseempfehlung geben sie keine Punkte für Aussagen, keine Begriffe und keine Erwähnungen des Themas (mit Thema
   fehlt eine veraltete Seite daher); der Abzug `STALE_ANALYSIS` bleibt.
+
+## Analysen löschen: `KnowledgeGraph#delete(caller, pages)`
+
+Für den Knopf „Analysen löschen“ am gewählten Knoten: löscht die gespeicherten Aussagenanalysen der Seiten aus der
+Auswahl (etwa über `holdings().resolve(selection)`), nur mit Leserecht, samt Analysen der Anhänge und enthaltenen
+Dateien; Seiten bleiben. Danach meldet `KnowledgeGraph#subscribe(Runnable)`, damit Stand, Graph und Glossar neu lesen.
+Neue Analysen aus Aufträgen melden sich dort noch nicht.
+
+Was mit dem Löschen geschieht:
+
+- Gelöscht wird die gespeicherte Analyse der Seite mit allen Herkünften darin (Original, Vorstufe, Korrekturen des
+  Prüfschritts), dazu die Analysen ihrer Anhänge und enthaltenen Dateien. Ohne Analyse fehlt die Seite in Stand,
+  Graph, Glossar, Leseempfehlung und möglichen Widersprüchen.
+- Urteile des Prüfschritts (FL4) liegen getrennt als Seiteninhalt in der Ablage der Anreicherungen, geschlüsselt nach
+  Satz und Aussage. Sie bleiben beim Löschen stehen und werden beim nächsten Analysieren derselben Sätze wieder
+  verwendet, ohne neuen Modellaufruf; sie fallen mit der Seite, der Quelle oder dem Entzug der KI-Freigabe weg.
+- Entscheidungen von Hand zu einzelnen Aussagen bleiben stehen und erscheinen als `staleDecisions`, bis die Aussage
+  wieder auftaucht oder die Entscheidung gelöscht wird. Entscheidungen zu ganzen Seiten bleiben unberührt und greifen
+  nach dem nächsten Analysieren wieder.
