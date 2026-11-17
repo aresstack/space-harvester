@@ -390,18 +390,13 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(GlossaryRuleSettings.MAX_TERMS, e.getMessage()));
         }
+        // Ein unbrauchbares Wort ist ein Problem; die übrigen Wörter seiner Liste gelten.
         for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
-            List<String> add = List.of();
-            try {
-                add = glossaryRules.with(kind, read.list(kind.addKey()), List.of()).added(kind);
-            } catch (IllegalArgumentException e) {
-                problems.add(new ConfigurationProblem(kind.addKey(), e.getMessage()));
-            }
-            try {
-                glossaryRules = glossaryRules.with(kind, add, read.list(kind.excludeKey()));
-            } catch (IllegalArgumentException e) {
-                problems.add(new ConfigurationProblem(kind.excludeKey(), e.getMessage()));
-            }
+            List<String> add = GlossaryRuleSettings.accepted(kind, true, read.list(kind.addKey()),
+                    message -> problems.add(new ConfigurationProblem(kind.addKey(), message)));
+            List<String> exclude = GlossaryRuleSettings.accepted(kind, false, read.list(kind.excludeKey()),
+                    message -> problems.add(new ConfigurationProblem(kind.excludeKey(), message)));
+            glossaryRules = glossaryRules.with(kind, add, exclude);
         }
         terms = terms.withGlossaryRules(glossaryRules);
         EnrichmentSettings enrichment = EnrichmentSettings.DEFAULT;

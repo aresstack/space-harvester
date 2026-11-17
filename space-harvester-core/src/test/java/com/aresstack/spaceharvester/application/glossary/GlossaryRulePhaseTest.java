@@ -174,7 +174,7 @@ class GlossaryRulePhaseTest {
         GlossaryClassification.Outcome outcome = classification.job(WIKI, context, EDITOR);
 
         assertThat(outcome.model()).isNull();
-        assertThat(outcome.modelSkipped()).isEqualTo("kein Modell eingestellt");
+        assertThat(outcome.modelSkipped()).isEqualTo(GlossaryClassification.SkipReason.NO_MODEL);
         assertThat(outcome.rules().pages()).isEqualTo(3);
         assertThat(outcome.rules().run().added()).isEqualTo(outcome.rules().proposed()).isPositive();
         GlossaryEntry antrag = entry("Antrag", WIKI).orElseThrow();
@@ -184,8 +184,10 @@ class GlossaryRulePhaseTest {
         assertThat(entry("Antragsdatenbank", WIKI).orElseThrow().classification().category())
                 .isEqualTo(Category.TECHNISCH);
         assertThat(phases).startsWith(GlossaryClassification.RULE_PHASE);
-        assertThat(events).singleElement().satisfies(event -> assertThat(event.message())
-                .contains("ausgelassen: kein Modell eingestellt").contains("3 Seiten"));
+        assertThat(events).extracting(JobEvent.Draft::code).containsExactly(GlossaryClassification.RULES_DONE,
+                "GLOSSARY_MODEL_SKIPPED:NO_MODEL");
+        assertThat(events).allSatisfy(event -> assertThat(event.severity()).isEqualTo(JobEvent.Severity.INFO));
+        assertThat(events.get(0).message()).contains("3 Seiten");
         assertThat(asked).isEmpty();
     }
 
@@ -202,7 +204,7 @@ class GlossaryRulePhaseTest {
         released = false;
         GlossaryClassification.Outcome outcome = classification.job(WIKI, null, EDITOR);
 
-        assertThat(outcome.modelSkipped()).isEqualTo("Quelle nicht für die KI freigegeben");
+        assertThat(outcome.modelSkipped()).isEqualTo(GlossaryClassification.SkipReason.NOT_RELEASED);
         assertThat(store.find("gai")).as("ausgefallene Modellphase löscht nichts").isPresent();
         assertThat(entry("Antrag", WIKI)).isPresent();
     }
@@ -245,6 +247,25 @@ class GlossaryRulePhaseTest {
     }
 
     @Test
+    void theOverviewListsImportancePerScopeAndDetailsPerTermWithoutStoringAnything() {
+        GlossaryOverview overview = new GlossaryOverview(caller -> List.copyOf(pages), () -> settings);
+
+        GlossaryOverview.Overview foe = overview.importance(EDITOR, "wiki", "FOE", () -> false);
+
+        assertThat(foe.pages()).isEqualTo(2);
+        assertThat(foe.rows().get(0).normalized()).isEqualTo("antrag");
+        assertThat(foe.rows().get(0).importance().pages()).isEqualTo(2);
+        assertThat(foe.rows()).extracting(GlossaryOverview.Row::normalized).doesNotContain("server");
+        assertThat(overview.importance(EDITOR, null, null, () -> false).rows()).hasSize(5);
+        GlossaryDerivation.Term antrag = overview.term(EDITOR, "wiki", null, "Antrag", () -> false).orElseThrow();
+        assertThat(antrag.undergoes()).extracting(GlossaryDerivation.Use::lemma).contains("prüft", "speichert");
+        assertThat(overview.term(EDITOR, "wiki", "IT", "Antrag", () -> false)).isEmpty();
+        assertThat(store.all()).as("nichts gespeichert").isEmpty();
+        assertThatThrownBy(() -> overview.importance(EDITOR, null, "FOE", () -> false))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void settingsKeepTheShortHeadRuleAndBothLoadersReadTheKeys() {
         assertThatThrownBy(() -> GlossaryRuleSettings.DEFAULT.with(GlossaryRuleSettings.Kind.TECHNICAL_HEADS,
                 List.of("port"), List.of()))
@@ -265,6 +286,23 @@ class GlossaryRulePhaseTest {
         assertThat(read.excluded(GlossaryRuleSettings.Kind.TECHNICAL_HEADS)).containsExactly("datei");
         assertThat(HarvesterConfiguration.fromProperties(new Properties()).orThrow().terms().glossaryRules())
                 .isEqualTo(GlossaryRuleSettings.DEFAULT);
+
+        List<String> problems = new ArrayList<>();
+        assertThat(GlossaryRuleSettings.accepted(GlossaryRuleSettings.Kind.ROLE_HEADS, true,
+                List.of("amt", "Sachgebietsleitung", "a/b"), problems::add))
+                .as("nur das falsche Wort fällt").containsExactly("sachgebietsleitung");
+        assertThat(problems).hasSize(2).anySatisfy(problem -> assertThat(problem).contains("amt"))
+                .anySatisfy(problem -> assertThat(problem).contains("a/b"));
+        for (String word : List.of("Load-Balancer", "Übergabe  Stelle", "Prüfer-In", "SCHNITTSTELLE")) {
+            assertThat(GlossaryRuleSettings.normalize(word)).as("eine Normalisierung")
+                    .isEqualTo(com.aresstack.spaceharvester.application.terms.TermText.normalize(word));
+        }
+        assertThat(GlossaryDerivation.Rules.of(GlossaryRuleSettings.DEFAULT.with(
+                GlossaryRuleSettings.Kind.TECHNICAL_WORDS, List.of("Über-Gabe"), List.of()))
+                .words(GlossaryRuleSettings.Kind.TECHNICAL_WORDS)).contains("über-gabe");
+        assertThat(GlossaryDerivation.ruleFor("Über-Gabe", GlossaryDerivation.Rules.of(GlossaryRuleSettings.DEFAULT
+                .with(GlossaryRuleSettings.Kind.TECHNICAL_WORDS, List.of("Über-Gabe"), List.of()))))
+                .isEqualTo(GlossaryDerivation.CategoryRule.TECHNICAL_HEAD);
 
         Properties wrong = new Properties();
         wrong.setProperty(GlossaryRuleSettings.Kind.ROLE_HEADS.addKey(), "amt");

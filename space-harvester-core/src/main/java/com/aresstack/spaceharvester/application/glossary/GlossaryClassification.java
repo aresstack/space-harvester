@@ -87,6 +87,27 @@ public class GlossaryClassification {
     static final String RULE_VERSION = "glossary-rules-v1";
     /** Vorschläge der Regelphase je Teilergebnis. */
     static final int RULE_CHUNK = 50;
+    /**
+     * Kennung des Ereignisses „Modellphase bewusst ausgelassen“ (ADR 0032, FL5b), mit Grund als Endung:
+     * {@code GLOSSARY_MODEL_SKIPPED:NO_MODEL} oder {@code GLOSSARY_MODEL_SKIPPED:NOT_RELEASED}. Die Auftragsliste
+     * zeigt es gelb (ausgelassen), nie rot, ohne den Text zu deuten.
+     */
+    public static final String MODEL_SKIPPED = "GLOSSARY_MODEL_SKIPPED";
+    /** Kennung des Ereignisses mit den Zahlen der Regelphase. */
+    public static final String RULES_DONE = "GLOSSARY_RULES_DONE";
+
+    /** Warum die Phase mit Modell ausfiel. */
+    public enum SkipReason {
+        /** Kein Chat-Modell eingestellt. */
+        NO_MODEL,
+        /** Quelle nicht für die KI freigegeben. */
+        NOT_RELEASED;
+
+        /** Kennung des Ereignisses, etwa {@code GLOSSARY_MODEL_SKIPPED:NO_MODEL}. */
+        public String code() {
+            return MODEL_SKIPPED + ":" + name();
+        }
+    }
     /** Fassung von Anweisung und Prüfung; eine neue macht den Ergebnis-Cache wirkungslos. */
     static final String PROMPT_VERSION = "glossary-classification-v1";
     static final int MAX_ANSWER_CHARS = 128 * 1024;
@@ -293,19 +314,24 @@ public class GlossaryClassification {
      */
     Outcome job(RelationScope scope, JobContext context, AccessContext caller) {
         RuleRun rules = analysed == null ? null : rules(scope, context, caller);
-        String skipped = null;
+        if (rules != null && context != null) {
+            context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, RULES_DONE,
+                    "„" + RULE_PHASE + "“: " + rules.describe(), null, null, null));
+        }
+        SkipReason skipped = null;
         Glossary.ProposalRun modelRun = null;
         if (!model.available()) {
-            skipped = "kein Modell eingestellt";
+            skipped = SkipReason.NO_MODEL;
         } else if (!model.mayProcess(scope.sourceId())) {
-            skipped = "Quelle nicht für die KI freigegeben";
+            skipped = SkipReason.NOT_RELEASED;
         } else {
             modelRun = run(scope, context);
         }
         if (skipped != null && context != null) {
             phase(context, PHASE + ": ausgelassen");
-            context.record(JobEvent.Draft.info(COMPONENT, "„" + PHASE + "“ ausgelassen: " + skipped
-                    + (rules == null ? "." : ". „" + RULE_PHASE + "“: " + rules.describe())));
+            context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                    skipped.code(), "„" + PHASE + "“ ausgelassen: " + (skipped == SkipReason.NO_MODEL
+                    ? "kein Modell eingestellt" : "Quelle nicht für die KI freigegeben"), null, null, null));
         }
         return new Outcome(rules, modelRun, skipped);
     }
@@ -317,7 +343,7 @@ public class GlossaryClassification {
      * @param model        Ergebnis der Phase mit Modell oder {@code null}, wenn sie ausfiel
      * @param modelSkipped warum die Phase mit Modell ausfiel, oder {@code null}
      */
-    record Outcome(RuleRun rules, Glossary.ProposalRun model, String modelSkipped) {
+    record Outcome(RuleRun rules, Glossary.ProposalRun model, SkipReason modelSkipped) {
     }
 
     /**
@@ -342,10 +368,8 @@ public class GlossaryClassification {
     RuleRun rules(RelationScope scope, JobContext context, AccessContext caller) {
         phase(context, RULE_PHASE);
         GlossaryRuleSettings settings = ruleSettings.get();
-        List<KnowledgeGraph.AnalysedPage> pages = analysed.apply(caller).stream()
-                .filter(page -> page.page().key().sourceId().equals(scope.sourceId())
-                        && (scope.spaceKey() == null || scope.spaceKey().equals(page.page().spaceKey())))
-                .toList();
+        List<KnowledgeGraph.AnalysedPage> pages = GlossaryOverview.inScope(analysed.apply(caller),
+                scope.sourceId(), scope.spaceKey());
         GlossaryRuleProposals.Batch batch = GlossaryRuleProposals.of(pages, settings, () -> {
             if (context != null) {
                 context.checkpoint();
