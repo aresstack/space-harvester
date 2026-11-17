@@ -376,7 +376,8 @@ class StatementAnalysisJobsTest {
         assertThat(parser.stages).hasSize(1);
         assertThat(jobs.events(done.id())).anySatisfy(event -> assertThat(event.message()).isEqualTo(
                 "Vorstufe „nur wo nötig“: 1 Seiten, 1 Sätze gewählt, 1 Abschnitte mit Modellaufruf, 0 Sätze aus der "
-                        + "Ablage, 1 Antwortzeilen verworfen, 0 Sätze mit ergänzten Wörtern verworfen, 0 unvollständig; "
+                        + "Ablage, 1 Antwortzeilen verworfen, 0 Sätze mit ergänzten Wörtern verworfen, 0 unvollständig, "
+                        + "0 wegen verlorener Verneinung oder Modalverb verworfen; "
                         + "1 Seiten ohne Vorstufe (kein Modell oder keine KI-Freigabe)"));
 
         // Zweiter Lauf: die aktuelle Analyse zählt nicht als erledigt, der Satz kommt aus der Ablage

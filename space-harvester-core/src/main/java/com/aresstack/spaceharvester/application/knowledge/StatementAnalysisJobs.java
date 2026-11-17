@@ -136,7 +136,7 @@ public class StatementAnalysisJobs {
         long current = 0;
         long withoutText = 0;
         StatementAnalysis.SimplificationRequest vorstufe = options.simplification();
-        long[] costs = new long[8];
+        long[] costs = new long[9];
         for (Target target : walk.pages.values()) {
             context.checkpoint();
             try {
@@ -159,6 +159,7 @@ public class StatementAnalysisJobs {
                     costs[4] += run.rejected();
                     costs[5] += run.added();
                     costs[6] += run.incomplete();
+                    costs[8] += run.lost();
                 }).analysis() == null) {
                     withoutText++; // ohne Lesetext: nichts zu analysieren
                 } else {
@@ -189,7 +190,7 @@ public class StatementAnalysisJobs {
                     ? "immer" : "nur wo nötig") + "“: " + costs[0] + " Seiten, " + costs[1] + " Sätze gewählt, "
                     + costs[2] + " Abschnitte mit Modellaufruf, " + costs[3] + " Sätze aus der Ablage, " + costs[4]
                     + " Antwortzeilen verworfen, " + costs[5] + " Sätze mit ergänzten Wörtern verworfen, " + costs[6]
-                    + " unvollständig; " + costs[7]
+                    + " unvollständig, " + costs[8] + " wegen verlorener Verneinung oder Modalverb verworfen; " + costs[7]
                     + " Seiten ohne Vorstufe (kein Modell oder keine KI-Freigabe)"));
         }
         if (walk.incomplete) {

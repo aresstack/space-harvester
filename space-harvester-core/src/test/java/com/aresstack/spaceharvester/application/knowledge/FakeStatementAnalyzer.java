@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.knowledge;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,6 +28,8 @@ final class FakeStatementAnalyzer implements StatementAnalyzer {
     RuntimeException failure;
     /** Bricht nach so vielen Sätzen ab (über den Abbruch-Schalter des Aufrufers), -1 = nie. */
     int cancelAfterSentences = -1;
+    /** Läuft nach der Vorstufe, vor dem Parsen. */
+    Runnable afterStage = () -> { };
     /** Herkunft aller Aussagen; {@code null} = Original. */
     ParsedStatements.Derivation derivation;
     /** Liefert eine Erwähnung außerhalb des Texts. */
@@ -144,8 +147,11 @@ final class FakeStatementAnalyzer implements StatementAnalyzer {
             }
             start = end;
         }
-        stages.add(simplification.simplify(chosen.isEmpty() ? List.of() : List.of(
-                new com.aresstack.spaceharvester.application.simplification.SimplificationSection(List.of(), chosen))));
+        Map<Integer, List<com.aresstack.spaceharvester.application.simplification.SimplifiedSentence>> answer =
+                simplification.simplify(chosen.isEmpty() ? List.of() : List.of(
+                new com.aresstack.spaceharvester.application.simplification.SimplificationSection(List.of(), chosen)));
+        stages.add(answer);
+        afterStage.run();
         return analyze(documentId, text, cancelled);
     }
 }

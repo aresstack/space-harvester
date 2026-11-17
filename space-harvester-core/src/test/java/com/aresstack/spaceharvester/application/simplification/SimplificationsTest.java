@@ -81,7 +81,7 @@ class SimplificationsTest {
         assertThat(result.sentences()).containsOnlyKeys(1, 2, 6);
         assertThat(result.sentences().get(6)).extracting(SimplifiedSentence::text)
                 .containsExactly("Der Techniker prüft die Pumpe 6.");
-        assertThat(result.costs()).isEqualTo(new Simplifications.Costs(3, 2, 0, 0, 0, 0));
+        assertThat(result.costs()).isEqualTo(new Simplifications.Costs(3, 2, 0, 0, 0, 0, 0));
         assertThat(enrichments.find(PAGE)).extracting(e -> e.processorId())
                 .containsExactly(Enrichments.SIMPLIFICATIONS);
     }

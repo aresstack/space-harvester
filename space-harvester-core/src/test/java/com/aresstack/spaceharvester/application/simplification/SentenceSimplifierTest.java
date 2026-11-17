@@ -106,8 +106,12 @@ class SentenceSimplifierTest {
                 1|T|Der Techniker öffnet die Pumpe.
                 2|T|Der Techniker prüft die Pumpe nicht.
                 """);
-        assertThat(lost.sentences().get(0)).as("Verneinung steht im Abschnitt").hasSize(1);
-        assertThat(lost.incomplete()).as("verloren: Verneinung und Modalverb des Originals").contains(0);
+        // Verneinung und Modalverb des Originals fehlen: der Satz sagte das Gegenteil, also wird er verworfen
+        assertThat(lost.sentences().get(0)).isEmpty();
+        assertThat(lost.incomplete()).contains(0);
+        assertThat(lost.lost()).containsExactly(0);
+        assertThat(lost.sentences().get(1)).as("Verneinung steht im Abschnitt, hinzufügen ist kein Verlust")
+                .hasSize(1);
         SentenceSimplifier.Parsed invented = SentenceSimplifier.parse(section, """
                 1|T|Der Techniker darf die Pumpe nicht öffnen.
                 2|T|Der Techniker muss die Pumpe prüfen.
@@ -115,8 +119,27 @@ class SentenceSimplifierTest {
                 """);
         assertThat(invented.sentences().get(0)).hasSize(1);
         assertThat(invented.incomplete()).doesNotContain(0);
+        assertThat(invented.lost()).isEmpty();
         assertThat(invented.sentences().get(1)).as("„muss“ und „kein“ stehen nicht im Abschnitt").isEmpty();
         assertThat(invented.added()).isEqualTo(2);
+    }
+
+    @Test
+    void aModalVerbKeptInOneOfSeveralSentencesIsNoLoss() {
+        SimplificationSection section = new SimplificationSection(List.of(), List.of(new SimplificationSection
+                .Sentence(0, "Die Pumpe muss geprüft und vom Techniker gereinigt werden.")));
+        SentenceSimplifier.Parsed kept = SentenceSimplifier.parse(section, """
+                1|T|Der Techniker muss die Pumpe prüfen.
+                1|T|Der Techniker reinigt die Pumpe.
+                """);
+        assertThat(kept.lost()).isEmpty();
+        assertThat(kept.sentences().get(0)).hasSize(2);
+        SentenceSimplifier.Parsed dropped = SentenceSimplifier.parse(section, """
+                1|T|Der Techniker prüft die Pumpe.
+                1|T|Der Techniker reinigt die Pumpe.
+                """);
+        assertThat(dropped.lost()).containsExactly(0);
+        assertThat(dropped.sentences().get(0)).isEmpty();
     }
 
     @Test

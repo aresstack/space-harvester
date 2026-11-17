@@ -187,6 +187,10 @@ public class StatementAnalysis {
             throw new CancellationException("Analyse abgebrochen");
         }
         check(result, text.get().text().length());
+        if (simplifications != null && !simplifications.released(key)) {
+            // ADR 0028: Freigabe während der Analyse entzogen, kein Modelltext der Seite in den Graph
+            result = withoutStage(result);
+        }
         PageStatementAnalysis analysis = new PageStatementAnalysis(key, snapshot.spaceKey(), snapshot.metadata().title(),
                 snapshot.revision(), input, parser.id(), version, clock.instant(), result);
         store.replace(analysis);
@@ -331,6 +335,62 @@ public class StatementAnalysis {
                 throw new IllegalStateException("Nominaler Bezug ohne Erwähnung");
             }
         }
+    }
+
+    /**
+     * Entfernt nach dem Entzug der KI-Freigabe (ADR 0028) aus den gespeicherten Analysen der Seiten ohne Freigabe die
+     * Aussagen der Vorstufe samt ihren Erwähnungen, ohne neu zu rechnen (der Server hat keinen Parser).
+     *
+     * @return Zahl der geänderten Analysen
+     */
+    public int withdrawStage(java.util.Collection<PageKey> pages, java.util.function.Predicate<PageKey> released) {
+        int changed = 0;
+        for (PageKey page : pages) {
+            if (released.test(page)) {
+                continue;
+            }
+            Optional<PageStatementAnalysis> stored = store.find(page);
+            if (stored.isEmpty()) {
+                continue;
+            }
+            ParsedStatements result = stored.get().result();
+            ParsedStatements stripped = withoutStage(result);
+            if (stripped != result) {
+                store.replace(stored.get().withResult(stripped));
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Die Analyse ohne Aussagen der Vorstufe und ohne die Erwähnungen, auf die nur sie zeigten; dieselbe Instanz, wenn
+     * es keine gab.
+     */
+    static ParsedStatements withoutStage(ParsedStatements result) {
+        List<ParsedStatements.Statement> kept = result.statements().stream()
+                .filter(statement -> statement.derivation().origin() == ParsedStatements.Origin.ORIGINAL).toList();
+        if (kept.size() == result.statements().size()) {
+            return result;
+        }
+        Set<String> stillUsed = new HashSet<>();
+        kept.forEach(statement -> statement.arguments().forEach(argument -> stillUsed.add(argument.mention())));
+        result.attachments().forEach(attachment -> {
+            stillUsed.add(attachment.head());
+            stillUsed.add(attachment.dependent());
+        });
+        Set<String> onlyStage = new HashSet<>();
+        result.statements().stream()
+                .filter(statement -> statement.derivation().origin() != ParsedStatements.Origin.ORIGINAL)
+                .forEach(statement -> statement.arguments().forEach(argument -> {
+                    if (argument.mention() != null && !stillUsed.contains(argument.mention())) {
+                        onlyStage.add(argument.mention());
+                    }
+                }));
+        List<ParsedStatements.Mention> mentions = result.mentions().stream()
+                .filter(mention -> !onlyStage.contains(mention.id())).toList();
+        return new ParsedStatements(result.sentences(), mentions, kept, result.attachments(), result.components(),
+                result.conllu());
     }
 
     /**
