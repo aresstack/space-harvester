@@ -289,10 +289,16 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      *                       für die Sitzung ab
      * @param secretVariable Name der Umgebungsvariable, die das Geheimnis liefern sollte, oder {@code null}
      */
-    public record SourceEntry(SourceSettingsConfig config, boolean secretMissing, String secretVariable) {
+    public record SourceEntry(SourceSettingsConfig config, boolean secretMissing, String secretVariable,
+                              Map<String, String> placeholderOptions) {
 
         public SourceEntry {
             Objects.requireNonNull(config, "config");
+            placeholderOptions = placeholderOptions == null ? Map.of() : Map.copyOf(placeholderOptions);
+        }
+
+        public SourceEntry(SourceSettingsConfig config, boolean secretMissing, String secretVariable) {
+            this(config, secretMissing, secretVariable, Map.of());
         }
 
         public String id() {

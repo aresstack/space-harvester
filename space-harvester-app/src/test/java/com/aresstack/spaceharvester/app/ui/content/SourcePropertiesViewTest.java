@@ -44,6 +44,7 @@ class SourcePropertiesViewTest {
     private final List<String> edited = new ArrayList<>();
     private AppSettings settings;
     private SourcePropertiesView view;
+    private boolean visible = true;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -56,15 +57,17 @@ class SourcePropertiesViewTest {
                     - id: wiki
                       type: confluence
                       title: Confluence HaVdB
-                      baseUrl: https://wiki.example.org
+                      baseUrl: https://angelo:geheim@wiki.example.org
                       auth:
                         type: pat
                         token: ${WIKI_TOKEN}
                       options:
                         mediaDownloads: "true"
                         startPage: "4711"
+                        spacePath: ${WIKI_PATH:/vorgabe}
+                        credentialRef: keepass:wiki
                 """.formatted(home.resolve("daten")));
-        settings = new AppSettingsLoader(new Placeholders(Map.of("WIKI_TOKEN", "tok-123")::get), home).load(file);
+        settings = new AppSettingsLoader(new Placeholders(Map.of("WIKI_TOKEN", "tok-123", "WIKI_PATH", "/pfad-aus-umgebung")::get), home).load(file);
         view = new SourcePropertiesView(() -> actions, () -> settings, new SourcePropertiesView.Runner() {
             @Override
             public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
@@ -76,6 +79,7 @@ class SourcePropertiesViewTest {
             }
         });
         view.onEdit(edited::add);
+        view.showingForTest(() -> visible);
         view.zone(ZoneId.of("Europe/Berlin"));
     }
 
@@ -106,6 +110,76 @@ class SourcePropertiesViewTest {
         assertThat(texts).doesNotContain("tok-123");
         assertThat(view.copyText()).contains("Kennzahlen\nSpaces: 2 Spaces").contains("Token: gesetzt")
                 .doesNotContain("tok-123");
+    }
+
+    @Test
+    void optionsFromPlaceholdersReferencesAndTheUserPartOfTheAddressAreNeverShownResolved() {
+        view.source("wiki");
+
+        List<String> texts = view.texts();
+        assertThat(texts).containsSubsequence("Adresse", "https://wiki.example.org", "Zugangsverweis",
+                "Verweis keepass:wiki", "spacePath", "${WIKI_PATH}");
+        assertThat(String.join("\n", texts)).doesNotContain("/pfad-aus-umgebung").doesNotContain("/vorgabe")
+                .doesNotContain("angelo").doesNotContain("geheim");
+        assertThat(view.copyText()).contains("spacePath: ${WIKI_PATH}").doesNotContain("/pfad-aus-umgebung")
+                .doesNotContain("/vorgabe").doesNotContain("angelo").doesNotContain("geheim");
+    }
+
+    @Test
+    void atMostOneRunAtATimeWithOneQueuedFollowUp() throws Exception {
+        List<Runnable> waiting = new ArrayList<>();
+        SourcePropertiesView slow = new SourcePropertiesView(() -> actions, () -> settings,
+                new SourcePropertiesView.Runner() {
+                    @Override
+                    public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
+                        waiting.add(() -> {
+                            try {
+                                onSuccess.accept(work.call());
+                            } catch (Exception e) {
+                                onFailure.accept(e);
+                            }
+                        });
+                    }
+                });
+        slow.showingForTest(() -> true);
+        slow.source("wiki");
+        assertThat(waiting).hasSize(1);
+
+        for (int i = 0; i < 5; i++) {
+            actions.holdings.pagesChanged("wiki", "CLUK", Set.of("11"));
+            actions.changes.changed("wiki");
+        }
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(waiting).as("kein zweiter Lauf, solange einer läuft").hasSize(1);
+        assertThat(slow.pendingForTest()).isTrue();
+
+        waiting.remove(0).run();
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(waiting).as("genau ein Nachlauf").hasSize(1);
+        waiting.remove(0).run();
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(waiting).isEmpty();
+        assertThat(slow.texts()).contains("360");
+    }
+
+    @Test
+    void aHiddenTabReadsNothingAndCatchesUpOnceWhenShown() throws Exception {
+        view.source("wiki");
+        int reads = actions.reads;
+        visible = false;
+
+        actions.counts = new HoldingCounts(341, 301, 5, 2);
+        actions.holdings.pagesChanged("wiki", "CLUK", Set.of("11"));
+        actions.changes.changed("wiki");
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(actions.reads).as("verdeckt wird nicht gelesen").isEqualTo(reads);
+
+        visible = true;
+        view.becameVisible();
+        assertThat(actions.reads).isEqualTo(reads + 1);
+        assertThat(view.texts()).contains("361");
+        view.becameVisible();
+        assertThat(actions.reads).as("nur einmal nachholen").isEqualTo(reads + 1);
     }
 
     @Test
@@ -195,7 +269,9 @@ class SourcePropertiesViewTest {
         @Override
         public List<SourceType> types() {
             return List.of(new SourceType("confluence", "Confluence", true, null, List.of(
-                    new SourceField("mediaDownloads", "Bilder laden", "", SourceField.Kind.FLAG, false, false, "true")),
+                    new SourceField("mediaDownloads", "Bilder laden", "", SourceField.Kind.FLAG, false, false, "true"),
+                    new SourceField("credentialRef", "Zugangsverweis", "", SourceField.Kind.SECRET_REF, false, true,
+                            "")),
                     List.of(SourceType.AuthMode.PAT)));
         }
 
