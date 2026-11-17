@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.changelog.ChangeReport;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
+import com.aresstack.spaceharvester.application.changelog.UpdateText;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import io.swagger.v3.oas.annotations.Operation;
@@ -78,6 +79,52 @@ public class ChangeLogController {
                                @Parameter(description = "Textunterschied je geänderter Seite mitliefern")
                                @RequestParam(name = "diff", defaultValue = "false") boolean diff) {
         return changeLog.report(caller, sourceId, updateId, diff);
+    }
+
+    @GetMapping(path = UPDATES + "/{updateId}/text", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Update-Text einer Ebene",
+            description = "Die feste Textform update-text/v1 eines Updates (ADR 0031): Kopf mit Zeitraum und Zählern, je "
+                    + "geänderter Seite Pfad, Arten, Versionen, Zeitpunkt und die geänderten Absätze. space beschränkt "
+                    + "auf einen Space, ohne gilt die ganze Quelle. Seitenweise über offset und limit (Seiten). Mit "
+                    + "Accept text/markdown nur der Text, sonst JSON mit Bericht und Lage jeder Seite im Text. Rechte "
+                    + "wie beim Bericht.")
+    @ApiResponse(responseCode = "200", description = "Update-Text")
+    @ApiResponse(responseCode = "400", description = "Ungültiger Ausschnitt (invalid-request)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder kein solches Update "
+            + "(update-not-found)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public UpdateText text(@Parameter(hidden = true) AccessContext caller, @PathVariable String sourceId,
+                           @PathVariable String updateId,
+                           @Parameter(description = "Space der Ebene; ohne die ganze Quelle")
+                           @RequestParam(required = false) String space,
+                           @RequestParam(defaultValue = "0") int offset,
+                           @RequestParam(defaultValue = "50") int limit) {
+        return changeLog.updateText(caller, sourceId, updateId, textWindow(space), offset(offset, limit), limit);
+    }
+
+    @GetMapping(path = UPDATES + "/{updateId}/text", produces = "text/markdown")
+    public ResponseEntity<String> markdown(@Parameter(hidden = true) AccessContext caller,
+                                           @PathVariable String sourceId, @PathVariable String updateId,
+                                           @RequestParam(required = false) String space,
+                                           @RequestParam(defaultValue = "0") int offset,
+                                           @RequestParam(defaultValue = "50") int limit) {
+        UpdateText text = changeLog.updateText(caller, sourceId, updateId, textWindow(space), offset(offset, limit),
+                limit);
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType("text/markdown;charset=UTF-8"))
+                .body(text.markdown());
+    }
+
+    private static String textWindow(String space) {
+        return space == null || space.isBlank() ? null : space.strip();
+    }
+
+    private static int offset(int offset, int limit) {
+        if (offset < 0 || limit < 1 || limit > UpdateText.MAX_LIMIT) {
+            throw new InvalidQueryException("offset ab 0, limit zwischen 1 und " + UpdateText.MAX_LIMIT);
+        }
+        return offset;
     }
 
     @GetMapping(path = UPDATES + "/{updateId}/summary", produces = MediaType.APPLICATION_JSON_VALUE)

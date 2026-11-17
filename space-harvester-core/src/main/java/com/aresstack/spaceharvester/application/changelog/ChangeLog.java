@@ -48,6 +48,10 @@ public final class ChangeLog implements AutoCloseable {
     private static final int MAX_PATH_DEPTH = 50;
     /** Höchstens so viele Schritte im Unterschied einer Seite. */
     static final int MAX_DIFF_STEPS = 20;
+    /** Reihenfolge der Seiten im Bericht: nach Art, dann Titel, dann Kennung. */
+    private static final Comparator<ReportedPage> REPORT_ORDER = Comparator.comparing(ReportedPage::kind)
+            .thenComparing(page -> page.title() == null ? "" : page.title(), String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(ReportedPage::pageId);
 
     private final ChangeLogStore store;
     private final AccessGuard access;
@@ -199,10 +203,77 @@ public final class ChangeLog implements AutoCloseable {
             ReportedPage located = withDirectory(page, visible);
             pages.add(withDiffs ? withDiff(caller, located, span.from(), span.to()) : located);
         }
-        pages.sort(Comparator.comparing(ReportedPage::kind)
-                .thenComparing(page -> page.title() == null ? "" : page.title(), String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(ReportedPage::pageId));
+        pages.sort(REPORT_ORDER);
         return new ChangeReport(consolidated.update(), pages);
+    }
+
+    /**
+     * Der Update-Text einer Ebene (ADR 0031, Abschnitt 2), seitenweise: Kopf mit Zeitraum und Zählern der Ebene, je
+     * Seite Pfad, Arten, Versionen, Zeitpunkt und geänderte Absätze. Rechte wie {@link #report}; Unterschiede werden nur
+     * für die Seiten des Ausschnitts gelesen. {@link ChangeReport#update()} trägt die Zähler der ganzen Quelle, die der
+     * Ebene stehen im Text und in {@link UpdateText#totalPages()}.
+     *
+     * @param update   {@link ChangeUpdate#id()} oder {@link ChangeUpdate#OPEN}
+     * @param spaceKey der Space, {@code null} für die ganze Quelle
+     * @param offset   erste Seite, ab 0
+     * @param limit    höchstens so viele Seiten, 1 bis {@value UpdateText#MAX_LIMIT}
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws UnknownUpdateException wenn die Quelle kein solches Update hat
+     */
+    public UpdateText updateText(AccessContext caller, String sourceId, String update, String spaceKey, int offset,
+                                 int limit) {
+        return text(caller, sourceId, update, spaceKey, offset, limit, null);
+    }
+
+    /**
+     * Der Update-Text als Material für ein Modell (ADR 0028, ADR 0031): nur Seiten mit KI-Freigabe, im Pfad nur
+     * freigegebene und sichtbare Vorfahren, ohne Verweise und ohne Namen von Personen.
+     */
+    UpdateText modelText(AccessContext caller, String sourceId, String update, String spaceKey,
+                         Predicate<PageKey> released, int offset, int limit) {
+        return text(caller, sourceId, update, spaceKey, offset, limit, Objects.requireNonNull(released, "released"));
+    }
+
+    private UpdateText text(AccessContext caller, String sourceId, String update, String spaceKey, int offset,
+                            int limit, Predicate<PageKey> released) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(update, "update");
+        if (offset < 0 || limit < 1 || limit > UpdateText.MAX_LIMIT) {
+            throw new IllegalArgumentException("Ausschnitt ungültig: " + offset + "/" + limit);
+        }
+        requireReadable(caller, sourceId);
+        Span span = span(sourceId, update);
+        Visibility visible = new Visibility(caller);
+        List<ChangeEntry> rows = store.changeEntries(ChangeQuery.span(sourceId, span.from(), span.to()),
+                visible::view, 0, Integer.MAX_VALUE).entries();
+        Consolidated consolidated = consolidate(span, rows);
+        List<ReportedPage> level = new ArrayList<>();
+        if (!consolidated.update().initial()) {
+            for (ReportedPage page : consolidated.pages()) {
+                if ((spaceKey == null || inSpace(page, spaceKey))
+                        && (released == null || released.test(new PageKey(page.sourceId(), page.pageId())))) {
+                    level.add(page);
+                }
+            }
+        }
+        level.sort(REPORT_ORDER);
+        int total = level.size();
+        List<ReportedPage> window = new ArrayList<>();
+        for (ReportedPage page : level.subList(Math.min(offset, total), Math.min(offset + limit, total))) {
+            ReportedPage located = released == null ? withDirectory(page, visible)
+                    : page.withDirectory(releasedPath(page, visible, released), null);
+            window.add(withDiff(caller, located, span.from(), span.to()));
+        }
+        UpdateTextRenderer.Rendered rendered = UpdateTextRenderer.render(consolidated.update(), spaceKey,
+                UpdateTextRenderer.counts(level), total, offset, window);
+        return new UpdateText(UpdateText.FORMAT, sourceId, consolidated.update().id(), spaceKey, total, offset,
+                new ChangeReport(consolidated.update(), window), rendered.markdown(), rendered.sections());
+    }
+
+    /** Ob die Seite in der Ebene des Space liegt: dort steht, dorthin oder von dort gewandert ist. */
+    private static boolean inSpace(ReportedPage page, String spaceKey) {
+        return spaceKey.equals(page.spaceKey()) || spaceKey.equals(page.oldSpaceKey())
+                || spaceKey.equals(page.newSpaceKey());
     }
 
     /** Rohe Zeilen für die Einsicht, neueste zuerst, seitenweise; nur Zeilen, die der Aufrufer sehen darf. */
