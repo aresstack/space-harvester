@@ -99,3 +99,33 @@ Subscription subscribe(Runnable listener)
   beim Löschen.
 - Wortlisten unter Einstellungen (mehrwertig: Tabelle mit Icon-Zeilenaktionen) und auf der Abschlussseite des
   Assistenten; die App schreibt sie als YAML-Liste in die Konfigurationsdatei.
+
+## Leseempfehlung: `ReadingAdvice#recommend` (PR 2)
+
+`Harvester#readingAdvice().recommend(caller, selection, topic, cancelled)` liefert eine `ReadingList`: die Seiten der
+Auswahl in der Reihenfolge, in der sie sich zum Lesen lohnen. Mit `topic` (Begriff, ohne Groß/Klein, Grundform oder
+Wortlaut) nur Seiten, die das Thema erwähnen. Reine Auswertung, abbrechbar (`CancellationException`), speichert nichts,
+liest das Änderungsprotokoll nur. Keine KI.
+
+- `ReadingList`: `topic`, `topTerms` (häufigste Begriffe der Auswahl nach Zahl der Seiten, mindestens zwei Seiten,
+  höchstens 10), `changesSince` (Beginn des Zeitraums für „kürzlich geändert“, 90 Tage), `pages`.
+- `Recommendation`: `page`, `score` (= Summe der Teilzahlen), `parts`, `standing` (der `PageStanding` der Status-quo-Sicht).
+- `Part`: `reason`, `count`, `points` (= count × Punkte je Grund), `terms` (nur bei `TOP_TERMS`). Teilzahlen mit 0 fehlen.
+
+| Grund (`ReadingReason`) | Punkte | Wann |
+|---|---|---|
+| `CURRENT_STATEMENTS` | +1 je Aussage | sichere Aussage mit Stand „gilt“ |
+| `OUTDATED_STATEMENTS` | −1 je Aussage | sichere Aussage mit Stand „überholt“ |
+| `TOP_TERMS` | +2 je Begriff | häufigster Begriff der Auswahl kommt auf der Seite vor |
+| `TOPIC_MENTIONS` | +1 je Erwähnung | gewähltes Thema |
+| `RECENT_CHANGE` | +3 | Änderungsprotokoll: neu oder Inhalt geändert in den letzten 90 Tagen |
+| `PAGE_OUTDATED` | −10 | Seite überholt (Label, Titel, Lage oder Entscheidung) |
+| `PAGE_DRAFT` | −5 | Seite Entwurf oder vom Menschen als geplant/unklar eingestuft |
+| `STALE_ANALYSIS` | −2 | Analyse passt nicht mehr zum Text |
+
+Die Punkte stehen als Konstanten in `ReadingAdvice`; die Anzeige zeigt jede Teilzahl mit Grund (etwa als Overlay am
+Mausklick auf die Summe), nie nur die Summe. Verweise zwischen Seiten und Aufrufe (Analytics) zählen noch nicht: Der
+Core hat dafür keinen abgelegten Bestand.
+
+Vorschlag für die Oberfläche: Unterreiter „Leseempfehlung“ neben der Status-quo-Sicht, Themenfeld mit ✕ oben rechts
+(Vorschläge aus `topTerms`), Liste mit Titel, Summe und Stand; Klick öffnet die Seite.
