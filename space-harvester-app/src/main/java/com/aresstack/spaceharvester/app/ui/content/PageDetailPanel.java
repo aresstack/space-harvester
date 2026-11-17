@@ -248,8 +248,8 @@ public final class PageDetailPanel extends JPanel {
             + "durchgestrichen an ihrer alten Stelle. Die Farben bleiben, bis du die Seite verlässt.\n\n"
             + "Grenzen: Markiert wird nur der Unterschied zwischen dem gezeigten Stand aus dem Cache und dem neuen. "
             + "Wer die Seite verlässt, ohne zu klicken, sieht beim nächsten Öffnen den neuen Stand ohne Farben, weil "
-            + "die Prüfung den Cache schon erneuert hat. Seiten mit mehr als 3000 Absätzen bleiben ohne Farben; "
-            + "Bilder ohne Text zählen nicht als Änderung.";
+            + "die Prüfung den Cache schon erneuert hat. Ist der geänderte Teil sehr lang (mehr als rund tausend "
+            + "Absätze auf beiden Seiten), bleibt die Seite ohne Farben; Bilder ohne Text zählen nicht als Änderung.";
     private final com.aresstack.spaceharvester.app.ui.controls.HelpButton readingHelp =
             new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Leseansicht", READING_HELP);
     /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */

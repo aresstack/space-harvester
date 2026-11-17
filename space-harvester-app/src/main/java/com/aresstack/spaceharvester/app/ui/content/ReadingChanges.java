@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.application.changelog.ParagraphAlignment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -13,8 +14,8 @@ import org.jsoup.nodes.Element;
  * (Angelo, 17.11.2026): neue Blöcke grün, geänderte blau, entfernte rot und durchgestrichen an ihrer alten Stelle.
  *
  * <p>Verglichen werden die innersten Textblöcke (Absätze, Listenpunkte, Überschriften, Tabellenzellen …) nach ihrem
- * Text. Zwischen zwei gleichen Blöcken gelten entfernte und neue paarweise als geändert, überzählige als neu bzw.
- * entfernt. Bilder ohne Text zählen nicht. Sehr lange Seiten bleiben ohne Markierung.
+ * Text, mit derselben Zuordnung wie der Reiter „Text“ ({@link ParagraphAlignment}). Bilder ohne Text zählen nicht.
+ * Ist der geänderte Teil für den Vergleich zu groß, bleibt die Seite ohne Markierung.
  */
 final class ReadingChanges {
 
@@ -24,9 +25,6 @@ final class ReadingChanges {
     static final String CHANGED = Comic.css(Comic.CHANGE_CHANGED);
     /** Hintergrund entfernter Blöcke. */
     static final String REMOVED = Comic.css(Comic.CHANGE_REMOVED);
-    /** Mehr Blöcke je Stand vergleicht die Markierung nicht. */
-    static final int MAX_BLOCKS = 3000;
-
     /** Blöcke, die nur in einer Liste oder Tabelle stehen dürfen. */
     private static final Set<String> CONTAINED = Set.of("li", "td", "th", "dt", "dd");
     private static final Set<String> BLOCKS = Set.of("p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre",
@@ -43,7 +41,10 @@ final class ReadingChanges {
         }
     }
 
-    /** {@code after} mit markierten Änderungen gegenüber {@code before}; unverändert, wenn sich nichts vergleichen lässt. */
+    /**
+     * {@code after} mit markierten Änderungen gegenüber {@code before}; unverändert, wenn sich nichts vergleichen lässt.
+     * Die Zuordnung der Blöcke kommt aus dem Core ({@link ParagraphAlignment}), dieselbe wie im Reiter „Text“.
+     */
     static Marked mark(String before, String after) {
         if (before == null || before.isBlank() || after == null || after.isBlank()) {
             return new Marked(after == null ? "" : after, 0, 0, 0);
@@ -52,45 +53,39 @@ final class ReadingChanges {
         Document fresh = Jsoup.parse(after);
         List<Element> x = blocks(old);
         List<Element> y = blocks(fresh);
-        if (x.size() > MAX_BLOCKS || y.size() > MAX_BLOCKS) {
+        ParagraphAlignment.Alignment alignment = ParagraphAlignment.align(
+                x.stream().map(ReadingChanges::text).toList(), y.stream().map(ReadingChanges::text).toList());
+        if (!(alignment instanceof ParagraphAlignment.Aligned aligned)) {
+            // Zu groß für den Vergleich: der neue Stand ohne Farben.
             return new Marked(after, 0, 0, 0);
-        }
-        List<String> a = x.stream().map(ReadingChanges::text).toList();
-        List<String> b = y.stream().map(ReadingChanges::text).toList();
-        int[][] lcs = new int[a.size() + 1][b.size() + 1];
-        for (int i = a.size() - 1; i >= 0; i--) {
-            for (int j = b.size() - 1; j >= 0; j--) {
-                lcs[i][j] = a.get(i).equals(b.get(j)) ? lcs[i + 1][j + 1] + 1
-                        : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-            }
         }
         int added = 0;
         int changed = 0;
         int removed = 0;
         List<Element> gone = new ArrayList<>();
-        List<Element> come = new ArrayList<>();
         Element previous = null;
-        int i = 0;
-        int j = 0;
-        while (i < a.size() || j < b.size()) {
-            if (i < a.size() && j < b.size() && a.get(i).equals(b.get(j))) {
-                int[] counts = flush(gone, come, y.get(j), previous, fresh.body());
-                added += counts[0];
-                changed += counts[1];
-                removed += counts[2];
-                previous = y.get(j);
-                i++;
-                j++;
-            } else if (j < b.size() && (i == a.size() || lcs[i][j + 1] >= lcs[i + 1][j])) {
-                come.add(y.get(j++));
-            } else {
-                gone.add(x.get(i++));
+        for (ParagraphAlignment.Step step : aligned.steps()) {
+            if (step.kind() == ParagraphAlignment.Kind.REMOVE) {
+                gone.add(x.get(step.before()));
+                continue;
             }
+            Element current = y.get(step.after());
+            removed += insertRemoved(gone, previous, current, fresh.body());
+            switch (step.kind()) {
+                case CHANGE -> {
+                    paint(current, CHANGED, false);
+                    changed++;
+                }
+                case ADD -> {
+                    paint(current, ADDED, false);
+                    added++;
+                }
+                default -> {
+                }
+            }
+            previous = current;
         }
-        int[] counts = flush(gone, come, null, previous, fresh.body());
-        added += counts[0];
-        changed += counts[1];
-        removed += counts[2];
+        removed += insertRemoved(gone, previous, null, fresh.body());
         if (added + changed + removed == 0) {
             return new Marked(after, 0, 0, 0);
         }
@@ -98,29 +93,21 @@ final class ReadingChanges {
     }
 
     /**
-     * Schreibt einen Abschnitt zwischen zwei gleichen Blöcken aus: paarweise geändert, Rest neu bzw. entfernt. Entfernte
-     * stehen vor {@code next}, dem nächsten gleichen Block; am Ende hinter dem letzten neuen Block, sonst hinter
-     * {@code previous}, sonst am Ende des Texts.
+     * Setzt die entfallenen Blöcke als rote, durchgestrichene Kopien an ihre alte Stelle zwischen {@code previous} und
+     * {@code next} (beide aus dem neuen Stand, je {@code null} am Anfang bzw. Ende): neben einen Block derselben Art,
+     * sonst vor den nächsten; Listenpunkte und Zellen ohne passenden Nachbarn werden zu Absätzen.
      */
-    private static int[] flush(List<Element> gone, List<Element> come, Element next, Element previous, Element body) {
-        int pairs = Math.min(gone.size(), come.size());
-        for (int k = 0; k < pairs; k++) {
-            paint(come.get(k), CHANGED, false);
-        }
-        for (int k = pairs; k < come.size(); k++) {
-            paint(come.get(k), ADDED, false);
-        }
-        Element after = !come.isEmpty() ? come.get(come.size() - 1) : previous;
+    private static int insertRemoved(List<Element> gone, Element previous, Element next, Element body) {
         Element chain = null;
-        for (int k = pairs; k < gone.size(); k++) {
-            Element copy = gone.get(k).clone();
+        for (Element block : gone) {
+            Element copy = block.clone();
             paint(copy, REMOVED, true);
             String name = copy.normalName();
             if (chain != null) {
                 chain.after(copy);
-            } else if (after != null && after.normalName().equals(name)) {
+            } else if (previous != null && previous.normalName().equals(name)) {
                 // Neben seinesgleichen (Listenpunkt hinter Listenpunkt, Zelle hinter Zelle).
-                after.after(copy);
+                previous.after(copy);
             } else if (next != null && next.normalName().equals(name)) {
                 next.before(copy);
             } else {
@@ -130,18 +117,17 @@ final class ReadingChanges {
                 }
                 if (next != null) {
                     next.before(copy);
-                } else if (after != null) {
-                    after.after(copy);
+                } else if (previous != null) {
+                    previous.after(copy);
                 } else {
                     body.prependChild(copy);
                 }
             }
             chain = copy;
         }
-        int[] counts = {come.size() - pairs, pairs, Math.max(0, gone.size() - pairs)};
+        int count = gone.size();
         gone.clear();
-        come.clear();
-        return counts;
+        return count;
     }
 
     private static void paint(Element element, String color, boolean struck) {

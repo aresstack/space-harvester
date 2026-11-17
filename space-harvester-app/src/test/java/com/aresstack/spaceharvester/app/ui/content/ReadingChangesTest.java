@@ -51,10 +51,16 @@ class ReadingChangesTest {
     }
 
     @Test
-    void veryLongPagesStayUnmarked() {
-        String many = "<p>x</p>".repeat(ReadingChanges.MAX_BLOCKS + 1);
-        ReadingChanges.Marked marked = ReadingChanges.mark(many, many + "<p>neu</p>");
+    void aChangedPartTooLargeForTheComparisonStaysUnmarked() {
+        StringBuilder before = new StringBuilder();
+        StringBuilder after = new StringBuilder();
+        for (int i = 0; i < 1001; i++) {
+            before.append("<p>alt ").append(i).append("</p>");
+            after.append("<p>neu ").append(i).append("</p>");
+        }
+        ReadingChanges.Marked marked = ReadingChanges.mark(before.toString(), after.toString());
         assertThat(marked.any()).isFalse();
+        assertThat(marked.html()).isEqualTo(after.toString());
     }
 
     @Test
