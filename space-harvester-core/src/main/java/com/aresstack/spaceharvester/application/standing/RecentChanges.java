@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -14,8 +15,13 @@ import java.util.function.BooleanSupplier;
 public interface RecentChanges {
 
     /** Ohne Änderungsprotokoll. */
-    RecentChanges NONE = (caller, from, cancelled) -> Map.of();
+    RecentChanges NONE = (caller, spaces, from, cancelled) -> Map.of();
 
-    /** Jüngste Inhaltsänderung je Seite seit {@code from} (einschließlich). */
-    Map<PageKey, Instant> since(AccessContext caller, Instant from, BooleanSupplier cancelled);
+    /**
+     * Jüngste Inhaltsänderung je Seite seit {@code from} (einschließlich), nur in den Quellen und Spaces der Auswahl.
+     *
+     * @param spaces Spaces je Quelle, wie sie in der Auswahl vorkommen ({@code null} für Seiten ohne Space)
+     */
+    Map<PageKey, Instant> since(AccessContext caller, Map<String, Set<String>> spaces, Instant from,
+                                BooleanSupplier cancelled);
 }
