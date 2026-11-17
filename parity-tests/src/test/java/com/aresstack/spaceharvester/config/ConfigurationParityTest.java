@@ -206,7 +206,7 @@ class ConfigurationParityTest {
                         .with(com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.Kind
                                 .ROLE_WORDS, java.util.List.of("sachgebiet", "amt"), java.util.List.of());
         assertThat(app.terms().glossaryRules()).isEqualTo(service2.terms().glossaryRules()).isEqualTo(rules);
-        assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
+        assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50, false));
 
         // ADR 0030: Aufbewahrung des Änderungsprotokolls, beim Dienst über withSyncRules.
         assertThat(app.cache().changeLog()).isEqualTo(service2.changeLog())
