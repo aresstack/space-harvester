@@ -11,8 +11,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * Bildschirmfotos des Reiters „Beziehungen“ mit Buchstabenleiste, Art-Chips und Nachladen zur Sichtprüfung (alle
- * Arten; nur Synonym und Schreibvariante unter B); läuft nur mit der Umgebungsvariable {@code SCREENSHOTS_DIR}.
+ * Bildschirmfotos des Reiters „Beziehungen“ mit Buchstabenleiste, Art-Chips und Nachladen zur Sichtprüfung (Vorgabe
+ * alle Arten; nur Synonym; Synonym und Schreibvariante unter B); läuft nur mit der Umgebungsvariable {@code SCREENSHOTS_DIR}.
  */
 class RelationTabScreenshotTest {
 
@@ -37,26 +37,32 @@ class RelationTabScreenshotTest {
         }
         RelationTab[] relations = new RelationTab[1];
         RelationTab[] synonyms = new RelationTab[1];
+        RelationTab[] both = new RelationTab[1];
         SwingUtilities.invokeAndWait(() -> {
             relations[0] = newTab(core);
             relations[0].load(null);
             synonyms[0] = newTab(core);
-            synonyms[0].typeChip(RelationType.ABBREVIATION).doClick();
-            synonyms[0].typeChip(RelationType.RELATED).doClick();
-            synonyms[0].directory().letterButton("B").doClick();
+            synonyms[0].typeChip(RelationType.SYNONYM).doClick();
+            both[0] = newTab(core);
+            both[0].typeChip(RelationType.SYNONYM).doClick();
+            both[0].typeChip(RelationType.VARIANT).doClick();
+            both[0].directory().letterButton("B").doClick();
         });
         for (int i = 0; i < 200 && (relations[0].directory().table().getRowCount() < 200
-                || synonyms[0].directory().table().getRowCount() < 2); i++) {
+                || synonyms[0].directory().table().getRowCount() < 3
+                || both[0].directory().table().getRowCount() < 2); i++) {
             Thread.sleep(25);
         }
+        java.util.Map<RelationTab, String> names = java.util.Map.of(relations[0], "beziehungen-",
+                synonyms[0], "beziehungen-synonym-", both[0], "beziehungen-synonym-schreibvariante-b-");
         for (int width : new int[] {1280, 960}) {
-            for (RelationTab tab : List.of(relations[0], synonyms[0])) {
+            for (RelationTab tab : List.of(relations[0], synonyms[0], both[0])) {
                 javax.swing.JPanel[] surface = new javax.swing.JPanel[1];
                 SwingUtilities.invokeAndWait(() -> surface[0] = surface(tab, width));
                 // Die Größenänderung meldet sich erst im nächsten Ereignis; die Buchstabenleiste rückt dann um.
                 SwingUtilities.invokeAndWait(() -> { });
                 SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], out.resolve(
-                        (tab == relations[0] ? "beziehungen-" : "beziehungen-synonyme-b-") + width + ".png")));
+                        names.get(tab) + width + ".png")));
             }
         }
     }

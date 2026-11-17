@@ -477,6 +477,8 @@ public final class TermsView implements View {
         /** Kopfzeile, darunter (wenn die Breite nicht reicht) die Buchstabenleiste, darunter Filter-Chips. */
         private final JPanel top = new JPanel(new BorderLayout());
         private final JPanel lettersSlot = new JPanel(new BorderLayout());
+        private final JLabel heading = Comic.text("");
+        private final JPanel lines = new JPanel(new BorderLayout(0, 2));
         private JPanel lettersPanel;
         private JPanel lettersEast;
         private boolean lettersBelow;
@@ -495,12 +497,9 @@ public final class TermsView implements View {
             right.setHorizontalAlignment(SwingConstants.RIGHT);
             table.getColumnModel().getColumn(columns.length - 1).setCellRenderer(right);
 
-            JLabel heading = Comic.text(title);
             heading.setFont(Comic.semiBold(15f));
-            JPanel lines = new JPanel(new BorderLayout(0, 2));
             lines.setOpaque(false);
-            lines.add(heading, BorderLayout.NORTH);
-            lines.add(Comic.muted("Alle berechtigten, aktuell indexierten Seiten"), BorderLayout.SOUTH);
+            heading(title, "Alle berechtigten, aktuell indexierten Seiten");
             head.setOpaque(false);
             head.add(lines, BorderLayout.CENTER);
             head.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(search), BorderLayout.EAST);
@@ -627,6 +626,20 @@ public final class TermsView implements View {
             }
             top.revalidate();
             top.repaint();
+        }
+
+        /** Titel und Unterzeile des Kopfs; {@code null} lässt die jeweilige Zeile weg (Einbau in fremde Ansichten). */
+        void heading(String title, String subtitle) {
+            lines.removeAll();
+            if (title != null) {
+                heading.setText(title);
+                lines.add(heading, BorderLayout.NORTH);
+            }
+            if (subtitle != null) {
+                lines.add(Comic.muted(subtitle), BorderLayout.SOUTH);
+            }
+            lines.revalidate();
+            lines.repaint();
         }
 
         /** Eine Zeile Filter (Chips) zwischen Kopf und Tabelle. */

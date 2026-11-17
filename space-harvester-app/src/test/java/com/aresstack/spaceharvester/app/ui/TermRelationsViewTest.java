@@ -193,8 +193,8 @@ class TermRelationsViewTest {
         SwingUtilities.invokeAndWait(() -> synonyms[0] = view[0].relations().table());
         await("Beziehungen geladen", () -> synonyms[0].getRowCount() == 4);
         SwingUtilities.invokeAndWait(() -> {
-            view[0].relationTab().typeChip(RelationType.ABBREVIATION).doClick();
-            view[0].relationTab().typeChip(RelationType.RELATED).doClick();
+            view[0].relationTab().typeChip(RelationType.SYNONYM).doClick();
+            view[0].relationTab().typeChip(RelationType.VARIANT).doClick();
         });
         await("nur Synonyme und Schreibvarianten", () -> synonyms[0].getRowCount() == 2);
         SwingUtilities.invokeAndWait(() -> {

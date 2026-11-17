@@ -58,7 +58,8 @@ import static com.aresstack.spaceharvester.app.ui.TermsView.UNDO;
 /**
  * Die Liste der Beziehungen zwischen Begriffen (#120), eine eigenständige Komponente ohne Annahmen über ihren Einbau
  * (heute unter Begriffe, später im Reiter Analyse der Seite, ADR 0029). Liste mit Buchstabenleiste, Suchfeld, Chips
- * zum Filtern nach Art (Abkürzung, Synonym, Schreibvariante, Verwandt; Vorgabe alle; der Filter fragt den Core) und
+ * zum Filtern nach Art (Abkürzung, Synonym, Schreibvariante, Verwandt; wie im Reiter Stand: kein Chip gedrückt =
+ * alles, gedrückte = nur diese Arten; der Filter fragt den Core) und
  * sortierbaren Spalten, Bestätigen, Ablehnen und Entfernen mit Rückgängig. Die Aktionen „Neue Beziehung …“
  * ({@link #createButton()}) und „Synonyme vorschlagen“ ({@link #proposeButton()}, #336: Umfang und Budget im Dialog,
  * Lauf mit Wartekreis über der Liste und Abbrechen, Ergebnis in der Statuszeile) setzt der Einbau oben rechts in seine
@@ -193,10 +194,11 @@ final class RelationTab {
             JPanel chips = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
             chips.setOpaque(false);
             for (RelationType type : offered) {
+                // Wie im Reiter Stand: kein Chip gedrückt = alles; gedrückt = nur diese Arten, mehrere möglich.
                 CountChip chip = CountChip.choice(Relation.typeText(type.name()), typeTone(type));
-                chip.setToolTipText("Beziehungen der Art „" + Relation.typeText(type.name()) + "“ zeigen");
-                chip.setSelected(true);
-                chip.addActionListener(e -> toggleType(type));
+                String word = Relation.typeText(type.name());
+                chip.tips("Nur „" + word + "“ zeigen", "Filter „" + word + "“ aufheben");
+                chip.addActionListener(e -> load(null));
                 typeChips.put(type, chip);
                 chips.add(chip);
             }
@@ -215,24 +217,13 @@ final class RelationTab {
             case ABBREVIATION -> Comic.PETROL;
             case SYNONYM -> Comic.BLUE;
             case VARIANT -> Comic.STANDING_CURRENT;
-            case RELATED -> Comic.ORANGE;
+            case RELATED -> Comic.STANDING_OUTDATED;
         };
     }
 
-    /**
-     * Art-Chips sind Umschalter (gefüllt = wird gezeigt). Ist keiner mehr an, gilt wieder die Vorgabe (alle), sichtbar
-     * an den Chips. Jede Änderung fragt den Core neu.
-     */
-    private void toggleType(RelationType type) {
-        if (typeChips.values().stream().noneMatch(CountChip::isSelected)) {
-            typeChips.values().forEach(chip -> chip.setSelected(true));
-        }
-        load(null);
-    }
-
-    /** Die Arten, die der Core liefern soll: die gewählten Chips; alle gewählt heißt ohne Eingrenzung. */
+    /** Die Arten, die der Core liefern soll: die gedrückten Chips; keiner gedrückt heißt ohne Eingrenzung. */
     List<RelationType> queriedTypes() {
-        if (typeChips.isEmpty() || typeChips.values().stream().allMatch(CountChip::isSelected)) {
+        if (typeChips.values().stream().noneMatch(CountChip::isSelected)) {
             return types;
         }
         return typeChips.entrySet().stream().filter(e -> e.getValue().isSelected()).map(Map.Entry::getKey).toList();
@@ -246,6 +237,15 @@ final class RelationTab {
     void pages(PageSet pages) {
         this.pages = pages;
         load(null);
+    }
+
+    /**
+     * Kopf für den Einbau: Titel und Unterzeile ({@code null} lässt die Zeile weg). Im Hauptreiter Begriffe bleiben
+     * „Beziehungen zwischen Begriffen“ und „Alle berechtigten, aktuell indexierten Seiten“; mit einer Seitenmenge oder
+     * einer eigenen Überschrift darüber setzt der Einbau beides passend oder entfernt den Kopf.
+     */
+    void heading(String title, String subtitle) {
+        directory.heading(title, subtitle);
     }
 
     /** Die Liste samt dem Wartekreis des Synonymlaufs; das ist das Element für den Einbau. */

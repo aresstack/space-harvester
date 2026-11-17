@@ -63,20 +63,24 @@ class TermsViewTest {
                     == javax.swing.SwingConstants.LEFT));
             seen.add(String.valueOf(TermsView.REJECTED_BACKGROUND.equals(cell.getBackground())));
             seen.add(String.valueOf(table.getRowSorter() instanceof javax.swing.table.TableRowSorter));
-            // Chips je Art, Vorgabe alle an; abgewählt fragt die Liste den Core nur nach den übrigen Arten.
+            // Chips je Art wie im Reiter Stand: keiner gedrückt = alles; gedrückte = nur diese Arten.
             seen.add(relations.queriedTypes().toString());
-            relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.ABBREVIATION).doClick();
-            relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.RELATED).doClick();
+            relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.SYNONYM).doClick();
             seen.add(relations.queriedTypes().toString());
-            // Sind alle abgewählt, gilt wieder die Vorgabe.
+            relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.VARIANT).doClick();
+            seen.add(relations.queriedTypes().toString());
+            seen.add(relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.SYNONYM)
+                    .getToolTipText());
             relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.SYNONYM).doClick();
             relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.VARIANT).doClick();
-            seen.add(relations.queriedTypes().toString() + " " + relations.typeChip(
-                    com.aresstack.spaceharvester.application.terms.RelationType.ABBREVIATION).isSelected());
+            seen.add(relations.queriedTypes().toString());
+            // Kopf für den Einbau: Titel und Unterzeile lassen sich setzen oder weglassen.
+            relations.heading("Beziehungen", null);
+            seen.add(String.valueOf(relations.directory().getComponentCount() > 0));
         });
         assertThat(seen).containsExactly("Begriff=Sachbearbeitung", "Beziehung=Synonym",
                 "Zu Begriff=Fallbearbeitung", "Status=Abgelehnt", "Herkunft=KI", "true", "true", "true", "[]",
-                "[SYNONYM, VARIANT]", "[] true");
+                "[SYNONYM]", "[SYNONYM, VARIANT]", "Filter „Synonym“ aufheben", "[]", "true");
         assertThat(new TermsView(null).relationTab().dialogTypes()).containsExactly(
                 com.aresstack.spaceharvester.application.terms.RelationType.values());
     }
