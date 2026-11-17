@@ -89,11 +89,7 @@ public final class TermsView implements View {
         this.context = context;
         root.setBackground(Comic.SURFACE);
         root.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
-        relationTab = new RelationTab(context, "Beziehungen zwischen Begriffen",
-                new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"},
-                r -> List.of(r.fromTerm(), Relation.typeText(r.type()), r.toTerm(), Relation.statusText(r.status()),
-                        Relation.originText(r.origin())),
-                List.of(), RelationType.ABBREVIATION, NO_RELATIONS);
+        relationTab = RelationTab.all(context);
         graph = new TermGraphView(context);
         glossaryTab = new GlossaryTab(context, () -> context == null || context.runtime() == null
                 ? java.util.Optional.empty() : context.runtime().workspace().glossary());

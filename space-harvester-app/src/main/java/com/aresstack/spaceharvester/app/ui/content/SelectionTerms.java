@@ -80,11 +80,14 @@ final class SelectionTerms implements TermsTab.Selection {
     @Override
     public TermsTab.Totals totals() {
         PageSet within = pages();
+        // Der Bestand der Auswahl, wie ihn der Export-Reiter zeigt: lokal gespeicherte von allen Seiten.
+        com.aresstack.spaceharvester.application.holdings.PageSelection holdings =
+                workspace.resolveSelection(selection.toCore(runtime));
         TermQueries.TermTotals terms = workspace.termTotals(new TermQueries.TermSearch(null, null, null, null, false,
                 TermsTab.STEP, null, null).within(within));
         int relations = workspace.termRelationCounts(within).values().stream().mapToInt(Integer::intValue).sum();
         return new TermsTab.Totals(terms.of(TermKind.ACRONYM), terms.of(TermKind.NOUN) + terms.of(TermKind.IDENTIFIER),
-                relations);
+                relations, holdings.counts().stored(), holdings.size());
     }
 
     @Override

@@ -335,6 +335,18 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
+        // Technik-Reiter ohne Seite (BG2b): dieselben Unterreiter, unter „Analyse“ nur die Beziehungen der Auswahl.
+        onEdt(() -> {
+            detail.tabs().select("Erweitert");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.wideAdvanced().names())).containsExactly("Technische Angaben", "Analyse",
+                "Originaldaten");
+        assertThat(onEdt(() -> detail.wideAdvanced().selected())).isEqualTo("Analyse");
+        assertThat(onEdt(() -> detail.wideAnalysis().isVisible() && !detail.wideAnalysis().showsSteps())).isTrue();
+        assertThat(onEdt(() -> detail.wideAnalysis().proposeButton().isVisible()
+                && detail.wideAnalysis().createButton().isVisible())).isTrue();
+        assertThat(onEdt(() -> detail.analysisView().proposeButton().isShowing())).isFalse();
         onEdt(() -> {
             detail.tabs().select("Leseansicht");
             return null;
