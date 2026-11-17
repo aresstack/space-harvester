@@ -74,7 +74,7 @@ class GlossaryTabTest {
         assertThat(glossary.reads).containsExactly("full null " + QUERY_DEFAULT);
         SwingUtilities.invokeAndWait(() -> {
             javax.swing.JTable table = tab[0].directory().table();
-            assertThat(row(table, 0)).containsExactly("Datenprodukt", "fachlich", "12 Seiten · 4× handelnd",
+            assertThat(row(table, 0)).containsExactly("Datenprodukt", "fachlich", "12 Seiten",
                     "Vorgeschlagen", "KI", "Beschreibt ein Produkt", "");
             assertThat(row(table, 1)).containsExactly("Haushaltsverfahren", "unklar", GlossaryTab.NO_IMPORTANCE,
                     "Bestätigt", "Manuell", "Beschreibt ein Produkt", "");
@@ -153,6 +153,48 @@ class GlossaryTabTest {
         });
         await("wieder zwei", () -> tab[0].directory().table().getRowCount() == 2);
         assertThat(glossary.entries).doesNotContainKey("4");
+    }
+
+    @Test
+    void tooNarrowForBothChipGroupsTheStatusMovesIntoAFilterMenu() throws Exception {
+        FakeGlossary glossary = new FakeGlossary();
+        glossary.put(entry("1", "Datenprodukt", "wiki", "DH", RelationOrigin.AI, ReviewStatus.PROPOSED, 1, false),
+                GlossaryDerivation.Category.FACHLICH, null);
+        glossary.put(entry("2", "Berechtigungsmanagement", "wiki", null, RelationOrigin.AI, ReviewStatus.REJECTED,
+                1, false), GlossaryDerivation.Category.FACHLICH, null);
+        GlossaryTab[] tab = new GlossaryTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new GlossaryTab(null, () -> Optional.of(glossary));
+            tab[0].component().setSize(1100, 400);
+            tab[0].component().doLayout();
+            tab[0].load();
+        });
+        await("geladen", () -> tab[0].directory().table().getRowCount() == 1);
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0].fitChips();
+            assertThat(tab[0].status(ReviewStatus.REJECTED).getParent().isVisible()).isTrue();
+            assertThat(tab[0].statusFilter().isVisible()).isFalse();
+            tab[0].component().setSize(420, 400);
+            tab[0].component().doLayout();
+            ((javax.swing.JComponent) tab[0].component().getComponent(0)).setSize(400, 30);
+            tab[0].fitChips();
+            assertThat(tab[0].status(ReviewStatus.REJECTED).getParent().isVisible()).isFalse();
+            assertThat(tab[0].statusFilter().isVisible()).isTrue();
+        });
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0].buildStatusMenu();
+            List<String> items = new ArrayList<>();
+            for (java.awt.Component item : tab[0].statusMenu().getComponents()) {
+                items.add(((javax.swing.JMenuItem) item).getText());
+            }
+            assertThat(items).containsExactly(GlossaryTab.OPEN_AND_CONFIRMED, "vorgeschlagen 1", "bestätigt 0",
+                    "abgelehnt 1");
+            ((javax.swing.JMenuItem) tab[0].statusMenu().getComponent(3)).doClick();
+        });
+        await("Sperrliste über das Menü", () -> tab[0].directory().table().getRowCount() == 1
+                && "Berechtigungsmanagement".equals(tab[0].directory().table().getValueAt(0, 0)));
+        SwingUtilities.invokeAndWait(() -> assertThat(tab[0].statusFilter().getToolTipText())
+                .endsWith("gewählt: abgelehnt"));
     }
 
     @Test

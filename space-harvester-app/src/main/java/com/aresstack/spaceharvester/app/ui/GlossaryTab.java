@@ -56,9 +56,10 @@ import java.util.function.Supplier;
 /**
  * Der Reiter „Fachglossar“ unter Begriffe (ADR 0032, FL5b): die Glossareinträge zur Auswahl links im Explorer,
  * fertig sortiert, gefiltert und gezählt vom Core ({@code GlossaryOverview}). Oben rechts in der Reiterzeile stehen
- * Zählchips je Einordnung (fachlich, Rolle, unklar, Technik; Technik standardmäßig aus) und je Status (vorgeschlagen,
- * bestätigt, abgelehnt = Sperrliste), die Suche mit ✕ und die Icon-Knöpfe „Fachbegriff hinzufügen“ und „Fachbegriffe
- * ermitteln“ ({@link TermsView}). Die Tabelle zeigt Begriff, Einordnung, Wichtigkeit, Status, Herkunft und
+ * die Suche mit ✕ und die Icon-Knöpfe „Fachbegriff hinzufügen“ und „Fachbegriffe ermitteln“ ({@link TermsView}); die
+ * sechs Reiter von Begriffe lassen dort keinen Platz für Chips. Darum steht über der Tabelle eine Zeile mit Zählchips
+ * je Einordnung (fachlich, Rolle, unklar, Technik; Technik standardmäßig aus) und je Status (vorgeschlagen,
+ * bestätigt, abgelehnt = Sperrliste); reicht die Breite nicht, steht der Status in einem Filtermenü. Die Tabelle zeigt Begriff, Einordnung, Wichtigkeit, Status, Herkunft und
  * Erläuterung; Zeilenaktionen als Symbole, Einzelheiten als Fenster am Mausklick.
  *
  * <p>Lesen in zwei Formen: Eine neue Auswahl oder das Ende von „Fachbegriffe ermitteln“, „Aussagen analysieren“ oder
@@ -77,6 +78,8 @@ final class GlossaryTab {
     static final String ADD_TIP = "Fachbegriff hinzufügen: einen Begriff von Hand anlegen; er gilt sofort als "
             + "bestätigt";
     static final String SEARCH_TIP = "Fachbegriffe suchen: Anfang des Begriffs oder eines seiner Wörter";
+    static final String STATUS_FILTER_TIP = "Nach Status filtern: vorgeschlagen, bestätigt oder abgelehnt (Sperrliste)";
+    static final String OPEN_AND_CONFIRMED = "vorgeschlagen und bestätigt";
     static final String CONFIRM = "Bestätigen";
     static final String REJECT = "Ablehnen";
     static final String RESTORE = "Ablehnung zurücknehmen";
@@ -128,7 +131,13 @@ final class GlossaryTab {
     private final Map<GlossaryDerivation.Category, CountChip> categories =
             new EnumMap<>(GlossaryDerivation.Category.class);
     private final Map<ReviewStatus, CountChip> statuses = new EnumMap<>(ReviewStatus.class);
-    private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+    /** Die Zeile über der Tabelle: Chips je Einordnung, dann je Status; zu schmal, steht der Status im Filtermenü. */
+    private final JPanel chipLine = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    private final JPanel categoryChips = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    private final JPanel statusChips = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    private final IconButton statusFilter = new IconButton(Glyph.FILTER, STATUS_FILTER_TIP);
+    private final javax.swing.JPopupMenu statusMenu = new javax.swing.JPopupMenu();
+    private final JPanel page = new JPanel(new java.awt.BorderLayout(0, 8));
     private final Map<String, Entry> byId = new HashMap<>();
     private final List<GlossaryAccess.Row> shown = new ArrayList<>();
     private final Map<String, GlossaryAccess.Row> rowById = new HashMap<>();
@@ -171,8 +180,10 @@ final class GlossaryTab {
         for (int c = 0; c < ACTIONS_COLUMN; c++) {
             table.getColumnModel().getColumn(c).setCellRenderer(renderer);
         }
-        table.getColumnModel().getColumn(0).setPreferredWidth(200);
-        table.getColumnModel().getColumn(5).setPreferredWidth(240);
+        int[] widths = {200, 80, 90, 110, 80, 300};
+        for (int c = 0; c < widths.length; c++) {
+            table.getColumnModel().getColumn(c).setPreferredWidth(widths[c]);
+        }
         RowActions.install(table, ACTIONS_COLUMN, ACTION_COUNT, row -> actions(entryAtModel(row)));
         table.addMouseListener(new MouseAdapter() {
             @Override
@@ -187,7 +198,9 @@ final class GlossaryTab {
                 }
             }
         });
-        tools.setOpaque(false);
+        for (JPanel group : List.of(chipLine, categoryChips, statusChips)) {
+            group.setOpaque(false);
+        }
         for (GlossaryDerivation.Category category : List.of(GlossaryDerivation.Category.FACHLICH,
                 GlossaryDerivation.Category.ROLLE, GlossaryDerivation.Category.UNKLAR,
                 GlossaryDerivation.Category.TECHNISCH)) {
@@ -196,20 +209,31 @@ final class GlossaryTab {
             chip.setSelected(GlossaryOverview.Query.WITHOUT_TECHNICAL.contains(category));
             chip.addActionListener(e -> refine());
             categories.put(category, chip);
-            tools.add(chip);
+            categoryChips.add(chip);
         }
-        tools.add(new ChipGap());
         for (ReviewStatus status : List.of(ReviewStatus.PROPOSED, ReviewStatus.CONFIRMED, ReviewStatus.REJECTED)) {
             CountChip chip = new CountChip(statusWord(status), statusTone(status));
             chip.setToolTipText(statusTip(status));
-            chip.addActionListener(e -> {
-                // Ein Status zur Zeit; ein zweiter Klick hebt den Filter auf (Vorschläge und bestätigte).
-                statuses.values().stream().filter(other -> other != chip).forEach(other -> other.setSelected(false));
-                refine();
-            });
+            chip.addActionListener(e -> chooseStatus(chip.isSelected() ? status : null));
             statuses.put(status, chip);
-            tools.add(chip);
+            statusChips.add(chip);
         }
+        statusFilter.setVisible(false);
+        statusFilter.addActionListener(e -> showStatusMenu());
+        chipLine.add(categoryChips);
+        chipLine.add(new ChipGap());
+        chipLine.add(statusChips);
+        chipLine.add(statusFilter);
+        // Kein Umbruch, kein Rollbalken: Reicht die Breite nicht für beide Gruppen, wandert der Status ins Menü.
+        chipLine.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                fitChips();
+            }
+        });
+        page.setOpaque(false);
+        page.add(chipLine, java.awt.BorderLayout.NORTH);
+        page.add(busy, java.awt.BorderLayout.CENTER);
         search.setToolTipText(SEARCH_TIP);
         search.getAccessibleContext().setAccessibleName(SEARCH_TIP);
         search.getDocument().addDocumentListener(new DocumentListener() {
@@ -228,16 +252,70 @@ final class GlossaryTab {
                 refine();
             }
         });
-        tools.add(searchField);
         detect.setEnabled(false);
         add.setEnabled(false);
         detect.addActionListener(e -> detect());
         add.addActionListener(e -> askNew());
     }
 
-    /** Die Werkzeuge der Reiterzeile: Chips und Suche; die Knöpfe kommen einzeln ({@link #addButton()}). */
+    /** Die Suche für die Reiterzeile; die Knöpfe kommen einzeln ({@link #addButton()}), die Chips stehen im Reiter. */
     JComponent tools() {
-        return tools;
+        return searchField;
+    }
+
+    /** Ein Status zur Zeit; {@code null} hebt den Filter auf (Vorschläge und bestätigte). */
+    private void chooseStatus(ReviewStatus chosen) {
+        statuses.forEach((status, chip) -> chip.setSelected(status == chosen));
+        refine();
+    }
+
+    /** Zeigt die Status-Chips, wenn beide Gruppen in die Zeile passen, sonst den Filterknopf mit Menü. */
+    void fitChips() {
+        int width = chipLine.getWidth();
+        if (width <= 0) {
+            return;
+        }
+        int needed = categoryChips.getPreferredSize().width + statusChips.getPreferredSize().width + 9 + 24;
+        boolean fits = width >= needed;
+        if (statusChips.isVisible() != fits) {
+            statusChips.setVisible(fits);
+            statusFilter.setVisible(!fits);
+            chipLine.revalidate();
+            chipLine.repaint();
+        }
+        updateStatusFilter();
+    }
+
+    /** Der Filterknopf zeigt den gewählten Status im Tooltip und ist gefüllt, solange einer gewählt ist. */
+    private void updateStatusFilter() {
+        ReviewStatus chosen = query().status();
+        String tip = chosen == null ? STATUS_FILTER_TIP : STATUS_FILTER_TIP + " · gewählt: " + statusWord(chosen);
+        statusFilter.setToolTipText(tip);
+        statusFilter.getAccessibleContext().setAccessibleName(tip);
+    }
+
+    /** Das Filtermenü mit denselben Zahlen wie die Chips; „vorgeschlagen und bestätigt“ hebt den Filter auf. */
+    private void showStatusMenu() {
+        buildStatusMenu();
+        statusMenu.show(statusFilter, 0, statusFilter.getHeight());
+    }
+
+    void buildStatusMenu() {
+        statusMenu.removeAll();
+        ReviewStatus chosen = query().status();
+        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
+        javax.swing.JRadioButtonMenuItem all = new javax.swing.JRadioButtonMenuItem(OPEN_AND_CONFIRMED,
+                chosen == null);
+        all.addActionListener(e -> chooseStatus(null));
+        group.add(all);
+        statusMenu.add(all);
+        statuses.forEach((status, chip) -> {
+            javax.swing.JRadioButtonMenuItem item = new javax.swing.JRadioButtonMenuItem(
+                    statusWord(status) + " " + chip.count(), status == chosen);
+            item.addActionListener(e -> chooseStatus(status));
+            group.add(item);
+            statusMenu.add(item);
+        });
     }
 
     /** Die Auswahl links hat sich geändert: volle Sicht, sofort wenn zu sehen, sonst beim nächsten Zeigen. */
@@ -423,6 +501,7 @@ final class GlossaryTab {
     void show(GlossaryAccess.Overview result, GlossaryOverview.Query query) {
         categories.forEach((category, chip) -> chip.count(result.byCategory().getOrDefault(category, 0)));
         statuses.forEach((status, chip) -> chip.count(result.byStatus().getOrDefault(status, 0)));
+        fitChips();
         Entry current = selectedEntry();
         String select = keepSelected != null ? keepSelected : current == null ? null : current.id();
         keepSelected = null;
@@ -477,13 +556,9 @@ final class GlossaryTab {
         return cells;
     }
 
-    /** „12 Seiten · 4× handelnd“; „–“ ohne Wichtigkeit in der Auswahl. */
+    /** „12 Seiten“ (die Seitenstreuung zählt zuerst); „–“ ohne Wichtigkeit in der Auswahl. Alles im Tooltip. */
     static String importance(GlossaryDerivation.Importance importance) {
-        if (importance == null) {
-            return NO_IMPORTANCE;
-        }
-        return Texts.count(importance.pages(), "Seite", "Seiten")
-                + (importance.asActor() == 0 ? "" : " · " + importance.asActor() + "× handelnd");
+        return importance == null ? NO_IMPORTANCE : Texts.count(importance.pages(), "Seite", "Seiten");
     }
 
     /** Die ganze Wichtigkeit als Tooltip der Spalte. */
@@ -972,7 +1047,7 @@ final class GlossaryTab {
     }
 
     JComponent component() {
-        return busy;
+        return page;
     }
 
     IconButton detectButton() {
@@ -1009,6 +1084,16 @@ final class GlossaryTab {
     BusyOverlay busy() {
         return busy;
     }
+
+    IconButton statusFilter() {
+        return statusFilter;
+    }
+
+    javax.swing.JPopupMenu statusMenu() {
+        return statusMenu;
+    }
+
+
 
     List<String> jobIds() {
         return List.copyOf(jobs.keySet());
