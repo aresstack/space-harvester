@@ -206,6 +206,21 @@ class AppSettingsLoaderTest {
         assertThat(on.problems()).singleElement().asString().contains("logging.threshold.console");
     }
 
+    /** Angelo 17.11.2026: Hintergrund des Bildbetrachters, ohne Angabe die Oberfläche der App. */
+    @Test
+    void theViewerBackgroundIsTheThemeByDefaultAndReadsItsValuesCaseInsensitively() throws Exception {
+        assertThat(load("space-harvester:\n  sources: []\n", Map.of()).viewerBackground())
+                .isEqualTo(ViewerBackground.THEME);
+        assertThat(load("space-harvester-app:\n  viewer:\n    background: Black\n", Map.of()).viewerBackground())
+                .isEqualTo(ViewerBackground.BLACK);
+        assertThat(load("space-harvester-app:\n  viewer:\n    background: gray\n", Map.of()).viewerBackground())
+                .isEqualTo(ViewerBackground.GREY);
+
+        AppSettings bad = load("space-harvester-app:\n  viewer:\n    background: pink\n", Map.of());
+        assertThat(bad.viewerBackground()).isEqualTo(ViewerBackground.THEME);
+        assertThat(bad.problems()).singleElement().asString().contains(ViewerBackground.KEY, "pink");
+    }
+
     @Test
     void theAnalyticsExportReadsPeriodAndPathsAndFallsBackToTheDefaultsForBadOnes() throws Exception {
         assertThat(load("space-harvester:\n  sources: []\n", Map.of()).analytics()).isEqualTo(AnalyticsSettings.DEFAULT);

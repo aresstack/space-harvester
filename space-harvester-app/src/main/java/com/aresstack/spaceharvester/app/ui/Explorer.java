@@ -443,7 +443,8 @@ public final class Explorer {
                 if (path == null || !javax.swing.SwingUtilities.isLeftMouseButton(event)) {
                     return;
                 }
-                // Ein Klick wählt nur (Download-Symbol und „Weitere laden“ ausgenommen), erst Doppelklick öffnet.
+                // Ein Klick öffnet (Angelo, 17.11.2026: einheitlich für Quelle, Space und Seite, kein Doppelklick
+                // zum Lesen); der Doppelklick klappt auf und zu, der Griff davor ebenso.
                 boolean single = event.getClickCount() == 1;
                 if (onAction(path, event.getPoint())) {
                     if (single) {
@@ -457,12 +458,10 @@ public final class Explorer {
                     if (single) {
                         refresh(((Node) path.getLastPathComponent()).item());
                     }
-                } else if (path.getLastPathComponent() instanceof Node node && node.item() instanceof MoreItem) {
-                    if (single) {
-                        activate(path);
-                    }
-                } else if (event.getClickCount() == 2) {
+                } else if (single) {
                     activate(path);
+                } else if (event.getClickCount() == 2) {
+                    toggle(path);
                 }
             }
 
@@ -1168,17 +1167,28 @@ public final class Explorer {
         }
     }
 
-    /** Ein Klick: Seite öffnen bzw. den nächsten Stapel holen. */
+    /**
+     * Ein Klick oder Enter: Seite öffnen bzw. den nächsten Stapel holen. Quelle und Space zeigt schon die Auswahl in
+     * der Mitte (die Quellenseite mit den Updates), ein Klick wechselt dort keinen Reiter.
+     */
     private void activate(TreePath path) {
         if (!(path.getLastPathComponent() instanceof Node node)) {
             return;
         }
         switch (node.item()) {
             case PageItem page -> context.navigator().openPage(page.sourceId(), page.pageId());
-            case SourceItem source -> context.navigator().openSource(source.sourceId(), source.title());
             case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
+        }
+    }
+
+    /** Doppelklick: den Knoten auf- oder zuklappen (Angelo, 17.11.2026). */
+    private void toggle(TreePath path) {
+        if (tree.isExpanded(path)) {
+            tree.collapsePath(path);
+        } else {
+            tree.expandPath(path);
         }
     }
 

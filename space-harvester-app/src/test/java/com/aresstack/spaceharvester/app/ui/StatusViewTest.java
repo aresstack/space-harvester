@@ -129,7 +129,7 @@ class StatusViewTest {
         assertThat(workspace.deleteFinishedJobs()).isEqualTo(finished);
         assertThat(workspace.jobs()).isEmpty();
 
-        // Besen „Alle Aufträge löschen“: auch ein gerade gestarteter Auftrag wird abgebrochen und gelöscht.
+        // „Alle Aufträge löschen“ (Menü neben dem Besen): auch ein gerade gestarteter Auftrag wird abgebrochen und gelöscht.
         workspace.startSync("handbuch", workspace.spaces("handbuch").get(0).key());
         java.util.List<String> everything = workspace.jobs().stream().map(j -> j.id()).toList();
         assertThat(everything).isNotEmpty();

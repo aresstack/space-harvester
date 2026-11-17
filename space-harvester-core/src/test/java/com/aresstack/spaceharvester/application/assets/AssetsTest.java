@@ -867,6 +867,35 @@ class AssetsTest {
     }
 
     @Test
+    void theReadingViewListsTheAttachmentsOncePerPageVersionInsteadOfOncePerImage() {
+        Assets assets = assets(100_000);
+        source.listed.add(attachment("att-p", "foto.png", "image/png", "2"));
+        HarvestSource.ViewImage foto = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/foto.png", "Foto", null, "image/png", null);
+        HarvestSource.ViewImage karte = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/karte.png", "Karte", null, "image/png", null);
+
+        for (int round = 0; round < 3; round++) {
+            assertThat(assets.viewDiagramSvg("wiki", "101", "7", foto)).isEmpty();
+            assertThat(assets.viewDiagram("wiki", "101", "7", foto)).isEmpty();
+            assertThat(assets.viewDiagramSvg("wiki", "101", "7", karte)).isEmpty();
+            assertThat(assets.viewDiagram("wiki", "101", "7", karte)).isEmpty();
+        }
+        assertThat(source.listings).isEqualTo(1);
+
+        // Eine neue Seitenversion fragt neu.
+        assets.viewDiagram("wiki", "101", "8", foto);
+        assertThat(source.listings).isEqualTo(2);
+
+        // Antwortet die Quelle nicht, gilt die Liste eine Weile als leer: das Bild kommt dann aus der Ablage, ohne dass
+        // jedes weitere Bild auf die Quelle wartet.
+        source.listingUnreachable = true;
+        assertThat(assets.viewDiagram("wiki", "101", "9", foto)).isEmpty();
+        assertThat(assets.viewDiagramSvg("wiki", "101", "9", karte)).isEmpty();
+        assertThat(source.listings).isEqualTo(3);
+    }
+
+    @Test
     void aDrawioDiagramOfAnotherPageBecomesAPngFromTheSvgOfTheSource() {
         Assets assets = assets(100_000);
         // Eingebunden über multiexcerpt-include: das Diagramm hängt an Seite 202, nicht an der gezeigten Seite 101.
@@ -1021,8 +1050,15 @@ class AssetsTest {
             return content.getBytes(StandardCharsets.UTF_8);
         }
 
+        int listings;
+        boolean listingUnreachable;
+
         @Override
         public PageAttachments attachments(String pageId) {
+            listings++;
+            if (listingUnreachable) {
+                throw new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "weg", null);
+            }
             return new PageAttachments(pageId, List.copyOf(listed), List.of(), "application/json", "test", List.of(),
                     NOW);
         }

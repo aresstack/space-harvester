@@ -192,6 +192,34 @@ class SourceQueryExportsTest {
         assertThat(wiki.requests).hasSize(4);
     }
 
+    /** Angelo 17.11.2026: Analytics über eine Quelle mit zwei Spaces ergibt je Space einen Auftrag und eine Datei. */
+    @Test
+    void analyticsOverTwoSpacesGivesOneJobAndOneFilePerSpace() throws Exception {
+        pagesOfSpace.put("DEV", List.of("1"));
+        pagesOfSpace.put("OPS", List.of("7"));
+        String period = period(CLOCK.instant(), AnalyticsQueries.DEFAULT_DAYS);
+        for (String key : List.of("DEV", "OPS")) {
+            wiki.stub(AnalyticsQueries.ROOT + "space/details?spaceKey=" + key, "{\"space\":{\"key\":\"" + key + "\"}}");
+            wiki.stub(AnalyticsQueries.ROOT + "space/activityByDate?spaceKey=" + key + "&" + period,
+                    "{\"activityByDate\":{\"views\":[]}}");
+            wiki.stub(contentViews(period, null).replace("spaceKey=DEV", "spaceKey=" + key),
+                    "{\"contentViews\":[]}");
+        }
+
+        List<JobStatus> started = exports.startAnalytics(CALLER, new Selection(List.of(
+                Selection.Root.space("wiki", "DEV"), Selection.Root.space("wiki", "OPS"))), out,
+                AnalyticsQueries.DEFAULT);
+
+        assertThat(started).hasSize(2).extracting(JobStatus::partitionKey).containsExactly("DEV", "OPS");
+        for (JobStatus job : started) {
+            JobStatus done = jobs.status(job.id());
+            assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(out.resolve(SourceQueryExports.fileName(JobType.ANALYTICS_EXPORT, done.partitionKey(), null,
+                    done.id()))).exists();
+        }
+        assertThat(list(out)).as("je Space eine eigene Datei").hasSize(2);
+    }
+
     @Test
     void aListWhoseTokenIsIgnoredEndsIncompleteInsteadOfEndless() throws Exception {
         pagesOfSpace.put("DEV", List.of("1"));
