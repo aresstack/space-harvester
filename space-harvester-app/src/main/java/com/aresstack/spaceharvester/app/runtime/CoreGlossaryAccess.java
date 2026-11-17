@@ -105,6 +105,18 @@ final class CoreGlossaryAccess implements GlossaryAccess {
     }
 
     @Override
+    public Entry categorize(String id, com.aresstack.spaceharvester.application.glossary.GlossaryDerivation.Category
+            category, long revision) {
+        return conflicts(() -> entry(harvester.glossary().categorize(caller, id, category, revision)));
+    }
+
+    @Override
+    public List<History> history(String id) {
+        return harvester.glossary().history(caller, id).stream()
+                .map(entry -> new History(entry.action(), entry.actor(), entry.at(), entry.status())).toList();
+    }
+
+    @Override
     public Entry confirm(String id, long revision) {
         return conflicts(() -> entry(harvester.glossary().confirm(caller, id, revision)));
     }
@@ -187,7 +199,8 @@ final class CoreGlossaryAccess implements GlossaryAccess {
     static Overview overview(GlossaryOverview.View view) {
         List<Row> rows = new ArrayList<>(view.rows().size());
         for (GlossaryOverview.ViewRow row : view.rows()) {
-            rows.add(new Row(entry(row.entry()), row.importance(), row.category()));
+            rows.add(new Row(entry(row.entry()), row.importance(), row.category(), row.entry().classification(),
+                    row.entry().definitionProposal()));
         }
         return new Overview(rows, view.countsByCategory(), view.countsByStatus(), view.pages(), view.stalePages(),
                 view);

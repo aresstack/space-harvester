@@ -84,7 +84,8 @@ class GlossaryTabTest {
             assertThat(tab[0].category(GlossaryDerivation.Category.TECHNISCH).isSelected()).isFalse();
             assertThat(tab[0].status(ReviewStatus.PROPOSED).count()).isEqualTo(1);
             assertThat(tab[0].status(ReviewStatus.CONFIRMED).count()).isEqualTo(1);
-            assertThat(status).last().isEqualTo("2 Fachbegriffe · 40 Seiten ausgewertet · 1 Analyse veraltet");
+            assertThat(status).last().isEqualTo("Alle Wissensquellen · 2 Fachbegriffe · 40 Seiten ausgewertet · 1 Analyse "
+                    + "veraltet");
             List<RowActions.Action> proposedAi = tab[0].actions(tab[0].entryAtView(0));
             assertThat(proposedAi.stream().map(RowActions.Action::tooltip)).containsExactly(GlossaryTab.CONFIRM,
                     GlossaryTab.REJECT, GlossaryTab.EDIT, GlossaryTab.ONLY_MANUAL);
@@ -149,7 +150,10 @@ class GlossaryTabTest {
         SwingUtilities.invokeAndWait(() -> {
             int row = tab[0].directory().table().getSelectedRow();
             assertThat(tab[0].directory().table().getValueAt(row, 4)).isEqualTo("Manuell");
+            List<String> asked = new ArrayList<>();
+            tab[0].confirmWith((heading, question) -> asked.add(question));
             tab[0].actions(tab[0].entryAtView(row)).get(3).run().run();
+            assertThat(asked).containsExactly("Wirklich „Haushaltsverfahren“ aus dem Fachglossar entfernen?");
         });
         await("wieder zwei", () -> tab[0].directory().table().getRowCount() == 2);
         assertThat(glossary.entries).doesNotContainKey("4");
@@ -297,6 +301,24 @@ class GlossaryTabTest {
     }
 
     @Test
+    void categorizingByHandGoesToTheCoreAndTheListShowsTheNewCategory() throws Exception {
+        FakeGlossary glossary = new FakeGlossary();
+        glossary.put(entry("1", "Sachbearbeiter", "wiki", "DH", RelationOrigin.RULE, ReviewStatus.PROPOSED, 1,
+                false), GlossaryDerivation.Category.UNKLAR, null);
+        GlossaryTab[] tab = new GlossaryTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new GlossaryTab(null, () -> Optional.of(glossary));
+            tab[0].load();
+        });
+        await("unklar", () -> tab[0].directory().table().getRowCount() == 1
+                && "unklar".equals(tab[0].directory().table().getValueAt(0, 1)));
+        SwingUtilities.invokeAndWait(() -> tab[0].categorize(tab[0].entryAtView(0), GlossaryDerivation.Category.ROLLE));
+        await("als Rolle", () -> "Rolle".equals(tab[0].directory().table().getValueAt(0, 1)));
+        assertThat(glossary.calls).containsExactly("categorize 1 ROLLE@1");
+        assertThat(glossary.reads).last().asString().startsWith("refine ");
+    }
+
+    @Test
     void textsForProgressOutcomeAndDetails() {
         assertThat(GlossaryTab.outcomeText(List.of(job("j", JobState.CANCELLED, new JobProgress(5, 2, 1, 0), null))))
                 .isEqualTo("Fachbegriffe ermitteln abgebrochen; 1 Eintrag bleibt, Entscheidungen unverändert");
@@ -307,11 +329,35 @@ class GlossaryTabTest {
         assertThat(GlossaryTab.outcomeText(List.of(job("j", JobState.COMPLETED, new JobProgress(5, 5, 2, 0), null))))
                 .isEqualTo("Fachbegriffe ermitteln abgeschlossen: 2 Einträge aus 5 geprüften Begriffen");
         Entry stale = entry("1", "Datenprodukt", "wiki", "DH", RelationOrigin.AI, ReviewStatus.CONFIRMED, 2, true);
-        String text = GlossaryTab.detailText(stale, List.of("Seite A: … das Datenprodukt liefert …"));
-        assertThat(text).startsWith("Beschreibt ein Produkt\n\nGilt für: wiki · DH\nHerkunft: KI (gpt-4o/p1) · "
-                + "Stand: Bestätigt am ");
-        assertThat(text).contains("2 Belege · Beleg veraltet").contains("• Seite A: … das Datenprodukt liefert …")
-                .contains("… und 1 weitere");
+        GlossaryAccess.Row row = new GlossaryAccess.Row(stale, new GlossaryDerivation.Importance(12, 30, 4, 1, 0),
+                GlossaryDerivation.Category.ROLLE, new com.aresstack.spaceharvester.application.glossary
+                .GlossaryEntry.Classification(GlossaryDerivation.Category.ROLLE,
+                com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy.RULE, "ROLE_HEAD"),
+                null);
+        com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin original =
+                com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin.ORIGINAL;
+        com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin staged =
+                com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin.VORSTUFE;
+        GlossaryDerivation.Term term = new GlossaryDerivation.Term("Datenprodukt", "datenprodukt", false,
+                row.importance(), List.of(new GlossaryDerivation.Use("prüfen", original, false, 5, List.of()),
+                new GlossaryDerivation.Use("ablehnen", original, true, 1, List.of()),
+                new GlossaryDerivation.Use("genehmigen", staged, false, 2, List.of())),
+                List.of(new GlossaryDerivation.Use("liefern", original, false, 3, List.of())), List.of(),
+                List.of(new GlossaryDerivation.Use("Angebot", original, false, 2, List.of())), List.of(),
+                GlossaryDerivation.Category.ROLLE, GlossaryDerivation.CategoryRule.ROLE_HEAD);
+        String text = GlossaryTab.overlayText(stale, row, term, List.of("Seite A: … das Datenprodukt liefert …"),
+                List.of(new GlossaryAccess.History("confirm", "angelo", T, ReviewStatus.CONFIRMED)));
+        assertThat(text).startsWith("Beschreibt ein Produkt\n\nEinordnung: Rolle (Regel: Wortende aus der Liste der "
+                + "Rollen und Stellen)\nGilt für: wiki · DH\nHerkunft: KI (gpt-4o/p1) · Stand: Bestätigt am ");
+        assertThat(text).contains("Wichtigkeit: Auf 12 Seiten, 30 Erwähnungen, handelnd 4×, betroffen 1×, als "
+                        + "Träger 0×")
+                .contains("Handelt: prüfen 5×\nHandelt nicht: ablehnen 1×\nIst betroffen: liefern 3×\nIst ein: "
+                        + "Angebot 2×\n")
+                .contains("Aus der Vorstufe (KI), zählt nicht für die Wichtigkeit: Handelt: genehmigen 2×")
+                .contains("2 Belege · Beleg veraltet").contains("• Seite A: … das Datenprodukt liefert …")
+                .contains("… und 1 weitere")
+                .contains("Protokoll:\n• ").contains(" bestätigt → Bestätigt · angelo");
+        assertThat(GlossaryTab.classifiedText(null)).isEqualTo(" (noch nicht eingeordnet)");
         assertThat(GlossaryTab.invalidTerm("  ")).isEqualTo("Den Fachbegriff angeben.");
         assertThat(GlossaryTab.invalidTerm("RSL")).isNull();
         assertThat(GlossaryTab.snippetText(new TermQueries.Snippet("vor  dem ", "Begriff", " danach", true, false)))
@@ -501,6 +547,21 @@ class GlossaryTabTest {
             return store(new Entry(e.id(), e.term(), e.normalized(), e.sourceId(), e.spaceKey(), e.origin(),
                     e.status(), e.evidence(), e.evidenceStale(), explanation, e.generation(), e.createdAt(), T,
                     e.reviewedAt(), e.revision() + 1));
+        }
+
+        @Override
+        public synchronized Entry categorize(String id, GlossaryDerivation.Category category, long revision) {
+            calls.add("categorize " + id + " " + category + "@" + revision);
+            Entry e = check(id, revision);
+            categories.put(id, category);
+            return store(new Entry(e.id(), e.term(), e.normalized(), e.sourceId(), e.spaceKey(), e.origin(),
+                    e.status(), e.evidence(), e.evidenceStale(), e.explanation(), e.generation(), e.createdAt(), T,
+                    e.reviewedAt(), e.revision() + 1));
+        }
+
+        @Override
+        public List<History> history(String id) {
+            return List.of(new History("create", "angelo", T, ReviewStatus.CONFIRMED));
         }
 
         @Override

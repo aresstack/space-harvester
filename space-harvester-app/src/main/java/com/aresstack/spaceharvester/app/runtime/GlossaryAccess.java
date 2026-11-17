@@ -182,12 +182,37 @@ public interface GlossaryAccess {
      * Eine Zeile der fertigen Sicht des Reiters ({@code GlossaryOverview.ViewRow}): der Eintrag mit seiner Wichtigkeit
      * in der Auswahl ({@code null}, wenn die Ableitung ihn dort nicht kennt) und seiner Einordnung.
      */
-    record Row(Entry entry, GlossaryDerivation.Importance importance, GlossaryDerivation.Category category) {
+    record Row(Entry entry, GlossaryDerivation.Importance importance, GlossaryDerivation.Category category,
+               com.aresstack.spaceharvester.application.glossary.GlossaryEntry.Classification classification,
+               RelationEvidence definition) {
 
         public Row {
             Objects.requireNonNull(entry, "entry");
             Objects.requireNonNull(category, "category");
         }
+
+        /** Ohne Begründung der Einordnung und ohne Vorschlag zur Begriffsbestimmung. */
+        public Row(Entry entry, GlossaryDerivation.Importance importance, GlossaryDerivation.Category category) {
+            this(entry, importance, category, null, null);
+        }
+    }
+
+    /** Eine Zeile im Protokoll eines Eintrags ({@code Glossary#history}): was, wer, wann, mit welchem Status. */
+    record History(String action, String actor, Instant at, ReviewStatus status) {
+    }
+
+    /** Ordnet den Eintrag von Hand ein; danach ändert kein Lauf die Einordnung mehr. */
+    Entry categorize(String id, GlossaryDerivation.Category category, long revision);
+
+    /** Das Protokoll des Eintrags, älteste zuerst. */
+    List<History> history(String id);
+
+    /**
+     * Einzelheiten eines Begriffs aus der gehaltenen Sicht ({@code View#term}), ohne neues Rechnen; leer, wenn die
+     * Ableitung ihn in der Auswahl nicht kennt.
+     */
+    default Optional<GlossaryDerivation.Term> term(Overview overview, String normalized) {
+        return overview == null || overview.held() == null ? Optional.empty() : overview.held().term(normalized);
     }
 
     /**

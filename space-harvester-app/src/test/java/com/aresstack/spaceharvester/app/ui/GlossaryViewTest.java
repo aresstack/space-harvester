@@ -105,7 +105,10 @@ class GlossaryViewTest {
                 && "Datenprodukt".equals(tab.directory().table().getValueAt(0, 0))
                 && "Bestätigt".equals(tab.directory().table().getValueAt(0, 3)));
         // Entfernen löscht den manuellen Eintrag im Core.
-        SwingUtilities.invokeAndWait(() -> tab.actions(tab.entryAtView(0)).get(3).run().run());
+        SwingUtilities.invokeAndWait(() -> {
+            tab.confirmWith((heading, question) -> true);
+            tab.actions(tab.entryAtView(0)).get(3).run().run();
+        });
         await("nur noch einer", () -> tab.directory().table().getRowCount() == 1);
         assertThat(workspace.glossary().get().search(new GlossaryAccess.Search(null, null, null, null, null, null,
                 10, null)).entries()).extracting(GlossaryAccess.Entry::term).containsExactly("Haushaltsverfahren");
