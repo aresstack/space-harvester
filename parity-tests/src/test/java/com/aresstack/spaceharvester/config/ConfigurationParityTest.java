@@ -108,6 +108,7 @@ class ConfigurationParityTest {
                   max-terms: 300
                   max-embedded-terms: 100
                   max-judged-pairs: 50
+                  automatic: false
               glossary:
                 rules:
                   max-terms: 200
@@ -196,6 +197,7 @@ class ConfigurationParityTest {
                 HarvesterConfiguration.DEFAULT, binder);
         SynonymBudget budget = service2.terms().synonyms();
         assertThat(app.terms().synonyms()).isEqualTo(budget);
+        assertThat(budget.automatic()).as("SY1: automatic aus beiden Loadern").isFalse();
         // ADR 0032, FL5b: Regeln der Begriffsableitung, als YAML-Liste und als Text mit Kommas.
         com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings rules =
                 com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.DEFAULT.withMaxTerms(200)

@@ -703,6 +703,8 @@ public final class Harvester implements AutoCloseable {
                     judge::mayProcess, termProcessor.version()), access, termRelations, judge, synonymCache, jobs,
                     () -> (this.settings != null ? this.settings.terms() : startTerms).synonyms(), clock);
             synonymDiscovery.pageReleases(pageReleases::contains);
+            // SY1: Neue KI-Freigaben von Seiten lösen den automatischen Lauf ihrer Quelle aus.
+            opened.add(pageReleases.subscribe(synonymDiscovery::releasesChanged));
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -835,7 +837,9 @@ public final class Harvester implements AutoCloseable {
             sectionTexts.set(documentEnrichments);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
-                    List.of(acronymRelationRule::refresh), documentEnrichments);
+                    // SY1: danach der automatische Synonymlauf der Quelle als eigener Auftrag.
+                    List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId)),
+                    documentEnrichments);
             this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock,
                     List.of(afterSync, run -> pruneChangeLog.run()), retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());

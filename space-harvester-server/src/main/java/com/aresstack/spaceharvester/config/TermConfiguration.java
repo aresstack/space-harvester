@@ -172,6 +172,8 @@ class TermConfiguration {
         AiRelease pages = release.getIfAvailable();
         if (pages != null) {
             discovery.pageReleases(pages.pages()::contains);
+            // SY1: Neue KI-Freigaben von Seiten lösen den automatischen Lauf ihrer Quelle aus.
+            pages.pages().subscribe(discovery::releasesChanged);
         }
         return discovery;
     }

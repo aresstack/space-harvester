@@ -111,6 +111,10 @@ public class SynonymDiscovery {
     private final Supplier<SynonymBudget> budget;
     private final Clock clock;
     private final Set<String> started = ConcurrentHashMap.newKeySet();
+    /** Quellen mit einem wartenden automatischen Lauf (SY1); höchstens einer je Quelle. */
+    private final Set<String> waiting = ConcurrentHashMap.newKeySet();
+    /** Stand je Quelle nach dem letzten vollständigen automatischen Lauf ({@link SynonymCandidates#state}). */
+    private final Map<String, String> finished = new ConcurrentHashMap<>();
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
     /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
     private volatile Predicate<PageKey> pageReleases = key -> false;
@@ -223,6 +227,70 @@ public class SynonymDiscovery {
                 }));
         started.add(status.id());
         return status;
+    }
+
+    /**
+     * Automatischer Lauf für eine Quelle (SY1, ADR 0019): Folgeschritt nach der Anreicherung einer Quelle, wie die
+     * Abkürzungsregel, als eigener Auftrag. Kein Zeitgeber. Nichts geschieht, wenn {@code terms.synonyms.automatic}
+     * aus ist, die Quelle unbekannt ist, schon ein Lauf für sie wartet oder sich seit dem letzten vollständigen Lauf
+     * nichts geändert hat ({@link SynonymCandidates#state}). Ohne Embedding-Modell oder Freigabe bleibt es bei
+     * Regelvorschlägen, ohne Fehler; der Abgleich lässt Bestätigtes und Abgelehntes stehen.
+     *
+     * @return der Auftrag, oder leer, wenn keiner nötig ist
+     */
+    public Optional<JobStatus> automatic(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        SynonymBudget chosen = budget.get();
+        if (!chosen.automatic() || catalog.find(sourceId).isEmpty()) {
+            return Optional.empty();
+        }
+        String state = candidates.state(sourceId);
+        if (state.equals(finished.get(sourceId)) || !waiting.add(sourceId)) {
+            return Optional.empty();
+        }
+        SynonymScope scope = SynonymScope.source(sourceId);
+        try {
+            JobStatus status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, JobTask.blocking(context -> {
+                waiting.remove(sourceId);
+                synchronized (lock(scope)) {
+                    // Der Stand vor dem Lauf: Was sich währenddessen ändert, löst den nächsten Lauf aus.
+                    String before = candidates.state(sourceId);
+                    run(scope, chosen, context);
+                    finished.put(sourceId, before);
+                }
+            }));
+            started.add(status.id());
+            LOG.log(System.Logger.Level.INFO, "Synonymerkennung für {0} automatisch eingeplant", sourceId);
+            return Optional.of(status);
+        } catch (RuntimeException e) {
+            waiting.remove(sourceId);
+            throw e;
+        }
+    }
+
+    /**
+     * Neue KI-Freigabe von Seiten einer Quelle (ADR 0028): Ihre Textstellen dürfen jetzt an das Embedding-Modell, also
+     * gilt der letzte Stand nicht mehr; danach wie {@link #automatic}.
+     */
+    public Optional<JobStatus> released(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        finished.remove(sourceId);
+        return automatic(sourceId);
+    }
+
+    /**
+     * Beobachter der Liste freigegebener Seiten: Für jede Quelle mit neu eingetragenen Seiten {@link #released}.
+     * Entfernte Seiten lösen keinen Lauf aus; ihre KI-Ergebnisse räumt die Neuberechnung ab (ADR 0028).
+     */
+    public void releasesChanged(com.aresstack.spaceharvester.application.release.PageReleases.Change change) {
+        change.added().stream().map(entry -> entry.key().sourceId()).distinct().forEach(sourceId -> {
+            try {
+                released(sourceId);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Synonymerkennung für {0} nicht eingeplant: {1}", sourceId,
+                        e.getClass().getSimpleName());
+            }
+        });
     }
 
     /** Ob der Auftrag von {@link #start} stammt; andere Anreicherungsaufträge gehören nicht hierher. */
