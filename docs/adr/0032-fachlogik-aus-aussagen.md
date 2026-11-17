@@ -134,6 +134,25 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Messung: `GlossarBerichtTest` gegen von Hand vorab festgelegte `begriffe.tsv`/`beziehungen.tsv` je Textsatz
   (Bericht `build/reports/pruefstand/glossar.md`, kein Pin; beim Kontrollsatz nur Zahlen und Kennungen).
 
+## Umsetzung FL5b-1 (Ablage im Glossar)
+
+- `GlossaryEntry` trägt zusätzlich `classification` (Kategorie, Urheber `RULE`/`AI`/`MANUAL`, Grund nur als
+  Kennung wie `TECHNICAL_HEAD`, nie freier Text eines Modells), `definitionProposal` (Belegposition, nie Text; bleibt
+  leer, bis das Artikel-Merkmal auf main ist) und `supportedBy` (welche Läufe den Begriff zuletzt nannten). Wichtigkeit
+  wird nicht gespeichert. Alte Ablagen bleiben lesbar (fehlende Felder: keine Einordnung, gestützt vom anlegenden Lauf).
+- Herkunft `RULE` ist zugelassen und verhält sich wie `AI`: ohne lesbaren Beleg unsichtbar, Belege und
+  Definitionsvorschlag nach Leserecht gefiltert. Die Herkunft ändert sich nie; Regel und KI teilen die Kennung je
+  Begriff und Geltungsbereich.
+- Stützung: Jede Phase trägt nur sich ein oder aus. Ein ungeprüfter Vorschlag fällt erst, wenn ihn kein Lauf mehr
+  stützt; ein bestätigter wird erst dann „Beleg veraltet“. Ein Lauf, der nicht stattfindet, löscht nichts.
+- Einordnung: Mensch vor KI vor Regel; die KI ersetzt eine Regel-Einordnung nur bei `UNKLAR`, die Regel nie die KI.
+  `Glossary.categorize` setzt die Einordnung des Menschen (Protokoll `categorize`).
+- `Glossary.Search` filtert nach Kategorien (ohne Einordnung zählt `UNKLAR`).
+- `GlossaryRuleProposals` macht aus `GlossaryDerivation` die Vorschläge eines Geltungsbereichs: nur Seitenbelege
+  (keine Anhänge), bis zu 3 aus dem Original, höchstens `maxTerms` (Standard 500) nach Wichtigkeit, der Rest bleibt
+  unverändert. Belege der Regel dürfen von Seiten ohne KI-Freigabe stammen; FL5c zeigt dem Modell nur Belege
+  freigegebener Seiten.
+
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
   [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).
