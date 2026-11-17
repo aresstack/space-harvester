@@ -1,0 +1,82 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/A@heute
+# sent_id = 1
+# text = Der Besteller erstellt eine Bestellanforderung.
+1	Der	der	DET	_	_	2	det	_	_
+2	Besteller	besteller	NOUN	_	_	3	nsubj	_	_
+3	erstellt	erstellen	VERB	_	_	0	root	_	_
+4	eine	ein	DET	_	_	5	det	_	_
+5	Bestellanforderung	bestellanforderung	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Die Einkaufsabteilung prüft die Bestellanforderung.
+1	Die	der	DET	_	_	2	det	_	_
+2	Einkaufsabteilung	einkaufsabteilung	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Bestellanforderung	bestellanforderung	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Der Einkäufer holt drei Angebote ein.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
+3	holt	holt	VERB	_	_	0	root	_	_
+4	drei	drei	NUM	_	_	5	nummod	_	_
+5	Angebote	angebot	NOUN	_	_	3	obj	_	_
+6	ein	ein	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 4
+# text = Der Lieferant liefert die Ware innerhalb von fünf Tagen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lieferant	lieferant	NOUN	_	_	3	nsubj	_	_
+3	liefert	liefern	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Ware	ware	NOUN	_	_	3	obj	_	_
+6	innerhalb	innerhalb	ADP	_	_	9	case	_	_
+7	von	von	ADP	_	_	9	case	_	_
+8	fünf	fünf	NUM	_	_	9	nummod	_	_
+9	Tagen	tag	NOUN	_	_	3	obl	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 5
+# text = Der Lagerist bucht den Wareneingang.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	bucht	buchen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Wareneingang	wareneingang	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 6
+# text = Die Buchhaltung bezahlt die Rechnung.
+1	Die	der	DET	_	_	2	det	_	_
+2	Buchhaltung	buchhaltung	NOUN	_	_	3	nsubj	_	_
+3	bezahlt	bezahlen	VERB	_	_	0	root	_	_
+4	die	der	PRON	_	_	5	nmod	_	_
+5	Rechnung	rechnung	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 7
+# text = Der Lagerleiter übergibt dem Besteller die Ware.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerleiter	lagerleiter	NOUN	_	_	3	nsubj	_	_
+3	übergibt	übergeben	VERB	_	_	0	root	_	_
+4	dem	der	DET	_	_	5	det	_	_
+5	Besteller	besteller	NOUN	_	_	3	obl:arg	_	_
+6	die	der	DET	_	_	7	det	_	_
+7	Ware	ware	NOUN	_	_	3	obj	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 8
+# text = Das Lagerverzeichnis enthält alle Lagerplätze.
+1	Das	der	DET	_	_	2	det	_	_
+2	Lagerverzeichnis	lagerverzeichnis	NOUN	_	_	3	nsubj	_	_
+3	enthält	enthalten	VERB	_	_	0	root	_	_
+4	alle	alle	DET	_	_	5	det	_	_
+5	Lagerplätze	lagerplätze	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+

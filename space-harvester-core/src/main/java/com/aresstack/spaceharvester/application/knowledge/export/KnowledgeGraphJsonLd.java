@@ -132,6 +132,19 @@ public final class KnowledgeGraphJsonLd {
      * IRI einer Erwähnung oder Aussage aus ihrer lokalen ID ({@code quelle/seite@fassung#s1.t2}): Fassung plus lokaler
      * Teil, kollisionsfrei über Quellen, Seiten und Fassungen.
      */
+    /**
+     * Aussage, auf die ein Teilsatz-Beteiligter verweist: gleicher Satz, Prädikat am Kopf des Teilsatzes
+     * ({@code …#s3.t4} → {@code …#s3.v4}), oder {@code null}, wenn der Kopf kein Vollverb ist.
+     */
+    static String clauseStatement(ParsedStatements result, ParsedStatements.Mention mention) {
+        int at = mention.id().lastIndexOf(".t");
+        if (at < 0) {
+            return null;
+        }
+        String candidate = mention.id().substring(0, at) + ".v" + mention.id().substring(at + 2);
+        return result.statements().stream().anyMatch(s -> s.id().equals(candidate)) ? candidate : null;
+    }
+
     public static String node(PageStatementAnalysis analysis, String localId) {
         int hash = localId.lastIndexOf('#');
         String local = hash < 0 ? localId : localId.substring(hash + 1);
@@ -202,7 +215,7 @@ public final class KnowledgeGraphJsonLd {
         set(json, "exportedQuality", "sh:exportedQuality");
         for (String link : List.of("revisionOf", "documentOf", "page", "mention", "participant", "head",
                 "dependent", "evidence", "inRevision", "actor", "affectedObject", "recipient", "prepositionalObject",
-                "instrument", "time", "circumstance")) {
+                "instrument", "time", "circumstance", "refersToStatement")) {
             reference(json, link, "sh:" + link);
         }
         json.writeName("participation");
@@ -326,7 +339,14 @@ public final class KnowledgeGraphJsonLd {
             optional(json, "headForm", mention.headForm());
             json.writeStringProperty("mentionKind", mention.kind().name());
             json.writeBooleanProperty("unresolved", mention.unresolved());
-            if (!mention.unresolved() && mention.lemma() != null && !TermText.normalize(mention.lemma()).isEmpty()) {
+            if (mention.kind() == ParsedStatements.MentionKind.CLAUSE) {
+                // Teilsatz als Beteiligter (ADR 0032): Kante zur Aussage des Teilsatzes, nie ein Begriff
+                String clauseStatement = clauseStatement(result, mention);
+                if (clauseStatement != null) {
+                    json.writeStringProperty("refersToStatement", node(analysis, clauseStatement));
+                }
+            } else if (!mention.unresolved() && mention.lemma() != null
+                    && !TermText.normalize(mention.lemma()).isEmpty()) {
                 json.writeStringProperty("lexicalKey", TermText.normalize(mention.lemma()));
             }
             if (!mention.cases().isEmpty()) {

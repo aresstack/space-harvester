@@ -2,7 +2,8 @@
 
 - Status: Angenommen (17.11.2026). Entwurf des Architekten (Strang AT), Nummer vom Koordinator.
 - Konzept und Messbericht für Angelo: https://claude.ai/artifact/HedyiZRKJCJpAAVt4modMH
-- Messdaten: `/mnt/project-files/fachlogik/messung-2026-11-17/`, Pakete: `/mnt/project-files/fachlogik/arbeitspakete.md`
+- Messbericht: [docs/fachlogik/messung-2026-11-17.md](../fachlogik/messung-2026-11-17.md), Pakete:
+  [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md); Daten im Prüfstand (siehe „Umsetzung FL0“)
 - Baut auf: ADR 0005 (objektzentrierte Extraktion), ADR 0024 (Aussagenanalyse auf Wunsch, globaler Wissensgraph),
   ADR 0025 (Aufträge), ADR 0027 (kein Polling), ADR 0028 (KI-Freigabe je Seite), ADR 0030 (Änderungsprotokoll).
 
@@ -80,7 +81,7 @@ Vorstufe, vom Modell korrigiert.
 ## Arbeitspakete
 FL0 Prüfstand · FL1 Regeln · FL2 Merkmale · FL3 Vorstufe (sofort, parallel; FL0 zuerst auf main) · FL4 Prüfschritt ·
 FL5 Begriffe und Glossar · FL6 Stand und Leseempfehlung · FL7 Schaubild · FL8 Soll-Ist.
-Einzelheiten: `/mnt/project-files/fachlogik/arbeitspakete.md`.
+Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 
 ## Umsetzung FL0 (Prüfstand)
 - `nlp-parser/src/test/resources/com/aresstack/spaceharvester/nlp/pruefstand/`: `saetze.tsv` (Textsätze mit Rolle
@@ -93,3 +94,21 @@ Einzelheiten: `/mnt/project-files/fachlogik/arbeitspakete.md`.
   Kette; mit `-PpruefstandSeiten=<Verzeichnis>` zählt er echte Seiten lokal, ohne Inhalte auszugeben.
 - Stand bei Einführung: heute 43/67, Vorstufe von Hand 59/67 (streng 58), gemma4:12b 55/67 (streng 51); falsch trotz
   PLAUSIBLE 12 / 5 / 8.
+
+## Umsetzung FL1 (Regeln, rules-7)
+- Teilsätze als Beteiligte: Erwähnung der Art `CLAUSE` (Kopf = Prädikat des Teilsatzes, Finding
+  `CLAUSE_PARTICIPANT`). `csubj` ist Subjekt, neben einem nominalen Subjekt Objekt; nachgestelltes `ccomp` ist Objekt;
+  ein vorangestellter dass-/ob-Satz (`advcl`/`ccomp`) und eine Infinitivgruppe im Vorfeld sind abgeleitet
+  (`HEURISTIC`, unsicher). wenn-/falls-/sofern-/sobald-/nachdem-Sätze bleiben eigene Aussagen. Im Wissensgraph sind
+  `CLAUSE`-Erwähnungen nie Begriffe; der JSON-LD-Export führt sie mit `refersToStatement` als Kante zur Aussage.
+- „durch“ im Passiv ohne von-Gruppe und die von-Gruppe bei „ist … zu + Infinitiv“ werden abgeleitete Handelnde
+  (`AGENT_FROM_DURCH`, `AGENT_FROM_VON`, ergänzend, unsicher).
+- Gemeinsames Objekt gereihter Verben nur bei reiner Verbreihung und nicht im eingeleiteten Nebensatz
+  (`OBJECT_FROM_COORDINATION`, Basis `COORDINATION`, unsicher; `StatementQuality` stützt es nie).
+- Relativpronomen am Anfang eines Relativsatzes werden auf ihr Bezugsnomen aufgelöst (`RELATIVE_PRONOUN_RESOLVED`);
+  Personalpronomen als Objekt eines gereihten Verbs nur bei genau einem nominalen Objekt des Bezugsverbs
+  (`PRONOUN_FROM_COORDINATION`, unsicher).
+- zu-Infinitiv ohne Hilfsverb hat kein Subjekt (`SUBJECT_OF_INFINITIVE`): das vermeintliche Subjekt wird bei fehlendem
+  Objekt unsicheres Objekt, sonst verworfen.
+- Mehrteilige Namen mit Bindestrich (`compound`) und `flat` bilden Kopfform und Grundform („Batch-Job“, „Load Balancer“).
+- Gespeicherte Analysen mit rules-6 gelten als veraltet (Analyzer-Version).

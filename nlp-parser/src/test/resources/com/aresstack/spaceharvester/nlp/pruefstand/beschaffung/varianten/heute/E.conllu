@@ -1,0 +1,152 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/E@heute
+# sent_id = 1
+# text = Dass die Lieferung vollständig ist, bestätigt der Lagerist.
+1	Dass	daß	SCONJ	_	_	4	mark	_	_
+2	die	der	DET	_	_	3	det	_	_
+3	Lieferung	lieferung	NOUN	_	_	4	nsubj	_	_
+4	vollständig	vollständig	ADJ	_	_	7	advcl	_	_
+5	ist	sein	AUX	_	_	4	cop	_	SpaceAfter=No
+6	,	,	PUNCT	_	_	4	punct	_	_
+7	bestätigt	bestätigen	VERB	_	_	0	root	_	_
+8	der	der	DET	_	_	9	det	_	_
+9	Lagerist	lagerist	NOUN	_	_	7	nsubj	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 2
+# text = Wer eine Bestellung auslöst, erhält eine Auftragsnummer.
+1	Wer	wer	PRON	_	_	4	nsubj	_	_
+2	eine	ein	DET	_	_	3	det	_	_
+3	Bestellung	bestellung	NOUN	_	_	4	obj	_	_
+4	auslöst	auslösen	VERB	_	_	6	csubj	_	SpaceAfter=No
+5	,	,	PUNCT	_	_	4	punct	_	_
+6	erhält	erhalten	VERB	_	_	0	root	_	_
+7	eine	ein	DET	_	_	8	det	_	_
+8	Auftragsnummer	auftragsnummer	NOUN	_	_	6	obj	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 3
+# text = Ob ein Artikel nachbestellt wird, entscheidet der Einkäufer.
+1	Ob	ob	SCONJ	_	_	4	mark	_	_
+2	ein	ein	DET	_	_	3	det	_	_
+3	Artikel	artikel	NOUN	_	_	4	nsubj:pass	_	_
+4	nachbestellt	nachstellen	VERB	_	_	7	advcl	_	_
+5	wird	werden	AUX	_	_	4	aux:pass	_	SpaceAfter=No
+6	,	,	PUNCT	_	_	4	punct	_	_
+7	entscheidet	entscheiden	VERB	_	_	0	root	_	_
+8	der	der	DET	_	_	9	det	_	_
+9	Einkäufer	einkäufer	NOUN	_	_	7	nsubj	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 4
+# text = Die Rechnung zu prüfen, gehört zu den Aufgaben der Buchhaltung.
+1	Die	der	DET	_	_	2	det	_	_
+2	Rechnung	rechnung	NOUN	_	_	4	obj	_	_
+3	zu	zu	PART	_	_	4	mark	_	_
+4	prüfen	prüfen	VERB	_	_	0	root	_	SpaceAfter=No
+5	,	,	PUNCT	_	_	6	punct	_	_
+6	gehört	gehören	VERB	_	_	4	conj	_	_
+7	zu	zu	ADP	_	_	9	case	_	_
+8	den	der	DET	_	_	9	det	_	_
+9	Aufgaben	aufgabe	NOUN	_	_	6	obl	_	_
+10	der	der	DET	_	_	11	det	_	_
+11	Buchhaltung	buchhaltung	NOUN	_	_	9	nmod	_	SpaceAfter=No
+12	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 5
+# text = Der Lagerist verpackt die Ware und übergibt sie dem Fahrer.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	verpackt	verpacken	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Ware	ware	NOUN	_	_	3	obj	_	_
+6	und	und	CCONJ	_	_	7	cc	_	_
+7	übergibt	übergeben	VERB	_	_	3	conj	_	_
+8	sie	sie	PRON	_	_	7	obj	_	_
+9	dem	der	DET	_	_	10	det	_	_
+10	Fahrer	fahrer	NOUN	_	_	7	obl:arg	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 6
+# text = Der Einkäufer holt Angebote ein, vergleicht die Preise und vergibt den Auftrag.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
+3	holt	holt	VERB	_	_	0	root	_	_
+4	Angebote	angebot	NOUN	_	_	3	obj	_	_
+5	ein	ein	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+6	,	,	PUNCT	_	_	7	punct	_	_
+7	vergleicht	vergleichen	VERB	_	_	3	conj	_	_
+8	die	der	DET	_	_	9	det	_	_
+9	Preise	preis	NOUN	_	_	7	obj	_	_
+10	und	und	CCONJ	_	_	11	cc	_	_
+11	vergibt	vergeben	VERB	_	_	3	conj	_	_
+12	den	der	DET	_	_	13	det	_	_
+13	Auftrag	auftrag	NOUN	_	_	11	obj	_	SpaceAfter=No
+14	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 7
+# text = Die Buchhaltung bezahlt die Rechnung, nachdem der Lagerist den Wareneingang gebucht hat.
+1	Die	der	DET	_	_	2	det	_	_
+2	Buchhaltung	buchhaltung	NOUN	_	_	3	nsubj	_	_
+3	bezahlt	bezahlen	VERB	_	_	0	root	_	_
+4	die	der	PRON	_	_	5	nsubj	_	_
+5	Rechnung	rechnung	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	,	,	PUNCT	_	_	12	punct	_	_
+7	nachdem	nachdem	SCONJ	_	_	12	mark	_	_
+8	der	der	DET	_	_	9	det	_	_
+9	Lagerist	lagerist	NOUN	_	_	12	nsubj	_	_
+10	den	der	DET	_	_	11	det	_	_
+11	Wareneingang	wareneingang	NOUN	_	_	12	obj	_	_
+12	gebucht	buchen	VERB	_	_	3	advcl	_	_
+13	hat	haben	AUX	_	_	12	aux	_	SpaceAfter=No
+14	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 8
+# text = Es wird geprüft, ob der Lieferant die Lieferfrist einhält.
+1	Es	es	PRON	_	_	3	expl	_	_
+2	wird	werden	AUX	_	_	3	aux:pass	_	_
+3	geprüft	prüfen	VERB	_	_	0	root	_	SpaceAfter=No
+4	,	,	PUNCT	_	_	10	punct	_	_
+5	ob	ob	SCONJ	_	_	10	mark	_	_
+6	der	der	DET	_	_	7	det	_	_
+7	Lieferant	lieferant	NOUN	_	_	10	nsubj	_	_
+8	die	der	DET	_	_	9	det	_	_
+9	Lieferfrist	lieferfrist	NOUN	_	_	10	obj	_	_
+10	einhält	einhält	VERB	_	_	3	csubj:pass	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Was der Lagerist beanstandet, muss der Lieferant ersetzen.
+1	Was	was	PRON	_	_	4	obj	_	_
+2	der	der	DET	_	_	3	det	_	_
+3	Lagerist	lagerist	NOUN	_	_	4	nsubj	_	_
+4	beanstandet	beanstanden	VERB	_	_	9	csubj	_	SpaceAfter=No
+5	,	,	PUNCT	_	_	4	punct	_	_
+6	muss	müssen	AUX	_	_	9	aux	_	_
+7	der	der	DET	_	_	8	det	_	_
+8	Lieferant	lieferant	NOUN	_	_	9	nsubj	_	_
+9	ersetzen	ersetzen	VERB	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+
+# sent_id = 10
+# text = Das Lagersystem bucht den Abgang, sobald der Fahrer die Übernahme quittiert, und druckt den Lieferschein.
+1	Das	der	DET	_	_	2	det	_	_
+2	Lagersystem	lagersystem	NOUN	_	_	3	nsubj	_	_
+3	bucht	buchen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Abgang	abgang	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	,	,	PUNCT	_	_	12	punct	_	_
+7	sobald	sobald	SCONJ	_	_	12	mark	_	_
+8	der	der	DET	_	_	9	det	_	_
+9	Fahrer	fahrer	NOUN	_	_	12	nsubj	_	_
+10	die	der	DET	_	_	11	det	_	_
+11	Übernahme	übernahme	NOUN	_	_	12	obj	_	_
+12	quittiert	quittieren	VERB	_	_	3	advcl	_	SpaceAfter=No
+13	,	,	PUNCT	_	_	15	punct	_	_
+14	und	und	CCONJ	_	_	15	cc	_	_
+15	druckt	druckt	VERB	_	_	12	conj	_	_
+16	den	der	DET	_	_	17	det	_	_
+17	Lieferschein	lieferschein	NOUN	_	_	15	obj	_	SpaceAfter=No
+18	.	.	PUNCT	_	_	3	punct	_	_
+

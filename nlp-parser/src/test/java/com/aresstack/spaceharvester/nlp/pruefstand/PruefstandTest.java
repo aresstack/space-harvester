@@ -16,8 +16,9 @@ import org.junit.jupiter.api.Test;
 /**
  * Prüfstand der Aussagen-Erkennung (ADR 0032, FL0) auf den gepinnten Analysen: bewertet jede Variante jedes
  * Textsatzes gegen die Handvorgabe, schreibt den Bericht nach {@code build/reports/pruefstand/bericht.md} und hält
- * den Stand aus {@code stand.tsv} fest: „vollständig richtig“ und „streng“ dürfen nicht sinken, „falsch trotz
- * PLAUSIBLE“ darf nicht steigen. Wird es besser, hebt derselbe PR die Werte in {@code stand.tsv} an.
+ * den Stand aus {@code stand.tsv} genau fest: „vollständig richtig“, „streng“ und „falsch trotz PLAUSIBLE“ müssen
+ * stimmen. Wird es schlechter, ist das ein Rückschritt; wird es besser, hebt derselbe PR die Werte in
+ * {@code stand.tsv} an (sonst bliebe eine alte Grenze stehen und ein späterer Rückschritt fiele nicht auf).
  */
 class PruefstandTest {
 
@@ -48,8 +49,9 @@ class PruefstandTest {
         Files.createDirectories(report.getParent());
         Files.writeString(report, bericht.text(), StandardCharsets.UTF_8);
         System.out.println(bericht.kurz());
-        besser.forEach(b -> System.out.println("BESSER: " + b + " – bitte stand.tsv anheben"));
         assertTrue(verstoesse.isEmpty(), "Prüfstand schlechter als stand.tsv:\n" + String.join("\n", verstoesse)
+                + "\n\n" + bericht.kurz());
+        assertTrue(besser.isEmpty(), "Prüfstand besser als stand.tsv, bitte anheben:\n" + String.join("\n", besser)
                 + "\n\n" + bericht.kurz());
         assertEquals(stand.size(), geprueft, "jede Zeile in stand.tsv gehört zu einer Variante");
     }

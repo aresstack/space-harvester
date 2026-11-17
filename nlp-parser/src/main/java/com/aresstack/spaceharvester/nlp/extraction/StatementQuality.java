@@ -148,8 +148,9 @@ public final class StatementQuality {
         return switch (argument.basis()) {
             case PARSER -> argument.certain();
             case LEXICON -> true;
-            case COORDINATION -> !argument.relation().startsWith("nsubj")
-                    || mention.cases().isEmpty() || mention.cases().contains("Nom");
+            // Ein von hinten übernommenes Objekt ist nie gestützt (kein Valenzlexikon, ADR 0032).
+            case COORDINATION -> !argument.relation().startsWith("obj") && (!argument.relation().startsWith("nsubj")
+                    || mention.cases().isEmpty() || mention.cases().contains("Nom"));
             default -> false;
         };
     }

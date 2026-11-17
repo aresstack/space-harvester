@@ -438,7 +438,8 @@ public class KnowledgeGraph {
     }
 
     private static String matching(ParsedStatements.Mention mention, Set<String> wanted) {
-        if (mention.kind() == ParsedStatements.MentionKind.PRONOUN || mention.unresolved()) {
+        if (mention.kind() == ParsedStatements.MentionKind.PRONOUN
+                || mention.kind() == ParsedStatements.MentionKind.CLAUSE || mention.unresolved()) {
             return null;
         }
         for (String candidate : candidates(mention)) {
@@ -465,7 +466,8 @@ public class KnowledgeGraph {
     private static Map<String, List<String>> keys(PageStatementAnalysis analysis) {
         Map<String, List<String>> keys = new LinkedHashMap<>();
         for (ParsedStatements.Mention mention : analysis.result().mentions()) {
-            if (mention.kind() == ParsedStatements.MentionKind.PRONOUN || mention.unresolved()
+            if (mention.kind() == ParsedStatements.MentionKind.PRONOUN
+                    || mention.kind() == ParsedStatements.MentionKind.CLAUSE || mention.unresolved()
                     || mention.key() == null || mention.key().isBlank()) {
                 continue;
             }

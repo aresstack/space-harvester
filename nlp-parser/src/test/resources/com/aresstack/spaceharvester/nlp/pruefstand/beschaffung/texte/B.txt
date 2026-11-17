@@ -1,0 +1,10 @@
+Die Bestellanforderung wird vom Kostenstellenleiter freigegeben.
+Die Ware wird durch den Lageristen auf Beschädigungen geprüft.
+Die Rechnung wird durch Überweisung beglichen.
+Beschädigte Artikel, die der Lagerist aussondert, werden innerhalb von zwei Wochen zurückgesendet.
+Die Inventur ist vom Lagerleiter einmal jährlich durchzuführen.
+Sofern der Mindestbestand unterschritten wird, löst das Lagersystem eine Nachbestellung aus und benachrichtigt den Einkäufer.
+Der Einkäufer darf den Auftrag nicht vergeben, solange die Freigabe fehlt.
+Der Lagerist erscheint zur Inventur und zählt den Bestand.
+Der Einkäufer vergleicht und bewertet die Angebote.
+Dem Lieferanten wird der Auftrag schriftlich erteilt.

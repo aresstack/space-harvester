@@ -83,7 +83,12 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
         NOUN,
         PROPER_NOUN,
         PRONOUN,
-        OTHER
+        OTHER,
+        /**
+         * Ein Teilsatz als Beteiligter (ADR 0032): verweist auf die Aussage des Teilsatzes (gleicher Satz, Kopf =
+         * Prädikat), ist nie ein Begriff und wird in Begriffen, Themen und Graphknoten nicht gezählt.
+         */
+        CLAUSE
     }
 
     /**

@@ -1,0 +1,7 @@
+Das Lagersystem speichert alle Bestände in einer Datenbank.
+Der Bestelldienst stellt eine Schnittstelle bereit.
+Ein Scanner überträgt die Artikelnummer an das Lagersystem.
+Der Druckserver erzeugt die Lieferscheine.
+Der Message Broker verteilt die Nachrichten an die Dienste.
+Die Anmeldung erfolgt über Single Sign-on.
+Das Bestellportal ruft den Bestelldienst über HTTPS auf.

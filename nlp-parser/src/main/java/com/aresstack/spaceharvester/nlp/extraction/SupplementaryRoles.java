@@ -55,7 +55,18 @@ final class SupplementaryRoles {
             }
             Mention mention = mentions.at(document, sentence, dependent);
             String marker = Markers.of(sentence, dependent);
-            if ("obl:agent".equals(relation)) {
+            boolean derivedAgent = "obl".equals(relation) && marker != null
+                    && statement.voice() == Statement.Voice.PASSIVE && !hasAgent(sentence, statement)
+                    && (DURCH.equals(marker.toLowerCase(Locale.ROOT))
+                    || ORIGIN_PREPOSITIONS.contains(marker.toLowerCase(Locale.ROOT)) && seinZuInfinitive(sentence,
+                    statement));
+            if (derivedAgent) {
+                // „wird durch die Bewilligungsstelle erlassen“, „ist vom Empfänger vorzulegen“ (ADR 0032)
+                arguments.add(new Argument(Role.ACTOR, mention.id(), relation, marker, Priority.SUPPLEMENTARY,
+                        Basis.HEURISTIC, false));
+                findings.add(DURCH.equals(marker.toLowerCase(Locale.ROOT)) ? Finding.AGENT_FROM_DURCH
+                        : Finding.AGENT_FROM_VON);
+            } else if ("obl:agent".equals(relation)) {
                 arguments.add(new Argument(Role.ACTOR, mention.id(), relation, marker, Priority.SUPPLEMENTARY,
                         Basis.PARSER, true));
             } else if ("iobj".equals(relation) || "obl:arg".equals(relation) && marker == null) {
@@ -115,6 +126,21 @@ final class SupplementaryRoles {
         }
         String word = mention.lemma() != null ? mention.lemma().toLowerCase(Locale.ROOT) : head;
         return TIME_WORDS.contains(word);
+    }
+
+    private static final String DURCH = "durch";
+
+    /** Ob das Prädikat schon eine von-/durch-Gruppe des Parsers ({@code obl:agent}) hat. */
+    private static boolean hasAgent(Sentence sentence, Statement statement) {
+        return !sentence.dependents(statement.predicate().verb(), "obl:agent").isEmpty();
+    }
+
+    /** „ist … zu + Infinitiv“: Hilfsverb {@code sein} als {@code aux:pass} an einem zu-Infinitiv. */
+    private static boolean seinZuInfinitive(Sentence sentence, Statement statement) {
+        Token verb = sentence.token(statement.predicate().verb());
+        return PrimaryRelationExtraction.zuInfinitive(sentence, verb)
+                && sentence.dependents(verb.id(), "aux:pass").stream()
+                .anyMatch(t -> "sein".equalsIgnoreCase(t.lemma()));
     }
 
     private static Argument circumstance(Mention mention, String relation, String marker) {

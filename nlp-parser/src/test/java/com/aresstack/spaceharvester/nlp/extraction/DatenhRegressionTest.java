@@ -90,11 +90,15 @@ class DatenhRegressionTest {
         assertEquals("PRON", welchen.upos(), "Zwischenstand: Wortart nach der Korrektur geschlossener Klassen");
         assertEquals("acl:relcl", sentence.head(welchen).deprel(), "MaltParser bildet jetzt einen Relativsatz");
 
-        // Endergebnis: keine Aussage „welchen“; das Pronomen bleibt offen und unsicher
+        // Endergebnis: keine Aussage „welchen“; seit rules-7 (ADR 0032, FL1) ist das Relativpronomen auf das Nomen
+        // aufgelöst, an dem der Relativsatz hängt („Datenprodukten, welchen … zugewiesen ist“)
         assertTrue(ANALYSIS.statements().stream().noneMatch(s -> s.predicate().lemma().equals("welcher")),
                 "verboten: Prädikat welchen");
         Statement assigned = statement("zuweisen", "Datenprodukt-API:");
-        assertTrue(assigned.has(Finding.UNRESOLVED_PRONOUN));
+        assertTrue(assigned.has(Finding.RELATIVE_PRONOUN_RESOLVED));
+        assertFalse(assigned.has(Finding.UNRESOLVED_PRONOUN));
+        assertTrue(assigned.arguments().stream().anyMatch(a -> "Datenprodukten".equals(
+                ANALYSIS.mention(a.mention()).headForm())), assigned.arguments().toString());
     }
 
     // ---- G: „hinweg“ als Verb (OpenNLP-Wortart, behoben vor dem Parser) ----------------------------------------------

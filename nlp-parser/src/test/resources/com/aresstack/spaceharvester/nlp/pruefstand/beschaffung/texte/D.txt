@@ -1,0 +1,12 @@
+Wareneingang
+Verantwortlich: Der Lagerist prüft jede Lieferung am Tag des Eingangs.
+Ablauf:
+- Lieferschein mit Bestellung abgleichen
+- Ware auf Schäden prüfen
+- Wareneingang buchen und Lagerplatz zuweisen
+Stand 2022: Es war vorgesehen, die Lagerplätze automatisch zu vergeben.
+Dieser Plan wurde aufgegeben.
+Derzeit vergibt der Lagerleiter die Lagerplätze von Hand.
+Ab 2027 soll ein Scanner die Lieferscheine erfassen.
+Offene Fragen
+Die Anbindung an die Buchhaltung ist noch nicht geklärt.
