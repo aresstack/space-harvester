@@ -128,6 +128,10 @@ final class SourceUpdatesView extends JPanel {
     private int listGeneration;
     /** Zähler der Textfenster: wechselt nur bei Auswahl oder Ebenenwechsel, nicht bei Meldungen. */
     private int textGeneration;
+    /** Meldungen des Core: höchstens ein Lauf zur Zeit und ein vorgemerkter Nachlauf, nur bei sichtbarem Reiter. */
+    private boolean messageRunning;
+    private boolean messagePending;
+    private java.util.function.BooleanSupplier showing = this::isShowing;
 
     /**
      * Was die Ansicht vom gewählten Update zeigt (Angelo, 17.11.2026): unter „Leseansicht“ die KI-Zusammenfassung,
@@ -196,6 +200,12 @@ final class SourceUpdatesView extends JPanel {
         busy = new BusyOverlay(reportScroll);
         busy.onCancel(this::cancelSummary);
         add(new SkyLayer(busy, sky, report), BorderLayout.CENTER);
+        // Beim Sichtbarwerden einmal nachholen, was verdeckt gemeldet wurde.
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                becameVisible();
+            }
+        });
         source(null, null);
     }
 
@@ -237,6 +247,7 @@ final class SourceUpdatesView extends JPanel {
         generation++;
         listGeneration++;
         textGeneration++;
+        messagePending = false;
         sourceId = id;
         spaceKey = id == null || space == null || space.isBlank() ? null : space;
         updates = List.of();
@@ -259,7 +270,7 @@ final class SourceUpdatesView extends JPanel {
         try {
             subscription = current.subscribe(id, changed -> SwingUtilities.invokeLater(() -> {
                 if (Objects.equals(changed, sourceId)) {
-                    reload();
+                    changed();
                 }
             }));
         } catch (RuntimeException e) {
@@ -268,17 +279,57 @@ final class SourceUpdatesView extends JPanel {
         reload();
     }
 
+    /**
+     * Eine Meldung des Core. Während eines Abgleichs kommen viele; gelesen wird höchstens ein Lauf zur Zeit (Liste samt
+     * Neu-Lesen des gezeigten Updates) mit einem vorgemerkten Nachlauf, und nur, solange der Reiter sichtbar ist.
+     */
+    private void changed() {
+        if (messageRunning || !showing.getAsBoolean()) {
+            messagePending = true;
+            return;
+        }
+        messagePending = false;
+        messageRunning = true;
+        reload(this::messageDone);
+    }
+
+    private void messageDone() {
+        messageRunning = false;
+        if (messagePending) {
+            SwingUtilities.invokeLater(this::changed);
+        }
+    }
+
+    /** Der Reiter ist sichtbar geworden: einmal nachholen, falls verdeckt etwas gemeldet wurde. */
+    void becameVisible() {
+        if (messagePending && !messageRunning) {
+            changed();
+        }
+    }
+
+    /** Tests: ob der Reiter als sichtbar gilt (sonst {@link #isShowing()}). */
+    void showingForTest(java.util.function.BooleanSupplier visible) {
+        showing = Objects.requireNonNull(visible, "visible");
+    }
+
     /** Liest die Updates neu; die Auswahl bleibt, solange es das Update noch gibt. */
     void reload() {
+        reload(() -> { });
+    }
+
+    /** {@code done} läuft auf dem EDT, sobald Liste und ein etwaiges Neu-Lesen des Updates fertig sind. */
+    private void reload(Runnable done) {
         Actions current = actions.get();
         String id = sourceId;
         String space = spaceKey;
         if (current == null || id == null) {
+            done.run();
             return;
         }
         int mine = ++listGeneration;
         runner.run(() -> current.updates(id, space), found -> {
             if (mine != listGeneration || !Objects.equals(id, sourceId) || !Objects.equals(space, spaceKey)) {
+                done.run();
                 return;
             }
             List<ChangeUpdate> fresh = List.copyOf(found);
@@ -294,6 +345,7 @@ final class SourceUpdatesView extends JPanel {
                 offerSummary();
                 renderList();
                 message(NO_UPDATES);
+                done.run();
                 return;
             }
             // Während eines Abgleichs kommen laufend Meldungen: Ein abgeschlossenes Update ändert sich nie mehr, sein
@@ -302,14 +354,18 @@ final class SourceUpdatesView extends JPanel {
             boolean reread = !keep.equals(selected) || shown == null || ChangeUpdate.OPEN.equals(keep)
                     || !Objects.equals(before, entry(fresh, keep));
             if (reread) {
-                select(keep, keep.equals(selected));
-            } else if (changed) {
+                select(keep, keep.equals(selected), done);
+                return;
+            }
+            if (changed) {
                 renderList();
             }
+            done.run();
         }, failure -> {
             if (mine == listGeneration) {
                 message("Updates nicht geladen: " + Problems.describe(failure).title());
             }
+            done.run();
         });
     }
 
@@ -326,14 +382,18 @@ final class SourceUpdatesView extends JPanel {
 
     /** Wählt ein Update und lädt seinen Bericht. */
     void select(String updateId) {
-        select(updateId, false);
+        select(updateId, false, () -> { });
     }
 
-    /** {@code keepPosition}: dasselbe Update neu gelesen, die Rollposition im Bericht bleibt. */
-    private void select(String updateId, boolean keepPosition) {
+    /**
+     * {@code keepPosition}: dasselbe Update neu gelesen, die Rollposition im Bericht bleibt. {@code done} läuft, wenn
+     * das Ergebnis da ist (gezeichnet oder verworfen).
+     */
+    private void select(String updateId, boolean keepPosition, Runnable done) {
         Actions current = actions.get();
         String id = sourceId;
         if (current == null || id == null || updateId == null) {
+            done.run();
             return;
         }
         if (!updateId.equals(selected)) {
@@ -367,15 +427,17 @@ final class SourceUpdatesView extends JPanel {
                     current.summariesAvailable(), List.of());
         }, found -> {
             if (mine != generation || !updateId.equals(selected)) {
+                done.run();
                 return;
             }
             if (keepPosition && loadedPages() > wanted) {
                 // Inzwischen wurden weitere Seiten nachgeladen: mit der neuen Zahl noch einmal lesen.
-                select(updateId, true);
+                select(updateId, true, done);
                 return;
             }
             if (keepPosition && found.report().equals(shown) && Objects.equals(found.summary(), summary)
                     && markdown(found.texts()).equals(markdown(windows))) {
+                done.run();
                 return;
             }
             java.awt.Point position = keepPosition ? viewPosition() : new java.awt.Point();
@@ -387,10 +449,12 @@ final class SourceUpdatesView extends JPanel {
             renderReport(shown);
             offerSummary();
             restore(position);
+            done.run();
         }, failure -> {
             if (mine == generation) {
                 message("Änderungen nicht geladen: " + Problems.describe(failure).title());
             }
+            done.run();
         });
     }
 
@@ -555,7 +619,7 @@ final class SourceUpdatesView extends JPanel {
         offerSummary();
         if (status.state() == JobState.COMPLETED && Objects.equals(run.sourceId(), sourceId)
                 && Objects.equals(run.spaceKey(), spaceKey) && Objects.equals(run.updateId(), selected)) {
-            select(selected, true);
+            select(selected, true, () -> { });
         }
     }
 
