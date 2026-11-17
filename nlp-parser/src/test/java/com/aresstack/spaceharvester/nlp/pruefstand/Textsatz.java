@@ -148,7 +148,7 @@ record Textsatz(String name, String rolle, List<Text> texte, List<Variante> vari
         }
     }
 
-    private static List<String[]> tsv(String content) {
+    static List<String[]> tsv(String content) {
         List<String[]> rows = new ArrayList<>();
         for (String line : content.split("\r?\n")) {
             if (!line.isBlank() && !line.startsWith("#")) {

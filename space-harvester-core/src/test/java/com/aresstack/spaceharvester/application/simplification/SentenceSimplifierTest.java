@@ -88,6 +88,46 @@ class SentenceSimplifierTest {
     }
 
     @Test
+    void umlautPluralsSecondEndingsDerivedNounsAndSeparatedParticlesCount() {
+        assertThat(SentenceSimplifier.related("Verträge", "Vertrag")).as("Mehrzahl mit Umlaut").isTrue();
+        assertThat(SentenceSimplifier.related("Ventils", "Ventil")).as("zweite Endung").isTrue();
+        assertThat(SentenceSimplifier.related("Dichtheit", "dicht")).as("Nomen aus Eigenschaft").isTrue();
+        assertThat(SentenceSimplifier.related("festgestellt", "feststellen")).as("„ge“ nach Verbzusatz").isTrue();
+        assertThat(SentenceSimplifier.related("vorlegen", "vorzulegen")).as("„zu“ nach Verbzusatz").isTrue();
+        assertThat(SentenceSimplifier.related("stellt", "feststellt")).isTrue();
+        assertThat(SentenceSimplifier.related("fest", "feststellt")).as("abgetrennter Verbzusatz").isTrue();
+        assertThat(SentenceSimplifier.related("gibt", "gegeben")).as("starke Form bleibt Grenze").isFalse();
+        assertThat(SentenceSimplifier.related("Ventil", "Venus")).as("gemeinsamer Anfang ist kein Stamm").isFalse();
+    }
+
+    @Test
+    void aDutyWithZuInfinitiveCoversMussButAPlanDoesNot() {
+        SimplificationSection duty = new SimplificationSection(List.of(), List.of(new SimplificationSection
+                .Sentence(0, "Die Pumpe ist vom Techniker jährlich vorzulegen.")));
+        SentenceSimplifier.Parsed kept = SentenceSimplifier.parse(duty,
+                "1|T|Der Techniker muss die Pumpe jährlich vorlegen.\n");
+        assertThat(kept.sentences().get(0)).hasSize(1);
+        assertThat(SentenceSimplifier.parse(duty, "1|T|Der Techniker legt die Pumpe jährlich vor.\n").lost())
+                .as("eine nur ausgedrückte Pflicht fehlt nie").isEmpty();
+        SimplificationSection plan = new SimplificationSection(List.of(), List.of(new SimplificationSection
+                .Sentence(0, "Es war geplant, die Pumpe jährlich zu prüfen.")));
+        assertThat(SentenceSimplifier.parse(plan, "1|P|Der Techniker muss die Pumpe jährlich prüfen.\n").added())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void anOrderAdverbNeedsTheMatchingConjunction() {
+        SimplificationSection after = new SimplificationSection(List.of(), List.of(new SimplificationSection
+                .Sentence(0, "Der Techniker prüft die Pumpe, nachdem das Lager sie geliefert hat.")));
+        assertThat(SentenceSimplifier.parse(after, "1|T|Danach prüft der Techniker die Pumpe.\n")
+                .sentences().get(0)).hasSize(1);
+        SimplificationSection plain = new SimplificationSection(List.of(), List.of(new SimplificationSection
+                .Sentence(0, "Der Techniker prüft die Pumpe.")));
+        assertThat(SentenceSimplifier.parse(plain, "1|T|Danach prüft der Techniker die Pumpe.\n").added())
+                .isEqualTo(1);
+    }
+
+    @Test
     void aForeignCompoundIsDiscarded() {
         SimplificationSection section = new SimplificationSection(List.of(),
                 List.of(new SimplificationSection.Sentence(0, "Der Vertrag wird vom Vermieter gekündigt.")));
