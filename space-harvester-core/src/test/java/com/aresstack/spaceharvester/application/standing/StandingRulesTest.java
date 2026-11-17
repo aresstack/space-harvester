@@ -80,9 +80,35 @@ class StandingRulesTest {
                 .isEqualTo(Standing.GEPLANT);
         assertThat(StandingRules.statement(statement(Features.UNKNOWN, null), null, outdated).basis())
                 .isEqualTo(StandingBasis.NONE);
+    }
+
+    @Test
+    void anArchivePagePullsFactsAndConditionsOfTheStage() {
+        StandingRules.PageCap outdated = StandingRules.cap(null, List.of(ARCHIVE));
+        for (StageFlag flag : List.of(StageFlag.FACT, StageFlag.CONDITION)) {
+            assertThat(StandingRules.statement(statement(features(Temporality.GILT),
+                    Derivation.vorstufe(flag, "Die Kasse prüft den Beleg.")), null, outdated))
+                    .isEqualTo(new StatementStanding(Standing.UEBERHOLT, StandingBasis.PAGE,
+                            StandingReason.PAGE_OUTDATED, ARCHIVE));
+        }
         assertThat(StandingRules.statement(statement(features(Temporality.GILT),
-                Derivation.vorstufe(StageFlag.FACT, "Die Kasse prüft den Beleg.")), null, outdated).basis())
-                .as("Kennzeichen der Vorstufe ist kein Zeitbezug GILT").isEqualTo(StandingBasis.STAGE_FLAG);
+                Derivation.vorstufe(StageFlag.PLANNING, "Die Kasse prüft den Beleg.")), null, outdated))
+                .as("Planung auf überholter Seite").isEqualTo(new StatementStanding(Standing.UNKLAR,
+                        StandingBasis.PAGE, StandingReason.PAGE_OUTDATED_PLAN, ARCHIVE));
+    }
+
+    @Test
+    void aDraftPagePullsFactsAndConditionsOfTheStage() {
+        StandingRules.PageCap draft = StandingRules.cap(null, List.of(DRAFT));
+        for (StageFlag flag : List.of(StageFlag.FACT, StageFlag.CONDITION)) {
+            assertThat(StandingRules.statement(statement(Features.UNKNOWN,
+                    Derivation.vorstufe(flag, "Die Kasse prüft den Beleg.")), null, draft))
+                    .isEqualTo(new StatementStanding(Standing.UNKLAR, StandingBasis.PAGE, StandingReason.PAGE_DRAFT,
+                            DRAFT));
+        }
+        assertThat(StandingRules.statement(statement(Features.UNKNOWN,
+                Derivation.vorstufe(StageFlag.DISCARDED, "Die Kasse prüft den Beleg.")), null, draft).basis())
+                .isEqualTo(StandingBasis.STAGE_FLAG);
     }
 
     @Test

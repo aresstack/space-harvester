@@ -101,7 +101,7 @@ public final class StandingRules {
         if (cap == null) {
             return own;
         }
-        if (own.reason() == StandingReason.TEMPORALITY_GILT && cap.standing() != Standing.GILT) {
+        if (silentlyCurrent(own.reason()) && cap.standing() != Standing.GILT) {
             return new StatementStanding(cap.standing(), StandingBasis.PAGE, cap.reason(), cap.mark());
         }
         if (cap.standing() == Standing.UEBERHOLT && own.standing() == Standing.GEPLANT) {
@@ -109,6 +109,15 @@ public final class StandingRules {
                     cap.mark());
         }
         return own;
+    }
+
+    /**
+     * Ob der Stand „gilt“ nur der stille Vorgabewert ist: Zeitbezug GILT oder Kennzeichen Tatsache bzw. Bedingung der
+     * Vorstufe. Beide sagen nichts über die Zeit; nur solche Aussagen zieht die Seite mit.
+     */
+    static boolean silentlyCurrent(StandingReason reason) {
+        return reason == StandingReason.TEMPORALITY_GILT || reason == StandingReason.STAGE_FACT
+                || reason == StandingReason.STAGE_CONDITION;
     }
 
     /** Stand der Aussage aus ihren eigenen Merkmalen und Kennzeichen, ohne Mensch und Seite. */

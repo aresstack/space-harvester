@@ -118,7 +118,8 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).
 - Stand je Aussage: Entscheidung des Menschen > Vorstufe (KI), wenn die Merkmale aus dem vereinfachten Satz stammen und
   der Zeitbezug nichts Eigenes sagt > Zeitbezug (früher und verworfen beide überholt, Grund getrennt) > unklar. Die Seite
-  (Label, eigener Titel, Titel eines Vorfahren, Entscheidung zur Seite) zieht nur Aussagen mit Zeitbezug GILT: überholt →
+  (Label, eigener Titel, Titel eines Vorfahren, Entscheidung zur Seite) zieht nur Aussagen, deren „gilt“ der stille
+  Vorgabewert ist (Zeitbezug GILT, Kennzeichen Tatsache oder Bedingung): überholt →
   überholt, Entwurf → unklar; Geplantes auf einer überholten Seite wird unklar. Verneinung und Verbindlichkeit ändern
   den Stand nie und gehen an jedem Eintrag mit.
 - Ob eine Aussage zählt und mit welcher Stufe, beantwortet nur `StandingRules#effectiveQuality` (FL4 hängt dort ein):

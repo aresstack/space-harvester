@@ -41,7 +41,7 @@ StatusQuoView view(AccessContext caller, Predicate<PageKey> pages, BooleanSuppli
 | `kind()` | `ACTION` (Handlung) oder `STATE` (Zustand mit Träger) |
 | `subject()` | Wortlaut des Handelnden bzw. Trägers |
 | `uncertain()` | unsicher gekennzeichnet anzeigen; zählt nicht für den Stand der Seite |
-| `origin()`, `stageFlag()` | Herkunft Original/Vorstufe und Kennzeichen der Vorstufe als eigenes Feld |
+| `origin()`, `stageFlag()` | Herkunft Original/Vorstufe und Kennzeichen der Vorstufe als eigenes Feld. **Weicht das Kennzeichen vom Stand ab** (etwa Kennzeichen Planung bei Stand „gilt“, weil das Original selbst „gilt“ sagt), zeigt die Anzeige das Kennzeichen sichtbar daneben |
 | `stateChange()` | Befund „Zustandswechsel“ („wird zuständig“), nur als Hinweis zeigen |
 | `decision()` | Entscheidung des Menschen mit `revision`, `decidedBy`, `decidedAt` oder `null` |
 | `analysisStale()` | Analyse der Seite ist veraltet: wie im Reiter „Aussagen“ kennzeichnen |
@@ -61,8 +61,8 @@ nennt, ob ein Mensch (`DECISION`), die Seite selbst (`PAGE`: `marks`) oder die M
 2. Vorstufe (KI): Stammen die Merkmale aus dem vereinfachten Satz und sagt der Zeitbezug nichts Eigenes, entscheidet
    das Kennzeichen (Planung → geplant, verworfen → überholt, Tatsache/Bedingung → gilt).
 3. Zeitbezug (FL2): gilt, geplant, früher → überholt, verworfen → überholt.
-4. Die Seite (Label, eigener Titel, Titel eines Vorfahren, Entscheidung zur Seite) zieht nur Aussagen mit Zeitbezug
-   GILT mit: überholt → überholt, Entwurf → unklar. Geplantes auf einer überholten Seite wird unklar. Sagt der Satz
+4. Die Seite (Label, eigener Titel, Titel eines Vorfahren, Entscheidung zur Seite) zieht nur Aussagen mit, deren „gilt“
+   der stille Vorgabewert ist (Zeitbezug GILT, Kennzeichen Tatsache oder Bedingung): überholt → überholt, Entwurf → unklar. Geplantes auf einer überholten Seite wird unklar. Sagt der Satz
    selbst geplant, früher oder verworfen, gewinnt der Satz.
 5. Verneinung und Verbindlichkeit ändern den Stand nie.
 6. Ungültige und vom Menschen abgelehnte Aussagen gehören nicht in die Sicht (eine Stelle:
