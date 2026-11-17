@@ -57,6 +57,23 @@ public interface PageCacheReader {
         return false;
     }
 
+    /**
+     * Seiten-IDs der Kinder in der Reihenfolge, in der die Quelle sie zuletzt lieferte; leer, wenn unbekannt.
+     *
+     * @param parentPageId Elternseite oder {@code null} für die Wurzelseiten von {@code spaceKey}
+     */
+    default List<String> childOrder(String sourceId, String spaceKey, String parentPageId) {
+        return List.of();
+    }
+
+    /**
+     * Merkt sich die Reihenfolge der Kinder, wie sie die Quelle gerade geliefert hat, und ersetzt die vorige. Der
+     * einzige schreibende Zugriff dieses Ports: nur ein Hinweis für die Anzeige, kein Seitenstand.
+     */
+    default void rememberChildOrder(String sourceId, String spaceKey, String parentPageId,
+                                    List<String> pageIds) {
+    }
+
     /** Ein Cache, der nicht eingerichtet ist: jede Abfrage scheitert mit {@link CacheUnavailableException}. */
     static PageCacheReader unavailable() {
         return new PageCacheReader() {

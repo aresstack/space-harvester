@@ -65,6 +65,26 @@ class LucenePageCacheReaderTest {
     }
 
     @Test
+    void theOrderOfChildrenIsRememberedPerNodeAndGoesWithItsSource() {
+        assertThat(reader.childOrder("wiki", null, "100")).isEmpty();
+
+        reader.rememberChildOrder("wiki", null, "100", java.util.List.of("102", "101", "103"));
+        reader.rememberChildOrder("wiki", "DEV", null, java.util.List.of("100"));
+        reader.rememberChildOrder("wiki", "OPS", null, java.util.List.of("200", "201"));
+
+        assertThat(reader.childOrder("wiki", null, "100")).containsExactly("102", "101", "103");
+        assertThat(reader.childOrder("wiki", "DEV", null)).containsExactly("100");
+        assertThat(reader.childOrder("wiki", "OPS", null)).containsExactly("200", "201");
+
+        reader.rememberChildOrder("wiki", null, "100", java.util.List.of("101"));
+        assertThat(reader.childOrder("wiki", null, "100")).containsExactly("101");
+
+        cache.removeSource("wiki");
+        assertThat(reader.childOrder("wiki", null, "100")).isEmpty();
+        assertThat(reader.childOrder("wiki", "DEV", null)).isEmpty();
+    }
+
+    @Test
     void anUnknownSpaceHasNoGeneration() {
         assertThat(reader.currentGeneration("wiki", "DEV")).isEmpty();
     }

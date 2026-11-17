@@ -123,6 +123,29 @@ class ReadingViewsTest {
     }
 
     @Test
+    void prefetchGivesUpSilentlyWhenTheSourceRefusesOrIsUnreachable() throws InterruptedException {
+        List<com.aresstack.spaceharvester.application.snapshot.PageSnapshot> pages = new java.util.ArrayList<>();
+        List<String> ids = new java.util.ArrayList<>();
+        for (int i = 200; i < 220; i++) {
+            pages.add(page("wiki", "DEV", String.valueOf(i), null));
+            ids.add(String.valueOf(i));
+        }
+        cache.publish("wiki", "DEV", confirmed("g2"), pages);
+        source.unreachable = true;
+        ReadingViews views = views((context, scope, kind) -> AccessDecision.ALLOW);
+
+        views.prefetch(CALLER, "wiki", ids);
+
+        // Höchstens die schon laufenden Abrufe erreichen die Quelle, die übrigen fragen sie nicht mehr.
+        long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < until) {
+            Thread.sleep(20);
+        }
+        assertThat(source.attempts).isBetween(1, 2);
+        assertThat(views.cached(CALLER, "wiki", "200")).isEmpty();
+    }
+
+    @Test
     void includedContentNeedsTheWholeSourceAndIsFetchedEveryTime() {
         ReadingView restricted = views((context, scope, kind) -> AccessDecision.ALLOW).view(CALLER, "wiki", "101",
                 false);
@@ -183,6 +206,7 @@ class ReadingViewsTest {
     private static final class Source implements HarvestSource {
 
         int reads;
+        volatile int attempts;
         boolean unreachable;
         boolean supported = true;
         String version = "3";
@@ -223,6 +247,7 @@ class ReadingViewsTest {
             if (!supported) {
                 return HarvestSource.super.readingPage(pageId);
             }
+            attempts++;
             if (unreachable) {
                 throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "weg", null);
             }
