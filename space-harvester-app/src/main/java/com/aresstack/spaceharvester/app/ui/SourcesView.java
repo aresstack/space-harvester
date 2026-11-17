@@ -644,8 +644,13 @@ public final class SourcesView implements View {
                 boolean token = config.auth().type() == SourceSettingsConfig.AuthType.PAT;
                 SecretState secret = SecretState.of(context.settings(), entry, context.secrets().has(entry),
                         context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(entry)));
+                // Bei Confluence öffnet der Stift denselben Dialog wie „Anmeldung“: EINE Logik für KeePass und Tresor.
+                // Ein eigener Tresor-Dialog legte sonst neben einem KeePass-Eintrag einen Wert ab, den der nächste
+                // Start nicht nutzt (KeePass geht vor), während er in dieser Sitzung KeePass überdeckte.
                 row(EditableProperty.action(token ? "Token" : "Passwort", secret.text(), secret.color(),
-                        (token ? "Token" : "Passwort") + " neu eingeben", () -> storeSecret(entry)));
+                        confluence ? "Zugangsdaten im Dialog „Anmeldung“ ändern (KeePass oder Manuell)"
+                                : (token ? "Token" : "Passwort") + " neu eingeben",
+                        confluence ? () -> setting(entry, SettingDialogs::auth) : () -> storeSecret(entry)));
             }
             if (confluence) {
                 SourceSettingsConfig.ClientCertificate certificate = config.clientCertificate();
