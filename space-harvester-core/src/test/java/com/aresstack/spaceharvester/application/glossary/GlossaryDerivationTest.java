@@ -410,9 +410,16 @@ class GlossaryDerivationTest {
         assertThat(GlossaryDerivation.ruleFor("Stelle")).isEqualTo(CategoryRule.ROLE_HEAD);
         // trügerische Wortenden: kurze und mehrdeutige Köpfe nie als Ende eines zusammengeschriebenen Worts
         for (String word : List.of("Import", "Support", "Rechtssystem", "Partnernetzwerk", "Aktienindex",
-                "Rohrleitung", "Leerstelle", "Fundstelle", "Urkunde", "Halbleiter", "Ehrenamt", "Samt",
+                "Rohrleitung", "Leerstelle", "Fundstelle", "Urkunde", "Ehrenamt", "Samt",
                 "Studienmodul", "Leistungsverzeichnis", "Wärmespeicher")) {
             assertThat(GlossaryDerivation.ruleFor(word)).as(word).isEqualTo(CategoryRule.NONE);
+        }
+        // -leiter ist Rollen-Kopf; die technischen Leiter gehen als Technik-Köpfe vor
+        for (String word : List.of("Referatsleiter", "Abteilungsleiterin", "Projektleiter", "Bauleiter", "Leiter")) {
+            assertThat(GlossaryDerivation.ruleFor(word)).as(word).isEqualTo(CategoryRule.ROLE_HEAD);
+        }
+        for (String word : List.of("Halbleiter", "Lichtwellenleiter", "Blitzableiter", "Supraleiter")) {
+            assertThat(GlossaryDerivation.ruleFor(word)).as(word).isEqualTo(CategoryRule.TECHNICAL_HEAD);
         }
         assertThat(GlossaryDerivation.categoryOf(CategoryRule.NONE)).isEqualTo(Category.UNKLAR);
     }

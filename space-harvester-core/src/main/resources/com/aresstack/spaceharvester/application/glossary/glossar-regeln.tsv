@@ -6,7 +6,7 @@
 #               mehrdeutige treffen Fachbegriffe („Rechtssystem“, „Aktienindex“, „Partnernetzwerk“).
 # rolle         Kopf von Rollen und Stellen, auch als Kompositum („Wirtschaftsprüfer“). Mindestens fünf Buchstaben.
 # rolle-wort    Rolle oder Stelle nur als ganzes Wort oder nach Bindestrich/Leerzeichen („Stelle“, nicht „Leerstelle“;
-#               „Leiter“, nicht „Halbleiter“). Technische Wörter gehen vor. Lieber UNKLAR als falsch.
+#               „Kasse“, nicht „Krankenkasse“). Technische Köpfe gehen vor („Halbleiter“ vor „leiter“). Lieber UNKLAR als falsch.
 # art	wort
 technik	applikation
 technik	authentifizierung
@@ -27,6 +27,13 @@ technik	schaltfläche
 technik	schnittstelle
 technik	server
 technik	software
+technik	halbleiter
+technik	lichtleiter
+technik	wellenleiter
+technik	ableiter
+technik	supraleiter
+technik	stromleiter
+technik	wärmeleiter
 technik-wort	anwendung
 technik-wort	api
 technik-wort	batch
@@ -87,6 +94,7 @@ rolle	gremium
 rolle	gutachter
 rolle	gutachterin
 rolle	kommission
+rolle	leiter
 rolle	leiterin
 rolle	lieferant
 rolle	mitarbeiter
@@ -103,7 +111,6 @@ rolle-wort	empfänger
 rolle-wort	kasse
 rolle-wort	kunde
 rolle-wort	kundin
-rolle-wort	leiter
 rolle-wort	leitung
 rolle-wort	referat
 rolle-wort	stelle
