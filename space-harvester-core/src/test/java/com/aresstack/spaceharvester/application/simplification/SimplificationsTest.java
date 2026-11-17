@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.simplification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -47,7 +48,7 @@ class SimplificationsTest {
         return out.toString();
     };
 
-    private static final class FakeModel implements SimplificationModel {
+    private static final class FakeModel implements StepModel {
         final AtomicInteger calls = new AtomicInteger();
         final List<String> inputs = java.util.Collections.synchronizedList(new ArrayList<>());
         volatile String version = "fake:m1";

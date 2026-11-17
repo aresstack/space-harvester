@@ -152,7 +152,8 @@ class FileKnowledgeGraphStoreTest {
                 s.end(), s.predicateText(), s.predicateLemma(), s.voice(), s.clause(), s.core(), s.arguments(),
                 s.findings(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
                 ParsedStatements.Features.UNKNOWN, ParsedStatements.Derivation.vorstufe(
-                        ParsedStatements.StageFlag.CONDITION, "Die Stelle prüft den Beleg.").withFeaturesFromOriginal());
+                        ParsedStatements.StageFlag.CONDITION, "Die Stelle prüft den Beleg.").withFeaturesFromOriginal()
+                        .withSection(new ParsedStatements.Section(0, 2)));
         new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
                 List.of(fromStage))).withStage("always|fake:m1|prompt-1"));
 
@@ -161,6 +162,8 @@ class FileKnowledgeGraphStoreTest {
         assertThat(read).isEqualTo(fromStage);
         assertThat(read.derivation().stageFlag()).isEqualTo(ParsedStatements.StageFlag.CONDITION);
         assertThat(read.derivation().featuresFrom()).isEqualTo(ParsedStatements.Origin.ORIGINAL);
+        assertThat(read.derivation().section()).as("Abschnitt für den Prüfschritt")
+                .isEqualTo(new ParsedStatements.Section(0, 2));
         assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().stage())
                 .isEqualTo("always|fake:m1|prompt-1");
 
@@ -170,9 +173,47 @@ class FileKnowledgeGraphStoreTest {
             file = files.findFirst().orElseThrow();
         }
         assertThat(Files.readString(file, StandardCharsets.UTF_8)).doesNotContain("origin", "stageFlag",
-                "simplifiedSentence", "featuresFrom", "\"stage\"");
+                "simplifiedSentence", "featuresFrom", "\"stage\"", "\"section\"");
         assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements()
                 .get(0).derivation()).isEqualTo(ParsedStatements.Derivation.ORIGINAL);
+    }
+
+    @Test
+    void verdictsAndCorrectionsOfTheCheckSurviveARestart() throws IOException {
+        PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
+        ParsedStatements.Statement s = base.result().statements().get(0);
+        ParsedStatements.Statement checked = s.withCheck(new ParsedStatements.Check(
+                ParsedStatements.Verdict.UNVOLLSTAENDIG, "fake:m1|prompt-1", true));
+        ParsedStatements.Statement correction = new ParsedStatements.Statement(s.id() + "m", s.sentence(), s.start(),
+                s.end(), s.predicateText(), s.predicateLemma(), s.voice(), s.clause(), false, s.arguments(),
+                s.findings(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
+                ParsedStatements.Features.UNKNOWN, ParsedStatements.Derivation.modell("Die Stelle prüft den Beleg.",
+                        s.id(), ParsedStatements.Origin.MODELL));
+        new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
+                List.of(checked, correction))));
+
+        List<ParsedStatements.Statement> read = new FileKnowledgeGraphStore(directory).find(base.key())
+                .orElseThrow().result().statements();
+
+        assertThat(read).containsExactly(checked, correction);
+        assertThat(read.get(0).check().corrected()).isTrue();
+        assertThat(read.get(1).derivation().corrects()).isEqualTo(s.id());
+    }
+
+    @Test
+    void anUnreadableCorrectionIsSkippedAndNeverLoadedAsAnOriginal() throws IOException {
+        PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
+        new FileKnowledgeGraphStore(directory).replace(base);
+        Path file;
+        try (Stream<Path> files = Files.list(directory.resolve(FileKnowledgeGraphStore.PAGES))) {
+            file = files.findFirst().orElseThrow();
+        }
+        String json = Files.readString(file, StandardCharsets.UTF_8);
+        Files.writeString(file, json.replace("\"review\"", "\"origin\" : \"MODELL\", \"review\""),
+                StandardCharsets.UTF_8);
+
+        assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements())
+                .isEmpty();
     }
 
     @Test

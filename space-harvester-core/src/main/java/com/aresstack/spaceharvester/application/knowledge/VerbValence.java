@@ -137,7 +137,7 @@ public final class VerbValence {
                     states++;
                     continue;
                 }
-                if (statement.quality() != ParsedStatements.Quality.PLAUSIBLE) {
+                if (statement.effectiveQuality() != ParsedStatements.Quality.PLAUSIBLE) {
                     notPlausible++;
                     continue;
                 }

@@ -1,0 +1,12 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/B@korrektur
+# sent_id = 1
+# text = Der Prüfer stellt Mängel fest.
+1	Der	der	DET	_	_	2	det	_	_
+2	Prüfer	prüfer	NOUN	_	_	3	nsubj	_	_
+3	stellt	stellen	VERB	_	_	0	root	_	_
+4	Mängel	mangel	PROPN	_	_	3	obj	_	_
+5	fest	fest	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+

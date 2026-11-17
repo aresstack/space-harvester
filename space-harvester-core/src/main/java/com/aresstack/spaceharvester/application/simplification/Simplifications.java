@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.simplification;
 
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -35,14 +36,14 @@ import java.util.function.Predicate;
  */
 public final class Simplifications {
 
-    private final SimplificationModel model;
+    private final StepModel model;
     private final SimplificationStore store;
     private final Predicate<PageKey> released;
 
     /**
      * @param released ob die Seite jetzt an den KI-Dienst darf, etwa {@code AiRelease::mayProcess}
      */
-    public Simplifications(SimplificationModel model, SimplificationStore store, Predicate<PageKey> released) {
+    public Simplifications(StepModel model, SimplificationStore store, Predicate<PageKey> released) {
         this.model = Objects.requireNonNull(model, "model");
         this.store = Objects.requireNonNull(store, "store");
         this.released = Objects.requireNonNull(released, "released");

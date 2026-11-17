@@ -4,6 +4,11 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.check.CheckScope;
+import com.aresstack.spaceharvester.application.check.CheckUnavailableException;
+import com.aresstack.spaceharvester.application.check.Corrections;
+import com.aresstack.spaceharvester.application.check.StatementCheck;
+import com.aresstack.spaceharvester.application.check.StatementChecks;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
@@ -54,6 +59,7 @@ public class StatementAnalysis {
     private final Supplier<StatementAnalyzer> analyzer;
     private final Clock clock;
     private final Simplifications simplifications;
+    private final StatementChecks checks;
 
     /**
      * @param texts    dieselbe Textprojektion wie der Leser ({@code Enrichments#text})
@@ -70,7 +76,17 @@ public class StatementAnalysis {
     public StatementAnalysis(Function<PageSnapshot, Optional<PageText>> texts, KnowledgeGraphStore store,
                              AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock,
                              Simplifications simplifications) {
+        this(texts, store, access, analyzer, clock, simplifications, null);
+    }
+
+    /**
+     * @param checks der Prüfschritt (ADR 0032, FL4) oder {@code null} ohne ihn
+     */
+    public StatementAnalysis(Function<PageSnapshot, Optional<PageText>> texts, KnowledgeGraphStore store,
+                             AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock,
+                             Simplifications simplifications, StatementChecks checks) {
         this.simplifications = simplifications;
+        this.checks = checks;
         this.texts = Objects.requireNonNull(texts, "texts");
         this.store = Objects.requireNonNull(store, "store");
         this.access = Objects.requireNonNull(access, "access");
@@ -186,6 +202,7 @@ public class StatementAnalysis {
         String documentId = PageStatementAnalysis.documentId(key, input);
         ParsedStatements result;
         String stage = null;
+        Map<Integer, ParsedStatements.Section> stageSections = new java.util.concurrent.ConcurrentHashMap<>();
         if (request != null && simplificationUnavailable(key).isEmpty()) {
             stage = stage(request);
             result = parser.analyze(documentId, analyzerText(text.get()), cancelled,
@@ -200,6 +217,12 @@ public class StatementAnalysis {
                             if (sections.isEmpty()) {
                                 return Map.of();
                             }
+                            for (SimplificationSection section : sections) {
+                                List<SimplificationSection.Sentence> lines = section.lines();
+                                ParsedStatements.Section range = new ParsedStatements.Section(lines.get(0).index(),
+                                        lines.get(lines.size() - 1).index());
+                                section.sentences().forEach(sentence -> stageSections.put(sentence.index(), range));
+                            }
                             Simplifications.Result run = simplifications.simplify(key, input, sections,
                                     request.parallel(), cancelled);
                             costs.accept(run.costs());
@@ -212,6 +235,7 @@ public class StatementAnalysis {
         if (cancelled.getAsBoolean()) {
             throw new CancellationException("Analyse abgebrochen");
         }
+        result = withSections(result, stageSections);
         check(result, text.get().text().length());
         if (stage != null && !simplifications.released(key)) {
             // ADR 0028: Freigabe während der Analyse entzogen, kein Modelltext der Seite in den Graph; ohne die Aussagen
@@ -225,6 +249,227 @@ public class StatementAnalysis {
         store.replace(analysis);
         return new PageStatements(PageStatements.State.CURRENT, null,
                 analysis.withResult(result.withoutConllu()));
+    }
+
+    /** Ob der Prüfschritt für diese Seite laufen kann: eingerichtet, Modell eingestellt, Seite für die KI freigegeben. */
+    public Optional<CheckUnavailableException.Reason> checkUnavailable(PageKey key) {
+        if (checks == null || !checks.available()) {
+            return Optional.of(CheckUnavailableException.Reason.NO_MODEL);
+        }
+        if (!checks.released(key)) {
+            return Optional.of(CheckUnavailableException.Reason.NOT_RELEASED);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Prüft die gespeicherte, aktuelle Analyse der Seite mit dem Chat-Modell (ADR 0032, FL4), im aufrufenden Thread.
+     * Nur auf ausdrücklichen Auftrag und nur für Seiten mit KI-Freigabe.
+     *
+     * <ul>
+     *     <li>Vorher fallen alle Urteile und Korrekturen eines früheren Laufs weg ({@link #withoutChecks}), auch die
+     *     eines anderen Modells oder einer anderen Anweisung.</li>
+     *     <li>Jede gewählte Aussage ({@link CheckScope}) mit gültigem Urteil bekommt ein
+     *     {@link ParsedStatements.Check}; die Stufe des Parsers bleibt, das Urteil senkt nur die wirksame Stufe
+     *     ({@link ParsedStatements.Statement#effectiveQuality()}). STIMMT hebt nie.</li>
+     *     <li>Korrekturen, die den Wortabgleich bestanden, parst der Satzanalysator (ohne ihn gibt es keine), und
+     *     {@link Corrections#merge} übernimmt die gültigen als eigene Aussagen. UNVOLLSTAENDIG ohne gültige Korrektur
+     *     ändert nichts an der Stufe.</li>
+     *     <li>Fehler, Abbruch oder Entzug der Freigabe schreiben nichts an der Analyse; schon gelesene Urteile bleiben
+     *     in der Ablage des Prüfschritts für den nächsten Lauf.</li>
+     * </ul>
+     *
+     * @param costs bekommt die Zahlen des Laufs; nie Inhalte
+     * @throws CheckUnavailableException ohne Modell, ohne Freigabe oder ohne aktuelle Analyse
+     * @throws CancellationException     nach einem Abbruch
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne Leserecht auf die Seite
+     */
+    public PageStatements check(AccessContext caller, PageSnapshot snapshot, BooleanSupplier cancelled,
+                                CheckRequest request, Consumer<CheckCosts> costs) {
+        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(costs, "costs");
+        require(caller, snapshot);
+        PageKey key = snapshot.key();
+        Optional<CheckUnavailableException.Reason> unavailable = checkUnavailable(key);
+        if (unavailable.isPresent()) {
+            throw new CheckUnavailableException(unavailable.get());
+        }
+        Optional<PageStatementAnalysis> stored = store.find(key);
+        Optional<PageText> text = texts.apply(snapshot);
+        if (stored.isEmpty() || text.isEmpty()
+                || reason(stored.get(), text.map(PageText::inputSha256)) != null) {
+            throw new CheckUnavailableException(CheckUnavailableException.Reason.NOT_CURRENT);
+        }
+        PageStatementAnalysis analysis = stored.get();
+        ParsedStatements base = withoutChecks(analysis.result());
+        String content = text.get().text();
+        Map<String, ParsedStatements.Mention> mentions = new java.util.HashMap<>();
+        base.mentions().forEach(mention -> mentions.put(mention.id(), mention));
+        Map<Integer, ParsedStatements.Sentence> sentences = new java.util.HashMap<>();
+        base.sentences().forEach(sentence -> sentences.put(sentence.index(), sentence));
+        Map<Integer, List<ParsedStatements.Statement>> chosen = new java.util.TreeMap<>();
+        Map<Integer, ParsedStatements.Section> sectionOf = new java.util.HashMap<>();
+        int withoutSection = 0;
+        for (ParsedStatements.Statement statement : base.statements()) {
+            if (!request.scope().includes(statement) || !sentences.containsKey(statement.sentence())) {
+                continue;
+            }
+            if (statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE) {
+                // Ohne den Abschnitt der Vorstufe (Analyse vor FL4) sähe das Modell nicht, woher ihre Beteiligten
+                // stammen; solche Aussagen bleiben ungeprüft, bis die Seite neu analysiert ist
+                if (statement.derivation().section() == null) {
+                    withoutSection++;
+                    continue;
+                }
+                sectionOf.merge(statement.sentence(), statement.derivation().section(), StatementAnalysis::wider);
+            }
+            chosen.computeIfAbsent(statement.sentence(), index -> new java.util.ArrayList<>()).add(statement);
+        }
+        List<StatementChecks.Group> groups = new java.util.ArrayList<>();
+        List<List<ParsedStatements.Statement>> grouped = new java.util.ArrayList<>();
+        List<String> sources = new java.util.ArrayList<>();
+        chosen.forEach((index, statements) -> {
+            String sentence = sentenceText(content, sentences.get(index));
+            // ADR 0032, FL4: Mit einer Aussage der Vorstufe geht derselbe Abschnitt wie bei der Vorstufe mit
+            List<String> context = sectionOf.containsKey(index)
+                    ? lines(content, base.sentences(), sectionOf.get(index)) : List.of();
+            groups.add(new StatementChecks.Group(sentence, context, statements.stream()
+                    .map(statement -> StatementCheck.Item.of(statement, mentions)).toList()));
+            grouped.add(statements);
+            sources.add(StatementCheck.source(sentence, context));
+        });
+        StatementChecks.Costs run = groups.isEmpty()
+                ? new StatementChecks.Costs(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                : null;
+        List<Map<Integer, StatementCheck.Answer>> answers = List.of();
+        if (!groups.isEmpty()) {
+            StatementChecks.Result result = checks.check(key, analysis.inputSha256(), groups, request.parallel(),
+                    cancelled);
+            run = result.costs();
+            answers = result.answers();
+        }
+        List<Corrections.Line> lines = new java.util.ArrayList<>();
+        for (int g = 0; g < grouped.size(); g++) {
+            for (Map.Entry<Integer, StatementCheck.Answer> entry : answers.get(g).entrySet()) {
+                if (entry.getValue().correction() != null) {
+                    lines.add(new Corrections.Line(grouped.get(g).get(entry.getKey() - 1),
+                            entry.getValue().correction(), sources.get(g)));
+                }
+            }
+        }
+        Corrections.Merged merged = new Corrections.Merged(base, Set.of(), Map.of());
+        int unparsed = 0;
+        StatementAnalyzer parser = analyzer.get();
+        if (!lines.isEmpty() && parser == null) {
+            unparsed = lines.size(); // ohne Satzanalysator (Dienst) bleibt jede Korrektur ungeparst, also ungültig
+        } else if (!lines.isEmpty()) {
+            StringBuilder correctionText = new StringBuilder();
+            int[] lineStarts = new int[lines.size()];
+            for (int i = 0; i < lines.size(); i++) {
+                lineStarts[i] = correctionText.length();
+                correctionText.append(lines.get(i).correction()).append('\n');
+            }
+            String parsedId = analysis.documentId() + "-check";
+            ParsedStatements parsed = parser.analyze(parsedId, correctionText.toString(), cancelled);
+            merged = Corrections.merge(base, analysis.documentId(), content, lines, parsed, lineStarts, parsedId);
+        }
+        String version = checks.version();
+        Map<String, ParsedStatements.Check> verdicts = new java.util.HashMap<>();
+        for (int g = 0; g < grouped.size(); g++) {
+            for (Map.Entry<Integer, StatementCheck.Answer> entry : answers.get(g).entrySet()) {
+                ParsedStatements.Statement statement = grouped.get(g).get(entry.getKey() - 1);
+                verdicts.put(statement.id(), new ParsedStatements.Check(entry.getValue().verdict(), version,
+                        merged.corrected().contains(statement.id())));
+            }
+        }
+        ParsedStatements checked = merged.result();
+        checked = new ParsedStatements(checked.sentences(), checked.mentions(), checked.statements().stream()
+                .map(statement -> verdicts.containsKey(statement.id())
+                        ? statement.withCheck(verdicts.get(statement.id())) : statement).toList(),
+                checked.attachments(), checked.components(), null);
+        if (cancelled.getAsBoolean()) {
+            throw new CancellationException("Prüfschritt abgebrochen");
+        }
+        if (!checks.released(key)) {
+            // ADR 0028: Freigabe während des Laufs entzogen, kein Urteil und keine Korrektur in den Graph
+            throw new CheckUnavailableException(CheckUnavailableException.Reason.NOT_RELEASED);
+        }
+        check(checked, content.length());
+        store.replace(analysis.withResult(withConllu(key, checked)));
+        int rejectedCorrections = unparsed + merged.rejected().values().stream().mapToInt(Integer::intValue).sum();
+        costs.accept(new CheckCosts(run, merged.corrected().size(), rejectedCorrections, withoutSection));
+        return new PageStatements(PageStatements.State.CURRENT, null, analysis.withResult(checked));
+    }
+
+    /**
+     * Entfernt nach dem Entzug der KI-Freigabe (ADR 0028) aus den gespeicherten Analysen der Seiten ohne Freigabe die
+     * Urteile und Korrekturen des Prüfschritts (ADR 0032, FL4), ohne neu zu rechnen und ohne die Analyse veralten zu
+     * lassen: Die Stufe des Parsers war nie verändert, die Aussagen stehen danach genau wie vor dem Prüflauf da.
+     * {@link #withdrawStage} tut das mit, wenn die Vorstufe ebenfalls zurückgeht.
+     *
+     * @return Zahl der geänderten Analysen
+     */
+    public int withdrawChecks(java.util.Collection<PageKey> pages, java.util.function.Predicate<PageKey> released) {
+        int changed = 0;
+        for (PageKey page : pages) {
+            if (released.test(page)) {
+                continue;
+            }
+            Optional<PageStatementAnalysis> stored = store.find(page);
+            if (stored.isEmpty()) {
+                continue;
+            }
+            ParsedStatements unchecked = withoutChecks(stored.get().result());
+            if (unchecked != stored.get().result()) {
+                store.replace(stored.get().withResult(withConllu(page, unchecked)));
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Gibt jeder Aussage der Vorstufe den Abschnitt ihres Aufrufs mit (ADR 0032, FL4): Der Prüfschritt zeigt dem Modell
+     * dieselben Zeilen als Zusammenhang, denn eine Vorstufen-Aussage darf Beteiligte aus Nachbarzeilen tragen.
+     */
+    static ParsedStatements withSections(ParsedStatements result, Map<Integer, ParsedStatements.Section> sections) {
+        if (sections.isEmpty() || result.statements().stream()
+                .noneMatch(statement -> statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE)) {
+            return result;
+        }
+        return new ParsedStatements(result.sentences(), result.mentions(), result.statements().stream()
+                .map(statement -> statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE
+                        && sections.containsKey(statement.sentence())
+                        ? statement.withDerivation(statement.derivation().withSection(
+                        sections.get(statement.sentence()))) : statement).toList(),
+                result.attachments(), result.components(), result.conllu());
+    }
+
+    /** Die Analyse mit der gespeicherten CoNLL-U der Seite, damit ein Ersetzen die Syntaxdetails behält. */
+    private ParsedStatements withConllu(PageKey page, ParsedStatements result) {
+        return result.conllu() != null ? result : result.withConllu(store.conllu(page).orElse(null));
+    }
+
+    /** Der größere von zwei Abschnitten desselben Satzes (sie sind gleich, solange eine Analyse sie setzte). */
+    private static ParsedStatements.Section wider(ParsedStatements.Section a, ParsedStatements.Section b) {
+        return new ParsedStatements.Section(Math.min(a.first(), b.first()), Math.max(a.last(), b.last()));
+    }
+
+    /** Die nicht leeren Sätze eines Abschnitts in Textreihenfolge, je eine Zeile, wie die Vorstufe sie sah. */
+    private static List<String> lines(String text, List<ParsedStatements.Sentence> sentences,
+                                      ParsedStatements.Section section) {
+        List<String> lines = new java.util.ArrayList<>();
+        sentences.stream().filter(sentence -> section.contains(sentence.index()))
+                .sorted(java.util.Comparator.comparingInt(ParsedStatements.Sentence::index))
+                .map(sentence -> sentenceText(text, sentence).replaceAll("\\s+", " ").strip())
+                .filter(line -> !line.isEmpty()).forEach(lines::add);
+        return List.copyOf(lines);
+    }
+
+    private static String sentenceText(String text, ParsedStatements.Sentence sentence) {
+        int start = Math.min(Math.max(0, sentence.start()), text.length());
+        int end = Math.min(Math.max(start, sentence.end()), text.length());
+        return text.substring(start, end);
     }
 
     /** Warum eine gespeicherte Analyse veraltet ist, oder {@code null}, wenn sie aktuell ist. */
@@ -386,14 +631,20 @@ public class StatementAnalysis {
                 continue;
             }
             ParsedStatements result = stored.get().result();
-            ParsedStatements stripped = withoutStage(result);
-            if (stripped != result) {
+            // ADR 0032, FL4: Urteile und Korrekturen des Prüfschritts fallen mit der Freigabe, ohne die Analyse
+            // veralten zu lassen; die Aussagen stehen danach genau wie vor dem Prüflauf da
+            ParsedStatements unchecked = withoutChecks(result);
+            ParsedStatements stripped = withoutStage(unchecked);
+            if (stripped != unchecked) {
                 // Die ersetzten Original-Aussagen fehlen jetzt: veraltet, der nächste Lauf rechnet ohne Vorstufe
-                store.replace(stored.get().withResult(stripped).withStage(PageStatementAnalysis.STAGE_WITHDRAWN));
+                store.replace(stored.get().withResult(withConllu(page, stripped))
+                        .withStage(PageStatementAnalysis.STAGE_WITHDRAWN));
                 changed++;
-            } else if (stored.get().stage() != null
+            } else if (unchecked != result || stored.get().stage() != null
                     && !PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.get().stage())) {
-                store.replace(stored.get().withStage(null)); // keine Aussage der Vorstufe übrig, nichts fehlt
+                String stage = PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.get().stage())
+                        ? stored.get().stage() : null; // keine Aussage der Vorstufe übrig, nichts fehlt
+                store.replace(stored.get().withResult(withConllu(page, unchecked)).withStage(stage));
                 changed++;
             }
         }
@@ -405,8 +656,38 @@ public class StatementAnalysis {
      * es keine gab.
      */
     static ParsedStatements withoutStage(ParsedStatements result) {
-        List<ParsedStatements.Statement> kept = result.statements().stream()
-                .filter(statement -> statement.derivation().origin() == ParsedStatements.Origin.ORIGINAL).toList();
+        Set<String> stage = new HashSet<>();
+        result.statements().stream()
+                .filter(statement -> statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE)
+                .forEach(statement -> stage.add(statement.id()));
+        // eine Korrektur einer Aussage der Vorstufe fällt mit ihr
+        return without(result, statement -> stage.contains(statement.id())
+                || stage.contains(statement.derivation().corrects()));
+    }
+
+    /**
+     * Die Analyse ohne Urteile und Korrekturen des Prüfschritts (ADR 0032, FL4): ohne {@link ParsedStatements.Check}
+     * an den Aussagen und ohne Aussagen mit Herkunft {@link ParsedStatements.Origin#MODELL} samt den Erwähnungen, auf
+     * die nur sie zeigten. Die Stufe des Parsers war nie verändert, also steht jede Aussage danach genau wie vor dem
+     * Prüflauf da. Dieselbe Instanz, wenn es nichts zu entfernen gab.
+     */
+    public static ParsedStatements withoutChecks(ParsedStatements result) {
+        boolean checked = result.statements().stream().anyMatch(statement -> statement.check() != null
+                || statement.derivation().origin() == ParsedStatements.Origin.MODELL);
+        if (!checked) {
+            return result;
+        }
+        ParsedStatements stripped = without(result,
+                statement -> statement.derivation().origin() == ParsedStatements.Origin.MODELL);
+        return new ParsedStatements(stripped.sentences(), stripped.mentions(), stripped.statements().stream()
+                .map(statement -> statement.check() == null ? statement : statement.withCheck(null)).toList(),
+                stripped.attachments(), stripped.components(), stripped.conllu());
+    }
+
+    /** Die Analyse ohne die Aussagen, die {@code drop} annimmt, und ohne die Erwähnungen, auf die nur sie zeigten. */
+    private static ParsedStatements without(ParsedStatements result,
+                                            java.util.function.Predicate<ParsedStatements.Statement> drop) {
+        List<ParsedStatements.Statement> kept = result.statements().stream().filter(drop.negate()).toList();
         if (kept.size() == result.statements().size()) {
             return result;
         }
@@ -418,7 +699,7 @@ public class StatementAnalysis {
         });
         Set<String> onlyStage = new HashSet<>();
         result.statements().stream()
-                .filter(statement -> statement.derivation().origin() != ParsedStatements.Origin.ORIGINAL)
+                .filter(drop)
                 .forEach(statement -> statement.arguments().forEach(argument -> {
                     if (argument.mention() != null && !stillUsed.contains(argument.mention())) {
                         onlyStage.add(argument.mention());
@@ -428,6 +709,35 @@ public class StatementAnalysis {
                 .filter(mention -> !onlyStage.contains(mention.id())).toList();
         return new ParsedStatements(result.sentences(), mentions, kept, result.attachments(), result.components(),
                 result.conllu());
+    }
+
+    /**
+     * Ein Prüflauf (ADR 0032, FL4).
+     *
+     * @param scope    welche Aussagen das Modell sieht
+     * @param parallel so viele Sätze einer Seite höchstens zugleich beim Modell
+     */
+    public record CheckRequest(CheckScope scope, int parallel) {
+
+        public CheckRequest {
+            Objects.requireNonNull(scope, "scope");
+            if (parallel < 1) {
+                throw new IllegalArgumentException("parallel muss mindestens 1 sein");
+            }
+        }
+    }
+
+    /**
+     * Zahlen eines Prüflaufs, ohne Inhalte.
+     *
+     * @param run                 Zahlen des Modellteils
+     * @param corrections         übernommene Korrekturen
+     * @param rejectedCorrections Korrekturen, die nach dem Wortabgleich nicht als Aussage taugten (Verb, Verneinung,
+     *                            Handelnder, Beteiligte) oder ohne Satzanalysator ungeparst blieben
+     * @param withoutSection      gewählte Aussagen der Vorstufe ohne gespeicherten Abschnitt (Analyse vor FL4),
+     *                            ungeprüft geblieben
+     */
+    public record CheckCosts(StatementChecks.Costs run, int corrections, int rejectedCorrections, int withoutSection) {
     }
 
     /**

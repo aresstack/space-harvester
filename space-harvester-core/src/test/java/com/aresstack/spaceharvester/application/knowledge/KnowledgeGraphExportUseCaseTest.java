@@ -212,6 +212,33 @@ class KnowledgeGraphExportUseCaseTest {
     }
 
     @Test
+    void theExportFollowsTheEffectiveQualityAndNamesTheVerdict() throws Exception {
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg. Die Stelle sendet den Bescheid.");
+        PageStatementAnalysis stored = store.find(new PageKey("wiki", "1")).orElseThrow();
+        ParsedStatements result = stored.result();
+        // erfunden: Urteile des Prüfschritts (ADR 0032, FL4)
+        List<ParsedStatements.Statement> checked = List.of(
+                result.statements().get(0).withCheck(new ParsedStatements.Check(ParsedStatements.Verdict.STIMMT,
+                        "fake:m1|prompt-1", false)),
+                result.statements().get(1).withCheck(new ParsedStatements.Check(ParsedStatements.Verdict.FALSCH,
+                        "fake:m1|prompt-1", false)));
+        store.replace(stored.withResult(new ParsedStatements(result.sentences(), result.mentions(), checked,
+                result.attachments(), result.components(), result.conllu())));
+
+        run(new Scope.Page("wiki", "1"));
+        JsonNode doc = read();
+
+        assertThat(nodes(doc, "Statement")).as("FALSCH senkt unter PLAUSIBLE").singleElement().satisfies(node -> {
+            assertThat(node.path("predicate").asString()).isEqualTo("prüft");
+            assertThat(node.path("checkVerdict").asString()).isEqualTo("STIMMT");
+            assertThat(node.path("checkVersion").asString()).isEqualTo("fake:m1|prompt-1");
+            assertThat(node.path("extractionQuality").asString()).isEqualTo("PLAUSIBLE");
+            assertThat(node.path("effectiveQuality").asString()).isEqualTo("PLAUSIBLE");
+        });
+        assertThat(doc.path("@context").toString()).contains("\"checkVerdict\"", "\"corrects\"");
+    }
+
+    @Test
     void aStateStatementLinksItsBearerAndSaysWhetherItIsAPropertyOrARoleNoun() throws Exception {
         analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
         PageStatementAnalysis stored = store.find(new PageKey("wiki", "1")).orElseThrow();

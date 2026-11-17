@@ -1,0 +1,103 @@
+# Handantworten des Prüfschritts (ADR 0032, FL4), von Hand: Text, Originalsatz, Aussage (Kurzform des Prüfstands), Antwort wie
+# vom Modell ohne Nummer. Urteile nach der Vorgabe (vollständig richtig = STIMMT); Korrekturen von Hand formuliert. Belegen nur
+# Lesen, Wortabgleich und Zusammenführen, nicht die Güte eines Modells.
+A	1	einreichen(H=Antragsteller, B=Förderantrag) PLAUSIBLE	STIMMT
+A	2	prüfen(H=Bewilligungsstelle, B=Antrag) PLAUSIBLE	STIMMT
+A	3	anfordern(H=Sachbearbeiter, B=Unterlagen) PLAUSIBLE	STIMMT
+A	4	erlassen(H=Bewilligungsstelle, B=Zuwendungsbescheid) PLAUSIBLE	STIMMT
+A	5	festlegen(H=Zuwendungsbescheid, B=Fördersumme) PLAUSIBLE	STIMMT
+A	6	abrufen(H=Zuwendungsempfänger, B=Mittel) PLAUSIBLE	STIMMT
+A	7	auszahlen(H=Kasse, B=Mittel) PLAUSIBLE	STIMMT
+A	8	vorlegen(H=Zuwendungsempfänger, B=Verwendungsnachweis) PLAUSIBLE	STIMMT
+A	9	kontrollieren(H=Prüfer, B=Verwendungsnachweis) PLAUSIBLE	STIMMT
+A	10	zurückfordern(H=Bewilligungsstelle, B=Mittel) PLAUSIBLE	STIMMT
+A	11	umfassen(H=Förderprogramm, B=Fördermaßnahmen) PLAUSIBLE	STIMMT
+A	12	gehören(H=Antrag) PLAUSIBLE	STIMMT
+B	1	prüfen(B=Förderantrag, H=Bewilligungsstelle) PLAUSIBLE	STIMMT
+B	2	anfordern(B=Unterlagen, H=Sachbearbeiter) PLAUSIBLE	STIMMT
+B	3	erlassen(B=Zuwendungsbescheid, H=Bewilligungsstelle) PLAUSIBLE	STIMMT
+B	4	abrufen(H=Zuwendungsempfänger, B=Mittel) PLAUSIBLE	STIMMT
+B	4	auszahlen(B=Mittel, H=Kasse) PLAUSIBLE	STIMMT
+B	5	erfolgen(H=Auszahlung) PLAUSIBLE	STIMMT
+B	6	vorlegen(H=Zuwendungsempfänger, B=Monate) PLAUSIBLE	FALSCH
+B	7	feststellen(H=Prüfer) PLAUSIBLE	UNVOLLSTAENDIG|Der Prüfer stellt Mängel fest.
+B	7	zurückfordern(H=Bewilligungsstelle, B=Mittel) PLAUSIBLE	STIMMT
+B	7	festsetzen(H=Bewilligungsstelle, B=Zinsen) PLAUSIBLE	STIMMT
+B	8	widerrufen(H=Bewilligungsstelle, B=Bescheid) PLAUSIBLE	STIMMT
+B	8	erfüllen(H=Zuwendungsempfänger, B=Auflagen) PLAUSIBLE	STIMMT
+B	9	mitteilen(B=Entscheidung, E=Antragsteller) PLAUSIBLE	STIMMT
+B	10	erfassen(H=Sachbearbeiter, B=Mittelabruf) UNCERTAIN	STIMMT
+B	10	prüfen(H=Sachbearbeiter, B=Mittelabruf) UNCERTAIN	STIMMT
+B	10	genehmigen(H=Sachbearbeiter, B=Mittelabruf) PLAUSIBLE	STIMMT
+C	1	speichern(H=Fachverfahren, B=Anträge) PLAUSIBLE	STIMMT
+C	2	bereitstellen(H=Antragsservice, B=REST-Schnittstelle) UNCERTAIN	STIMMT
+C	3	liefern(H=Schnittstelle, B=Antragsdaten) PLAUSIBLE	STIMMT
+C	4	übertragen(H=Batch-Job, B=Auszahlungsdaten) PLAUSIBLE	STIMMT
+C	5	bestätigen(H=Kassensystem, B=Empfang) PLAUSIBLE	STIMMT
+C	6	verteilen(H=Load Balancer, B=Anfragen) PLAUSIBLE	STIMMT
+C	7	erfolgen(H=Authentifizierung) PLAUSIBLE	STIMMT
+C	8	aufrufen(H=Portal, B=Antragsservice) PLAUSIBLE	STIMMT
+D	2	prüfen(H=Bewilligungsstelle, B=Antrag) PLAUSIBLE	STIMMT
+D	4	prüfen(B=Vollständigkeit) PLAUSIBLE	STIMMT
+D	5	feststellen(B=Förderfähigkeit) PLAUSIBLE	STIMMT
+D	6	erstellen(B=Bescheid) PLAUSIBLE	STIMMT
+D	6	versenden(B=Bescheid) PLAUSIBLE	STIMMT
+D	7	automatisieren(B=Prüfung) PLAUSIBLE	STIMMT
+D	8	verwerfen(B=Überlegung) PLAUSIBLE	STIMMT
+D	9	prüfen(H=Sachbearbeiter) PLAUSIBLE	UNVOLLSTAENDIG|Der Sachbearbeiter prüft die Förderfähigkeit manuell.
+D	10	bewerten(H=Regelwerk, B=Förderfähigkeit) PLAUSIBLE	STIMMT
+D	12	abstimmen(B=Schnittstelle) PLAUSIBLE	STIMMT
+E	1	vollständig(H=Antrag) PLAUSIBLE	STIMMT
+E	1	bestätigen(B=vollständig, H=Bewilligungsstelle) UNCERTAIN	STIMMT
+E	2	stellen(H=Wer, B=Antrag) UNCERTAIN	STIMMT
+E	2	erhalten(H=stellt, B=Eingangsbestätigung) PLAUSIBLE	STIMMT
+E	3	förderfähig(H=Maßnahme) PLAUSIBLE	STIMMT
+E	3	entscheiden(H=Sachbearbeiter, B=förderfähig) UNCERTAIN	STIMMT
+E	4	einreichen(H=Antragsteller, B=Unterlagen) PLAUSIBLE	STIMMT
+E	4	obliegen(H=einzureichen, E=Antragsteller) UNCERTAIN	STIMMT
+E	5	prüfen(H=Sachbearbeiter, B=Antrag) PLAUSIBLE	STIMMT
+E	5	weiterleiten(H=Sachbearbeiter, B=Antrag) UNCERTAIN	STIMMT
+E	6	prüfen(H=Bewilligungsstelle, B=Antrag) PLAUSIBLE	STIMMT
+E	6	nachfordern(H=Bewilligungsstelle, B=Unterlagen) PLAUSIBLE	STIMMT
+E	6	erlassen(H=Bewilligungsstelle, B=Bescheid) PLAUSIBLE	STIMMT
+E	7	erhalten(H=Antragsteller, B=Bescheid) PLAUSIBLE	STIMMT
+E	7	prüfen(H=Bewilligungsstelle, B=Antrag) PLAUSIBLE	STIMMT
+E	8	prüfen(B=erfüllt) PLAUSIBLE	STIMMT
+E	8	erfüllen(H=Antragsteller, B=Voraussetzungen) PLAUSIBLE	STIMMT
+E	9	beanstanden(H=Prüfer, B=Was) UNCERTAIN	STIMMT
+E	9	nachbessern(H=Zuwendungsempfänger, B=beanstandet) PLAUSIBLE	STIMMT
+E	10	auszahlen(H=Kasse, B=Mittel) PLAUSIBLE	STIMMT
+E	10	vorliegen(H=Mittelabruf) PLAUSIBLE	STIMMT
+E	10	informieren(H=Kasse, B=Zuwendungsempfänger) PLAUSIBLE	STIMMT
+F	1	zuständig(H=Bewilligungsstelle) PLAUSIBLE	STIMMT
+F	2	unvollständig(H=Antrag) PLAUSIBLE	STIMMT
+F	3	ansprechpartner(H=Sachbearbeiter) PLAUSIBLE	STIMMT
+F	4	rückzahlbar(H=Zuschuss) PLAUSIBLE	STIMMT
+F	5	vollständig(H=Unterlagen) PLAUSIBLE	STIMMT
+F	6	fehlerhaft(H=Bescheid) PLAUSIBLE	STIMMT
+F	7	freigeben(B=Schnittstelle) PLAUSIBLE	STIMMT
+F	8	gültig(H=Zusage) PLAUSIBLE	STIMMT
+F	9	bestandskräftig(H=Bescheid) PLAUSIBLE	STIMMT
+F	10	förderung(H=Zuschuss) PLAUSIBLE	STIMMT
+F	11	einwandfrei(H=Abrechnung) PLAUSIBLE	STIMMT
+F	12	einziehen(B=Rate) PLAUSIBLE	STIMMT
+G	1	prüfen(H=Bewilligungsstelle, B=Antrag) PLAUSIBLE	STIMMT
+G	2	versanden(H=Sachbearbeiter, B=Bescheid) PLAUSIBLE	FALSCH
+G	3	auszahlen(H=Kasse, B=Zuschuss) PLAUSIBLE	STIMMT
+G	4	zurückgeben(H=Antragsteller, B=Unterlagen) PLAUSIBLE	STIMMT
+G	5	vollständig(H=Antrag) PLAUSIBLE	STIMMT
+G	6	ändern(B=Richtlinie) PLAUSIBLE	STIMMT
+G	7	ablehnen(H=Bewilligungsstelle, B=Antrag) PLAUSIBLE	STIMMT
+G	8	abrufen(H=Zuwendungsempfänger, B=Mittel) PLAUSIBLE	STIMMT
+G	9	nachfordern(H=Stelle, B=Antrag) PLAUSIBLE	STIMMT
+W	2	regeln(H=Rechtssystem, B=Rückforderung) PLAUSIBLE	STIMMT
+W	3	fördern(B=Import) PLAUSIBLE	STIMMT
+W	4	beraten(H=Support) PLAUSIBLE	FALSCH
+W	6	liegen(H=Haltestelle) PLAUSIBLE	STIMMT
+W	7	bestimmen(H=Aktienindex, B=Zinssatz) PLAUSIBLE	STIMMT
+W	8	gehören(H=Studienmodul) PLAUSIBLE	STIMMT
+W	9	prüfen(H=Bauleiter, B=Leistungsverzeichnis) PLAUSIBLE	STIMMT
+W	10	fördern(B=Ehrenamt) PLAUSIBLE	STIMMT
+W	11	enthalten(H=Aktenordner, B=Ausbildungszertifikat) PLAUSIBLE	STIMMT
+W	12	übernehmen(H=Krankenkasse, B=Kosten) PLAUSIBLE	STIMMT
+W	13	fördern(B=Wärmespeicher) PLAUSIBLE	STIMMT

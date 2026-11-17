@@ -8,7 +8,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
-import com.aresstack.spaceharvester.application.simplification.SimplificationModel;
+import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import com.aresstack.spaceharvester.application.simplification.SimplificationStore;
 import com.aresstack.spaceharvester.application.simplification.Simplifications;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -29,7 +29,7 @@ class StatementAnalysisStageTest {
     private final InMemoryKnowledgeGraphStore store = new InMemoryKnowledgeGraphStore();
     private final FakeStatementAnalyzer parser = new FakeStatementAnalyzer();
     private final AtomicBoolean released = new AtomicBoolean(true);
-    private final SimplificationModel model = new SimplificationModel() {
+    private final StepModel model = new StepModel() {
         @Override
         public String version() {
             return "fake:m1";
@@ -128,8 +128,11 @@ class StatementAnalysisStageTest {
         });
 
         assertThat(store.find(page.key()).orElseThrow().result().statements()).hasSize(2)
-                .allSatisfy(statement -> assertThat(statement.derivation().origin())
-                        .isEqualTo(ParsedStatements.Origin.VORSTUFE));
+                .allSatisfy(statement -> {
+                    assertThat(statement.derivation().origin()).isEqualTo(ParsedStatements.Origin.VORSTUFE);
+                    // ADR 0032, FL4: der Abschnitt des Aufrufs, den der Prüfschritt als Zusammenhang zeigt
+                    assertThat(statement.derivation().section()).isEqualTo(new ParsedStatements.Section(0, 1));
+                });
     }
 
     @Test

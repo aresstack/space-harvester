@@ -140,6 +140,11 @@ record Textsatz(String name, String rolle, List<Text> texte, List<Variante> vari
         return content;
     }
 
+    /** Der Inhalt einer Ressource oder {@code null}, wenn sie fehlt. */
+    static String optional(String path) {
+        return optionalResource(path);
+    }
+
     private static String optionalResource(String path) {
         try (InputStream input = Textsatz.class.getResourceAsStream(path)) {
             return input == null ? null : new String(input.readAllBytes(), StandardCharsets.UTF_8);
