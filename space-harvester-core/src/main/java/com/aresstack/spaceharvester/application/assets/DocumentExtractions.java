@@ -67,6 +67,11 @@ public final class DocumentExtractions {
         return structure.version();
     }
 
+    /** Die Grenzen, unter denen gelesen wird. */
+    public ExtractionLimits limits() {
+        return limits;
+    }
+
     /** Der Schlüssel der Extraktion eines Inhalts. */
     public ExtractionKey key(String sha256) {
         return ExtractionKey.of(sha256, structure);
@@ -123,8 +128,8 @@ public final class DocumentExtractions {
                 return known.get();
             }
         }
-        try (ExtractionWriter writer = extractions.writer(key)) {
-            Target target = new Target(writer);
+        Target target = new Target(() -> extractions.writer(key));
+        try (target) {
             StructuredDocument document = read(asset, store, target);
             // Auch ein Teil an einer vorübergehenden Grenze verhindert das Ablegen: Behälter und Teile werden nur
             // zusammen neu gelesen (Punkt 5, Verzeichnis als Ganzes), der Teil würde sonst nie erneut gelesen.
@@ -132,8 +137,8 @@ public final class DocumentExtractions {
                 return new StoredExtraction(key, document, 0, document.blocks(), document.chars(), Instant.now());
             }
             // Behälter und Teile werden zusammen gültig (AP7b).
-            return writer.commit(new StructuredDocument(document.head(), document.outcome(), document.directory(),
-                    target.blocks, target.chars));
+            return target.writer.commit(new StructuredDocument(document.head(), document.outcome(),
+                    document.directory(), target.blocks, target.chars));
         } catch (UncheckedIOException e) {
             throw new AssetStoreException("Dokument nicht lesbar", e.getCause());
         }
@@ -528,6 +533,55 @@ public final class DocumentExtractions {
         return Stream.concat(own, parts);
     }
 
+    /**
+     * Ein Abschnitt eines Dokuments, wie {@link #documentSections} ihn liefert, ohne die Abschnitte davor zu lesen: für
+     * das Dokument selbst direkt, für eine enthaltene Datei nur unter deren Abschnitten. Leer, wenn es ihn nicht gibt
+     * oder der Teil nicht lesbar abgelegt ist.
+     *
+     * @param part die enthaltene Datei, leer für das Dokument selbst
+     */
+    public Optional<TextSection> documentSection(StoredExtraction extraction, Optional<PartId> part, int index) {
+        Objects.requireNonNull(part, "part");
+        if (part.isEmpty()) {
+            return extraction.sections() > 0 ? extractions.section(extraction.key(), index) : Optional.empty();
+        }
+        String key = part.get().storageKey();
+        boolean usable = extraction.document().directory().stream()
+                .anyMatch(entry -> entry.id().storageKey().equals(key) && usable(entry.outcome()));
+        Optional<ExtractionStore.PartSections> reader = extractions.partSections(extraction.key());
+        if (!usable || reader.isEmpty() || !reader.get().keys().contains(key)) {
+            return Optional.empty();
+        }
+        try (Stream<TextSection> sections = reader.get().sections(key)) {
+            return sections.filter(section -> section.index() == index).findFirst();
+        }
+    }
+
+    /**
+     * Welche Dokumente {@link #documentSections} liefern würde, ohne einen Abschnitt zu lesen (nur das Manifest): das
+     * Dokument selbst ({@link Optional#empty()}), wenn es Abschnitte hat, dann je lesbarem Teil mit abgelegtem Text
+     * einer, inhaltsgleiche einmal.
+     */
+    public java.util.List<Optional<EmbeddedEntry>> documents(StoredExtraction extraction) {
+        java.util.List<Optional<EmbeddedEntry>> documents = new java.util.ArrayList<>();
+        if (extraction.sections() > 0) {
+            documents.add(Optional.empty());
+        }
+        java.util.List<EmbeddedEntry> directory = extraction.document().directory();
+        if (directory.isEmpty()) {
+            return documents;
+        }
+        Optional<ExtractionStore.PartSections> reader = extractions.partSections(extraction.key());
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (EmbeddedEntry entry : directory) {
+            String key = entry.id().storageKey();
+            if (usable(entry.outcome()) && reader.isPresent() && reader.get().keys().contains(key) && seen.add(key)) {
+                documents.add(Optional.of(entry));
+            }
+        }
+        return documents;
+    }
+
     /** Ein Teil mit einem seiner Abschnitte, oder ohne Abschnitt ({@code null}), wenn er keinen Text hat. */
     private record Piece(EmbeddedEntry entry, TextSection section) {
     }
@@ -823,14 +877,31 @@ public final class DocumentExtractions {
      * Ablage: Der zweite wird gelesen (seine Kinder brauchen eigene Einträge), seine Blöcke werden nicht ein zweites
      * Mal geschrieben.
      */
-    private static final class Target implements StructureSink {
+    private static final class Target implements StructureSink, AutoCloseable {
 
-        private final ExtractionWriter writer;
+        private final java.util.function.Supplier<ExtractionWriter> writers;
+        private ExtractionWriter writer;
         private long blocks;
         private long chars;
 
-        Target(ExtractionWriter writer) {
-            this.writer = writer;
+        Target(java.util.function.Supplier<ExtractionWriter> writers) {
+            this.writers = writers;
+            this.writer = writers.get();
+        }
+
+        /** Verwirft den unbestätigten Stand und beginnt einen neuen unter demselben Schlüssel. */
+        @Override
+        public boolean restart() {
+            writer.close();
+            writer = writers.get();
+            blocks = 0;
+            chars = 0;
+            return true;
+        }
+
+        @Override
+        public void close() {
+            writer.close();
         }
 
         @Override

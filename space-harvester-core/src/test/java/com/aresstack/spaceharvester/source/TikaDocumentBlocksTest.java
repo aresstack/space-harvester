@@ -67,7 +67,7 @@ class TikaDocumentBlocksTest {
     }
 
     @Test
-    void excelCellsBecomeTablesUnderTheirSheetWithoutRowReference() throws IOException {
+    void excelCellsBecomeTablesUnderTheirSheetWithTheirCellReference() throws IOException {
         Path xlsx = directory.resolve("blaetter.xlsx");
         try (XSSFWorkbook workbook = new XSSFWorkbook(); OutputStream out = Files.newOutputStream(xlsx)) {
             var kosten = workbook.createSheet("Kosten");
@@ -88,7 +88,7 @@ class TikaDocumentBlocksTest {
         assertThat(tables.get(1).location().flatMap(Location::sheet)).contains("Personen");
         assertThat(tables.get(0).cells()).extracting(Block.Cell::text).contains("B3-Wert", "D17-Wert");
         assertThat(tables).flatExtracting(Block.Table::cells).allSatisfy(cell -> {
-            assertThat(cell.cellRef()).as("Tika liefert die Zeile nicht").isEmpty();
+            assertThat(cell.cellRef()).as("Zellbezug aus dem Original (TikaXlsxCellRefsTest)").isPresent();
             assertThat(cell.text()).doesNotStartWith("\t");
         });
         assertThat(sink.blocks).filteredOn(Block.Heading.class::isInstance)
@@ -214,30 +214,6 @@ class TikaDocumentBlocksTest {
         assertThat(slideOf(sink, "FOLIE-EINS")).hasValue(1);
         assertThat(slideOf(sink, "FOLIE-ZWEI")).as("ausgeblendet, zählt mit").hasValue(2);
         assertThat(slideOf(sink, "FOLIE-DREI")).hasValue(3);
-    }
-
-    @Test
-    void pptxSlidesGetNoSlideNumber() throws Exception {
-        Path pptx = directory.resolve("folien.pptx");
-        try (org.apache.poi.xslf.usermodel.XMLSlideShow show = new org.apache.poi.xslf.usermodel.XMLSlideShow()) {
-            for (String mark : new String[] {"FOLIE-EINS", "FOLIE-ZWEI"}) {
-                org.apache.poi.xslf.usermodel.XSLFTextBox box = show.createSlide().createTextBox();
-                box.setText(mark);
-                box.setAnchor(new java.awt.Rectangle(50, 50, 300, 50));
-            }
-            try (java.io.OutputStream out = Files.newOutputStream(pptx)) {
-                show.write(out);
-            }
-        }
-        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
-
-        structure.extract(pptx, "folien.pptx",
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation", ExtractionLimits.DEFAULTS,
-                sink);
-
-        assertThat(sink.text()).contains("FOLIE-EINS", "FOLIE-ZWEI");
-        assertThat(sink.blocks).as("Reihenfolge von Tika nicht verlässlich").allSatisfy(block ->
-                assertThat(block.location().flatMap(Location::slide)).isEmpty());
     }
 
     @Test

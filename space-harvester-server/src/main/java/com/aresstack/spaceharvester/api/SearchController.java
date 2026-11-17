@@ -435,7 +435,8 @@ public class SearchController {
                     relevance == null ? null : new RelevanceResponse(relevance.similarity(),
                             new ChunkResponse(relevance.charStart(), relevance.charEnd()),
                             relevance.freshness() == RelevanceSearch.Freshness.CURRENT ? "current" : "stale",
-                            relevance.passageId()));
+                            relevance.passageId(), relevance.attachmentId(), relevance.attachmentTitle(),
+                            relevance.partId(), relevance.partTitle(), relevance.section()));
         }
     }
 
@@ -447,10 +448,25 @@ public class SearchController {
      * @param freshness  {@code current} oder {@code stale}, wenn das Embedding aus einer älteren Revision stammt
      * @param passageId  stabile Adresse des Absatzes, der diesen Abschnitt enthält (lesbar über GET …/passages?id=);
      *                   {@code null}, wenn die Absätze der Seite nicht aus demselben Text stammen
+     * @param attachmentId nur wenn das ähnlichste Stück in einem Anhang liegt (ADR 0026): der Anhang; {@code chunk}
+     *                   bezieht sich dann auf den Lesetext des Abschnitts {@code section}
+     * @param attachmentTitle Dateiname dieses Anhangs
+     * @param partId     enthaltene Datei im Anhang, fehlt beim Anhang selbst
+     * @param partTitle  Anzeigename der enthaltenen Datei
+     * @param section    Abschnitt im Dokument ab 0
      */
     public record RelevanceResponse(double similarity, ChunkResponse chunk,
                                     @Schema(allowableValues = {"current", "stale"}) String freshness,
-                                    String passageId) {
+                                    String passageId,
+                                    @JsonInclude(JsonInclude.Include.NON_NULL) String attachmentId,
+                                    @JsonInclude(JsonInclude.Include.NON_NULL) String attachmentTitle,
+                                    @JsonInclude(JsonInclude.Include.NON_NULL) String partId,
+                                    @JsonInclude(JsonInclude.Include.NON_NULL) String partTitle,
+                                    @JsonInclude(JsonInclude.Include.NON_NULL) Integer section) {
+
+        public RelevanceResponse(double similarity, ChunkResponse chunk, String freshness, String passageId) {
+            this(similarity, chunk, freshness, passageId, null, null, null, null, null);
+        }
     }
 
     /** Zeichenbereich {@code [charStart, charEnd)} in der Textprojektion {@code confluence-storage-text/v1}. */

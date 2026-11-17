@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.UserCredential;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -11,7 +12,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
@@ -69,6 +72,51 @@ class SearchHitPrefetchTest {
         }
         // Nur die beiden schon laufenden Abrufe enden regulär, die wartenden entfallen mit dem Aufruf.
         assertThat(loaded).hasSizeLessThanOrEqualTo(2);
+    }
+
+    @Test
+    void theProgressOfABatchArrivesWithoutAnyQueryEndingWithDone() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        BlockingQueue<KeywordSearch.Progress> mine = new LinkedBlockingQueue<>();
+        BlockingQueue<KeywordSearch.Progress> other = new LinkedBlockingQueue<>();
+        try (SearchHitPrefetch prefetch = prefetch(Duration.ofMillis(100), release)) {
+            KeywordSearch.Prefetch.Fill fill = prefetch.prefetch(APP, List.of(hit("5", "1"), hit("6", "1")));
+            // Wie die App: erst anmelden, dann einmal lesen.
+            prefetch.subscribe(fill.progressId(), mine::add);
+            prefetch.subscribe("anderer-stapel", other::add);
+            assertThat(prefetch.progress(fill.progressId()).orElseThrow().done()).isFalse();
+
+            release.countDown();
+            KeywordSearch.Progress last = null;
+            while (last == null || !last.done()) {
+                last = mine.poll(10, TimeUnit.SECONDS);
+                assertThat(last).as("Meldung").isNotNull();
+            }
+            assertThat(last.loaded()).isEqualTo(2);
+            assertThat(last.id()).isEqualTo(fill.progressId());
+            assertThat(other.poll(300, TimeUnit.MILLISECONDS)).as("fremder Stapel").isNull();
+        }
+    }
+
+    @Test
+    void aCancelArrivesAndAClosedSubscriptionGetsNothingMore() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        BlockingQueue<KeywordSearch.Progress> seen = new LinkedBlockingQueue<>();
+        try (SearchHitPrefetch prefetch = prefetch(Duration.ofMillis(100), release)) {
+            List<KeywordSearch.Hit> hits = IntStream.range(60, 66).mapToObj(i -> hit(String.valueOf(i), "1")).toList();
+            KeywordSearch.Prefetch.Fill fill = prefetch.prefetch(APP, hits);
+            Subscription subscription = prefetch.subscribe(fill.progressId(), seen::add);
+
+            assertThat(prefetch.cancel(fill.progressId())).isTrue();
+            KeywordSearch.Progress cancelled = seen.poll(10, TimeUnit.SECONDS);
+            assertThat(cancelled).isNotNull();
+            assertThat(cancelled.cancelled()).isTrue();
+
+            subscription.close();
+            seen.clear();
+            release.countDown();
+            assertThat(seen.poll(500, TimeUnit.MILLISECONDS)).as("abgemeldet").isNull();
+        }
     }
 
     @Test

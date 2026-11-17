@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.knowledge;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -132,9 +133,12 @@ public class GraphNeighbourhood {
      * @param includeStale veraltete Seiten zeigen (gekennzeichnet)
      * @param sourceId     nur diese Quelle oder {@code null}
      * @param spaceKey     nur dieser Space oder {@code null}
+     * @param pages        nur diese Seiten samt ihren Dokumenten, etwa eine Seite samt Unterseiten aus der Auswahl im
+     *                     Baum (ADR 0029), oder {@code null} ohne diese Grenze; gilt für Fokus, Ziele von Verbindungen
+     *                     und die Begriffssuche gleich
      */
     public record Options(int maxNodes, int maxEdges, Set<PageGraph.NodeKind> kinds, Set<EdgeType> types,
-                          boolean includeStale, String sourceId, String spaceKey) {
+                          boolean includeStale, String sourceId, String spaceKey, PageSet pages) {
 
         public static final Options DEFAULT = new Options(DEFAULT_MAX_NODES, DEFAULT_MAX_EDGES,
                 EnumSet.allOf(PageGraph.NodeKind.class), EnumSet.allOf(EdgeType.class), true, null, null);
@@ -145,6 +149,16 @@ public class GraphNeighbourhood {
             }
             kinds = kinds.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(kinds));
             types = types.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(types));
+        }
+
+        public Options(int maxNodes, int maxEdges, Set<PageGraph.NodeKind> kinds, Set<EdgeType> types,
+                       boolean includeStale, String sourceId, String spaceKey) {
+            this(maxNodes, maxEdges, kinds, types, includeStale, sourceId, spaceKey, null);
+        }
+
+        /** Dieselben Grenzen, nur auf diesen Seiten (ADR 0029); {@code null} hebt die Grenze auf. */
+        public Options within(PageSet pages) {
+            return new Options(maxNodes, maxEdges, kinds, types, includeStale, sourceId, spaceKey, pages);
         }
     }
 
@@ -415,6 +429,9 @@ public class GraphNeighbourhood {
             return false;
         }
         if (options.sourceId() != null && !options.sourceId().equals(page.key().sourceId())) {
+            return false;
+        }
+        if (options.pages() != null && !options.pages().contains(page.key())) {
             return false;
         }
         return options.spaceKey() == null || options.spaceKey().equals(page.spaceKey());

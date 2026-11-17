@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.query;
 
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -40,14 +41,28 @@ public final class ExcerptPriority {
 
     private final Scorer scorer;
     private final Predicate<String> mayProcessExternally;
+    private final Predicate<PageKey> pageReleased;
 
     /**
      * @param scorer               der Cross-Encoder des Dienstes
      * @param mayProcessExternally ob Inhalte dieser Quelle an den Dienst gehen dürfen (Quellen-ID)
      */
     public ExcerptPriority(Scorer scorer, Predicate<String> mayProcessExternally) {
+        this(scorer, mayProcessExternally, key -> false);
+    }
+
+    private ExcerptPriority(Scorer scorer, Predicate<String> mayProcessExternally, Predicate<PageKey> pageReleased) {
         this.scorer = scorer;
         this.mayProcessExternally = Objects.requireNonNull(mayProcessExternally, "mayProcessExternally");
+        this.pageReleased = Objects.requireNonNull(pageReleased, "pageReleased");
+    }
+
+    /**
+     * Dieselbe Bewertung; Treffer von Seiten auf der Liste freigegebener Seiten gehen auch aus einer nicht
+     * freigegebenen Quelle an den Dienst (ADR 0028). Die Liste wird bei jeder Suche gefragt.
+     */
+    public ExcerptPriority withPageReleases(Predicate<PageKey> pageReleased) {
+        return new ExcerptPriority(scorer, mayProcessExternally, pageReleased);
     }
 
     /** Ohne Bewertung: die Reihenfolge der Quellen bleibt die Ladereihenfolge. */
@@ -70,7 +85,16 @@ public final class ExcerptPriority {
         }, sourceId -> {
             ExcerptPriority priority = current.get();
             return priority.scorer != null && priority.mayProcessExternally.test(sourceId);
+        }, key -> {
+            ExcerptPriority priority = current.get();
+            return priority.scorer != null && priority.pageReleased.test(key);
         });
+    }
+
+    /** Ob Titel und Auszug dieses Treffers an den Dienst gehen dürfen: Quelle oder Seite freigegeben. */
+    private boolean released(KeywordSearch.Hit hit) {
+        return mayProcessExternally.test(hit.sourceId())
+                || hit.pageId() != null && pageReleased.test(new PageKey(hit.sourceId(), hit.pageId()));
     }
 
     /** Ob überhaupt bewertet werden kann. */
@@ -117,7 +141,7 @@ public final class ExcerptPriority {
         List<String> documents = new ArrayList<>();
         for (int i = 0; i < size; i++) {
             KeywordSearch.Hit hit = hits.get(i);
-            if (mayProcessExternally.test(hit.sourceId())) {
+            if (released(hit)) {
                 String title = hit.title() == null ? "" : hit.title();
                 String snippet = hit.snippet() == null ? "" : hit.snippet();
                 String document = snippet.isBlank() ? title : title + "\n" + snippet;
@@ -162,7 +186,8 @@ public final class ExcerptPriority {
     /**
      * Bewertung jedes Treffers gegen die Anfrage, höher ist besser (ADR 0017: immer gegen die ursprüngliche Frage).
      * {@link Double#NaN} für Treffer ohne Bewertung: ohne Bewerter, aus Quellen ohne Freigabe für externe
-     * Verarbeitung, ohne Titel und Auszug, oder wenn der Dienst scheitert oder Unbrauchbares liefert. Scheitert nie.
+     * Verarbeitung (außer Seiten auf der Liste freigegebener Seiten), ohne Titel und Auszug, oder wenn der Dienst
+     * scheitert oder Unbrauchbares liefert. Scheitert nie.
      */
     public double[] scores(String query, List<KeywordSearch.Hit> hits) {
         int size = hits == null ? 0 : hits.size();
@@ -175,7 +200,7 @@ public final class ExcerptPriority {
         List<String> documents = new ArrayList<>();
         for (int i = 0; i < size; i++) {
             KeywordSearch.Hit hit = hits.get(i);
-            if (mayProcessExternally.test(hit.sourceId())) {
+            if (released(hit)) {
                 String title = hit.title() == null ? "" : hit.title();
                 String snippet = hit.snippet() == null ? "" : hit.snippet();
                 String document = snippet.isBlank() ? title : title + "\n" + snippet;

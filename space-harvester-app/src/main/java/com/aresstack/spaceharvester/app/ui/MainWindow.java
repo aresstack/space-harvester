@@ -9,7 +9,6 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicWindowResizer;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowShape;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
-import com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons;
 import com.aresstack.enterpriseai.ui.comic.paint.StrokeIcon;
 import com.aresstack.enterpriseai.ui.comic.theme.ComicTheme;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics;
@@ -41,9 +40,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste in zwei Gruppen
- * (Tooltip mit Namen, Strg+1 … Strg+7): links die Arbeitsbereiche Suche, Inhalte, Begriffe, Aufträge und Status,
- * rechts, abgetrennt, Wissensquellen verwalten und Einstellungen, dann ✕. Links dauerhaft der {@link Explorer} über
+ * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste (Tooltip mit Namen,
+ * Strg+1 … Strg+6): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
+ * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Begriffe und Aufträge, dann abgetrennt
+ * Wissensquellen verwalten und Einstellungen, dann ✕ (Angelo, 13.11.2026: der Baum links wählt, die Reiter oben
+ * entscheiden, wie die Mitte das Gewählte zeigt). Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
  * Statusleiste die feste Aktionszeile des Bereichs ({@link View#actions()}). Der Fortschritt der Aufträge füllt den
  * Hintergrund der Statuszeile ({@link StatusLine}). Navigation und
@@ -59,6 +60,10 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel deck = new JPanel(cards);
     private final Map<AppContext.Section, View> views = new EnumMap<>(AppContext.Section.class);
     private final Map<AppContext.Section, ComposerToggleButton> nav = new EnumMap<>(AppContext.Section.class);
+    /** Die Bereichsknöpfe; ohne gewählten Knopf (Inhalte über die Reiter) ist keiner dunkel. */
+    private final ButtonGroup navGroup = new ButtonGroup();
+    /** Abstand zwischen der Suche und den Reitern der Seitenansicht in der Icon-Leiste. */
+    private static final int TAB_GAP = 12;
     /** Der dauerhafte Explorer links: Wissensquelle → Space → Seite → Unterseite. */
     private final Explorer explorer;
     /**
@@ -94,12 +99,14 @@ public final class MainWindow implements AppContext.Navigator {
     private StatusLine statusLine;
     /** „Confluence verlangt einen Einmalcode“ ganz links in der Statuszeile, solange eine Anforderung offen ist. */
     private SignInNotice signInNotice;
+    /** „Proxy-Skript seit … nicht erneuert“ daneben, solange das Erneuern des PAC-Skripts scheitert. */
+    private ProxyNotice proxyNotice;
     /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
     private final FindBar findBar;
     private AppContext.Section current = AppContext.Section.SEARCH;
     /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
     private AppContext.Section beforeSettings = AppContext.Section.SEARCH;
-    private final JPanel top = new JPanel(new BorderLayout(12, 0));
+    private final JPanel top = new JPanel(new HeaderLayout(12));
     private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
@@ -121,6 +128,8 @@ public final class MainWindow implements AppContext.Navigator {
         settings.onLeave(() -> show(beforeSettings));
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
+        // Links gewählt bestimmt rechts (Angelo, 13.11.2026): der Reiter „Export“ folgt der Auswahl im Explorer.
+        explorer.onSelection(content::selection);
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
@@ -130,7 +139,10 @@ public final class MainWindow implements AppContext.Navigator {
                 explorer.revealPage(position);
             }
         });
-        views.put(AppContext.Section.STATUS, statusView);
+        // Quelle oder Space in der Bereichsanzeige angeklickt: im Baum wählen; die Auswahl bestimmt wie immer die Mitte.
+        content.onLocate(explorer::reveal);
+        // Die Diagnose ist kein eigener Bereich mehr, sondern die Seite „Diagnose“ der Einstellungen.
+        settings.diagnosis(statusView);
         views.put(AppContext.Section.SOURCES, sources);
         views.put(AppContext.Section.CONTENT, content);
         views.put(AppContext.Section.ACTIVITIES, activities);
@@ -160,6 +172,8 @@ public final class MainWindow implements AppContext.Navigator {
         context.events().subscribe(StatusMessageEvent.class, this::showStatus);
         context.onChange(ignored -> updateStatus());
         updateStatus();
+        // „Nach dem Update Änderungen anzeigen“ (ADR 0030): eine neue Marke öffnet die Updates ihrer Quelle.
+        UpdateFollower.install(context, this::openSource, content::shownSource);
     }
 
     /** Öffnet das rahmenlose Fenster; Schließen beendet die Laufzeit (Rückfrage bei laufenden Aufträgen). */
@@ -215,27 +229,43 @@ public final class MainWindow implements AppContext.Navigator {
         title.setForeground(Comic.INK);
         title.setIcon(ApplicationIcons.titleLogo());
         title.setIconTextGap(8);
-        ButtonGroup group = new ButtonGroup();
         JPanel icons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
         icons.setOpaque(false);
-        icons.setBorder(BorderFactory.createEmptyBorder(0, 28, 0, 0));
+        // Knapper als früher (28), damit das Suchfeld auch bei 960 px Fensterbreite seine Mindestbreite behält.
+        icons.setBorder(BorderFactory.createEmptyBorder(0, 20, 0, 0));
+        // Rechts: Begriffe und Aufträge, dann abgetrennt die Verwaltung (Angelo, 13.11.2026).
+        JPanel trailing = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0));
+        trailing.setOpaque(false);
         JPanel administration = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0));
         administration.setOpaque(false);
         administration.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 1, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(0, 8, 0, 0)));
-        int number = 1;
         for (AppContext.Section section : AppContext.Section.values()) {
-            ComposerToggleButton button = navButton(section, number++);
-            group.add(button);
+            if (!section.button()) {
+                continue;
+            }
+            ComposerToggleButton button = navButton(section, shortcutNumber(section));
+            navGroup.add(button);
             nav.put(section, button);
-            (section.administration() ? administration : icons).add(button);
+            (section.administration() ? administration : section.trailing() ? trailing : icons).add(button);
         }
+        // Die Reiter der Seitenansicht schalten die Mitte um: ein Klick zeigt Inhalte, auch aus einem anderen Bereich.
+        JComponent tabBar = content.tabBar();
+        tabBar.setBorder(BorderFactory.createEmptyBorder(0, TAB_GAP, 0, 0));
+        for (Component tab : tabBar.getComponents()) {
+            if (tab instanceof javax.swing.AbstractButton button) {
+                button.addActionListener(e -> show(AppContext.Section.CONTENT));
+            }
+        }
+        icons.add(tabBar);
+        // Der Titel steht in der Mitte der linken Gruppe und ist ihr einziger kürzbarer Teil (HeaderLayout).
         JPanel west = new JPanel(new BorderLayout());
         west.setOpaque(false);
-        west.add(title, BorderLayout.WEST);
-        west.add(icons, BorderLayout.CENTER);
-        JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 10, 0));
+        west.add(title, BorderLayout.CENTER);
+        west.add(icons, BorderLayout.EAST);
+        JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
         east.setOpaque(false);
+        east.add(trailing);
         east.add(administration);
         east.add(Dialogs.closeButton(new ComicWindowHoldCloseButton(Comic.PALETTE, minimize, close, 24)));
         top.setOpaque(false);
@@ -288,13 +318,16 @@ public final class MainWindow implements AppContext.Navigator {
 
         // Gesamtstand aller Aufträge; Anhalten und Abbrechen stehen für alle zugleich in der Kopfzeile der Aufträge.
         jobStatus = new JobStatusLine(context.events());
+        jobStatus.navigation(content.navigation());
         // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
         signInNotice = new SignInNotice(context, request -> {
             show(AppContext.Section.ACTIVITIES);
             activities.showSignIn(request);
         });
-        statusLine = new StatusLine(jobStatus.model(), signInNotice, viewStatus, status, jobStatus,
-                new CopyrightLink());
+        // Scheitert das Erneuern des Proxy-Skripts, steht es daneben; der Klick zeigt den Grund (Angelo 16.11.2026).
+        proxyNotice = new ProxyNotice(context);
+        statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, proxyNotice), viewStatus,
+                status, jobStatus, new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
@@ -306,6 +339,20 @@ public final class MainWindow implements AppContext.Navigator {
         ComicWindowResizer.install(surface, RESIZE_GRIP);
         installShortcuts(surface);
         return surface;
+    }
+
+    /** Die Ziffer des Tastenkürzels Strg+Ziffer: fortlaufend über alle Bereiche mit Kürzel, auch ohne Knopf. */
+    static int shortcutNumber(AppContext.Section section) {
+        int number = 0;
+        for (AppContext.Section candidate : AppContext.Section.values()) {
+            if (candidate.toolbar()) {
+                number++;
+            }
+            if (candidate == section) {
+                return number;
+            }
+        }
+        return number;
     }
 
     /** Nur ein Symbol; Name als Tooltip und für Bildschirmleser, Strg+Ziffer wählt den Bereich. */
@@ -321,6 +368,9 @@ public final class MainWindow implements AppContext.Navigator {
     private void installShortcuts(JComponent surface) {
         int number = 1;
         for (AppContext.Section section : AppContext.Section.values()) {
+            if (!section.toolbar()) {
+                continue;
+            }
             String key = "section-" + section.name();
             surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
                     java.awt.event.KeyEvent.VK_0 + number++, java.awt.event.InputEvent.CTRL_DOWN_MASK), key);
@@ -339,6 +389,12 @@ public final class MainWindow implements AppContext.Navigator {
                 findBar.focus();
             }
         });
+    }
+
+    @Override
+    public void showGeneralSettings() {
+        show(AppContext.Section.SETTINGS);
+        settings.select(SettingsView.GENERAL);
     }
 
     /** Einstellungen mit dem Bereich „KI-Dienst“. */
@@ -363,6 +419,11 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void show(AppContext.Section section) {
+        if (section == AppContext.Section.STATUS) {
+            show(AppContext.Section.SETTINGS);
+            settings.select(SettingsView.DIAGNOSIS);
+            return;
+        }
         cards.show(deck, section.name());
         boolean changed = section != current;
         if (changed && current != AppContext.Section.SETTINGS) {
@@ -386,7 +447,12 @@ public final class MainWindow implements AppContext.Navigator {
         ComposerToggleButton button = nav.get(section);
         if (button != null) {
             button.setSelected(true);
+        } else {
+            navGroup.clearSelection();
         }
+        // Die Reiter in der Leiste zeigen ihre Auswahl nur, solange die Mitte die Seitenansicht zeigt.
+        content.tabsActive(section == AppContext.Section.CONTENT);
+        jobStatus.navigationVisible(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
         view.shown();
         if (changed) {
@@ -418,6 +484,25 @@ public final class MainWindow implements AppContext.Navigator {
         show(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
         explorer.reveal(sourceId, spaceKey);
+    }
+
+    @Override
+    public void openSource(String sourceId, String title) {
+        show(AppContext.Section.CONTENT);
+        content.openSource(sourceId, title);
+    }
+
+    @Override
+    public void openExport(String sourceId, String spaceKey, String rootPageId) {
+        show(AppContext.Section.CONTENT);
+        if (rootPageId == null) {
+            content.openSpace(sourceId, spaceKey);
+            explorer.reveal(sourceId, spaceKey);
+        } else {
+            revealOpened = true;
+            content.openPage(sourceId, rootPageId);
+        }
+        content.showExport();
     }
 
     @Override
@@ -463,6 +548,26 @@ public final class MainWindow implements AppContext.Navigator {
                     Comic.MUTED);
             showJob(started.jobs().get(0).id());
         }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
+    }
+
+    /** Kreispfeile im Baum: Quelle oder Space holen nach wie die Quellenkarte, eine Seite liest ihren Teilbaum neu. */
+    @Override
+    public void refresh(String sourceId, String spaceKey, String pageId) {
+        if (pageId == null) {
+            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey))) {
+                notice("Nachholen wird gestartet …", Comic.MUTED);
+            } else {
+                notice("Nachholen nicht gestartet: keine Spaces bekannt, oder die Quelle holt schon nach",
+                        Comic.ORANGE);
+            }
+            return;
+        }
+        notice("Aktualisierung wird gestartet …", Comic.MUTED);
+        Downloads.refreshSubtree(context, sourceId, spaceKey, pageId, started -> {
+            notice("Aktualisierung der Seite samt Unterseiten gestartet", Comic.MUTED);
+            showJob(started.jobs().get(0).id());
+        }, error -> notice("Aktualisierung ließ sich nicht starten: " + Problems.describe(error).title(),
+                Comic.RED));
     }
 
     /** Eine kurze Meldung in der Statusleiste, bis sich der Stand der Laufzeit ändert. */
@@ -543,13 +648,26 @@ public final class MainWindow implements AppContext.Navigator {
 
     private static Icon icon(AppContext.Section section) {
         return switch (section) {
-            case STATUS -> SidebarIcons.compass();
+            case STATUS -> Glyph.PULSE;
             case SOURCES -> database();
+            // Inhalte hat keinen eigenen Knopf mehr; das Buch bleibt für Verweise (etwa „Inhalte öffnen“).
             case CONTENT -> ComposerIcons.openBook();
             case TERMS -> ComposerIcons.marker();
-            case ACTIVITIES -> ComposerIcons.refresh();
+            case ACTIVITIES -> stack();
             case SEARCH -> ComposerIcons.magnifier();
             case SETTINGS -> ComposerIcons.gear();
+        };
+    }
+
+    /** Der Stapel (drei Blätter übereinander, Stapelverarbeitung) für „Aufträge“; neutral, ohne Farbe. */
+    static StrokeIcon stack() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawRoundRect(4, 1, 9, 3, 2, 2);
+                g2.drawRoundRect(3, 6, 9, 3, 2, 2);
+                g2.drawRoundRect(2, 11, 9, 3, 2, 2);
+            }
         };
     }
 

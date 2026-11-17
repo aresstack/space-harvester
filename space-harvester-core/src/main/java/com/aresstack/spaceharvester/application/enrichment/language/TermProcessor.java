@@ -57,6 +57,15 @@ public class TermProcessor implements EnrichmentProcessor {
         return "6;acronyms=" + acronyms.version();
     }
 
+    /**
+     * Auch je Abschnitt eines Anhangs oder einer enthaltenen Datei (ADR 0026, AP9b); rechnet lokal, ohne Netz. Die
+     * Version bleibt: dieselbe Logik auf dem Lesetext des Dokuments.
+     */
+    @Override
+    public boolean documents() {
+        return true;
+    }
+
     @Override
     public EnrichmentOutput process(PageText text) {
         String content = text.text();

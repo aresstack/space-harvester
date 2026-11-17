@@ -168,6 +168,22 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      `<dataDirectory>/facts`.
    - `terms()`, `termRelations()`: Begriffsindex und Begriffsbeziehungen (#119, #120).
    - `assets()`, `imageAnalysis()`: Anhänge mit Text, Vorschau und Bildbeschreibung (#183, #184, ADR 0021).
+   - `changeLog()`: Änderungsprotokoll und Updates je Quelle (`ChangeLog`, ADR 0030): `updates` von Update-Marke zu
+     Update-Marke, `report` eines Updates mit je Seite zusammengefassten Änderungen (Erstbefüllung nur mit Zählern),
+     `entries` mit Suche, `subscribe` für neue Zeilen und Marken; jede Zeile mit den Leserechten ihrer Seite. Im
+     Dienst `GET /api/v1/sources/{sourceId}/updates`, `…/updates/{updateId}` und `GET /api/v1/change-log`.
+     Zusammenfassung eines Updates (ADR 0030, Abschnitt 5): `summarize` startet auf Wunsch den Auftrag
+     `UPDATE_SUMMARY` (anhaltbar, nie für die Erstbefüllung); an das Chat-Modell gehen nur Seiten mit KI-Freigabe
+     (`AiRelease::mayProcess`, ADR 0028) samt freigegebenen Vorfahren im Pfad und, wenn der Auftraggeber den Inhalt
+     lesen darf, den geänderten Absätzen (CL5); alle übrigen nur als Zahl je Space, Seiten ohne bekannten Inhalt
+     (bisheriger fehlte, neuer steht aus, kein Inhaltsrecht) nur als geändert, gekürzte Unterschiede mit dem
+     Gezeigten. Große Updates in Teilen nach Zeichenbudget, stufenweise zusammengeführt.
+     `summary` liefert Text und Aussagen mit Seitenverweisen, leer, wenn eine eingegangene Seite die Freigabe verlor oder
+     der Leser sie (bei eingegangenen Absätzen: ihren Inhalt) nicht lesen darf; `stale`, wenn sich der Bericht oder
+     der Inhalt seitdem geändert hat. Abgelegt im Cache neben dem
+     Protokoll, gelöscht mit der Quelle, beim Aufräumen und beim Entzug der Freigabe (`withdrawn`). Einstellung
+     `space-harvester.cache.change-log.show-after-update` (Standard aus). Im Dienst
+     `GET`/`POST /api/v1/sources/{sourceId}/updates/{updateId}/summary`.
 
    Adressen (#178, wie `ResolveKnowledgeAddressUseCase` und `KnowledgeBookmarkIds` im Enterprise AI Client):
    `Harvester.pages().pageByUrl(caller, quelle, adresse, refresh)` liest eine Seite über URL mit oder ohne Seiten-ID,

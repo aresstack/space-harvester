@@ -75,7 +75,6 @@ final class GlossaryTab {
     static final int SNIPPET_CHARS = 120;
     /** Höchstens so viele Belege zeigt das Fenster, mit Link zur Seite. */
     static final int EVIDENCE_SHOWN = 3;
-    static final int POLL_MS = 1000;
     /** So lange sammelt der Reiter Änderungsmeldungen, bevor er einmal neu lädt. */
     static final int REFRESH_MS = 400;
     static final int NOTICE_MS = 8000;
@@ -103,7 +102,8 @@ final class GlossaryTab {
     private final Map<String, JobStatus> jobs = new LinkedHashMap<>();
     /** Der Lauf wird gerade gestartet (Aufträge noch ohne Kennung). */
     private boolean starting;
-    private final Timer poll = new Timer(POLL_MS, e -> pollJob());
+    /** Meldet den Reiter wieder von den Aufträgen ab; {@code null} ohne Lauf. */
+    private Runnable unobserveJobs;
     /** Fasst Änderungsmeldungen des Glossars zu einem Neuladen zusammen. */
     private final Timer refresh = new Timer(REFRESH_MS, e -> refresh());
     /** Das beobachtete Glossar und wie der Beobachter wieder abgemeldet wird. */
@@ -123,7 +123,6 @@ final class GlossaryTab {
     GlossaryTab(AppContext context, Supplier<Optional<GlossaryAccess>> access) {
         this.context = context;
         this.access = access;
-        poll.setRepeats(false);
         refresh.setRepeats(false);
         directory.show(List.of(), TermsView.NOT_AVAILABLE);
         directory.sortable();
@@ -571,7 +570,7 @@ final class GlossaryTab {
             if (context != null && context.navigator() != null) {
                 context.navigator().followJobs();
             }
-            started.forEach(this::track);
+            observeJobs(glossary.get(), started);
         }, failure -> {
             starting = false;
             updateDetect();
@@ -581,19 +580,31 @@ final class GlossaryTab {
         });
     }
 
-    private void pollJob() {
-        Optional<GlossaryAccess> glossary = access.get();
-        List<String> open = jobs.values().stream().filter(s -> !s.state().terminal()).map(JobStatus::id).toList();
-        if (open.isEmpty() || glossary.isEmpty()) {
-            return;
+    /**
+     * Meldet den Reiter bei den Aufträgen des Glossars an (ADR 0027, kein Zeitgeber) und liest danach einmal den Stand
+     * der gestarteten Aufträge, damit zwischen Start und Anmeldung nichts verloren geht.
+     */
+    private void observeJobs(GlossaryAccess glossary, List<JobStatus> started) {
+        if (unobserveJobs != null) {
+            unobserveJobs.run();
         }
+        unobserveJobs = glossary.observeJobs(status -> javax.swing.SwingUtilities.invokeLater(() -> track(status)));
+        List<String> ids = started.stream().map(JobStatus::id).toList();
+        // Der Stand beim Start; hat eine Meldung ihn inzwischen ersetzt, ist sie jünger als das Gelesene.
+        Map<String, JobStatus> before = new HashMap<>(jobs);
         Background.run(() -> {
             List<JobStatus> states = new ArrayList<>();
-            for (String id : open) {
-                states.add(glossary.get().classification(id));
+            for (String id : ids) {
+                states.add(glossary.classification(id));
             }
             return states;
-        }, states -> states.forEach(this::track), failure -> finish(failure));
+        }, states -> {
+            for (JobStatus state : states) {
+                if (jobs.get(state.id()) == before.get(state.id())) {
+                    track(state);
+                }
+            }
+        }, this::finish);
     }
 
     /** Merkt sich den Stand eines Auftrags; sind alle zu Ende, Rückmeldung in die Statuszeile und die Liste neu. */
@@ -604,13 +615,14 @@ final class GlossaryTab {
         jobs.put(status.id(), status);
         if (jobs.values().stream().allMatch(s -> s.state().terminal())) {
             finish(null);
-            return;
         }
-        poll.restart();
     }
 
     private void finish(Throwable failure) {
-        poll.stop();
+        if (unobserveJobs != null) {
+            unobserveJobs.run();
+            unobserveJobs = null;
+        }
         List<JobStatus> ended = List.copyOf(jobs.values());
         jobs.clear();
         updateDetect();

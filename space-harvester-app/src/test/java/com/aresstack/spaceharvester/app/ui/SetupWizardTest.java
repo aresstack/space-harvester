@@ -146,6 +146,37 @@ class SetupWizardTest {
     }
 
     @Test
+    void theAnalyticsExportIsEditedUnderGeneralWithTheDefaultsAsPlaceholdersAndShownOnTheSummary()
+            throws Exception {
+        SettingsView[] view = new SettingsView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            assertThat(view[0].analyticsDetails.getText()).as("ohne Angabe leer, die Vorgabe ist Platzhalter")
+                    .isEmpty();
+            assertThat(view[0].analyticsContentViews.placeholder()).startsWith("/rest/confanalytics/1.0/space/"
+                    + "paginated/contentViews?");
+            assertThat(view[0].analyticsPeriod.value()).isEqualTo(java.time.Duration.ofDays(365));
+            view[0].analyticsContentViews.setText("/rest/confanalytics/2.0/space/paginated/contentViews?spaceKey="
+                    + "{spaceKey}");
+            view[0].analyticsContentViews.postActionEvent();
+        });
+        await(() -> context.settings().analytics().contentViews() != null);
+        assertThat(context.settings().analytics().contentViews()).startsWith("/rest/confanalytics/2.0/");
+        assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("  analytics:\n    content-views: "
+                + "\"/rest/confanalytics/2.0/space/paginated/contentViews?spaceKey={spaceKey}\"\n",
+                "# Kommentar bleibt stehen");
+        SwingUtilities.invokeAndWait(() -> {
+            // Ein Pfad außerhalb von /rest/ wird gemeldet, nicht gespeichert.
+            view[0].analyticsDetails.setText("https://example.org/rest/x");
+            view[0].analyticsDetails.postActionEvent();
+            assertThat(context.settings().analytics().details()).isNull();
+            SetupWizard wizard = new SetupWizard(context);
+            wizard.show(SetupWizard.SUMMARY);
+            assertThat(texts(wizard.summary)).containsSubsequence(SettingsView.ANALYTICS_TITLE, "angepasst · 365 Tage");
+        });
+    }
+
+    @Test
     void theSecurityTabNamesWhereSecretsLiveButNeverTheirValues() throws Exception {
         SettingsView[] view = new SettingsView[1];
         // Gelesen wird auf dem EDT: Meldet die Laufzeit inzwischen einen neuen Stand (etwa eine pausierte Quelle),
@@ -272,6 +303,10 @@ class SetupWizardTest {
             assertThat(wizard[0].step()).isEqualTo(SetupWizard.MODELS);
             wizard[0].ai.visionModel.setText("vision-x");
             wizard[0].ai.rerankModel.setText("rerank-y");
+            wizard[0].ai.chatModel.setText("chat-z");
+            assertThat(wizard[0].ai.judgedPairs()).as("Standard: Chat-Prüfung aus").isZero();
+            wizard[0].ai.judgedPairs.setValue(30);
+            assertThat(wizard[0].ai.changed()).as("nur das Budget geändert zählt als Änderung").isTrue();
             wizard[0].next.doClick();
             assertThat(wizard[0].step()).isEqualTo(SetupWizard.SUMMARY);
         });
@@ -287,11 +322,12 @@ class SetupWizardTest {
             }
             Thread.sleep(50);
         }
-        assertThat(summary).as("ohne „Speichern“ übernommen").contains("vision-x", "rerank-y",
-                "im Tresor").doesNotContain("fehlt");
+        assertThat(summary).as("ohne „Speichern“ übernommen").contains("vision-x", "rerank-y", "chat-z",
+                AiSettingsPanel.JUDGED_PAIRS_LABEL, "30 " + AiSettingsPanel.JUDGED_PAIRS_UNIT, "im Tresor")
+                .doesNotContain("fehlt");
         assertThat(String.join("\n", summary)).doesNotContain("sk-wizard-geheim");
         assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("vision-x", "rerank-y",
-                "http://127.0.0.1:9/v1").doesNotContain("sk-wizard-geheim");
+                "http://127.0.0.1:9/v1", "max-judged-pairs: 30").doesNotContain("sk-wizard-geheim");
         SwingUtilities.invokeAndWait(() -> assertThat(wizard[0].ai.modelRetry.active())
                 .as("„Modelle“ verlassen: keine Wiederholung").isFalse());
     }
@@ -330,7 +366,7 @@ class SetupWizardTest {
         SwingUtilities.invokeAndWait(() -> {
             AiSettingsPanel panel = new AiSettingsPanel(context);
             javax.swing.JComponent models = panel.modelsComponent();
-            models.setSize(700, 600);
+            models.setSize(700, 700);
             layout(models);
             assertThat(panel.dimensions.isVisible()).as("Dimension unter „Erweitert“").isFalse();
             assertThat(panel.chunkTokens.isVisible()).isFalse();

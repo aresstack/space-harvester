@@ -188,7 +188,9 @@ class GlossaryTabTest {
         glossary.changed();
         await("Teilergebnis sichtbar", () -> tab[0].directory().table().getRowCount() == 1);
         assertThat(tab[0].jobIds()).containsExactly("job-1");
+        // Das Ende meldet der Core (ADR 0027), der Reiter fragt nicht nach.
         glossary.state = JobState.COMPLETED;
+        glossary.jobChanged();
         await("Auftrag zu Ende", () -> tab[0].jobIds().isEmpty());
         SwingUtilities.invokeAndWait(() -> assertThat(tab[0].detectButton().isEnabled()).isTrue());
     }
@@ -273,6 +275,20 @@ class GlossaryTabTest {
         /** Meldet eine Änderung wie der Core, aus einem fremden Thread. */
         void changed() {
             new Thread(() -> observers.forEach(Runnable::run)).start();
+        }
+
+        final List<java.util.function.Consumer<JobStatus>> jobObservers =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        void jobChanged() {
+            JobStatus status = classification("job-1");
+            new Thread(() -> jobObservers.forEach(observer -> observer.accept(status))).start();
+        }
+
+        @Override
+        public Runnable observeJobs(java.util.function.Consumer<JobStatus> onChange) {
+            jobObservers.add(onChange);
+            return () -> jobObservers.remove(onChange);
         }
 
         @Override

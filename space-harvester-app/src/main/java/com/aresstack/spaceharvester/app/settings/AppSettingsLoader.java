@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
+import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
@@ -9,6 +10,7 @@ import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
+import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -220,7 +222,40 @@ public final class AppSettingsLoader {
                 sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
                 localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
                 inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems),
-                consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems));
+                consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems),
+                enrichment(map(get(root, "enrichment")), problems), analytics(map(get(app, "analytics")), problems));
+    }
+
+    /**
+     * {@code space-harvester-app.analytics}: Zeitraum ({@code period}, Dauer wie 365d) und die Pfade des
+     * Analytics-Plugins ({@code details}, {@code activity-by-date}, {@code content-views}); fehlt ein Wert, gilt die
+     * Vorgabe des Core. Ein Pfad muss unter {@code /rest/} liegen, sonst wird er gemeldet und die Vorgabe gilt.
+     */
+    private AnalyticsSettings analytics(Map<?, ?> raw, List<String> problems) {
+        if (raw.isEmpty()) {
+            return AnalyticsSettings.DEFAULT;
+        }
+        Duration period = duration(get(raw, "period"), null, AnalyticsSettings.KEY + ".period", problems);
+        if (period != null && !AnalyticsSettings.wholeDays(period)) {
+            problems.add(AnalyticsSettings.KEY + ".period muss ganze Tage umfassen, mindestens 1d");
+            period = null;
+        }
+        return new AnalyticsSettings(period, analyticsPath(get(raw, "details"), "details", problems),
+                analyticsPath(get(raw, "activity-by-date"), "activity-by-date", problems),
+                analyticsPath(get(raw, "content-views"), "content-views", problems));
+    }
+
+    private String analyticsPath(Object raw, String key, List<String> problems) {
+        String path = text(raw, problems);
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        if (!com.aresstack.spaceharvester.application.metadata.AnalyticsQueries.validPath(path.strip())) {
+            problems.add(AnalyticsSettings.KEY + "." + key + " muss ein Pfad unter /rest/ ohne Leerzeichen sein; es "
+                    + "gilt die Vorgabe");
+            return null;
+        }
+        return path.strip();
     }
 
     /**
@@ -247,6 +282,23 @@ public final class AppSettingsLoader {
             return ConsoleOutput.DEFAULT;
         }
         return output;
+    }
+
+    /** {@code space-harvester.enrichment.documents.*}: Analysen je Anhang (ADR 0026, AP9a), wie beim Dienst. */
+    private EnrichmentSettings enrichment(Map<?, ?> enrichment, List<String> problems) {
+        Map<?, ?> documents = map(get(enrichment, "documents"));
+        EnrichmentSettings d = EnrichmentSettings.DEFAULT;
+        boolean enabled = flag(get(documents, "enabled"), d.documents(),
+                ROOT + "." + EnrichmentSettings.DOCUMENTS_ENABLED, problems);
+        String maxKey = ROOT + "." + EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS;
+        long maxChars = longNumber(get(documents, "embedding-max-chars"), d.documentEmbeddingMaxChars(), maxKey,
+                problems);
+        try {
+            return new EnrichmentSettings(enabled, maxChars);
+        } catch (IllegalArgumentException e) {
+            problems.add(maxKey + ": " + e.getMessage());
+            return new EnrichmentSettings(enabled, d.documentEmbeddingMaxChars());
+        }
     }
 
     /** {@code space-harvester.terms.synonyms.*}: Budget der Synonymerkennung (#336), dieselben Schlüssel wie beim Dienst. */
@@ -516,7 +568,26 @@ public final class AppSettingsLoader {
             retention = AppSettings.Cache.DEFAULT_RETENTION;
         }
         return new AppSettings.Cache(maxAge, flag(get(cache, "version-check"), true,
-                "space-harvester.cache.version-check", problems), retention);
+                "space-harvester.cache.version-check", problems), retention, changeLog(map(get(cache, "change-log")),
+                problems));
+    }
+
+    /**
+     * Aufbewahrung des Änderungsprotokolls (ADR 0030) wie im Server ({@link ChangeLogSettings#parse}): fehlend die
+     * Vorgabe, leer (auch ohne Wert, wie Spring es liest) oder {@code 0} unbegrenzt.
+     */
+    private ChangeLogSettings changeLog(Map<?, ?> changeLog, List<String> problems) {
+        Object raw = get(changeLog, "retention");
+        String value = raw == null ? (changeLog.containsKey("retention") ? "" : null) : String.valueOf(raw);
+        ChangeLogSettings settings;
+        try {
+            settings = ChangeLogSettings.parse(value);
+        } catch (IllegalArgumentException e) {
+            problems.add("space-harvester." + ChangeLogSettings.RETENTION + ": " + e.getMessage());
+            settings = ChangeLogSettings.DEFAULT;
+        }
+        return settings.withShowAfterUpdate(flag(get(changeLog, "show-after-update"), false,
+                "space-harvester." + ChangeLogSettings.SHOW_AFTER_UPDATE, problems));
     }
 
     /**
@@ -815,7 +886,8 @@ public final class AppSettingsLoader {
                 text(get(ai, "embedding-model"), problems), text(get(ai, "embedding-dimensions"), problems),
                 optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released,
                 text(get(ai, "rerank-model"), problems), text(get(ai, "embedding-chunk-tokens"), problems),
-                text(get(ai, "embedding-chunk-overlap-sentences"), problems), text(get(ai, "vision-model"), problems));
+                text(get(ai, "embedding-chunk-overlap-sentences"), problems), text(get(ai, "vision-model"), problems),
+                text(get(ai, "chat-max-tokens"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -823,7 +895,7 @@ public final class AppSettingsLoader {
         boolean valid = draft.problems().isEmpty();
         return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
                 draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
-                draft.tokens(), draft.overlap(), draft.visionModel());
+                draft.tokens(), draft.overlap(), draft.visionModel(), draft.maxTokens());
     }
 
     // ------------------------------------------------------------------ Werte

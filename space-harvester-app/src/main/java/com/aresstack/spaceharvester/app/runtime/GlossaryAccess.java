@@ -160,6 +160,17 @@ public interface GlossaryAccess {
         };
     }
 
+    /**
+     * Beobachter für die Aufträge „Fachbegriffe ermitteln“ (ADR 0027): meldet jeden neuen Stand eines Auftrags aus
+     * beliebigem Thread, statt dass der Reiter ihn in Abständen liest. Erst anmelden, dann {@link #classification}.
+     *
+     * @return meldet den Beobachter wieder ab
+     */
+    default Runnable observeJobs(java.util.function.Consumer<JobStatus> onChange) {
+        return () -> {
+        };
+    }
+
     /** Kontext einer Belegstelle, leer wenn die Seite fehlt, nicht sichtbar oder inzwischen anders ist. */
     Optional<TermQueries.Snippet> snippet(RelationEvidence evidence, int chars);
 

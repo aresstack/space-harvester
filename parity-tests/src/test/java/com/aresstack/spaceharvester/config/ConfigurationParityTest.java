@@ -58,6 +58,10 @@ class ConfigurationParityTest {
                 vision-model: vision-model
                 external-processing-sources:
                   - confluence
+              cache:
+                change-log:
+                  retention: P2Y
+                  show-after-update: true
               sync:
                 interval: 30m
                 spaces:
@@ -99,6 +103,10 @@ class ConfigurationParityTest {
                   max-terms: 300
                   max-embedded-terms: 100
                   max-judged-pairs: 50
+              enrichment:
+                documents:
+                  enabled: false
+                  embedding-max-chars: 3000000000
             """;
 
     private static final String TOKEN = "parity-token";
@@ -162,6 +170,16 @@ class ConfigurationParityTest {
         assertThat(app.terms().synonyms()).isEqualTo(budget);
         assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
 
+        // ADR 0030: Aufbewahrung des Änderungsprotokolls, beim Dienst über withSyncRules.
+        assertThat(app.cache().changeLog()).isEqualTo(service2.changeLog())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ChangeLogSettings(
+                        java.time.Duration.ofDays(730), true));
+
+        // ADR 0026, AP9a: Analysen je Anhang, beim Dienst ebenfalls über withSyncRules.
+        assertThat(app.enrichment()).isEqualTo(service2.enrichment())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.EnrichmentSettings(false,
+                        3_000_000_000L));
+
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder
                 .bind("space-harvester.assets.extraction", ExtractionProperties.class).get().toLimits();
@@ -174,7 +192,7 @@ class ConfigurationParityTest {
         assertThat(extraction.unpackRatioFromBytes()).isEqualTo(200L * 1024 * 1024);
         assertThat(extraction.maxDepth()).isEqualTo(4);
         assertThat(extraction.maxEmbeddedFiles()).isEqualTo(500);
-        assertThat(extraction.memoryLimit("application/zip")).isEqualTo(40L * 1024 * 1024);
+        assertThat(extraction.memoryLimit("application/msword")).isEqualTo(40L * 1024 * 1024);
         assertThat(extraction.memoryLimit("message/rfc822")).isZero();
         assertThat(extraction.memoryLimit("application/pdf")).as("Nachweis bleibt").isZero();
 

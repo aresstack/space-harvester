@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -118,6 +119,24 @@ public abstract class TermIndexContract {
         assertThat(index().postings(new TermIndex.Filter(BOTH, null, null, null, "2"), null, false, 10)).isEmpty();
         assertThat(index().postings(new TermIndex.Filter(Set.of(), null, null, null, "1"), null, false, 10))
                 .isEmpty();
+    }
+
+    @Test
+    void aPageSetKeepsOnlyTheTermsOfItsPagesAndKeepsSourcesApart() {
+        PageKey a2 = new PageKey("wiki-a", "2");
+        store().save(terms(A1, "1", payload(term("Beleg", "noun", null, 0, 5))));
+        store().save(terms(a2, "1", payload(term("Beleg", "noun", null, 0, 5), term("API", "acronym", null, 6, 9))));
+        store().save(terms(B1, "1", payload(term("Beleg", "noun", null, 0, 5))));
+
+        // B1 hat dieselbe Seiten-ID wie A1, aber eine andere Quelle: nicht in der Menge.
+        PageSet subtree = PageSet.ofKeys(List.of(A1, a2));
+        assertThat(index().postings(new TermIndex.Filter(BOTH, null, null, null, "1", null, TermOrigin.PAGES,
+                subtree), null, false, 10)).extracting(posting -> posting.normalized() + "/" + posting.page())
+                .containsExactly("api/" + a2, "beleg/" + A1, "beleg/" + a2);
+        assertThat(index().postings(new TermIndex.Filter(BOTH, null, "beleg", null, "1", null, TermOrigin.PAGES,
+                PageSet.ofKeys(List.of(B1))), null, false, 10)).extracting(TermPosting::page).containsExactly(B1);
+        assertThat(index().postings(new TermIndex.Filter(BOTH, null, null, null, "1", null, TermOrigin.PAGES,
+                PageSet.EMPTY), null, false, 10)).isEmpty();
     }
 
     @Test

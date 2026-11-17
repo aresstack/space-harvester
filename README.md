@@ -42,18 +42,15 @@ Die Desktop-Anwendung läuft eigenständig mit direktem Core-Zugriff – **ohne 
 
 1. Unter [Releases](https://github.com/aresstack/space-harvester/releases) das Desktop-JAR
    `space-harvester-app-<version>.jar` und bei Bedarf `SHA256SUMS` herunterladen.
-2. Mit Java 21 starten:
+2. Per Doppelklick oder so starten (ein Java 21 muss installiert sein, das registrierte `java` darf älter sein):
 
 ```bash
 java -jar space-harvester-app-<version>.jar
 ```
 
-**Windows:** Zeigt `java -version` noch ein älteres Java (z. B. 1.8), die App mit dem vollen Pfad zur `java.exe` des
-JDK 21 starten (Einzelheiten unter [Starten unter Windows](docs/DESKTOP_APP.md#starten-unter-windows)):
-
-```bat
-"C:\Program Files\<JDK-21-Ordner>\bin\java.exe" -jar space-harvester-app-<version>.jar
-```
+Der Einstieg des JARs ist ein für Java 8 übersetzter Launcher: Läuft das JAR unter einem älteren Java (unter Windows
+oft 1.8), sucht er ein Java 21 und startet die App damit, Argumente wie `--config` reicht er durch
+([Starten unter Windows](docs/DESKTOP_APP.md#starten-unter-windows)).
 
 Beim ersten Start führt der Einrichtungsassistent durch Quellen, Netzwerk, KI-Dienst und Modelle. Die App bietet
 Suche, Explorer, Leseansicht, Quellenverwaltung, Synchronisierung, Downloads, Aufträge, Begriffe, Analysen, Status
@@ -288,14 +285,16 @@ und Core-Bibliothek (`space-harvester-core-<v>.jar` mit `-sources` und `-javadoc
 
 | Auslöser | Ergebnis |
 |---|---|
-| Push auf `main` | das rollierende Pre-Release `beta` (Version `<Basis>-beta.<N>`) wird ersetzt |
-| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` wird ersetzt |
-| **Actions › Release › Run workflow** auf `main` mit Feld `tag` (z. B. `v0.1.0`) | reguläres Release genau dieser Version, als *Latest* markiert |
+| Push auf `main` | das eine rollierende Release `latest` („Space Harvester – current build“, als *Latest* markiert, Dateien ohne Versionsnummer) bekommt diesen Stand |
+| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` (ohne Versionsnummer, nie *Latest*) bekommt diesen Stand |
+| **Actions › Release › Run workflow** auf `main` mit Feld `tag` (z. B. `v0.1.0`) | Release genau dieser Version mit Versionsnummer, als *Latest* markiert, bis der nächste main-Push `latest` wieder dazu macht |
 
 - Ein reguläres Release braucht auf `main` die Release-Notizen `docs/release-notes/<tag>.md`
   ([v0.1.0](docs/release-notes/v0.1.0.md)); der Workflow stellt sie vor die Dateiübersicht und bricht ohne sie ab.
-- Die Beta trägt die nächste Patch-Version nach dem neuesten regulären Release (nach `v0.1.1`: `0.1.2-beta.<N>`).
-  GitHub sortiert Releases nach Datum, deshalb steht über dem regulären Release („Latest“) höchstens die eine Beta.
+- Feste Adresse des neuesten Stands (Lesezeichen):
+  <https://github.com/aresstack/space-harvester/releases/download/latest/space-harvester-app.jar>
+  (Dienst: `…/latest/space-harvester.jar`, Core: `…/latest/space-harvester-core.jar`).
+- Intern (`--version`) trägt der rollierende Stand `<nächste Patch-Version>-beta.<N>`; im Release erscheint keine Nummer.
 - Nicht über **Releases › Draft a new release** gehen: Versionierte Releases werden nie überschrieben, der Workflow
   lehnt das Hochladen dann ab. Ablauf im Detail: [Desktop › Releases](docs/DESKTOP_APP.md#releases).
 
@@ -485,7 +484,7 @@ space-harvester:
 
 - **Fail-Closed:** Lässt sich eine Route nicht bestimmen (keine PAC-Adresse, PAC nicht ladbar, Skriptfehler,
   Zeitüberschreitung), scheitert die Anfrage mit dem Grund. Der Dienst verbindet dann **nie** stillschweigend direkt.
-  Gescheiterte Auflösungen werden 1 Minute gemerkt (`failure-ttl`), gefundene Routen 10 Minuten (`cache-ttl`).
+  Gescheiterte Auflösungen werden 1 Minute gemerkt (`failure-ttl`), gefundene Routen 10 Minuten (`cache-ttl`). Scheitert die erneute Auflösung einer zuvor gefundenen Route (z. B. WPAD-Server antwortet nicht), bleibt die zuletzt gültige Route in Gebrauch.
 - **Ohne Konfiguration** bleibt alles direkt wie bisher. Loopback-Ziele gehen immer direkt. Falsche Einstellungen
   (fehlende `pac-url`, Windows-Modus auf Linux, nicht umgesetzte `windows-native-*`-Modi) verhindern den Start.
 - **Je Ziel-URL:** Das PAC-Skript bekommt bei HTTPS wie im Browser nur `https://host[:port]/`, bei HTTP die ganze

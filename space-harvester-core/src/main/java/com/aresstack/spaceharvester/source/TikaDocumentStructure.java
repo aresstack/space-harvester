@@ -82,9 +82,13 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s9";
+    public static final String VERSION = "3.3-s13";
 
-    /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
+    /**
+     * Tika-Konfiguration: alle Standard-Parser außer der Texterkennung; HTML liest {@link HtmlStreamParser} als Strom
+     * statt Tikas DOM (AP10), auch in Archiven und Mails, weil es dieselbe Erkennung ist. Ist er nicht verfügbar
+     * ({@link HtmlStreamParser#available()}), bleibt Tikas JSoupParser.
+     */
     private static final String CONFIG = """
             <?xml version="1.0" encoding="UTF-8"?>
             <properties>
@@ -92,7 +96,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 <parser class="org.apache.tika.parser.DefaultParser">
                   <parser-exclude class="org.apache.tika.parser.ocr.TesseractOCRParser"/>
                   <parser-exclude class="org.apache.tika.parser.mail.RFC822Parser"/>
+                  HTML_EXCLUDE
                 </parser>
+                HTML_PARSER
                 <parser class="org.apache.tika.parser.mail.RFC822Parser">
                   <params>
                     <param name="extractAllAlternatives" type="bool">true</param>
@@ -261,6 +267,22 @@ public final class TikaDocumentStructure implements DocumentStructure {
     private StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
                                        StructureSink sink, PartRules rules, PartId.Content wanted,
                                        java.util.concurrent.atomic.AtomicReference<Path> found, Delivery delivery) {
+        boolean[] broken = new boolean[1];
+        StructuredDocument first = extract(original, title, mediaType, limits, sink, rules, wanted, found, delivery,
+                true, broken);
+        // Foliennummern ohne Beleg (Tika gab andere Folien aus als zugeordnet): Dieser Stand darf nicht gültig werden;
+        // verworfen und einmal ohne Zuordnung neu gelesen (Architekt 13.11.2026).
+        if (broken[0] && sink.restart()) {
+            return extract(original, title, mediaType, limits, sink, rules, wanted, found, delivery, false,
+                    new boolean[1]);
+        }
+        return first;
+    }
+
+    private StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                       StructureSink sink, PartRules rules, PartId.Content wanted,
+                                       java.util.concurrent.atomic.AtomicReference<Path> found, Delivery delivery,
+                                       boolean slideOrder, boolean[] slideOrderBroken) {
         Objects.requireNonNull(original, "original");
         Objects.requireNonNull(rules, "rules");
         Objects.requireNonNull(limits, "limits");
@@ -281,7 +303,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
             }
             AutoDetectParser tika = parser();
             // Der gemeldete Typ wird hier billig geprüft, der erkannte erst im Lauf (unter Platz- und Zeitgrenze).
-            if (ExtractionLimits.exceeds(size, limits.memoryLimit(mediaType))) {
+            if (ExtractionLimits.exceeds(size, memoryLimit(limits, mediaType))) {
                 return empty(Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEMORY_LIMIT));
             }
             if (limits.tempSpaceReserve() > 0 && usableTempSpace() < limits.tempSpaceReserve()) {
@@ -311,7 +333,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
             reader.wanted = wanted;
             reader.found = found;
             reader.delivery = delivery;
-            return run(reader, limits);
+            reader.slideOrder = slideOrder;
+            StructuredDocument result = run(reader, limits);
+            slideOrderBroken[0] = reader.slideOrderBroken;
+            return result;
         } finally {
             target.close();
         }
@@ -403,6 +428,31 @@ public final class TikaDocumentStructure implements DocumentStructure {
         }
     }
 
+    /** Die Konfiguration mit dem HTML-Strom, wenn er verfügbar ist. */
+    static String config() {
+        boolean stream = HtmlStreamParser.available();
+        return CONFIG.replace("HTML_EXCLUDE", stream
+                        ? "<parser-exclude class=\"org.apache.tika.parser.html.JSoupParser\"/>" : "")
+                .replace("HTML_PARSER", stream
+                        ? "<parser class=\"" + HtmlStreamParser.class.getName() + "\"/>" : "");
+    }
+
+    /**
+     * Die Speicherschranke des Typs; ohne HTML-Strom gilt für HTML wieder die Schranke aller übrigen Typen (Tikas
+     * DOM-Baum, gemessen: OutOfMemoryError ab 60 MiB bei 256 MiB Heap).
+     */
+    static long memoryLimit(ExtractionLimits limits, String mediaType) {
+        long limit = limits.memoryLimit(mediaType);
+        String type = mediaType == null ? "" : mediaType.split(";", 2)[0].strip().toLowerCase(Locale.ROOT);
+        if (!HtmlStreamParser.available() && HTML_TYPES.contains(type)) {
+            long fallback = limits.memoryLimit(ExtractionLimits.ANY_TYPE);
+            return limit == 0 ? fallback : fallback == 0 ? limit : Math.min(limit, fallback);
+        }
+        return limit;
+    }
+
+    private static final Set<String> HTML_TYPES = Set.of("text/html", "application/xhtml+xml");
+
     private static StructuredDocument empty(Outcome outcome) {
         return new StructuredDocument(DocumentHead.EMPTY, outcome, List.of(), 0, 0);
     }
@@ -415,7 +465,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 if (current == null) {
                     try {
                         current = new AutoDetectParser(new TikaConfig(
-                                new ByteArrayInputStream(CONFIG.getBytes(StandardCharsets.UTF_8))));
+                                new ByteArrayInputStream(config().getBytes(StandardCharsets.UTF_8))));
                     } catch (Exception e) {
                         throw new IllegalStateException("Tika-Konfiguration nicht lesbar", e);
                     }
@@ -462,6 +512,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
         private boolean stopped;
         private StatusReason stopReason;
         private StructuredDocument result;
+        /** Foliennummern bei .pptx zuordnen ({@link PptxSlideOrder}); aus beim zweiten Lauf. */
+        private boolean slideOrder = true;
+        /** Tika gab andere Folien aus als zugeordnet: Die Nummern dieses Laufs sind nicht belegt. */
+        private volatile boolean slideOrderBroken;
 
         Reader(AutoDetectParser tika, Path original, String title, String mediaType, long size,
                ExtractionLimits limits, StructureSink sink, BlockSink target, PartRules rules) {
@@ -480,7 +534,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
             // Gelesen wird nach dem Inhalt; die Schranke gilt deshalb auch für den an der Datei erkannten Typ, bei
             // Abweichung der strengere Wert (Architekt 13.11.2026). Die Erkennung läuft hier unter Platz- und
             // Zeitgrenze, weil sie bei Containern (OLE2, ZIP) selbst Struktur liest.
-            if (ExtractionLimits.exceeds(size, limits.memoryLimit(detect(tika, original, title)))) {
+            if (ExtractionLimits.exceeds(size, memoryLimit(limits, detect(tika, original, title)))) {
                 synchronized (this) {
                     if (!stopped) {
                         result = new StructuredDocument(DocumentHead.EMPTY,
@@ -512,6 +566,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 (parseWith == null ? tika : parseWith).parse(in, root.handler, metadata, context);
                 flushMailBody(root);
                 root.handler.flush();
+                root.handler.checkSlides();
                 outcome = root.full ? root.truncatedOrFailed(StatusReason.TOO_LARGE)
                         : missing != null ? root.partial(missing)
                         : embeddedFailure(metadata) ? root.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
@@ -519,6 +574,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 outcome = aborted(root, e);
             } finally {
                 discardMailBody(root);
+                // Auch nach Abbruch oder Fehler: Mappe und Blattleser sind eigene Dateizugriffe.
+                root.handler.closeWorkbook();
             }
             synchronized (this) {
                 if (stopped) {
@@ -1079,9 +1136,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
             if (!CONTAINER_TYPES.contains(type) && !rules.documentTypes().test(type)) {
                 return Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEDIA_TYPE_EXCLUDED);
             }
-            long limit = limits.memoryLimit(type);
+            long limit = memoryLimit(limits, type);
             if (!declared.isEmpty()) {
-                long other = limits.memoryLimit(declared);
+                long other = memoryLimit(limits, declared);
                 limit = limit == 0 ? other : other == 0 ? limit : Math.min(limit, other);
             }
             if (ExtractionLimits.exceeds(bytes, limit)) {
@@ -1119,6 +1176,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     (parseWith == null ? tika : parseWith).parse(in, child.handler, metadata, context);
                     flushMailBody(child);
                     child.handler.flush();
+                    child.handler.checkSlides();
                     outcome = child.full ? child.truncatedOrFailed(StatusReason.TOO_LARGE)
                             : embeddedFailure(metadata) ? child.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
                 } catch (Exception | LinkageError | OutOfMemoryError e) {
@@ -1136,6 +1194,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 partSink.head(child.head(metadata));
             } finally {
                 discardMailBody(child);
+                child.handler.closeWorkbook();
                 synchronized (Reader.this) {
                     open.remove(child);
                     // Die Zeit im Teil zählt nicht zur Gesamtlaufzeit des Elterndokuments.
@@ -1467,6 +1526,19 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 private boolean sheetHeading;
                 private int page;
                 private int slide;
+                /** Folien von Tika in einem .pptx bisher und ihre Nummern ({@link PptxSlideOrder}). */
+                private int slides;
+                private int[] slideNumbers;
+                /** Zellbezüge bei .xlsx/.xlsm ({@link XlsxCellRefs}): Mappe, mitgelesenes Blatt, erwartete Zeile. */
+                private Optional<XlsxCellRefs.Workbook> workbook;
+                private XlsxCellRefs.Sheet sheetRows;
+                private XlsxCellRefs.Row expectedRow;
+                /** Vor der Sperre gelesene Zeile zum beginnenden {@code tr}. */
+                private XlsxCellRefs.Row aheadRow;
+                /** Die Zuordnung ist für dieses Blatt beendet (nicht belegt). */
+                private boolean sheetUnmatched;
+                /** Erste Zelle der laufenden Zeile in {@code cells}. */
+                private int rowCellsStart;
                 private String sheet;
                 private int tables;
                 private final List<Block.Cell> cells = new ArrayList<>();
@@ -1485,6 +1557,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                         throws SAXException {
                     progress();
                     String name = name(localName, qName);
+                    // Die Zeile des Blatt-XML außerhalb der Sperre lesen: Die Wache braucht sie für Zeitgrenze und
+                    // Abbruch. Den Zustand des Handlers ändert nur dieser Thread.
+                    aheadRow = name.equals("tr") && tables == 1 && ignored == 0 ? nextSheetRow() : null;
                     synchronized (Reader.this) {
                         if (name.equals("head") || name.equals("script") || name.equals("style")) {
                             ignored++;
@@ -1592,6 +1667,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                     entryTitle = false;
                                 } else if (embedded == 0 && isSheet(cls)) {
                                     sheet = null;
+                                    startSheetRows();
                                 }
                                 resetKind();
                             }
@@ -1701,12 +1777,19 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     if (isSheet(cls)) {
                         sheetTitle = true;
                         sheet = null;
+                        startSheetRows();
                     } else if (cls.equals("page") && pdf()) {
                         page++;
                     } else if (cls.equals("slide") && legacyPowerPoint()) {
-                        // Nur .ppt: Tika gibt die Folien dort in Folienreihenfolge aus (ausgeblendete zählen mit). Bei
-                        // .pptx stimmt die Reihenfolge nicht, dort bleibt die Folie leer (Architekt 13.11.2026).
+                        // .ppt: Tika gibt die Folien dort in Folienreihenfolge aus (ausgeblendete zählen mit).
                         slide++;
+                    } else if ((cls.equals("slide-master") || cls.equals("slide-handout-master")) && powerPoint()) {
+                        // Folienmaster und Handzettelmaster gibt Tika nach allen Folien aus: gehören zu keiner Folie.
+                        slide = 0;
+                    } else if (cls.equals("slide-content") && powerPoint()) {
+                        // .pptx (AP10): Tika gibt die Folien nicht in Folienreihenfolge aus; die Nummer kommt aus
+                        // PptxSlideOrder, sonst bleibt sie leer. Notizen danach gehören zu dieser Folie.
+                        slide = nextSlide();
                     }
                     resetKind();
                 }
@@ -1734,6 +1817,141 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     }
                     outlookStage = 2;
                     return false;
+                }
+
+                private boolean workbookType() {
+                    String type = detectedType();
+                    return type.equals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                            || type.equals("application/vnd.ms-excel.sheet.macroenabled.12");
+                }
+
+                /** Beginn oder Ende eines Blatts: Das mitgelesene Blatt endet, das nächste beginnt mit Belegung. */
+                private void startSheetRows() {
+                    if (sheetRows != null) {
+                        sheetRows.close();
+                        sheetRows = null;
+                    }
+                    expectedRow = null;
+                    sheetUnmatched = false;
+                }
+
+                /** Die Zeile des Blatt-XML zum nächsten {@code tr}; {@code null} ohne Zuordnung. */
+                private XlsxCellRefs.Row nextSheetRow() {
+                    if (!slideOrder || sheetUnmatched || embedded > 0 || sheet == null || !workbookType()) {
+                        return null;
+                    }
+                    if (sheetRows == null) {
+                        if (workbook == null) {
+                            TikaInputStream in = stream;
+                            Path file;
+                            try {
+                                file = in != null && in.hasFile() ? in.getPath() : null;
+                            } catch (IOException e) {
+                                file = null;
+                            }
+                            workbook = XlsxCellRefs.open(file, TikaDocumentStructure::normalize);
+                        }
+                        sheetRows = workbook.flatMap(book -> book.sheet(sheet)).orElse(null);
+                        if (sheetRows == null) {
+                            unmatchedSheet();
+                            return null;
+                        }
+                    }
+                    XlsxCellRefs.Row next = sheetRows.next().orElse(null);
+                    if (next == null) {
+                        unmatchedSheet();
+                    }
+                    return next;
+                }
+
+                /**
+                 * Ende einer Zeile: Passen Tikas Zellen zu den belegten Spalten des Blatt-XML (Zahl bis zur letzten
+                 * belegten Spalte, Text nur in belegten Spalten), bekommen ihre Zellen den Zellbezug; sonst endet die
+                 * Zuordnung für dieses Blatt.
+                 */
+                private void referenceRow() {
+                    XlsxCellRefs.Row expected = expectedRow;
+                    expectedRow = null;
+                    if (expected == null || sheetUnmatched) {
+                        return;
+                    }
+                    boolean matches = column == expected.cells();
+                    for (int i = rowCellsStart; matches && i < cells.size(); i++) {
+                        Block.Cell cell = cells.get(i);
+                        if (!cell.text().isEmpty() && !expected.values().get(cell.column())) {
+                            matches = false;
+                        }
+                    }
+                    if (!matches) {
+                        unmatchedSheet();
+                        return;
+                    }
+                    for (int i = rowCellsStart; i < cells.size(); i++) {
+                        Block.Cell cell = cells.get(i);
+                        if (cell.row() == row) {
+                            cells.set(i, new Block.Cell(cell.row(), cell.column(), cell.text(), cell.header(),
+                                    Optional.of(XlsxCellRefs.ref(cell.column(), expected.number()))));
+                        }
+                    }
+                }
+
+                private void unmatchedSheet() {
+                    if (!sheetUnmatched) {
+                        sheetUnmatched = true;
+                        // Einmal je Blatt, ohne Dokumentdaten (Architekt 13.11.2026).
+                        LOG.log(System.Logger.Level.INFO, "Zellbezüge nicht belegt ({0})", "xlsx-cellref-unmatched");
+                    }
+                    if (sheetRows != null) {
+                        sheetRows.close();
+                        sheetRows = null;
+                    }
+                }
+
+                /** Am Ende eines Dokuments: die Mappe schließen. */
+                void closeWorkbook() {
+                    startSheetRows();
+                    if (workbook != null) {
+                        workbook.ifPresent(XlsxCellRefs.Workbook::close);
+                        workbook = null;
+                    }
+                }
+
+                private boolean powerPoint() {
+                    String type = detectedType();
+                    return type.startsWith("application/vnd.openxmlformats-officedocument.presentationml.")
+                            || type.startsWith("application/vnd.ms-powerpoint.presentation.macroenabled")
+                            || type.startsWith("application/vnd.ms-powerpoint.slideshow.macroenabled");
+                }
+
+                /** Die Foliennummer der nächsten Folie von Tika; 0, wenn die Zuordnung fehlt oder nicht mehr passt. */
+                private int nextSlide() {
+                    if (!slideOrder) {
+                        return 0;
+                    }
+                    if (slideNumbers == null) {
+                        TikaInputStream in = stream;
+                        Path file = null;
+                        try {
+                            file = in != null && in.hasFile() ? in.getPath() : null;
+                        } catch (IOException e) {
+                            file = null;
+                        }
+                        slideNumbers = PptxSlideOrder.of(file).orElse(new int[0]);
+                    }
+                    slides++;
+                    if (slides > slideNumbers.length) {
+                        // Mehr Folien als zugeordnet: auch die Nummern davor sind nicht belegt.
+                        slideOrderBroken |= slideNumbers.length > 0;
+                        return 0;
+                    }
+                    return slideNumbers[slides - 1];
+                }
+
+                /** Am Ende eines Dokuments: Weniger Folien als zugeordnet heißt, die Nummern sind nicht belegt. */
+                void checkSlides() {
+                    if (slideNumbers != null && slideNumbers.length > 0 && slides != slideNumbers.length) {
+                        slideOrderBroken = true;
+                    }
                 }
 
                 private boolean legacyPowerPoint() {
@@ -1806,6 +2024,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                     flushText();
                                 }
                                 column = 0;
+                                rowCellsStart = cells.size();
+                                expectedRow = aheadRow;
+                                aheadRow = null;
                             } else {
                                 appendCell("\n");
                             }
@@ -1844,6 +2065,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                         case "tr" -> {
                             if (tables == 1) {
                                 closeCell();
+                                referenceRow();
                                 row++;
                                 if (cellChars >= maxBlockChars / 2) {
                                     emitTablePiece();
@@ -1927,6 +2149,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     List<Block.Cell> piece = List.copyOf(cells);
                     boolean empty = cellChars == 0;
                     cells.clear();
+                    // Zellen der laufenden Zeile, die schon hinausgingen, bleiben ohne Bezug (noch nicht belegt).
+                    rowCellsStart = 0;
                     cellChars = 0;
                     List<Link> pieceLinks = List.copyOf(links);
                     links.clear();

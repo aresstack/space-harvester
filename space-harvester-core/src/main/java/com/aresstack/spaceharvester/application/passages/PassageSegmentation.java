@@ -328,7 +328,10 @@ public final class PassageSegmentation {
     public static List<Block> blocks(PageText text) {
         String content = text.text();
         List<PageText.Section> sections = text.sections();
-        boolean lines = text.schema().startsWith("confluence-storage-text/");
+        // Eine Zeile je Block: die Projektion einer Confluence-Seite und der Lesetext eines Dokuments (ADR 0026),
+        // dort ist jede Tabellenzeile ein eigener Block, kein Absatz reicht über die Grenze einer Tabelle.
+        boolean lines = text.schema().startsWith("confluence-storage-text/")
+                || text.schema().startsWith("document-text/");
         List<Block> blocks = new ArrayList<>();
         int paragraphStart = -1;
         int paragraphEnd = -1;

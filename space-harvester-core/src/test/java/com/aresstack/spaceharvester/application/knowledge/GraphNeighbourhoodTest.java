@@ -7,10 +7,12 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -245,6 +247,30 @@ class GraphNeighbourhoodTest {
         assertThat(subgraph.focus()).startsWith("wiki/1@");
         assertThat(subgraph.nodes()).allMatch(node -> node.page().key().sourceId().equals("wiki"));
         assertThat(subgraph.hidden()).as("nur fehlende Knoten im gewählten Umfang").isLessThanOrEqualTo(1);
+    }
+
+    @Test
+    void aPageSetLimitsFocusLinksAndTheTermSearchToItsPagesBeforeTheLimit() {
+        // ADR 0029: Seite samt Unterseiten, hier wiki/1 und wiki/2; archiv/1 hat dieselbe ID in einer anderen Quelle.
+        for (int i = 1; i <= 4; i++) {
+            analyse("archiv", String.valueOf(i), "Die Buchhaltung prüft den Beleg.");
+        }
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
+        analyse("wiki", "2", "Die Prüferin bestätigt den Beleg.");
+        PageSet subtree = PageSet.ofKeys(List.of(new PageKey("wiki", "1"), new PageKey("wiki", "2")));
+        GraphNeighbourhood.Options within = new GraphNeighbourhood.Options(2, 100,
+                EnumSet.allOf(PageGraph.NodeKind.class), EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true,
+                null, null).within(subtree);
+
+        GraphNeighbourhood.Subgraph term = neighbourhood.term(CALLER, "Beleg", within);
+        assertThat(term.focus()).startsWith("wiki/");
+        assertThat(term.nodes()).allMatch(node -> subtree.contains(node.page().key()));
+
+        GraphNeighbourhood.Subgraph page = neighbourhood.page(CALLER, new PageKey("wiki", "1"),
+                GraphNeighbourhood.Options.DEFAULT.within(subtree));
+        assertThat(page.nodes()).isNotEmpty().allMatch(node -> subtree.contains(node.page().key()));
+        assertThat(neighbourhood.page(CALLER, new PageKey("archiv", "1"), GraphNeighbourhood.Options.DEFAULT
+                .within(subtree)).nodes()).as("Fokus außerhalb der Auswahl").isEmpty();
     }
 
     @Test

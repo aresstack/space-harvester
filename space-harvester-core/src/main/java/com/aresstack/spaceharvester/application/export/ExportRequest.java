@@ -7,8 +7,9 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 
 /**
- * Ein Exportauftrag: Quelle, Space, gegebenenfalls eine Startseite, und Formate. Ob der Space schon im Cache liegt, ist keine Voraussetzung; der Export
- * liest ihn bei Bedarf selbst ein ({@link Exports}).
+ * Ein Exportauftrag: Quelle, Space, gegebenenfalls eine Startseite, und Formate. Ob der Space schon im Cache liegt, ist
+ * keine Voraussetzung; der Export liest ihn bei Bedarf selbst ein ({@link Exports}). Eine Ausgabe aus dem Bestand
+ * ({@link #holdingsOnly()}, ADR 0029) liest dagegen nur den Seiten-Cache.
  *
  * @param sourceId Quelle
  * @param spaceKey Space
@@ -25,10 +26,13 @@ import java.util.function.Predicate;
  *                   Elternbeziehungen des Cache; {@code null} für den ganzen Space
  * @param depth      nur mit Startseite: wie viele Ebenen unter ihr mitkommen; {@code 0} für die Startseite allein ohne
  *                   Unterseiten (Einzelseite, wie „Seite exportieren“ im Enterprise AI Client), {@code null} für alle
+ * @param holdingsOnly Ausgabe aus dem Bestand (ADR 0029): liest nur den Seiten-Cache, nie die Quelle; enthält die
+ *                     gespeicherten Seiten des Umfangs, auch veraltete im gespeicherten Stand, und nennt die übrigen
+ *                     nur mit ihrer Zahl. Schließt {@code refresh} aus.
  */
 public record ExportRequest(String sourceId, String spaceKey, String owner, List<String> formats, boolean refresh,
                             Predicate<PageHeader> visible, BooleanSupplier authorized, String rootPageId,
-                            Integer depth) {
+                            Integer depth, boolean holdingsOnly) {
 
     public ExportRequest {
         Objects.requireNonNull(sourceId, "sourceId");
@@ -45,6 +49,17 @@ public record ExportRequest(String sourceId, String spaceKey, String owner, List
         if (depth != null && rootPageId == null) {
             throw new IllegalArgumentException("depth gibt es nur mit rootPageId");
         }
+        if (holdingsOnly && refresh) {
+            throw new IllegalArgumentException("Eine Ausgabe aus dem Bestand liest die Quelle nicht; refresh geht "
+                    + "nicht");
+        }
+    }
+
+    /** Export mit Beschaffung bei Bedarf (ADR 0010). */
+    public ExportRequest(String sourceId, String spaceKey, String owner, List<String> formats, boolean refresh,
+                         Predicate<PageHeader> visible, BooleanSupplier authorized, String rootPageId,
+                         Integer depth) {
+        this(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth, false);
     }
 
     /** Teilbaum ohne Tiefenbeschränkung. */
@@ -64,16 +79,34 @@ public record ExportRequest(String sourceId, String spaceKey, String owner, List
         return new ExportRequest(sourceId, spaceKey, owner, formats, false, header -> true, () -> true);
     }
 
+    /** Ausgabe des ganzen Space aus dem Bestand (ADR 0029), ohne Einschränkung je Seite. */
+    public static ExportRequest fromHoldings(String sourceId, String spaceKey, String owner, List<String> formats) {
+        return of(sourceId, spaceKey, owner, formats).withHoldingsOnly(true);
+    }
+
     public ExportRequest withRefresh(boolean refresh) {
-        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth);
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth,
+                holdingsOnly);
     }
 
     public ExportRequest withVisible(Predicate<PageHeader> visible) {
-        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth);
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth,
+                holdingsOnly);
     }
 
     public ExportRequest withAuthorized(BooleanSupplier authorized) {
-        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth);
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth,
+                holdingsOnly);
+    }
+
+    /**
+     * Derselbe Umfang als Ausgabe aus dem Bestand oder als Export mit Beschaffung.
+     *
+     * @throws IllegalArgumentException wenn {@code holdingsOnly} und {@link #refresh()} zusammenkämen
+     */
+    public ExportRequest withHoldingsOnly(boolean holdingsOnly) {
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth,
+                holdingsOnly);
     }
 
     /**
@@ -83,7 +116,7 @@ public record ExportRequest(String sourceId, String spaceKey, String owner, List
      */
     public ExportRequest withRoot(String rootPageId) {
         return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId,
-                rootPageId == null ? null : depth);
+                rootPageId == null ? null : depth, holdingsOnly);
     }
 
     /**
@@ -93,7 +126,8 @@ public record ExportRequest(String sourceId, String spaceKey, String owner, List
      * @throws IllegalArgumentException ohne Startseite oder bei negativer Tiefe
      */
     public ExportRequest withDepth(Integer depth) {
-        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth);
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth,
+                holdingsOnly);
     }
 
     /** Derselbe Auftrag für eine einzelne Seite ohne Unterseiten ({@code withRoot(pageId).withDepth(0)}). */

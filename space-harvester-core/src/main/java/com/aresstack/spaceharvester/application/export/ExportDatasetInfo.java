@@ -31,16 +31,29 @@ public record ExportDatasetInfo(String exportId, String sourceId, String spaceKe
      * @param missing        nicht beschafft (fehlt, verboten, zu groß, nicht erreichbar)
      * @param signInRequired wegen fehlender Anmeldung (Einmalcode) nicht beschafft; Nachholen über
      *                       {@link ExportConversions#collectImages}
-     * @param redundant      bewusst nicht geladen, etwa die Vorschau eines gezeichneten draw.io-Diagramms oder ein
-     *                       Dokument-Anhang außerhalb der Einstellung (ADR 0023)
+     * @param redundant      bewusst nicht geladen, weil das Diagramm aus seiner Quelle gezeichnet wird: die Vorschau
+     *                       ({@code <Name>.png}) eines draw.io-Diagramms ({@code REDUNDANT})
+     * @param excluded       nach den Export-Einstellungen ausgelassen: Dokument-Anhang mit nicht zugelassenem Typ oder
+     *                       über der Größengrenze ({@code EXCLUDED}, ADR 0023); getrennt von {@code redundant}, damit
+     *                       die Anzeige beide Fälle auseinanderhält (Angelo, 13.11.2026)
      */
-    public record Media(int stored, int missing, int signInRequired, int redundant) {
+    public record Media(int stored, int missing, int signInRequired, int redundant, int excluded) {
 
-        public static final Media NONE = new Media(0, 0, 0, 0);
+        public static final Media NONE = new Media(0, 0, 0, 0, 0);
+
+        /** Ohne nach Einstellung Ausgelassene. */
+        public Media(int stored, int missing, int signInRequired, int redundant) {
+            this(stored, missing, signInRequired, redundant, 0);
+        }
 
         /** Alle Dateien der Beschaffung. */
         public int total() {
-            return stored + missing + signInRequired + redundant;
+            return stored + missing + signInRequired + redundant + excluded;
+        }
+
+        /** Bewusst nicht geladen, gleich aus welchem Grund: Diagramm-Vorschauen und nach Einstellung Ausgelassene. */
+        public int skipped() {
+            return redundant + excluded;
         }
 
         public static Media of(ExportAssetManifest manifest) {
@@ -48,15 +61,17 @@ public record ExportDatasetInfo(String exportId, String sourceId, String spaceKe
             int missing = 0;
             int signIn = 0;
             int redundant = 0;
+            int excluded = 0;
             for (ExportAssetManifest.Entry entry : manifest.assets()) {
                 switch (entry.status()) {
                     case STORED -> stored++;
                     case SIGN_IN_REQUIRED -> signIn++;
-                    case REDUNDANT, EXCLUDED -> redundant++;
+                    case REDUNDANT -> redundant++;
+                    case EXCLUDED -> excluded++;
                     default -> missing++;
                 }
             }
-            return new Media(stored, missing, signIn, redundant);
+            return new Media(stored, missing, signIn, redundant, excluded);
         }
     }
 

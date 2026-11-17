@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.core;
 
+import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -18,6 +19,12 @@ import com.aresstack.spaceharvester.application.assets.ExtractionStatus;
 import com.aresstack.spaceharvester.application.assets.ExtractionStore;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
+import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
+import com.aresstack.spaceharvester.application.changelog.ChangeLog;
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
+import com.aresstack.spaceharvester.application.changelog.TextContentDiffer;
+import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
@@ -28,6 +35,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationManag
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
+import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.Swappable;
@@ -35,8 +43,10 @@ import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
+import com.aresstack.spaceharvester.application.enrichment.DocumentTexts;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.VersionRecomputation;
@@ -57,11 +67,14 @@ import com.aresstack.spaceharvester.application.enrichment.statements.StatementS
 import com.aresstack.spaceharvester.application.export.EnrichmentAnalyses;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
+import com.aresstack.spaceharvester.application.export.SelectionDataset;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
+import com.aresstack.spaceharvester.application.holdings.Holdings;
+import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
@@ -71,6 +84,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
 import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
 import com.aresstack.spaceharvester.application.passages.NavigationQueries;
@@ -114,11 +128,15 @@ import com.aresstack.spaceharvester.application.facts.PageFacts;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.searchrun.SearchRuns;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
+import com.aresstack.spaceharvester.application.release.AiRelease;
+import com.aresstack.spaceharvester.application.release.PageReleaseService;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.SourceType;
@@ -139,6 +157,7 @@ import com.aresstack.spaceharvester.application.terms.AcronymResolution;
 import com.aresstack.spaceharvester.application.terms.ResolutionCache;
 import com.aresstack.spaceharvester.application.terms.SynonymCandidates;
 import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
+import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.output.convert.AnalysisConverter;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
@@ -151,6 +170,7 @@ import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter
 import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
+import com.aresstack.spaceharvester.persistence.files.FileReadStates;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
@@ -163,7 +183,9 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneCatalogGaps;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageReleases;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneHoldingsCatalog;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
@@ -171,6 +193,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSearchRunLog;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.GitSourceAdapter;
 import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
@@ -185,6 +208,7 @@ import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
+import com.aresstack.spaceharvester.source.ai.ChatUpdateSummaryModel;
 import com.aresstack.spaceharvester.source.ai.ChatSynonymJudgmentModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
@@ -195,6 +219,7 @@ import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
 import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
+import com.aresstack.spaceharvester.application.metadata.SourceQueryExports;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalyzer;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
@@ -219,6 +244,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -262,7 +288,6 @@ public final class Harvester implements AutoCloseable {
     public static final Duration DEFAULT_SEARCH_RUN_MAX_AGE = Duration.ofDays(30);
 
     private static final System.Logger LOG = System.getLogger(Harvester.class.getName());
-    private static final Duration POLL = Duration.ofMillis(50);
     /** Gleichzeitige Abrufe, mit denen die Schlagwortsuche gefundene Seiten in den Cache lädt. */
     private static final int SEARCH_FILL_PARALLEL = 4;
 
@@ -274,6 +299,10 @@ public final class Harvester implements AutoCloseable {
     private final SpaceKeyCheck spaceKeys;
     private final PageFreshness freshness;
     private final PageQueries pages;
+    private final Holdings holdings;
+    private final AiRelease aiRelease;
+    private final PageReleaseService pageReleaseService;
+    private final ExportAssetCollection assetCollection;
     private final PageAddresses addresses;
     private final ReadingViews readingViews;
     private final PageNavigation navigation;
@@ -300,6 +329,9 @@ public final class Harvester implements AutoCloseable {
     private final SynonymDiscovery synonymDiscovery;
     private final FactEdits factEdits;
     private final Jobs jobs;
+    /** Seiten-Cache samt Änderungsprotokoll und Update-Marken (ADR 0030). */
+    private final LucenePageCache pageCache;
+    private final ChangeLog changeLog;
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
@@ -316,6 +348,7 @@ public final class Harvester implements AutoCloseable {
     private final KnowledgeGraph knowledgeGraph;
     private final StatementAnalysisJobs statementAnalysisJobs;
     private final KnowledgeGraphExportUseCase knowledgeGraphExport;
+    private final SourceQueryExports sourceQueryExports;
     private final java.nio.file.Path knowledgeGraphExportDirectory;
     private final SignInRequests signIns;
     private final Enrichments enrichments;
@@ -324,6 +357,8 @@ public final class Harvester implements AutoCloseable {
     private final ExportPackageImport packageImport;
     private final TrustBundles trustBundles;
     private final String userAgent;
+    /** Die KI-Einstellungen der wirksamen Konfiguration, oder die festen des Builders. */
+    private final Supplier<AiServiceSettings> currentAi;
     /** Ob Proxy und Vertrauen ohne Bundle der Konfiguration folgen ({@code network.*}, ADR 0015). */
     private final boolean networkFollows;
     /**
@@ -350,8 +385,34 @@ public final class Harvester implements AutoCloseable {
     private final Map<String, ConfiguredSchedule> configuredSchedules = new LinkedHashMap<>();
     private final List<ConfiguredSchedule> configuredInventories = new ArrayList<>();
 
+    /**
+     * Misst den Start des Core für das Protokoll: jeder Schritt über einer Sekunde mit Namen und Dauer, am Ende die
+     * Gesamtdauer. Keine Inhalte, nur Schrittnamen.
+     */
+    private static final class StartTimer {
+
+        private static final long SLOW_NANOS = TimeUnit.SECONDS.toNanos(1);
+        private final long started = System.nanoTime();
+        private long last = started;
+
+        void step(String name) {
+            long now = System.nanoTime();
+            if (now - last >= SLOW_NANOS) {
+                LOG.log(System.Logger.Level.INFO, "Start: {0} dauerte {1} ms", name,
+                        TimeUnit.NANOSECONDS.toMillis(now - last));
+            }
+            last = now;
+        }
+
+        void done() {
+            LOG.log(System.Logger.Level.INFO, "Core gestartet in {0} ms",
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+        }
+    }
+
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
+        StartTimer start = new StartTimer();
         try {
             this.networkFollows = builder.configuration != null && !builder.networkFixed;
             // Folgt das Netzwerk der Konfiguration, liest das Vertrauen ohne Bundle die Regel je Handshake.
@@ -363,15 +424,18 @@ public final class Harvester implements AutoCloseable {
                     builder.secretProvider);
             opened.add(catalog);
             this.catalog = catalog;
+            start.step("Quellen");
             this.trustBundles = trustBundles;
             this.userAgent = builder.userAgent;
             ConfigurationManager manager = builder.configuration;
             this.settings = manager == null ? null : manager.current().configuration();
             // Was der Builder nach configuration() selbst festlegt, bleibt fest; alles andere folgt der Konfiguration.
             boolean liveAi = manager != null && !builder.aiFixed;
+            this.currentAi = () -> liveAi ? this.settings.ai() : builder.ai;
             Path cacheDirectory = builder.dataDirectory.resolve("cache");
             LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"));
             opened.add(cache);
+            this.pageCache = cache;
             LuceneJobStore jobStore = LuceneJobStore.open(cacheDirectory.resolve("jobs"));
             opened.add(jobStore);
             LuceneJobEventStore eventStore = LuceneJobEventStore.open(cacheDirectory.resolve("job-events"));
@@ -392,6 +456,11 @@ public final class Harvester implements AutoCloseable {
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
             opened.add(enrichmentStore);
+            // ADR 0028: die für die KI freigegebenen Seiten neben dem Cache, als Hash-Menge im Speicher.
+            LucenePageReleases pageReleases = LucenePageReleases.open(cacheDirectory.resolve("page-releases"));
+            opened.add(pageReleases);
+            this.aiRelease = new AiRelease(sourceId -> (liveAi ? this.settings.ai() : builder.ai)
+                    .mayProcessExternally(sourceId), pageReleases);
             // #182: Suchlauf-Protokoll neben der Diagnoseablage, nur Lucene.
             SearchRunLog runLog = SearchRunLog.NONE;
             if (builder.searchRuns) {
@@ -401,6 +470,7 @@ public final class Harvester implements AutoCloseable {
                 runLog = lucene;
             }
             this.searchRuns = new SearchRuns(runLog, builder.searchRunAdministrators);
+            start.step("Ablagen öffnen und Aufträge übernehmen");
             EmbeddingProcessor embedding = null;
             ExecutorService background = null;
             Swappable<EmbeddingGeneration> model = null;
@@ -430,8 +500,9 @@ public final class Harvester implements AutoCloseable {
             TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
             SentenceSegmenter sentences = OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules));
             if (embedding != null) {
+                // ADR 0028: auch die Seiten der Liste freigegebener Seiten, gefragt bei jeder Seite.
                 embedding = embedding.withPassages(new PassageChunks(new PassageSegmentation(sentences,
-                        sentenceRules)));
+                        sentenceRules))).withPageReleases(pageReleases::contains);
             }
             this.embeddingModel = model;
             if (embedding != null || builder.statements.enabled()) {
@@ -459,7 +530,7 @@ public final class Harvester implements AutoCloseable {
             AiServiceSettings startAi = builder.ai;
             DocumentNavigationBuilder navigationBuilder = new DocumentNavigationBuilder();
             processors.add(new NavigationProcessor(navigationBuilder, embedding, enrichmentStore::find,
-                    new ChatNavigationLabeler(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
+                    enrichmentStore::find, new ChatNavigationLabeler(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
                             builder.userAgent)));
             // ADR 0021: Bildbeschreibung über das Vision-Modell der wirksamen Konfiguration, nur auf Abruf; der
             // Prozessor images rechnet nie selbst, er bestimmt nur, wann ein Ergebnis gilt.
@@ -476,7 +547,8 @@ public final class Harvester implements AutoCloseable {
                 StatementChatModels chats = new StatementChatModels(() -> liveAi ? this.settings.ai() : startAi,
                         catalog, trustBundles, builder.userAgent);
                 statementsReleased = chats.mayProcessExternally();
-                statementProcessor = new StatementProcessor(sentences, () -> statementSettings, chats, statementsReleased);
+                statementProcessor = new StatementProcessor(sentences, () -> statementSettings, chats,
+                        statementsReleased, pageReleases::contains);
                 processors.add(statementProcessor);
             }
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
@@ -487,8 +559,9 @@ public final class Harvester implements AutoCloseable {
             this.pageTexts = projector;
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
             // Cache neu, eingeschaltet auch statements (#108); images rechnet nur auf Abruf und prüft die Freigabe dann
-            // selbst. Schließt vor dem Hintergrund.
-            if (model != null || statementsReleased != null) {
+            // selbst. Schließt vor dem Hintergrund. Auch ohne beide Modelle: Die Rücknahme der Bildbeschreibungen
+            // (ADR 0028) läuft über ihn, auch wenn nur ein Vision-Modell eingestellt ist.
+            {
                 List<String> releaseDependent = new ArrayList<>();
                 if (model != null) {
                     releaseDependent.addAll(List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
@@ -500,11 +573,15 @@ public final class Harvester implements AutoCloseable {
                 // fragt die Freigabe darum selbst.
                 EmbeddingProcessor embeddings = model != null ? embedding : null;
                 Predicate<String> statementsFollow = statementsReleased;
-                Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
-                        || statementsFollow != null && statementsFollow.test(sourceId);
+                AiRelease release = this.aiRelease;
+                Predicate<String> released = embeddings == null && statementsFollow == null ? release::sourceReleased
+                        : sourceId -> embeddings != null && embeddings.covers(sourceId)
+                                || statementsFollow != null && statementsFollow.test(sourceId);
                 ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                         cache::snapshots, released, releaseDependent);
                 opened.add(recomputation);
+                // ADR 0028: Der Abgleich beim Start fragt je Seite auch die Liste freigegebener Seiten.
+                recomputation.pageReleases(pageReleases::contains);
                 // Was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach, gleicht der Start
                 // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten; mit Satzanalyse auch nur mit
                 // Chat-Modell.
@@ -513,14 +590,18 @@ public final class Harvester implements AutoCloseable {
                         () -> embeddings != null && embeddings.available()
                                 || statementsOnStart != null && statementsOnStart.available(),
                         PassagePayload.REASON_NOT_APPROVED);
+                // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten,
+                // deren Quelle nicht als Ganzes freigegeben ist, sonst ändert sich nichts.
+                opened.add(pageReleases.subscribe(change -> recomputation.recomputePages(
+                        release.outsideReleasedSources(change.added()),
+                        release.outsideReleasedSources(change.removed()), cache::find)));
                 this.releaseRecomputation = recomputation;
-            } else {
-                this.releaseRecomputation = null;
             }
             // Ergebnisse lokaler Prozessoren einer älteren Version (etwa nach geänderter Akronymerkennung) rechnet der
             // Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten.
             VersionRecomputation versions = new VersionRecomputation(enrichments, cache::snapshots);
             opened.add(versions);
+            start.step("Anreicherung");
             versions.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList());
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
@@ -529,9 +610,20 @@ public final class Harvester implements AutoCloseable {
                     new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()), textIndex);
 
             this.access = new AccessGuard(builder.accessPolicy);
+            // ADR 0027: Bestand je Space; jeder Commit des Cache meldet ihm seine Änderungen. Schließt vor dem Cache.
+            LuceneHoldingsCatalog holdingsCatalog = new LuceneHoldingsCatalog(cache);
+            this.holdings = new Holdings(catalog, holdingsCatalog, access, builder.maxTreeNodes);
+            opened.add(holdings);
+            cache.changes(holdings);
+            // ADR 0028: Eintragen aus der Auswahl, gebündelte Liste und Entfernen für die Oberfläche.
+            this.pageReleaseService = new PageReleaseService(pageReleases, holdings, access, cache::findHeader,
+                    key -> enrichmentStore.find(key).stream().anyMatch(found -> "embedding".equals(found.processorId())
+                            && found.status() == Enrichment.Status.OK), clock);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
             this.snapshots = new SourceSnapshots(catalog);
+            // ADR 0027: jeder Inhaltsabruf bei der Quelle (Planer, Lesen, Abgleich, Export) meldet dem Bestand „lädt“.
+            snapshots.loads(holdings);
             this.sources = new SourceQueries(catalog);
             this.spaceKeys = new SpaceKeyCheck(sources);
             this.freshness = new PageFreshness(sources, snapshots, clock);
@@ -539,7 +631,11 @@ public final class Harvester implements AutoCloseable {
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting), enrichments, texts),
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
-            this.passages = new PassageQueries(pages, enrichments, projector);
+            // ADR 0026, AP9a: Lesetexte der Abschnitte von Anhängen, sobald die Analysen je Dokument stehen (unten).
+            AtomicReference<DocumentEnrichments> sectionTexts = new AtomicReference<>();
+            DocumentTexts documentTexts = (document, section, inputSha256, extraction) -> sectionTexts.get() == null
+                    ? Optional.empty() : sectionTexts.get().sectionText(document, section, inputSha256, extraction);
+            this.passages = new PassageQueries(pages, enrichments, projector, documentTexts);
             this.documentNavigation = new NavigationQueries(pages, enrichments, projector, navigationBuilder);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
@@ -557,7 +653,7 @@ public final class Harvester implements AutoCloseable {
             this.search = new PageSearch(catalog, index, access);
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
-                    termProcessor.version());
+                    termProcessor.version(), documentTexts);
             FileResolutionCache resolutionCache = new FileResolutionCache(builder.dataDirectory.resolve("term-relations"));
             this.termRelations = new TermRelations(catalog,
                     new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
@@ -590,6 +686,7 @@ public final class Harvester implements AutoCloseable {
                     () -> embeddingForTerms == null ? Optional.empty() : embeddingForTerms.currentProvider(),
                     judge::mayProcess, termProcessor.version()), access, termRelations, judge, synonymCache, jobs,
                     () -> (this.settings != null ? this.settings.terms() : startTerms).synonyms(), clock);
+            synonymDiscovery.pageReleases(pageReleases::contains);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -626,12 +723,14 @@ public final class Harvester implements AutoCloseable {
             SwappableReranker swappable = null;
             if (reranker == SearchReranker.NONE && liveAi) {
                 // ADR 0015: Modell und Option „umordnen“ wechseln zur Laufzeit; ohne beides ordnet nichts um.
-                swappable = new SwappableReranker(modelReranker(settings, catalog, trustBundles, builder.userAgent));
+                swappable = new SwappableReranker(modelReranker(settings, catalog, trustBundles, builder.userAgent,
+                        pageReleases::contains));
                 reranker = swappable;
             } else if (reranker == SearchReranker.NONE && builder.ai.reranking()) {
                 // #181: Cross-Encoder des Dienstes, Texte nur aus freigegebenen Quellen.
                 reranker = new ModelReranker(builder.ai.rerankModel(), RemoteAi.of(builder.ai, catalog, trustBundles,
-                        builder.userAgent).reranker(), builder.ai::mayProcessExternally);
+                        builder.userAgent).reranker(), builder.ai::mayProcessExternally)
+                        .withPageReleases(pageReleases::contains);
             }
             // #154: mit Cross-Encoder lädt die Schlagwortsuche die vielversprechendsten Funde zuerst; mit
             // Konfiguration folgt die Bewertung dem jeweils eingestellten Rerank-Modell.
@@ -672,8 +771,12 @@ public final class Harvester implements AutoCloseable {
             SemanticPreparation preparation = embedding == null || prefetch == null ? null
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
+            // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
+            EnrichmentSettings searchEnrichment = builder.enrichment;
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal, reranker, textIndex, preparation, runLog);
+                    renewal, reranker, textIndex, preparation, runLog,
+                    () -> (this.settings != null ? this.settings.enrichment() : searchEnrichment).documents(),
+                    documentTexts);
             // #182: Fakten aus den Anreicherungen mit den manuellen und geprüften (außerhalb des Caches), Rechte je
             // Seite an ihrem Space im Cache.
             FileFactEditStore factEditStore = new FileFactEditStore(builder.dataDirectory.resolve("facts"));
@@ -689,14 +792,50 @@ public final class Harvester implements AutoCloseable {
                     HitScorer.of(excerpts), runLog);
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
+            start.step("Suche");
             this.liveReranker = swappable;
             LuceneSyncBaselineStore baselineStore = new LuceneSyncBaselineStore(cache);
+            // ADR 0030: Aufbewahrung des Änderungsprotokolls beim Start und nach jedem Abgleich, nie nach Zeitgeber.
+            Clock pruneClock = clock;
+            Runnable pruneChangeLog = () -> {
+                HarvesterConfiguration current = this.settings;
+                (current != null ? current.changeLog() : ChangeLogSettings.DEFAULT).cutoff(pruneClock.instant())
+                        .ifPresent(cutoff -> {
+                            try {
+                                cache.pruneChangeLog(cutoff);
+                            } catch (RuntimeException e) {
+                                LOG.log(System.Logger.Level.WARNING, "Änderungsprotokoll nicht aufgeräumt ({0})",
+                                        e.getClass().getName());
+                            }
+                        });
+            };
+            // Beim Start im Hintergrund: Das Aufräumen wartet auf den Schreiblauf des Cache und hielte sonst den Start auf.
+            Thread.ofVirtual().name("change-log-prune").start(pruneChangeLog);
+            // ADR 0026, AP9a: Analysen je Anhang und enthaltener Datei als Auftrag der Anreicherung wie bei Seiten;
+            // der Lauf nach dem Abgleich holt den Bestand nach.
+            EnrichmentSettings startEnrichment = builder.enrichment;
+            DocumentEnrichments documentEnrichments = new DocumentEnrichments(enrichments, jobs,
+                    () -> this.settings != null ? this.settings.enrichment() : startEnrichment);
+            sectionTexts.set(documentEnrichments);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
-                    List.of(acronymRelationRule::refresh));
-            this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock, List.of(afterSync),
-                    retentionRule(builder));
+                    List.of(acronymRelationRule::refresh), documentEnrichments);
+            this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock,
+                    List.of(afterSync, run -> pruneChangeLog.run()), retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
+            // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
+            // ADR 0030, CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
+            cache.contentDiffer(new TextContentDiffer(pageTexts));
+            opened.add(ManualSyncRounds.start(jobs, cache, clock));
+            // ADR 0030, Abschnitt 5: Zusammenfassen nur auf Wunsch, an das Modell nur Seiten mit KI-Freigabe.
+            AiRelease summaryRelease = this.aiRelease;
+            this.changeLog = new ChangeLog(cache, access, cache::findHeader,
+                    () -> catalog.all().stream().map(HarvestSource::id).toList(),
+                    new ChangeLog.Summaries(jobs, new ChatUpdateSummaryModel(
+                            () -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles, builder.userAgent),
+                            summaryRelease::mayProcess, clock));
+            opened.add(changeLog);
+            start.step("Änderungsprotokoll");
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
                 this.syncBeforeSearch = new SyncBeforeSearch(syncs, () -> this.settings, OWNER, clock);
@@ -717,7 +856,7 @@ public final class Harvester implements AutoCloseable {
                             sha256 -> assets().storedDescription(sha256))),
                     new JsonPackageConverter(), new MarkdownConverter(), new MarkdownPackageConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
-            this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
+            this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, holdingsCatalog, clock);
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
             // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
@@ -732,8 +871,11 @@ public final class Harvester implements AutoCloseable {
             assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(
                     builder.extractionLimits.parallel(), ExtractionStore.DEFAULT_SECTION_CHARS),
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
-            // ADR 0026, AP9a: Analysen je Anhang und enthaltener Datei als Auftrag der Anreicherung wie bei Seiten.
-            assets.indexedDocuments(new DocumentEnrichments(enrichments, jobs, () -> true));
+            assets.indexedDocuments(documentEnrichments);
+            documentEnrichments.assets(assets);
+            // ADR 0028: Bilder einer Seite auf der Liste freigegebener Seiten gehen auch aus einer gesperrten Quelle an
+            // das Vision-Modell.
+            assets.pageReleases(pageReleases::contains);
             // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen. Die
             // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
             EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);
@@ -751,6 +893,17 @@ public final class Harvester implements AutoCloseable {
             assets.durations(durations);
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
+            // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
+            // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
+            PageImageAnalysis pageImages = this.imageAnalysis;
+            AiRelease withdrawn = this.aiRelease;
+            ChangeLog summaries = this.changeLog;
+            releaseRecomputation.withdrawal(pages -> {
+                pageImages.withdraw(pages, withdrawn::mayProcess);
+                documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
+                // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
+                summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
+            });
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.
             KnowledgeGraphStore graphStore = new FileKnowledgeGraphStore(
@@ -790,6 +943,22 @@ public final class Harvester implements AutoCloseable {
             this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
                     key -> cache.findHeader(key).map(header -> header.metadata().parentPageId()), clock, OWNER);
             this.knowledgeGraphExportDirectory = builder.exportDirectory().resolve("knowledge-graph");
+            // Angelo 16.11.2026: Confluence-Metadaten und Analytics als eigene Exporte aus der Quelle, je Wurzel
+            // der Auswahl ein Auftrag; die Seiten kommen aus dem Bestand, die Daten per REST-Abfrage.
+            Holdings selectedPages = this.holdings;
+            this.sourceQueryExports = new SourceQueryExports(jobs, catalog, new SourceQueryExports.Scopes() {
+                @Override
+                public List<Selection.Root> outputs(AccessContext who, Selection selection) {
+                    return selectedPages.outputs(who, selection);
+                }
+
+                @Override
+                public List<String> pages(AccessContext who, Selection.Root root) {
+                    return selectedPages.resolve(who, Selection.of(root)).pages().pagesOf(root.sourceId()).stream()
+                            .sorted(java.util.Comparator.comparingInt(String::length).thenComparing(
+                                    java.util.Comparator.naturalOrder())).toList();
+                }
+            }, access, clock, OWNER);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
@@ -798,7 +967,20 @@ public final class Harvester implements AutoCloseable {
                     // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
                     exportSettings(manager));
             images.connections(connections);
-            images.imported(importedAssets, new ReadingViewStore(enrichmentStore));
+            ReadingViewStore readingViews = new ReadingViewStore(enrichmentStore);
+            images.imported(importedAssets, readingViews);
+            // Ihr Stand gehört zum Fingerabdruck einer Ausgabe aus dem Bestand (ADR 0029).
+            exports.imported(importedAssets, readingViews);
+            // ADR 0029, Schritt 7: Bilder und Anhänge einer Auswahl ohne Export beschaffen, für die Aufträge dieser App.
+            Holdings selected = this.holdings;
+            AccessContext app = this.caller;
+            images.selections((owner, root) -> OWNER.equals(owner)
+                    ? Optional.of(new SelectionDataset(root.sourceId(), root.spaceKey(), root.pageId(),
+                    selected.storedPages(app, Selection.of(root)).stream()
+                            .map(page -> cache.findHeader(page.key())).flatMap(Optional::stream).toList(),
+                    cache::find))
+                    : Optional.empty());
+            this.assetCollection = images;
             // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
@@ -807,7 +989,8 @@ public final class Harvester implements AutoCloseable {
             // kommt aus dem Cache.
             this.rereads = new DocumentRereads(jobs, assets, assetStore,
                     sourceId -> catalog.config(sourceId).isPresent(),
-                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()), clock);
+                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
+                    new FileReadStates(builder.assetDirectory()), clock);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads);
             // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
             // mit derselben Lese- und Exportprüfung wie beim Start.
@@ -819,6 +1002,7 @@ public final class Harvester implements AutoCloseable {
             // „Daten bereinigen“ und „Quelle entfernen“ leeren dieselben Ablagen; die Füllschlange zuerst.
             SourceDataPurge purge = new SourceDataPurge(jobs, SourceDataStores.builder()
                     .fillQueue(fillQueue)
+                    .pageReleases(pageReleases)
                     .pageCache(cache)
                     .fullText(textIndex)
                     .enrichments(enrichmentStore)
@@ -832,6 +1016,7 @@ public final class Harvester implements AutoCloseable {
                     .build(), sourceId -> catalog.config(sourceId).isPresent(),
                     sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
             this.sourceManagement = new SourceManagement(catalog, jobs, purge);
+            start.step("Exporte, Bilder und Aussagen");
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);
             this.inventories = Reconciliation.inventories(syncs, OWNER, clock, inventoryLog);
@@ -849,6 +1034,8 @@ public final class Harvester implements AutoCloseable {
                 opened.add(fill);
                 this.backgroundFill = fill;
                 filling.set(fill);
+                // ADR 0027: jeder Commit des Seiten-Cache weckt die Suche nach Lücken, nie in Abständen.
+                cache.changes(holdings.andThen(fill::wake));
             } else {
                 this.backgroundFill = null;
             }
@@ -862,7 +1049,12 @@ public final class Harvester implements AutoCloseable {
             if (backgroundFill != null) {
                 backgroundFill.start();
             }
+            // ADR 0026, Punkt 11 (AP5c): nach einem Wechsel der Extraktor-Version oder geänderten Grenzen liest ein
+            // eigener Auftrag die abgelegten Dokumente neu, ohne den Start aufzuhalten.
+            rereads.afterChange(catalog.configs().stream().map(SourceSettingsConfig::id).toList(), OWNER);
+            start.step("Zeitpläne und Nachholen");
             this.resources = List.copyOf(opened);
+            start.done();
         } catch (RuntimeException e) {
             closeAll(opened, e);
             throw e;
@@ -906,15 +1098,20 @@ public final class Harvester implements AutoCloseable {
         return Optional.of(provider);
     }
 
-    /** Der Cross-Encoder des Dienstes (#181), wenn die Konfiguration umordnen lässt; sonst keiner. */
+    /**
+     * Der Cross-Encoder des Dienstes (#181), wenn die Konfiguration umordnen lässt; sonst keiner.
+     *
+     * @param pageReleased ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028)
+     */
     private static SearchReranker modelReranker(HarvesterConfiguration configuration, ConfiguredSourceCatalog catalog,
-                                                TrustBundles trustBundles, String userAgent) {
+                                                TrustBundles trustBundles, String userAgent,
+                                                Predicate<PageKey> pageReleased) {
         if (!configuration.reranking()) {
             return SearchReranker.NONE;
         }
         AiServiceSettings ai = configuration.ai();
         return new ModelReranker(ai.rerankModel(), RemoteAi.of(ai, catalog, trustBundles, userAgent).reranker(),
-                ai::mayProcessExternally);
+                ai::mayProcessExternally).withPageReleases(pageReleased);
     }
 
     /**
@@ -944,7 +1141,7 @@ public final class Harvester implements AutoCloseable {
         SearchReranker reranker = null;
         if (liveReranker != null && change.rerankerChanged()) {
             try {
-                reranker = modelReranker(next, catalog, trustBundles, userAgent);
+                reranker = modelReranker(next, catalog, trustBundles, userAgent, aiRelease.pages()::contains);
             } catch (RuntimeException e) {
                 throw new ConfigurationRejectedException("ai." + AiServiceSettings.RERANK_MODEL,
                         "Das Rerank-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
@@ -952,8 +1149,7 @@ public final class Harvester implements AutoCloseable {
         }
         EmbeddingGeneration nextModel = model;
         SearchReranker nextReranker = reranker;
-        ConfigurationListener.Preparation releases = releaseRecomputation == null
-                ? ConfigurationListener.Preparation.NOTHING : releaseRecomputation.prepare(change);
+        ConfigurationListener.Preparation releases = releaseRecomputation.prepare(change);
         return () -> {
             settings = next;
             if (network != null) {
@@ -1103,7 +1299,7 @@ public final class Harvester implements AutoCloseable {
     private void catchUpOnStart() {
         HarvesterConfiguration configuration = settings;
         try {
-            List<JobStatus> started = syncs.catchUpAll(OWNER, sourceId -> {
+            List<JobStatus> started = syncs.catchUpAll(OWNER, ChangeTrigger.STARTUP, sourceId -> {
                 SyncSettings rules = configuration.syncFor(sourceId);
                 return rules.catchUpOnStart() ? rules.mode() : null;
             });
@@ -1185,6 +1381,29 @@ public final class Harvester implements AutoCloseable {
     /** Seiten, Baum und Einzelseiten aus dem Cache, mit {@code refresh} gegen die Quelle geprüft. */
     public PageQueries pages() {
         return pages;
+    }
+
+    /** Bestand je Space mit Zählern je Teilbaum und Meldungen bei jeder Änderung (ADR 0027). */
+    /** Bilder und Anhänge beschaffen, für Exporte und für eine Auswahl ohne Export (ADR 0029, Schritt 7). */
+    public ExportAssetCollection assetCollection() {
+        return assetCollection;
+    }
+
+    /** Die Liste freigegebener Seiten für die Oberfläche (ADR 0028): Eintragen, Liste, Entfernen. */
+    public PageReleaseService pageReleaseService() {
+        return pageReleaseService;
+    }
+
+    public Holdings holdings() {
+        return holdings;
+    }
+
+    /**
+     * Die Freigabeprüfung für den KI-Dienst mit der Liste der freigegebenen Seiten (ADR 0028): Quelle in
+     * {@code ai.external-processing-sources} oder Seite auf der Liste.
+     */
+    public AiRelease aiRelease() {
+        return aiRelease;
     }
 
     /**
@@ -1311,6 +1530,19 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
+     * Meldet einen Empfänger für den Stand der Beschaffung an (ADR 0027), statt {@link #acquisitionStatus()} in
+     * Abständen zu lesen: nach jeder Änderung von Planer und Hintergrundfüllung der jüngste Stand, gebündelt, auf dem
+     * Zustell-Thread des Core. Erst anmelden, dann {@link #acquisitionStatus()} lesen.
+     */
+    public Subscription subscribeAcquisition(Consumer<AcquisitionStatus> listener) {
+        Objects.requireNonNull(listener, "listener");
+        if (backgroundFill != null) {
+            return backgroundFill.subscribe(listener);
+        }
+        return acquisition.subscribe(status -> listener.accept(BackgroundFill.withoutFill(acquisition)));
+    }
+
+    /**
      * Progressive Suche (ADR 0017): die ursprüngliche Anfrage sofort, dann Varianten in Wellen, bewertet gegen die
      * ursprüngliche Anfrage, bis das Qualitätsziel des {@link SearchProfile} erreicht oder das Budget aufgebraucht ist.
      */
@@ -1411,6 +1643,11 @@ public final class Harvester implements AutoCloseable {
      * JSON-LD-Export des Knowledge Graph als Auftrag (#499 Abschnitt G, ADR 0024); liest nur vorhandene Analysen und
      * stößt nie eine an.
      */
+    /** Confluence-Metadaten und Analytics als eigene Exporte aus der Quelle (Angelo 16.11.2026). */
+    public SourceQueryExports sourceQueryExports() {
+        return sourceQueryExports;
+    }
+
     public KnowledgeGraphExportUseCase knowledgeGraphExport() {
         return knowledgeGraphExport;
     }
@@ -1432,6 +1669,14 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
+     * Die Proxy-Route je Ziel aller Quellen; die Oberfläche zeigt {@link ProxyRoutes#pacState()} („Proxy-Skript seit …
+     * nicht erneuert“) und hört mit {@link ProxyRoutes#onPacChange} darauf.
+     */
+    public ProxyRoutes proxyRoutes() {
+        return catalog.routes();
+    }
+
+    /**
      * Die Modelle des KI-Dienstes für „Modelle laden“, auch mit noch nicht gespeicherten Einstellungen aus der
      * Oberfläche. Fragt {@code GET {base-url}/models} über dieselbe Proxy-Route wie die Quellen ab (PAC, Proxy,
      * fail-closed).
@@ -1441,6 +1686,24 @@ public final class Harvester implements AutoCloseable {
      */
     public List<AiModel> aiModels(AiServiceSettings settings) {
         return RemoteAi.of(settings, catalog, trustBundles, userAgent).models();
+    }
+
+    /**
+     * Der Chat-Port des KI-Dienstes der wirksamen Konfiguration für den Chat der App (ADR 0012: der Chat selbst
+     * bleibt außerhalb des Core): Route, TLS, Token und Frist wie {@link #aiModels}; {@code null} ohne Dienst oder
+     * Chat-Modell. Je Aufruf frisch gebaut, damit geänderte Einstellungen ohne Neustart gelten (ADR 0015).
+     */
+    public AiChat aiChat() {
+        AiServiceSettings current = currentAi.get();
+        if (current == null || !current.chat()) {
+            return null;
+        }
+        try {
+            return RemoteAi.of(current, catalog, trustBundles, userAgent).chat();
+        } catch (IllegalArgumentException notConfigured) {
+            // Etwa ein nicht eingerichtetes trust-bundle: dann kein Chat, wie ohne Modell.
+            return null;
+        }
     }
 
     /**
@@ -1642,6 +1905,21 @@ public final class Harvester implements AutoCloseable {
         return syncs.catchUp(sourceId, spaceKey, OWNER, since, mode);
     }
 
+    /** Änderungsprotokoll und Updates je Quelle (ADR 0030), mit den Rechten des Aufrufers je Seite. */
+    public ChangeLog changeLog() {
+        return changeLog;
+    }
+
+    /** Die Zeilen des Änderungsprotokolls einer Quelle (ADR 0030) ohne Rechteprüfung, für Tests. */
+    List<ChangeEntry> changeEntries(String sourceId) {
+        return pageCache.changeEntries(sourceId);
+    }
+
+    /** Die Update-Marken einer Quelle (ADR 0030), für Tests. */
+    List<UpdateMark> updateMarks(String sourceId) {
+        return pageCache.marks(sourceId);
+    }
+
     /**
      * Holt für alle Spaces mit bestätigter Generation die verpassten Änderungen nach, etwa beim Start (ADR 0014); nur
      * Spaces, für die die Richtlinie {@code SYNC} freigibt. Wartet nicht.
@@ -1654,7 +1932,8 @@ public final class Harvester implements AutoCloseable {
             if (access.permits(caller, ResourceScope.space(space.sourceId(), space.spaceKey()), AccessKind.SYNC)
                     && catalog.find(space.sourceId()).isPresent()) {
                 try {
-                    started.add(syncs.catchUp(space.sourceId(), space.spaceKey(), OWNER, null));
+                    started.add(syncs.catchUp(space.sourceId(), space.spaceKey(), OWNER, null, SyncMode.SYNC_CACHE,
+                            ChangeTrigger.STARTUP));
                 } catch (com.aresstack.spaceharvester.application.sync.SyncAlreadyRunningException e) {
                     // läuft schon
                 } catch (com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException e) {
@@ -1872,24 +2151,14 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
-     * Wartet, bis der Auftrag einen Endzustand erreicht hat.
+     * Wartet, bis der Auftrag einen Endzustand erreicht hat, ohne Abfrage im Takt (ADR 0027, {@link Jobs#await}).
      *
      * @return der Endzustand ({@link JobState#COMPLETED}, {@link JobState#FAILED} oder {@link JobState#CANCELLED})
      * @throws TimeoutException     wenn der Auftrag nach {@code timeout} noch läuft; er läuft weiter
      * @throws InterruptedException wenn der wartende Thread unterbrochen wird; der Auftrag läuft weiter
      */
     public JobStatus await(String jobId, Duration timeout) throws TimeoutException, InterruptedException {
-        Instant deadline = Instant.now().plus(timeout);
-        while (true) {
-            JobStatus status = status(jobId);
-            if (status.state().terminal()) {
-                return status;
-            }
-            if (Instant.now().isAfter(deadline)) {
-                throw new TimeoutException("Auftrag " + jobId + " läuft nach " + timeout + " noch");
-            }
-            Thread.sleep(POLL);
-        }
+        return jobs.await(jobId, OWNER, timeout);
     }
 
     /** Beendet Aufträge, schließt die Indizes und die Verbindungen der Quellen. */
@@ -1963,6 +2232,7 @@ public final class Harvester implements AutoCloseable {
         private ImageDescriber imageDescriber;
         private StatementSettings statements = StatementSettings.DEFAULT;
         private TermSettings terms = TermSettings.DEFAULT;
+        private EnrichmentSettings enrichment = EnrichmentSettings.DEFAULT;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 0;
         private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
@@ -2226,6 +2496,15 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder terms(TermSettings terms) {
             this.terms = Objects.requireNonNull(terms, "terms");
+            return this;
+        }
+
+        /**
+         * Analysen je Anhang und enthaltener Datei (ADR 0026, AP9a, {@code enrichment.documents.*}) für eine feste
+         * Konfiguration; mit {@link #configuration} folgen sie der wirksamen Konfiguration.
+         */
+        public Builder enrichment(EnrichmentSettings enrichment) {
+            this.enrichment = Objects.requireNonNull(enrichment, "enrichment");
             return this;
         }
 

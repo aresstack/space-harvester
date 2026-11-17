@@ -47,19 +47,34 @@ public final class StatementProcessor implements EnrichmentProcessor {
     private final Supplier<StatementSettings> settings;
     private final Supplier<StatementChat> chat;
     private final Predicate<String> mayProcessExternally;
+    private final Predicate<PageKey> pageReleased;
+
+    /** Nur nach der Freigabe der Quelle, ohne Liste freigegebener Seiten. */
+    public StatementProcessor(SentenceSegmenter segmenter, Supplier<StatementSettings> settings,
+                              Supplier<StatementChat> chat, Predicate<String> mayProcessExternally) {
+        this(segmenter, settings, chat, mayProcessExternally, key -> false);
+    }
 
     /**
      * @param segmenter            Satzgrenzen, produktiv {@code OpenNlpSentenceSegmenter.german(…)} (ADR 0020)
      * @param settings             Schalter und Grenzen, je Seite gelesen
      * @param chat                 das eingestellte Chat-Modell oder {@code null}, je Seite gelesen
      * @param mayProcessExternally ob Inhalte der Quelle an den KI-Dienst gehen dürfen; je Seite gefragt
+     * @param pageReleased         ob die Seite auf der Liste freigegebener Seiten steht (ADR 0028); je Seite gefragt
      */
     public StatementProcessor(SentenceSegmenter segmenter, Supplier<StatementSettings> settings,
-                              Supplier<StatementChat> chat, Predicate<String> mayProcessExternally) {
+                              Supplier<StatementChat> chat, Predicate<String> mayProcessExternally,
+                              Predicate<PageKey> pageReleased) {
         this.segmenter = Objects.requireNonNull(segmenter, "segmenter");
         this.settings = Objects.requireNonNull(settings, "settings");
         this.chat = Objects.requireNonNull(chat, "chat");
         this.mayProcessExternally = Objects.requireNonNull(mayProcessExternally, "mayProcessExternally");
+        this.pageReleased = Objects.requireNonNull(pageReleased, "pageReleased");
+    }
+
+    /** Quelle freigegeben oder Seite auf der Liste freigegebener Seiten (ADR 0028). */
+    private boolean released(PageKey key) {
+        return mayProcessExternally.test(key.sourceId()) || pageReleased.test(key);
     }
 
     @Override
@@ -88,7 +103,7 @@ public final class StatementProcessor implements EnrichmentProcessor {
 
     @Override
     public boolean appliesTo(PageKey key) {
-        return available() && mayProcessExternally.test(key.sourceId());
+        return available() && released(key);
     }
 
     @Override
@@ -108,7 +123,7 @@ public final class StatementProcessor implements EnrichmentProcessor {
         StatementSettings current = settings();
         StatementChat model = chat.get();
         if (!current.enabled() || ChatStatementExtractor.model(model) == null
-                || !mayProcessExternally.test(key.sourceId())) {
+                || !released(key)) {
             throw new ProcessingNotAllowedException("statements ist aus, ohne Chat-Modell oder für diese Quelle "
                     + "nicht freigegeben");
         }

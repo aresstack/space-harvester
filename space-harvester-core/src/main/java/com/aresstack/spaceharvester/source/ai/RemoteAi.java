@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysis;
 import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysisCache;
 import com.aresstack.enterpriseai.astu.acropolis.image.SourceImageAnalysisUseCase;
 import com.aresstack.enterpriseai.astu.acropolis.navigation.ChatSectionLabeler;
+import com.aresstack.enterpriseai.astu.chat.ChatFinishReason;
 import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatOptions;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
@@ -26,6 +27,8 @@ import com.aresstack.enterpriseai.model.kipitz.KipitzModelCatalogAdapter;
 import com.aresstack.enterpriseai.model.kipitz.KipitzModelCatalogConfig;
 import com.aresstack.enterpriseai.model.kipitz.KipitzRerankAdapter;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.ai.AiChatException;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
@@ -151,6 +154,72 @@ public final class RemoteAi {
         };
     }
 
+    /**
+     * Das Chat-Modell als Gesprächspartner der App ({@code POST /chat/completions}, streamend) über den unveränderten
+     * {@code OpenAiCompatibleChatAdapter}: derselbe Port, den der Enterprise AI Client für seinen Chat nutzt, hinter
+     * der eigenen SPI {@link AiChat}, damit die Kopie aus enterprise-ai-sources hier im Quellenadapter bleibt. Der
+     * Chat selbst gehört nicht in den Core (ADR 0012); hier gibt es nur die Verbindung mit Route, TLS, Token und
+     * Fristen wie bei allen anderen Aufrufen. Was an den Dienst geht, entscheidet der Aufrufer (ADR 0028).
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public AiChat chat() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        ChatCompletionPort adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        return (request, listener) -> {
+            List<ChatMessage> messages = new ArrayList<>();
+            for (AiChat.Message message : request.messages()) {
+                messages.add(switch (message.role()) {
+                    case SYSTEM -> ChatMessage.system(message.text());
+                    case USER -> ChatMessage.user(message.text());
+                    case ASSISTANT -> ChatMessage.assistant(message.text());
+                });
+            }
+            ChatOptions.Builder options = ChatOptions.builder().model(request.model());
+            if (request.reasoningEffort() != null) {
+                options.reasoningEffort(request.reasoningEffort());
+            }
+            StringBuilder received = new StringBuilder();
+            ChatTask task = adapter.stream(new ChatRequest(messages, options.build()), new ChatStreamListener() {
+                @Override
+                public void onStart() {
+                }
+
+                @Override
+                public void onDelta(String text) {
+                    synchronized (received) {
+                        received.append(text);
+                    }
+                    listener.delta(text);
+                }
+
+                @Override
+                public void onComplete(ChatResponse response) {
+                    String full;
+                    synchronized (received) {
+                        full = received.length() > 0 || response == null || response.content() == null
+                                ? received.toString() : response.content();
+                    }
+                    listener.completed(full);
+                }
+
+                @Override
+                public void onError(ChatCompletionException error) {
+                    listener.failed(new AiChatException(AiChatException.Kind.valueOf(error.kind().name()),
+                            error.statusCode(), error.getMessage(), error));
+                }
+
+                @Override
+                public void onCancelled() {
+                    listener.cancelled();
+                }
+            });
+            return task::cancel;
+        };
+    }
+
     /** Obergrenze der Antwort des Chat-Modells für Suchvarianten in Tokens. */
     static final int MAX_VARIANT_TOKENS = 1024;
 
@@ -171,16 +240,15 @@ public final class RemoteAi {
         ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_VARIANT_TOKENS).build();
         return (instructions, question) -> {
             try {
-                return adapter.complete(new ChatRequest(
-                        List.of(ChatMessage.system(instructions), ChatMessage.user(question)), options)).content();
+                return complete(adapter.complete(new ChatRequest(
+                        List.of(ChatMessage.system(instructions), ChatMessage.user(question)), options)),
+                        MAX_VARIANT_TOKENS, false);
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
             }
         };
     }
 
-    /** Obergrenze der Antwort des Chat-Modells für Akronym-Ausschreibungen in Tokens (#122). */
-    static final int MAX_EXPANSION_TOKENS = 4096;
     /** Eigene Frist je Anfrage der Akronymauflösung, unabhängig von {@code ai.timeout} (#122). */
     public static final Duration EXPANSION_TIMEOUT = Duration.ofSeconds(90);
 
@@ -198,8 +266,11 @@ public final class RemoteAi {
 
     /**
      * Dasselbe Chat-Modell für die Bedeutungsprüfung der Synonymerkennung (#336): Anweisung und JSON-Eingabe hinein,
-     * der Text der Antwort heraus; geprüft wird die Antwort in {@code SynonymDiscovery}. Frist und Obergrenze wie
-     * {@link #acronymExpansions()}.
+     * der Text der Antwort heraus; geprüft wird die Antwort in {@code SynonymDiscovery}. Frist wie
+     * {@link #acronymExpansions()}; das Ausgabelimit ist {@code ai.chat-max-tokens} (Standard 8192) und geht als
+     * {@code max_tokens} mit. Endet die Antwort an diesem Limit ({@code finish_reason = length}), ist ihr JSON
+     * abgeschnitten: Das Modell meldet {@code INVALID_RESPONSE} mit dem Hinweis auf die Einstellung, statt den
+     * Rest als vollständige Antwort weiterzugeben.
      *
      * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
      */
@@ -209,11 +280,12 @@ public final class RemoteAi {
         }
         OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
                 (int) EXPANSION_TIMEOUT.toMillis()));
-        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_EXPANSION_TOKENS).build();
+        int maxTokens = settings.chatMaxTokens();
+        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens).build();
         return (instructions, input) -> {
             try {
-                return adapter.complete(new ChatRequest(
-                        List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)).content();
+                return complete(adapter.complete(new ChatRequest(
+                        List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)), maxTokens, true);
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
             }
@@ -495,6 +567,27 @@ public final class RemoteAi {
     }
 
     /** Nur Art und Status: Die Meldung des Adapters kann gekürzte Serverantworten enthalten, die die Frage zitieren. */
+    /** Meldung einer am Ausgabelimit abgeschnittenen Antwort; der Text der Antwort steht nie darin. */
+    static final String TRUNCATED = "Chat-Dienst: Antwort am Ausgabelimit abgeschnitten (finish_reason=length, "
+            + "max_tokens=";
+    static final String TRUNCATED_ADVICE = "; Ausgabelimit unter Einstellungen › KI erhöhen ("
+            + AiServiceSettings.PREFIX + AiServiceSettings.CHAT_MAX_TOKENS + ")";
+
+    /**
+     * Der Text einer vollständigen Antwort. Hat der Dienst sie am Ausgabelimit beendet, ist sie unvollständig und
+     * kein Ergebnis: ein abgeschnittenes JSON sähe sonst wie eine fertige Antwort aus.
+     *
+     * @param configurable ob das Limit die Einstellung {@code ai.chat-max-tokens} ist (dann nennt die Meldung sie)
+     * @throws AiServiceException {@code INVALID_RESPONSE} bei {@code finish_reason = length}
+     */
+    static String complete(ChatResponse response, int maxTokens, boolean configurable) {
+        if (response.finishReason() == ChatFinishReason.LENGTH) {
+            throw new AiServiceException(AiServiceException.Reason.INVALID_RESPONSE, TRUNCATED + maxTokens + ")"
+                    + (configurable ? TRUNCATED_ADVICE : ""));
+        }
+        return response.content();
+    }
+
     private static AiServiceException chatFailure(ChatCompletionException e) {
         AiServiceException.Reason reason = switch (e.kind()) {
             case AUTHENTICATION -> AiServiceException.Reason.UNAUTHORIZED;

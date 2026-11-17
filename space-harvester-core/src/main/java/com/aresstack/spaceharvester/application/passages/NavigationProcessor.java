@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.passages;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
@@ -36,6 +37,7 @@ public final class NavigationProcessor implements EnrichmentProcessor {
     private final DocumentNavigationBuilder builder;
     private final EmbeddingProcessor embedding;
     private final Function<PageKey, List<Enrichment>> stored;
+    private final Function<DocumentKey, List<Enrichment>> documents;
     private final NavigationLabelModel labels;
 
     /**
@@ -53,9 +55,20 @@ public final class NavigationProcessor implements EnrichmentProcessor {
      */
     public NavigationProcessor(DocumentNavigationBuilder builder, EmbeddingProcessor embedding,
                                Function<PageKey, List<Enrichment>> stored, NavigationLabelModel labels) {
+        this(builder, embedding, stored, null, labels);
+    }
+
+    /**
+     * @param documents die gespeicherten Anreicherungen eines Anhangs oder einer enthaltenen Datei, z. B.
+     *                  {@code EnrichmentStore::find}, oder {@code null}: dann nur Seiten (ADR 0026, AP9a)
+     */
+    public NavigationProcessor(DocumentNavigationBuilder builder, EmbeddingProcessor embedding,
+                               Function<PageKey, List<Enrichment>> stored,
+                               Function<DocumentKey, List<Enrichment>> documents, NavigationLabelModel labels) {
         this.builder = Objects.requireNonNull(builder, "builder");
         this.embedding = embedding;
         this.stored = Objects.requireNonNull(stored, "stored");
+        this.documents = documents;
         this.labels = labels;
     }
 
@@ -87,7 +100,7 @@ public final class NavigationProcessor implements EnrichmentProcessor {
      */
     @Override
     public boolean background(PageKey key) {
-        return background() && embedding.covers(key.sourceId()) && embedding.passages() && embedding.sentenceModel();
+        return background() && embedding.covers(key) && embedding.passages() && embedding.sentenceModel();
     }
 
     @Override
@@ -102,15 +115,44 @@ public final class NavigationProcessor implements EnrichmentProcessor {
 
     @Override
     public EnrichmentOutput process(PageKey key, PageText text) {
-        return process(key, null, text);
+        return process(key, null, text, stored.apply(key));
+    }
+
+    /**
+     * Wie bei {@code passages}: Überschriften ohne Freigabe gelten nicht mehr, sobald die Quelle freigegeben ist, und
+     * Themenabschnitte mit Modell nicht mehr, sobald die Seite ihre Freigabe verlor (ADR 0028).
+     */
+    @Override
+    public boolean outdated(Enrichment stored) {
+        return !stored.document().isPage() && embedding != null && embedding.available()
+                && PassageProcessor.notApproved(stored) == embedding.covers(stored.key());
+    }
+
+    /** Auch Anhänge und enthaltene Dateien, wenn ihre gespeicherten Anreicherungen erreichbar sind. */
+    @Override
+    public boolean documents() {
+        return documents != null;
+    }
+
+    /**
+     * Ein Abschnitt eines Dokuments aus den Embeddings je Absatz desselben Abschnitts (gleicher Lesetext); ohne Titel,
+     * denn der Anzeigename des Dokuments geht nie an das Chat-Modell.
+     */
+    @Override
+    public EnrichmentOutput process(DocumentKey document, PageText text) {
+        return process(document.page(), null, text, documents.apply(document));
     }
 
     private EnrichmentOutput process(PageKey key, String title, PageText text) {
+        return process(key, title, text, stored.apply(key));
+    }
+
+    private EnrichmentOutput process(PageKey key, String title, PageText text, List<Enrichment> candidates) {
         String version = version();
         if (embedding == null || !embedding.available()) {
             return headings(text, NavigationPayload.REASON_NO_MODEL, version);
         }
-        if (!embedding.covers(key.sourceId())) {
+        if (!embedding.covers(key)) {
             // Wie bei passages: gilt, bis Text, Modell oder Verfahren wechseln.
             return headings(text, NavigationPayload.REASON_NOT_APPROVED, version);
         }
@@ -122,7 +164,7 @@ public final class NavigationProcessor implements EnrichmentProcessor {
             // Wie im Client kein Clustern über Absätze aus dem Regel-Splitter; ein Satzmodell ändert die Version.
             return headings(text, NavigationPayload.REASON_NO_SENTENCE_MODEL, version);
         }
-        Enrichment current = stored.apply(key).stream()
+        Enrichment current = candidates.stream()
                 .filter(e -> e.processorId().equals(embedding.id())
                         && e.freshness(text.inputSha256(), embedding.version()) == Enrichment.Freshness.CURRENT)
                 .findFirst().orElse(null);
@@ -139,7 +181,9 @@ public final class NavigationProcessor implements EnrichmentProcessor {
             passages.add(new DocumentNavigationBuilder.Passage(chunk.charStart(), chunk.charEnd(), chunk.vector()));
         }
         boolean[] incomplete = {false};
-        SectionLabeler labeler = labels == null || !labels.available() || !labels.mayLabel(key.sourceId()) ? null
+        // Benennen darf das Modell, was seine Quelle oder die Liste freigegebener Seiten freigibt (ADR 0028).
+        boolean mayLabel = labels != null && (labels.mayLabel(key.sourceId()) || embedding.pageReleased(key));
+        SectionLabeler labeler = !mayLabel || !labels.available() ? null
                 : (named, texts) -> {
                     try {
                         NavigationLabelModel.Labels result = labels.labels(named, texts);

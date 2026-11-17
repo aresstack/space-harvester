@@ -97,7 +97,8 @@ public final class TermPayload {
             postings.add(new TermPosting(enrichment.key(), entry.kind(), entry.term(), entry.normalized(),
                     entry.count(), entry.expansion(), entry.section(), entry.occurrences(), enrichment.revision(),
                     enrichment.inputSha256(), enrichment.processorVersion(),
-                    TermIndex.sortKey(entry.normalized(), entry.kind(), enrichment.key())));
+                    TermIndex.sortKey(entry.normalized(), entry.kind(), enrichment.document(), enrichment.section()),
+                    enrichment.document(), enrichment.section(), enrichment.extraction()));
         }
         return postings;
     }

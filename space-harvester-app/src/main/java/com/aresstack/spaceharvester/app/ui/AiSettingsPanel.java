@@ -13,12 +13,16 @@ import com.aresstack.spaceharvester.app.settings.AiDraft;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
+import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
+import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 
 import javax.swing.JComponent;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JPopupMenu;
+import javax.swing.JSpinner;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.JTextField;
 import java.awt.BorderLayout;
 import java.io.IOException;
@@ -105,6 +109,8 @@ final class AiSettingsPanel {
     final JTextField rerankModel = Comic.field(24);
     final JTextField visionModel = Comic.field(24);
     final JTextField chunkTokens = Comic.field(6);
+    /** Ausgabelimit einer Antwort des Text-Modells in Tokens ({@code chat-max-tokens}); leer: Standard des Core. */
+    final JTextField chatMaxTokens = Comic.field(6);
     final JTextField chunkOverlap = Comic.field(6);
     final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     private final SettingDialogs.Rows modelRows;
@@ -126,6 +132,22 @@ final class AiSettingsPanel {
             "Dimension, Abschnittsgröße und Überlappung für Embeddings");
     /** Stand des MaltParser-Modells (ADR 0024); nur lesbar, der Knopf steht im Feld. */
     final JTextField parserStatus = Comic.field(24);
+    /**
+     * Paare je Synonymlauf, die zusätzlich das Text-Modell prüft ({@code space-harvester.terms.synonyms.
+     * max-judged-pairs}, #336); 0 lässt die Prüfung aus. Zahl mit Einheit, kein Freitext.
+     */
+    final JSpinner judgedPairs = countSpinner(SynonymRunForm.MAX_PAIRS, 10);
+    final HelpButton judgedPairsHelp = new HelpButton(Dialogs.CLOSE_SIZE, JUDGED_PAIRS_LABEL, JUDGED_PAIRS_HELP);
+    static final String JUDGED_PAIRS_LABEL = "Synonymprüfung";
+    static final String JUDGED_PAIRS_UNIT = "Paare je Lauf";
+    static final String JUDGED_PAIRS_HELP = "Die Synonymerkennung (Begriffe › Synonyme, Knopf „Synonyme "
+            + "vorschlagen“) findet Kandidatenpaare über Regeln und das Embedding-Modell. Steht hier eine Zahl über "
+            + "0, gehen je Lauf höchstens so viele Kandidatenpaare zusätzlich mit kurzen Fundstellen aus freigegebenen "
+            + "Quellen an das Text-Modell, das die Bedeutung prüft (Synonym, Schreibvariante, verwandt). Bei 0 bleibt "
+            + "die Prüfung aus; ähnliche Embedding-Paare werden dann direkt Vorschläge.\n\n"
+            + "Der Wert ist die Vorbelegung des Startdialogs „Synonyme vorschlagen“ und lässt sich dort je Lauf "
+            + "ändern. Er gilt ohne Neustart beim nächsten Lauf. Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.terms.synonyms.max-judged-pairs.";
     final ComposerButton parserInstall = Comic.button(ParserModelSetup.INSTALL,
             "Lädt das freigegebene deutsche MaltParser-Modell aus dem GitHub-Release, prüft die Prüfsumme und "
                     + "entpackt es ins Datenverzeichnis");
@@ -189,7 +211,12 @@ final class AiSettingsPanel {
         rows.add("API-Key", apiKey, " ");
         modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über das Auswahlmenü rechts");
         modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
-                "Für spätere Suchbegriffe aus einer Frage; optional");
+                "Für die Synonymprüfung und spätere Suchbegriffe aus einer Frage; optional");
+        modelRows.add(CHAT_MAX_TOKENS_LABEL, chatMaxTokens, CHAT_MAX_TOKENS_HELP);
+        judgedPairs.setToolTipText("Höchstens so viele Kandidatenpaare je Synonymlauf prüft das Text-Modell; 0 "
+                + "lässt die Prüfung aus");
+        modelRows.add(JUDGED_PAIRS_LABEL, Comic.row(judgedPairs, Comic.text(JUDGED_PAIRS_UNIT), judgedPairsHelp),
+                null);
         modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
@@ -283,6 +310,8 @@ final class AiSettingsPanel {
         dimensions.setText(current.embeddingDimensions() == null ? "" : current.embeddingDimensions());
         rerankModel.setText(current.rerankModel() == null ? "" : current.rerankModel());
         visionModel.setText(current.visionModel() == null ? "" : current.visionModel());
+        chatMaxTokens.setText(current.chatMaxTokens() == null ? "" : current.chatMaxTokens());
+        judgedPairs.setValue(Math.min(savedBudget(settings).maxJudgedPairs(), SynonymRunForm.MAX_PAIRS));
         chunkTokens.setText(current.chunkTokens() == null ? "" : current.chunkTokens());
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null);
@@ -515,7 +544,7 @@ final class AiSettingsPanel {
     AiDraft draft() {
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
                 timeout, releasedDraft(), rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
-                visionModel.getText());
+                visionModel.getText(), chatMaxTokens.getText());
     }
 
     /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */
@@ -596,7 +625,8 @@ final class AiSettingsPanel {
     boolean changed() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess);
+        return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess)
+                || judgedPairs() != savedBudget(settings).maxJudgedPairs();
     }
 
     /** Ob gerade gespeichert wird (Assistent: Übernehmen beim Schrittwechsel). */
@@ -648,7 +678,9 @@ final class AiSettingsPanel {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         AiAccess chosen = accessDraft();
-        if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)) {
+        int judged = judgedPairs();
+        if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)
+                && judged == savedBudget(settings).maxJudgedPairs()) {
             if (!quiet) {
                 feedback.info("Nichts geändert", null);
             }
@@ -711,7 +743,7 @@ final class AiSettingsPanel {
                 try {
                     Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
                             false);
-                    store(context, measured.draft(), new char[0], chosen);
+                    store(context, measured.draft(), new char[0], chosen, judged);
                     return measured;
                 } finally {
                     if (resolved != null) {
@@ -720,7 +752,7 @@ final class AiSettingsPanel {
                 }
             }
             Measured measured = measure(context, runtime, draft, key, true);
-            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen);
+            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged);
             return measured;
         }, measured -> {
             if (!chosen.fromKeePass() && !vault && key.length > 0) {
@@ -796,12 +828,25 @@ final class AiSettingsPanel {
 
     /** Wie {@link #store(AppContext, AiDraft, char[])}, dazu Bezugsart und KeePass-Eintrag des Keys. */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access) throws IOException {
+        store(context, draft, key, access, null);
+    }
+
+    /**
+     * Wie {@link #store(AppContext, AiDraft, char[], AiAccess)}, dazu die Paare je Synonymlauf für das Text-Modell
+     * ({@code terms.synonyms.max-judged-pairs}); {@code null} oder unverändert lässt den Block {@code terms} in Ruhe.
+     */
+    static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs)
+            throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
         ConfigFileEditor.Draft written = editor.withAi(context.configFile(), new ConfigFileEditor.Draft(text, null),
                 draft);
         written = editor.withAiAccess(context.configFile(), written, access);
+        SynonymBudget budget = savedBudget(context.settings());
+        if (judgedPairs != null && judgedPairs != budget.maxJudgedPairs()) {
+            written = editor.withSynonymBudget(context.configFile(), written, budget.withMaxJudgedPairs(judgedPairs));
+        }
         boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
         if (key.length == 0) {
             editor.save(context.configFile(), written, backup);
@@ -824,6 +869,29 @@ final class AiSettingsPanel {
             }
             throw e;
         }
+    }
+
+    /** Das Budget der Synonymerkennung aus der Datei; ohne Datei der Standard des Core (Prüfung aus). */
+    static SynonymBudget savedBudget(AppSettings settings) {
+        return settings == null ? SynonymBudget.DEFAULT : settings.terms().synonyms();
+    }
+
+    /** Die eingestellten Paare je Synonymlauf für das Text-Modell; 0 = Prüfung aus. */
+    int judgedPairs() {
+        return ((Number) judgedPairs.getValue()).intValue();
+    }
+
+    /** Ein Zahlenfeld von 0 bis {@code maximum} im Stil der Dauer-Felder dieser App. */
+    private static JSpinner countSpinner(int maximum, int step) {
+        JSpinner spinner = new JSpinner(new SpinnerNumberModel(0, 0, maximum, step));
+        spinner.setFont(Comic.regular(13f));
+        if (spinner.getEditor() instanceof JSpinner.DefaultEditor editor) {
+            Comic.style(editor.getTextField());
+            editor.getTextField().setColumns(6);
+            editor.getTextField().setBorder(javax.swing.BorderFactory.createEmptyBorder(2, 6, 2, 4));
+        }
+        spinner.setBorder(Comic.fieldBorder());
+        return spinner;
     }
 
     /** Die Eingaben mit Dimension, falls gemessen; {@code problem} sagt, warum nicht. */
@@ -886,6 +954,10 @@ final class AiSettingsPanel {
                 : new String(key), blankToNull(draft.chatModel()), blankToNull(draft.embeddingModel()),
                 draft.dimensions(), draft.timeout(), null, Set.of());
     }
+
+    static final String CHAT_MAX_TOKENS_LABEL = "Ausgabelimit";
+    static final String CHAT_MAX_TOKENS_HELP = "So viele Tokens darf eine Antwort des Text-Modells höchstens lang "
+            + "werden (max_tokens); leer: 8192. Endet eine Antwort am Limit, gilt sie als unvollständig";
 
     static final String UNAUTHENTICATED = "Nicht authentifiziert (401/403): API-Key prüfen";
     static final String NOT_SIGNED_IN = "Nicht angemeldet – API-Key fehlt";

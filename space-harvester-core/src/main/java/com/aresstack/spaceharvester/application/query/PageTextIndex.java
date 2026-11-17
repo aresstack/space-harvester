@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.query;
 
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import java.util.List;
 import java.util.Objects;
@@ -49,6 +50,30 @@ public interface PageTextIndex {
         return Optional.empty();
     }
 
+    /**
+     * Dateiname des Anhangs und Anzeigename der enthaltenen Datei, wie sie Treffer des Volltexts tragen (#723), für
+     * Treffer der semantischen Suche in einem Dokument (ADR 0026, AP9a). Leer, wenn der Index das Dokument nicht kennt.
+     *
+     * @param partId Teilkennung ({@code PartId#value()}) oder leer für den Anhang selbst
+     */
+    default Optional<DocumentTitles> documentTitles(PageKey page, String attachmentId, String partId) {
+        return Optional.empty();
+    }
+
+    /**
+     * Namen eines Dokuments.
+     *
+     * @param title     Dateiname des Anhangs, leer ohne
+     * @param partTitle Anzeigename der enthaltenen Datei, leer für den Anhang selbst oder ohne Namen
+     */
+    record DocumentTitles(String title, String partTitle) {
+
+        public DocumentTitles {
+            title = title == null ? "" : title;
+            partTitle = partTitle == null ? "" : partTitle;
+        }
+    }
+
     /** Entfernt den Text eines Anhangs der Seite; ein unbekannter Anhang ist kein Fehler. */
     default void removeAttachment(PageKey page, String attachmentId) {
     }
@@ -87,6 +112,26 @@ public interface PageTextIndex {
      * @param limit höchstens so viele
      */
     List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, int limit);
+
+    /**
+     * Wie {@link #search(String, Set, SearchSpaces, int)}, aber nur Seiten dieser Menge samt ihren Anhängen (ADR 0029);
+     * mit {@code null} ohne diese Grenze. Ein Index filtert vor der Rangfolge, damit seine Grenze gelesener Dokumente
+     * nicht vor dem Filter greift; diese Vorgabe für Indizes ohne Seitenfeld filtert nur nach.
+     *
+     * @param pages nur diese Seiten oder {@code null}
+     */
+    default List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet pages, int limit) {
+        if (pages == null) {
+            return search(text, sourceIds, spaces, limit);
+        }
+        Set<String> within = new java.util.TreeSet<>(sourceIds);
+        within.retainAll(pages.sourceIds());
+        if (within.isEmpty()) {
+            return List.of();
+        }
+        return search(text, within, spaces, limit).stream()
+                .filter(match -> pages.contains(match.sourceId(), match.pageId())).toList();
+    }
 
     /** Macht Änderungen dauerhaft. */
     void flush();

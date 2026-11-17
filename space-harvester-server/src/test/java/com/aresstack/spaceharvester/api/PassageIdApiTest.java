@@ -172,6 +172,15 @@ class PassageIdApiTest {
         assertProblem(unknown, 404, "cache-miss");
         assertProblem(metadataOnly, 404, "cache-miss");
         assertThat(forbidden.body()).doesNotContain("Panzerschrank").doesNotContain("Tresorraum");
+        // Absätze aus Anhängen (ADR 0026, AP9a): Rechte wie die Seite; ein Dokument, das es nicht gibt, ist weg.
+        HttpResponse<String> hiddenDocument = send("/api/v1/passages?id=" + encode(inDocument(hidden)),
+                READER_TOKEN);
+        HttpResponse<String> goneDocument = send("/api/v1/passages?id=" + encode(inDocument(id)), READER_TOKEN);
+        assertProblem(hiddenDocument, 404, "cache-miss");
+        assertThat(goneDocument.statusCode()).isEqualTo(200);
+        JsonNode gone = json.readTree(goneDocument.body());
+        assertThat(gone.get("match").asString()).isEqualTo("older-version");
+        assertThat(gone.get("passages")).isEmpty();
         JsonNode reader = json.readTree(send("/api/v1/search?text=Panzerschranks", READER_TOKEN).body());
         assertThat(reader.findValuesAsString("pageId")).doesNotContain("103");
         assertThat(reader.findValues("passageId")).allSatisfy(value -> assertThat(value.isNull()).isTrue());
@@ -201,6 +210,12 @@ class PassageIdApiTest {
             assertThat(System.nanoTime()).as("Treffer mit Passage-ID für " + pageId).isLessThan(deadline);
             Thread.sleep(50);
         }
+    }
+
+    /** Dieselbe Stelle als Absatz eines Anhangs der Seite. */
+    private static String inDocument(String pageId) {
+        int position = pageId.lastIndexOf("#p");
+        return pageId.substring(0, position) + "~a-" + sha256("anhang") + pageId.substring(position);
     }
 
     private void assertProblem(HttpResponse<String> response, int status, String type) throws Exception {

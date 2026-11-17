@@ -28,6 +28,12 @@ public final class PassagePayload {
     public static final String REASON_NOT_APPROVED = "source-not-approved";
     /** Modell eingestellt, aber nicht erreichbar. */
     public static final String REASON_MODEL_UNAVAILABLE = "model-unavailable";
+    /**
+     * Abschnitt eines Dokuments hinter der Grenze für das Embedding-Modell
+     * ({@code space-harvester.enrichment.documents.embedding-max-chars}, ADR 0026): vollständig nach Struktur, ohne
+     * Aufruf des Modells.
+     */
+    public static final String REASON_EMBEDDING_LIMIT = "embedding-limit";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 

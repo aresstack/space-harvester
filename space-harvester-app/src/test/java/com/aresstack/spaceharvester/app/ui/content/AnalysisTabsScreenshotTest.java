@@ -104,6 +104,10 @@ class AnalysisTabsScreenshotTest {
         surface.add(component, BorderLayout.CENTER);
         surface.setSize(1280, 420);
         layout(surface);
+        // Umbrechende Texte kennen erst nach dem ersten Auslegen ihre echte Breite; im Fenster legt Swing danach neu
+        // aus (WrappedText.setBounds), hier ohne Fenster von Hand: zwischengespeicherte Größen verwerfen.
+        invalidate(surface);
+        layout(surface);
         layout(surface);
         BufferedImage image = new BufferedImage(surface.getWidth(), surface.getHeight(), BufferedImage.TYPE_INT_RGB);
         Graphics2D g = image.createGraphics();
@@ -115,6 +119,15 @@ class AnalysisTabsScreenshotTest {
             ImageIO.write(image, "png", file.toFile());
         } catch (java.io.IOException e) {
             throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    private static void invalidate(Component component) {
+        component.invalidate();
+        if (component instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                invalidate(child);
+            }
         }
     }
 

@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
+import com.aresstack.spaceharvester.application.changelog.SummaryModel;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
@@ -22,6 +23,8 @@ import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
+import com.aresstack.spaceharvester.application.release.AiRelease;
+import com.aresstack.spaceharvester.application.release.PageReleases;
 import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -31,6 +34,7 @@ import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
+import com.aresstack.spaceharvester.source.ai.ChatUpdateSummaryModel;
 import com.aresstack.spaceharvester.source.ai.ChatSynonymJudgmentModel;
 import com.aresstack.spaceharvester.application.terms.SynonymJudgmentModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
@@ -75,7 +79,7 @@ class AiConfiguration {
     EmbeddingProcessor embeddingProcessor(AiServiceSettings settings, AiProperties properties,
                                           ConfiguredSourceCatalog catalog, TrustBundles trust,
                                           ObjectProvider<BuildProperties> build, LiveConfiguration live,
-                                          ObjectProvider<SentenceSegmenter> sentences) {
+                                          ObjectProvider<SentenceSegmenter> sentences, AiRelease release) {
         if (properties.embeddingModel() != null && !settings.embeddings()) {
             throw new IllegalStateException("space-harvester.ai.embedding-model braucht base-url und "
                     + "embedding-dimensions");
@@ -107,7 +111,9 @@ class AiConfiguration {
                         properties.embeddingChunkOverlapSentences()),
                 sourceId -> model.get().ai().mayProcessExternally(sourceId))
                 .withPassages(new PassageChunks(new PassageSegmentation(sentences.getIfAvailable(
-                        () -> EnrichmentConfiguration.sentences(rules)), rules)));
+                        () -> EnrichmentConfiguration.sentences(rules)), rules)))
+                // ADR 0028: auch die Seiten der Liste freigegebener Seiten, gefragt bei jeder Seite.
+                .withPageReleases(release.pages()::contains);
     }
 
     /** Ein Embedding-Modell (oder keines) mit den Einstellungen, aus denen es entstand, samt Freigabe je Quelle. */
@@ -116,24 +122,28 @@ class AiConfiguration {
 
     /**
      * Cross-Encoder des Dienstes für {@code sort=relevance} (#181): ordnet das Fenster nach der Kosinusrangfolge um, mit
-     * Texten nur aus Quellen in {@code external-processing-sources}. Modell und {@code search.rerank} wechseln zur
-     * Laufzeit (ADR 0015); ohne beides bleibt die Reihenfolge.
+     * Texten nur aus Quellen in {@code external-processing-sources} und von Seiten der Liste freigegebener Seiten
+     * (ADR 0028). Modell und {@code search.rerank} wechseln zur Laufzeit (ADR 0015); ohne beides bleibt die
+     * Reihenfolge.
      */
     @Bean
     SwappableReranker searchReranker(AiServiceSettings settings, ConfiguredSourceCatalog catalog, TrustBundles trust,
-                                     ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+                                     ObjectProvider<BuildProperties> build, LiveConfiguration live,
+                                     AiRelease release) {
         if (settings.rerankModel() != null && !settings.reranking()) {
             throw new IllegalStateException("space-harvester.ai.rerank-model braucht base-url");
         }
         String userAgent = userAgent(build);
-        SwappableReranker reranker = new SwappableReranker(modelReranker(live.current(), catalog, trust, userAgent));
+        PageReleases pages = release.pages();
+        SwappableReranker reranker = new SwappableReranker(modelReranker(live.current(), catalog, trust, userAgent,
+                pages));
         live.listen(change -> {
             if (!change.rerankerChanged()) {
                 return ConfigurationListener.Preparation.NOTHING;
             }
             SearchReranker next;
             try {
-                next = modelReranker(change.next(), catalog, trust, userAgent);
+                next = modelReranker(change.next(), catalog, trust, userAgent, pages);
             } catch (RuntimeException e) {
                 throw new ConfigurationRejectedException("ai." + AiServiceSettings.RERANK_MODEL,
                         "Das Rerank-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
@@ -166,16 +176,17 @@ class AiConfiguration {
 
     /**
      * Der Cross-Encoder, wenn die Konfiguration umordnen lässt. Die Freigabe je Quelle stammt aus denselben
-     * Einstellungen wie Endpunkt und Modell; eine geänderte Freigabe baut einen neuen Reranker.
+     * Einstellungen wie Endpunkt und Modell; eine geänderte Freigabe baut einen neuen Reranker. Die Liste
+     * freigegebener Seiten (ADR 0028) fragt er bei jedem Umordnen.
      */
     private static SearchReranker modelReranker(HarvesterConfiguration configuration, ConfiguredSourceCatalog catalog,
-                                                TrustBundles trust, String userAgent) {
+                                                TrustBundles trust, String userAgent, PageReleases pages) {
         if (!configuration.reranking()) {
             return SearchReranker.NONE;
         }
         AiServiceSettings ai = configuration.ai();
         return new ModelReranker(ai.rerankModel(), RemoteAi.of(ai, catalog, trust, userAgent).reranker(),
-                ai::mayProcessExternally);
+                ai::mayProcessExternally).withPageReleases(pages::contains);
     }
 
     private static String userAgent(ObjectProvider<BuildProperties> build) {
@@ -216,6 +227,16 @@ class AiConfiguration {
         return new ChatAcronymExpansionModel(() -> live.current().ai(), catalog, trust, userAgent(build));
     }
 
+    /**
+     * Zusammenfassung eines Updates (ADR 0030, Abschnitt 5) über dasselbe Chat-Modell; ohne Modell antwortet
+     * {@code POST /api/v1/sources/{sourceId}/updates/{updateId}/summary} mit {@code summary-unavailable}.
+     */
+    @Bean
+    SummaryModel updateSummaries(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                 ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new ChatUpdateSummaryModel(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
     /** Bedeutungsprüfung der Synonymerkennung (#336) über dasselbe Chat-Modell wie die Akronymauflösung. */
     @Bean
     SynonymJudgmentModel synonymJudgments(ConfiguredSourceCatalog catalog, TrustBundles trust,
@@ -241,7 +262,7 @@ class AiConfiguration {
     @ConditionalOnProperty(prefix = "space-harvester.enrichment.statements", name = "enabled", havingValue = "true")
     StatementProcessor statementProcessor(ConfiguredSourceCatalog catalog, TrustBundles trust,
                                           ObjectProvider<BuildProperties> build, LiveConfiguration live,
-                                          SentenceSegmenter sentences,
+                                          SentenceSegmenter sentences, AiRelease release,
                                           @Value("${space-harvester.enrichment.statements.verify:"
                                                   + StatementSettings.DEFAULT_VERIFY + "}") boolean verify,
                                           @Value("${space-harvester.enrichment.statements.max-paragraphs:"
@@ -252,7 +273,8 @@ class AiConfiguration {
         StatementSettings settings = new StatementSettings(true, verify, maxParagraphs, maxParagraphChars);
         StatementChatModels chats = new StatementChatModels(() -> live.current().ai(), catalog, trust,
                 userAgent(build));
-        return new StatementProcessor(sentences, () -> settings, chats, chats.mayProcessExternally());
+        return new StatementProcessor(sentences, () -> settings, chats, chats.mayProcessExternally(),
+                release.pages()::contains);
     }
 
     /** Hintergrund der Anreicherungen, die über das Netz rechnen: Embeddings und Satzanalyse. */
@@ -270,7 +292,8 @@ class AiConfiguration {
     @Bean(destroyMethod = "close")
     ReleaseRecomputation releaseRecomputation(Enrichments enrichments, ObjectProvider<EmbeddingProcessor> embedding,
                                               ObjectProvider<StatementProcessor> statements,
-                                              ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
+                                              ObjectProvider<LucenePageCache> cache, LiveConfiguration live,
+                                              AiRelease release) {
         LucenePageCache pages = cache.getIfAvailable();
         EmbeddingProcessor embeddings = embedding.getIfAvailable();
         boolean withStatements = statements.getIfAvailable() != null;
@@ -283,12 +306,24 @@ class AiConfiguration {
         if (withStatements) {
             processorIds.add(StatementProcessor.ID);
         }
-        Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
-                || withStatements && live.current().ai().mayProcessExternally(sourceId);
+        // Ohne beide Modelle nur für die Rücknahme der Bildbeschreibungen (ADR 0028): die Freigabe der Quelle selbst.
+        Predicate<String> released = embeddings == null && !withStatements
+                ? sourceId -> live.current().ai().mayProcessExternally(sourceId)
+                : sourceId -> embeddings != null && embeddings.covers(sourceId)
+                        || withStatements && live.current().ai().mayProcessExternally(sourceId);
         ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                 sourceId -> pages == null ? java.util.Collections.emptyIterator() : pages.snapshots(sourceId),
                 released, processorIds);
         live.listen(recomputation);
+        // ADR 0028: Der Abgleich beim Start fragt je Seite auch die Liste freigegebener Seiten.
+        recomputation.pageReleases(release.pages()::contains);
+        // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten, deren
+        // Quelle nicht als Ganzes freigegeben ist. Ohne Cache gibt es keine Seiten zu rechnen.
+        if (pages != null) {
+            release.pages().subscribe(change -> recomputation.recomputePages(
+                    release.outsideReleasedSources(change.added()), release.outsideReleasedSources(change.removed()),
+                    pages::find));
+        }
         return recomputation;
     }
 

@@ -84,7 +84,7 @@ class AppSettingsLoaderTest {
                 """, Map.of());
 
         assertThat(settings.problems()).anySatisfy(problem -> assertThat(problem).contains("memory-limits"));
-        assertThat(settings.storage().extraction().memoryLimit("application/zip")).isEqualTo(20L * 1024 * 1024);
+        assertThat(settings.storage().extraction().memoryLimit("application/msword")).isEqualTo(20L * 1024 * 1024);
         assertThat(settings.storage().extraction().memoryLimit("message/rfc822")).isEqualTo(30L * 1024 * 1024);
     }
 
@@ -204,6 +204,38 @@ class AppSettingsLoaderTest {
         AppSettings on = load("logging:\n  threshold:\n    console: on\n", Map.of());
         assertThat(on.consoleOutput()).isEqualTo(ConsoleOutput.OFF);
         assertThat(on.problems()).singleElement().asString().contains("logging.threshold.console");
+    }
+
+    @Test
+    void theAnalyticsExportReadsPeriodAndPathsAndFallsBackToTheDefaultsForBadOnes() throws Exception {
+        assertThat(load("space-harvester:\n  sources: []\n", Map.of()).analytics()).isEqualTo(AnalyticsSettings.DEFAULT);
+        AppSettings set = load("""
+                space-harvester-app:
+                  analytics:
+                    period: 90d
+                    details: "/rest/confanalytics/1.0/space/details?spaceKey={spaceKey}&x=1"
+                    content-views: /rest/confanalytics/2.0/space/paginated/contentViews?spaceKey={spaceKey}
+                """, Map.of());
+        assertThat(set.problems()).isEmpty();
+        assertThat(set.analytics().period()).isEqualTo(java.time.Duration.ofDays(90));
+        assertThat(set.analytics().days()).isEqualTo(90);
+        assertThat(set.analytics().details()).endsWith("&x=1");
+        assertThat(set.analytics().activityByDate()).as("ohne Angabe Vorgabe").isNull();
+        assertThat(set.analytics().contentViews()).startsWith("/rest/confanalytics/2.0/");
+        assertThat(set.analytics().toQueries().contentViews().pathTemplate()).startsWith("/rest/confanalytics/2.0/");
+        assertThat(set.analytics().toQueries().days()).isEqualTo(90);
+        assertThat(set.analytics().toQueries().space().get(1).pathTemplate())
+                .isEqualTo(com.aresstack.spaceharvester.application.metadata.AnalyticsQueries.DEFAULT_ACTIVITY_BY_DATE);
+
+        AppSettings bad = load("""
+                space-harvester-app:
+                  analytics:
+                    period: 36h
+                    details: https://example.org/rest/x
+                    activity-by-date: "/rest/a b"
+                """, Map.of());
+        assertThat(bad.analytics()).isEqualTo(AnalyticsSettings.DEFAULT);
+        assertThat(bad.problems()).hasSize(3).allMatch(problem -> problem.startsWith(AnalyticsSettings.KEY));
     }
 
     @Test

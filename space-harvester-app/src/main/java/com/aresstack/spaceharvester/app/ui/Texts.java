@@ -128,6 +128,10 @@ public final class Texts {
             case GLOSSARY -> "Fachbegriffe ermitteln";
             case IMPORT -> "Import";
             case REREAD -> "Neu lesen";
+            case CONVERSION -> "Datei erzeugen";
+            case METADATA_EXPORT -> "Confluence-Metadaten";
+            case ANALYTICS_EXPORT -> "Analytics";
+            case UPDATE_SUMMARY -> "Zusammenfassen";
         };
     }
 

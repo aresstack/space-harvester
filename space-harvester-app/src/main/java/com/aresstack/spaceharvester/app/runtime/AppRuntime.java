@@ -252,7 +252,8 @@ public final class AppRuntime implements AutoCloseable {
                 new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()));
         return new HarvesterConfiguration(aiService(settings.ai(), secrets.aiKey(), version), search, withRules,
                 NetworkSettings.DEFAULT, new StorageSettings(settings.storage().dataDirectory()))
-                .withLocalFiles(settings.localFiles()).withTerms(settings.terms());
+                .withLocalFiles(settings.localFiles()).withTerms(settings.terms())
+                .withEnrichment(settings.enrichment()).withChangeLog(settings.cache().changeLog());
     }
 
     /**
@@ -367,6 +368,10 @@ public final class AppRuntime implements AutoCloseable {
             // Der Cross-Encoder ordnet nur die Trefferliste aus dem Cache neu (ADR 0013); ohne ihn bleibt sie.
             service = service.withRerankModel(ai.rerankModel());
         }
+        if (ai.chatMaxTokens() != null) {
+            // Ausgabelimit des Text-Modells (max_tokens); ohne Eintrag gilt der Standard des Core.
+            service = service.withChatMaxTokens(ai.chatMaxTokens());
+        }
         if (ai.visionModel() != null) {
             // Bildbeschreibungen nur auf Abruf im Reiter „Bilder“ (ADR 0021); ohne Modell nennt er den Grund.
             service = service.withVisionModel(ai.visionModel());
@@ -385,6 +390,11 @@ public final class AppRuntime implements AutoCloseable {
 
     public Workspace workspace() {
         return workspace;
+    }
+
+    /** Für Tests im Paket: der Harvester dieser Laufzeit, etwa für eine zweite Sicht mit anderen Rechten. */
+    Harvester harvester() {
+        return harvester;
     }
 
     /** Was der Core an Quellen beanstandet hat, die deshalb fehlen; je Eintrag Position, ID und Grund. */

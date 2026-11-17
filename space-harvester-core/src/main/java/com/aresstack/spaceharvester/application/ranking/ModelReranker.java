@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.ranking;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -33,15 +34,30 @@ public final class ModelReranker implements SearchReranker {
     private final String modelId;
     private final Scorer scorer;
     private final Predicate<String> mayProcessExternally;
+    private final Predicate<PageKey> pageReleased;
 
     /**
      * @param modelId              Rerank-Modell des Dienstes
      * @param mayProcessExternally ob Inhalte dieser Quelle an den Dienst gehen dürfen
      */
     public ModelReranker(String modelId, Scorer scorer, Predicate<String> mayProcessExternally) {
+        this(modelId, scorer, mayProcessExternally, key -> false);
+    }
+
+    private ModelReranker(String modelId, Scorer scorer, Predicate<String> mayProcessExternally,
+                          Predicate<PageKey> pageReleased) {
         this.modelId = Objects.requireNonNull(modelId, "modelId");
         this.scorer = Objects.requireNonNull(scorer, "scorer");
         this.mayProcessExternally = Objects.requireNonNull(mayProcessExternally, "mayProcessExternally");
+        this.pageReleased = Objects.requireNonNull(pageReleased, "pageReleased");
+    }
+
+    /**
+     * Derselbe Reranker; Seiten auf der Liste freigegebener Seiten gehen auch aus einer nicht freigegebenen Quelle an
+     * den Dienst (ADR 0028). Die Liste wird bei jedem Umordnen gefragt.
+     */
+    public ModelReranker withPageReleases(Predicate<PageKey> pageReleased) {
+        return new ModelReranker(modelId, scorer, mayProcessExternally, pageReleased);
     }
 
     /**
@@ -49,7 +65,7 @@ public final class ModelReranker implements SearchReranker {
      * für externe Verarbeitung.
      */
     public ExcerptPriority excerptPriority() {
-        return new ExcerptPriority(scorer::score, mayProcessExternally);
+        return new ExcerptPriority(scorer::score, mayProcessExternally).withPageReleases(pageReleased);
     }
 
     @Override
@@ -69,7 +85,8 @@ public final class ModelReranker implements SearchReranker {
         List<String> documents = new ArrayList<>();
         for (int i = 0; i < candidates.size(); i++) {
             SearchHit hit = candidates.get(i);
-            if (mayProcessExternally.test(hit.page().header().key().sourceId())) {
+            PageKey key = hit.page().header().key();
+            if (mayProcessExternally.test(key.sourceId()) || pageReleased.test(key)) {
                 String document = request.documents().apply(hit);
                 if (document != null && !document.isBlank()) {
                     slots.add(i);

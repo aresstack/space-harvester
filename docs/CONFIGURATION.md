@@ -144,8 +144,8 @@ veraltet). Berechnet wird im Hintergrund der Anreicherungen nach Abgleich oder A
 | `space-harvester.enrichment.statements.max-paragraphs` | `40` | höchstens so viele Absätze (Modellanfragen) je Seite, höchstens 200 |
 | `space-harvester.enrichment.statements.max-paragraph-chars` | `1500` | längere Absätze in Folgen ganzer Sätze bis zu dieser Länge, höchstens 8000 |
 
-- **Datenschutz:** Absätze gehen nur aus Quellen in `ai.external-processing-sources` an den Dienst, sonst nie, auch
-  nicht bei einer Neuberechnung. Das Log nennt nur Prozessor, Seite und Fehlertyp, nie Text oder Antwort.
+- **Datenschutz:** Absätze gehen nur aus Quellen in `ai.external-processing-sources` und von Seiten auf der Liste
+  freigegebener Seiten (ADR 0028) an den Dienst, sonst nie, auch nicht bei einer Neuberechnung. Das Log nennt nur Prozessor, Seite und Fehlertyp, nie Text oder Antwort.
 - Die Schlüssel wirken beim Start (in der Bibliothek `Harvester.builder().statements(…)`); Chat-Modell und Freigabe
   folgen der wirksamen Konfiguration. Scheitert ein Absatz, ist das ganze Ergebnis fehlgeschlagen (kein halbes).
 - `MENTION`, `EVENT` und `RELATION` entstehen dann doppelt, regelbasiert und aus `statements`, mit eigenen Kennungen.
@@ -228,7 +228,7 @@ Die Grenzen wirken beim Lesen: Bereits gelesene Dokumente behalten ihr Ergebnis,
 | `idle-timeout` / `total-timeout` | `30s` / `30m` | Laufzeit ohne Fortschritt / insgesamt je Dokument (`timeout`) |
 | `temp-space-reserve` | `1GB` | Freier Platz für temporäre Dateien (`temp-space-low`) |
 | `parallel` | `2` | Gleichzeitige Läufe |
-| `memory-limits` | `*`: `20MB`; PDF, `.docx`, `.xlsx`, `.eml`: `0` | Liste aus `type` (Medientyp oder `*`) und `limit`; Einträge ersetzen nur den genannten Typ (`memory-limit`, `EXCLUDED`) |
+| `memory-limits` | `*`: `20MB`; PDF, `.docx`, `.xlsx`, `.pptx`, `.eml`, Text, CSV, ZIP, GZIP, TAR: `0` | Liste aus `type` (Medientyp oder `*`) und `limit`; Einträge ersetzen nur den genannten Typ (`memory-limit`, `EXCLUDED`) |
 
 ```yaml
 space-harvester:
@@ -293,6 +293,7 @@ neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konf
 | --- | --- | --- |
 | KI-Dienst, Adresse, API-Key, Frist | `ai.base-url`, `ai.api-key`, `ai.timeout`, `ai.trust-bundle` | ja, neue Client-Instanzen |
 | Modelle je Funktion, global für alle Quellen | `ai.chat-model`, `ai.embedding-model`, `ai.embedding-dimensions`, `ai.rerank-model`, `ai.vision-model` | ja, neue Anfragen |
+| Ausgabelimit einer Antwort des Chat-Modells in Tokens, gesendet als `max_tokens` (Standard 8192, 1 bis 1000000; App: Einstellungen › KI › „Ausgabelimit“). Gilt für Akronymauflösung und Synonymprüfung. Endet eine Antwort am Limit (`finish_reason=length`), gilt sie als unvollständig: Der Aufruf meldet das mit dem Hinweis auf diese Einstellung, statt ein abgeschnittenes JSON auszuwerten | `ai.chat-max-tokens` | ja, neue Anfragen |
 | Freigabe für externe Verarbeitung | `ai.external-processing-sources` | ja; die Seiten der Quelle im Cache werden neu angereichert (siehe unten) |
 | Semantische Suche (Haken, Standard aus) | `search.semantic` | ja; ohne Embedding-Modell bleibt sie aus |
 | Reranking, wenn ein Modell eingestellt ist | `search.rerank` (Standard `true`) | ja |
@@ -454,6 +455,14 @@ diese Embeddings je Absatz; sie hat keine eigenen Schlüssel und folgt `ai.embed
 (PR #401, ADR 0020), nur in der Anreicherung und nur für freigegebene Quellen, mit fester Frist von 60 s und
 höchstens zwei Benennungen zugleich (nicht einstellbar); ohne Chat-Modell bleibt der erste Satz, bei Ausfall des
 Modells ebenso mit `reason=model-unavailable`. Ein anderes Chat-Modell macht gespeicherte Navigationen alt.
+
+**Liste freigegebener Seiten (ADR 0028):** Neben der Freigabe je Quelle gibt es eine Liste einzelner Seiten, die der
+Benutzer über den Chat freigibt; sie liegt unter `<cache>/page-releases` (im Server
+`space-harvester.cache.directory/page-releases`), nicht in der YAML. Eine Seite der Liste bekommt Embeddings, Absätze,
+Navigation samt Themenüberschriften und, eingeschaltet, die Satzanalyse wie eine Seite einer freigegebenen Quelle.
+Eintragen reiht diese Prozessoren für die Seite im selben gedrosselten Hintergrund ein; Entfernen rechnet sie ohne
+Modell neu, ihr Embedding und ihre Satzanalyse entfallen. Seiten einer als Ganzes freigegebenen Quelle ändern sich
+dabei nicht.
 
 **Wechsel der Freigabe (`ai.external-processing-sources`):** Wird eine Quelle neu freigegeben oder ihre Freigabe
 entzogen, reiht der Dienst (im Core der Harvester mit `Harvester.Builder.configuration`, im Server mit

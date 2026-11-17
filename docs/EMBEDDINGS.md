@@ -142,11 +142,47 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Analysen je Dokument (ADR 0026, AP9a): Liegt ein Dokument-Anhang neu oder geändert im Volltextindex, plant
   `DocumentEnrichments` einen Auftrag `ENRICHMENT` der Quelle und des Space ein (sichtbar, anhaltbar, abbrechbar wie
   die Anreicherung der Seiten). Er rechnet je abgelegtem Abschnitt des Anhangs und seiner lesbaren Teile (`OK`,
-  `PARTIAL`) die Prozessoren mit `documents()`, derzeit `outline`. Eingabe ist `DocumentSectionText`
+  `PARTIAL`) die Prozessoren mit `documents()`: `outline`, `embedding`, `passages` und `navigation`. Eingabe ist `DocumentSectionText`
   (`document-text/v1`): je Block eine Zeile, Tabellenzeilen mit ` | ` wie bei der Projektion einer Seite, kein Kopf,
   kein Status, kein Name. Extraktor und Version gehören nicht zur Eingabe: Gleiche Blöcke bleiben aktuell (Abnahme 8).
   Die Freigabe gilt über die Seite. Weggefallene Teile und Abschnitte verlieren ihre Ergebnisse erst nach dem
   vollständigen Lauf, Anhänge, die die vollständige Liste der Seite nicht mehr nennt, sofort.
+  Die Arbeit ergibt sich aus dem Zustand, das Ereignis stößt nur an: Der Auftrag nach jedem Abgleich holt für die
+  abgelegten Dokument-Anhänge seiner Seiten, die im Volltextindex stehen, nach, was fehlt oder veraltet ist. Jeder Stand
+  eines Dokuments trägt den Hash seines Lesetextes (`revision`, SHA-256 über die Abschnitte der Ansicht) und die
+  Extraktion, für die er gebildet wurde (`extraction`). Gleiche Extraktion, alle zuständigen Prozessoren in ihrer
+  Version: aktuell, ohne einen Abschnitt zu lesen. Andere Extraktion: Der Hash wird einmal neu gebildet; ist er gleich,
+  wird nur die Extraktion nachgetragen, ohne zu rechnen und ohne KI-Dienst.
+  `space-harvester.enrichment.documents.enabled` (Standard `true`) schaltet das ab: Es entsteht nichts Neues,
+  Vorhandenes bleibt lesbar. `space-harvester.enrichment.documents.embedding-max-chars` (Standard 2 000 000, `0` ohne
+  Grenze) begrenzt, was je Dokument an das Embedding-Modell geht; Absätze und Navigation gelten ohne Grenze. Beide
+  Schlüssel lesen Dienst und App gleich, wirksam beim nächsten Lauf. Gezählt wird über die Abschnitte des Dokuments
+  in Lesereihenfolge (`DocumentPosition`); eine Kürzung steht im Ergebnis von `embedding` als
+  `"cut":{"maxChars","offset","embeddedChars","chars"}` und als Warnung. Die Grenze greift vor jedem Modellaufruf: Ein
+  Abschnitt, der nicht ganz darunter fällt, zerlegt `passages` vollständig nach Struktur (`embedding-limit`), ohne
+  Satzvektoren. Absätze zerlegen den Lesetext wie die
+  Projektion einer Seite zeilenweise: Jede Tabellenzeile ist ein eigener Absatz, keiner reicht über eine Tabelle. Die
+  Navigation nutzt die Embeddings je Absatz desselben Abschnitts; der Anzeigename des Dokuments geht nie an das
+  Chat-Modell.
+- Suche in Dokumenten (ADR 0026, AP9a), nur mit `space-harvester.enrichment.documents.enabled`: Die semantische Suche
+  sucht zusätzlich und getrennt in den Vektoren der Anhänge und enthaltenen Dateien (`EmbeddingIndex#nearestDocuments`);
+  die Kandidaten aus Seiten bleiben dieselben. Ein Treffer zählt für die Seite, unter der das Dokument steht, und
+  braucht deren Rechte (`metadata` und `content`); ohne sie fällt er ohne Spur weg, samt Ausschnitt und Text für einen
+  Reranker. Je Seite bleibt es ein Treffer mit dem besten Stück aus Seite und Dokumenten (bei Gleichstand die Seite).
+  Liegt es in einem Dokument, trägt `relevance` zusätzlich `attachmentId`, `attachmentTitle`, `partId` und
+  `partTitle` (nur bei einer enthaltenen Datei) und `section`; `chunk` bezieht sich dann auf den Lesetext dieses
+  Abschnitts (`document-text/v1`). Namen kommen aus dem Volltextindex wie bei Treffern der Volltextsuche (#723).
+  Ausschnitt und Reranker-Text stammen aus der abgelegten Extraktion, nur wenn deren Abschnitt genau der Text des
+  Embeddings ist. Ohne Dokumentvektoren sind Treffer und Reihenfolge byte-gleich; abgeschaltet wird nicht in
+  Dokumenten gesucht.
+- Passage-IDs in Dokumenten (`DocumentPassages`, Form von AT bestätigt): Capture ist der Hash des Lesetextes des
+  ganzen Dokuments (`revision`, 64 Hexziffern), die Position zählt die Absätze über alle Abschnitte in Reihenfolge.
+  Tragen die Absatz-Stände des Dokuments nicht alle dieselbe `revision` (Lauf nicht durch), gibt es keine ID.
+  `GET /api/v1/passages?id=` prüft die Rechte der Seite und liest nur den Text des einen Abschnitts (die Zahl der
+  Absätze je Abschnitt steht in den gespeicherten Ergebnissen). Anderer Text des Dokuments oder ein Dokument, das es
+  nicht mehr gibt (etwa eine Positionskennung nach dem Neulesen des Behälters): `older-version` ohne Absätze, fest
+  „nicht mehr vorhanden“. Gleicher Text mit anderer Zerlegung oder anderem Modell: `changed`. Nachbarn kommen aus
+  demselben Abschnitt.
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.

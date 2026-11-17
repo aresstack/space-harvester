@@ -1,0 +1,89 @@
+package com.aresstack.spaceharvester.config;
+
+import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.changelog.ChangeLog;
+import com.aresstack.spaceharvester.application.changelog.ChangeLogStore;
+import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
+import com.aresstack.spaceharvester.application.changelog.SummaryModel;
+import com.aresstack.spaceharvester.application.changelog.TextContentDiffer;
+import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
+import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.release.AiRelease;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sync.SyncCommitted;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
+import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
+import java.time.Clock;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/**
+ * Änderungsprotokoll (ADR 0030) im Dienst wie in der Bibliothek: Update-Marke je Quelle nach manueller
+ * Synchronisierung, Aufräumen nach {@code space-harvester.cache.change-log.retention} beim Start und nach jedem
+ * Abgleich, Abfragen und Zusammenfassungen für die REST-API. Ohne Cache gibt es kein Protokoll.
+ */
+@Configuration(proxyBeanMethods = false)
+class ChangeLogConfiguration {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ChangeLogConfiguration.class);
+
+    @Bean(destroyMethod = "close")
+    ChangeLog changeLog(ObjectProvider<LucenePageCache> cache, AccessGuard access, SourceCatalog catalog, Jobs jobs,
+                        SummaryModel summaries, AiRelease release) {
+        LucenePageCache available = cache.getIfAvailable();
+        if (available != null) {
+            // CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
+            available.contentDiffer(new TextContentDiffer(PageTextProjector.firstOf(List.of(
+                    new ConfluenceStorageTextProjector(), new LocalFilesTextProjector(),
+                    new KnowledgeDocumentTextProjector()))));
+        }
+        ChangeLogStore store = available == null ? ChangeLogStore.NONE : available;
+        Function<PageKey, Optional<PageHeader>> headers = available == null ? key -> Optional.empty()
+                : available::findHeader;
+        // ADR 0030, Abschnitt 5: Zusammenfassen nur auf Wunsch, an das Modell nur Seiten mit KI-Freigabe.
+        return new ChangeLog(store, access, headers, () -> catalog.all().stream().map(HarvestSource::id).toList(),
+                new ChangeLog.Summaries(jobs, summaries, release::mayProcess, Clock.systemUTC()));
+    }
+
+    @Bean(destroyMethod = "close")
+    ManualSyncRounds manualSyncRounds(Jobs jobs, ObjectProvider<LucenePageCache> cache) {
+        LucenePageCache available = cache.getIfAvailable();
+        return ManualSyncRounds.start(jobs, available == null ? ChangeLogStore.NONE : available, Clock.systemUTC());
+    }
+
+    /**
+     * Räumt beim Start (im Hintergrund) und nach jedem bestätigten Abgleich auf, nie nach Zeitgeber (ADR 0030,
+     * Abschnitt 2).
+     */
+    @Bean
+    SyncCommitted pruneChangeLog(ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
+        Runnable prune = () -> {
+            LucenePageCache available = cache.getIfAvailable();
+            if (available == null) {
+                return;
+            }
+            try {
+                ChangeLogSettings settings = live.current().changeLog();
+                (settings != null ? settings : ChangeLogSettings.DEFAULT).cutoff(Clock.systemUTC().instant())
+                        .ifPresent(available::pruneChangeLog);
+            } catch (RuntimeException e) {
+                LOG.warn("Änderungsprotokoll nicht aufgeräumt ({})", e.getClass().getName());
+            }
+        };
+        // Beim Start im Hintergrund: Das Aufräumen wartet auf den Schreiblauf des Cache und hielte sonst den Start auf.
+        Thread.ofVirtual().name("change-log-prune").start(prune);
+        return run -> prune.run();
+    }
+}

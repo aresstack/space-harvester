@@ -16,6 +16,7 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Tag;
@@ -32,6 +33,7 @@ class LargeDocumentFilesTest {
 
     private static final String XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     private static final String DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    private static final String PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
     @TempDir
     Path directory;
@@ -58,7 +60,12 @@ class LargeDocumentFilesTest {
     void excelWithOneMillionRowsIsReadCompletely() {
         Path xlsx = LargeFiles.xlsx(directory.resolve("zeilen.xlsx"), LargeFiles.XLSX_ROWS);
 
-        assertComplete(xlsx, XLSX, LargeFiles.rowMark(0), LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1));
+        TikaDocumentStructureTest.Counting sink = assertComplete(xlsx, XLSX, LargeFiles.rowMark(0),
+                LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1));
+
+        // AP10: Zellbezug aus dem Original bis zur letzten Zeile.
+        assertThat(sink.cellRefs).containsExactlyInAnyOrderEntriesOf(Map.of(LargeFiles.rowMark(0), "A1",
+                LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1), "A" + LargeFiles.XLSX_ROWS));
     }
 
     /**
@@ -70,7 +77,12 @@ class LargeDocumentFilesTest {
     void excelWithOneMillionSharedStringsIsReadCompletely() {
         Path xlsx = sharedStringsXlsx(directory.resolve("geteilt.xlsx"), LargeFiles.XLSX_ROWS);
 
-        assertComplete(xlsx, XLSX, LargeFiles.rowMark(0), LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1));
+        TikaDocumentStructureTest.Counting sink = assertComplete(xlsx, XLSX, LargeFiles.rowMark(0),
+                LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1));
+
+        // AP10: Zellbezug aus dem Original bis zur letzten Zeile.
+        assertThat(sink.cellRefs).containsExactlyInAnyOrderEntriesOf(Map.of(LargeFiles.rowMark(0), "A1",
+                LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1), "A" + LargeFiles.XLSX_ROWS));
     }
 
     @Test
@@ -108,17 +120,101 @@ class LargeDocumentFilesTest {
         assertThat(sink.found).containsExactlyInAnyOrder("MARKE-GROSSE-MAIL", first, last, "MARKE-NACH-DEM-PDF");
     }
 
-    private void assertComplete(Path file, String mediaType, String firstMark, String lastMark) {
+    /*
+     * AP3e (Auflage AT 13.11.2026): Formate, die Tika als Strom liest, und Archive, die der PartExtractor zählend in
+     * temporäre Dateien packt, ohne Schranke memory-limit; je Typ eine Datei über 300 MiB, vollständig, Status OK.
+     */
+
+    @Test
+    void textOver300MiBIsReadCompletely() throws IOException {
+        Path text = LargeFiles.text(directory.resolve("gross.txt"), LargeFiles.BYTES_OVER_300_MIB);
+        assertThat(Files.size(text)).isGreaterThan(LargeFiles.MIB_300);
+
+        assertComplete(text, "text/plain", LargeFiles.FIRST_MARK, LargeFiles.LAST_MARK);
+    }
+
+    @Test
+    void htmlOver300MiBIsReadCompletely() throws IOException {
+        // AP10: als Strom (HtmlStreamParser), nicht als DOM-Baum.
+        Path html = LargeFiles.html(directory.resolve("gross.html"), LargeFiles.BYTES_OVER_300_MIB);
+        assertThat(Files.size(html)).isGreaterThan(LargeFiles.MIB_300);
+
+        assertComplete(html, "text/html", LargeFiles.FIRST_MARK, LargeFiles.LAST_MARK);
+    }
+
+    @Test
+    void csvOver300MiBIsReadCompletely() throws IOException {
+        Path csv = LargeFiles.csv(directory.resolve("gross.csv"), LargeFiles.BYTES_OVER_300_MIB);
+        assertThat(Files.size(csv)).isGreaterThan(LargeFiles.MIB_300);
+
+        assertComplete(csv, "text/csv", LargeFiles.FIRST_MARK, LargeFiles.LAST_MARK);
+    }
+
+    @Test
+    void pptxOver300MiBIsReadCompletely() throws IOException {
+        Path pptx = LargeFiles.pptx(directory.resolve("gross.pptx"), LargeFiles.PPTX_OVER_300_MIB_SLIDES);
+        assertThat(Files.size(pptx)).isGreaterThan(LargeFiles.MIB_300);
+
+        assertComplete(pptx, PPTX, LargeFiles.slideMark(1),
+                LargeFiles.slideMark(LargeFiles.PPTX_OVER_300_MIB_SLIDES));
+    }
+
+    @Test
+    void zipOver300MiBIsReadCompletely() throws IOException {
+        Path text = LargeFiles.text(directory.resolve("inhalt.txt"), LargeFiles.BYTES_OVER_300_MIB);
+        Path zip = LargeFiles.zip(directory.resolve("gross.zip"), text, "inhalt.txt");
+        Files.delete(text);
+
+        assertArchiveComplete(zip, "application/zip");
+    }
+
+    @Test
+    void gzipOver300MiBIsReadCompletely() throws IOException {
+        Path text = LargeFiles.text(directory.resolve("inhalt.txt"), LargeFiles.BYTES_OVER_300_MIB);
+        Path gzip = LargeFiles.gzip(directory.resolve("inhalt.txt.gz"), text);
+        Files.delete(text);
+
+        assertArchiveComplete(gzip, "application/gzip");
+    }
+
+    @Test
+    void tarOver300MiBIsReadCompletely() throws IOException {
+        Path text = LargeFiles.text(directory.resolve("inhalt.txt"), LargeFiles.BYTES_OVER_300_MIB);
+        Path tar = LargeFiles.tar(directory.resolve("gross.tar"), text, "inhalt.txt");
+        Files.delete(text);
+
+        assertArchiveComplete(tar, "application/x-tar");
+    }
+
+    /** Die Hülle und ihr einziger Eintrag, eine Textdatei über 300 MiB, beide OK und vollständig. */
+    private void assertArchiveComplete(Path archive, String mediaType) throws IOException {
+        assertThat(Files.size(archive)).isGreaterThan(LargeFiles.MIB_300);
+        TikaDocumentStructureTest.Counting sink = new TikaDocumentStructureTest.Counting(LargeFiles.FIRST_MARK,
+                LargeFiles.LAST_MARK);
+
+        StructuredDocument result = structure.extract(archive, archive.getFileName().toString(), mediaType,
+                ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(result.outcome().status()).as("Status der Hülle").isEqualTo(ExtractionStatus.OK);
+        assertThat(result.directory()).singleElement().satisfies(entry -> assertThat(entry.outcome().status())
+                .as("Status des Eintrags").isEqualTo(ExtractionStatus.OK));
+        assertThat(sink.found).containsExactlyInAnyOrder(LargeFiles.FIRST_MARK, LargeFiles.LAST_MARK);
+        assertThat(sink.partChars).isGreaterThan(LargeFiles.MIB_300 / 2);
+    }
+
+    private TikaDocumentStructureTest.Counting assertComplete(Path file, String mediaType, String firstMark,
+            String lastMark) {
         TikaDocumentStructureTest.Counting sink = new TikaDocumentStructureTest.Counting(firstMark, lastMark);
 
         StructuredDocument result = structure.extract(file, file.getFileName().toString(), mediaType,
                 ExtractionLimits.DEFAULTS, sink);
 
-        assertThat(result.outcome().status()).as("Status").isEqualTo(ExtractionStatus.OK);
+        assertThat(result.outcome().status()).as("Status %s", result.outcome()).isEqualTo(ExtractionStatus.OK);
         assertThat(result.outcome().truncated()).isFalse();
         assertThat(sink.found).containsExactlyInAnyOrder(firstMark, lastMark);
         assertThat(result.chars()).isEqualTo(sink.chars);
         assertThat(sink.largestBlock).isLessThanOrEqualTo(ExtractionStore.DEFAULT_SECTION_CHARS);
+        return sink;
     }
 
     /** Ein Blatt mit {@code rows} Zeilen, Spalte A die Zeilenmarke als geteilte Zeichenkette; ohne POI geschrieben. */

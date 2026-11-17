@@ -31,6 +31,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
@@ -138,6 +139,49 @@ class FileSystemExportArtifactWriterTest {
         assertThat(line.path("header").path("title").asString()).isEqualTo("Neuer Titel");
         assertThat(line.path("header").path("metadataHash").asString()).isEqualTo(current.metadataHash());
         assertThat(line.path("raw").path("retrievedAt").asString()).isEqualTo(stored.retrievedAt().toString());
+    }
+
+    @Test
+    void aWrittenPageComesBackExactlyAsItWasWritten() {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        PageSnapshot stored = snapshot("100", null, PRETTY);
+        try (ExportArtifactWriter.Session session = writer.begin("job-w", SCOPE)) {
+            write(session, stored);
+
+            PageSnapshot back = session.written(stored.key()).orElseThrow();
+            assertThat(back.payload().rawSha256()).isEqualTo(stored.payload().rawSha256());
+            assertThat(back.payload().mediaType()).isEqualTo(stored.payload().mediaType());
+            assertThat(back.metadataHash()).isEqualTo(stored.metadataHash());
+            assertThat(back.retrievedAt()).isEqualTo(stored.retrievedAt());
+            assertThat(session.written(new com.aresstack.spaceharvester.application.snapshot.PageKey("confluence",
+                    "2"))).isEmpty();
+        }
+    }
+
+    @Test
+    void aFolderLockedForAMomentIsMovedOnTheNextAttempt() throws Exception {
+        int[] calls = {0};
+        List<Long> waited = new ArrayList<>();
+
+        FileSystemExportArtifactWriter.retryWhileLocked(() -> {
+            if (calls[0]++ < 2) {
+                throw new java.nio.file.AccessDeniedException("export");
+            }
+        }, waited::add);
+
+        assertThat(calls[0]).isEqualTo(3);
+        assertThat(waited).containsExactly(100L, 200L);
+    }
+
+    @Test
+    void aFolderThatStaysLockedFailsAfterTheLastAttempt() {
+        int[] calls = {0};
+
+        assertThatThrownBy(() -> FileSystemExportArtifactWriter.retryWhileLocked(() -> {
+            calls[0]++;
+            throw new java.nio.file.AccessDeniedException("export");
+        }, millis -> { })).isInstanceOf(java.nio.file.AccessDeniedException.class);
+        assertThat(calls[0]).isEqualTo(FileSystemExportArtifactWriter.LOCK_RETRY_MILLIS.length + 1);
     }
 
     @Test

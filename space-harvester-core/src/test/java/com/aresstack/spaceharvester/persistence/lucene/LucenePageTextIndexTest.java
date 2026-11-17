@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -71,6 +72,32 @@ class LucenePageTextIndexTest {
     }
 
     @Test
+    void aPageSetFiltersBeforeTheRankingAndKeepsTheAttachmentsOfItsPages() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            index.put(entry("wiki", "1", "DEV", "Nachtlauf", "Nachtlauf Nachtlauf"));
+            index.put(entry("wiki", "2", "DEV", "B", "Nachtlauf"));
+            index.put(entry("wiki", "3", "DEV", "C", "nichts"));
+            index.put(entry("docs", "2", "docs", "D", "Nachtlauf"));
+            index.putAttachment(new PageTextIndex.AttachmentEntry(new PageKey("wiki", "3"), "DEV", "a1", "plan.txt",
+                    "Nachtlauf im Anhang", "s1"));
+            PageSet subtree = PageSet.of(Map.of("wiki", java.util.List.of("2", "3")));
+
+            // Mit Grenze 1 fände die Suche ohne Filter nur die beste Seite 1; der Filter wirkt vorher.
+            assertThat(index.search("nachtlauf", Set.of("wiki", "docs"), SearchSpaces.all(), subtree, 1))
+                    .singleElement().satisfies(match -> {
+                        assertThat(match.sourceId()).isEqualTo("wiki");
+                        assertThat(match.pageId()).isIn("2", "3");
+                    });
+            assertThat(index.search("nachtlauf", Set.of("wiki", "docs"), SearchSpaces.all(), subtree, 10))
+                    .extracting(match -> match.sourceId() + "/" + match.pageId() + "/" + match.inAttachment())
+                    .containsExactlyInAnyOrder("wiki/2/false", "wiki/3/true");
+            assertThat(index.search("nachtlauf", Set.of("wiki"), SearchSpaces.all(), PageSet.EMPTY, 10)).isEmpty();
+            assertThat(index.search("nachtlauf", Set.of("wiki", "docs"), SearchSpaces.all(), null, 10))
+                    .hasSize(4);
+        }
+    }
+
+    @Test
     void replacesRemovesAndSurvivesAReopen() {
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
             index.put(entry("wiki", "1", "DEV", "A", "alt"));
@@ -132,6 +159,12 @@ class LucenePageTextIndexTest {
             assertThat(index.search("Bugstrahl", Set.of("wiki"), SearchSpaces.all(), 10))
                     .singleElement().satisfies(match -> assertThat(match.partId()).isNull());
             assertThat(index.attachmentInputSha256(page, "a1")).contains("s1");
+            // Namen für Treffer der semantischen Suche in einem Dokument (ADR 0026, AP9a).
+            assertThat(index.documentTitles(page, "a1", "sha256:x:1"))
+                    .contains(new PageTextIndex.DocumentTitles("akte.zip", "teil.txt"));
+            assertThat(index.documentTitles(page, "a2", "")).contains(new PageTextIndex.DocumentTitles("andere.pdf",
+                    ""));
+            assertThat(index.documentTitles(page, "a3", "")).isEmpty();
 
             // Kürzer geworden, ein Teil weniger: überzählige Abschnitte und Teile verschwinden, der andere Anhang
             // und die Seite bleiben.

@@ -806,6 +806,8 @@ class TikaDocumentStructureTest {
         final Set<String> found = new java.util.HashSet<>();
         private final Set<String> marks;
         long largestBlock;
+        /** Zellbezug der Tabellenzelle, in der eine Marke stand (leer ohne Bezug). */
+        final Map<String, String> cellRefs = new java.util.HashMap<>();
 
         Counting(String... marks) {
             this.marks = Set.of(marks);
@@ -817,6 +819,15 @@ class TikaDocumentStructureTest {
                 blocks++;
                 chars += block.chars();
                 largestBlock = Math.max(largestBlock, block.chars());
+                if (block instanceof Block.Table table) {
+                    for (Block.Cell cell : table.cells()) {
+                        for (String mark : marks) {
+                            if (cell.text().contains(mark)) {
+                                cellRefs.put(mark, cell.cellRef().orElse(""));
+                            }
+                        }
+                    }
+                }
                 String text = DocumentExtractions.plain(block);
                 for (String mark : marks) {
                     if (text.contains(mark)) {

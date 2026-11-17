@@ -4,6 +4,8 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
+import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
 import org.yaml.snakeyaml.error.YAMLException;
@@ -17,6 +19,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -347,7 +350,9 @@ public final class ConfigFileEditor {
     /**
      * Der Entwurf {@code base} mit neuer Cache-Frische ({@code space-harvester.cache.max-age}, {@code version-check})
      * und Sperrfrist ({@code space-harvester.sync.withheld-retention}, ADR 0014); dieselben Schlüssel wie im Server.
-     * Nur diese drei Werte ändern sich.
+     * Nur diese drei Werte ändern sich, dazu die Aufbewahrung des Änderungsprotokolls
+     * ({@code space-harvester.cache.change-log.retention}, ADR 0030; {@code 0} heißt unbegrenzt), wenn sie von dem
+     * abweicht, was die Datei schon liest.
      */
     public Draft withCache(Path file, Draft base, AppSettings.Cache cache) {
         String text = nested(base.text(), "cache", "max-age", indent -> indent + "max-age: " + duration(cache.maxAge())
@@ -357,6 +362,12 @@ public final class ConfigFileEditor {
         text = nested(text, "sync", "withheld-retention", indent -> indent + "withheld-retention: "
                 + duration(cache.withheldRetention()) + "\n");
         AppSettings settings = loader.read(file, text);
+        if (!settings.cache().changeLog().equals(cache.changeLog())) {
+            String retention = cache.changeLog().unlimited() ? "0" : duration(cache.changeLog().retention());
+            text = nested(text, "cache", "change-log", indent -> indent + "change-log:\n" + indent + "  retention: "
+                    + retention + "\n" + indent + "  show-after-update: " + cache.changeLog().showAfterUpdate() + "\n");
+            settings = loader.read(file, text);
+        }
         if (!settings.cache().equals(cache)) {
             throw new IllegalArgumentException("Die Cache-Einstellungen ließen sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.cache und space-harvester.sync von Hand "
@@ -386,6 +397,38 @@ public final class ConfigFileEditor {
     }
 
     /**
+     * Der Entwurf {@code base} mit den gemeinsamen Erkennungsregeln aller Quellen ({@code space-harvester.sync.interval},
+     * {@code inventory-interval}, {@code mode}, {@code catch-up-on-start}, {@code before-search}, {@code events}),
+     * dieselben Schlüssel wie im Dienst; nur diese Werte ändern sich. Ein Abstand {@code null} („aus“) entfernt seinen
+     * Schlüssel. Frist, Sperrfrist und Hintergrund schreiben {@link #withCache} und
+     * {@link #withBackground}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSync(Path file, Draft base, SyncSettings sync) {
+        String text = nested(base.text(), "sync", "interval", indent -> sync.interval() == null ? ""
+                : indent + "interval: " + duration(sync.interval()) + "\n");
+        text = nested(text, "sync", "inventory-interval", indent -> sync.inventoryInterval() == null ? ""
+                : indent + "inventory-interval: " + duration(sync.inventoryInterval()) + "\n");
+        text = nested(text, "sync", "mode", indent -> indent + "mode: " + sync.mode().key() + "\n");
+        text = nested(text, "sync", "catch-up-on-start", indent -> indent + "catch-up-on-start: "
+                + sync.catchUpOnStart() + "\n");
+        text = nested(text, "sync", "before-search", indent -> indent + "before-search: " + sync.beforeSearch() + "\n");
+        text = nested(text, "sync", "events", indent -> indent + "events: " + sync.events() + "\n");
+        AppSettings settings = loader.read(file, text);
+        SyncSettings read = settings.sync();
+        if (!Objects.equals(read.interval(), sync.interval())
+                || !Objects.equals(read.inventoryInterval(), sync.inventoryInterval()) || read.mode() != sync.mode()
+                || read.catchUpOnStart() != sync.catchUpOnStart() || read.beforeSearch() != sync.beforeSearch()
+                || read.events() != sync.events()) {
+            throw new IllegalArgumentException("Die Synchronisierung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.sync von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
      * Der Entwurf {@code base} mit neuen Wiederholungen ({@code space-harvester.jobs.retry.*}, ADR 0025), dieselben
      * Schlüssel wie im Dienst; nur der Block {@code retry} unter {@code jobs} ändert sich.
      *
@@ -408,6 +451,32 @@ public final class ConfigFileEditor {
         if (newProblem || !settings.jobLimits().retry().equals(retry)) {
             throw new IllegalArgumentException("Die Wiederholungen ließen sich nicht sicher in die Konfigurationsdatei "
                     + "schreiben; bitte space-harvester.jobs.retry von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Budget der Synonymerkennung ({@code space-harvester.terms.synonyms.*},
+     * #336), dieselben Schlüssel wie im Dienst; nur der Block {@code synonyms} unter {@code terms} ändert sich.
+     * {@code max-judged-pairs} über 0 schaltet die Prüfung der Kandidatenpaare durch das Text-Modell zu.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSynonymBudget(Path file, Draft base, SynonymBudget budget) {
+        String text = nested(base.text(), "terms", "synonyms", indent -> {
+            String inner = indent + "  ";
+            return indent + "synonyms:\n"
+                    + inner + SynonymBudget.MAX_TERMS + ": " + budget.maxTerms() + "\n"
+                    + inner + SynonymBudget.MAX_EMBEDDED_TERMS + ": " + budget.maxEmbeddedTerms() + "\n"
+                    + inner + SynonymBudget.MAX_JUDGED_PAIRS + ": " + budget.maxJudgedPairs() + "\n";
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.terms().synonyms().equals(budget)) {
+            throw new IllegalArgumentException("Das Budget der Synonymerkennung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.terms.synonyms von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
@@ -479,6 +548,43 @@ public final class ConfigFileEditor {
         if (newProblem || settings.consoleOutput() != output) {
             throw new IllegalArgumentException("Die Terminal-Ausgabe ließ sich nicht sicher in die Konfigurationsdatei "
                     + "schreiben; bitte " + ConsoleOutput.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit dem Export „Analytics“ ({@code space-harvester-app.analytics}, nur die App, Angelo
+     * 16.11.2026): Zeitraum und die drei Pfade; nur Angaben, die von der Vorgabe abweichen, stehen in der Datei, alles
+     * Vorgabe entfernt den Block. Pfade stehen in Anführungszeichen, denn sie enthalten {@code {} und {@code :}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withAnalytics(Path file, Draft base, AnalyticsSettings analytics) {
+        String value = null;
+        if (!analytics.isDefault()) {
+            StringBuilder block = new StringBuilder("analytics:");
+            if (analytics.period() != null) {
+                block.append("\n  period: ").append(duration(analytics.period()));
+            }
+            if (analytics.details() != null) {
+                block.append("\n  details: ").append(quoted(analytics.details()));
+            }
+            if (analytics.activityByDate() != null) {
+                block.append("\n  activity-by-date: ").append(quoted(analytics.activityByDate()));
+            }
+            if (analytics.contentViews() != null) {
+                block.append("\n  content-views: ").append(quoted(analytics.contentViews()));
+            }
+            value = block.toString();
+        }
+        String text = appValue(base.text(), "analytics", value);
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.analytics().equals(analytics)) {
+            throw new IllegalArgumentException("Der Export „Analytics“ ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte " + AnalyticsSettings.KEY + " von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
@@ -814,7 +920,10 @@ public final class ConfigFileEditor {
         if (root < 0) {
             if (value != null) {
                 // Oben in der Datei, wie im Beispiel; der Rest bleibt unverändert.
-                lines.addAll(0, List.of("space-harvester-app:", "  " + value, ""));
+                List<String> fresh = new ArrayList<>(List.of("space-harvester-app:"));
+                fresh.addAll(valueLines(value, "  "));
+                fresh.add("");
+                lines.addAll(0, fresh);
             }
             return String.join(newline, lines) + newline;
         }
@@ -832,9 +941,18 @@ public final class ConfigFileEditor {
             lines.subList(line, blockEnd(lines, line, childIndent)).clear();
         }
         if (value != null) {
-            lines.add(line >= 0 ? line : root + 1, " ".repeat(childIndent) + value);
+            lines.addAll(line >= 0 ? line : root + 1, valueLines(value, " ".repeat(childIndent)));
         }
         return String.join(newline, lines) + newline;
+    }
+
+    /** Ein Wert mit Zeilenumbrüchen ist ein Block: jede Zeile bekommt den Einzug des Schlüssels davor. */
+    private static List<String> valueLines(String value, String indent) {
+        List<String> result = new ArrayList<>();
+        for (String line : value.split("\n", -1)) {
+            result.add(indent + line);
+        }
+        return result;
     }
 
     /** Hinter der letzten Inhaltszeile des Blocks ab {@code start}; Kommentare danach bleiben außerhalb. */
@@ -1102,7 +1220,10 @@ public final class ConfigFileEditor {
     }
 
     private static void add(List<String> lines, int at, String block) {
-        lines.addAll(at, List.of(block.split("\n")));
+        // Ein leerer Block entfernt den Schlüssel, ohne eine Leerzeile zu hinterlassen.
+        if (!block.isEmpty()) {
+            lines.addAll(at, List.of(block.split("\n")));
+        }
     }
 
     private static boolean blankOrComment(String line) {

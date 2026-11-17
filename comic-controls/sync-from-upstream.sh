@@ -50,7 +50,9 @@ checksums() {
 }
 
 workdir="$(mktemp -d)"
-trap 'rm -rf "$workdir"' EXIT
+# Ein Hintergrundlauf von git (commit-graph nach dem Nachladen des Teilklons) kann beim Aufräumen noch schreiben; das
+# Aufräumen darf das Ergebnis der Prüfung nicht ändern.
+trap 'rm -rf "$workdir" 2>/dev/null || { sleep 1; rm -rf "$workdir" 2>/dev/null; } || true' EXIT
 
 case "${1:-}" in
   sync)

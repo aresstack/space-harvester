@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.ranking;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.Objects;
@@ -37,7 +38,8 @@ public final class PageRenewal implements RelevanceSearch.Renewal {
         try {
             background.execute(() -> {
                 try {
-                    pages.page(caller, key.sourceId(), key.pageId(), false);
+                    // ADR 0030: die Suche hat den veralteten Treffer gemeldet.
+                    ChangeTrigger.SEARCH.run(() -> pages.page(caller, key.sourceId(), key.pageId(), false));
                 } catch (RuntimeException e) {
                     // Ohne Seiten-ID; die Suche hat den Treffer schon als veraltet markiert.
                     LOG.log(System.Logger.Level.INFO, "Nachladen in {0} gescheitert ({1})", key.sourceId(),

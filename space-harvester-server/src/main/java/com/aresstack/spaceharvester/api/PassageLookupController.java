@@ -46,7 +46,10 @@ public class PassageLookupController {
                     + "Text), es folgen alle aktuellen Absätze; changed: gleicher Text, aber Zerlegung oder "
                     + "Embedding-Modell gewechselt, es folgen alle aktuellen Absätze; unavailable: für die Seite "
                     + "liegen gerade keine Absätze vor (state sagt warum). Nachziehen wie "
-                    + "GET …/pages/{pageId}/passages; eine nicht sichtbare Seite antwortet wie eine unbekannte (404).")
+                    + "GET …/pages/{pageId}/passages; eine nicht sichtbare Seite antwortet wie eine unbekannte (404). "
+                    + "Ein Absatz eines Anhangs (~<Dokument> hinter der Capture) braucht die Rechte seiner Seite; "
+                    + "older-version heißt dort: nicht mehr vorhanden (anderer Text des Dokuments oder Dokument "
+                    + "weg), ohne Absätze; found liefert die Nachbarn aus demselben Abschnitt.")
     @ApiResponse(responseCode = "200", description = "PassageLookupResponse")
     @ApiResponse(responseCode = "400", description = "Keine Passage-ID (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,

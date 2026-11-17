@@ -8,12 +8,14 @@ import com.aresstack.spaceharvester.application.assets.DocumentRereads;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.facts.FactEditStore;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sync.InventoryLog;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.core.SourceDataStores;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
+import com.aresstack.spaceharvester.persistence.files.FileReadStates;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
@@ -21,17 +23,23 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Optional;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
  * „Daten bereinigen“ ({@link SourceDataPurge}) mit den Ablagen dieses Dienstes, in derselben Reihenfolge wie im
  * Harvester ({@link SourceDataStores}). Ohne Cache-Verzeichnis fehlen Seiten-Cache, Volltext, Anreicherungen und
- * Füllschlange; dann bleibt, was es gibt. Dazu „Neu lesen“ ({@link DocumentRereads}) der abgelegten Dokumente.
+ * Füllschlange; dann bleibt, was es gibt. Die Liste der KI-freigegebenen Seiten ist die der Freigabeprüfung
+ * ({@link AiRelease#pages()}), mit oder ohne Cache. Dazu „Neu lesen“ ({@link DocumentRereads}) der abgelegten Dokumente.
  */
 @Configuration(proxyBeanMethods = false)
 class SourceDataConfiguration {
@@ -39,6 +47,7 @@ class SourceDataConfiguration {
     @Bean
     SourceDataPurge sourceDataPurge(Jobs jobs, ConfiguredSourceCatalog catalog,
                                     ObjectProvider<LuceneFillQueue> fillQueue,
+                                    AiRelease aiRelease,
                                     ObjectProvider<LucenePageCache> cache,
                                     ObjectProvider<LucenePageTextIndex> texts,
                                     ObjectProvider<LuceneEnrichmentStore> enrichments,
@@ -52,7 +61,8 @@ class SourceDataConfiguration {
                                     ObjectProvider<FactEditStore> facts, ObjectProvider<InventoryLog> inventory,
                                     ObjectProvider<AcquisitionScheduler> acquisition) {
         Clock clock = Clock.systemUTC();
-        SourceDataStores stores = SourceDataStores.builder().fillQueue(fillQueue.getIfAvailable());
+        SourceDataStores stores = SourceDataStores.builder().fillQueue(fillQueue.getIfAvailable())
+                .pageReleases(aiRelease.pages());
         cache.ifAvailable(stores::pageCache);
         texts.ifAvailable(stores::fullText);
         enrichments.ifAvailable(stores::enrichments);
@@ -79,11 +89,22 @@ class SourceDataConfiguration {
      */
     @Bean
     DocumentRereads documentRereads(Jobs jobs, Assets assets, AssetStore store, ConfiguredSourceCatalog catalog,
-                                    ObjectProvider<SnapshotRepository> snapshots) {
+                                    ObjectProvider<SnapshotRepository> snapshots,
+                                    @Value("${space-harvester.assets.directory:data/assets}") Path directory) {
         SnapshotRepository pages = snapshots.getIfAvailable();
         return new DocumentRereads(jobs, assets, store, sourceId -> catalog.config(sourceId).isPresent(),
                 pages == null ? key -> Optional.empty()
                         : key -> pages.findHeader(key).map(header -> header.metadata().partitionKey()),
-                Clock.systemUTC());
+                new FileReadStates(directory), Clock.systemUTC());
+    }
+
+    /**
+     * AP5c: nach einem Wechsel der Extraktor-Version oder geänderten Grenzen liest ein interner Auftrag die abgelegten
+     * Dokumente neu, sobald der Dienst bereit ist.
+     */
+    @Bean
+    ApplicationListener<ApplicationReadyEvent> rereadAfterChange(DocumentRereads rereads,
+                                                                 ConfiguredSourceCatalog catalog) {
+        return event -> rereads.afterChange(catalog.configs().stream().map(SourceSettingsConfig::id).toList(), null);
     }
 }

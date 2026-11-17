@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.application.enrichment.embedding;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.enrichment.DocumentPosition;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.JsonText;
@@ -54,6 +57,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     private final int maxChunkChars;
     private final TextSegmentation segmentation;
     private final Predicate<String> sources;
+    /** Seiten der Liste freigegebener Seiten (ADR 0028), auch aus nicht freigegebenen Quellen. */
+    private final Predicate<PageKey> pages;
     private final boolean remote;
     /** Absätze wie askai arch statt fester Stücke; {@code null}: Zerlegung nach Token-Budget. */
     private final PassageChunking passages;
@@ -92,6 +97,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
                                TextSegmentation segmentation, Predicate<String> sources, boolean remote) {
         this.segmentation = Objects.requireNonNull(segmentation, "segmentation");
         this.sources = Objects.requireNonNull(sources, "sources");
+        this.pages = key -> false;
         this.remote = remote;
         this.provider = Objects.requireNonNull(provider, "provider");
         if (maxChunkChars != 0 && maxChunkChars < 100) {
@@ -101,9 +107,10 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         this.passages = null;
     }
 
-    private EmbeddingProcessor(EmbeddingProcessor base, PassageChunking passages) {
+    private EmbeddingProcessor(EmbeddingProcessor base, PassageChunking passages, Predicate<PageKey> pages) {
         this.segmentation = base.segmentation;
         this.sources = base.sources;
+        this.pages = pages;
         this.remote = base.remote;
         this.provider = base.provider;
         this.maxChunkChars = base.maxChunkChars;
@@ -117,7 +124,15 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      * Die Version nennt die Zerlegung: Vorhandene Embeddings veralten und werden aus dem Cache neu berechnet.
      */
     public EmbeddingProcessor withPassages(PassageChunking value) {
-        return new EmbeddingProcessor(this, Objects.requireNonNull(value, "passages"));
+        return new EmbeddingProcessor(this, Objects.requireNonNull(value, "passages"), pages);
+    }
+
+    /**
+     * Derselbe Prozessor, der zusätzlich die Seiten der Liste freigegebener Seiten einbettet (ADR 0028), auch wenn ihre
+     * Quelle nicht freigegeben ist; die Liste wird bei jeder Seite neu gefragt.
+     */
+    public EmbeddingProcessor withPageReleases(Predicate<PageKey> released) {
+        return new EmbeddingProcessor(this, passages, Objects.requireNonNull(released, "released"));
     }
 
     /** Ob die Stücke semantische Absätze sind ({@link #withPassages}). */
@@ -175,12 +190,27 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     @Override
     public boolean appliesTo(PageKey key) {
-        return covers(key.sourceId());
+        return covers(key);
     }
 
-    /** Ob Inhalte dieser Quelle eingebettet werden; ohne Modell keine. */
+    /** Ob Inhalte dieser Quelle als Ganzes eingebettet werden; ohne Modell keine. */
     public boolean covers(String sourceId) {
         return available() && sources.test(sourceId);
+    }
+
+    /** Ob diese Seite eingebettet wird: ihre Quelle oder sie selbst ist freigegeben (ADR 0028); ohne Modell keine. */
+    public boolean covers(PageKey key) {
+        return available() && released(key);
+    }
+
+    /** Ob die Seite an den Dienst gehen darf, unabhängig vom Modell: Quelle freigegeben oder Seite auf der Liste. */
+    public boolean released(PageKey key) {
+        return sources.test(key.sourceId()) || pages.test(key);
+    }
+
+    /** Ob die Seite auf der Liste freigegebener Seiten steht (ADR 0028), gleich, ob ihre Quelle freigegeben ist. */
+    public boolean pageReleased(PageKey key) {
+        return pages.test(key);
     }
 
     @Override
@@ -207,18 +237,86 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      */
     @Override
     public EnrichmentOutput process(PageKey key, PageText text) {
-        if (!sources.test(key.sourceId())) {
-            throw new ProcessingNotAllowedException("Quelle nicht für den KI-Dienst freigegeben");
+        if (!released(key)) {
+            throw new ProcessingNotAllowedException("Seite nicht für den KI-Dienst freigegeben");
         }
         return process(text);
     }
 
+    /** Auch Anhänge und enthaltene Dateien (ADR 0026, AP9a), mit der Grenze je Dokument. */
+    @Override
+    public boolean documents() {
+        return true;
+    }
+
+    /**
+     * Ein Abschnitt eines Dokuments: an das Modell geht höchstens, was die Grenze je Dokument nach den Abschnitten davor
+     * noch zulässt ({@link DocumentPosition#embeddingBudget()}). Eine Kürzung steht als {@code cut} im Ergebnis: Grenze,
+     * Stelle des Abschnitts, eingebettete und gelesene Zeichen; Absätze und Navigation gelten ohne Grenze.
+     *
+     * @throws ProcessingNotAllowedException wenn Inhalte der Quelle nicht an den Dienst gehen dürfen
+     */
+    @Override
+    public EnrichmentOutput process(DocumentKey document, PageText text, DocumentPosition position) {
+        if (!released(document.page())) {
+            throw new ProcessingNotAllowedException("Seite nicht für den KI-Dienst freigegeben");
+        }
+        long budget = position.embeddingBudget();
+        int length = text.text().length();
+        if (budget >= length) {
+            return process(text);
+        }
+        int embedded = (int) budget;
+        String cut = ",\"cut\":{\"maxChars\":" + position.embeddingMaxChars() + ",\"offset\":" + position.offset()
+                + ",\"embeddedChars\":" + embedded + ",\"chars\":" + length + "}";
+        String warning = "Grenze für das Embedding-Modell je Dokument erreicht: " + embedded + " von " + length
+                + " Zeichen dieses Abschnitts eingebettet";
+        return process(cut(text, embedded), cut, warning);
+    }
+
+    private static final Pattern EMBEDDED_CHARS = Pattern.compile("\"cut\":\\{[^}]*\"embeddedChars\":(\\d+)");
+
+    /**
+     * Ein Stand gilt nur, wenn er so viele Zeichen des Abschnitts eingebettet hat, wie die Grenze an dieser Stelle jetzt
+     * zulässt: eine andere Grenze oder ein kürzerer Abschnitt davor rechnet ihn neu.
+     */
+    @Override
+    public boolean current(Enrichment stored, PageText text, DocumentPosition position) {
+        if (stored.document().isPage()) {
+            return true;
+        }
+        int length = text.text().length();
+        long expected = Math.min(position.embeddingBudget(), length);
+        java.util.regex.Matcher cut = EMBEDDED_CHARS.matcher(stored.payloadJson());
+        long recorded = cut.find() ? Long.parseLong(cut.group(1)) : length;
+        return recorded == expected;
+    }
+
+    /** Der Anfang {@code [0, chars)} des Textes mit den Abschnitten darin, Stellen unverändert. */
+    static PageText cut(PageText text, int chars) {
+        List<PageText.Section> sections = new ArrayList<>();
+        for (PageText.Section section : text.sections()) {
+            if (section.start() < chars) {
+                sections.add(new PageText.Section(section.heading(), section.level(), section.start(),
+                        Math.min(section.end(), chars)));
+            }
+        }
+        return new PageText(text.schema(), text.text().substring(0, chars), sections);
+    }
+
     @Override
     public EnrichmentOutput process(PageText text) {
+        return process(text, "", null);
+    }
+
+    private EnrichmentOutput process(PageText text, String cut, String cutWarning) {
         // Ein Modell für den ganzen Lauf, auch wenn es währenddessen gewechselt wird.
         EmbeddingProvider provider = provider();
         List<Chunk> chunks = passages == null ? chunks(text) : passageChunks(text, provider);
         List<String> warnings = new ArrayList<>();
+        if (cutWarning != null) {
+            warnings.add(cutWarning);
+        }
         if (chunks.size() > MAX_CHUNKS) {
             warnings.add("Nur die ersten " + MAX_CHUNKS + " von " + chunks.size() + " Abschnitten eingebettet");
             chunks = chunks.subList(0, MAX_CHUNKS);
@@ -242,7 +340,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             json.append('}');
         }
         // Mit der Version dieses Modells, nicht der bei Abschluss eingestellten.
-        return new EnrichmentOutput(json.append("]}").toString(), warnings, version(provider));
+        return new EnrichmentOutput(json.append("]").append(cut).append('}').toString(), warnings,
+                version(provider));
     }
 
     /**

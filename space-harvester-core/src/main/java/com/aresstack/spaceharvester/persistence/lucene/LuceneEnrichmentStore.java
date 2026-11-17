@@ -11,9 +11,11 @@ import com.aresstack.spaceharvester.application.facts.EnrichmentFacts;
 import com.aresstack.spaceharvester.application.facts.FactStore;
 import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.TermOccurrence;
+import com.aresstack.spaceharvester.application.terms.TermOrigin;
 import com.aresstack.spaceharvester.application.terms.TermPayload;
 import com.aresstack.spaceharvester.application.terms.TermPosting;
 import com.aresstack.spaceharvester.application.terms.TermText;
@@ -148,7 +150,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static final String ATTACHMENT_ID = "documentAttachmentId";
     private static final String PART_ID = "documentPartId";
     private static final String SECTION = "documentSection";
-    /** Vektoren eines Dokuments: die Seitensuche ({@link #nearest}) findet sie nicht. */
+    private static final String DOCUMENT_EXTRACTION = "documentExtraction";
+    /** Vektoren eines Dokuments: nur {@link #nearestDocuments} findet sie, die Seitensuche nicht. */
     private static final String VECTOR_DOCUMENT = "vectorDocument";
     private static final String VECTOR_DOCUMENT_KEY = "vectorDocumentKey";
     private static final String VECTOR_DOCUMENT_ATTACHMENT = "vectorDocumentAttachment";
@@ -179,6 +182,14 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static final String TERM_SECTION = "termSection";
     /** Fundstellen als Folge von Ganzzahlpaaren (Anfang, Ende), je vier Bytes. */
     private static final String TERM_OCCURRENCES = "termOccurrences";
+    /**
+     * Begriffe eines Anhangs oder einer enthaltenen Datei (ADR 0026, AP9b): Markierung, Dokument ({@link
+     * DocumentKey#value()}) und Anhang ({@code page \0 attachmentId}) zum Entfernen; eigene Felder, damit
+     * {@link #find(DocumentKey)} sie nie für Ergebnisse hält.
+     */
+    private static final String TERM_DOCUMENT = "termDocument";
+    private static final String TERM_DOCUMENT_KEY = "termDocumentKey";
+    private static final String TERM_DOCUMENT_ATTACHMENT = "termDocumentAttachment";
     /** Ergebnis ({@link #ID}), zu dem ein Faktendokument gehört. */
     private static final String FACT_OF = "factOf";
     /** Seite eines Faktendokuments; getrennt von {@link #PAGE}, damit {@link #find} nur Ergebnisse sieht. */
@@ -377,7 +388,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             for (Enrichment enrichment : find(document)) {
                 if (enrichment.section() == section) {
                     String id = id(enrichment);
-                    writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id));
+                    writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id), new Term(TERM_OF, id));
                 }
             }
             changed();
@@ -400,11 +411,12 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                 }
             } else if (document.isEmbedded() || document.attachmentId().isEmpty()) {
                 writer.deleteDocuments(new Term(DOCUMENT, document.value()),
-                        new Term(VECTOR_DOCUMENT_KEY, document.value()));
+                        new Term(VECTOR_DOCUMENT_KEY, document.value()), new Term(TERM_DOCUMENT_KEY, document.value()));
             } else {
                 // Ein Anhang samt seinen enthaltenen Dateien.
                 writer.deleteDocuments(new Term(DOCUMENT_ATTACHMENT, attachment(document)),
-                        new Term(VECTOR_DOCUMENT_ATTACHMENT, attachment(document)));
+                        new Term(VECTOR_DOCUMENT_ATTACHMENT, attachment(document)),
+                        new Term(TERM_DOCUMENT_ATTACHMENT, attachment(document)));
             }
             changed();
         } catch (IOException e) {
@@ -443,6 +455,11 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             writer.deleteDocuments(new BooleanQuery.Builder()
                     .add(new TermQuery(new Term(DOCUMENT_PAGE, page(key))), BooleanClause.Occur.FILTER)
                     .add(new TermQuery(new Term(DOCUMENT_PROCESSOR, processorId)), BooleanClause.Occur.FILTER).build());
+            if (TermPayload.PROCESSOR.equals(processorId)) {
+                writer.deleteDocuments(new BooleanQuery.Builder()
+                        .add(new TermQuery(new Term(TERM_PAGE, page(key))), BooleanClause.Occur.FILTER)
+                        .add(new TermQuery(new Term(TERM_DOCUMENT, "1")), BooleanClause.Occur.FILTER).build());
+            }
             if (EMBEDDING.equals(processorId)) {
                 writer.deleteDocuments(new BooleanQuery.Builder()
                         .add(new TermQuery(new Term(VECTOR_PAGE, page(key))), BooleanClause.Occur.FILTER)
@@ -473,6 +490,28 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     @Override
     public List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        return nearest(sourceIds, processorVersion, query, k, false, null);
+    }
+
+    @Override
+    public List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        return nearest(sourceIds, processorVersion, query, k, true, null);
+    }
+
+    @Override
+    public List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                  PageSet pages) {
+        return nearest(sourceIds, processorVersion, query, k, false, pages);
+    }
+
+    @Override
+    public List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                           PageSet pages) {
+        return nearest(sourceIds, processorVersion, query, k, true, pages);
+    }
+
+    private List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                   boolean documents, PageSet within) {
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(processorVersion, "processorVersion");
         Objects.requireNonNull(query, "query");
@@ -481,16 +520,25 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         }
         requireOpen();
         float[] normalized = EmbeddingIndex.normalized(query);
-        if (query.length > MAX_VECTOR_DIMENSIONS || isZero(normalized) || sourceIds.isEmpty()) {
+        if (query.length > MAX_VECTOR_DIMENSIONS || isZero(normalized) || sourceIds.isEmpty()
+                || within != null && within.isEmpty()) {
             return List.of();
         }
-        BooleanQuery filter = new BooleanQuery.Builder()
+        BooleanQuery.Builder filters = new BooleanQuery.Builder()
                 .add(new TermInSetQuery(VECTOR_SOURCE, sourceIds.stream().map(BytesRef::new).toList()),
                         BooleanClause.Occur.FILTER)
                 .add(new TermQuery(new Term(VECTOR_VERSION, processorVersion)), BooleanClause.Occur.FILTER)
-                // Nur Seiten: Stücke von Anhängen beziehen sich nicht auf den Seitentext (ADR 0026, eigene Suche).
-                .add(new TermQuery(new Term(VECTOR_DOCUMENT, "1")), BooleanClause.Occur.MUST_NOT)
-                .build();
+                // Seiten und Dokumente getrennt: Stücke von Anhängen beziehen sich nicht auf den Seitentext (ADR 0026).
+                .add(new TermQuery(new Term(VECTOR_DOCUMENT, "1")),
+                        documents ? BooleanClause.Occur.FILTER : BooleanClause.Occur.MUST_NOT);
+        if (within != null) {
+            // Seite samt Unterseiten (ADR 0029): vor der Nachbarsuche, damit alle k aus der Menge kommen.
+            List<BytesRef> pages = new ArrayList<>(within.size());
+            within.asMap().forEach((sourceId, pageIds) -> pageIds.forEach(pageId ->
+                    pages.add(new BytesRef(page(new PageKey(sourceId, pageId))))));
+            filters.add(new TermInSetQuery(VECTOR_PAGE, pages), BooleanClause.Occur.FILTER);
+        }
+        BooleanQuery filter = filters.build();
         try {
             IndexSearcher searcher = searchers.acquire();
             try {
@@ -526,13 +574,24 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_BATCH + " liegen");
         }
         requireOpen();
-        if (filter.sourceIds().isEmpty()) {
+        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()) {
             return List.of();
         }
         BooleanQuery.Builder query = new BooleanQuery.Builder()
                 .add(new TermInSetQuery(TERM_SOURCE, filter.sourceIds().stream().map(BytesRef::new).toList()),
                         BooleanClause.Occur.FILTER)
                 .add(new TermQuery(new Term(TERM_VERSION, filter.processorVersion())), BooleanClause.Occur.FILTER);
+        if (filter.pages() != null) {
+            // Seite samt Unterseiten (ADR 0029): Begriffe der Dokumente tragen die Seite, zu der sie gehören.
+            List<BytesRef> pages = new ArrayList<>(filter.pages().size());
+            filter.pages().asMap().forEach((sourceId, pageIds) -> pageIds.forEach(pageId ->
+                    pages.add(new BytesRef(page(new PageKey(sourceId, pageId))))));
+            query.add(new TermInSetQuery(TERM_PAGE, pages), BooleanClause.Occur.FILTER);
+        }
+        if (filter.origin() != TermOrigin.ALL) {
+            query.add(new TermQuery(new Term(TERM_DOCUMENT, "1")), filter.origin() == TermOrigin.DOCUMENTS
+                    ? BooleanClause.Occur.FILTER : BooleanClause.Occur.MUST_NOT);
+        }
         if (filter.kind() != null) {
             query.add(new TermQuery(new Term(TERM_KIND, filter.kind().id())), BooleanClause.Occur.FILTER);
         }
@@ -779,15 +838,11 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     /** Ein Dokument je Begriff eines gültigen {@code terms}-Ergebnisses ({@link TermPayload#postings}). */
     private static List<Document> terms(Enrichment enrichment) {
-        if (enrichment.ofDocument()) {
-            // Begriffe je Dokument kommen mit AP9b (Strang B); bis dahin liest der Begriffsindex nur Seiten.
-            return List.of();
-        }
         List<TermPosting> postings = TermPayload.postings(enrichment);
         if (postings.isEmpty()) {
             return List.of();
         }
-        String id = id(enrichment.key(), enrichment.processorId());
+        String id = id(enrichment);
         List<Document> docs = new ArrayList<>(postings.size());
         for (TermPosting posting : postings) {
             Document doc = new Document();
@@ -816,6 +871,12 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                 packed.putInt(occurrence.start()).putInt(occurrence.end());
             }
             doc.add(new StoredField(TERM_OCCURRENCES, packed.array()));
+            if (enrichment.ofDocument()) {
+                doc.add(new StringField(TERM_DOCUMENT, "1", Field.Store.NO));
+                doc.add(new StringField(TERM_DOCUMENT_KEY, enrichment.document().value(), Field.Store.NO));
+                doc.add(new StringField(TERM_DOCUMENT_ATTACHMENT, attachment(enrichment.document()), Field.Store.NO));
+                storeDocument(doc, enrichment);
+            }
             docs.add(doc);
         }
         return docs;
@@ -863,9 +924,13 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         while (packed.remaining() >= 8) {
             occurrences.add(new TermOccurrence(packed.getInt(), packed.getInt()));
         }
+        DocumentKey document = documentKey(key, doc);
+        int section = section(doc);
         return new TermPosting(key, kind, doc.get(TERM), normalized, doc.getField(TERM_COUNT).numericValue()
                 .intValue(), doc.get(TERM_EXPANSION), doc.get(TERM_SECTION), occurrences, doc.get(REVISION),
-                doc.get(INPUT_SHA256), doc.get(PROCESSOR_VERSION), TermIndex.sortKey(normalized, kind, key));
+                doc.get(INPUT_SHA256), doc.get(PROCESSOR_VERSION),
+                TermIndex.sortKey(normalized, kind, document, section), document, section,
+                doc.get(DOCUMENT_EXTRACTION));
     }
 
     private static String factJson(MetadataFact fact) {
@@ -1002,7 +1067,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         return new Enrichment(key, doc.get(PROCESSOR_ID),
                 doc.get(PROCESSOR_VERSION), doc.get(INPUT_SHA256), doc.get(REVISION),
                 Enrichment.Status.valueOf(doc.get(STATUS)), doc.get(PAYLOAD), List.of(doc.getValues(WARNING)),
-                doc.get(ERROR_CODE), Instant.parse(doc.get(COMPUTED_AT)), documentKey(key, doc), section(doc));
+                doc.get(ERROR_CODE), Instant.parse(doc.get(COMPUTED_AT)), documentKey(key, doc), section(doc),
+                doc.get(DOCUMENT_EXTRACTION));
     }
 
     /** Anhang, Teil und Abschnitt getrennt gespeichert (Schlüsselform, ADR 0026); nie aus einer Zeichenkette zerlegt. */
@@ -1010,6 +1076,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         enrichment.document().attachmentId().ifPresent(id -> doc.add(new StoredField(ATTACHMENT_ID, id)));
         enrichment.document().part().ifPresent(id -> doc.add(new StoredField(PART_ID, id.value())));
         doc.add(new StoredField(SECTION, enrichment.section()));
+        storeIfPresent(doc, DOCUMENT_EXTRACTION, enrichment.extraction());
     }
 
     private static DocumentKey documentKey(PageKey page, Document doc) {

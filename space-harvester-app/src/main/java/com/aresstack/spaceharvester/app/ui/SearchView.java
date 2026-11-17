@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
@@ -19,7 +20,6 @@ import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
-import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
@@ -63,7 +63,6 @@ public final class SearchView implements View {
     /** Schluss der Fortschrittszeile, wenn nichts mehr nachlädt. */
     static final String DONE = "Die Suche ist abgeschlossen";
     /** Abstand der Abfragen des Ladestands ({@code KeywordSearch.progress}), solange Seiten in den Cache laden. */
-    private static final int POLL_MILLIS = 400;
     static final String SEMANTIC = "Semantische Suche";
 
     private final AppContext context;
@@ -119,8 +118,11 @@ public final class SearchView implements View {
     private final JPanel statusInfo = new JPanel();
     final ComposerButton cancel = Comic.button("Abbrechen", "Das Laden der gefundenen Seiten abbrechen; Geladenes "
             + "bleibt im Cache");
-    /** Fragt den Ladestand ab; steigt er, wird derselbe Stapel neu geordnet ({@link #refresh}). */
-    private final Timer poll = new Timer(POLL_MILLIS, e -> poll());
+    /**
+     * Anmeldung für den Ladestand des laufenden Stapels (ADR 0027, Angelo 13.11.2026: kein Zeitgeber); steigt die
+     * Zahl geladener Seiten, wird derselbe Stapel neu geordnet ({@link #refresh}).
+     */
+    private Subscription progressSubscription = Subscription.NONE;
     /** Kennung des ladenden Stapels für {@code progress} und {@code cancel}; {@code null}, wenn nichts lädt. */
     private String progressId;
     /** Zuletzt gemeldete geladene Seiten; steigt die Zahl, sucht die Ansicht denselben Stapel erneut. */
@@ -162,7 +164,6 @@ public final class SearchView implements View {
         run.addActionListener(e -> search());
         more.addActionListener(e -> loadMore());
         more.setEnabled(false);
-        poll.setRepeats(false);
         cancel.addActionListener(e -> cancelLoading());
         endState.setFont(Comic.semiBold(13f));
         endState.setForeground(Comic.INK);
@@ -805,7 +806,7 @@ public final class SearchView implements View {
             return;
         }
         // Das Laden des vorigen Stapels läuft im Core weiter; die Ansicht folgt ab jetzt dem neuen.
-        poll.stop();
+        untrack();
         progressId = null;
         // Bis zur Antwort gibt es keinen weiteren Stapel; ein zweiter Klick verwürfe sonst den laufenden.
         nextCursor = null;
@@ -851,24 +852,50 @@ public final class SearchView implements View {
     }
 
     /**
-     * Folgt dem Laden eines Stapels ({@code Results.progress()}): zeigt „x von y“ und fragt den Stand ab, bis der Core
-     * {@code done} meldet. Ohne zu ladende Seiten ist die Suche sofort abgeschlossen.
+     * Folgt dem Laden eines Stapels ({@code Results.progress()}): zeigt „x von y“, meldet sich für seinen Ladestand an
+     * und liest ihn danach einmal, damit keine Meldung verloren geht; der Core meldet bis {@code done}. Ohne zu
+     * ladende Seiten ist die Suche sofort abgeschlossen.
      */
     private void track(KeywordSearch.Progress progress) {
-        poll.stop();
+        untrack();
         cancelled = false;
         if (progress == null) {
             progressId = null;
             finished(false);
             return;
         }
-        progressId = progress.id();
+        String id = progress.id();
+        progressId = id;
         lastLoaded = progress.loaded();
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            progressSubscription = runtime.workspace().subscribeSearchProgress(id,
+                    state -> SwingUtilities.invokeLater(() -> advanced(id, state)));
+        }
         progress(progress);
+        read();
     }
 
-    /** Ein Takt: Ladestand holen; ist mehr geladen, denselben Stapel neu einsortieren. */
-    private void poll() {
+    /** Beendet das Folgen des laufenden Stapels (neuer Stapel, Abbruch, neue Suche). */
+    private void untrack() {
+        progressSubscription.close();
+        progressSubscription = Subscription.NONE;
+    }
+
+    /** Eine Meldung des Core zum Stapel {@code id}: ist mehr geladen, denselben Stapel neu einsortieren. */
+    private void advanced(String id, KeywordSearch.Progress state) {
+        if (!id.equals(progressId)) {
+            return;
+        }
+        if (state.loaded() > lastLoaded) {
+            lastLoaded = state.loaded();
+            refresh();
+        }
+        progress(state);
+    }
+
+    /** Liest den Ladestand einmal nach dem Anmelden; kennt der Core den Stapel nicht mehr, lädt nichts mehr. */
+    private void read() {
         AppRuntime runtime = context.runtime();
         String id = progressId;
         if (runtime == null || id == null) {
@@ -879,22 +906,15 @@ public final class SearchView implements View {
                 return;
             }
             if (current.isEmpty()) {
-                // Der Core kennt den Stapel nicht mehr: nichts lädt mehr.
                 progressId = null;
+                untrack();
                 refresh();
                 finished(false);
                 return;
             }
-            KeywordSearch.Progress state = current.get();
-            if (state.loaded() > lastLoaded) {
-                lastLoaded = state.loaded();
-                refresh();
-            }
-            progress(state);
+            advanced(id, current.get());
         }, error -> {
-            if (id.equals(progressId)) {
-                poll.restart();
-            }
+            // Die Anmeldung meldet den nächsten Stand.
         });
     }
 
@@ -941,7 +961,7 @@ public final class SearchView implements View {
         if (runtime == null || id == null) {
             return;
         }
-        poll.stop();
+        untrack();
         progressId = null;
         cancelled = true;
         // Kein erneutes Suchen danach: Es lüde die abgebrochenen Seiten wieder in den Cache.
@@ -991,7 +1011,7 @@ public final class SearchView implements View {
         overlay.setBusy(false);
         AppRuntime runtime = context.runtime();
         String id = progressId;
-        poll.stop();
+        untrack();
         progressId = null;
         idle(null);
         progressText.setText("");
@@ -1064,7 +1084,7 @@ public final class SearchView implements View {
     private void progress(KeywordSearch.Progress state) {
         if (state.done()) {
             progressId = null;
-            poll.stop();
+            untrack();
             if (!state.cancelled()) {
                 refresh();
             }
@@ -1076,7 +1096,6 @@ public final class SearchView implements View {
         endState.setVisible(false);
         cancel.setVisible(true);
         updateMore();
-        poll.restart();
     }
 
     /** Ende der Zeile: „Die Suche ist abgeschlossen“ mit der Zahl der Treffer, nach einem Abbruch als solcher. */

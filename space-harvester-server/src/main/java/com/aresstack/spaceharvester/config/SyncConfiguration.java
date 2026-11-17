@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
@@ -163,7 +164,7 @@ class SyncConfiguration {
             }
             HarvesterConfiguration configuration = live.current();
             try {
-                int started = syncJobs.catchUpAll(null, sourceId -> {
+                int started = syncJobs.catchUpAll(null, ChangeTrigger.STARTUP, sourceId -> {
                     SyncSettings rules = configuration.syncFor(sourceId);
                     return rules.catchUpOnStart() ? rules.mode() : null;
                 }).size();

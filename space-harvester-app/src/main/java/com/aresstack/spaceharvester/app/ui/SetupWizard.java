@@ -357,6 +357,13 @@ final class SetupWizard {
         summary.add("Proxy", proxyMode);
         summary.add("Serverzertifikate", settings.tls().describe());
         summary.add(SettingDialogs.RETRY_TITLE, SettingDialogs.retrySummary(settings.jobLimits().retry()));
+        // Einstellbar unter Cache › „Alle Quellen anpassen“ (ADR 0030): öffnet nach einem Update dessen Änderungen.
+        summary.add(SettingDialogs.SHOW_AFTER_UPDATE, settings.cache() != null
+                && settings.cache().changeLog().showAfterUpdate() ? "an" : "aus");
+        summary.add("Text-Modell", blank(settings.ai().chatModel()));
+        int judged = settings.terms().synonyms().maxJudgedPairs();
+        summary.add(AiSettingsPanel.JUDGED_PAIRS_LABEL,
+                judged == 0 ? "aus" : judged + " " + AiSettingsPanel.JUDGED_PAIRS_UNIT);
         summary.add("Embedding-Modell", blank(settings.ai().embeddingModel()));
         summary.add("Rerank-Modell", blank(settings.ai().rerankModel()));
         summary.add("Vision-Modell", blank(settings.ai().visionModel()));
@@ -378,6 +385,9 @@ final class SetupWizard {
                 AiSettingsPanel.releasedText(settings, settings.ai().externalProcessingSources()));
         // Einstellbar unter Allgemein › Terminal-Ausgabe; die Protokolldatei bekommt immer alles.
         summary.add(SettingsView.CONSOLE_TITLE, settings.consoleOutput().label());
+        // Einstellbar unter Allgemein › Analytics-Export: Zeitraum und Pfade des Confluence-Analytics-Plugins.
+        summary.add(SettingsView.ANALYTICS_TITLE, settings.analytics().isDefault() ? "Vorgaben (Confluence 10.2)"
+                : "angepasst · " + settings.analytics().days() + " Tage");
         summary.add("Konfigurationsdatei", context.configFile().toAbsolutePath().toString());
     }
 

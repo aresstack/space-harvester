@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.UserCredential;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sync.SyncBaselineStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
@@ -16,10 +17,14 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
@@ -121,6 +126,46 @@ class BackgroundFillTest {
         eligible.add("wiki");
     }
 
+    /** Wartet auf eine passende Meldung (ADR 0027). */
+    private static AcquisitionStatus next(BlockingQueue<AcquisitionStatus> seen, Predicate<AcquisitionStatus> wanted)
+            throws InterruptedException {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (System.nanoTime() < until) {
+            AcquisitionStatus next = seen.poll(until - System.nanoTime(), TimeUnit.NANOSECONDS);
+            if (next != null && wanted.test(next)) {
+                return next;
+            }
+        }
+        throw new AssertionError("Keine passende Meldung");
+    }
+
+    @Test
+    void theStatusOfFillAndPlannerArrivesWithoutAnyQueryUntilTheSubscriptionIsClosed() throws Exception {
+        gates.put("new-1", new CountDownLatch(1));
+        gates.put("old-1", new CountDownLatch(1));
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        BackgroundFill fill = new BackgroundFill(scheduler(1), queue, catalog(GAPS), SERVER, eligible::contains, NOW,
+                true);
+        open.add(fill);
+        BlockingQueue<AcquisitionStatus> seen = new LinkedBlockingQueue<>();
+        Subscription subscription = fill.subscribe(seen::add);
+        fill.start();
+
+        AcquisitionStatus loading = next(seen, status -> status.backgroundRunning() == 1 && status.queued() == 2);
+        assertThat(loading.pause()).isEqualTo(AcquisitionStatus.Pause.NONE);
+        gates.values().forEach(CountDownLatch::countDown);
+        AcquisitionStatus idle = next(seen, status -> status.loaded() == 2 && status.queued() == 0
+                && status.inFlight() == 0);
+        assertThat(idle.pause()).isEqualTo(AcquisitionStatus.Pause.IDLE);
+
+        fill.enabled(false);
+        assertThat(next(seen, status -> status.pause() == AcquisitionStatus.Pause.DISABLED)).isNotNull();
+
+        subscription.close();
+        fill.enabled(true);
+        assertThat(seen.poll(500, TimeUnit.MILLISECONDS)).as("abgemeldet").isNull();
+    }
+
     @Test
     void fillsNotLoadedAndOutdatedPagesOfEligibleSources() throws Exception {
         BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
@@ -219,6 +264,123 @@ class BackgroundFillTest {
         // Die gescheiterte Seite kommt erst nach der Wartezeit wieder, nicht in einer Schleife.
         assertThat(attempts.get("kaputt")).isEqualTo(1);
         assertThat(fill.status().failed()).isEqualTo(1);
+    }
+
+    @Test
+    void theCatalogIsSearchedAfterEachChangeAndNeverInIntervals() throws Exception {
+        List<BackgroundFill.Gap> gaps = new CopyOnWriteArrayList<>();
+        AtomicInteger searches = new AtomicInteger();
+        BackgroundFill.Catalog counting = new BackgroundFill.Catalog() {
+            @Override
+            public List<SyncBaselineStore.SpaceRef> spaces() {
+                searches.incrementAndGet();
+                return List.of(new SyncBaselineStore.SpaceRef("wiki", "DEV"));
+            }
+
+            @Override
+            public List<BackgroundFill.Gap> gaps(String sourceId, String spaceKey, int limit) {
+                return gaps.stream().limit(limit).toList();
+            }
+        };
+        BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), counting, SERVER,
+                eligible::contains, new BackgroundFill.Timing(Duration.ZERO, Duration.ofMillis(200), 1000), true);
+        open.add(fill);
+        fill.start();
+        eventually(() -> fill.status().lastScan() != null);
+
+        TimeUnit.MILLISECONDS.sleep(800);
+        assertThat(searches.get()).as("keine Suche in Abständen").isEqualTo(1);
+
+        gaps.add(gap("wiki", "neu", BackgroundFill.Kind.NOT_LOADED));
+        fill.wake();
+        fill.wake();
+        eventually(() -> loaded.contains("neu"));
+        assertThat(searches.get()).as("zwei Weckrufe kurz hintereinander, eine Suche").isEqualTo(2);
+    }
+
+    @Test
+    void aCommitDuringTheStartupDelayDoesNotEndIt() throws Exception {
+        // Die Titelsuche katalogisiert ihre Funde und bietet sie an, solange die Füllung anläuft.
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        queue.add(List.of(gap("wiki", "fund", BackgroundFill.Kind.NOT_LOADED)));
+        BackgroundFill fill = new BackgroundFill(scheduler(1), queue, catalog(List.of()), SERVER, eligible::contains,
+                new BackgroundFill.Timing(Duration.ofSeconds(2), Duration.ofHours(1), 1000), true);
+        open.add(fill);
+        fill.start();
+
+        // Der Commit des Seiten-Cache weckt; die Füllung lädt trotzdem erst nach der Anlaufzeit.
+        fill.wake();
+        TimeUnit.MILLISECONDS.sleep(300);
+        assertThat(loaded).isEmpty();
+        assertThat(fill.status().lastScan()).isNull();
+
+        eventually(() -> loaded.contains("fund"));
+    }
+
+    @Test
+    void aFailedPageComesBackOnceItsWaitIsOverWithoutAnyOtherEvent() throws Exception {
+        failing.add("new-1");
+        BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), catalog(GAPS),
+                SERVER, eligible::contains, new BackgroundFill.Timing(Duration.ZERO, Duration.ofMillis(300), 1000),
+                true);
+        open.add(fill);
+        fill.start();
+        eventually(() -> fill.status().failed() == 1);
+
+        failing.remove("new-1");
+
+        eventually(() -> loaded.contains("new-1"));
+    }
+
+    @Test
+    void aFailedCatalogSearchIsRepeatedAfterThePauseWithoutAnyOtherEvent() throws Exception {
+        List<BackgroundFill.Gap> gaps = new CopyOnWriteArrayList<>();
+        AtomicBoolean broken = new AtomicBoolean();
+        AtomicInteger searches = new AtomicInteger();
+        BackgroundFill.Catalog flaky = new BackgroundFill.Catalog() {
+            @Override
+            public List<SyncBaselineStore.SpaceRef> spaces() {
+                searches.incrementAndGet();
+                if (broken.getAndSet(false)) {
+                    throw new IllegalStateException("Katalog gerade nicht lesbar");
+                }
+                return List.of(new SyncBaselineStore.SpaceRef("wiki", "DEV"));
+            }
+
+            @Override
+            public List<BackgroundFill.Gap> gaps(String sourceId, String spaceKey, int limit) {
+                return gaps.stream().limit(limit).toList();
+            }
+        };
+        BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), flaky, SERVER,
+                eligible::contains, new BackgroundFill.Timing(Duration.ZERO, Duration.ofMillis(200), 1000), true);
+        open.add(fill);
+        fill.start();
+        eventually(() -> fill.status().lastScan() != null);
+
+        // Die Suche nach dieser Änderung scheitert einmal; danach kommt kein Ereignis mehr.
+        gaps.add(gap("wiki", "neu", BackgroundFill.Kind.NOT_LOADED));
+        broken.set(true);
+        fill.wake();
+
+        eventually(() -> loaded.contains("neu"));
+        assertThat(searches.get()).isEqualTo(3);
+    }
+
+    @Test
+    void entriesOfASwitchedOffSourceAtTheHeadOfTheQueueDoNotHideTheRest() throws Exception {
+        // Nach einem Neustart: vorn mehr als ein Fenster Einträge einer Quelle, die nicht mehr füllen soll.
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        queue.add(List.of(gap("other", "a", BackgroundFill.Kind.NOT_LOADED),
+                gap("other", "b", BackgroundFill.Kind.NOT_LOADED), gap("other", "c", BackgroundFill.Kind.NOT_LOADED),
+                gap("other", "d", BackgroundFill.Kind.NOT_LOADED), gap("wiki", "dahinter",
+                        BackgroundFill.Kind.NOT_LOADED)));
+
+        fill(scheduler(1), queue, catalog(List.of()), true);
+
+        // Der Lader meldet die Seite, bevor ihr Abruf endet und den Eintrag aus der Schlange nimmt: auf beides warten.
+        eventually(() -> loaded.contains("dahinter") && queue.size() == 0);
+        assertThat(loaded).containsExactly("dahinter");
     }
 
     @Test
@@ -333,6 +495,7 @@ class BackgroundFillTest {
         AutoCloseable pause = scheduler.pauseBackground();
         AtomicReference<BackgroundFill> fill = new AtomicReference<>();
         AtomicBoolean withdrawn = new AtomicBoolean();
+        AtomicInteger checkedAfter = new AtomicInteger();
         // Die Füllung der Quelle geht aus, nachdem feed() sie geprüft, aber bevor es die Anfrage eingetragen hat;
         // revalidate() läuft genau dazwischen und sieht die Anfrage deshalb noch nicht.
         Predicate<String> eligibleUntilFeed = sourceId -> {
@@ -344,6 +507,10 @@ class BackgroundFillTest {
                 fill.get().revalidate();
                 return true;
             }
+            if (inFeed) {
+                // Die Prüfung nach dem Eintragen: Erst danach zieht feed() die Anfrage zurück.
+                checkedAfter.incrementAndGet();
+            }
             return eligible.contains(sourceId);
         };
         BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
@@ -353,7 +520,9 @@ class BackgroundFillTest {
         fill.set(started);
         started.start();
 
-        eventually(() -> withdrawn.get() && started.status().inFlight() == 0);
+        // Nicht schon zwischen Rückzug und Eintragen weitermachen: Dann wäre noch nichts übergeben, der Planer liefe nach
+        // pause.close() an und lüde die Anfrage, bevor feed() sie zurückziehen kann.
+        eventually(() -> checkedAfter.get() > 0 && started.status().inFlight() == 0);
         pause.close();
         assertThat(loaded).isEmpty();
     }

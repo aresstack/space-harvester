@@ -7,8 +7,10 @@ import com.aresstack.spaceharvester.application.facts.EnrichmentFacts;
 import com.aresstack.spaceharvester.application.facts.FactStore;
 import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermPayload;
+import com.aresstack.spaceharvester.application.terms.TermOrigin;
 import com.aresstack.spaceharvester.application.terms.TermPosting;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -155,8 +157,13 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
     }
 
     @Override
-    public synchronized List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query,
-                                               int k) {
+    public List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        return nearest(sourceIds, processorVersion, query, k, null);
+    }
+
+    @Override
+    public synchronized List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                               PageSet pages) {
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(processorVersion, "processorVersion");
         if (k < 1 || k > MAX_K) {
@@ -172,37 +179,79 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
             return List.of();
         }
         for (Map.Entry<PageKey, TreeMap<String, Enrichment>> page : results.entrySet()) {
-            Enrichment result = page.getValue().get(EMBEDDING);
-            if (!sourceIds.contains(page.getKey().sourceId()) || result == null
-                    || result.status() != Enrichment.Status.OK
-                    || !result.processorVersion().equals(processorVersion)) {
-                continue;
-            }
-            EmbeddingPayload payload;
-            try {
-                payload = EmbeddingPayload.parse(result.payloadJson());
-            } catch (IllegalArgumentException e) {
-                continue;
-            }
-            for (int i = 0; i < payload.chunks().size(); i++) {
-                EmbeddingPayload.Chunk chunk = payload.chunks().get(i);
-                float[] vector = EmbeddingIndex.normalized(chunk.vector());
-                if (vector.length != normalized.length) {
-                    continue;
-                }
-                double dot = 0;
-                double norm = 0;
-                for (int d = 0; d < vector.length; d++) {
-                    dot += (double) vector[d] * normalized[d];
-                    norm += (double) vector[d] * vector[d];
-                }
-                if (norm == 0) {
-                    continue;
-                }
-                hits.add(new ChunkHit(page.getKey(), i, chunk.charStart(), chunk.charEnd(), result.inputSha256(),
-                        Math.max(-1, Math.min(1, dot))));
+            if (pages == null || pages.contains(page.getKey())) {
+                collect(hits, page.getValue().get(EMBEDDING), sourceIds, processorVersion, normalized);
             }
         }
+        return top(hits, k);
+    }
+
+    @Override
+    public List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        return nearestDocuments(sourceIds, processorVersion, query, k, null);
+    }
+
+    @Override
+    public synchronized List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion,
+                                                        float[] query, int k, PageSet pages) {
+        Objects.requireNonNull(sourceIds, "sourceIds");
+        Objects.requireNonNull(processorVersion, "processorVersion");
+        if (k < 1 || k > MAX_K) {
+            throw new IllegalArgumentException("k muss zwischen 1 und " + MAX_K + " liegen");
+        }
+        float[] normalized = EmbeddingIndex.normalized(query);
+        List<ChunkHit> hits = new ArrayList<>();
+        boolean zero = true;
+        for (float v : normalized) {
+            zero &= v == 0;
+        }
+        if (zero) {
+            return List.of();
+        }
+        for (TreeMap<String, Enrichment> entries : documents.values()) {
+            for (Enrichment result : entries.values()) {
+                if (EMBEDDING.equals(result.processorId()) && (pages == null || pages.contains(result.key()))) {
+                    collect(hits, result, sourceIds, processorVersion, normalized);
+                }
+            }
+        }
+        return top(hits, k);
+    }
+
+    private static void collect(List<ChunkHit> hits, Enrichment result, Set<String> sourceIds,
+                                String processorVersion, float[] normalized) {
+        if (result == null || !sourceIds.contains(result.key().sourceId())
+                || result.status() != Enrichment.Status.OK
+                || !result.processorVersion().equals(processorVersion)) {
+            return;
+        }
+        EmbeddingPayload payload;
+        try {
+            payload = EmbeddingPayload.parse(result.payloadJson());
+        } catch (IllegalArgumentException e) {
+            return;
+        }
+        for (int i = 0; i < payload.chunks().size(); i++) {
+            EmbeddingPayload.Chunk chunk = payload.chunks().get(i);
+            float[] vector = EmbeddingIndex.normalized(chunk.vector());
+            if (vector.length != normalized.length) {
+                continue;
+            }
+            double dot = 0;
+            double norm = 0;
+            for (int d = 0; d < vector.length; d++) {
+                dot += (double) vector[d] * normalized[d];
+                norm += (double) vector[d] * vector[d];
+            }
+            if (norm == 0) {
+                continue;
+            }
+            hits.add(new ChunkHit(result.key(), i, chunk.charStart(), chunk.charEnd(), result.inputSha256(),
+                    Math.max(-1, Math.min(1, dot))));
+        }
+    }
+
+    private static List<ChunkHit> top(List<ChunkHit> hits, int k) {
         hits.sort(Comparator.comparingDouble(ChunkHit::similarity).reversed()
                 .thenComparing(hit -> hit.page().pageId()).thenComparing(hit -> hit.page().sourceId())
                 .thenComparingInt(ChunkHit::chunk));
@@ -215,11 +264,21 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
             throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_BATCH + " liegen");
         }
         List<TermPosting> found = new ArrayList<>();
+        List<Enrichment> candidates = new ArrayList<>();
         for (TreeMap<String, Enrichment> page : results.values()) {
             Enrichment result = page.get(TermPayload.PROCESSOR);
-            if (result == null) {
-                continue;
+            if (result != null) {
+                candidates.add(result);
             }
+        }
+        // ADR 0026, AP9b: Begriffe je Abschnitt eines Anhangs oder einer enthaltenen Datei; die Herkunft wählt der Filter.
+        if (filter.origin() != TermOrigin.PAGES) {
+            for (TreeMap<String, Enrichment> document : documents.values()) {
+                document.values().stream().filter(result -> TermPayload.PROCESSOR.equals(result.processorId()))
+                        .forEach(candidates::add);
+            }
+        }
+        for (Enrichment result : candidates) {
             for (TermPosting posting : TermPayload.postings(result)) {
                 if (filter.matches(posting) && (from == null || (inclusive ? ORDER.compare(posting.sortKey(), from) >= 0
                         : ORDER.compare(posting.sortKey(), from) > 0))) {

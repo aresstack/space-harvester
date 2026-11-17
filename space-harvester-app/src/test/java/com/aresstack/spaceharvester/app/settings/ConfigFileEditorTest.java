@@ -464,6 +464,36 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theChangeLogRetentionIsWrittenOnlyWhenItChangesAndZeroMeansUnlimited() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  cache:\n    search-timeout: 5s   # bleibt\n");
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                AppSettings.Cache.DEFAULT));
+        assertThat(Files.readString(file)).as("Vorgabe ein Jahr: kein Schlüssel nötig").doesNotContain("change-log");
+
+        var days = new com.aresstack.spaceharvester.application.configuration.ChangeLogSettings(Duration.ofDays(90));
+        AppSettings.Cache cache = new AppSettings.Cache(Duration.ZERO, true, Duration.ofDays(30), days);
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null), cache));
+        assertThat(Files.readString(file)).contains("    search-timeout: 5s   # bleibt",
+                "    change-log:\n      retention: 90d");
+        assertThat(loader.load(file).cache().changeLog()).isEqualTo(days);
+
+        var unlimited = com.aresstack.spaceharvester.application.configuration.ChangeLogSettings.UNLIMITED;
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                new AppSettings.Cache(Duration.ZERO, true, Duration.ofDays(30), unlimited)));
+        assertThat(Files.readString(file)).contains("      retention: 0").doesNotContain("90d");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.cache().changeLog().unlimited()).isTrue();
+
+        var shown = days.withShowAfterUpdate(true);
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                new AppSettings.Cache(Duration.ZERO, true, Duration.ofDays(30), shown)));
+        assertThat(Files.readString(file)).contains("      retention: 90d\n      show-after-update: true");
+        assertThat(loader.load(file).cache().changeLog()).isEqualTo(shown);
+    }
+
+    @Test
     void cacheFreshnessAndWithheldRetentionUseTheServerKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  cache:\n    search-timeout: 5s   # bleibt\n");
@@ -527,6 +557,33 @@ class ConfigFileEditorTest {
         assertThat(Files.readString(file)).doesNotContain("sources:").contains("withheld-retention: 14d");
         Files.writeString(file, "space-harvester:\n  sync:\n    sources:\n      wiki:\n        mode: alles\n");
         assertThat(loader.load(file).problems()).anyMatch(p -> p.contains("sync.sources.wiki.mode"));
+    }
+
+    @Test
+    void theSynonymBudgetGoesUnderTermsSynonymsAndKeepsTheOtherKeys() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  terms:\n    synonyms:\n      max-terms: 300   # bleibt\n"
+                + "      max-judged-pairs: 5\n  jobs:\n    max-concurrent: 3\n");
+        var budget = new com.aresstack.spaceharvester.application.terms.SynonymBudget(300, 500, 40);
+        editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                budget));
+        editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                budget));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("    synonyms:\n      max-terms: 300\n      max-embedded-terms: 500\n"
+                + "      max-judged-pairs: 40\n", "max-concurrent: 3").doesNotContain("max-judged-pairs: 5");
+        assertThat(text.indexOf("synonyms:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("synonyms:"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.terms().synonyms()).isEqualTo(budget);
+        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.application.terms.SynonymBudget.DEFAULT.withMaxJudgedPairs(20)));
+        assertThat(loader.load(file).terms().synonyms().maxJudgedPairs()).as("Block ohne terms neu angelegt")
+                .isEqualTo(20);
     }
 
     @Test
@@ -655,6 +712,46 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theAnalyticsExportIsWrittenAsABlockUnderTheAppRootAndRemovedWhenAllIsDefault() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester-app:\n  output-directory: D:\\out   # bleibt\nspace-harvester:\n"
+                + "  sources: []\n");
+        AnalyticsSettings custom = new AnalyticsSettings(Duration.ofDays(90),
+                "/rest/confanalytics/1.0/space/details?spaceKey={spaceKey}", null,
+                "/rest/confanalytics/2.0/space/paginated/contentViews?spaceKey={spaceKey}&from={from}");
+        editor.save(file, editor.withAnalytics(file, new ConfigFileEditor.Draft(Files.readString(file), null), custom));
+        String text = Files.readString(file);
+        assertThat(text).contains("  output-directory: D:\\out   # bleibt\n", "  analytics:\n    period: 90d\n"
+                + "    details: \"/rest/confanalytics/1.0/space/details?spaceKey={spaceKey}\"\n"
+                + "    content-views: \"/rest/confanalytics/2.0/space/paginated/contentViews?spaceKey={spaceKey}"
+                + "&from={from}\"\n").doesNotContain("activity-by-date");
+        assertThat(loader.load(file).analytics()).isEqualTo(custom);
+
+        // Erneut setzen ersetzt den Block; nur noch der Zeitraum weicht ab.
+        AnalyticsSettings period = new AnalyticsSettings(Duration.ofDays(30), null, null, null);
+        editor.save(file, editor.withAnalytics(file, new ConfigFileEditor.Draft(Files.readString(file), null), period));
+        text = Files.readString(file);
+        assertThat(text).contains("  analytics:\n    period: 30d\n").doesNotContain("details", "content-views");
+        assertThat(text.split("analytics:", -1)).hasSize(2);
+        assertThat(loader.load(file).analytics()).isEqualTo(period);
+
+        // Alles Vorgabe: der Block verschwindet, der Rest bleibt.
+        editor.save(file, editor.withAnalytics(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                AnalyticsSettings.DEFAULT));
+        text = Files.readString(file);
+        assertThat(text).doesNotContain("analytics").contains("  output-directory: D:\\out   # bleibt\n",
+                "space-harvester:\n  sources: []\n");
+        assertThat(loader.load(file).analytics()).isEqualTo(AnalyticsSettings.DEFAULT);
+
+        // Ohne App-Wurzel entsteht sie oben in der Datei.
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        editor.save(file, editor.withAnalytics(file, new ConfigFileEditor.Draft(Files.readString(file), null), period));
+        assertThat(Files.readString(file)).startsWith("space-harvester-app:\n  analytics:\n    period: 30d\n\n"
+                + "space-harvester:\n");
+        assertThat(loader.load(file).analytics()).isEqualTo(period);
+    }
+
+    @Test
     void aCommentedRetryHeaderIsReplacedAsAWholeBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    retry: # eigene Werte\n      max-attempts: 5\n"
@@ -666,6 +763,29 @@ class ConfigFileEditorTest {
         assertThat(text).doesNotContain("max-attempts: 5", "initial-delay: 2s").contains("max-attempts: 2");
         assertThat(text.indexOf("max-attempts")).isEqualTo(text.lastIndexOf("max-attempts"));
         assertThat(loader.load(file).problems()).isEmpty();
+    }
+
+    @Test
+    void theSharedSyncRulesUseTheCoreKeysAndDropAnIntervalThatIsOff() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sync:\n    interval: 2h   # alt\n    withheld-retention: 14d\n");
+        var sync = new com.aresstack.spaceharvester.application.configuration.SyncSettings(true, null, java.util.List.of(),
+                true, Duration.ofDays(14), true, com.aresstack.spaceharvester.application.sync.SyncMode.FULL,
+                Duration.ofDays(1), Map.of());
+        editor.save(file, editor.withSync(file, new ConfigFileEditor.Draft(Files.readString(file), null), sync));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("    withheld-retention: 14d", "    inventory-interval: 1d", "    mode: full",
+                "    catch-up-on-start: true", "    before-search: true", "    events: true")
+                .doesNotContain("interval: 2h");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.sync().interval()).as("aus = Schlüssel weg").isNull();
+        assertThat(settings.sync().inventoryInterval()).isEqualTo(Duration.ofDays(1));
+        assertThat(settings.sync().mode()).isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.FULL);
+        assertThat(settings.sync().catchUpOnStart()).isTrue();
+        assertThat(settings.sync().beforeSearch()).isTrue();
+        assertThat(settings.sync().events()).isTrue();
     }
 
     @Test
@@ -687,6 +807,25 @@ class ConfigFileEditorTest {
         assertThat(settings.sync().backgroundParallelism()).isEqualTo(5);
         assertThat(settings.effectiveSync("wiki").backgroundFill()).as("eigene Regel").isTrue();
         assertThat(settings.effectiveSync("docs").backgroundFill()).as("wie global").isFalse();
+    }
+
+    @Test
+    void theOutputLimitOfTheChatModelGoesIntoTheAiBlock() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("https://ki.firma.de/v1", "gpt-oss-120b", null, null, null, java.util.List.of())
+                .withChatMaxTokens("16384");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("chat-max-tokens: 16384");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().chatMaxTokens()).isEqualTo(16384);
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(new AiDraft("https://ki.firma.de/v1", "gpt-oss-120b", null, null, null, java.util.List.of())
+                .yaml("")).doesNotContain("chat-max-tokens");
+        assertThat(ai.withChatMaxTokens("0").problems()).anyMatch(p -> p.contains("Ausgabelimit"));
+        assertThat(ai.withChatMaxTokens("viel").problems()).anyMatch(p -> p.contains("Ausgabelimit"));
     }
 
     @Test

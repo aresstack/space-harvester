@@ -121,6 +121,17 @@ class ConfigurationOverlayTest {
     }
 
     @Test
+    void theOutputTokenLimitCanBeChangedAndResetLive() {
+        HarvesterConfiguration raised = ConfigurationOverlay.overlay(FULL,
+                Map.of("ai.chat-max-tokens", 16384)).orThrow();
+        HarvesterConfiguration reset = ConfigurationOverlay.overlay(raised,
+                Map.of("space-harvester.ai.chat-max-tokens", "")).orThrow();
+
+        assertThat(raised.ai().chatMaxTokens()).isEqualTo(16384);
+        assertThat(reset.ai().chatMaxTokens()).isEqualTo(AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS);
+    }
+
+    @Test
     void emptyOrNullResetsAndIndexedListsReplace() {
         Map<String, Object> values = new HashMap<>();
         values.put("ai.rerank-model", "");

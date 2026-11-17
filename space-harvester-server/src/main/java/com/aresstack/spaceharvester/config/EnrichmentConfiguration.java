@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.changelog.ChangeLog;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
@@ -13,6 +15,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
+import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.VersionRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
@@ -33,6 +36,7 @@ import com.aresstack.spaceharvester.application.passages.PassageQueries;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
+import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
@@ -87,7 +91,7 @@ class EnrichmentConfiguration {
         // benennt das Chat-Modell (ADR 0020)
         EnrichmentStore enrichmentStore = store.getIfAvailable(InMemoryEnrichmentStore::new);
         processors.add(new NavigationProcessor(new DocumentNavigationBuilder(), embedding.getIfAvailable(),
-                enrichmentStore::find, labels.getIfAvailable()));
+                enrichmentStore::find, enrichmentStore::find, labels.getIfAvailable()));
         // ADR 0021: rechnet nie selbst, bestimmt nur, wann eine Bildanalyse gilt (Modellwechsel macht sie alt)
         processors.add(new ImageProcessor(describer::getIfAvailable));
         // #108: Satzanalyse über das Chat-Modell, nur eingeschaltet (AiConfiguration), im Hintergrund
@@ -106,10 +110,35 @@ class EnrichmentConfiguration {
         return OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(rules));
     }
 
-    /** Bildanalyse auf Abruf (ADR 0021, #362). */
+    /**
+     * Bildanalyse auf Abruf (ADR 0021, #362). Verliert eine Seite die Freigabe für den KI-Dienst (Liste oder Quelle,
+     * ADR 0028), entfallen auch ihre Bildbeschreibungen und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge,
+     * die mit Modell entstanden, rechnen ohne neu.
+     */
     @Bean
-    PageImageAnalysis pageImageAnalysis(Assets assets, Enrichments enrichments) {
-        return new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
+    PageImageAnalysis pageImageAnalysis(Assets assets, Enrichments enrichments,
+                                        ObjectProvider<ReleaseRecomputation> recomputation,
+                                        ObjectProvider<AiRelease> release,
+                                        ObjectProvider<DocumentEnrichments> documents,
+                                        ObjectProvider<ChangeLog> changeLog) {
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
+        ReleaseRecomputation withdrawals = recomputation.getIfAvailable();
+        AiRelease pages = release.getIfAvailable();
+        if (withdrawals != null && pages != null) {
+            withdrawals.withdrawal(snapshots -> {
+                analysis.withdraw(snapshots, pages::mayProcess);
+                DocumentEnrichments found = documents.getIfAvailable();
+                if (found != null) {
+                    found.withdrawn(snapshots, pages::mayProcess);
+                }
+                // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
+                ChangeLog log = changeLog.getIfAvailable();
+                if (log != null) {
+                    log.withdrawn(snapshots.stream().map(PageSnapshot::key).toList());
+                }
+            });
+        }
+        return analysis;
     }
 
     /** Dokumentnavigation einer Seite für {@code GET …/navigation} (ADR 0020). */
@@ -120,8 +149,14 @@ class EnrichmentConfiguration {
 
     /** Semantische Absätze einer Seite für {@code GET …/passages} (ADR 0020). */
     @Bean
-    PassageQueries passageQueries(PageQueries pages, Enrichments enrichments) {
-        return new PassageQueries(pages, enrichments, projector());
+    PassageQueries passageQueries(PageQueries pages, Enrichments enrichments,
+                                  ObjectProvider<DocumentEnrichments> documents) {
+        // ADR 0026, AP9a: Absätze aus Anhängen lesen den Text nur ihres Abschnitts aus der Extraktion.
+        return new PassageQueries(pages, enrichments, projector(), (document, section, inputSha256, extraction) -> {
+            DocumentEnrichments found = documents.getIfAvailable();
+            return found == null ? java.util.Optional.empty()
+                    : found.sectionText(document, section, inputSha256, extraction);
+        });
     }
 
     /**
@@ -136,13 +171,14 @@ class EnrichmentConfiguration {
     @Bean
     EnrichmentsAfterSync enrichmentsAfterSync(Enrichments enrichments, ObjectProvider<SnapshotRepository> snapshots,
                                               ObjectProvider<Jobs> jobs, ObjectProvider<PageTextIndexing> texts,
-                                              ObjectProvider<AcronymRelationRule> acronymRule) {
+                                              ObjectProvider<AcronymRelationRule> acronymRule,
+                                              ObjectProvider<DocumentEnrichments> documents) {
         // Eigener Auftrag ENRICHMENT: Abgleich und Export warten nicht auf die Anreicherung; er hält auch den
         // Volltextindex nach (#180) und danach die Regelvorschläge der Begriffsbeziehungen (#120).
         AcronymRelationRule rule = acronymRule.getIfAvailable();
         List<Consumer<String>> followUps = rule == null ? List.of() : List.of(rule::refresh);
         return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable(),
-                texts.getIfAvailable(), followUps);
+                texts.getIfAvailable(), followUps, documents.getIfAvailable());
     }
 
     /**
@@ -151,11 +187,14 @@ class EnrichmentConfiguration {
      */
     @Bean
     DocumentEnrichments documentEnrichments(Enrichments enrichments, ObjectProvider<Jobs> jobs,
-                                            ObjectProvider<Assets> assets) {
-        DocumentEnrichments documents = new DocumentEnrichments(enrichments, jobs.getIfAvailable(), () -> true);
+                                            ObjectProvider<Assets> assets, LiveConfiguration live) {
+        // enrichment.documents.* aus der wirksamen Konfiguration, beim nächsten Lauf wirksam.
+        DocumentEnrichments documents = new DocumentEnrichments(enrichments, jobs.getIfAvailable(),
+                () -> live.current().enrichment());
         Assets target = assets.getIfAvailable();
         if (target != null) {
             target.indexedDocuments(documents);
+            documents.assets(target);
         }
         return documents;
     }

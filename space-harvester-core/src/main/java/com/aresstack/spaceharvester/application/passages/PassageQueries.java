@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.passages;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.enrichment.DocumentTexts;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
@@ -22,11 +23,21 @@ public final class PassageQueries {
     private final PageQueries pages;
     private final Enrichments enrichments;
     private final PageTextProjector projector;
+    private final DocumentTexts documentTexts;
 
     public PassageQueries(PageQueries pages, Enrichments enrichments, PageTextProjector projector) {
+        this(pages, enrichments, projector, DocumentTexts.NONE);
+    }
+
+    /**
+     * @param documentTexts Lesetext eines Abschnitts eines Dokuments für Absätze aus Anhängen (ADR 0026, AP9a)
+     */
+    public PassageQueries(PageQueries pages, Enrichments enrichments, PageTextProjector projector,
+                          DocumentTexts documentTexts) {
         this.pages = Objects.requireNonNull(pages, "pages");
         this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
         this.projector = Objects.requireNonNull(projector, "projector");
+        this.documentTexts = Objects.requireNonNull(documentTexts, "documentTexts");
     }
 
     /**
@@ -63,8 +74,10 @@ public final class PassageQueries {
     public PassageLookup resolve(AccessContext caller, String passageId) {
         PassageId requested = PassageId.parse(passageId);
         if (requested.document().isPresent()) {
-            // Absätze von Anhängen löst erst AP9a (Prozessoren je Dokument) auf; nie still die Absätze der Seite.
-            throw new IllegalArgumentException("Absätze von Anhängen lassen sich noch nicht auflösen");
+            // Ein Absatz eines Anhangs (ADR 0026, AP9a): Rechte wie die Seite, nie still die Absätze der Seite.
+            DeliveredPage page = pages.page(caller, requested.sourceId(), requested.pageId(), false);
+            return DocumentPassages.resolve(requested, enrichments.store().findDocuments(page.snapshot().key()),
+                    documentTexts, NEIGHBOURS);
         }
         return PassageLookup.of(requested, page(caller, requested.sourceId(), requested.pageId()), NEIGHBOURS);
     }

@@ -33,9 +33,19 @@ final class RecordingExportArtifactWriter implements ExportArtifactWriter {
         return new Session() {
             private boolean done;
 
+            private final Map<com.aresstack.spaceharvester.application.snapshot.PageKey, PageSnapshot> snapshots =
+                    new HashMap<>();
+
             @Override
             public void page(PageHeader header, PageSnapshot snapshot) {
                 pageIds.add(header.key().pageId());
+                snapshots.put(snapshot.key(), snapshot);
+            }
+
+            @Override
+            public java.util.Optional<PageSnapshot> written(
+                    com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                return java.util.Optional.ofNullable(snapshots.get(key));
             }
 
             @Override

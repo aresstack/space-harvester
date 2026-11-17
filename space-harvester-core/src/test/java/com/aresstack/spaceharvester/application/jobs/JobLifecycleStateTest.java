@@ -153,6 +153,22 @@ class JobLifecycleStateTest {
     }
 
     @Test
+    void anOutputFromTheHoldingsAndItsFilesHaveNothingToForceButRetryTheirFailures() {
+        Map<String, String> holdings = Map.of(JobLifecycleState.HOLDINGS, "true");
+        for (JobType type : List.of(JobType.EXPORT, JobType.ASSETS, JobType.ATTACHMENTS)) {
+            JobStatus done = new JobStatus("j", type, "confluence", "DEV", "client-a", JobState.COMPLETED,
+                    new JobProgress(3, 3, 3, 0), null, false, T0, null, null, null, null, holdings, false, false, null);
+            assertThat(done.lifecycle().actions()).containsExactly(JobAction.DELETE);
+            JobStatus incomplete = new JobStatus("j", type, "confluence", "DEV", "client-a", JobState.COMPLETED,
+                    new JobProgress(3, 3, 2, 1), null, false, T0, null, null, null, null, holdings, true, false, null);
+            assertThat(incomplete.lifecycle().actions()).containsExactly(JobAction.RETRY_FAILED, JobAction.DELETE);
+            JobStatus cancelled = new JobStatus("j", type, "confluence", "DEV", "client-a", JobState.CANCELLED,
+                    new JobProgress(3, 2, 2, 0), null, false, T0, null, null, null, null, holdings, false, false, null);
+            assertThat(cancelled.lifecycle().actions()).doesNotContain(JobAction.FORCE_REFRESH);
+        }
+    }
+
+    @Test
     void aRequestedPauseCanStillBecomeACancelButNotTheOtherWayRound() {
         JobLifecycleState pausing = status(JobType.EXPORT, JobState.RUNNING, 0, false, true, true).lifecycle();
         assertThat(pausing.key()).isEqualTo("PAUSE_REQUESTED");

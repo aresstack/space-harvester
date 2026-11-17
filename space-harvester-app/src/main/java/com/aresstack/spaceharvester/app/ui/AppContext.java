@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
+import com.aresstack.spaceharvester.app.settings.AnalyticsSettings;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -40,14 +41,38 @@ public final class AppContext {
 
     /** Die Bereiche der Hauptnavigation. */
     public enum Section {
-        // Reihenfolge der Icon-Leiste: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche ist die
-        // Startansicht.
+        // Reihenfolge der Tastenkürzel Strg+1 …: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche
+        // ist die Startansicht.
         SEARCH("Suche"), CONTENT("Inhalte"), TERMS("Begriffe"), ACTIVITIES("Aufträge"), STATUS("Status"),
         SOURCES("Wissensquellen verwalten"), SETTINGS("Einstellungen");
 
-        /** Rechts in der Icon-Leiste, getrennt von den Arbeitsbereichen. */
+        /** Rechts in der Icon-Leiste, abgetrennt von allem anderen. */
         public boolean administration() {
             return this == SOURCES || this == SETTINGS;
+        }
+
+        /**
+         * Rechts in der Icon-Leiste, links vom Trenner der Verwaltung (Angelo, 13.11.2026): Begriffe und Aufträge
+         * stehen nicht mehr bei den Reitern der Mitte.
+         */
+        public boolean trailing() {
+            return this == TERMS || this == ACTIVITIES;
+        }
+
+        /**
+         * Ob der Bereich einen eigenen Knopf in der Icon-Leiste hat. Inhalte hat keinen: Die Reiter der Seitenansicht
+         * (Leseansicht, Text, …) stehen selbst in der Leiste und schalten die Mitte um; Status führt zur Diagnose.
+         */
+        public boolean button() {
+            return toolbar() && this != CONTENT;
+        }
+
+        /**
+         * Ob der Bereich ein Tastenkürzel Strg+Ziffer hat. Status (Diagnose) hat keins mehr: Er steht als Bereich
+         * „Diagnose“ in den Einstellungen (Angelo, 13.11.2026); {@code show(STATUS)} führt dorthin.
+         */
+        public boolean toolbar() {
+            return this != STATUS;
         }
 
         private final String title;
@@ -77,11 +102,31 @@ public final class AppContext {
 
         void openSpace(String sourceId, String spaceKey);
 
+        /** Zeigt die Quellenseite einer Wissensquelle mit ihren Updates (ADR 0030); ohne eigene Umsetzung nichts. */
+        default void openSource(String sourceId, String title) {
+        }
+
+        /**
+         * Zeigt Inhalte › Export für einen Space bzw. eine Startseite samt Unterseiten (Angelo, 13.11.2026): wählt
+         * sie zuerst im Explorer, dann den Reiter; ohne eigene Umsetzung nur den Space.
+         */
+        default void openExport(String sourceId, String spaceKey, String rootPageId) {
+            openSpace(sourceId, spaceKey);
+        }
+
         /** Zeigt eine Seite im Explorer (aufgeklappt und gewählt), ohne sie zu öffnen; ohne Explorer ohne Wirkung. */
         default void revealPage(String sourceId, String pageId) {
         }
 
         void showJob(String jobId);
+
+        /**
+         * Einstellungen mit der Seite „Allgemein“ (Konfigurationsdatei, Hinweise, abgewiesene Quellen), auch wenn
+         * zuletzt eine andere Seite der Einstellungen, etwa die Diagnose, offen war.
+         */
+        default void showGeneralSettings() {
+            show(Section.SETTINGS);
+        }
 
         /**
          * Ein Auftrag wurde außerhalb von „Aufträge“ gestartet und läuft im Hintergrund weiter: die Auftragsliste und
@@ -110,6 +155,14 @@ public final class AppContext {
 
         /** Wie {@link #downloadPage(String, String, String)}, ohne {@code withChildren} nur die Seite selbst. */
         default void downloadPage(String sourceId, String spaceKey, String pageId, boolean withChildren) {
+        }
+
+        /**
+         * Holt die Änderungen eines Knotens samt Teilbaum aus der Quelle nach (Kreispfeile im Baum, Angelo
+         * 16.11.2026): ohne {@code spaceKey} jeden Space der Quelle, mit {@code spaceKey} diesen Space (Nachholen wie
+         * auf der Quellenkarte), mit {@code pageId} die Seite samt Unterseiten neu aus der Quelle.
+         */
+        default void refresh(String sourceId, String spaceKey, String pageId) {
         }
 
         void search(String text);
@@ -363,6 +416,37 @@ public final class AppContext {
     private volatile ConsoleOutput consoleWanted;
 
     /**
+     * Speichert den Export „Analytics“ ({@code space-harvester-app.analytics}) in der Datei, ohne Neustart der
+     * Laufzeit: der nächste Export liest die Werte aus den Einstellungen. Schnell aufeinanderfolgende Änderungen
+     * schreiben immer die jüngste zuletzt.
+     */
+    public void analytics(AnalyticsSettings analytics, Runnable done, Consumer<Throwable> failed) {
+        analyticsWanted = analytics;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                AnalyticsSettings wanted = analyticsWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withAnalytics(configFile, new ConfigFileEditor.Draft(text, null),
+                        wanted), !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withAnalytics(saved);
+            }
+            fire();
+            done.run();
+        }, error -> {
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private volatile AnalyticsSettings analyticsWanted;
+
+    /**
      * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab
      * ({@code space-harvester-app.disabled-sources}) und startet die Quellen neu; beim Start setzt die Laufzeit ihn im
      * Core ({@code SourceManagement.setEnabled}). Der Bestand der Quelle bleibt.
@@ -477,6 +561,14 @@ public final class AppContext {
     /** Der Ereignisbus dieses Fensters; die Statuszeile zeigt, was darauf als {@code StatusMessageEvent} erscheint. */
     public com.aresstack.spaceharvester.app.event.ApplicationEventBus events() {
         return events;
+    }
+
+    /** Favoriten des Benutzers (Stern im Explorer und in der Leseansicht), Datei im Datenordner der App. */
+    private final Favorites favorites = new Favorites(() -> settings() == null ? null
+            : settings().storage().dataDirectory().resolve(Favorites.FILE));
+
+    public Favorites favorites() {
+        return favorites;
     }
 
     public Navigator navigator() {

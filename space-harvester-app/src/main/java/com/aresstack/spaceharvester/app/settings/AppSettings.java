@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
+import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
+import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
@@ -50,6 +52,8 @@ import java.util.Set;
  * @param consoleOutput   welche Meldungen im Terminal erscheinen ({@code logging.threshold.console}, derselbe Schlüssel
  *                        wie beim Dienst); ohne Angabe {@link ConsoleOutput#DEFAULT}, die Protokolldatei bekommt immer
  *                        alles
+ * @param analytics       Zeitraum und Pfade des Exports „Analytics“ ({@code space-harvester-app.analytics}); ohne
+ *                        Angabe die Vorgaben des Core, nur die App
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
@@ -58,7 +62,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           TrustSettings tls, Cache cache, boolean setupCompleted,
                           Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
                           LocalFileSettings localFiles, Map<String, String> sourceKeePass,
-                          List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput) {
+                          List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
+                          EnrichmentSettings enrichment, AnalyticsSettings analytics) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -81,6 +86,37 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         inactiveRoots = inactiveRoots == null ? List.of() : List.copyOf(inactiveRoots);
         terms = terms == null ? TermSettings.DEFAULT : terms;
         consoleOutput = consoleOutput == null ? ConsoleOutput.DEFAULT : consoleOutput;
+        enrichment = enrichment == null ? EnrichmentSettings.DEFAULT : enrichment;
+        analytics = analytics == null ? AnalyticsSettings.DEFAULT : analytics;
+    }
+
+    /** Mit dem Export „Analytics“ ohne Angabe ({@link AnalyticsSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                       LocalFileSettings localFiles, Map<String, String> sourceKeePass,
+                       List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
+                       EnrichmentSettings enrichment) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots, terms, consoleOutput, enrichment, AnalyticsSettings.DEFAULT);
+    }
+
+    /** Mit den Analysen je Dokument ohne Angabe ({@link EnrichmentSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                       LocalFileSettings localFiles, Map<String, String> sourceKeePass,
+                       List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots, terms, consoleOutput, EnrichmentSettings.DEFAULT);
     }
 
     /** Mit der Terminal-Ausgabe ohne Angabe ({@link ConsoleOutput#DEFAULT}), für Aufrufer, die sie nicht brauchen. */
@@ -167,7 +203,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput);
+                inactiveRoots, terms, consoleOutput, enrichment, analytics);
     }
 
     /** Dieselbe Konfiguration mit anderen Grenzen für Bilder- und Anhängeaufträge ({@link JobLimits#withParallel}). */
@@ -175,7 +211,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads), ai, outputDirectory, problems, disabledSources, tls,
                 cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass, inactiveRoots, terms,
-                consoleOutput);
+                consoleOutput, enrichment, analytics);
     }
 
     /**
@@ -186,13 +222,13 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads).withConnections(connections), ai, outputDirectory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles,
-                sourceKeePass, inactiveRoots, terms, consoleOutput);
+                sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics);
     }
 
     /**
      * Diese Konfiguration mit den Laufzeitwerten von {@code other}: KI-Dienst, Aktualität und Frist, Synchronisierung
      * und Regeln je Quelle, Bezug des API-Keys, freigegebene Ordner, parallele Vorbereitungen und Downloads,
-     * Terminal-Ausgabe. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
+     * Terminal-Ausgabe, Export „Analytics“. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
      */
     public AppSettings withLive(AppSettings other) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
@@ -201,21 +237,28 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
                 other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms,
-                other.consoleOutput);
+                other.consoleOutput, other.enrichment, other.analytics);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput);
+                inactiveRoots, terms, consoleOutput, enrichment, analytics);
     }
 
     /** Dieselbe Konfiguration mit anderer Terminal-Ausgabe; die Laufzeit braucht sie nicht. */
     public AppSettings withConsoleOutput(ConsoleOutput output) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
-                localFiles, sourceKeePass, inactiveRoots, terms, output);
+                localFiles, sourceKeePass, inactiveRoots, terms, output, enrichment, analytics);
+    }
+
+    /** Dieselbe Konfiguration mit anderem Export „Analytics“; die Laufzeit braucht ihn nicht. */
+    public AppSettings withAnalytics(AnalyticsSettings analytics) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
+                outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
+                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics);
     }
 
     /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */
@@ -314,16 +357,27 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * KI-Dienst ({@code space-harvester.ai}, ADR 0011): OpenAI-kompatible Basisadresse, gewählte Modelle und die für
      * externe Verarbeitung freigegebenen Quellen. Der API-Key steht nie in der Datei, sondern im Tresor der App.
      *
-     * @param timeout {@code null} für den Standard des Core
+     * @param timeout       {@code null} für den Standard des Core
+     * @param chatMaxTokens Ausgabelimit einer Antwort des Chat-Modells in Tokens ({@code chat-max-tokens});
+     *                      {@code null} für den Standard des Core (8192)
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
-                             Integer chunkTokens, Integer chunkOverlapSentences, String visionModel) {
+                             Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                             Integer chatMaxTokens) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
         public AiSettings {
             externalProcessingSources = List.copyOf(externalProcessingSources);
+        }
+
+        /** Mit dem Ausgabelimit des Core. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, null);
         }
 
         /** Ohne Vision-Modell: keine Bildbeschreibung (#362). */
@@ -353,14 +407,21 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * {@code space-harvester.cache.version-check} und {@code space-harvester.sync.withheld-retention} (wie lange eine
      * gesperrte Seite im Bestand bleibt, ADR 0014).
      */
-    public record Cache(Duration maxAge, boolean versionCheck, Duration withheldRetention) {
+    public record Cache(Duration maxAge, boolean versionCheck, Duration withheldRetention,
+                        ChangeLogSettings changeLog) {
 
         public static final Duration DEFAULT_RETENTION = Duration.ofDays(30);
         public static final Cache DEFAULT = new Cache(Duration.ZERO, true, DEFAULT_RETENTION);
 
+        /** Mit der Vorgabe des Änderungsprotokolls ({@link ChangeLogSettings#DEFAULT}). */
+        public Cache(Duration maxAge, boolean versionCheck, Duration withheldRetention) {
+            this(maxAge, versionCheck, withheldRetention, ChangeLogSettings.DEFAULT);
+        }
+
         public Cache {
             maxAge = maxAge == null ? Duration.ZERO : maxAge;
             withheldRetention = withheldRetention == null ? DEFAULT_RETENTION : withheldRetention;
+            changeLog = changeLog == null ? ChangeLogSettings.DEFAULT : changeLog;
         }
     }
 }

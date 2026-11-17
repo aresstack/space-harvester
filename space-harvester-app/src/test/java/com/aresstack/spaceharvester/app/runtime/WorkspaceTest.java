@@ -30,6 +30,7 @@ import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -37,9 +38,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -193,6 +194,170 @@ class WorkspaceTest {
         String space = workspace.spaces("handbuch").get(0).key();
         assertThat(await(workspace, workspace.startSync("handbuch", space)).state()).isEqualTo(JobState.COMPLETED);
         assertThat(workspace.cachedPages("handbuch", space, null, 100).pages()).hasSize(2);
+    }
+
+    @Test
+    void jobChangesArriveWithoutAskingAgain() throws Exception {
+        Workspace workspace = start().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        java.util.concurrent.BlockingQueue<JobStatus> changes = new java.util.concurrent.LinkedBlockingQueue<>();
+        java.util.List<com.aresstack.spaceharvester.application.jobs.JobEvent> events =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (com.aresstack.spaceharvester.application.observe.Subscription subscription = workspace.subscribeJobs(
+                new com.aresstack.spaceharvester.application.jobs.JobListener() {
+                    @Override
+                    public void changed(JobStatus status) {
+                        changes.add(status);
+                    }
+
+                    @Override
+                    public void event(com.aresstack.spaceharvester.application.jobs.JobEvent event) {
+                        events.add(event);
+                    }
+                })) {
+            JobStatus started = workspace.startSync("handbuch", space);
+
+            JobStatus finished = null;
+            long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+            while (finished == null && System.nanoTime() < until) {
+                JobStatus next = changes.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                if (next != null && next.id().equals(started.id()) && next.state() == JobState.COMPLETED) {
+                    finished = next;
+                }
+            }
+            assertThat(finished).as("Ende des Abgleichs gemeldet").isNotNull();
+            assertThat(finished.progress().processed()).isPositive();
+            assertThat(events).extracting(com.aresstack.spaceharvester.application.jobs.JobEvent::jobId)
+                    .contains(started.id());
+        }
+    }
+
+    @Test
+    void aFormatButtonFirstLoadsWithoutHoldingsAndThenWritesTheFileAsItsOwnJob() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        Path out = home.resolve("ausgabe");
+        com.aresstack.spaceharvester.application.holdings.Selection space =
+                com.aresstack.spaceharvester.application.holdings.Selection.of(
+                        com.aresstack.spaceharvester.application.holdings.Selection.Root.space("wiki", "DEV"));
+
+        List<JobStatus> first = workspace.exportFiles(space, List.of("json"), "markdown", out);
+
+        assertThat(first).extracting(JobStatus::type).containsExactly(JobType.EXPORT, JobType.CONVERSION);
+        assertThat(first.get(0).parameter(com.aresstack.spaceharvester.application.export.Exports.HOLDINGS))
+                .as("ohne Bestand lädt der erste Auftrag von der Quelle").isNull();
+        JobStatus file = await(workspace, first.get(1));
+        assertThat(file.state()).as(String.valueOf(file)).isEqualTo(JobState.COMPLETED);
+        assertThat(workspace.producedFile(file.id())).hasValueSatisfying(produced ->
+                assertThat(produced.path().getParent()).isEqualTo(out));
+
+        // Jetzt liegt der Space im Bestand: die Daten kommen aus ihm.
+        List<JobStatus> second = workspace.exportFiles(space, List.of("json"), "markdown", out);
+        assertThat(second.get(0).parameter(com.aresstack.spaceharvester.application.export.Exports.HOLDINGS))
+                .isEqualTo("true");
+        assertThat(await(workspace, second.get(1)).state()).isEqualTo(JobState.COMPLETED);
+
+        // Wer exportieren, aber nicht abgleichen darf, sieht und löscht seine Datei-Aufträge.
+        Workspace exportOnly = new Workspace(started.harvester(),
+                new com.aresstack.spaceharvester.application.access.AccessGuard((context, scope, kind) ->
+                        kind == com.aresstack.spaceharvester.application.access.AccessKind.SYNC
+                                ? com.aresstack.spaceharvester.application.access.AccessDecision.DENY
+                                : com.aresstack.spaceharvester.application.access.AccessDecision.ALLOW),
+                new ActivityLog(home.resolve("nur-export.txt")));
+        assertThat(exportOnly.job(file.id()).type()).isEqualTo(JobType.CONVERSION);
+        assertThat(exportOnly.jobs()).extracting(JobStatus::id).contains(file.id());
+    }
+
+    @Test
+    void pagesStoredWithoutTheirImagesAreExportedWithTheImagesFromTheSource() throws Exception {
+        Workspace workspace = start().workspace();
+        // Ein Abgleich speichert die Seiten, beschafft aber keine Bilder und Anhänge.
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL)).state())
+                .isEqualTo(JobState.COMPLETED);
+
+        List<JobStatus> started = workspace.exportFiles(com.aresstack.spaceharvester.application.holdings.Selection.of(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.space("wiki", "DEV")),
+                List.of("json"), "markdown", home.resolve("ausgabe"));
+
+        assertThat(started.get(0).parameter(com.aresstack.spaceharvester.application.export.Exports.HOLDINGS))
+                .as("nicht aus dem Bestand: dort fehlen die Bilder").isNull();
+        JobStatus file = await(workspace, started.get(1));
+        assertThat(file.state()).as(String.valueOf(file)).isEqualTo(JobState.COMPLETED);
+        assertThat(workspace.jobs()).filteredOn(job -> started.get(0).id().equals(
+                        job.parameter(com.aresstack.spaceharvester.application.export.ExportAssetCollection.EXPORT_ID))
+                        && job.type() == JobType.ASSETS)
+                .as("die Bilder des Exports sind vor der Datei fertig").isNotEmpty()
+                .allSatisfy(job -> assertThat(job.finishedAt()).isBeforeOrEqualTo(file.startedAt()));
+    }
+
+    @Test
+    void theDeletionOfAJobOfAnInvisibleSourceIsNotAnnounced() throws Exception {
+        AppRuntime started = start();
+        Workspace full = started.workspace();
+        Workspace onlyWiki = new Workspace(started.harvester(), new com.aresstack.spaceharvester.application.access
+                .AccessGuard(new LocalOperatorPolicy(com.aresstack.spaceharvester.application.access.AccessContext
+                .technicalClient(com.aresstack.spaceharvester.core.Harvester.OWNER), java.util.Set.of("wiki"))),
+                new ActivityLog(home.resolve("nur-wiki.txt")));
+        String hidden = await(full, full.startSync("handbuch", full.spaces("handbuch").get(0).key())).id();
+        String shown = await(full, full.startSync("wiki", "DEV")).id();
+        java.util.concurrent.BlockingQueue<String> removed = new java.util.concurrent.LinkedBlockingQueue<>();
+        try (com.aresstack.spaceharvester.application.observe.Subscription subscription = onlyWiki.subscribeJobs(
+                new com.aresstack.spaceharvester.application.jobs.JobListener() {
+                    @Override
+                    public void changed(JobStatus status) {
+                    }
+
+                    @Override
+                    public void removed(JobStatus last) {
+                        removed.add(last.id());
+                    }
+                })) {
+            // Zuerst die unsichtbare: ihre Zustellung käme vor der sichtbaren.
+            full.deleteJob(hidden);
+            full.deleteJob(shown);
+
+            List<String> seen = new ArrayList<>();
+            long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+            while (!seen.contains(shown) && System.nanoTime() < until) {
+                String next = removed.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                if (next != null) {
+                    seen.add(next);
+                }
+            }
+            assertThat(seen).as("Löschung des sichtbaren Auftrags gemeldet").contains(shown);
+            assertThat(seen).as("Löschung des unsichtbaren Auftrags").doesNotContain(hidden);
+        }
+    }
+
+    @Test
+    void theHoldingsOfASpaceReportTheirChangeAndCountTheLoadedPages() throws Exception {
+        Workspace workspace = start().workspace();
+        java.util.concurrent.BlockingQueue<String> changes = new java.util.concurrent.LinkedBlockingQueue<>();
+        try (com.aresstack.spaceharvester.application.observe.Subscription subscription = workspace.subscribeHoldings(
+                "wiki", "DEV", new com.aresstack.spaceharvester.application.holdings.HoldingsListener() {
+                    @Override
+                    public void pagesChanged(String sourceId, String spaceKey, java.util.Set<String> pageIds) {
+                        changes.add("pages:" + spaceKey);
+                    }
+
+                    @Override
+                    public void spaceChanged(String sourceId, String spaceKey) {
+                        changes.add("space:" + spaceKey);
+                    }
+                })) {
+            assertThat(workspace.holdings("wiki", "DEV").space().inventoried()).isFalse();
+
+            assertThat(await(workspace, workspace.startSync("wiki", "DEV")).state()).isEqualTo(JobState.COMPLETED);
+
+            assertThat(changes.poll(10, java.util.concurrent.TimeUnit.SECONDS)).as("Meldung ohne Abfrage")
+                    .isNotNull();
+            com.aresstack.spaceharvester.application.holdings.SpaceHoldings holdings = workspace.holdings("wiki",
+                    "DEV");
+            assertThat(holdings.space().inventoried()).isTrue();
+            assertThat(holdings.space().counts().pages()).isPositive().isEqualTo(holdings.pages().size());
+            assertThat(workspace.holdingSpaces("wiki")).extracting(
+                    com.aresstack.spaceharvester.application.holdings.SpaceSummary::spaceKey).contains("DEV");
+        }
     }
 
     @Test
@@ -581,11 +746,45 @@ class WorkspaceTest {
 
     private static void assertNoFileContains(Path directory, String secret) throws Exception {
         byte[] needle = secret.getBytes(StandardCharsets.UTF_8);
-        try (Stream<Path> files = Files.walk(directory)) {
-            for (Path file : files.filter(Files::isRegularFile).toList()) {
-                String content = new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1);
-                assertThat(content).as(file.toString()).doesNotContain(new String(needle, StandardCharsets.ISO_8859_1));
+        // Ohne Files.walk: Verschwindet ein temporäres Verzeichnis eines laufenden Auftrags während des Durchlaufs,
+        // bricht walk mit NoSuchFileException ab; hier wird es übersprungen.
+        List<Path> found = new ArrayList<>();
+        Files.walkFileTree(directory, new java.nio.file.SimpleFileVisitor<>() {
+            @Override
+            public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs) {
+                if (attrs.isRegularFile()) {
+                    found.add(file);
+                }
+                return java.nio.file.FileVisitResult.CONTINUE;
             }
+
+            @Override
+            public java.nio.file.FileVisitResult visitFileFailed(Path file, IOException e) throws IOException {
+                if (e instanceof java.nio.file.NoSuchFileException) {
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+                throw e;
+            }
+
+            @Override
+            public java.nio.file.FileVisitResult postVisitDirectory(Path dir, IOException e) throws IOException {
+                if (e != null && !(e instanceof java.nio.file.NoSuchFileException)) {
+                    throw e;
+                }
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+        });
+        for (Path file : found) {
+            byte[] bytes;
+            try {
+                bytes = Files.readAllBytes(file);
+            } catch (java.nio.file.NoSuchFileException e) {
+                // Eine temporäre Datei eines laufenden Auftrags (etwa beim Entpacken eines Anhangs) ist schon
+                // wieder weg; was bleibt, wird geprüft.
+                continue;
+            }
+            String content = new String(bytes, StandardCharsets.ISO_8859_1);
+            assertThat(content).as(file.toString()).doesNotContain(new String(needle, StandardCharsets.ISO_8859_1));
         }
     }
 }

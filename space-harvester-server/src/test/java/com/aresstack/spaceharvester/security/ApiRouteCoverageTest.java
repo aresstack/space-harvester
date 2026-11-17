@@ -55,10 +55,13 @@ class ApiRouteCoverageTest {
     private static final String PASSAGE_ID = java.net.URLEncoder.encode("wiki:x1@" + "0".repeat(64) + "#p0@aa-bb",
             java.nio.charset.StandardCharsets.UTF_8);
     // Die Quellentypen (#187) sind Teil des Programms, keine Daten einer Quelle: 200 mit der Typenliste.
+    // Das Änderungsprotokoll ohne sourceId (ADR 0030) zeigt nur Zeilen freigegebener Seiten: 200 ohne Zeilen.
+    private static final String CHANGE_LOG = "/api/v1/change-log";
     private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search",
             "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations",
             "/api/v1/sign-ins", PROGRESSIVE, "/api/v1/search/runs", FACTS, "/api/v1/terms",
-            "/api/v1/terms/occurrences", "GET /api/v1/term-relations", "GET /api/v1/glossary", "/api/v1/sources/types");
+            "/api/v1/terms/occurrences", "GET /api/v1/term-relations", "GET /api/v1/glossary", "/api/v1/sources/types",
+            CHANGE_LOG);
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {

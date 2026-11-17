@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.facts.FactEdit;
 import com.aresstack.spaceharvester.application.facts.FactEditStore;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
 import com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis;
+import com.aresstack.spaceharvester.application.release.PageReleases;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
@@ -52,6 +53,11 @@ public final class SourceDataStores {
     /** Wartende Seiten der Hintergrundfüllung; zuerst, damit sie nichts nachlädt. {@code null} ohne Füllung. */
     public SourceDataStores fillQueue(LuceneFillQueue queue) {
         return queue == null ? this : add("Warteschlange der Hintergrundfüllung", queue::removeSource);
+    }
+
+    /** Für die KI freigegebene Seiten der Quelle (ADR 0028). {@code null} ohne Liste. */
+    public SourceDataStores pageReleases(PageReleases releases) {
+        return releases == null ? this : add("Für die KI freigegebene Seiten", releases::removeSource);
     }
 
     /** Seiten samt Verlauf, Katalog, bestätigte Generationen, Abgleichstände und zurückgehaltene Seiten. */

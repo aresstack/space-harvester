@@ -31,7 +31,8 @@ class BackgroundPlateTest {
     void thePlateShowsTotalsAndEachSource() throws Exception {
         List<String> values = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
-            BackgroundPlate plate = new BackgroundPlate(Optional::empty);
+            BackgroundPlate plate = new BackgroundPlate(Optional::empty,
+                    listener -> com.aresstack.spaceharvester.application.observe.Subscription.NONE);
             assertThat(texts(plate)).contains("noch nicht gestartet");
             plate.render(status(true, Pause.NONE, 2));
             values.addAll(texts(plate));

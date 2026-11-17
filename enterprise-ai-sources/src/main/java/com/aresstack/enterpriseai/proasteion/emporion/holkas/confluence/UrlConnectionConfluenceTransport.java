@@ -87,10 +87,24 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
         return exchange("GET", uri, headers, null, pageMaxBytes, anonymousSslSocketFactory, sink);
     }
 
+    /**
+     * Ziel von {@link #postForm} für einen strombaren Körper (Erfolg, kein HTML): wird nicht gelesen. Nach einem
+     * angenommenen Einmalcode leitet Confluence auf die Datei weiter, die die Code-Seite ausgelöst hat; ein großer
+     * Anhang überschritt dabei die Grenze für Antworten, und das Absenden galt als gescheitert, obwohl der Code
+     * angenommen war (Space Harvester, 16.11.2026).
+     */
+    private static final java.io.OutputStream SKIP_BODY = new java.io.OutputStream() {
+        @Override
+        public void write(int b) {
+            throw new IllegalStateException("SKIP_BODY wird nie beschrieben");
+        }
+    };
+
     @Override
     public ConfluenceHttpResponse postForm(URI uri, Map<String, String> headers, byte[] form, int maxBytes)
             throws IOException {
-        return exchange("POST", uri, headers, form == null ? new byte[0] : form, maxBytes, sslSocketFactory, null);
+        return exchange("POST", uri, headers, form == null ? new byte[0] : form, maxBytes, sslSocketFactory,
+                SKIP_BODY);
     }
 
     /**
@@ -175,6 +189,16 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
             InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
             if (sink != null && stream != null
                     && ConfluenceHttpResponse.streamable(status, connection.getContentType())) {
+                if (sink == SKIP_BODY) {
+                    // Status, Typ und Cookies reichen; die Verbindung schließt ohne den Rest der Datei.
+                    try {
+                        stream.close();
+                    } catch (IOException e) {
+                        // Der Rest der Datei wird nicht gebraucht; disconnect() schließt die Verbindung ohnehin.
+                    }
+                    return new ConfluenceHttpResponse(status, connection.getContentType(), new byte[0], location[0],
+                            setCookies(connection.getHeaderFields()));
+                }
                 long copied = copy(stream, sink);
                 return new ConfluenceHttpResponse(status, connection.getContentType(), new byte[0], location[0],
                         setCookies(connection.getHeaderFields())).streamed(copied);

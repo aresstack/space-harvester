@@ -100,18 +100,32 @@ public final class PageDetailPanel extends JPanel {
     private static final String GRAPH = "Graph";
     static final String GRAPH_PLACEHOLDER = "Noch kein Wissensgraph – Analyse folgt";
     private static final String ADVANCED = "Erweitert";
+    /** Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links, auch ohne gezeigte Seite. */
+    static final String EXPORT = "Export";
+    static final String CHAT = "Chat";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
     private static final String TECHNICAL = "Technische Angaben";
     private static final String EMPTY = "empty";
     private static final String PAGE = "page";
+    private static final String EXPORT_CARD = "export";
+    private static final String CHAT_CARD = "chat";
+    /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
+    private static final String SOURCE_CARD = "source";
+    static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
+    /** Die übrigen Reiter der Quellenseite bleiben leer, bis sie Quelleninhalte zeigen; kein Hinweistext. */
+    static final String EMPTY_SOURCE = " ";
     private static final int READER_PADDING_TOP = 10;
 
     private final AppContext context;
     private final JLabel title = new JLabel(" ");
     private final java.awt.CardLayout cards = new java.awt.CardLayout();
     private final JPanel deck = new JPanel(cards);
-    private final JLabel empty = Comic.muted("Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.");
+    /** Welche Karte Seite oder Hinweis zeigt, solange nicht der Reiter „Export“ gewählt ist. */
+    private String pageCard = EMPTY;
+    private final ExportPanel export;
+    private final ChatPanel chat;
+    private final JLabel empty = Comic.muted(EMPTY_PAGE);
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
     private final References references = new References();
@@ -122,6 +136,7 @@ public final class PageDetailPanel extends JPanel {
     private final StatementsTab statementsView;
     /** Unterreiter „Analysen → Graph“ (#499 F): fokussierte Teilgraphen, geladen erst beim Anzeigen. */
     private final KnowledgeGraphTab graphView;
+    private final SourceUpdatesView sourceView;
     private final JLabel state = Comic.muted(" ");
     /** Schließt das Seiteninfo-Popup, sobald die Maus Überschrift und Popup verlassen hat. */
     private final javax.swing.Timer detailsWatch = new javax.swing.Timer(120, e -> hideDetailsWhenLeft());
@@ -149,7 +164,7 @@ public final class PageDetailPanel extends JPanel {
     private final JTable enrichments = Comic.table(new JTable(enrichmentModel));
     private final JTextArea enrichmentResult = Comic.code();
     private final PillTabs tabs = new PillTabs();
-    /** Die Hauptreiter als quadratische Symbolknöpfe für die Werkzeugleiste unten ({@link #tabIcons()}). */
+    /** Die Hauptreiter als quadratische Symbolknöpfe für die Icon-Leiste des Hauptfensters ({@link #tabIcons()}). */
     private final JComponent tabIcons;
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
@@ -161,6 +176,35 @@ public final class PageDetailPanel extends JPanel {
             "Vergleicht die Seite live mit der Quelle (refresh); der Bestand ändert sich erst beim Abgleich");
     private final ComposerButton saveRaw = Comic.button("Original speichern …", "Native Payload Byte für Byte");
     private final ComposerButton browse = Comic.button("Im Browser öffnen", "Öffnet die Seite in der Quelle im Browser");
+    /** Der Stern im Kopf (Angelo, 13.11.2026): dieselbe Markierung wie im Explorer, gefüllt als Favorit. */
+    private final com.aresstack.spaceharvester.app.ui.IconButton star =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.STAR,
+                    "Als Favorit markieren");
+    /** Pfad der gezeigten Seite, sobald der Core ihn geliefert hat; für den Favoriten. */
+    private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position shownPosition;
+    /** Die Überschrift für die Zeile der Bereichsanzeige ({@link #headerTitle()}): mittig, nie breiter als ihr Text. */
+    private final JPanel heading = new JPanel(null) {
+        @Override
+        public void doLayout() {
+            java.awt.Dimension t = title.getPreferredSize();
+            int width = Math.min(t.width, getWidth());
+            title.setBounds((getWidth() - width) / 2, (getHeight() - t.height) / 2, width, t.height);
+        }
+
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            return title.getPreferredSize();
+        }
+
+        @Override
+        public java.awt.Dimension getMinimumSize() {
+            return new java.awt.Dimension(0, title.getPreferredSize().height);
+        }
+    };
+    /** Weitere Aktionen zur Seite hinter einem Dreieck neben dem Stern, wie im Audio Studio (Angelo, 16.11.2026). */
+    private final com.aresstack.spaceharvester.app.ui.IconButton more =
+            new com.aresstack.spaceharvester.app.ui.IconButton(new DownTriangle(), MORE_ACTIONS);
+    static final String MORE_ACTIONS = "Weitere Aktionen zur Seite";
     private final ComposerButton bookmark = Comic.button("Lesezeichen kopieren",
             "Stabile Adresse dieser Seite und Version (space-harvester://…); unter Suche wieder zu öffnen");
     private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
@@ -182,6 +226,10 @@ public final class PageDetailPanel extends JPanel {
     private boolean readingLoaded;
     private boolean referencesLoaded;
     private boolean imagesLoaded;
+    /** Anmeldung bei der Liste freigegebener Seiten (ADR 0028), damit „Bilder“ eine neue Freigabe der Seite zeigt. */
+    private com.aresstack.spaceharvester.application.observe.Subscription releaseSubscription =
+            com.aresstack.spaceharvester.application.observe.Subscription.NONE;
+    private AppRuntime releaseRuntime;
     private final ReadingPane readingPane = new ReadingPane();
     /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */
     static final int MOUSE_BACK_BUTTON = 4;
@@ -218,11 +266,22 @@ public final class PageDetailPanel extends JPanel {
         this.context = context;
         this.statementsView = new StatementsTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context.parserModel());
+        this.sourceView = new SourceUpdatesView(() -> context.runtime() == null ? null
+                : context.runtime().workspace());
+        sourceView.onOpen(changed -> {
+            if (context.navigator() != null) {
+                context.navigator().openPage(changed.sourceId(), changed.pageId());
+            } else {
+                load(changed.sourceId(), changed.pageId(), false);
+            }
+        });
         this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace());
+        this.export = new ExportPanel(context);
+        this.chat = new ChatPanel(context);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
-        title.setFont(Comic.semiBold(17f));
+        title.setFont(Comic.semiBold(15f));
         title.setForeground(Comic.INK);
 
         reader.setEditable(false);
@@ -311,8 +370,13 @@ public final class PageDetailPanel extends JPanel {
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ANALYSES, analysisTabs)
-                .tab(ADVANCED, advanced);
-        // Die Hauptreiter wandern als Symbolknöpfe mittig in die Werkzeugleiste unten (wie die Kopfzeile in AskAI);
+                .tab(ADVANCED, advanced)
+                // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
+                // eigene Karte neben Seite und Hinweis, der Reiter hält nur den Platz.
+                .tab(EXPORT, new JPanel())
+                // Der Chat ebenso: sein Wissen ist die Auswahl links, nicht die gezeigte Seite.
+                .tab(CHAT, new JPanel());
+        // Die Hauptreiter wandern als Symbolknöpfe in die Icon-Leiste oben (Angelo, 13.11.2026);
         // die Unterreiter von „Analysen“ rücken dadurch an die Stelle der bisherigen Reiterzeile.
         java.util.Map<String, Icon> icons = new java.util.LinkedHashMap<>();
         icons.put(READING, PageTabIcons.reading());
@@ -321,9 +385,12 @@ public final class PageDetailPanel extends JPanel {
         icons.put(ATTACHMENTS, PageTabIcons.attachments());
         icons.put(ANALYSES, PageTabIcons.analyses());
         icons.put(ADVANCED, PageTabIcons.advanced());
+        icons.put(EXPORT, PageTabIcons.export());
+        icons.put(CHAT, ChatIcons.chat());
         tabIcons = tabs.iconBar(icons);
         // Nachladen nur für den sichtbaren Reiter: beim Wechsel des Haupt- wie des Unterreiters.
         tabs.onSelect(name -> {
+            showDeck();
             loadVisible();
             showTabStatus();
         });
@@ -337,6 +404,7 @@ public final class PageDetailPanel extends JPanel {
         images.onStatus(text -> tabStatus(IMAGES, text));
         references.onStatus(text -> tabStatus(REFERENCES, text));
         statementsView.onStatus(text -> tabStatus(STATEMENTS, text));
+        sourceView.onStatus(text -> tabStatus(READING, text));
         graphView.onStatus(text -> tabStatus(GRAPH, text));
         // Lauf-, Erfolgs- und Infomeldungen gehen in die Statuszeile des Hauptfensters; die Platte zeigt nur Probleme.
         feedback.statusLine((text, tone) -> context.events().publish(
@@ -361,6 +429,8 @@ public final class PageDetailPanel extends JPanel {
         saveRaw.addActionListener(e -> saveRaw());
         browse.addActionListener(e -> browse());
         bookmark.addActionListener(e -> copyBookmark());
+        star.addActionListener(e -> toggleFavorite());
+        context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::updateStar));
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
         previewAsset.addActionListener(e -> openAttachment());
@@ -382,33 +452,11 @@ public final class PageDetailPanel extends JPanel {
                 showDetails();
             }
         });
-        // Die Überschrift ist nur so breit wie ihr Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
-        JPanel heading = new JPanel(null) {
-            @Override
-            public void doLayout() {
-                java.awt.Dimension t = title.getPreferredSize();
-                title.setBounds(0, (getHeight() - t.height) / 2, Math.min(t.width, getWidth()), t.height);
-            }
-
-            @Override
-            public java.awt.Dimension getPreferredSize() {
-                return title.getPreferredSize();
-            }
-
-            @Override
-            public java.awt.Dimension getMinimumSize() {
-                return new java.awt.Dimension(0, title.getPreferredSize().height);
-            }
-        };
+        // Die Überschrift steht mittig in der Zeile der Bereichsanzeige (Angelo, 16.11.2026) und ist nur so breit wie ihr
+        // Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
         heading.setOpaque(false);
         heading.add(title);
-        JPanel titleRow = new JPanel(new BorderLayout(8, 0));
-        titleRow.setOpaque(false);
-        // Zurück und Vor wie im Browser vor dem Titel.
-        titleRow.add(Comic.row(backButton, forwardButton), BorderLayout.WEST);
-        titleRow.add(heading, BorderLayout.CENTER);
-        titleRow.add(Comic.row(bookmark, browse), BorderLayout.EAST);
-        header.add(titleRow, BorderLayout.NORTH);
+        more.addActionListener(e -> moreMenu().show(more, 0, more.getHeight()));
         header.add(feedback, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
         page.setOpaque(false);
@@ -419,6 +467,9 @@ public final class PageDetailPanel extends JPanel {
         deck.setOpaque(false);
         deck.add(empty, EMPTY);
         deck.add(page, PAGE);
+        deck.add(export, EXPORT_CARD);
+        deck.add(chat, CHAT_CARD);
+        deck.add(sourceView, SOURCE_CARD);
         add(deck, BorderLayout.CENTER);
         clear();
     }
@@ -456,8 +507,137 @@ public final class PageDetailPanel extends JPanel {
         renderDetails();
         feedback.clear();
         setActionsEnabled(false);
-        cards.show(deck, EMPTY);
-        tabIcons.setVisible(false);
+        showCard(EMPTY);
+    }
+
+    /** Setzt den Favoriten der gezeigten Seite oder nimmt ihn zurück (Pfad aus der geladenen Position). */
+    private void toggleFavorite() {
+        if (page == null || sourceId == null || pageId == null) {
+            return;
+        }
+        String spaceKey = shownPosition != null && shownPosition.spaceKey() != null ? shownPosition.spaceKey()
+                : page.header().metadata().partitionKey();
+        if (spaceKey == null) {
+            return;
+        }
+        String title = page.header().metadata().title();
+        java.util.List<String> path = new java.util.ArrayList<>();
+        java.util.List<String> ancestors = new java.util.ArrayList<>();
+        path.add(sourceTitle(sourceId));
+        if (shownPosition != null) {
+            path.add(shownPosition.spaceName() == null || shownPosition.spaceName().isBlank() ? spaceKey
+                    : shownPosition.spaceName());
+            for (com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode ancestor
+                    : shownPosition.ancestors()) {
+                path.add(ancestor.title());
+                ancestors.add(ancestor.pageId());
+            }
+        } else {
+            path.add(spaceKey);
+        }
+        context.favorites().toggle(new com.aresstack.spaceharvester.app.ui.Favorites.Favorite(sourceId, spaceKey,
+                pageId, title, path, ancestors));
+    }
+
+    private String sourceTitle(String id) {
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            for (com.aresstack.spaceharvester.application.sources.HarvestSource source
+                    : runtime.workspace().sources()) {
+                if (source.id().equals(id)) {
+                    return source.title() == null || source.title().isBlank() ? id : source.title();
+                }
+            }
+        }
+        return id;
+    }
+
+    /** Gefüllt, wenn die gezeigte Seite ein Favorit ist; ohne Seite gesperrt. */
+    private void updateStar() {
+        boolean shown = page != null && sourceId != null && pageId != null;
+        String spaceKey = !shown ? null : shownPosition != null && shownPosition.spaceKey() != null
+                ? shownPosition.spaceKey() : page.header().metadata().partitionKey();
+        boolean favorite = spaceKey != null && context.favorites().contains(sourceId, spaceKey, pageId);
+        star.setEnabled(shown && spaceKey != null);
+        star.setIcon(favorite ? com.aresstack.spaceharvester.app.ui.Glyph.STAR_FILLED
+                : com.aresstack.spaceharvester.app.ui.Glyph.STAR);
+        star.setToolTipText(favorite ? "Favorit entfernen" : "Als Favorit markieren");
+        star.getAccessibleContext().setAccessibleName(favorite ? "Favorit entfernen" : "Als Favorit markieren");
+    }
+
+    /** Für Tests: der Stern im Kopf. */
+    javax.swing.AbstractButton starButton() {
+        return star;
+    }
+
+    /** Seite oder Hinweis merken; sichtbar wird es erst, wenn weder „Export“ noch „Chat“ gewählt ist. */
+    private void showCard(String card) {
+        if (!SOURCE_CARD.equals(card)) {
+            // Keine Quellenseite mehr: Anmeldung beim Änderungsprotokoll endet, die leere Karte nennt wieder die Seite.
+            sourceView.source(null, null);
+            empty.setText(EMPTY_PAGE);
+        }
+        pageCard = card;
+        showDeck();
+    }
+
+    private void showDeck() {
+        String selected = tabs.selected();
+        // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
+        sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected));
+        String page = pageCard;
+        if (SOURCE_CARD.equals(page)) {
+            // Auf der Quellenseite zeigt nur „Leseansicht“ etwas (die Updates); die übrigen Seitenreiter bleiben leer.
+            page = READING.equals(selected) ? SOURCE_CARD : EMPTY;
+        }
+        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD : page);
+    }
+
+    /**
+     * Die Quellenseite einer gewählten Wissensquelle (ADR 0030): leert die Seitenreiter und zeigt unter „Leseansicht“
+     * die Updates der Quelle; Export und Chat folgen ohnehin der Auswahl.
+     */
+    public void showSource(String sourceId, String sourceTitle) {
+        clear();
+        title.setText(sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
+        empty.setText(EMPTY_SOURCE);
+        sourceView.source(sourceId, sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
+        pageCard = SOURCE_CARD;
+        showDeck();
+    }
+
+    /** Zeigt den Reiter „Updates“ der Quellenseite (Doppelklick auf eine Quelle). */
+    public void showReading() {
+        tabs.select(READING);
+    }
+
+    /** Der Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links. */
+    public ExportPanel export() {
+        return export;
+    }
+
+    /** Der Reiter „Chat“ (Angelo, 13.11.2026), vorerst ein Click-Dummy; sein Wissen ist die Auswahl links. */
+    public ChatPanel chat() {
+        return chat;
+    }
+
+    /** Der Reiter „Analysen › Graph“; die Auswahl links grenzt ihn ein (ADR 0029). */
+    SourceUpdatesView sourceView() {
+        return sourceView;
+    }
+
+    /** Ob gerade die Quellenseite (ADR 0030) gezeigt wird. */
+    boolean showsSource() {
+        return SOURCE_CARD.equals(pageCard);
+    }
+
+    public KnowledgeGraphTab graph() {
+        return graphView;
+    }
+
+    /** Zeigt den Reiter „Export“, etwa aus „Inhalte öffnen“ eines Auftrags. */
+    public void showExport() {
+        tabs.select(EXPORT);
     }
 
     /** Ob gerade keine Seite angezeigt oder geladen wird. */
@@ -488,7 +668,7 @@ public final class PageDetailPanel extends JPanel {
      */
     public void openPassage(String passageId) {
         if (!PassageId.looksLike(passageId)) {
-            cards.show(deck, PAGE);
+            showCard(PAGE);
             feedback.problem(new InvalidQueryException("Keine Passage-ID"), Problems.Step.PAGE);
             return;
         }
@@ -515,8 +695,7 @@ public final class PageDetailPanel extends JPanel {
         positionShown.accept(null);
         references.message(" ");
         int current = ++request;
-        cards.show(deck, PAGE);
-        tabIcons.setVisible(true);
+        showCard(PAGE);
         showReader(null, false);
         statementsView.pending(new PageKey(sourceId, pageId));
         graphView.page(null);
@@ -1158,6 +1337,8 @@ public final class PageDetailPanel extends JPanel {
             if (shown == page) {
                 breadcrumbs.show(position);
                 renderDetails();
+                shownPosition = position;
+                updateStar();
                 positionShown.accept(position);
             }
         }, error -> {
@@ -1195,11 +1376,13 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || page == null || imagesLoaded) {
             return;
         }
+        watchReleases(runtime);
         imagesLoaded = true;
         images.loading();
         String source = sourceId;
         DeliveredPage shown = page;
-        Background.run(() -> imageRows(runtime, source, runtime.workspace().images(shown)), found -> {
+        Background.run(() -> imageRows(runtime, source, shown.snapshot().key().pageId(),
+                runtime.workspace().images(shown)), found -> {
             if (shown == page) {
                 images.describing(false);
                 images.released(found.released());
@@ -1228,7 +1411,7 @@ public final class PageDetailPanel extends JPanel {
         DeliveredPage shown = page;
         images.describing(true);
         feedback.working("Bilder werden beschrieben …");
-        Background.run(() -> imageRows(runtime, source, once ? runtime.workspace().describeImagesOnce(source, id)
+        Background.run(() -> imageRows(runtime, source, id, once ? runtime.workspace().describeImagesOnce(source, id)
                 : runtime.workspace().describeImages(source, id)), found -> {
             // Der Reiter gehört allen Seiten: auch nach einem Seitenwechsel wieder freigeben.
             images.describing(false);
@@ -1274,8 +1457,33 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
+    /**
+     * Meldet sich je Laufzeit einmal bei der Liste freigegebener Seiten an: Kommt die gezeigte Seite dazu oder geht sie
+     * weg (etwa durch Senden im Chat), gilt der geladene Stand der Bilder nicht mehr; ist „Bilder“ offen, lädt er neu.
+     */
+    private void watchReleases(AppRuntime runtime) {
+        if (runtime == releaseRuntime) {
+            return;
+        }
+        releaseSubscription.close();
+        releaseRuntime = runtime;
+        releaseSubscription = runtime.workspace().subscribePageReleases(change -> {
+            boolean mine = java.util.stream.Stream.concat(change.added().stream(), change.removed().stream())
+                    .anyMatch(entry -> entry.key().sourceId().equals(sourceId)
+                            && entry.key().pageId().equals(pageId));
+            if (mine) {
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    imagesLoaded = false;
+                    if (IMAGES.equals(selectedTab())) {
+                        loadImages();
+                    }
+                });
+            }
+        });
+    }
+
     /** Die Bilder für den Reiter; Vorschauen nur aus der Ablage, außerhalb des EDT. */
-    private static ImageRows imageRows(AppRuntime runtime, String sourceId, PageImages found) {
+    private static ImageRows imageRows(AppRuntime runtime, String sourceId, String pageId, PageImages found) {
         List<ImagesTab.Image> rows = new ArrayList<>();
         java.util.Map<String, String> versions;
         try {
@@ -1293,7 +1501,8 @@ public final class PageDetailPanel extends JPanel {
                     entry.reason(), preview));
         }
         return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), found.warnings(),
-                List.copyOf(rows), found.describedCount(), runtime.workspace().imagesReleased(sourceId));
+                // Freigegeben ist die Quelle oder die Seite selbst (Liste freigegebener Seiten, ADR 0028).
+                List.copyOf(rows), found.describedCount(), runtime.workspace().imagesReleased(sourceId, pageId));
     }
 
     /**
@@ -1763,15 +1972,82 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void setActionsEnabled(boolean enabled) {
+        if (!enabled) {
+            shownPosition = null;
+        }
+        updateStar();
         refresh.setEnabled(enabled || pageId != null);
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
         bookmark.setEnabled(enabled);
+        more.setEnabled(enabled);
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
         updatePreviewEnabled();
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
+    }
+
+    /** Die Überschrift der Seite für die Zeile der Bereichsanzeige; öffnet beim Überfahren die Details. */
+    JComponent headerTitle() {
+        return heading;
+    }
+
+    /**
+     * Stern und das Dreieck mit den weiteren Aktionen, rechts in der Zeile der Bereichsanzeige; auf der Quellenseite
+     * links davon die Werkzeuge der Updates (keine eigene Leiste, Angelo 17.11.2026).
+     */
+    JComponent headerActions() {
+        return Comic.row(sourceView.tools(), star, more);
+    }
+
+    /** Zurück und Vor für die Statuszeile des Hauptfensters. */
+    JComponent navigation() {
+        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 2, 0));
+        row.setOpaque(false);
+        row.add(backButton.compact());
+        row.add(forwardButton.compact());
+        return row;
+    }
+
+    javax.swing.AbstractButton moreButton() {
+        return more;
+    }
+
+    /** „Lesezeichen kopieren“ und „Im Browser öffnen“; je Eintrag so wählbar wie die Aktion gerade gilt. */
+    javax.swing.JPopupMenu moreMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        for (ComposerButton action : List.of(bookmark, browse)) {
+            javax.swing.JMenuItem item = new javax.swing.JMenuItem(action.getText());
+            item.setFont(Comic.regular(13f));
+            item.setToolTipText(action.getToolTipText());
+            item.setEnabled(action.isEnabled());
+            item.addActionListener(e -> action.doClick());
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    /** Gefülltes Dreieck nach unten, in der Vordergrundfarbe des Knopfs. */
+    private static final class DownTriangle implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(c.isEnabled() ? c.getForeground() : Comic.MUTED);
+            g2.fillPolygon(new int[] {x + 3, x + 13, x + 8}, new int[] {y + 5, y + 5, y + 11}, 3);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 16;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
+        }
     }
 
     Breadcrumbs breadcrumbs() {
@@ -1796,7 +2072,8 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * Die Hauptreiter (Leseansicht, Text, Eigenschaften, Anhänge, Analysen, Erweitert) als quadratische Symbolknöpfe;
-     * das Hauptfenster setzt sie mittig in die Werkzeugleiste unten. Sichtbar nur, solange eine Seite gezeigt wird.
+     * das Hauptfenster setzt sie in die Icon-Leiste oben, wo sie die Mitte umschalten. Immer sichtbar, auch ohne
+     * Seite (dann zeigt die Mitte den Hinweis, eine Seite im Explorer zu wählen).
      */
     public JComponent tabIcons() {
         return tabIcons;

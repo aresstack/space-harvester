@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.DownloadAccess;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
+import com.aresstack.enterpriseai.source.api.RestResponse;
 import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -234,6 +235,40 @@ final class ConfluenceRestClient {
      */
     StoredPage storedPage(Session session, String contentId) throws KnowledgeSourceException {
         return storedPage(send(session, storedPagePath(contentId), "Seite", config.maxResponseBytes()), contentId);
+    }
+
+    /**
+     * Eine beliebige GET-Abfrage unter {@code /rest/} der Quelle ({@code RestQuerySource}): dieselbe Anmeldung,
+     * dieselben Wiederholungen und dieselbe Fehlerabbildung wie jeder andere Abruf; der Körper kommt unverändert.
+     * Pfade außerhalb von {@code /rest/}, mit {@code ..}, {@code //} oder Fragment lehnt der Client ab, damit die
+     * Anmeldung nie an eine andere Adresse geht.
+     */
+    RestResponse restGet(Session session, String pathAndQuery) throws KnowledgeSourceException {
+        if (!validRestPath(pathAndQuery)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "REST-Abfrage: nur Pfade unter /rest/ der Quelle");
+        }
+        ConfluenceHttpResponse response = send(session, pathAndQuery, "REST-Abfrage", config.maxResponseBytes());
+        return new RestResponse(response.contentType(), response.body());
+    }
+
+    /** {@code /rest/…} ohne Fragment, ohne {@code ..}, ohne doppelte Schrägstriche und ohne Steuerzeichen. */
+    static boolean validRestPath(String pathAndQuery) {
+        if (pathAndQuery == null || !pathAndQuery.startsWith("/rest/") || pathAndQuery.contains("#")
+                || pathAndQuery.contains("//") || pathAndQuery.contains("\\")) {
+            return false;
+        }
+        String path = pathAndQuery.split("\\?", 2)[0];
+        if ((path + "/").contains("/../") || (path + "/").contains("/./")
+                || path.toLowerCase(Locale.ROOT).matches(".*%(2e|2f|5c).*")) {
+            return false;
+        }
+        for (int i = 0; i < pathAndQuery.length(); i++) {
+            char c = pathAndQuery.charAt(i);
+            if (c < 0x21 || c > 0x7e) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -865,7 +900,7 @@ final class ConfluenceRestClient {
                 return drawioSvg(session, fragment);
             } catch (KnowledgeSourceException | DrawioDiagramRenderer.Unsupported e) {
                 drawio = e.getMessage();
-                LOG.info("[Confluence] draw.io: JGraphX nicht möglich (" + drawio + "), verwende PNG-Vorschau: "
+                LOG.info("[Confluence] draw.io: Zeichnung nicht möglich (" + drawio + "), verwende PNG-Vorschau: "
                         + logPath(preview == null ? "" : preview));
             }
         }

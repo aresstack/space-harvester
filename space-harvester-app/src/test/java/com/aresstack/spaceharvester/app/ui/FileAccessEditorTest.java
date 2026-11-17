@@ -221,6 +221,60 @@ class FileAccessEditorTest {
         });
     }
 
+    /**
+     * Der Wettlauf aus dem CI-Lauf von #775: Eine Prüfung läuft noch, der Ordner wird entfernt, inzwischen angelegt
+     * und wieder aufgenommen; das verspätete alte Ergebnis darf die neue Zeile nicht auf „Nicht erreichbar“ setzen.
+     * Außerdem startet ein zweites Hinzufügen keine zweite Prüfung für einen Ordner, dessen Prüfung noch läuft.
+     */
+    @Test
+    void aLateResultOfASupersededCheckDoesNotOverwriteTheFreshRow() throws Exception {
+        String folder = home.resolve("spaet").toString();
+        String other = home.resolve("anderer").toString();
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger checks = new AtomicInteger();
+        AtomicBoolean exists = new AtomicBoolean(false);
+        FileAccessEditor.Probe probe = path -> {
+            if (path.toString().equals(folder)) {
+                checks.incrementAndGet();
+                if (!exists.get()) {
+                    // Die erste Prüfung hängt (etwa ein Netzpfad), bis der Test sie freigibt.
+                    release.await(30, TimeUnit.SECONDS);
+                    return false;
+                }
+                return true;
+            }
+            return true;
+        };
+        FileAccessEditor[] editor = new FileAccessEditor[1];
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0] = new FileAccessEditor(context, parent -> true, probe);
+            editor[0].path.setText(folder);
+            editor[0].add.doClick();
+            editor[0].path.setText(other);
+            editor[0].add.doClick();
+        });
+        await(() -> FileAccessEditor.STATUS_REACHABLE.equals(editor[0].table.getValueAt(1, FileAccessEditor.STATUS)));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(editor[0].table.getValueAt(0, FileAccessEditor.STATUS))
+                    .isEqualTo(FileAccessEditor.STATUS_CHECKING);
+            editor[0].revoke(folder);
+            exists.set(true);
+            editor[0].path.setText(folder);
+            editor[0].add.doClick();
+        });
+        await(() -> FileAccessEditor.STATUS_REACHABLE.equals(editor[0].table.getValueAt(1, FileAccessEditor.STATUS)));
+        release.countDown();
+        // Das verspätete „Nicht erreichbar“ der ersten Prüfung verfällt; die Zeile bleibt erreichbar.
+        Thread.sleep(300);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(editor[0].table.getValueAt(1, FileAccessEditor.STATUS))
+                    .isEqualTo(FileAccessEditor.STATUS_REACHABLE);
+            assertThat(editor[0].status(folder)).isEqualTo(FileAccessEditor.STATUS_REACHABLE);
+        });
+        assertThat(checks.get()).as("eine Prüfung je Aufnahme, keine Doppelprüfung beim zweiten Hinzufügen")
+                .isEqualTo(2);
+    }
+
     private static void await(java.util.function.BooleanSupplier condition) throws Exception {
         long until = System.currentTimeMillis() + 30_000;
         boolean[] met = {false};

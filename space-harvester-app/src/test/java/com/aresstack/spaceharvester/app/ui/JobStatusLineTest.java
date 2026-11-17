@@ -70,4 +70,54 @@ class JobStatusLineTest {
         }
         return count;
     }
+
+    /** „Fertig“ bleibt nicht dauerhaft stehen (Angelo, 16.11.2026); Zurück und Vor der Seitenansicht stehen mittig. */
+    @Test
+    void doneFadesAndTheMiddleCarriesTheNavigation() throws Exception {
+        ApplicationEventBus bus = new ApplicationEventBus();
+        SwingUtilities.invokeAndWait(() -> {
+            JobStatusLine line = new JobStatusLine(bus);
+            javax.swing.JPanel navigation = new javax.swing.JPanel();
+            navigation.add(new javax.swing.JButton("<"));
+            line.navigation(navigation);
+            assertThat(SwingUtilities.isDescendingFrom(navigation, line)).isTrue();
+            line.navigationVisible(false);
+            assertThat(navigation.isVisible()).isFalse();
+
+            JobProgressEvent done = new JobProgressEvent("Aufträge: 3 fertig", 0, 0, false, Outcome.COMPLETED);
+            bus.publish(done);
+            assertThat(line.endState.isVisible()).isTrue();
+            assertThat(line.doneTimer().isRunning()).isTrue();
+            for (java.awt.event.ActionListener listener : line.doneTimer().getActionListeners()) {
+                listener.actionPerformed(null);
+            }
+            assertThat(line.endState.isVisible()).as("Fertig verschwindet nach der Frist").isFalse();
+            bus.publish(done);
+            assertThat(line.endState.isVisible()).as("derselbe Stand holt es nicht zurück").isFalse();
+
+            bus.publish(new JobProgressEvent("Aufträge: 1 fehlgeschlagen", 0, 0, false, Outcome.FAILED));
+            assertThat(line.endState.isVisible()).isTrue();
+            assertThat(line.doneTimer().isRunning()).as("Fehlgeschlagen bleibt stehen").isFalse();
+        });
+    }
+
+    @Test
+    void aLongJobTextShortensInsteadOfPushingTheNavigationOut() throws Exception {
+        ApplicationEventBus bus = new ApplicationEventBus();
+        SwingUtilities.invokeAndWait(() -> {
+            JobStatusLine line = new JobStatusLine(bus);
+            javax.swing.JPanel navigation = new javax.swing.JPanel();
+            navigation.add(new javax.swing.JButton("<"));
+            navigation.add(new javax.swing.JButton(">"));
+            line.navigation(navigation);
+            bus.publish(new JobProgressEvent("Aufträge: 3 laufen, 2 warten · 41 % · noch ≈ 12 min, sehr langer Text",
+                    41, 100, false, Outcome.RUNNING));
+            line.setSize(200, 24);
+            line.doLayout();
+            navigation.getParent().doLayout();
+            assertThat(navigation.getWidth()).isEqualTo(navigation.getPreferredSize().width);
+            assertThat(line.text.getWidth()).isLessThan(line.text.getPreferredSize().width);
+            assertThat(line.text.getWidth() + navigation.getParent().getWidth()).isEqualTo(200);
+        });
+    }
 }

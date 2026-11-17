@@ -5,10 +5,12 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -38,6 +40,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -329,6 +332,17 @@ public class KeywordSearch {
     }
 
     /**
+     * Meldet einen Empfänger für den Ladestand eines Stapels an (ADR 0027), statt {@link #progress} in Abständen zu
+     * lesen: nach jeder geladenen oder gescheiterten Seite und nach einem Abbruch der jüngste {@link Progress},
+     * gebündelt, zuletzt mit {@link Progress#done()}. Erst anmelden, dann {@link #progress} lesen; ohne Vorabladen oder
+     * ohne Stapel {@link Subscription#NONE}.
+     */
+    public Subscription subscribe(String progressId, Consumer<Progress> listener) {
+        Objects.requireNonNull(listener, "listener");
+        return prefetch == null || progressId == null ? Subscription.NONE : prefetch.subscribe(progressId, listener);
+    }
+
+    /**
      * Bricht das Laden eines Stapels ab ({@link Results#progress()}): Wartende Abrufe entfallen, ein laufender endet
      * regulär. Was schon im Cache liegt, bleibt.
      *
@@ -451,8 +465,11 @@ public class KeywordSearch {
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query.scope());
         scope.requireKnown(catalog);
         Position position = cursor == null || cursor.isEmpty() ? null : decode(cursor, fingerprint(query));
-        if (position == null && !scope.sourceIds().isEmpty()) {
-            before.searching(scope.sourceIds());
+        // Mit einer Seitenmenge (ADR 0029) nur die Quellen, in denen sie Seiten hat.
+        Set<String> sourceIds = scope.sourceIds().stream().filter(query::reaches)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (position == null && !sourceIds.isEmpty()) {
+            before.searching(sourceIds);
         }
         Map<String, Integer> offsets = position == null ? null : position.offsets();
         boolean cached = texts != null;
@@ -474,7 +491,7 @@ public class KeywordSearch {
         List<LiveSearch> searches = new ArrayList<>();
         for (HarvestSource source : catalog.all()) {
             String sourceId = source.id();
-            if (!scope.sourceIds().contains(sourceId)) {
+            if (!sourceIds.contains(sourceId)) {
                 continue;
             }
             boolean live = source.capabilities().contains(SourceCapability.LIVE_SEARCH);
@@ -527,7 +544,7 @@ public class KeywordSearch {
                 if (observer != null) {
                     // Sobald diese Quelle geantwortet hat, erfährt es der Beobachter, auch wenn andere noch suchen.
                     List<Future<List<SourceSearchMatch>>> answers = List.copyOf(perQuery);
-                    searching.submit(() -> report(observer, caller, search, answers, limit));
+                    searching.submit(() -> report(observer, caller, query, search, answers, limit));
                 }
             }
         }
@@ -590,16 +607,23 @@ public class KeywordSearch {
         while (candidates.size() < limit && added) {
             added = false;
             for (Map.Entry<String, List<SourceSearchMatch>> entry : pending.entrySet()) {
+                List<SourceSearchMatch> matches = entry.getValue();
                 int index = taken.get(entry.getKey());
-                if (index < entry.getValue().size() && candidates.size() < limit) {
-                    candidates.add(new Candidate(entry.getKey(), entry.getValue().get(index), false, null, null));
-                    taken.put(entry.getKey(), index + 1);
+                // Funde außerhalb der Seitenmenge zählen als genommen, damit der Cursor in der Rangfolge der Quelle
+                // weiterzählt; sie werden weder Kandidat noch geladen.
+                while (index < matches.size() && !query.admits(entry.getKey(), matches.get(index).pageId())) {
+                    index++;
+                }
+                if (index < matches.size() && candidates.size() < limit) {
+                    candidates.add(new Candidate(entry.getKey(), matches.get(index), false, null, null));
+                    index++;
                     added = true;
                 }
+                taken.put(entry.getKey(), index);
             }
         }
 
-        catalogFindings(caller, pending);
+        catalogFindings(caller, query, pending);
 
         Map<String, Integer> next = new LinkedHashMap<>();
         for (String sourceId : pending.keySet()) {
@@ -637,7 +661,7 @@ public class KeywordSearch {
             Set<PageKey> seen = new HashSet<>();
             toLoad.forEach(hit -> seen.add(new PageKey(hit.sourceId(), hit.pageId())));
             for (Hit hit : position.pending()) {
-                if (scope.sourceIds().contains(hit.sourceId()) && !unavailable.contains(hit.sourceId())
+                if (sourceIds.contains(hit.sourceId()) && !unavailable.contains(hit.sourceId())
                         && seen.add(new PageKey(hit.sourceId(), hit.pageId()))) {
                     toLoad.add(hit);
                 }
@@ -673,14 +697,14 @@ public class KeywordSearch {
         if (!searchable.isEmpty() && delivered.size() < MAX_DEPTH) {
             try {
                 int wanted = Math.min(delivered.size() + limit + 1, MAX_DEPTH);
-                List<PageTextIndex.Match> matches = new ArrayList<>(texts.search(query.text(), searchable,
-                        query.spaces(), wanted));
+                List<PageTextIndex.Match> matches = new ArrayList<>(searchTexts(query.text(), searchable, query,
+                        wanted));
                 // Erweiterungen je Quelle, nur in dieser Quelle gesucht, damit Beziehungen ihres Umfangs bleiben.
                 for (String sourceId : searchable) {
                     List<String> expanded = expansions.computeIfAbsent(sourceId, id ->
                             expansion.expand(caller, query.text(), id, spaceKey));
                     for (String text : expanded) {
-                        matches.addAll(texts.search(text, Set.of(sourceId), query.spaces(), wanted));
+                        matches.addAll(searchTexts(text, Set.of(sourceId), query, wanted));
                     }
                 }
                 Set<String> seenMatches = new HashSet<>();
@@ -749,12 +773,15 @@ public class KeywordSearch {
 
     /**
      * Bietet die Funde dieses Stapels zum Katalogisieren als Kopfdaten an (ADR 0016). Das reiht nur ein; ob ein Fund in
-     * den Katalog kommt, entscheiden Aufrufer und Richtlinie dort. Ein Fehler lässt die Suche nie scheitern.
+     * den Katalog kommt, entscheiden Aufrufer und Richtlinie dort. Ein Fehler lässt die Suche nie scheitern. Mit einer
+     * Seitenmenge nur ihre Funde (ADR 0029): Die Hintergrundfüllung lädt angebotene Funde, und außerhalb der Auswahl
+     * soll nichts geladen werden.
      */
-    private void catalogFindings(AccessContext caller, Map<String, List<SourceSearchMatch>> found) {
+    private void catalogFindings(AccessContext caller, Query query, Map<String, List<SourceSearchMatch>> found) {
         found.forEach((sourceId, matches) -> {
             try {
                 findings.offer(caller, sourceId, matches.stream()
+                        .filter(match -> query.admits(sourceId, match.pageId()))
                         .map(match -> new FindingCatalog.Finding(match.pageId(), match.version())).toList());
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Funde aus {0} nicht katalogisiert ({1})", sourceId,
@@ -846,13 +873,19 @@ public class KeywordSearch {
         return new Checked(hits, complete);
     }
 
+    /** Der Volltextindex, mit Seitenmenge der Anfrage vor der Rangfolge gefiltert (ADR 0029), ohne wie bisher. */
+    private List<PageTextIndex.Match> searchTexts(String text, Set<String> sourceIds, Query query, int wanted) {
+        return query.pages() == null ? texts.search(text, sourceIds, query.spaces(), wanted)
+                : texts.search(text, sourceIds, query.spaces(), query.pages(), wanted);
+    }
+
     /**
      * Meldet dem Beobachter die Funde einer Quelle, sobald alle ihre Anfragen geantwortet haben: derselbe Ausschnitt
      * und dieselben vorläufigen Treffer wie am Ende in {@link #provisional}, aber nur für Quellen, deren Freigabe für
      * die ganze Quelle gilt; die übrigen prüft erst der Stapel je Seite. Ausgefallene Anfragen und Fehler des
      * Beobachters lässt die Suche hier unbeachtet, der Stapel meldet sie.
      */
-    private void report(Found found, AccessContext caller, LiveSearch search,
+    private void report(Found found, AccessContext caller, Query query, LiveSearch search,
                         List<Future<List<SourceSearchMatch>>> answers, int limit) {
         List<List<SourceSearchMatch>> answered = new ArrayList<>();
         for (Future<List<SourceSearchMatch>> answer : answers) {
@@ -876,6 +909,9 @@ public class KeywordSearch {
         boolean snippet = access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT);
         List<Hit> hits = new ArrayList<>();
         for (SourceSearchMatch match : fresh) {
+            if (!query.admits(sourceId, match.pageId())) {
+                continue;
+            }
             hits.add(new Hit(sourceId, match.pageId(), null, match.title(), snippet ? match.snippet() : "",
                     match.url(), match.version(), match.modifiedAt(), null, null, null));
         }
@@ -936,6 +972,9 @@ public class KeywordSearch {
      * @throws SourceAccessException wenn die Kopfdaten nicht lesbar sind; der Stapel ist dann unvollständig
      */
     private Optional<Hit> hit(AccessContext caller, Query query, Candidate candidate) {
+        if (!query.admits(candidate.sourceId(), candidate.match().pageId())) {
+            return Optional.empty();
+        }
         if (candidate.known() != null) {
             // Eben gefunden, live geprüft und geladen; aus dem Cache kommen nur Fundstelle und Auszug.
             Hit known = candidate.known();
@@ -1081,6 +1120,10 @@ public class KeywordSearch {
             // Nur mit Ausschluss, damit Cursor von Anfragen ohne ihn gültig bleiben.
             canonical += "\u0000-" + String.join("\u0001", new TreeSet<>(query.excludedSpaceKeys()));
         }
+        if (query.pages() != null) {
+            // Nur mit Grenze, aus demselben Grund; eine andere Auswahl macht den Cursor ungültig (ADR 0029).
+            canonical += "\u0000p" + query.pages().fingerprint();
+        }
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest, 0, 12);
@@ -1129,6 +1172,13 @@ public class KeywordSearch {
         /** Der laufende Stand eines Stapels ({@link Fill#progressId()}); leer, wenn unbekannt oder verdrängt. */
         default Optional<Progress> progress(String id) {
             return Optional.empty();
+        }
+
+        /**
+         * Meldet einen Empfänger für den Stand eines Stapels an (ADR 0027); ohne Fortschritt {@link Subscription#NONE}.
+         */
+        default Subscription subscribe(String id, Consumer<Progress> listener) {
+            return Subscription.NONE;
         }
 
         /** Kopfdaten einer Seite im Cache, ohne Rückfrage bei der Quelle; leer, wenn unbekannt. */
@@ -1187,9 +1237,12 @@ public class KeywordSearch {
      * @param sourceIds ohne {@code sourceId}: nur diese Quellen; leer für alle freigegebenen
      * @param spaceKeys nur Seiten dieser Spaces, global in jeder Quelle; leer für alle
      * @param excludedSpaceKeys ohne Seiten dieser Spaces (#179, wie die abgehakten Spaces im Enterprise AI Client)
+     * @param pages     nur diese Seiten samt ihren Anhängen, etwa eine Seite samt Unterseiten aus der Auswahl im Baum
+     *                  (ADR 0029), oder {@code null} ohne diese Grenze. Ein Fund der Quelle außerhalb der Menge fällt
+     *                  weg und wird nicht geladen; Quellen ohne Seite in der Menge werden nicht gefragt.
      */
     public record Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
-                        Set<String> excludedSpaceKeys) {
+                        Set<String> excludedSpaceKeys, PageSet pages) {
 
         public Query {
             if (text == null || text.isBlank()) {
@@ -1209,8 +1262,28 @@ public class KeywordSearch {
                     : excludedSpaceKeys), null, null, null, null, null, null, SearchSort.TITLE).spaceKeys();
         }
 
+        public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
+                     Set<String> excludedSpaceKeys) {
+            this(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, null);
+        }
+
         public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys) {
             this(text, sourceId, sourceIds, spaceKeys, Set.of());
+        }
+
+        /** Dieselbe Suche, begrenzt auf diese Seiten (ADR 0029); {@code null} hebt die Grenze auf. */
+        public Query within(PageSet pages) {
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages);
+        }
+
+        /** Ob die Seite in der Grenze der Suche liegt; ohne Grenze jede. */
+        boolean admits(String sourceId, String pageId) {
+            return pages == null || pages.contains(sourceId, pageId);
+        }
+
+        /** Ob die Quelle Seiten in der Grenze der Suche hat; ohne Grenze jede. */
+        boolean reaches(String sourceId) {
+            return pages == null || !pages.pagesOf(sourceId).isEmpty();
         }
 
         /** Alle freigegebenen Quellen. */

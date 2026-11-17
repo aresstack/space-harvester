@@ -91,6 +91,23 @@ class StatementProcessorTest {
     }
 
     @Test
+    void aPageOnTheListOfReleasedPagesReachesTheChatAlthoughItsSourceIsNot() {
+        // ADR 0028: Quelle „intern“ ist nicht freigegeben, nur diese eine Seite steht auf der Liste.
+        PageSnapshot listed = page("intern");
+        Set<com.aresstack.spaceharvester.application.snapshot.PageKey> released = Set.of(listed.key());
+        StatementProcessor perPage = new StatementProcessor(StatementAnalyzerTest.SENTENCES, settings::get, model::get,
+                Set.of("wiki")::contains, released::contains);
+        PageText text = PROJECTOR.project(listed).orElseThrow();
+        chat.enqueueAnswer(StatementAnalyzerTest.ANSWER);
+
+        assertThat(perPage.appliesTo(listed.key())).isTrue();
+        assertThat(perPage.process(listed.key(), text).payloadJson()).isNotBlank();
+        assertThat(chat.requests()).isNotEmpty();
+        assertThat(perPage.appliesTo(new com.aresstack.spaceharvester.application.snapshot.PageKey("intern",
+                "andere"))).isFalse();
+    }
+
+    @Test
     void aReleasedSourceGetsStatementsAsFactsOfTheSameTypes() {
         chat.enqueueAnswer(StatementAnalyzerTest.ANSWER);
         PageSnapshot page = page("wiki");

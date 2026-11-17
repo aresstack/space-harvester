@@ -30,6 +30,7 @@ import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
@@ -374,6 +375,18 @@ class RelevanceSearchTest {
                 SearchSort.TITLE);
 
         assertThat(ids(search(ALLOW_ALL).search(CALLER, dev, "Betrieb", 10))).containsExactly("11", "12", "10");
+    }
+
+    @Test
+    void aPageSetLimitsTheVectorCandidatesToItsPages() {
+        // ADR 0029: Seite samt Unterseiten, hier 10 und 20; die übrigen Seiten wären ähnlicher.
+        PageSearchQuery within = query(null).within(PageSet.ofKeys(List.of(new PageKey("wiki", "10"),
+                new PageKey("wiki", "20"))));
+
+        assertThat(ids(search(ALLOW_ALL).search(CALLER, within, "nächtlicher Betrieb", 10)))
+                .containsExactly("10", "20");
+        assertThat(ids(search(ALLOW_ALL).search(CALLER, query(null).within(PageSet.EMPTY), "nächtlicher Betrieb",
+                10))).isEmpty();
     }
 
     @Test

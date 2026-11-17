@@ -72,10 +72,32 @@ public final class Explorer {
     static final String MORE = "Weitere laden …";
     private static final String TREE = "tree";
     private static final String MATCHES = "matches";
+    private static final String FAVORITES = "favorites";
+    static final String FAVORITE = "Favorit";
+    static final String UNFAVORITE = "Favorit entfernen";
+    static final String ONLY_FAVORITES = "Nur Favoriten zeigen";
+    static final String STAR_TIP = "Favorit setzen oder entfernen";
+    /** Am Zustandspunkt (Angelo, 16.11.2026): beim Darüberfahren Kreispfeile, der Klick holt den Knoten samt Teilbaum nach. */
+    static final String REFRESH_TIP = "Klick: Änderungen aus der Quelle nachholen";
+    static final String REFRESH = "Änderungen nachholen";
+    static final String REFRESH_ALL_TITLE = "Alles aktualisieren?";
+    static final String REFRESH_ALL_QUESTION = "Wirklich alle Wissensquellen aktualisieren? Für jeden Space jeder "
+            + "Wissensquelle startet sofort ein eigener Auftrag, der die Änderungen nachholt.";
+    static final String ALL_NODES = "Alle Knoten zeigen";
     private static final int MATCH_LIMIT = 50;
     private static final int TREE_LIMIT = 5_000;
     private static final int BATCH = 100;
     private static final int ACTION_WIDTH = 30;
+    /** Spalte des Bestandszeichens links vom Stern. */
+    private static final int BADGE_WIDTH = 22;
+    /** Mindestbreite für den Titel vor den Spalten, damit auch bei sehr schmalem Baum wenigstens „…“ bleibt. */
+    private static final int MIN_TITLE_WIDTH = 40;
+    static final String ALL_TIP = "Alle Wissensquellen wählen: Chat, Export und Analysen beziehen sich dann auf alles";
+    static final String DOWNLOAD_ALL_TITLE = "Alles herunterladen?";
+    static final String DOWNLOAD_ALL_QUESTION = "Wirklich alle Wissensquellen herunterladen? Für jeden Space jeder "
+            + "Wissensquelle startet sofort ein eigener Auftrag.";
+    static final String DOWNLOAD_ALL_TIP = "Alles herunterladen: für jeden Space jeder Wissensquelle startet sofort ein "
+            + "eigener Auftrag, exportiert wird unter Aufträge";
     static final String DOWNLOAD_TIP = "Herunterladen: Auftrag startet sofort, exportiert wird unter Aufträge";
     static final String PAGE_ONLY = "Nur diese Seite herunterladen";
     static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten; Auftrag startet sofort";
@@ -95,6 +117,39 @@ public final class Explorer {
     /** Umfang aus der Auswahl: eine Quelle, ein Space oder nichts (alle). */
     public record Scope(String sourceId, String spaceKey) {
         public static final Scope ALL = new Scope(null, null);
+    }
+
+    /** Meldet jede Änderung der Auswahl als Quelle, Space oder Seite (für den Reiter „Export“); {@code null} ohne. */
+    public void onSelection(Consumer<com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection> listener) {
+        this.selectionListener = Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * Die erste gewählte Zeile als Quelle, Space oder Seite; {@link com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection#ALL} bei gewählter
+     * Überschrift; {@code null} ohne Auswahl oder auf einem Hinweis.
+     */
+    public com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection selection() {
+        if (global) {
+            return com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.ALL;
+        }
+        TreePath[] paths = tree.getSelectionPaths();
+        for (TreePath path : paths == null ? new TreePath[0] : paths) {
+            if (path.getLastPathComponent() instanceof Node node) {
+                var selection = switch (node.item()) {
+                    case SourceItem source -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                            source.sourceId(), null, null, source.title());
+                    case SpaceItem space -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                            space.sourceId(), space.spaceKey(), null, space.name());
+                    case PageItem page -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                            page.sourceId(), page.spaceKey(), page.pageId(), page.title());
+                    default -> null;
+                };
+                if (selection != null) {
+                    return selection;
+                }
+            }
+        }
+        return null;
     }
 
     sealed interface Item permits SourceItem, SpaceItem, PageItem, MoreItem, Note {
@@ -166,8 +221,32 @@ public final class Explorer {
     private final JPanel root = new JPanel(new BorderLayout(0, 6));
     private final PlaceholderField filter = new PlaceholderField(14, "Titel filtern …");
     private final Node top = new Node(new Note("Wissensquellen"));
+    /** Kopf: Überschrift und Filterfeld; als globale Auswahl gelb hinterlegt wie ein gewählter Knoten im Baum. */
+    private final JPanel head = new JPanel(new BorderLayout(0, 6));
+    private final JLabel heading = Comic.caption("Wissensquellen");
+    /** Rechts neben der Überschrift, tut dasselbe wie der Klick auf sie: zeigt, dass man hier wählen kann. */
+    private final IconButton selectAll = new IconButton(Glyph.SELECT_ALL, ALL_TIP);
+    /** Ganz rechts in der Kopfzeile, in der Spalte der Download-Symbole: lädt alle Quellen, je Space ein Auftrag. */
+    private final IconButton downloadAll = new IconButton(ComposerIcons.download(), DOWNLOAD_ALL_TIP);
+    /** Zwischen „Alles auswählen“ und Download: das Bestandszeichen über alle Quellen, in der Spalte der Zeilen. */
+    private final JLabel allBadge = new JLabel();
+    /** Rückfrage vor dem Alles-Download (Ja/Nein); Tests setzen eine eigene Antwort. */
+    private java.util.function.Predicate<java.awt.Component> confirmDownloadAll =
+            parent -> Dialogs.confirm(parent, DOWNLOAD_ALL_TITLE, DOWNLOAD_ALL_QUESTION);
+    /** Rückfrage vor dem Aktualisieren aller Quellen (Ja/Nein); Tests setzen eine eigene Antwort. */
+    private java.util.function.Predicate<java.awt.Component> confirmRefreshAll =
+            parent -> Dialogs.confirm(parent, REFRESH_ALL_TITLE, REFRESH_ALL_QUESTION);
+    /** Ob die Maus über dem Zustandspunkt der Kopfzeile steht: dann zeigt er die Kreispfeile. */
+    private boolean allBadgeHover;
+    /**
+     * Die Überschrift „Wissensquellen“ ist gewählt (Angelo, 16.11.2026): die globale Auswahl über alle Quellen; Chat,
+     * Export und Analysen beziehen sich dann auf alles, im Baum ist nichts gewählt.
+     */
+    private boolean global;
     private final DefaultTreeModel model = new DefaultTreeModel(top);
     private final JTree tree = new JTree(model);
+    /** Die Bestandszeichen je Zeile (Angelo, 13.11.2026): aus dem Core gemeldet, nie abgefragt. */
+    private final TreeStates states;
     private final DefaultListModel<Match> matchModel = new DefaultListModel<>();
     private final JList<Match> matches = new JList<>(matchModel);
     private final CardLayout cards = new CardLayout();
@@ -175,11 +254,18 @@ public final class Explorer {
     private final JLabel note = Comic.muted(" ");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alles zuklappen");
     private final IconButton showCurrent = new IconButton(Glyph.CROSSHAIR, "Aktuelles Dokument im Baum zeigen");
+    /** Unten rechts (Angelo, 13.11.2026): Umriss = alle Knoten, gefüllt = nur die Favoriten als Liste mit Pfad. */
+    private final IconButton favoritesOnly = new IconButton(Glyph.STAR, ONLY_FAVORITES);
+    private boolean onlyFavorites;
+    private final DefaultListModel<Favorites.Favorite> favoriteModel = new DefaultListModel<>();
+    private final JList<Favorites.Favorite> favorites = new JList<>(favoriteModel);
     /** Die zuletzt in der Leseansicht gezeigte Seite; Ziel von „Aktuelles Dokument im Baum zeigen“. */
     private PageNavigation.Position current;
     private final Timer debounce = new Timer(300, e -> runFilter());
     private List<String> shownSources = List.of();
     private Consumer<List<Scope>> scopeListener = scopes -> { };
+    private Consumer<com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection> selectionListener =
+            selection -> { };
     private int filterRequest;
     /** Während {@link #revealPage} wählt der Baum selbst; der Suchumfang bleibt dann, wie er ist. */
     private boolean revealing;
@@ -187,6 +273,10 @@ public final class Explorer {
     private int revealRequest;
     /** Zeile, über deren Download-Symbol die Maus steht; -1 sonst. */
     private int hoverRow = -1;
+    /** Zeile, über deren Stern die Maus steht; -1 sonst (Angelo, 16.11.2026: Hervorhebung nur auf dem Stern). */
+    private int hoverStarRow = -1;
+    /** Zeile, über deren Zustandspunkt die Maus steht; dort stehen dann die Kreispfeile zum Nachholen. */
+    private int hoverBadgeRow = -1;
     /** „Analysieren“ über den Core ({@code Workspace}); Tests setzen eine eigene Umsetzung. */
     private Analyses analyses = new WorkspaceAnalyses();
     /** Bestätigung großer Analyseumfänge; Tests antworten ohne Dialog. */
@@ -243,6 +333,8 @@ public final class Explorer {
 
     public Explorer(AppContext context) {
         this.context = context;
+        this.states = new TreeStates(context, this::statesChanged);
+        states.onSpaceChanged(this::spaceStructureChanged);
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
         tree.setToggleClickCount(0);
@@ -266,9 +358,16 @@ public final class Explorer {
         tree.getSelectionModel().setSelectionMode(
                 javax.swing.tree.TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION);
         tree.addTreeSelectionListener(e -> {
+            // Ein gewählter Knoten löst die globale Auswahl ab.
+            if (global && tree.getSelectionCount() > 0) {
+                global = false;
+                paintHead();
+            }
             if (!revealing) {
                 scopeListener.accept(scopes());
             }
+            // Der Export folgt auch einer Auswahl, die ein geöffneter Treffer oder Auftrag gesetzt hat.
+            selectionListener.accept(selection());
         });
         MouseAdapter mouse = new MouseAdapter() {
             @Override
@@ -282,6 +381,14 @@ public final class Explorer {
                 if (onAction(path, event.getPoint())) {
                     if (single) {
                         download(((Node) path.getLastPathComponent()).item());
+                    }
+                } else if (onStar(path, event.getPoint())) {
+                    if (single) {
+                        toggleFavorite(((Node) path.getLastPathComponent()).item());
+                    }
+                } else if (onBadge(path, event.getPoint())) {
+                    if (single) {
+                        refresh(((Node) path.getLastPathComponent()).item());
                     }
                 } else if (path.getLastPathComponent() instanceof Node node && node.item() instanceof MoreItem) {
                     if (single) {
@@ -310,17 +417,24 @@ public final class Explorer {
             public void mouseMoved(MouseEvent event) {
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
                 int row = onAction(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
-                tree.setToolTipText(row >= 0 ? DOWNLOAD_TIP : null);
-                if (row != hoverRow) {
+                int starRow = onStar(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
+                int badgeRow = onBadge(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
+                tree.setToolTipText(row >= 0 ? DOWNLOAD_TIP : starRow >= 0 ? STAR_TIP
+                        : badgeRow >= 0 ? refreshTip(badgeTip(path)) : null);
+                if (row != hoverRow || starRow != hoverStarRow || badgeRow != hoverBadgeRow) {
                     hoverRow = row;
+                    hoverStarRow = starRow;
+                    hoverBadgeRow = badgeRow;
                     tree.repaint();
                 }
             }
 
             @Override
             public void mouseExited(MouseEvent event) {
-                if (hoverRow >= 0) {
+                if (hoverRow >= 0 || hoverStarRow >= 0 || hoverBadgeRow >= 0) {
                     hoverRow = -1;
+                    hoverStarRow = -1;
+                    hoverBadgeRow = -1;
                     tree.repaint();
                 }
             }
@@ -384,24 +498,112 @@ public final class Explorer {
 
         JScrollPane treeScroll = Comic.scroll(tree);
         treeScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
-        // Zeilen gehen mindestens über die volle Breite (Download-Symbol rechtsbündig); breitere Zeilen scrollen
-        // waagerecht. Bei neuer Breite neu vermessen.
+        // Jede Zeile ist genau so breit wie der sichtbare Bereich: Bestandszeichen, Stern und Download-Symbol stehen
+        // in festen Spalten ganz rechts, ein zu langer Titel wird davor mit „…“ gekürzt. Bei neuer Breite neu
+        // vermessen (auch beim Verschieben des Teilers).
         treeScroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
-                tree.setCellRenderer(new Renderer());
+                remeasure();
             }
         });
         JScrollPane matchScroll = Comic.scroll(matches);
         deck.setOpaque(false);
         deck.add(treeScroll, TREE);
         deck.add(matchScroll, MATCHES);
+        favorites.setFont(Comic.regular(13f));
+        favorites.setOpaque(false);
+        favorites.setSelectionBackground(Comic.YELLOW);
+        favorites.setSelectionForeground(Comic.INK);
+        favorites.setCellRenderer(new javax.swing.DefaultListCellRenderer() {
+            @Override
+            public java.awt.Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                                   boolean selected, boolean focus) {
+                super.getListCellRendererComponent(list, value, index, selected, focus);
+                if (value instanceof Favorites.Favorite favorite) {
+                    // Der Favorit selbst in Tinte, seine Eltern als Pfad gedämpft darunter.
+                    setText("<html>" + escape(favorite.title()) + "<br><font color='#7a7a7a'>"
+                            + escape(favorite.where()) + "</font></html>");
+                    setIcon(favorite.isSource() ? MainWindow.database()
+                            : favorite.pageId() == null ? SidebarIcons.folder() : SidebarIcons.page());
+                }
+                setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 2));
+                setOpaque(selected);
+                return this;
+            }
+        });
+        favorites.getAccessibleContext().setAccessibleName("Favoriten");
+        favorites.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    openFavorite();
+                }
+            }
+        });
+        bindEnter(favorites, this::openFavorite);
+        javax.swing.JScrollPane favoriteScroll = Comic.scroll(favorites);
+        favoriteScroll.setBorder(BorderFactory.createEmptyBorder());
+        deck.add(favoriteScroll, FAVORITES);
+        context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::favoritesChanged));
         root.setOpaque(false);
         // Kopf wie in der Quellenverwaltung: Comic-Überschrift, darunter das Filterfeld.
-        JPanel head = new JPanel(new BorderLayout(0, 6));
+        // Die Überschrift ist anklickbar: sie wählt alle Wissensquellen; dann ist der ganze Kopf samt Filterfeld
+        // gelb hinterlegt, als ein Feld (Angelo, 16.11.2026).
         head.setOpaque(false);
-        head.add(Comic.caption("Wissensquellen"), BorderLayout.NORTH);
+        // Rechts 2 px, damit der Download-Knopf in der Spalte der Download-Symbole des Baums steht.
+        head.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 2));
+        JPanel title = new JPanel(new BorderLayout(4, 0));
+        title.setOpaque(false);
+        title.add(heading, BorderLayout.CENTER);
+        // Rechtsbündig wie die Symbole der Zeilen (Angelo, 16.11.2026): links „Alles auswählen“, rechts Download.
+        JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+        actions.setOpaque(false);
+        actions.add(selectAll);
+        allBadge.setHorizontalAlignment(JLabel.CENTER);
+        allBadge.setPreferredSize(new java.awt.Dimension(BADGE_WIDTH, RoundHover.SIZE));
+        // Beim Darüberfahren Kreispfeile; der Klick aktualisiert nach Rückfrage alle Quellen (Angelo, 16.11.2026).
+        allBadge.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        allBadge.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent event) {
+                allBadgeHover = true;
+                statesChanged();
+            }
+
+            @Override
+            public void mouseExited(MouseEvent event) {
+                allBadgeHover = false;
+                statesChanged();
+            }
+
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    refreshAll();
+                }
+            }
+        });
+        actions.add(allBadge);
+        actions.add(downloadAll);
+        title.add(actions, BorderLayout.EAST);
+        selectAll.addActionListener(e -> selectAll());
+        downloadAll.addActionListener(e -> downloadAll());
+        head.add(title, BorderLayout.NORTH);
         head.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter), BorderLayout.CENTER);
+        heading.setToolTipText(ALL_TIP);
+        heading.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        MouseAdapter chooseAll = new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    selectAll();
+                }
+            }
+        };
+        heading.addMouseListener(chooseAll);
+        title.addMouseListener(chooseAll);
+        head.addMouseListener(chooseAll);
         root.add(head, BorderLayout.NORTH);
         root.add(deck, BorderLayout.CENTER);
         collapseAll.addActionListener(e -> collapseAll());
@@ -417,6 +619,8 @@ public final class Explorer {
         // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
         note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
         foot.add(note, BorderLayout.CENTER);
+        favoritesOnly.addActionListener(e -> showOnlyFavorites(!onlyFavorites));
+        foot.add(favoritesOnly, BorderLayout.EAST);
         root.add(foot, BorderLayout.SOUTH);
         context.onChange(ignored -> refreshSources());
         refreshSources();
@@ -460,9 +664,121 @@ public final class Explorer {
         revealPage(current);
     }
 
-    /** Hebt die Auswahl auf; der Umfang ist dann wieder alles. */
+    /** Hebt die Auswahl auf, auch die globale; der Umfang ist dann wieder alles. */
     public void clearSelection() {
-        tree.clearSelection();
+        boolean was = global;
+        global = false;
+        if (tree.getSelectionCount() > 0) {
+            tree.clearSelection();
+        } else if (was) {
+            selectionListener.accept(null);
+        }
+        paintHead();
+    }
+
+    /**
+     * Wählt die Überschrift „Wissensquellen“: die globale Auswahl über alle Quellen. Die Auswahl im Baum verschwindet,
+     * der Umfang der Suche ist alles, Chat und Export erhalten {@link com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection#ALL}.
+     */
+    public void selectAll() {
+        if (global) {
+            return;
+        }
+        global = true;
+        paintHead();
+        if (tree.getSelectionCount() > 0) {
+            // Der Auswahl-Listener des Baums meldet Umfang und Auswahl.
+            tree.clearSelection();
+        } else {
+            scopeListener.accept(List.of());
+            selectionListener.accept(selection());
+        }
+    }
+
+    /** Für Tests: ersetzt die Rückfrage vor dem Alles-Download. */
+    void confirmDownloadAll(java.util.function.Predicate<java.awt.Component> confirmer) {
+        this.confirmDownloadAll = Objects.requireNonNull(confirmer, "confirmer");
+    }
+
+    /** Je Quelle die Spaces, die der Baum schon kennt (aufgeklappte Quellen), für den Gesamtstand der Kopfzeile. */
+    private java.util.Map<String, java.util.Set<String>> treeSpaces() {
+        java.util.Map<String, java.util.Set<String>> spaces = new java.util.HashMap<>();
+        for (int i = 0; i < top.getChildCount(); i++) {
+            if (!(top.getChildAt(i) instanceof Node source)) {
+                continue;
+            }
+            for (int j = 0; j < source.getChildCount(); j++) {
+                if (source.getChildAt(j) instanceof Node child && child.item() instanceof SpaceItem space) {
+                    spaces.computeIfAbsent(space.sourceId(), ignored -> new java.util.HashSet<>()).add(space.spaceKey());
+                }
+            }
+        }
+        return spaces;
+    }
+
+    /** Der Bestand hat sich geändert: Baum und das Zeichen der Kopfzeile neu. */
+    private void statesChanged() {
+        tree.repaint();
+        TreeStates.Badge badge = states.all(shownSources, treeSpaces());
+        allBadge.setIcon(allBadgeHover ? Glyph.SYNC : badge.kind() == TreeStates.Kind.NONE ? null : badge.glyph());
+        allBadge.setForeground(allBadgeHover ? Comic.INK : badge.color());
+        allBadge.setToolTipText(refreshTip(badge.tooltip()));
+    }
+
+    /** Der Tooltip am Zustandspunkt: der Stand, dahinter der Hinweis auf das Nachholen. */
+    static String refreshTip(String stateTip) {
+        return stateTip == null || stateTip.isBlank() ? REFRESH_TIP : stateTip + " · " + REFRESH_TIP;
+    }
+
+    /** Für Tests: eigene Antwort auf die Rückfrage vor dem Aktualisieren aller Quellen. */
+    void confirmRefreshAll(java.util.function.Predicate<java.awt.Component> confirmer) {
+        this.confirmRefreshAll = Objects.requireNonNull(confirmer, "confirmer");
+    }
+
+    /** Holt nach Rückfrage die Änderungen aller Wissensquellen des Baums nach (Angelo, 16.11.2026). */
+    void refreshAll() {
+        if (shownSources.isEmpty() || !confirmRefreshAll.test(root)) {
+            return;
+        }
+        for (String sourceId : List.copyOf(shownSources)) {
+            context.navigator().refresh(sourceId, null, null);
+        }
+    }
+
+    /** Holt den Knoten samt Teilbaum aus der Quelle nach ({@link AppContext.Navigator#refresh}). */
+    private void refresh(Item item) {
+        switch (item) {
+            case SourceItem source -> context.navigator().refresh(source.sourceId(), null, null);
+            case SpaceItem space -> context.navigator().refresh(space.sourceId(), space.spaceKey(), null);
+            case PageItem page -> context.navigator().refresh(page.sourceId(), page.spaceKey(), page.pageId());
+            default -> {
+            }
+        }
+    }
+
+    /**
+     * Lädt alle Wissensquellen des Baums nach Rückfrage (Angelo, 16.11.2026): je Space ein eigener Auftrag, wie
+     * einzeln angestoßen.
+     */
+    void downloadAll() {
+        if (shownSources.isEmpty() || !confirmDownloadAll.test(root)) {
+            return;
+        }
+        for (String sourceId : List.copyOf(shownSources)) {
+            context.navigator().download(sourceId, List.of());
+        }
+    }
+
+    /** Ob die Überschrift „Wissensquellen“ gewählt ist (alle Quellen). */
+    public boolean allSelected() {
+        return global;
+    }
+
+    private void paintHead() {
+        head.setOpaque(global);
+        head.setBackground(Comic.YELLOW);
+        heading.setForeground(global ? Comic.INK : Comic.MUTED);
+        head.repaint();
     }
 
     /** Zeigt einen Space im Baum: Quelle aufklappen, Space wählen und aufklappen; unbekannte bleiben ohne Wirkung. */
@@ -532,11 +848,31 @@ public final class Explorer {
     }
 
     private void descend(Node node, List<java.util.function.Predicate<Item>> steps, int index, int ticket) {
-        Runnable next = () -> {
+        Runnable next = () -> step(node, steps, index, ticket);
+        TreePath path = new TreePath(node.getPath());
+        if (node.loaded) {
+            tree.expandPath(path);
+            next.run();
+        } else {
+            node.then = next;
+            tree.expandPath(path);
+        }
+    }
+
+    /** Ein Schritt des Abstiegs; liegt das Kind in einem noch nicht geladenen Stapel, lädt er ihn nach und sucht erneut. */
+    private void step(Node node, List<java.util.function.Predicate<Item>> steps, int index, int ticket) {
+        {
             if (ticket != revealRequest) {
                 return;
             }
             Node child = index < steps.size() ? child(node, steps.get(index)) : null;
+            if (child == null) {
+                Node moreNode = child(node, item -> item instanceof MoreItem);
+                if (moreNode != null && moreNode.item() instanceof MoreItem more) {
+                    loadMore(node, moreNode, more, () -> step(node, steps, index, ticket));
+                    return;
+                }
+            }
             if (child == null && index < steps.size() - 1 && node.item() instanceof SpaceItem) {
                 // Vorfahren, die der Baum nicht als Wurzel zeigt: die Seite direkt unter dem Space suchen.
                 child = child(node, steps.get(steps.size() - 1));
@@ -550,14 +886,6 @@ public final class Explorer {
             } else {
                 descend(child, steps, index + 1, ticket);
             }
-        };
-        TreePath path = new TreePath(node.getPath());
-        if (node.loaded) {
-            tree.expandPath(path);
-            next.run();
-        } else {
-            node.then = next;
-            tree.expandPath(path);
         }
     }
 
@@ -614,10 +942,13 @@ public final class Explorer {
         AppRuntime runtime = context.runtime();
         List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
         List<String> ids = sources.stream().map(HarvestSource::id).toList();
+        // Vor dem Vergleich: eine neue Laufzeit mit denselben Quellen meldet die Zeichen neu an.
+        states.watch(ids);
         if (ids.equals(shownSources) && top.getChildCount() > 0) {
             return;
         }
         shownSources = ids;
+        statesChanged();
         top.removeAllChildren();
         for (HarvestSource source : sources) {
             top.add(expandable(new SourceItem(source.id(), source.title())));
@@ -646,12 +977,21 @@ public final class Explorer {
         }
         node.loading = true;
         Item item = node.item();
+        if (item instanceof SpaceItem space) {
+            states.open(space.sourceId(), space.spaceKey());
+        } else if (item instanceof PageItem page) {
+            states.open(page.sourceId(), page.spaceKey());
+        }
         Background.run(() -> children(runtime, item, null), batch -> {
             node.loading = false;
             node.loaded = true;
             node.removeAllChildren();
             append(node, batch);
             model.nodeStructureChanged(node);
+            // Neue Spaces im Baum zählen für den Gesamtstand der Kopfzeile.
+            if (item instanceof SourceItem) {
+                statesChanged();
+            }
             Runnable then = node.then;
             node.then = null;
             if (then != null) {
@@ -673,15 +1013,16 @@ public final class Explorer {
         }
         switch (node.item()) {
             case PageItem page -> context.navigator().openPage(page.sourceId(), page.pageId());
-            case MoreItem more -> loadMore(node, more);
+            case SourceItem source -> context.navigator().openSource(source.sourceId(), source.title());
+            case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
         }
     }
 
-    private void loadMore(Node moreNode, MoreItem more) {
+    /** Lädt den nächsten Stapel Kinder von {@code parent}; {@code then} läuft danach auf dem EDT (etwa der Abstieg). */
+    private void loadMore(Node parent, Node moreNode, MoreItem more, Runnable then) {
         AppRuntime runtime = context.runtime();
-        Node parent = (Node) moreNode.getParent();
         if (runtime == null || parent == null || parent.loading) {
             return;
         }
@@ -690,9 +1031,19 @@ public final class Explorer {
         model.nodeChanged(moreNode);
         Background.run(() -> children(runtime, parent.item(), more.cursor()), batch -> {
             parent.loading = false;
-            parent.remove(moreNode);
+            // Nur einfügen und entfernen, nicht den Knoten neu aufbauen: das ließe die Auswahl darunter (und damit den
+            // Suchbereich) fallen.
+            model.removeNodeFromParent(moreNode);
+            int first = parent.getChildCount();
             append(parent, batch);
-            model.nodeStructureChanged(parent);
+            int[] added = new int[parent.getChildCount() - first];
+            for (int i = 0; i < added.length; i++) {
+                added[i] = first + i;
+            }
+            model.nodesWereInserted(parent, added);
+            if (then != null) {
+                then.run();
+            }
         }, error -> {
             parent.loading = false;
             moreNode.setUserObject(more);
@@ -717,6 +1068,101 @@ public final class Explorer {
 
     /** Ein Stapel Kinder; im Hintergrund. */
     record Batch(List<Node> nodes, String nextCursor) {
+    }
+
+    /**
+     * Ein Space hat laut Core einen neuen Stand (etwa nach dem Nachholen über die Kreispfeile, Codex zu #802): die
+     * geladenen Knoten dieses Space (oder aller Spaces der Quelle, {@code spaceKey} null) lesen ihre Kinder nach.
+     * Vorhandene Knoten bleiben samt Aufklappung und Auswahl, neue kommen hinzu, verschwundene gehen, geänderte Titel
+     * werden übernommen; die Ansicht springt nicht.
+     */
+    private void spaceStructureChanged(String sourceId, String spaceKey) {
+        Node source = child(top, item -> item instanceof SourceItem s && s.sourceId().equals(sourceId));
+        if (source == null) {
+            return;
+        }
+        for (int i = 0; i < source.getChildCount(); i++) {
+            if (source.getChildAt(i) instanceof Node space && space.item() instanceof SpaceItem item
+                    && (spaceKey == null || item.spaceKey().equals(spaceKey))) {
+                reread(space);
+            }
+        }
+    }
+
+    /** Liest die Kinder eines geladenen Knotens nach und gleicht sie ab ({@link #merge}); danach seine geladenen Kinder. */
+    private void reread(Node node) {
+        AppRuntime runtime = context.runtime();
+        Item item = node.item();
+        if (runtime == null || !node.loaded || node.loading || !(item instanceof SpaceItem || item instanceof PageItem)) {
+            return;
+        }
+        node.loading = true;
+        Background.run(() -> children(runtime, item, null), batch -> {
+            node.loading = false;
+            merge(node, batch);
+        }, error -> node.loading = false);
+    }
+
+    /** Schlüssel eines Knotens für den Abgleich; Hinweise und „Weitere laden“ haben keinen. */
+    private static String key(Item item) {
+        return switch (item) {
+            case SpaceItem space -> "s" + space.spaceKey();
+            case PageItem page -> "p" + page.pageId();
+            default -> null;
+        };
+    }
+
+    /** Gleicht die Kinder von {@code parent} mit dem frischen Stapel ab, mit einzelnen Modell-Ereignissen statt Neuaufbau. */
+    private void merge(Node parent, Batch batch) {
+        java.util.Map<String, Node> existing = new java.util.LinkedHashMap<>();
+        for (int i = parent.getChildCount() - 1; i >= 0; i--) {
+            Node child = (Node) parent.getChildAt(i);
+            String key = key(child.item());
+            if (key == null) {
+                model.removeNodeFromParent(child);
+            } else {
+                existing.put(key, child);
+            }
+        }
+        List<Node> kept = new ArrayList<>();
+        int index = 0;
+        for (Node fresh : batch.nodes()) {
+            Node current = existing.remove(key(fresh.item()));
+            if (current == null) {
+                model.insertNodeInto(fresh, parent, index);
+            } else {
+                if (!current.item().equals(fresh.item())) {
+                    current.setUserObject(fresh.item());
+                    model.nodeChanged(current);
+                }
+                if (!current.loaded && current.getChildCount() == 0 && fresh.getChildCount() > 0) {
+                    // Hat jetzt Kinder: den Platzhalter fürs Aufklappen nachtragen.
+                    model.insertNodeInto((Node) fresh.getFirstChild(), current, 0);
+                } else if (!current.loaded && current.getChildCount() > 0 && fresh.getChildCount() == 0) {
+                    model.removeNodeFromParent((Node) current.getFirstChild());
+                }
+                if (parent.getIndex(current) != index) {
+                    model.removeNodeFromParent(current);
+                    model.insertNodeInto(current, parent, index);
+                }
+                kept.add(current);
+            }
+            index++;
+        }
+        for (Node gone : existing.values()) {
+            model.removeNodeFromParent(gone);
+        }
+        if (batch.nextCursor() != null) {
+            model.insertNodeInto(new Node(new MoreItem(batch.nextCursor())), parent, parent.getChildCount());
+        }
+        if (parent.getChildCount() == 0) {
+            Node empty = new Node(new Note(parent.item() instanceof SourceItem ? "Keine Spaces" : "Keine Seiten"));
+            empty.loaded = true;
+            model.insertNodeInto(empty, parent, 0);
+        }
+        for (Node child : kept) {
+            reread(child);
+        }
     }
 
     static Batch children(AppRuntime runtime, Item item, String cursor) {
@@ -804,7 +1250,7 @@ public final class Explorer {
         String text = filter.getText().trim();
         int id = ++filterRequest;
         if (text.isEmpty()) {
-            cards.show(deck, TREE);
+            cards.show(deck, onlyFavorites ? FAVORITES : TREE);
             note.setText(" ");
             return;
         }
@@ -931,6 +1377,12 @@ public final class Explorer {
 
         private final javax.swing.Icon download = ComposerIcons.download();
         private boolean action;
+        /** Ob die Zeile einen Stern trägt (Space oder Seite): gefüllt als Favorit, sonst nur beim Darüberfahren. */
+        private boolean starred;
+        private TreeStates.Badge badge = TreeStates.Badge.NONE;
+        /** Trägt die Farbe des Zeichens; {@link Glyph} malt in der Vordergrundfarbe seines Wirts. */
+        private final JLabel badgeHost = new JLabel();
+        private boolean favorite;
         private int row = -1;
         private int width;
 
@@ -964,18 +1416,24 @@ public final class Explorer {
                 }
             }
             action = downloadable(item);
+            starred = starrable(item);
+            favorite = starred && isFavorite(item);
+            badge = badge(item);
             this.row = row;
             int depth = value instanceof Node node ? node.getLevel() : 1;
-            int text = super.getPreferredSize().width;
-            width = Math.max(text + (action ? ACTION_WIDTH : 0),
-                    tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4);
+            // Die Spalten rechts liegen im rechten Rand des Labels: der Titel endet davor und wird nötigenfalls
+            // mit „…“ gekürzt, statt die Symbole aus dem sichtbaren Bereich zu schieben.
+            int columns = (action ? ACTION_WIDTH : 0) + (starred ? ACTION_WIDTH + BADGE_WIDTH : 0);
+            setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, columns));
+            int visible = tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4;
+            width = Math.max(visible, columns + MIN_TITLE_WIDTH);
             return this;
         }
 
         @Override
         public java.awt.Dimension getPreferredSize() {
             java.awt.Dimension size = super.getPreferredSize();
-            return new java.awt.Dimension(Math.max(size.width, width), Math.max(size.height, RoundHover.SIZE));
+            return new java.awt.Dimension(width, Math.max(size.height, RoundHover.SIZE));
         }
 
         @Override
@@ -993,10 +1451,40 @@ public final class Explorer {
                 g.setColor(Comic.INK);
                 download.paintIcon(this, g, x + (ACTION_WIDTH - download.getIconWidth()) / 2,
                         (getHeight() - download.getIconHeight()) / 2);
+                // Der Stern links daneben (Angelo, 16.11.2026): immer sichtbar, damit man weiß, wo man klickt –
+                // als Favorit gefüllt in Tinte, sonst als gedämpfter Umriss, beim Darüberfahren in Tinte.
+                if (starred) {
+                    Glyph star = favorite ? Glyph.STAR_FILLED : Glyph.STAR;
+                    badgeHost.setForeground(favorite || row == hoverStarRow ? Comic.INK : Comic.MUTED);
+                    int sx = x - ACTION_WIDTH;
+                    star.paintIcon(badgeHost, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
+                            (getHeight() - star.getIconHeight()) / 2);
+                }
+                // Das Bestandszeichen links vom Stern, in seiner Farbe (Haken grün, Wolke gedämpft, Pfeile blau …);
+                // unter der Maus stattdessen die Kreispfeile zum Nachholen (Angelo, 16.11.2026).
+                if (starred) {
+                    int bx = x - ACTION_WIDTH - BADGE_WIDTH;
+                    javax.swing.Icon glyph = row == hoverBadgeRow ? Glyph.SYNC
+                            : badge.kind() == TreeStates.Kind.NONE ? null : badge.glyph();
+                    if (row == hoverBadgeRow) {
+                        RoundHover.paint(g, bx + (BADGE_WIDTH - RoundHover.SIZE) / 2, 0, RoundHover.SIZE,
+                                getHeight(), false);
+                    }
+                    if (glyph != null) {
+                        badgeHost.setForeground(row == hoverBadgeRow ? Comic.INK : badge.color());
+                        glyph.paintIcon(badgeHost, g, bx + (BADGE_WIDTH - glyph.getIconWidth()) / 2,
+                                (getHeight() - glyph.getIconHeight()) / 2);
+                    }
+                }
             } finally {
                 g.dispose();
             }
         }
+    }
+
+    /** Vermisst alle Zeilen neu, etwa nach einer neuen Breite des sichtbaren Bereichs. */
+    void remeasure() {
+        tree.setCellRenderer(new Renderer());
     }
 
     /** Linker Rand einer Zeile dieser Tiefe, wie {@code BasicTreeUI} ihn ohne sichtbare Wurzel legt. */
@@ -1030,6 +1518,171 @@ public final class Explorer {
                 && point.x >= bounds.x + bounds.width - ACTION_WIDTH;
     }
 
+    /** Ob der Punkt auf dem Bestandszeichen der Zeile liegt (links vom Stern). */
+    private boolean onBadge(TreePath path, java.awt.Point point) {
+        java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
+        return bounds != null && path.getLastPathComponent() instanceof Node node && starrable(node.item())
+                && point.x >= bounds.x + bounds.width - 2 * ACTION_WIDTH - BADGE_WIDTH
+                && point.x < bounds.x + bounds.width - 2 * ACTION_WIDTH;
+    }
+
+    private String badgeTip(TreePath path) {
+        TreeStates.Badge badge = path.getLastPathComponent() instanceof Node node ? badge(node.item())
+                : TreeStates.Badge.NONE;
+        return badge.tooltip();
+    }
+
+    /** Das Bestandszeichen einer Zeile: Quellen über alle ihre Spaces, Spaces nach ihrem Stand, Seiten nach Zustand bzw. Teilbaum. */
+    TreeStates.Badge badge(Item item) {
+        return switch (item) {
+            case SourceItem source -> states.all(List.of(source.sourceId()), treeSpaces());
+            case SpaceItem space -> states.space(space.sourceId(), space.spaceKey());
+            case PageItem page -> states.page(page.sourceId(), page.spaceKey(), page.pageId(),
+                    !Boolean.FALSE.equals(page.hasChildren()));
+            case null, default -> TreeStates.Badge.NONE;
+        };
+    }
+
+    /** Für Tests: der Bestand. */
+    TreeStates states() {
+        return states;
+    }
+
+    /** Ob der Punkt auf dem Stern der Zeile liegt (links vom Download-Symbol). */
+    private boolean onStar(TreePath path, java.awt.Point point) {
+        java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
+        return bounds != null && path.getLastPathComponent() instanceof Node node && starrable(node.item())
+                && point.x >= bounds.x + bounds.width - 2 * ACTION_WIDTH
+                && point.x < bounds.x + bounds.width - ACTION_WIDTH;
+    }
+
+    // ------------------------------------------------------------------ Favoriten
+
+    /** Favorit werden können Spaces und Seiten (Angelo, 13.11.2026) und ganze Quellen (16.11.2026). */
+    static boolean starrable(Item item) {
+        return item instanceof SourceItem || item instanceof SpaceItem || item instanceof PageItem;
+    }
+
+    boolean isFavorite(Item item) {
+        return switch (item) {
+            case SourceItem source -> context.favorites().contains(source.sourceId(), null, null);
+            case SpaceItem space -> context.favorites().contains(space.sourceId(), space.spaceKey(), null);
+            case PageItem page -> context.favorites().contains(page.sourceId(), page.spaceKey(), page.pageId());
+            default -> false;
+        };
+    }
+
+    /**
+     * Setzt den Favoriten des Knotens oder nimmt ihn zurück. Eine Seite merkt sich dabei ihren Pfad (Space und
+     * Vorfahren aus {@code PageNavigation.position}, im Hintergrund); ein Space nur seine Quelle.
+     */
+    void toggleFavorite(Item item) {
+        Favorites store = context.favorites();
+        switch (item) {
+            case SourceItem source -> store.toggle(Favorites.Favorite.source(source.sourceId(),
+                    sourceTitle(source.sourceId())));
+            case SpaceItem space -> store.toggle(Favorites.Favorite.space(space.sourceId(), space.spaceKey(),
+                    space.name(), sourceTitle(space.sourceId())));
+            case PageItem page -> {
+                if (store.contains(page.sourceId(), page.spaceKey(), page.pageId())) {
+                    store.toggle(new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(), page.title(),
+                            List.of(), List.of()));
+                    return;
+                }
+                AppRuntime runtime = context.runtime();
+                String source = sourceTitle(page.sourceId());
+                if (runtime == null) {
+                    store.toggle(new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(), page.title(),
+                            List.of(source, page.spaceKey()), List.of()));
+                    return;
+                }
+                Background.run(() -> runtime.workspace().position(page.sourceId(), page.pageId()), position ->
+                        store.toggle(favorite(position, source, page)), error ->
+                        store.toggle(new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(),
+                                page.title(), List.of(source, page.spaceKey()), List.of())));
+            }
+            default -> {
+            }
+        }
+    }
+
+    /** Ein Seiten-Favorit aus dem Pfad der Seite: Quelle › Space › Vorfahren, dazu die IDs der Vorfahren. */
+    static Favorites.Favorite favorite(PageNavigation.Position position, String sourceTitle, PageItem page) {
+        List<String> path = new ArrayList<>();
+        List<String> ancestors = new ArrayList<>();
+        path.add(sourceTitle);
+        if (position == null || position.page() == null) {
+            path.add(page.spaceKey());
+            return new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(), page.title(), path,
+                    ancestors);
+        }
+        path.add(position.spaceName() == null || position.spaceName().isBlank() ? position.spaceKey()
+                : position.spaceName());
+        for (HarvestSource.PageNode ancestor : position.ancestors()) {
+            path.add(ancestor.title());
+            ancestors.add(ancestor.pageId());
+        }
+        return new Favorites.Favorite(page.sourceId(), position.spaceKey() == null ? page.spaceKey()
+                : position.spaceKey(), page.pageId(), position.page().title() == null ? page.title()
+                : position.page().title(), path, ancestors);
+    }
+
+    private String sourceTitle(String sourceId) {
+        return where(sourceId, null);
+    }
+
+    /** Umschalter unten rechts: nur die Favoriten als Liste (Stern gefüllt) oder der ganze Baum (Umriss). */
+    void showOnlyFavorites(boolean only) {
+        onlyFavorites = only;
+        favoritesOnly.setIcon(only ? Glyph.STAR_FILLED : Glyph.STAR);
+        favoritesOnly.setToolTipText(only ? ALL_NODES : ONLY_FAVORITES);
+        favoritesOnly.getAccessibleContext().setAccessibleName(only ? ALL_NODES : ONLY_FAVORITES);
+        favoritesChanged();
+        if (filter.getText().trim().isEmpty()) {
+            cards.show(deck, only ? FAVORITES : TREE);
+            note.setText(only && favoriteModel.isEmpty() ? "Noch keine Favoriten: Stern an Space oder Seite" : " ");
+        }
+    }
+
+    boolean onlyFavorites() {
+        return onlyFavorites;
+    }
+
+    private void favoritesChanged() {
+        List<Favorites.Favorite> all = context.favorites().all();
+        favoriteModel.clear();
+        all.forEach(favoriteModel::addElement);
+        if (onlyFavorites && filter.getText().trim().isEmpty()) {
+            note.setText(all.isEmpty() ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
+        }
+        tree.repaint();
+    }
+
+    /** Ein Favorit in der Liste: die Seite öffnen bzw. den Space zeigen; der Baum folgt der geöffneten Seite. */
+    private void openFavorite() {
+        Favorites.Favorite favorite = favorites.getSelectedValue();
+        if (favorite == null) {
+            return;
+        }
+        if (favorite.isSource()) {
+            // Die ganze Quelle: im Baum wählen, Mitte und rechts folgen der Auswahl.
+            reveal(favorite.sourceId(), null);
+        } else if (favorite.pageId() == null) {
+            context.navigator().openSpace(favorite.sourceId(), favorite.spaceKey());
+        } else {
+            context.navigator().openPage(favorite.sourceId(), favorite.pageId());
+        }
+    }
+
+    /** Für Tests: die Favoritenliste und ihr Umschalter. */
+    JList<Favorites.Favorite> favoriteList() {
+        return favorites;
+    }
+
+    IconButton favoritesButton() {
+        return favoritesOnly;
+    }
+
     private void popup(MouseEvent event) {
         TreePath path = tree.getPathForLocation(event.getX(), event.getY());
         if (path == null || !(path.getLastPathComponent() instanceof Node node)) {
@@ -1057,6 +1710,17 @@ public final class Explorer {
             download.setToolTipText(DOWNLOAD_TIP);
             download.addActionListener(e -> download(item));
             menu.add(download);
+        }
+        if (starrable(item)) {
+            javax.swing.JMenuItem star = new javax.swing.JMenuItem(isFavorite(item) ? UNFAVORITE : FAVORITE);
+            star.setIcon(isFavorite(item) ? Glyph.STAR_FILLED : Glyph.STAR);
+            star.addActionListener(e -> toggleFavorite(item));
+            menu.add(star);
+            javax.swing.JMenuItem refresh = new javax.swing.JMenuItem(REFRESH);
+            refresh.setIcon(Glyph.SYNC);
+            refresh.setToolTipText(REFRESH_TIP);
+            refresh.addActionListener(e -> refresh(item));
+            menu.add(refresh);
         }
         if (analysisScope(item, false) != null) {
             String unavailable = analyses.unavailable();
@@ -1210,6 +1874,46 @@ public final class Explorer {
     /** Für Tests. */
     JTree tree() {
         return tree;
+    }
+
+    /** Für Tests: Zeile, über deren Stern die Maus steht. */
+    int hoverStarRow() {
+        return hoverStarRow;
+    }
+
+    /** Für Tests: Zeile, über deren Zustandspunkt die Maus steht. */
+    int hoverBadgeRow() {
+        return hoverBadgeRow;
+    }
+
+    /** Für Tests: Zeile, über deren Download-Symbol die Maus steht. */
+    int hoverRow() {
+        return hoverRow;
+    }
+
+    /** Für Tests: das Bestandszeichen der Kopfzeile. */
+    JLabel allBadge() {
+        return allBadge;
+    }
+
+    /** Für Tests: der Download-Knopf ganz rechts in der Kopfzeile. */
+    IconButton downloadAllButton() {
+        return downloadAll;
+    }
+
+    /** Für Tests: der Knopf neben der Überschrift. */
+    IconButton selectAllButton() {
+        return selectAll;
+    }
+
+    /** Für Tests: die anklickbare Überschrift. */
+    JLabel heading() {
+        return heading;
+    }
+
+    /** Für Tests: der Kopf (Überschrift und Filterfeld), gelb bei globaler Auswahl. */
+    JPanel head() {
+        return head;
     }
 
     /** Für Tests. */

@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -31,6 +32,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -110,6 +112,8 @@ public class SynonymDiscovery {
     private final Clock clock;
     private final Set<String> started = ConcurrentHashMap.newKeySet();
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
+    /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
+    private volatile Predicate<PageKey> pageReleases = key -> false;
 
     /**
      * @param model  das Chat-Modell der wirksamen Konfiguration; {@link SynonymJudgmentModel#NONE} ohne
@@ -141,6 +145,16 @@ public class SynonymDiscovery {
      */
     public record Availability(boolean chatModel, boolean embeddingModel, List<String> released,
                                List<String> withheld, SynonymBudget budget) {
+    }
+
+    /**
+     * Schließt die Liste freigegebener Seiten an (ADR 0028), auch für die semantische Vorauswahl: Textstellen einer
+     * Seite darauf gehen auch aus einer nicht freigegebenen Quelle an das Modell. Gefragt wird je Textstelle bei jeder
+     * Anfrage.
+     */
+    public void pageReleases(Predicate<PageKey> released) {
+        this.pageReleases = Objects.requireNonNull(released, "released");
+        candidates.pageReleases(released);
     }
 
     public Availability availability(SynonymScope scope) {
@@ -481,10 +495,16 @@ public class SynonymDiscovery {
         return known;
     }
 
+    /** Ob die Textstelle an das Modell darf: ihre Quelle oder ihre Seite ist freigegeben (ADR 0028). */
+    private boolean released(RelationEvidence evidence) {
+        return model.mayProcess(evidence.sourceId())
+                || evidence.pageId() != null && pageReleases.test(new PageKey(evidence.sourceId(), evidence.pageId()));
+    }
+
     private List<SynonymCandidate.Context> releasedContexts(List<SynonymCandidate.Context> contexts) {
         List<SynonymCandidate.Context> released = new ArrayList<>();
         for (SynonymCandidate.Context context : contexts) {
-            if (model.mayProcess(context.evidence().sourceId())) {
+            if (released(context.evidence())) {
                 released.add(new SynonymCandidate.Context(released.size() + 1, context.text(), context.evidence()));
             }
         }
@@ -493,12 +513,12 @@ public class SynonymDiscovery {
 
     private boolean allReleased(Pair pair) {
         for (SynonymCandidate.Context context : pair.a) {
-            if (!model.mayProcess(context.evidence().sourceId())) {
+            if (!released(context.evidence())) {
                 return false;
             }
         }
         for (SynonymCandidate.Context context : pair.b) {
-            if (!model.mayProcess(context.evidence().sourceId())) {
+            if (!released(context.evidence())) {
                 return false;
             }
         }

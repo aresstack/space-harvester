@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.app.settings.AuthMode;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
+import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
 import com.aresstack.spaceharvester.app.settings.SourceFieldSpec;
 import com.aresstack.spaceharvester.app.settings.SourceFields;
 import com.aresstack.spaceharvester.application.sources.SourceType;
@@ -609,6 +610,25 @@ final class SourceForm {
         open(parent, context, null, saved);
     }
 
+    static final String HELP_HEADING = "Wo Quellen gespeichert werden";
+    /** Der Hilfetext hinter dem Fragezeichen; früher stand ein Teil davon unter „Quelle hinzufügen …“. */
+    static final String HELP_TEXT = """
+            Diese Oberfläche ändert nur die Konfigurationsdatei: Was du hier speicherst, schreibt die App direkt in \
+            <Benutzerordner>\\.space-harvester\\space-harvester-app.yml (abweichend --config oder \
+            SPACE_HARVESTER_APP_CONFIG). Es gibt keinen zweiten Speicherort und keinen Vorrang zwischen Datei und \
+            Dialog: Es gilt, was zuletzt gespeichert wurde, egal ob hier oder im Editor. Die Datei lässt sich also \
+            auch von Hand pflegen (Einstellungen › Allgemein nennt den Pfad); bei offenem Dialog erst speichern, dann \
+            die Datei bearbeiten.
+
+            Token und Passwörter stehen nie in der Datei, nur ein Platzhalter ${NAME}; den Wert legt die App \
+            verschlüsselt im Tresor dieses Windows-Kontos ab (nur für dieses Konto lesbar).
+
+            Eine neue oder geänderte Quelle startet die Laufzeit der App neu; Regeln zu Synchronisierung und Cache \
+            wirken ohne Neustart.
+
+            Nur der Dienst (Microservice) kennt einen Vorrang: Kommandozeile und Umgebungsvariablen vor Config Server \
+            vor application-<Profil>.yml vor application.yml.""";
+
     /** Wie {@link #open(Component, AppContext, Consumer)}, aber zum Bearbeiten eines bestehenden Eintrags. */
     static void open(Component parent, AppContext context, SourceDraft.Editable editing, Consumer<String> saved) {
         SourceForm form = new SourceForm(context, editing);
@@ -616,7 +636,8 @@ final class SourceForm {
         JDialog dialog = Dialogs.dialog(parent, heading);
         form.saved = saved;
         form.close = dialog::dispose;
-        Dialogs.frame(dialog, heading, form.component(), dialog::dispose);
+        Dialogs.frame(dialog, heading, form.component(), dialog::dispose,
+                new HelpButton(Dialogs.CLOSE_SIZE, HELP_HEADING, HELP_TEXT));
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowOpened(java.awt.event.WindowEvent e) {

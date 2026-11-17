@@ -12,6 +12,9 @@ import java.awt.Graphics;
 public final class IconButton extends JButton {
 
     private static final int SIZE = RoundHover.SIZE;
+    /** Kantenlänge in engen Zeilen wie der Statuszeile ({@link #compact()}). */
+    static final int COMPACT_SIZE = 22;
+    private int size = SIZE;
 
     public IconButton(Icon icon, String tooltip) {
         super(icon);
@@ -33,9 +36,17 @@ public final class IconButton extends JButton {
         super.paintComponent(graphics);
     }
 
+    /** Kleiner Knopf für enge Zeilen (Statuszeile): Die Zeile behält ihre Höhe. */
+    public IconButton compact() {
+        size = COMPACT_SIZE;
+        setMargin(new java.awt.Insets(0, 0, 0, 0));
+        revalidate();
+        return this;
+    }
+
     @Override
     public Dimension getPreferredSize() {
-        return new Dimension(SIZE, SIZE);
+        return new Dimension(size, size);
     }
 
     @Override

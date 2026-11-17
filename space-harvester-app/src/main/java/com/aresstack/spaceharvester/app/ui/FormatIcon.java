@@ -15,7 +15,7 @@ import java.awt.geom.Path2D;
  * Symbol eines Ausgabeformats: ein Blatt mit Eselsohr und darauf das Kürzel in der Farbe des Formats (PDF rot, Word
  * blau, Markdown Tinte, JSON Petrol), damit die Formate in der Auftragsliste ohne Text zu unterscheiden sind.
  */
-final class FormatIcon implements Icon {
+public final class FormatIcon implements Icon {
 
     private static final int WIDTH = 18;
     private static final int HEIGHT = 20;
@@ -29,13 +29,16 @@ final class FormatIcon implements Icon {
     }
 
     /** Das Symbol zu einem Format-Kürzel des Core ({@code pdf}, {@code docx}, {@code markdown}, {@code json}). */
-    static FormatIcon of(String format) {
+    public static FormatIcon of(String format) {
         return switch (format) {
             case "pdf" -> new FormatIcon("PDF", Comic.RED);
             case "docx" -> new FormatIcon("W", Comic.BLUE);
             case "markdown" -> new FormatIcon("MD", Comic.INK);
             case "json" -> new FormatIcon("{}", Comic.PETROL);
             case "analysis" -> new FormatIcon("AN", Comic.ORANGE);
+            // Exporte aus der Quelle (Angelo 16.11.2026): Confluence-Metadaten und Analytics (Aufrufe).
+            case "metadata" -> new FormatIcon("ME", Comic.PETROL);
+            case "analytics" -> new FormatIcon("ST", Comic.PETROL);
             default -> new FormatIcon(format.substring(0, Math.min(3, format.length())).toUpperCase(
                     java.util.Locale.ROOT), Comic.INK);
         };

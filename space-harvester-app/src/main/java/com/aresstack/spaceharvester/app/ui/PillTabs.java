@@ -26,6 +26,8 @@ public final class PillTabs extends JPanel {
     private final ButtonGroup group = new ButtonGroup();
     private final Map<String, ComposerToggleButton> buttons = new LinkedHashMap<>();
     private Consumer<String> listener = name -> { };
+    /** Der gewählte Reiter, auch während die Knöpfe ihre Auswahl nicht zeigen ({@link #showSelection}). */
+    private String current;
 
     public PillTabs() {
         super(new BorderLayout(0, 8));
@@ -51,6 +53,7 @@ public final class PillTabs extends JPanel {
         deck.add(content, name);
         if (buttons.size() == 1) {
             button.setSelected(true);
+            current = name;
         }
         return this;
     }
@@ -66,6 +69,7 @@ public final class PillTabs extends JPanel {
     public void select(String name) {
         ComposerToggleButton button = buttons.get(name);
         if (button != null) {
+            current = name;
             button.setSelected(true);
             cards.show(deck, name);
             listener.accept(name);
@@ -73,12 +77,23 @@ public final class PillTabs extends JPanel {
     }
 
     public String selected() {
-        for (Map.Entry<String, ComposerToggleButton> entry : buttons.entrySet()) {
-            if (entry.getValue().isSelected()) {
-                return entry.getKey();
-            }
+        return current;
+    }
+
+    /**
+     * Ob die Knöpfe den gewählten Reiter dunkel zeigen. Stehen die Reiter als Umschalter in der Icon-Leiste des
+     * Hauptfensters, zeigen sie ihre Auswahl nur, solange die Mitte auch ihren Inhalt zeigt; der gewählte Reiter
+     * ({@link #selected()}) bleibt dabei erhalten und kommt mit {@code true} wieder.
+     */
+    public void showSelection(boolean shown) {
+        if (!shown) {
+            group.clearSelection();
+            return;
         }
-        return null;
+        ComposerToggleButton button = current == null ? null : buttons.get(current);
+        if (button != null) {
+            button.setSelected(true);
+        }
     }
 
     public void onSelect(Consumer<String> listener) {
@@ -96,12 +111,12 @@ public final class PillTabs extends JPanel {
 
     /**
      * Macht aus den Reitern quadratische Symbolknöpfe (der Name bleibt Tooltip und zugänglicher Name) und gibt ihre
-     * Leiste zum Einbau an anderer Stelle zurück, etwa mittig in der Werkzeugleiste unten. Umschalten, Auswahl und
+     * Leiste zum Einbau an anderer Stelle zurück, etwa in die Icon-Leiste des Hauptfensters. Umschalten, Auswahl und
      * die dunkle Füllung des aktiven Knopfs bleiben wie bei den Pillen; die Reiterzeile oben entfällt, solange sie
      * keine Aktionen trägt. Reiter ohne Symbol in {@code icons} behalten ihre Pille.
      */
     public JComponent iconBar(Map<String, javax.swing.Icon> icons) {
-        JPanel strip = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
+        JPanel strip = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         strip.setOpaque(false);
         String selected = selected();
         for (Map.Entry<String, ComposerToggleButton> entry : new LinkedHashMap<>(buttons).entrySet()) {

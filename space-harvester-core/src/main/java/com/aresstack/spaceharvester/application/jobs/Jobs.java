@@ -1,5 +1,9 @@
 package com.aresstack.spaceharvester.application.jobs;
 
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.observe.Coalescer;
+import com.aresstack.spaceharvester.application.observe.Listeners;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Clock;
 import java.time.Duration;
@@ -50,6 +54,11 @@ import java.util.function.UnaryOperator;
  * gibt seinen Platz frei; die hängende Arbeit wird abgekoppelt: sie meldet nichts mehr, ändert den Eintrag nicht mehr
  * und endet an ihrem nächsten Prüfpunkt.
  *
+ * <p>Wer zusehen will, meldet sich an ({@link #subscribe(String, JobListener)}, ADR 0027), statt in Abständen zu fragen:
+ * Jede Änderung von Zustand, Zählern, Phase oder Pause und jedes Diagnoseereignis wird gemeldet, gebündelt auf einem
+ * eigenen Thread. Damit ein hängender Schritt auch ohne Abfrage abgekoppelt wird, prüft {@code Jobs} nach einem
+ * angeforderten Abbruch oder Anhalten nach {@link #STOP_GRACE} selbst.
+ *
  * <p>Hält sich ein Auftrag wegen fehlender Verbindung an ({@link PauseReason#CONNECTION_LOST}), läuft er nach
  * {@link RetrySettings#resumeDelay(int)} von selbst wieder an, nie endgültig aufgebend; ebenso läuft ein während des
  * Laufs angefordertes „Nur Fehler neu versuchen“ direkt nach dem Durchgang ({@link #recovery(JobRecovery)},
@@ -69,6 +78,12 @@ public class Jobs implements AutoCloseable {
 
     private final JobStore store;
     private final JobEventStore events;
+    /** Angemeldete Empfänger der Auftragsmeldungen (ADR 0027). */
+    private final Listeners<JobListener> listeners = new Listeners<>("Aufträge");
+    /** Gebündelte Zustellung je Auftrag; die Werte sind die Eigentümer, für die Meldung einer Löschung. */
+    private final Coalescer<String, Mark> notifier = new Coalescer<>("jobs", this::deliver);
+    /** Wann nach einem angeforderten Abbruch oder Anhalten selbst geprüft wird; in Tests kürzer. */
+    private volatile Duration stopWatch = STOP_GRACE.plusSeconds(1);
     private final RouteLookup routes;
     private final Executor executor;
     private final JobLimits limits;
@@ -132,7 +147,7 @@ public class Jobs implements AutoCloseable {
      */
     public Jobs(JobStore store, JobEventStore events, RouteLookup routes, Executor executor, JobLimits limits,
                 Clock clock) {
-        this.store = Objects.requireNonNull(store, "store");
+        this.store = new ObservedStore(Objects.requireNonNull(store, "store"));
         this.events = Objects.requireNonNull(events, "events");
         this.routes = Objects.requireNonNull(routes, "routes");
         this.executor = Objects.requireNonNull(executor, "executor");
@@ -282,6 +297,90 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Wie {@link #submitAwaiting}, aber freigegeben, sobald der Vorgänger erfolgreich endet ({@link JobState#COMPLETED}),
+     * ohne dass jemand {@link #releaseAwaiting} ruft; etwa die Datei eines Exports, die entsteht, sobald sein
+     * Datenbestand fertig ist (Angelo 16.11.2026). Ist der Vorgänger schon erfolgreich beendet, reiht sich der Auftrag
+     * gleich ein. Hält der Vorgänger an, scheitert er oder wird abgebrochen, wartet der Auftrag weiter, bis derselbe
+     * Eintrag später erfolgreich endet; wird der Vorgänger gelöscht, verschwindet er mit.
+     *
+     * @param awaited der Auftrag, dem er folgt
+     * @throws UnknownJobException wenn es den Vorgänger nicht gibt
+     */
+    public JobStatus submitAfter(JobType type, String sourceId, String partitionKey, String rootPageId,
+                                 String owner, Map<String, String> parameters, JobTask task, String awaited) {
+        return submitAfter(type, sourceId, partitionKey, rootPageId, owner, parameters, task, List.of(awaited));
+    }
+
+    /**
+     * Wie {@link #submitAfter(JobType, String, String, String, String, Map, JobTask, String)}, aber nach mehreren
+     * Vorgängern: frei, sobald jeder erfolgreich beendet ist, etwa die Datei eines Exports nach dem Export und seinen
+     * Bildern und Anhängen. Gewartet wird der Reihe nach; {@link JobStatus#parameter} {@link #AWAITS} nennt den ersten.
+     *
+     * @param awaited die Vorgänger, mindestens einer
+     * @throws UnknownJobException wenn es einen Vorgänger nicht gibt
+     */
+    public JobStatus submitAfter(JobType type, String sourceId, String partitionKey, String rootPageId,
+                                 String owner, Map<String, String> parameters, JobTask task,
+                                 java.util.Collection<String> awaited) {
+        if (awaited.isEmpty()) {
+            throw new IllegalArgumentException("Mindestens ein Vorgänger");
+        }
+        JobStatus status;
+        synchronized (lock) {
+            java.util.ArrayDeque<String> pending = new java.util.ArrayDeque<>();
+            for (String id : awaited) {
+                Objects.requireNonNull(id, "awaited");
+                boolean done = !open.containsKey(id) && store.find(id)
+                        .orElseThrow(() -> new UnknownJobException(id)).state() == JobState.COMPLETED;
+                if (!done && !pending.contains(id)) {
+                    pending.add(id);
+                }
+            }
+            String first = awaited.iterator().next();
+            status = submitAwaiting(type, sourceId, partitionKey, rootPageId, owner, parameters, task,
+                    pending.isEmpty() ? first : pending.peekFirst());
+            Job job = open.get(status.id());
+            job.releaseWhenDone = true;
+            if (pending.isEmpty()) {
+                job.awaiting = null;
+            } else {
+                pending.pollFirst();
+                job.laterAwaited.addAll(pending);
+            }
+            status = job.snapshot();
+            store.save(status);
+        }
+        dispatch();
+        return status;
+    }
+
+    /**
+     * Unter dem Sperrobjekt: Die Aufträge, die auf das erfolgreiche Ende dieses Auftrags warten, warten auf ihren
+     * nächsten noch nicht erfolgreich beendeten Vorgänger oder sind frei.
+     */
+    private void releaseFollowers(Job ended) {
+        for (Job follower : open.values()) {
+            releaseFollowerFrom(follower, ended.id);
+        }
+    }
+
+    /** Unter dem Sperrobjekt: Wartet der Nachfolger auf {@code predecessor}, wartet er auf den nächsten oder ist frei. */
+    private void releaseFollowerFrom(Job follower, String predecessor) {
+        if (follower.releaseWhenDone && predecessor.equals(follower.awaiting) && follower.state == JobState.QUEUED) {
+            String next = null;
+            while (next == null && !follower.laterAwaited.isEmpty()) {
+                String candidate = follower.laterAwaited.pollFirst();
+                // Ein gelöschter späterer Vorgänger hält nichts mehr auf.
+                boolean done = !open.containsKey(candidate) && store.find(candidate)
+                        .map(other -> other.state() == JobState.COMPLETED).orElse(true);
+                next = done ? null : candidate;
+            }
+            follower.awaiting = next;
+            store.save(follower.snapshot());
+        }
+    }
+
+    /**
      * Gibt einen wartenden Auftrag aus {@link #submitAwaiting} frei; er reiht sich dann wie jeder andere ein.
      *
      * @return ob es den Auftrag noch wartend gab; {@code false}, wenn er gelöscht, abgebrochen oder schon frei ist
@@ -317,6 +416,145 @@ public class Jobs implements AutoCloseable {
                 .count() >= perOwner) {
             throw JobCapacityExceededException.perOwner(perOwner);
         }
+    }
+
+    /**
+     * Meldet einen Empfänger für die Aufträge eines Auftraggebers an (ADR 0027): gemeldet wird jede Änderung von
+     * Zustand, Zählern, Phase oder Pause ({@link JobListener#changed}, je Auftrag höchstens alle
+     * {@link Coalescer#INTERVAL}), jede Löschung und jedes neue Diagnoseereignis. Wer danach {@link #list} oder
+     * {@link #status} liest, verpasst nichts.
+     *
+     * @param owner Auftraggeber wie bei {@link #submit}; {@code null} für Aufträge ohne Auftraggeber
+     */
+    public Subscription subscribe(String owner, JobListener listener) {
+        Objects.requireNonNull(listener, "listener");
+        return listeners.add(listener, subject -> Objects.equals(subject, owner));
+    }
+
+    /**
+     * Meldet einen Empfänger für die Aufträge aller Auftraggeber an, wie {@link #subscribe}; für Dienste des Core, die
+     * jeden Auftrag einer Art verfolgen (ADR 0030: Update-Marke nach manueller Synchronisierung).
+     */
+    public Subscription subscribeAll(JobListener listener) {
+        Objects.requireNonNull(listener, "listener");
+        return listeners.add(listener);
+    }
+
+    /** Die Aufträge einer Art aller Auftraggeber mit laufenden Zählern, älteste zuerst. */
+    public List<JobStatus> listAll(JobType type) {
+        Objects.requireNonNull(type, "type");
+        List<JobStatus> result = new ArrayList<>();
+        for (JobStatus stored : store.all()) {
+            if (stored.type() == type) {
+                try {
+                    result.add(status(stored.id()));
+                } catch (UnknownJobException e) {
+                    // inzwischen gelöscht
+                }
+            }
+        }
+        result.sort(Comparator.comparing(JobStatus::createdAt));
+        return result;
+    }
+
+    /**
+     * Wie {@link #await}, wartet aber auch, bis die abgekoppelte Arbeit eines nach der Anhaltefrist für beendet
+     * erklärten Laufs wirklich geendet hat; erst dann liest sie nichts mehr und der Eintrag lässt sich neu starten.
+     *
+     * @throws TimeoutException wenn der Auftrag oder seine abgekoppelte Arbeit nach {@code timeout} noch läuft
+     */
+    public JobStatus awaitSettled(String jobId, String owner, Duration timeout)
+            throws java.util.concurrent.TimeoutException, InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        JobStatus status = await(jobId, owner, timeout);
+        synchronized (lock) {
+            while (lingering.contains(jobId)) {
+                long left = deadline - System.nanoTime();
+                if (left <= 0) {
+                    throw new java.util.concurrent.TimeoutException("Auftrag " + jobId + " beendet noch seinen hängenden Schritt");
+                }
+                TimeUnit.NANOSECONDS.timedWait(lock, left);
+            }
+        }
+        return status;
+    }
+
+    /**
+     * Wartet, bis der eigene Auftrag einen Endzustand erreicht hat ({@link JobState#terminal()}), ohne Abfrage im Takt
+     * (ADR 0027): Ein Auftrag verlässt die offenen Aufträge genau mit seinem Ende, und jedes Verlassen weckt hier. Auch
+     * {@link #close()} weckt, damit niemand nach dem Abbruch der wartenden Aufträge bis zur Frist hängt.
+     *
+     * @return der Endzustand
+     * @throws UnknownJobException  wenn es keinen eigenen Auftrag mit dieser ID gibt
+     * @throws TimeoutException     wenn der Auftrag nach {@code timeout} noch läuft oder wartet; er läuft weiter
+     * @throws InterruptedException wenn der wartende Thread unterbrochen wird; der Auftrag läuft weiter
+     */
+    public JobStatus await(String jobId, String owner, Duration timeout)
+            throws java.util.concurrent.TimeoutException, InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (true) {
+            JobStatus status = status(jobId, owner);
+            if (status.state().terminal()) {
+                return status;
+            }
+            synchronized (lock) {
+                if (open.containsKey(jobId)) {
+                    long left = deadline - System.nanoTime();
+                    if (left <= 0) {
+                        throw new java.util.concurrent.TimeoutException("Auftrag " + jobId + " läuft nach " + timeout
+                                + " noch");
+                    }
+                    TimeUnit.NANOSECONDS.timedWait(lock, left);
+                }
+            }
+        }
+    }
+
+    /** Auftraggeber eines Auftrags für die Meldung einer Löschung; {@code null} ohne Auftraggeber. */
+    /**
+     * Eine Vormerkung: der Auftraggeber und, bei einer Löschung, der letzte Stand des Auftrags, den es danach nicht mehr
+     * zu lesen gibt.
+     */
+    private record Mark(String owner, JobStatus gone) {
+    }
+
+    /** Merkt einen Auftrag zur Meldung vor; ohne Empfänger nichts. */
+    private void changed(String jobId, String owner) {
+        if (!listeners.isEmpty()) {
+            notifier.mark(jobId, Set.of(new Mark(owner, null)));
+        }
+    }
+
+    /** Auf dem Zustell-Thread: der jüngste Stand, oder die Löschung, wenn es den Auftrag nicht mehr gibt. */
+    private void deliver(String jobId, Set<Mark> marks) {
+        JobStatus status;
+        try {
+            // Liest wie eine Abfrage, koppelt also auch einen nach STOP_GRACE hängenden Schritt ab.
+            status = status(jobId);
+        } catch (UnknownJobException e) {
+            for (Mark mark : marks) {
+                if (mark.gone() != null) {
+                    listeners.deliver(mark.owner(), listener -> listener.removed(mark.gone()));
+                }
+            }
+            return;
+        }
+        listeners.deliver(status.owner(), listener -> listener.changed(status));
+    }
+
+    /**
+     * Unter dem Sperrobjekt, sobald Abbruch oder Anhalten eines laufenden Auftrags angefordert ist: prüft nach
+     * {@link #STOP_GRACE} selbst, ob sein Schritt hängt, statt auf eine Abfrage zu warten.
+     */
+    private void watchStop(Job job) {
+        if (job.state == JobState.RUNNING) {
+            notifier.markLater(job.id, Set.of(new Mark(job.owner, null)), stopWatch);
+        }
+    }
+
+    /** Für Tests: die eigene Prüfung nach {@link #STOP_GRACE} früher, die Uhr des Tests entscheidet. */
+    void stopWatch(Duration delay) {
+        stopWatch = Objects.requireNonNull(delay, "delay");
     }
 
     /** @throws UnknownJobException wenn es keinen Auftrag mit dieser ID gibt */
@@ -452,6 +690,7 @@ public class Jobs implements AutoCloseable {
                 job.retryFailedRequested = false;
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = clock.instant();
+                    watchStop(job);
                 }
                 boolean wasQueued = job.state == JobState.QUEUED;
                 if (wasQueued) {
@@ -624,6 +863,31 @@ public class Jobs implements AutoCloseable {
         return status;
     }
 
+    /**
+     * Prüft ohne Wirkung, ob {@link #rerun} diesen Auftrag jetzt annähme: beendet, kein nachlaufender Schritt und Platz
+     * frei. Für Aufrufer, die vor dem Neustart andere Aufträge anhalten und das nicht umsonst tun wollen.
+     *
+     * @throws UnknownJobException         wenn es keinen eigenen Auftrag mit dieser ID gibt
+     * @throws JobNotResumableException    wenn er wartet, läuft, noch nachläuft oder sich nicht neu starten lässt
+     * @throws JobCapacityExceededException wenn kein Platz frei ist
+     */
+    public void requireRerunnable(String jobId, String owner) {
+        JobStatus current = requireOwner(status(jobId), owner);
+        if (!current.type().resumable()) {
+            throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht erneut starten");
+        }
+        synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
+            }
+            if (open.containsKey(jobId)) {
+                throw new JobNotResumableException(jobId, "der Auftrag wartet oder läuft noch");
+            }
+            requireNotLingering(jobId);
+            requireCapacity(current.type(), current.owner());
+        }
+    }
+
     /** Unter dem Sperrobjekt: kein neuer Lauf, solange die abgekoppelte Arbeit des Eintrags noch läuft. */
     private void requireNotLingering(String jobId) {
         if (lingering.contains(jobId)) {
@@ -708,10 +972,22 @@ public class Jobs implements AutoCloseable {
                 // Was auf diesen Auftrag wartet (Bilder und Anhänge eines Exports), verschwindet mit; auch, was nach
                 // einem Neustart als unterbrochen gilt, ohne je gestartet zu sein.
                 for (Job follower : List.copyOf(this.open.values())) {
-                    if (jobId.equals(follower.awaiting)) {
+                    // Ein Nachfolger mehrerer Vorgänger (submitAfter) hängt am ersten, etwa die Datei an ihrem Export,
+                    // auch wenn er gerade auf dessen Bilder wartet; ein späterer Vorgänger hält ihn nur nicht mehr auf.
+                    boolean anchored = follower.releaseWhenDone
+                            ? jobId.equals(follower.parameters.get(AWAITS)) && follower.state == JobState.QUEUED
+                            : jobId.equals(follower.awaiting);
+                    if (anchored) {
                         stop(follower.id);
                         events.delete(follower.id);
                         store.delete(follower.id);
+                    } else if (follower.releaseWhenDone && follower.state == JobState.QUEUED
+                            && (jobId.equals(follower.awaiting) || follower.laterAwaited.contains(jobId))) {
+                        follower.laterAwaited.remove(jobId);
+                        if (jobId.equals(follower.awaiting)) {
+                            releaseFollowerFrom(follower, jobId);
+                            freed |= follower.awaiting == null;
+                        }
                     }
                 }
                 for (JobStatus follower : store.all()) {
@@ -944,6 +1220,7 @@ public class Jobs implements AutoCloseable {
                 job.cancelRequested = true;
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = clock.instant();
+                    watchStop(job);
                 }
                 // Abbrechen geht vor Anhalten und vor einem Neustart für „Nur Fehler neu versuchen“.
                 job.pauseRequested = false;
@@ -986,6 +1263,8 @@ public class Jobs implements AutoCloseable {
                 store.save(job.snapshot());
             }
             queued.clear();
+            // Weckt, wer auf das Ende eines wartenden Auftrags wartet ({@link #await}).
+            lock.notifyAll();
             for (Job job : open.values()) {
                 job.cancelRequested = true;
                 store.save(job.snapshot());
@@ -995,6 +1274,7 @@ public class Jobs implements AutoCloseable {
                 ownTimer.shutdownNow();
             }
         }
+        notifier.close();
     }
 
     /**
@@ -1221,10 +1501,28 @@ public class Jobs implements AutoCloseable {
         dispatch();
     }
 
+    /**
+     * Der Auslöser, unter dem ein Auftrag in den Cache schreibt (ADR 0030): die Angabe {@link ChangeTrigger#PARAMETER}
+     * am Auftrag, sonst nach seiner Art; {@link ChangeTrigger#UNKNOWN}, wenn beides nichts sagt.
+     */
+    static ChangeTrigger trigger(JobType type, Map<String, String> parameters) {
+        String given = parameters == null ? null : parameters.get(ChangeTrigger.PARAMETER);
+        if (given != null) {
+            return ChangeTrigger.parse(given);
+        }
+        return switch (type) {
+            case EXPORT, ASSETS, ATTACHMENTS, CONVERSION, METADATA_EXPORT, ANALYTICS_EXPORT, KNOWLEDGE_GRAPH_EXPORT ->
+                    ChangeTrigger.EXPORT;
+            case HARVEST, IMPORT -> ChangeTrigger.MANUAL;
+            default -> ChangeTrigger.UNKNOWN;
+        };
+    }
+
     private void run(Job job) {
         CompletionStage<Void> stage;
         try {
-            stage = job.task.start(job);
+            // ADR 0030: Was der Auftrag in den Cache schreibt, trägt seinen Auslöser; blockierende Arbeit läuft hier.
+            stage = trigger(job.type, job.parameters).call(() -> job.task.start(job));
             if (stage == null) {
                 stage = CompletableFuture.failedFuture(new IllegalStateException("JobTask lieferte null"));
             }
@@ -1263,6 +1561,9 @@ public class Jobs implements AutoCloseable {
             // Erst das Endereignis, dann der Endzustand: Wer den Endzustand sieht, findet auch die Diagnose.
             recordEnd(job, finished, cause);
             store.save(finished);
+            if (finished.state() == JobState.COMPLETED) {
+                releaseFollowers(job);
+            }
             reconnectAttempt = followUp(job, finished);
             // Für ↻ angehalten: gleich weiter im selben Eintrag, auch ohne neue Fehler; sonst nur mit Fehlern.
             boolean pressed = job.restartForRetry;
@@ -1506,6 +1807,7 @@ public class Jobs implements AutoCloseable {
                 job.cancelRequested = true;
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = now;
+                    watchStop(job);
                 }
                 job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
                         "Nur Fehler neu versuchen: Durchgang hält an und startet sofort neu", null, null, null, null);
@@ -1642,6 +1944,10 @@ public class Jobs implements AutoCloseable {
         volatile JobStage stage;
         /** Der Auftrag, auf den dieser wartet ({@link Jobs#submitAwaiting}), bis {@link Jobs#releaseAwaiting}. */
         volatile String awaiting;
+        /** Wird frei, sobald {@link #awaiting} erfolgreich endet ({@link Jobs#submitAfter}). */
+        volatile boolean releaseWhenDone;
+        /** Weitere Vorgänger nach {@link #awaiting}, der Reihe nach ({@link Jobs#submitAfter}); nur unter der Sperre. */
+        final java.util.ArrayDeque<String> laterAwaited = new java.util.ArrayDeque<>();
         /** Noch nicht startbereit: die Vorbereitung beim Annehmen läuft noch. */
         volatile boolean starting;
         /** Erfüllt, sobald ein vorbereiteter Download seinen Platz hat ({@link #grantDownloads()}). */
@@ -1804,21 +2110,25 @@ public class Jobs implements AutoCloseable {
         @Override
         public void discovered(long pages) {
             discovered.addAndGet(pages);
+            changed(id, owner);
         }
 
         @Override
         public void processed(long pages) {
             processed.addAndGet(pages);
+            changed(id, owner);
         }
 
         @Override
         public void written(long pages) {
             written.addAndGet(pages);
+            changed(id, owner);
         }
 
         @Override
         public void failed(long pages) {
             failedPages.addAndGet(pages);
+            changed(id, owner);
         }
 
         @Override
@@ -1829,6 +2139,7 @@ public class Jobs implements AutoCloseable {
             this.component = component;
             this.phase = phase;
             if (changed) {
+                changed(id, owner);
                 emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, component, null, "Phase: " + phase, null, null,
                         null, null);
             }
@@ -1879,9 +2190,13 @@ public class Jobs implements AutoCloseable {
                     }
                 } while (!sequence.compareAndSet(current, current + 1));
                 try {
-                    appendQuietly(new JobEvent(id, current + 1, clock.instant(), type, sourceId,
+                    JobEvent event = new JobEvent(id, current + 1, clock.instant(), type, sourceId,
                             partitionKey, severity, category, eventComponent, phase, code, message, httpStatus,
-                            proxyRoute, tlsFinding, detail));
+                            proxyRoute, tlsFinding, detail);
+                    appendQuietly(event);
+                    if (!listeners.isEmpty()) {
+                        notifier.execute(() -> listeners.deliver(owner, listener -> listener.event(event)));
+                    }
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.WARNING, "Diagnoseereignis nicht erzeugt ({0})",
                             e.getClass().getName());
@@ -1892,6 +2207,39 @@ public class Jobs implements AutoCloseable {
         /** Koppelt die Arbeit ab; wartet auf ein gerade entstehendes Ereignis ({@link #emit}). */
         synchronized void detach() {
             detached = true;
+        }
+    }
+
+    /** Die Auftragsablage, die jedes Speichern und Löschen zur Meldung vormerkt (ADR 0027). */
+    private final class ObservedStore implements JobStore {
+
+        private final JobStore delegate;
+
+        ObservedStore(JobStore delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void save(JobStatus status) {
+            delegate.save(status);
+            changed(status.id(), status.owner());
+        }
+
+        @Override
+        public Optional<JobStatus> find(String jobId) {
+            return delegate.find(jobId);
+        }
+
+        @Override
+        public List<JobStatus> all() {
+            return delegate.all();
+        }
+
+        @Override
+        public void delete(String jobId) {
+            Optional<JobStatus> gone = listeners.isEmpty() ? Optional.empty() : delegate.find(jobId);
+            delegate.delete(jobId);
+            gone.ifPresent(status -> notifier.mark(jobId, Set.of(new Mark(status.owner(), status))));
         }
     }
 }

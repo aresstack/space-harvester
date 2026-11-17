@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
+import com.aresstack.spaceharvester.app.ui.controls.SectionHeader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
@@ -101,7 +102,7 @@ public final class SourcesView implements View {
     final ComposerButton exportMarked = Comic.button("Ausgewählte herunterladen",
             "Je angehaktem Space sofort einen Download starten; exportiert wird unter Aufträge");
     /** Kreispfeil am Space: vollständiger Abgleich des gewählten bzw. der angehakten Spaces, sofort angewendet. */
-    final ComposerButton reconcile = Comic.button(Glyph.REFRESH, "Bestand abgleichen",
+    final ComposerButton reconcile = Comic.button(Glyph.SYNC, "Bestand abgleichen",
             "Gewählten Space (oder alle angehakten) vollständig mit der Quelle abgleichen: neue Seiten aufnehmen, "
                     + "geänderte aktualisieren, verschobene neu zuordnen, gelöschte entfernen; je Space ein Auftrag");
     /** Nur den Seitenkatalog anlegen, ohne Inhalte; für Spaces, die der Cache noch nicht kennt. */
@@ -115,10 +116,14 @@ public final class SourcesView implements View {
     private final JLabel spaceLine = Comic.muted(" ");
     /** Reiter „Synchronisierung“: was für die gewählte Quelle gilt. */
     final Facts syncFacts = new Facts();
-    final ComposerButton editSourceRules = Comic.primary("Regeln dieser Quelle …",
-            "Erkennung, Aktualisierung und Bereinigung nur für diese Quelle; leer bleibt wie global");
-    private final ComposerButton editRules = Comic.button("Gemeinsame Werte …",
-            "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten für alle Quellen (Einstellungen › Cache)");
+    final ComposerButton editSourceRules = Comic.button(Glyph.PENCIL, "Diese Quelle anpassen …",
+            "Erkennung, Aktualisierung und Bereinigung nur für diese Quelle ändern; „Wie global“ nimmt den gemeinsamen "
+                    + "Wert");
+    final ComposerButton editRules = Comic.button(Glyph.PENCIL, "Alle Quellen …",
+            "Die gemeinsamen Werte aller Quellen ändern (auch unter Einstellungen › Cache)");
+    /** Über den Werten: was der Reiter zeigt und wo sich die Werte ändern lassen. */
+    private final JTextArea syncIntro = Comic.hint("So hält die App diese Quelle aktuell. Werte mit „(wie global)“ "
+            + "stammen aus den gemeinsamen Regeln aller Quellen; ändern über die Knöpfe rechts.");
     /** Zeile unter der Maus für den runden Rand am Export-Knopf. */
     private int hoverRow = -1;
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
@@ -144,12 +149,8 @@ public final class SourcesView implements View {
         cardsScroll.getViewport().setBackground(Comic.SURFACE);
         left.add(cardsScroll, BorderLayout.CENTER);
         add.addActionListener(e -> SourceForm.open(root, context, this::select));
-        JPanel south = new JPanel(new BorderLayout(0, 8));
-        south.setOpaque(false);
-        south.add(add, BorderLayout.NORTH);
-        south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Token und Passwörter legt "
-                + "die App verschlüsselt ab."), BorderLayout.SOUTH);
-        left.add(south, BorderLayout.SOUTH);
+        // Kein Hinweistext unter dem Knopf: Was Quellen speichern, erklärt das Fragezeichen im Quellenformular.
+        left.add(add, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);
@@ -277,8 +278,8 @@ public final class SourcesView implements View {
                         .open();
             }
         });
-        editRules.addActionListener(e -> SettingDialogs.cache(root, context,
-                () -> feedback.success("Regeln übernommen")).open());
+        editRules.addActionListener(e -> SettingDialogs.syncRules(root, context, null,
+                () -> feedback.success("Regeln aller Quellen übernommen")).open());
         spaces.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 updateSpaceActions();
@@ -304,8 +305,13 @@ public final class SourcesView implements View {
         // Textreiter statt Trenner: je Reiter die ganze Höhe, die Einstellungen scrollen bei Bedarf.
         JPanel syncPanel = new JPanel(new BorderLayout(0, 8));
         syncPanel.setOpaque(false);
+        // Zuerst die Knöpfe zum Ändern, rechts oben, mit dem Hinweis daneben; die Werte darunter.
+        JPanel syncHead = new JPanel(new BorderLayout(12, 0));
+        syncHead.setOpaque(false);
+        syncHead.add(syncIntro, BorderLayout.CENTER);
+        syncHead.add(Comic.row(editSourceRules, editRules), BorderLayout.EAST);
+        syncPanel.add(syncHead, BorderLayout.NORTH);
         syncPanel.add(syncFacts, BorderLayout.CENTER);
-        syncPanel.add(Comic.row(editSourceRules, editRules), BorderLayout.SOUTH);
         tabs.tab(SPACES, spacesPanel)
                 .tab(SYNC, flush(Comic.column(syncPanel)))
                 .tab(SETTINGS, flush(Comic.column(settings)))
@@ -344,9 +350,38 @@ public final class SourcesView implements View {
             selected = sourceId;
             filter.setText("");
         }
+        // Eine gewählte Quelle in einer zugeklappten Gruppe klappt die Gruppe auf.
+        String type = cards.get(sourceId).entry.config().type();
+        if (collapsedTypes.remove(type)) {
+            typeHeaders().stream().filter(h -> h.title().equals(Texts.sourceType(type))).forEach(h -> h.open(true));
+            showGroups();
+        }
         cards.values().forEach(SourceCard::update);
         cards.get(sourceId).scrollRectToVisible(new Rectangle(cards.get(sourceId).getSize()));
         showSelected();
+    }
+
+    /** Quellentypen, deren Gruppe zugeklappt ist; gilt für die Sitzung. */
+    private final java.util.Set<String> collapsedTypes = new java.util.HashSet<>();
+
+    /** Für Tests: die Gruppenüberschriften in Reihenfolge. */
+    List<SectionHeader> typeHeaders() {
+        List<SectionHeader> headers = new ArrayList<>();
+        for (Component c : cardsPanel.getComponents()) {
+            if (c instanceof SectionHeader header) {
+                headers.add(header);
+            }
+        }
+        return headers;
+    }
+
+    /** Zeigt die Karten offener Gruppen und versteckt die zugeklappten. */
+    private void showGroups() {
+        for (SourceCard card : cards.values()) {
+            card.setVisible(!collapsedTypes.contains(card.entry.config().type()));
+        }
+        cardsPanel.revalidate();
+        cardsPanel.repaint();
     }
 
     private void refresh() {
@@ -357,20 +392,57 @@ public final class SourcesView implements View {
             sources.addAll(entries);
             cards.clear();
             cardsPanel.removeAll();
+            // Je Quellentyp eine aufklappbare Gruppe, in der Reihenfolge der Datei; nur Typen mit Quellen.
+            Map<String, List<AppSettings.SourceEntry>> byType = new LinkedHashMap<>();
             for (AppSettings.SourceEntry entry : entries) {
-                SourceCard card = new SourceCard(entry);
-                cards.put(entry.id(), card);
-                cardsPanel.add(card);
+                byType.computeIfAbsent(entry.config().type(), t -> new ArrayList<>()).add(entry);
             }
-            cardsPanel.revalidate();
-            cardsPanel.repaint();
+            byType.forEach((type, group) -> {
+                boolean open = !collapsedTypes.contains(type);
+                SectionHeader header = new SectionHeader(Texts.sourceType(type), open, null) {
+                    @Override
+                    public void toggle() {
+                        super.toggle();
+                        if (isOpen()) {
+                            collapsedTypes.remove(type);
+                        } else {
+                            collapsedTypes.add(type);
+                        }
+                        showGroups();
+                    }
+                };
+                header.count(group.size());
+                cardsPanel.add(header);
+                for (AppSettings.SourceEntry entry : group) {
+                    SourceCard card = new SourceCard(entry);
+                    cards.put(entry.id(), card);
+                    cardsPanel.add(card);
+                }
+            });
+            showGroups();
         }
         if (selected == null || !cards.containsKey(selected)) {
             selected = sources.isEmpty() ? null : sources.get(0).id();
         }
+        dropStaleWatches();
         cards.values().forEach(SourceCard::update);
         showSelected();
         updateSpaceActions();
+    }
+
+    /**
+     * Ein Neustart der Laufzeit beendet die alten Aufträge ohne Meldung an die Wartenden; eine Wache auf eine
+     * geschlossene Laufzeit würde nie fertig und ließe die Kreispfeile grau. Sie gibt deshalb auf, und die Statuszeile
+     * sagt es.
+     */
+    private void dropStaleWatches() {
+        AppRuntime current = context.runtime();
+        for (CatchUpWatch watch : new ArrayList<>(watches.values())) {
+            if (watch.runtime != current && watch.abandon()) {
+                feedback.warning("Nachholen abgebrochen", "Die Verbindungen wurden neu gestartet; die Aufträge dazu "
+                        + "stehen unter Aufträge.");
+            }
+        }
     }
 
     /** Reiter „Synchronisierung“: Erkennung, Aktualisierung, Bereinigung, wie sie für die gewählte Quelle gelten. */
@@ -386,14 +458,15 @@ public final class SourcesView implements View {
         SyncSettings effective = settings.effectiveSync(entry.id());
         syncFacts.add("Erkennung", "Wie erfährt die App von neuen und geänderten Seiten?", Comic.MUTED)
                 .add("Über die Suche", "immer: gefundene Seiten kommen in den Cache")
-                .add("Automatische Änderungssuche", interval(effective.interval(), "CQL, ohne "
+                .add(SettingDialogs.CHANGE_SEARCH_TITLE, interval(effective.interval(), "CQL, ohne "
                         + "Administratorrechte") + origin(rule.changeSearchInterval()), tone(rule.changeSearchInterval()))
-                .add("Regelmäßige Bestandsinventur", interval(effective.inventoryInterval(), "nur Seitenmetadaten")
+                .add(SettingDialogs.INVENTORY_TITLE, interval(effective.inventoryInterval(), "nur Seitenmetadaten")
                         + origin(rule.inventoryInterval()), tone(rule.inventoryInterval()))
-                .add("Betriebsart", SettingDialogs.modeLabel(effective.mode()) + origin(rule.mode()), tone(rule.mode()))
-                .add("Nachholen beim Start", onOff(effective.catchUpOnStart()) + origin(rule.catchUpOnStart()),
+                .add(SettingDialogs.MODE_TITLE, SettingDialogs.modeLabel(effective.mode()) + origin(rule.mode()),
+                        tone(rule.mode()))
+                .add(SettingDialogs.CATCH_UP_TITLE, onOff(effective.catchUpOnStart()) + origin(rule.catchUpOnStart()),
                         tone(rule.catchUpOnStart()))
-                .add("Abgleich vor jeder Suche", onOff(effective.beforeSearch()) + origin(rule.beforeSearch()),
+                .add(SettingDialogs.BEFORE_SEARCH_TITLE, onOff(effective.beforeSearch()) + origin(rule.beforeSearch()),
                         tone(rule.beforeSearch()))
                 .add("Webhooks", onOff(effective.events()) + origin(rule.events())
                         + " · nur im Server, Einrichtung in Confluence", tone(rule.events()))
@@ -1046,6 +1119,231 @@ public final class SourcesView implements View {
      * Startet für die angehakten Spaces, sonst den gewählten, je einen Auftrag: Kreispfeil (vollständiger Abgleich),
      * Initialisieren oder Änderungen prüfen. Ohne Auswahl startet nichts, auch nicht der erste Space der Liste.
      */
+    static final String SYNC_CARD_TOOLTIP = "Änderungen seit dem letzten Lauf nachholen: je Space dieser Quelle ein "
+            + "Auftrag im Hintergrund; die Kreispfeile bleiben grau, bis alle durch sind";
+
+    /** Quellen, deren Nachholen läuft; so lange bleiben die Kreispfeile ihrer Karte ausgegraut. */
+    private final java.util.Set<String> catchingUp = new java.util.HashSet<>();
+    /** Laufende Wachen auf die Nachhol-Aufträge, je Quelle eine; bei Neustart der Laufzeit geben sie auf. */
+    private final Map<String, CatchUpWatch> watches = new java.util.HashMap<>();
+
+    /** Für Tests: die Kreispfeile an der Karte dieser Quelle. */
+    IconButton syncButton(String sourceId) {
+        SourceCard card = cards.get(sourceId);
+        return card == null ? null : card.sync;
+    }
+
+    /**
+     * Kreispfeile an der Quellenkarte: je Space der Quelle die Änderungen seit dem letzten bestätigten Stand nachholen
+     * ({@link Workspace#catchUp}), in der Betriebsart der Quelle; Spaces ohne bestätigten Stand bekommen einen ersten.
+     * Der Knopf bleibt ausgegraut, bis jeder gestartete Auftrag beendet ist, auch gescheitert; das Ergebnis steht in
+     * der Statuszeile und unter Aufträge.
+     */
+    /**
+     * Holt die Änderungen einer Quelle nach, je Space ein Auftrag; {@code spaceKeys} leer heißt alle Spaces, die die
+     * Verbindung kennt. Auch aus dem Baum (Kreispfeile an Quelle oder Space, Angelo 16.11.2026). Die ganze Quelle
+     * läuft nur einmal zugleich (die Karte zeigt es); einzelne Spaces starten unabhängig davon, damit kein Klick
+     * verloren geht (Codex zu #802).
+     *
+     * @return ob gestartet wurde; {@code false} ohne Spaces oder solange die ganze Quelle schon nachholt
+     */
+    boolean catchUp(String id, List<String> spaceKeys) {
+        AppRuntime runtime = context.runtime();
+        List<String> keys = spaceKeys.isEmpty()
+                ? context.connection(id).spaces().stream().map(Partition::key).toList() : spaceKeys;
+        if (runtime == null || keys.isEmpty()) {
+            feedback.info("Keine Spaces bekannt", "Zuerst die Verbindung prüfen; danach holen die Kreispfeile je Space "
+                    + "die Änderungen nach.");
+            return false;
+        }
+        boolean whole = spaceKeys.isEmpty();
+        if (whole) {
+            if (!catchingUp.add(id)) {
+                return false;
+            }
+            cards.values().forEach(SourceCard::update);
+        }
+        // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: nur katalogisieren).
+        SyncMode mode = context.settings() != null ? context.settings().effectiveSync(id).mode()
+                : SyncMode.CATALOG_ONLY;
+        feedback.working("Nachholen von " + Texts.count(keys.size(), "Space", "Spaces") + " wird gestartet …");
+        Background.run(() -> {
+            List<String> jobs = new ArrayList<>();
+            Map<String, Exception> failed = new LinkedHashMap<>();
+            for (String key : keys) {
+                try {
+                    jobs.add(runtime.workspace().catchUp(id, key, mode).id());
+                } catch (RuntimeException e) {
+                    failed.put(key, e);
+                }
+            }
+            return new CatchUpStarted(jobs, failed);
+        }, started -> {
+            if (!whole) {
+                // Einzelne Spaces: keine Karten-Sperre, keine Beobachtung; der Auftrag steht unter Aufträge.
+                if (started.failed().isEmpty()) {
+                    feedback.success(Texts.count(started.jobs().size(), "Space wird", "Spaces werden") + " nachgeholt");
+                } else {
+                    feedback.warning(Texts.count(started.failed().size(), "Space", "Spaces") + " nicht gestartet",
+                            started.failed().entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
+                                    .collect(java.util.stream.Collectors.joining("\n")));
+                }
+                return;
+            }
+            if (started.jobs().isEmpty()) {
+                finishCatchUp(id, new CatchUpResult(0, 0, started.failed()));
+                return;
+            }
+            if (context.runtime() != runtime) {
+                // Die Laufzeit wurde zwischen Start und Rückkehr neu gestartet; ihre Aufträge sind beendet.
+                finishCatchUp(id, new CatchUpResult(started.jobs().size(), started.jobs().size(), started.failed()));
+                return;
+            }
+            CatchUpWatch watch = new CatchUpWatch(runtime, id, started);
+            watches.put(id, watch);
+            watch.begin();
+        }, error -> {
+            if (whole) {
+                finishCatchUp(id, error);
+            } else {
+                feedback.problem(error);
+            }
+        });
+        return true;
+    }
+
+    private void finishCatchUp(String id, CatchUpResult result) {
+        watches.remove(id);
+        catchingUp.remove(id);
+        cards.values().forEach(SourceCard::update);
+        String done = Texts.count(result.started(), "Space", "Spaces") + " nachgeholt";
+        if (result.failed().isEmpty() && result.broken() == 0) {
+            feedback.success(done);
+        } else {
+            int notOk = result.failed().size() + result.broken();
+            feedback.warning(Texts.count(result.started() - result.broken(), "Space", "Spaces") + " nachgeholt, "
+                    + Texts.count(notOk, "Space", "Spaces") + " nicht",
+                    result.failed().entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
+                            .collect(java.util.stream.Collectors.joining("\n"))
+                            + (result.broken() == 0 ? "" : "\nEinzelheiten unter Aufträge"));
+        }
+    }
+
+    private void finishCatchUp(String id, Throwable error) {
+        watches.remove(id);
+        catchingUp.remove(id);
+        cards.values().forEach(SourceCard::update);
+        feedback.problem(error);
+    }
+
+    private record CatchUpStarted(List<String> jobs, Map<String, Exception> failed) {
+    }
+
+    private record CatchUpResult(int started, int broken, Map<String, Exception> failed) {
+    }
+
+    /**
+     * Wartet auf das Ende der Nachhol-Aufträge einer Quelle ohne Abfragen (ADR 0027): erst beim Core anmelden
+     * ({@link Workspace#subscribeJobs}), dann den Stand jedes Auftrags einmal lesen, danach nur Meldungen. Sobald jeder
+     * Auftrag beendet ist (auch gescheitert oder gelöscht), meldet die Statuszeile das Ergebnis.
+     */
+    private final class CatchUpWatch implements com.aresstack.spaceharvester.application.jobs.JobListener {
+
+        private final AppRuntime runtime;
+        private final String sourceId;
+        private final CatchUpStarted started;
+        /** Noch nicht beendete Aufträge. */
+        private final java.util.Set<String> open;
+        private int broken;
+        private boolean finished;
+        private com.aresstack.spaceharvester.application.observe.Subscription subscription =
+                com.aresstack.spaceharvester.application.observe.Subscription.NONE;
+
+        CatchUpWatch(AppRuntime runtime, String sourceId, CatchUpStarted started) {
+            this.runtime = runtime;
+            this.sourceId = sourceId;
+            this.started = started;
+            this.open = new java.util.HashSet<>(started.jobs());
+        }
+
+        void begin() {
+            subscription = runtime.workspace().subscribeJobs(this);
+            // Was zwischen Start und Anmeldung schon endete, holt das einmalige Lesen nach.
+            Background.run(() -> {
+                List<JobStatus> current = new ArrayList<>();
+                for (String job : started.jobs()) {
+                    current.add(runtime.workspace().job(job));
+                }
+                return current;
+            }, current -> {
+                for (int i = 0; i < current.size(); i++) {
+                    JobStatus status = current.get(i);
+                    if (status == null) {
+                        ended(started.jobs().get(i), false);
+                    } else {
+                        changed(status);
+                    }
+                }
+            }, error -> {
+                subscription.close();
+                synchronized (this) {
+                    finished = true;
+                }
+                finishCatchUp(sourceId, error);
+            });
+        }
+
+        /**
+         * Gibt die Wache auf, ohne ein Ergebnis zu melden (EDT); die Kreispfeile werden wieder frei.
+         *
+         * @return ob sie noch lief
+         */
+        boolean abandon() {
+            synchronized (this) {
+                if (finished) {
+                    return false;
+                }
+                finished = true;
+            }
+            subscription.close();
+            watches.remove(sourceId);
+            catchingUp.remove(sourceId);
+            return true;
+        }
+
+        @Override
+        public void changed(JobStatus status) {
+            if (status.state().terminal()) {
+                ended(status.id(), status.state() == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+            }
+        }
+
+        @Override
+        public void removed(JobStatus last) {
+            ended(last.id(), last.state() == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+        }
+
+        /** Vom Zustell-Thread des Core oder vom EDT; das Ergebnis kommt einmal, auf dem EDT. */
+        private void ended(String jobId, boolean ok) {
+            boolean done;
+            synchronized (this) {
+                if (finished || !open.remove(jobId)) {
+                    return;
+                }
+                if (!ok) {
+                    broken++;
+                }
+                done = open.isEmpty();
+                finished = done;
+            }
+            if (done) {
+                subscription.close();
+                CatchUpResult result = new CatchUpResult(started.jobs().size(), broken, started.failed());
+                javax.swing.SwingUtilities.invokeLater(() -> finishCatchUp(sourceId, result));
+            }
+        }
+    }
+
     private void startSpaces(String one, String many, SpaceStart action) {
         List<String> keys = spaceTargets();
         String id = selectedId();
@@ -1220,16 +1518,27 @@ public final class SourcesView implements View {
         /** Höhen aus der tatsächlichen Breite: umbrechende Namen kennen ihre Höhe erst mit der Breite. */
         @Override
         public void doLayout() {
-            int y = 0;
-            for (Component c : getComponents()) {
-                int h = ((SourceCard) c).heightFor(getWidth());
-                c.setBounds(0, y, getWidth(), h);
-                y += h + GAP;
-            }
+            int y = place(getWidth(), true);
             if (y != lastHeight) {
                 lastHeight = y;
                 revalidate();
             }
+        }
+
+        /** Überschriften mit ihrer festen Höhe, Karten mit ihrer Höhe bei dieser Breite; versteckte Karten fehlen. */
+        private int place(int width, boolean apply) {
+            int y = 0;
+            for (Component c : getComponents()) {
+                if (!c.isVisible()) {
+                    continue;
+                }
+                int h = c instanceof SourceCard card ? card.heightFor(width) : c.getPreferredSize().height;
+                if (apply) {
+                    c.setBounds(0, y, width, h);
+                }
+                y += h + (c instanceof SourceCard ? GAP : 2);
+            }
+            return y;
         }
 
         private int lastHeight = -1;
@@ -1238,11 +1547,7 @@ public final class SourcesView implements View {
         public Dimension getPreferredSize() {
             int width = getWidth() > 0 ? getWidth() : getParent() != null && getParent().getWidth() > 0
                     ? getParent().getWidth() : 220;
-            int y = 0;
-            for (Component c : getComponents()) {
-                y += ((SourceCard) c).heightFor(width) + GAP;
-            }
-            return new Dimension(width, y);
+            return new Dimension(width, place(width, false));
         }
 
         @Override
@@ -1285,6 +1590,9 @@ public final class SourcesView implements View {
         private final IconButton edit = new IconButton(Glyph.PENCIL, "Einstellungen der Quelle öffnen");
         private final IconButton remove = new IconButton(Glyph.TRASH,
                 "Quelle entfernen (fragt nach; der lokale Bestand bleibt im Datenordner)");
+        /** Kreispfeile vor den drei Punkten: Änderungen seit dem letzten bestätigten Stand je Space nachholen. */
+        // Zwei sich verfolgende Kreispfeile, das übliche Aktualisieren-Symbol (Angelo, 16.11.2026).
+        final IconButton sync = new IconButton(Glyph.SYNC, SYNC_CARD_TOOLTIP);
         private final IconButton more = new IconButton(Glyph.MORE, "Weitere Aktionen");
 
         private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
@@ -1309,6 +1617,7 @@ public final class SourcesView implements View {
             actions.setOpaque(false);
             actions.add(edit);
             actions.add(remove);
+            actions.add(sync);
             actions.add(more);
             add(actions);
 
@@ -1319,6 +1628,10 @@ public final class SourcesView implements View {
             remove.addActionListener(e -> {
                 select(entry.id());
                 SourcesView.this.remove(entry);
+            });
+            sync.addActionListener(e -> {
+                select(entry.id());
+                SourcesView.this.catchUp(entry.id(), List.of());
             });
             more.addActionListener(e -> {
                 select(entry.id());
@@ -1429,6 +1742,9 @@ public final class SourcesView implements View {
             state.setText(text);
             state.setForeground(color);
             mark.state(mode, text);
+            // Ausgegraut, bis alle gestarteten Aufträge durch oder gescheitert sind, wie die Knöpfe beim Export.
+            sync.setEnabled(!disabled(entry) && !waiting && connection.state() == AppContext.Connection.State.CONNECTED
+                    && !catchingUp.contains(entry.id()));
             revalidate();
             repaint();
         }

@@ -81,7 +81,7 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
                        SearchRunId partOf) {
         long deadline = System.nanoTime() + wait.toNanos();
         KeywordSearch.Query keywordQuery = new KeywordSearch.Query(shortened(text), query.sourceId(),
-                query.sourceIds(), query.spaceKeys(), excludedSpaceKeys);
+                query.sourceIds(), query.spaceKeys(), excludedSpaceKeys, query.pages());
         KeywordSearch.Results found = keywords.search(caller, keywordQuery, null, MAX_PAGES, partOf);
         if (awaitLoading(found.progress(), deadline)) {
             // Die Schlagwortsuche wartet nicht aufs Laden; erst danach findet der Volltextindex die Seiten.
