@@ -133,8 +133,10 @@ public final class ConfigurationOverlay {
         put(properties, SimplificationSettings.MODE, configuration.simplification().mode().value());
         put(properties, SimplificationSettings.PARALLEL, configuration.simplification().parallel());
         put(properties, SimplificationSettings.MODEL, configuration.simplification().model());
-        put(properties, StandingSettings.OUTDATED_WORDS, String.join(",", configuration.standing().outdatedWords()));
-        put(properties, StandingSettings.DRAFT_WORDS, String.join(",", configuration.standing().draftWords()));
+        put(properties, StandingSettings.OUTDATED_WORDS, String.join(",",
+                StandingSettings.written(configuration.standing().outdatedWords())));
+        put(properties, StandingSettings.DRAFT_WORDS, String.join(",",
+                StandingSettings.written(configuration.standing().draftWords())));
         put(properties, CheckSettings.SCOPE, configuration.check().scope().value());
         put(properties, CheckSettings.PARALLEL, configuration.check().parallel());
         put(properties, CheckSettings.MODEL, configuration.check().model());

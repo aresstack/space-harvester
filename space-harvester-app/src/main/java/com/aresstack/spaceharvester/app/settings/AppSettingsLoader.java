@@ -235,7 +235,8 @@ public final class AppSettingsLoader {
 
     /**
      * {@code space-harvester.statements.standing.*}: Wörter für überholte Seiten und Entwürfe (ADR 0032, FL6), wie beim
-     * Dienst ({@link StandingSettings}): YAML-Liste oder Text mit Kommas; fehlend oder leer heißt Vorgabe. Ein
+     * Dienst ({@link StandingSettings}): YAML-Liste oder Text mit Kommas; fehlend oder leer heißt Vorgabe, „-“ allein
+     * heißt keine Wörter. Ein
      * unlesbarer Wert ist ein Problem und lässt die Vorgabe stehen.
      */
     private StandingSettings standing(Map<?, ?> standing, List<String> problems) {
@@ -273,7 +274,7 @@ public final class AppSettingsLoader {
                 words.addAll(List.of(value.split(",")));
             }
         }
-        return words.stream().allMatch(word -> word.isBlank()) ? fallback : words;
+        return StandingSettings.words(words, fallback);
     }
 
     /**
