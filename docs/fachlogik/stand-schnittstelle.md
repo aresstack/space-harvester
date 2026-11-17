@@ -190,3 +190,13 @@ Liste, auch für die Einträge möglicher Widersprüche und Ablösungen (es sind
   gespeichert.
 - Anhänge und enthaltene Dateien liefern noch keinen Originalsatz, bis ihre Lesetexte an die Analyse angebunden sind
   (ADR 0026). Bis dahin zeigt die Anzeige den vereinfachten Satz oder Handelnden und Prädikat.
+
+## Analysen löschen: `KnowledgeGraph#delete(caller, pages)`
+
+Für den Knopf „Analysen löschen“ am gewählten Knoten: löscht die gespeicherten Aussagenanalysen der Seiten aus der
+Auswahl (etwa über `holdings().resolve(selection)`), nur mit Leserecht, samt Analysen der Anhänge und enthaltenen
+Dateien; Seiten bleiben. Danach meldet `KnowledgeGraph#subscribe(Runnable)`, damit Stand, Graph und Glossar neu lesen.
+Neue Analysen aus Aufträgen melden sich dort noch nicht.
+
+Veraltete Analysen (`analysisStale`, Seite `State.STALE`) liefert die Status-quo-Sicht weiter mit, nichts wird
+versteckt; die Anzeige darf sie standardmäßig ausblenden.

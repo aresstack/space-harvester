@@ -264,6 +264,27 @@ class KnowledgeGraphTest {
     }
 
     @Test
+    void deleteRemovesOnlyTheChosenReadablePagesWithTheirDocumentsAndTellsObservers() {
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        DocumentKey attachment = DocumentKey.attachment(new PageKey("wiki", "1"), "42");
+        analyseDocument(attachment, "Die Buchhaltung sendet den Beleg.");
+        analyse("wiki", "2", "Die Kasse zahlt den Zuschuss.");
+        analyse("geheim", "3", "Die Revision prüft den Beleg.");
+        deniedSources.add("geheim");
+        KnowledgeGraph graph = graph();
+        java.util.concurrent.atomic.AtomicInteger told = new java.util.concurrent.atomic.AtomicInteger();
+        graph.subscribe(told::incrementAndGet);
+
+        assertThat(graph.delete(CALLER, key -> !key.pageId().equals("2"))).isEqualTo(2);
+
+        assertThat(store.all()).extracting(analysis -> analysis.key().pageId()).containsExactlyInAnyOrder("2", "3");
+        assertThat(store.documents()).isEmpty();
+        assertThat(told).hasValue(1);
+        assertThat(graph.delete(CALLER, key -> key.pageId().equals("9"))).isZero();
+        assertThat(told).as("nichts gelöscht, keine Meldung").hasValue(1);
+    }
+
+    @Test
     void aNodeOfADocumentIsFoundAgainByItsId() {
         analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
         DocumentKey attachment = DocumentKey.attachment(new PageKey("wiki", "1"), "42");
