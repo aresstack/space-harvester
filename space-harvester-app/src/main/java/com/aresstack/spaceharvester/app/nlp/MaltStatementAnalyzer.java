@@ -451,6 +451,7 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
         return new ParsedStatements.Features(
                 features.negated() ? ParsedStatements.Negation.NEGATED : ParsedStatements.Negation.AFFIRMED,
                 ParsedStatements.Modality.valueOf(features.modality().name()),
-                ParsedStatements.Temporality.valueOf(features.temporality().name()));
+                ParsedStatements.Temporality.valueOf(features.temporality().name()),
+                features.article() == null ? null : ParsedStatements.Article.valueOf(features.article().name()));
     }
 }

@@ -32,6 +32,8 @@ final class FakeStatementAnalyzer implements StatementAnalyzer {
     Runnable afterStage = () -> { };
     /** Herkunft aller Aussagen; {@code null} = Original. */
     ParsedStatements.Derivation derivation;
+    /** Begleiter des Rollennomens an allen Aussagen (ADR 0032); {@code null} = keiner. */
+    ParsedStatements.Article article;
     /** Liefert eine Erwähnung außerhalb des Texts. */
     boolean broken;
 
@@ -116,7 +118,10 @@ final class FakeStatementAnalyzer implements StatementAnalyzer {
                         // Merkmale nur, wenn der Satz „nicht“ enthält; sonst unbekannt wie bei älteren Analysen
                         text.substring(start, end).contains(" nicht") ? new ParsedStatements.Features(
                                 ParsedStatements.Negation.NEGATED, ParsedStatements.Modality.NONE,
-                                ParsedStatements.Temporality.GILT) : ParsedStatements.Features.UNKNOWN,
+                                ParsedStatements.Temporality.GILT, article) : article != null
+                                ? new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED,
+                                        ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT, article)
+                                : ParsedStatements.Features.UNKNOWN,
                         derivation));
             }
             start = end;

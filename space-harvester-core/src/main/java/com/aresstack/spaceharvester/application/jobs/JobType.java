@@ -78,7 +78,13 @@ public enum JobType {
      * „Zusammenfassen“ (ADR 0030, Abschnitt 5): die KI-Zusammenfassung eines Updates einer Quelle, nur auf Wunsch; Titel
      * und Unterschiede nur freigegebener Seiten (ADR 0028). Eingeplant wie ein Folgeauftrag ({@link #followUp()}).
      */
-    UPDATE_SUMMARY;
+    UPDATE_SUMMARY,
+    /**
+     * „Aussagen prüfen“ (ADR 0032, FL4): das Chat-Modell beurteilt die Aussagen gespeicherter, aktueller Analysen eines
+     * Umfangs gegen ihren Originalsatz; nur auf ausdrückliche Anforderung und nur Seiten mit KI-Freigabe, nie
+     * Folgeauftrag einer Analyse. Ein neuer Lauf fragt nur, was in der Ablage des Prüfschritts fehlt.
+     */
+    STATEMENT_CHECK;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
