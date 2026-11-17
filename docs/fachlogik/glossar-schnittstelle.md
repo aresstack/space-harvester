@@ -11,13 +11,13 @@ Einträge, Einordnung, Wichtigkeit, Belege und Zahlen kommen fertig aus dem Core
 |---|---|---|
 | `Glossary` | Einträge des Fachglossars (Nutzerdaten): Suchen, Bestätigen, Ablehnen, Einordnen, Erläutern | ja (`glossary/glossary.json`) |
 | `GlossaryClassification` | Auftrag `GLOSSARY` „Fachbegriffe ermitteln“: Phase „Begriffe ableiten“ (Regeln, ohne Modell), danach Phase mit Modell | schreibt Vorschläge ins Glossar |
-| `GlossaryOverview` | Teilzahlen der Wichtigkeit (Liste) und Einzelheiten je Begriff, je Aufrufer gerechnet | nein |
+| `GlossaryOverview` | fertige Sicht des Reiters: Einträge mit Wichtigkeit, sortiert, gefiltert, gezählt; Einzelheiten je Begriff; je Aufrufer gerechnet | nein |
 
 ## Ein Eintrag: `GlossaryEntry`
 
 | Feld | Anzeige |
 |---|---|
-| `term`, `normalized` | Begriff im Wortlaut; `normalized` ist der Schlüssel zum Verknüpfen mit der Liste der Teilzahlen |
+| `term`, `normalized` | Begriff im Wortlaut; `normalized` ist der Schlüssel für `View#term` |
 | `scope` | Geltungsbereich: global, Quelle oder Space |
 | `origin` | wer angelegt hat: `MANUAL` (Mensch), `RULE` (Regel), `AI` (Modell); ändert sich nie |
 | `status` | `PROPOSED`, `CONFIRMED`, `REJECTED` |
@@ -48,31 +48,40 @@ List<GlossaryStore.AuditEntry> history(AccessContext caller, String id)
 - Sichtbarkeit macht der Core: Einträge der Regel und der KI ohne lesbaren Beleg erscheinen gar nicht; Belege und
   `definitionProposal` nur, wenn der Aufrufer die Seite lesen darf.
 
-### Teilzahlen und Sortierung nach Wichtigkeit: `GlossaryOverview`
+### Die fertige Sicht des Reiters: `GlossaryOverview#view`
 
 ```java
-GlossaryOverview.Overview importance(AccessContext caller, String sourceId, String spaceKey, BooleanSupplier cancelled)
-Optional<GlossaryDerivation.Term> term(AccessContext caller, String sourceId, String spaceKey, String term,
-                                       BooleanSupplier cancelled)
+GlossaryOverview.View view(AccessContext caller, PageSelection selection, GlossaryOverview.Query query,
+                           BooleanSupplier cancelled)
 ```
 
-- `importance` liefert je Begriff des Geltungsbereichs (`sourceId` `null` = alle lesbaren Seiten, `spaceKey` nur mit
-  `sourceId`) eine `Row`: `term`, `normalized`, `importance` (`pages`, `mentions`, `asActor`, `asAffected`,
-  `asBearer`), `category`, `rule`, ohne Belege, schon nach Wichtigkeit sortiert (Seitenstreuung, dann Handelnder, dann
-  Erwähnungen). Dazu `pages` und `stalePages`.
-- `term` liefert die Einzelheiten eines Begriffs: Verhalten (`acts`, `undergoes`; verneinte Verben getrennt),
-  Eigenschaften (`properties`), Ist-Beziehungen (`isA`, `instances`), je mit Anzahl, Herkunft (Original/Vorstufe) und
-  bis zu drei Belegen. Nur Original zählt für Wichtigkeit; Vorstufe getrennt zeigen.
-- Gerechnet wird nur über die Seiten mit Aussagenanalyse, die der Aufrufer lesen darf; nichts wird gespeichert, kein
-  Modell, keine Quelle. Laufzeit wie die Ableitung selbst (`GlossaryDerivationTest`, 5000 Seiten rund 0,8 s im
-  Container), je Aufruf einmal über alle Seiten des Geltungsbereichs. Im Hintergrund rufen (`BusyOverlay`), `cancelled` beim Abbrechen setzen
-  (`CancellationException`, nichts bleibt zurück).
-
-**Zusammenführen im Reiter:** Glossareinträge des Geltungsbereichs über `entries` lesen (alle Seiten), die Liste
-`importance` desselben Geltungsbereichs einmal holen und über `normalized` verknüpfen. Sortiert wird nach der
-Wichtigkeit der Liste; Einträge ohne Zeile (manuelle oder ohne aktuelle Analyse) haben Wichtigkeit 0 und stehen
-hinten, alphabetisch. Begriffe der Liste ohne Glossareintrag zeigt der Reiter nicht (sie wurden nicht vorgeschlagen:
-kein Seitenbeleg oder über `max-terms`). Ein Klick auf einen Eintrag holt `term(...)` für die Einzelheiten im Overlay.
+- **Auswahl links** (`PageSelection` aus dem Bestand, ADR 0029, wie `StatusQuo#view`): Die Wichtigkeit zählt über die
+  Seiten der Auswahl (Knoten samt Kindern). Die Einträge kommen aus dem Geltungsbereich, in dem die Auswahl liegt: ein
+  Space ergibt global, Quelle und Space; eine Quelle ergibt global und Quelle; mehrere Quellen oder „Wissensquellen“
+  ergeben alle lesbaren Einträge (`View#scope`).
+- **`Query(q, categories, status)`**: Suchtext, Kategorien (`null` = alle) und Status (`null` = Vorschläge und
+  bestätigte, `REJECTED` = Sperrliste). `Query.DEFAULT` fragt ohne `TECHNISCH` (`Query.WITHOUT_TECHNICAL`); der Filter
+  „Technik“ fragt nur `TECHNISCH`.
+- **`View`** liefert alles fertig:
+  - `rows`: `ViewRow(entry, importance, category)`, schon verknüpft und sortiert: Einträge mit Wichtigkeit zuerst
+    (Seitenstreuung, dann Handelnder, dann Erwähnungen), Einträge ohne Zeile (manuelle oder ohne aktuelle Analyse in
+    der Auswahl, `importance == null`) hinten, alphabetisch. Begriffe der Ableitung ohne Glossareintrag erscheinen
+    nicht (nicht vorgeschlagen: kein Seitenbeleg oder über `max-terms`).
+  - `countsByCategory` und `countsByStatus` für die Chips: Kategorien gezählt unter dem gewählten Status, Status
+    gezählt unter den gewählten Kategorien; jeweils mit Suchtext. Jeder Wert ist vorhanden, auch 0.
+  - `pages`, `stalePages`: Seiten der Auswahl mit aktueller bzw. veralteter (übersprungener) Analyse.
+  - `term(normalized)`: Einzelheiten zum Klick aus dem gehaltenen Ergebnis, ohne neues Rechnen: Verhalten (`acts`,
+    `undergoes`; verneinte Verben getrennt), Eigenschaften (`properties`), Ist-Beziehungen (`isA`, `instances`), je
+    mit Anzahl, Herkunft (Original/Vorstufe) und bis zu drei Belegen. Nur Original zählt für Wichtigkeit; Vorstufe
+    getrennt zeigen.
+- Der Reiter verknüpft, sortiert, filtert und zählt nichts selbst. Gerechnet wird nur über Seiten mit
+  Aussagenanalyse, die der Aufrufer lesen darf; nichts wird gespeichert, kein Modell, keine Quelle. Im Hintergrund
+  rufen (`BusyOverlay`), `cancelled` beim Abbrechen setzen (`CancellationException`, nichts bleibt zurück). Laufzeit:
+  5000 Seiten mit 500 Einträgen rund 0,4 s im Container (`GlossaryOverviewViewTest`), je Aufruf einmal über die
+  Auswahl.
+- Ohne Auswahl im Bestand: `view(caller, RelationScope, Predicate<PageKey>, query, cancelled)`.
+- Weiter vorhanden für den Dienst und Einzelzugriffe: `importance(caller, sourceId, spaceKey, cancelled)` (Teilzahlen
+  ohne Einträge) und `term(caller, sourceId, spaceKey, term, cancelled)`; der Reiter braucht beide nicht.
 
 ## Ändern
 
@@ -110,10 +119,10 @@ boolean modelAvailable()  // ob die Phase mit Modell möglich ist
 
 ## Beobachter (kein Polling, ADR 0027)
 
-- `Glossary#subscribe(Runnable)`: jede Änderung am Glossar (Lauf, Mensch, „Daten bereinigen“). Danach die sichtbare
-  Seite neu lesen; die Rückgabe abmelden, wenn der Reiter schließt.
-- Teilzahlen (`importance`) neu holen, wenn ein Auftrag „Aussagen analysieren“ oder `GLOSSARY` endet
-  (`Jobs#subscribe`), nicht zeitgesteuert.
+- `Glossary#subscribe(Runnable)`: jede Änderung am Glossar (Lauf, Mensch, „Daten bereinigen“). Danach die Sicht neu
+  holen; die Rückgabe abmelden, wenn der Reiter schließt.
+- Die Sicht auch neu holen, wenn ein Auftrag `STATEMENT_ANALYSIS` („Aussagen analysieren“), `STATEMENT_CHECK` (Aussagen prüfen, sobald dieser Auftrag auf main ist) oder
+  `GLOSSARY` endet (`Jobs#subscribe`) und wenn sich die Auswahl links ändert; nie zeitgesteuert.
 
 ## Einstellungen
 

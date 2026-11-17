@@ -147,21 +147,47 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
      * @param modality    Verbindlichkeit
      * @param temporality Zeitbezug
      */
-    public record Features(Negation negation, Modality modality, Temporality temporality) {
+    public record Features(Negation negation, Modality modality, Temporality temporality, Article article) {
 
         /** Merkmale nicht bestimmt (ältere Analysen, andere Analysatoren). */
         public static final Features UNKNOWN = new Features(Negation.UNKNOWN, Modality.UNKNOWN, Temporality.UNKNOWN);
 
+        /**
+         * @param article Begleiter des Rollennomens einer Zustandsaussage (ADR 0032); {@code null} bei Handlungen,
+         *                Eigenschaften und Analysen vor rules-13
+         */
         public Features {
             Objects.requireNonNull(negation, "negation");
             Objects.requireNonNull(modality, "modality");
             Objects.requireNonNull(temporality, "temporality");
         }
 
+        /** Ohne Artikel. */
+        public Features(Negation negation, Modality modality, Temporality temporality) {
+            this(negation, modality, temporality, null);
+        }
+
         /** Ob die Merkmale bestimmt wurden. */
         public boolean known() {
             return !equals(UNKNOWN);
         }
+    }
+
+    /**
+     * Begleiter des Rollennomens einer Zustandsaussage („ist ein/der/kein Ansprechpartner“, ADR 0032): ein neutrales
+     * Merkmal ohne Deutung. {@link #KEIN} ändert nichts an der Verneinung.
+     */
+    public enum Article {
+        /** ein, eine, einen, einem, einer, eines. */
+        UNBESTIMMT,
+        /** der, die, das, den, dem, des. */
+        BESTIMMT,
+        /** Kein Begleiter, auch Mehrzahl ohne Artikel. */
+        OHNE,
+        /** kein, keine, keinen, keinem, keiner, keines. */
+        KEIN,
+        /** Jeder andere Begleiter (unser, ihr, dieser, jeder …). */
+        SONSTIGER
     }
 
     /** Herkunft einer Aussage (ADR 0032, FL3). */

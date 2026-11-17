@@ -117,3 +117,11 @@ W11	W	11	enthalten	Aktenordner	Ausbildungszertifikat	-	nein	-	GILT
 W12	W	12	übernehmen	Krankenkasse	Kosten	-	nein	-	GILT	
 W13	W	13	fördern	-	Wärmespeicher	-	nein	-	GILT	Passiv ohne Handelnden
 W14	W	14	markieren	-	Leerstelle	-	nein	-	GILT	Passiv; „im Formular“ ist Ergänzung
+R01	R	1	Behörde	Prüfstelle	-	-	nein	-	GILT	Zustand; Rollennomen mit „eine“
+R02	R	2	Ansprechpartnerin	Weber|Frau Weber	-	-	nein	-	GILT	Zustand; Rollennomen mit „die“
+R03	R	3	Ansprechpartner	Referenten	-	-	nein	-	GILT	Zustand; Mehrzahl ohne Artikel
+R04	R	4	Förderung	Darlehen	-	-	ja	-	GILT	Zustand; „keine“: verneint und Begleiter KEIN
+R05	R	5	Bewilligungsstelle	Prüfstelle	-	-	ja	-	GILT	Zustand; „nicht die“: verneint und BESTIMMT
+R06	R	6	Partner	Kammer	-	-	nein	-	GILT	Zustand; „unser“: SONSTIGER
+R07	R	7	Sachbearbeiter	Klein|Herr Klein	-	-	nein	-	GILT	Zustand; Rollennomen ohne Artikel
+R08	R	8	Träger	Bewilligungsstelle	-	-	nein	-	GILT	Zustand; Rollennomen mit „der“

@@ -1,0 +1,88 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/H@heute
+# sent_id = 1
+# text = Eine Rahmenvereinbarung ist ein Vertrag mit festen Preisen.
+1	Eine	ein	DET	_	_	2	det	_	_
+2	Rahmenvereinbarung	rahmenvereinbarung	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	ein	ein	DET	_	_	5	det	_	_
+5	Vertrag	vertrag	NOUN	_	_	0	root	_	_
+6	mit	mit	ADP	_	_	8	case	_	_
+7	festen	fest	ADJ	_	_	8	amod	_	_
+8	Preisen	preis	NOUN	_	_	5	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 2
+# text = Der Lagerleiter ist Vertreter des Einkäufers.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerleiter	lagerleiter	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Vertreter	vertreter	NOUN	_	_	0	root	_	_
+5	des	der	DET	_	_	6	det	_	_
+6	Einkäufers	einkäufer	NOUN	_	_	4	nmod	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 3
+# text = Die Einkaufsabteilung ist die Vergabestelle des Hauses.
+1	Die	der	DET	_	_	2	det	_	_
+2	Einkaufsabteilung	einkaufsabteilung	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Vergabestelle	vergabestelle	NOUN	_	_	0	root	_	_
+6	des	der	DET	_	_	7	det	_	_
+7	Hauses	haus	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 4
+# text = Ein Angebot ist keine Bestellung.
+1	Ein	ein	DET	_	_	2	det	_	_
+2	Angebot	angebot	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	keine	kein	DET	_	_	5	det	_	_
+5	Bestellung	bestellung	NOUN	_	_	0	root	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 5
+# text = Lieferanten sind Vertragspartner des Hauses.
+1	Lieferanten	lieferant	NOUN	_	_	3	nsubj	_	_
+2	sind	sein	AUX	_	_	3	cop	_	_
+3	Vertragspartner	vertragspartner	NOUN	_	_	0	root	_	_
+4	des	der	DET	_	_	5	det	_	_
+5	Hauses	haus	NOUN	_	_	3	nmod	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 6
+# text = Der Mindestbestand ist eine Kennzahl, die das Lagersystem überwacht.
+1	Der	der	DET	_	_	2	det	_	_
+2	Mindestbestand	mindestbestand	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	eine	ein	DET	_	_	5	det	_	_
+5	Kennzahl	kennzahl	NOUN	_	_	0	root	_	SpaceAfter=No
+6	,	,	PUNCT	_	_	10	punct	_	_
+7	die	der	PRON	_	_	10	nsubj	_	_
+8	das	der	DET	_	_	9	det	_	_
+9	Lagersystem	lagersystem	NOUN	_	_	10	obj	_	_
+10	überwacht	überwacht	VERB	_	_	5	acl:relcl	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 7
+# text = Das Außenlager war früher eine Werkstatt.
+1	Das	der	DET	_	_	2	det	_	_
+2	Außenlager	außenlager	NOUN	_	_	6	nsubj	_	_
+3	war	sein	AUX	_	_	6	cop	_	_
+4	früher	früher	ADJ	_	_	6	amod	_	_
+5	eine	ein	DET	_	_	6	det	_	_
+6	Werkstatt	werkstatt	NOUN	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 8
+# text = Der Einkäufer wird Leiter der Abteilung.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	0	root	_	_
+3	wird	werden	AUX	_	_	2	cop	_	_
+4	Leiter	leiter	NOUN	_	_	2	nsubj	_	_
+5	der	der	DET	_	_	6	det	_	_
+6	Abteilung	abteilung	NOUN	_	_	4	nmod	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	2	punct	_	_
+

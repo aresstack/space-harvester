@@ -177,6 +177,16 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   `PUT /{id}/category`. Der Dienst hat keinen Wissensgraphen: keine Regelphase, keine Teilzahlen, 503 ohne Modell.
 - Schnittstelle für den Glossar-Reiter: `docs/fachlogik/glossar-schnittstelle.md`.
 
+## Umsetzung FL5b-2c (fertige Sicht des Glossar-Reiters)
+
+- `GlossaryOverview#view(caller, PageSelection, Query, cancelled)`: Einträge des Geltungsbereichs, in dem die Auswahl
+  liegt, mit der Wichtigkeit über die Seiten der Auswahl verknüpft, sortiert (ohne Wichtigkeit hinten, alphabetisch),
+  nach Kategorie, Status und Suchtext gefiltert, mit Zahlen je Kategorie und je Status für die Chips, `pages` und
+  `stalePages`. Die Sicht hält das Ergebnis der Ableitung und beantwortet `term(normalized)` ohne neues Rechnen.
+- Nichts gespeichert, abbrechbar; 5000 Seiten mit 500 Einträgen rund 0,4 s im Container. Der Reiter rechnet nichts
+  selbst; neu geholt wird bei Glossar-Änderung, Auswahlwechsel und Ende von `STATEMENT_ANALYSIS`, `STATEMENT_CHECK` (sobald auf main),
+  `GLOSSARY`.
+
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
   [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).

@@ -95,3 +95,24 @@ G05	G	5	liefern	Lieferant	Ware	-	nein	-	FRUEHER	Präteritum Vollverb
 G06	G	6	erweitern	-	Lager	-	nein	-	FRUEHER	Passiv Präteritum „wurde“
 G07	G	7	verschieben	Lagerleiter	Inventur	-	nein	KANN	GILT	Konjunktiv II „könnte“: KANN, nicht FRUEHER
 G08	G	8	vergeben	Einkaufsabteilung	Auftrag	-	nein	-	FRUEHER	Plusquamperfekt
+# Text H (Begriffsbestimmung und Rolle, 17.11.2026, 04:20 MEZ): von Hand festgelegt, BEVOR der Artikel am Rollennomen gebaut war. Erwarteter Artikel je Zeile in artikel.tsv.
+H01	H	1	Vertrag	Rahmenvereinbarung	-	-	nein	-	GILT	Zustand; Begriffsbestimmung „ist ein“
+H02	H	2	Vertreter	Lagerleiter	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel
+H03	H	3	Vergabestelle	Einkaufsabteilung	-	-	nein	-	GILT	Zustand; Gleichsetzung „ist die“
+H04	H	4	Bestellung	Angebot	-	-	ja	-	GILT	Zustand; verneint durch „keine“
+H05	H	5	Vertragspartner	Lieferanten	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Mehrzahl
+H06	H	6	Kennzahl	Mindestbestand	-	-	nein	-	GILT	Zustand; Begriffsbestimmung mit Relativsatz
+H07	H	6	überwachen	Lagersystem	Kennzahl	-	nein	-	GILT	Relativpronomen „die“ = Kennzahl
+H08	H	7	Werkstatt	Außenlager	-	-	nein	-	FRUEHER	Zustand; „war früher eine“
+H09	H	8	Leiter	Einkäufer	-	-	nein	-	GILT	Zustand; „werden“ mit Rollennomen (Zustandswechsel)
+# Text I (Begriffe mit trügerischem Wortende, 17.11.2026, 04:40 MEZ): von Hand festgelegt, BEVOR die Ableitung der Begriffe (FL5) darüber lief. Einordnung in begriffe.tsv.
+I01	I	1	verursachen	Transport	Kosten	-	nein	-	GILT	
+I02	I	2	tragen	Kostenstelle	Ausgaben	-	nein	-	GILT	
+I03	I	3	bestimmen	Preisindex	Aufschlag	-	nein	-	GILT	
+I04	I	4	gewichten	Punktesystem	Preis	-	nein	-	GILT	
+I05	I	5	nennen	Monatsreport	Bestellungen	-	nein	-	GILT	
+I06	I	6	annehmen	Poststelle	Pakete	-	nein	-	GILT	abgetrennte Verbpartikel
+I07	I	7	umfassen	Lieferantennetzwerk	Firmen	-	nein	-	GILT	
+I08	I	8	erhalten	Stammkunde	Rabatt	-	nein	-	GILT	
+I09	I	9	brauchen	Export	Genehmigung	-	nein	-	GILT	„der Ware“ ist Genitiv am Export
+I10	I	10	abzeichnen	Sachgebietsleiter	Rechnung	-	nein	-	GILT	abgetrennte Verbpartikel

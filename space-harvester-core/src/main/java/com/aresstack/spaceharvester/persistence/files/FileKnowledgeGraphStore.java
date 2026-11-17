@@ -326,6 +326,9 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 entry.put("negation", statement.features().negation().name());
                 entry.put("modality", statement.features().modality().name());
                 entry.put("temporality", statement.features().temporality().name());
+                if (statement.features().article() != null) {
+                    entry.put("article", statement.features().article().name()); // ADR 0032, rules-13
+                }
             }
             if (statement.derivation().origin() != ParsedStatements.Origin.ORIGINAL) {
                 // ADR 0032, FL3: nur bei Aussagen der Vorstufe; fehlt das Feld, stammt die Aussage aus dem Original
@@ -423,7 +426,9 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                     enumOr(ParsedStatements.Negation.class, entry, "negation", ParsedStatements.Negation.UNKNOWN),
                     enumOr(ParsedStatements.Modality.class, entry, "modality", ParsedStatements.Modality.UNKNOWN),
                     enumOr(ParsedStatements.Temporality.class, entry, "temporality",
-                            ParsedStatements.Temporality.UNKNOWN)), derivation, check(entry.path("check")));
+                            ParsedStatements.Temporality.UNKNOWN),
+                    enumOr(ParsedStatements.Article.class, entry, "article", null)), derivation,
+                    check(entry.path("check")));
             statements.add(statement);
         }
         List<ParsedStatements.Attachment> attachments = new ArrayList<>();

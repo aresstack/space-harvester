@@ -158,6 +158,23 @@ class KnowledgeGraphExportUseCaseTest {
     }
 
     @Test
+    void theArticleOfARoleNounIsExportedOnlyWhenKnown() throws Exception {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt nicht den Beleg.");
+        run(new Scope.Page("wiki", "1"));
+        assertThat(nodes(read(), "Statement")).singleElement().satisfies(node -> assertThat(
+                node.has("roleNounArticle")).isFalse());
+
+        parser.article = ParsedStatements.Article.KEIN;
+        analyse("wiki", "2", "Die Stelle übermittelt den Antrag.");
+        Files.list(out).forEach(path -> path.toFile().delete());
+        run(new Scope.Page("wiki", "2"));
+        JsonNode doc = read();
+        assertThat(nodes(doc, "Statement")).singleElement().satisfies(node -> assertThat(
+                node.path("roleNounArticle").asString()).isEqualTo("KEIN"));
+        assertThat(doc.path("@context").toString()).contains("\"roleNounArticle\":\"sh:roleNounArticle\"");
+    }
+
+    @Test
     void stageStatementsCarryOriginFlagAndSimplifiedSentenceAndOriginalsNone() throws Exception {
         analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
         run(new Scope.Page("wiki", "1"));

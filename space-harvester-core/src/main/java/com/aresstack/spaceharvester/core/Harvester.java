@@ -25,6 +25,8 @@ import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
 import com.aresstack.spaceharvester.application.changelog.TextContentDiffer;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
+import com.aresstack.spaceharvester.application.check.StatementCheckStore;
+import com.aresstack.spaceharvester.application.check.StatementChecks;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
@@ -349,6 +351,7 @@ public final class Harvester implements AutoCloseable {
     private final ConnectionBudget connections;
     private final PageImageAnalysis imageAnalysis;
     private final Simplifications simplifications;
+    private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
@@ -919,15 +922,25 @@ public final class Harvester implements AutoCloseable {
                     () -> this.settings.simplification().model(), catalog, trustBundles, builder.userAgent),
                     new SimplificationStore(enrichmentStore, clock), withdrawn::mayProcess);
             Simplifications simplified = this.simplifications;
+            // ADR 0032, FL4: Prüfschritt nur auf Auftrag, gleicher Modellweg wie die Vorstufe (Temperatur 0, abgeschnitten
+            // = Fehler), an das Modell nur Seiten mit KI-Freigabe; seine Ablage zählt als Seiteninhalt.
+            this.statementChecks = new StatementChecks(new ChatStepModel(ChatStepModel.CHECK,
+                    () -> liveAi ? this.settings.ai() : startAi,
+                    () -> this.settings.check().model(), catalog, trustBundles, builder.userAgent),
+                    new StatementCheckStore(enrichmentStore, clock), withdrawn::mayProcess);
+            StatementChecks checked = this.statementChecks;
             java.util.concurrent.atomic.AtomicReference<StatementAnalysis> graphAnalysis =
                     new java.util.concurrent.atomic.AtomicReference<>();
             releaseRecomputation.withdrawal(pages -> {
                 pageImages.withdraw(pages, withdrawn::mayProcess);
                 simplified.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                checked.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 // ADR 0032, FL3: Aussagen der Vorstufe tragen Modelltext der Seite und fallen aus dem Graph
                 StatementAnalysis graph = graphAnalysis.get();
                 if (graph != null) {
                     graph.withdrawStage(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                    // ADR 0032, FL4: Urteile und Korrekturen fallen weg, die Aussagen stehen wie vor dem Prüflauf
+                    graph.withdrawChecks(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 }
                 documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
@@ -946,7 +959,7 @@ public final class Harvester implements AutoCloseable {
                 }
             };
             this.statementAnalysis = new StatementAnalysis(readerText, graphStore, access, () -> statementAnalyzer,
-                    clock, simplified);
+                    clock, simplified, checked);
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
@@ -954,7 +967,7 @@ public final class Harvester implements AutoCloseable {
             // ADR 0032, FL5b: Teilzahlen der Begriffsableitung je Aufrufer für den Glossar-Reiter.
             this.glossaryOverview = new com.aresstack.spaceharvester.application.glossary.GlossaryOverview(
                     knowledgeGraph::analysed,
-                    () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules());
+                    () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules(), glossary);
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
@@ -1675,6 +1688,11 @@ public final class Harvester implements AutoCloseable {
     /** Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3): Modellaufruf und Ablage je Satz, nur für freigegebene Seiten. */
     public Simplifications simplifications() {
         return simplifications;
+    }
+
+    /** Prüfschritt (ADR 0032, FL4): Modellaufruf und Ablage je Aussage, nur für freigegebene Seiten. */
+    public StatementChecks statementChecks() {
+        return statementChecks;
     }
 
     /**

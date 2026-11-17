@@ -1,0 +1,80 @@
+# Erfundene Gold-Analysen zum Begleiter des Rollennomens (ADR 0032, rules-13).
+# sent_id = 1
+# text = Die Stelle ist eine Behörde.
+1	Die	der	DET	_	_	2	det	_	_
+2	Stelle	Stelle	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	eine	ein	DET	_	_	5	det	_	_
+5	Behörde	Behörde	NOUN	_	_	0	root	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 2
+# text = Frau Weber ist die Ansprechpartnerin.
+1	Frau	Frau	NOUN	_	_	5	nsubj	_	_
+2	Weber	Weber	PROPN	_	_	1	flat	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Ansprechpartnerin	Ansprechpartnerin	NOUN	_	_	0	root	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 3
+# text = Herr Klein ist Sachbearbeiter.
+1	Herr	Herr	NOUN	_	_	4	nsubj	_	_
+2	Klein	Klein	PROPN	_	_	1	flat	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Sachbearbeiter	Sachbearbeiter	NOUN	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 4
+# text = Das Vorhaben ist keine Förderung.
+1	Das	der	DET	_	_	2	det	_	_
+2	Vorhaben	Vorhaben	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	keine	kein	DET	_	_	5	det	_	_
+5	Förderung	Förderung	NOUN	_	_	0	root	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 5
+# text = Die Prüfstelle ist nicht die Bewilligungsstelle.
+1	Die	der	DET	_	_	2	det	_	_
+2	Prüfstelle	Prüfstelle	NOUN	_	_	6	nsubj	_	_
+3	ist	sein	AUX	_	_	6	cop	_	_
+4	nicht	nicht	PART	_	_	6	advmod	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Bewilligungsstelle	Bewilligungsstelle	NOUN	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 6
+# text = Die Referenten sind Ansprechpartner.
+1	Die	der	DET	_	_	2	det	_	_
+2	Referenten	Referent	NOUN	_	_	4	nsubj	_	_
+3	sind	sein	AUX	_	_	4	cop	_	_
+4	Ansprechpartner	Ansprechpartner	NOUN	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 7
+# text = Die Kammer ist unser Partner.
+1	Die	der	DET	_	_	2	det	_	_
+2	Kammer	Kammer	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	unser	unser	DET	_	_	5	det:poss	_	_
+5	Partner	Partner	NOUN	_	_	0	root	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 8
+# text = Der Antrag ist vollständig.
+1	Der	der	DET	_	_	2	det	_	_
+2	Antrag	Antrag	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	vollständig	vollständig	ADJ	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 9
+# text = Die Stelle prüft den Antrag.
+1	Die	der	DET	_	_	2	det	_	_
+2	Stelle	Stelle	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Antrag	Antrag	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+

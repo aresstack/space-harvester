@@ -1,0 +1,95 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/R@heute
+# sent_id = 1
+# text = Die Prüfstelle ist eine Behörde des Bundes.
+1	Die	der	DET	_	_	2	det	_	_
+2	Prüfstelle	prüfstelle	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	eine	ein	DET	_	_	5	det	_	_
+5	Behörde	behörde	NOUN	_	_	0	root	_	_
+6	des	der	DET	_	_	7	det	_	_
+7	Bundes	bund	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 2
+# text = Frau Weber ist die Ansprechpartnerin für Rückfragen.
+1	Frau	frau	NOUN	_	_	2	compound	_	_
+2	Weber	weber	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Ansprechpartnerin	ansprechpartnerin	NOUN	_	_	0	root	_	_
+6	für	für	ADP	_	_	7	case	_	_
+7	Rückfragen	rückfrage	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 3
+# text = Die Referenten sind Ansprechpartner der Antragsteller.
+1	Die	der	DET	_	_	2	det	_	_
+2	Referenten	referent	NOUN	_	_	4	nsubj	_	_
+3	sind	sein	AUX	_	_	4	cop	_	_
+4	Ansprechpartner	ansprechpartner	NOUN	_	_	0	root	_	_
+5	der	der	DET	_	_	6	det	_	_
+6	Antragsteller	antragsteller	NOUN	_	_	4	nmod	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 4
+# text = Das Darlehen ist keine Förderung im Sinne der Richtlinie.
+1	Das	der	DET	_	_	2	det	_	_
+2	Darlehen	darlehen	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	keine	kein	DET	_	_	5	det	_	_
+5	Förderung	förderung	NOUN	_	_	0	root	_	_
+6-7	im	_	_	_	_	_	_	_	_
+6	in	in	ADP	_	_	8	case	_	_
+7	dem	der	DET	_	_	8	det	_	_
+8	Sinne	sinn	NOUN	_	_	5	nmod	_	_
+9	der	der	DET	_	_	10	det	_	_
+10	Richtlinie	richtlinie	NOUN	_	_	8	nmod	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 5
+# text = Die Prüfstelle ist nicht die Bewilligungsstelle.
+1	Die	der	DET	_	_	2	det	_	_
+2	Prüfstelle	prüfstelle	NOUN	_	_	6	nsubj	_	_
+3	ist	sein	AUX	_	_	6	cop	_	_
+4	nicht	nicht	PART	_	_	6	advmod	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 6
+# text = Die Kammer ist unser Partner bei der Beratung.
+1	Die	der	DET	_	_	2	det	_	_
+2	Kammer	kammer	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	unser	unser	DET	_	_	5	det:poss	_	_
+5	Partner	partner	NOUN	_	_	0	root	_	_
+6	bei	bei	ADP	_	_	8	case	_	_
+7	der	der	DET	_	_	8	det	_	_
+8	Beratung	beratung	NOUN	_	_	5	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 7
+# text = Herr Klein ist Sachbearbeiter im Referat.
+1	Herr	herr	NOUN	_	_	2	compound	_	_
+2	Klein	klein	PROPN	_	_	7	nsubj	_	_
+3	ist	sein	AUX	_	_	7	cop	_	_
+4	Sachbearbeiter	sachbearbeiter	PROPN	_	_	7	nsubj	_	_
+5-6	im	_	_	_	_	_	_	_	_
+5	in	in	ADP	_	_	7	case	_	_
+6	dem	der	DET	_	_	7	det	_	_
+7	Referat	referat	NOUN	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 8
+# text = Die Bewilligungsstelle ist der Träger des Programms.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	der	der	DET	_	_	5	det	_	_
+5	Träger	träger	NOUN	_	_	0	root	_	_
+6	des	der	DET	_	_	7	det	_	_
+7	Programms	programms	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	5	punct	_	_
+

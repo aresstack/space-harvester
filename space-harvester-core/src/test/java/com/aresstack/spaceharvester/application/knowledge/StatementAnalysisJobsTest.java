@@ -405,6 +405,77 @@ class StatementAnalysisJobsTest {
                 .contains("0 Abschnitte mit Modellaufruf, 1 Sätze aus der Ablage"));
     }
 
+    @Test
+    void theCheckJobSendsOnlyReleasedCurrentPagesToTheModelAndReportsNumbersOnly() {
+        List<String> inputs = new java.util.concurrent.CopyOnWriteArrayList<>();
+        StepModel model = new StepModel() {
+            @Override
+            public String version() {
+                return "fake:m1";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String complete(String instructions, String input) {
+                inputs.add(input);
+                return "1|FALSCH\n";
+            }
+        };
+        com.aresstack.spaceharvester.application.check.StatementChecks checks =
+                new com.aresstack.spaceharvester.application.check.StatementChecks(model,
+                        new com.aresstack.spaceharvester.application.check.StatementCheckStore(
+                                new InMemoryEnrichmentStore(), StatementAnalysisTest.clock()),
+                        page -> !page.pageId().equals("2"));
+        StatementAnalysis withCheck = new StatementAnalysis(snapshot -> Optional.of(StatementAnalysisTest
+                .text(snapshot)), store, access, configured::get, StatementAnalysisTest.clock(), null, checks);
+        StatementAnalysisJobs checkJobs = new StatementAnalysisJobs(jobs, tree,
+                (caller, sourceId, pageId) -> page(sourceId, pageId), withCheck, access, "desktop");
+        tree.space("wiki", "DEV", "1", "2", "3");
+        // Seiten 1 und 2 analysiert, Seite 3 nicht; Seite 2 ohne KI-Freigabe
+        run(new StatementAnalysisJobs.Scope.SinglePage("wiki", "DEV", "1"), StatementAnalysisJobs.Options.DEFAULT);
+        run(new StatementAnalysisJobs.Scope.SinglePage("wiki", "DEV", "2"), StatementAnalysisJobs.Options.DEFAULT);
+        assertThat(checkJobs.checkAvailable()).isTrue();
+
+        JobStatus done = jobs.status(checkJobs.startCheck(CALLER, new StatementAnalysisJobs.Scope.Space("wiki", "DEV"),
+                new StatementAnalysisJobs.CheckOptions(0,
+                        com.aresstack.spaceharvester.application.check.CheckScope.ALL, 2)).id());
+
+        assertThat(done.type()).isEqualTo(JobType.STATEMENT_CHECK);
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.progress()).as("ermittelt, erledigt, geprüft, gescheitert")
+                .isEqualTo(new JobProgress(3, 3, 1, 0));
+        assertThat(inputs).isNotEmpty().allSatisfy(input -> assertThat(input).contains("Sachbearbeiter 1")
+                .doesNotContain("Sachbearbeiter 2"));
+        assertThat(store.find(new PageKey("wiki", "1")).orElseThrow().result().statements())
+                .allSatisfy(statement -> assertThat(statement.check().verdict())
+                        .isEqualTo(ParsedStatements.Verdict.FALSCH));
+        assertThat(store.find(new PageKey("wiki", "2")).orElseThrow().result().statements())
+                .allSatisfy(statement -> assertThat(statement.check()).isNull());
+        assertThat(store.find(new PageKey("wiki", "3"))).as("nicht nebenbei analysiert").isEmpty();
+        assertThat(jobs.events(done.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(StatementAnalysisJobs.CHECK_COSTS);
+            assertThat(event.message()).startsWith("Prüfschritt „alle Aussagen“: 3 Seiten ermittelt, 1 ohne aktuelle "
+                    + "Analyse; ").contains(" FALSCH, 0 ohne gültiges Urteil").doesNotContain("Sachbearbeiter");
+        });
+        assertThat(jobs.events(done.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(StatementAnalysisJobs.CHECK_NOT_RELEASED);
+            assertThat(event.message()).isEqualTo("1 Seiten ohne KI-Freigabe nicht geprüft");
+        });
+    }
+
+    @Test
+    void withoutAModelTheCheckJobDoesNotStart() {
+        assertThat(batch.checkAvailable()).isFalse();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> batch.startCheck(CALLER,
+                new StatementAnalysisJobs.Scope.Space("wiki", "DEV"), StatementAnalysisJobs.CheckOptions.of(0,
+                        com.aresstack.spaceharvester.application.configuration.CheckSettings.DEFAULT)))
+                .isInstanceOf(com.aresstack.spaceharvester.application.check.CheckUnavailableException.class);
+    }
+
     private JobStatus run(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {
         return jobs.status(batch.start(CALLER, scope, options).id());
     }
