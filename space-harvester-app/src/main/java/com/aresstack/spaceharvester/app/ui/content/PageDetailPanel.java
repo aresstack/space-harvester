@@ -113,10 +113,8 @@ public final class PageDetailPanel extends JPanel {
     /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
     private static final String SOURCE_CARD = "source";
     static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
-    static final String EMPTY_SOURCE = "Für eine Wissensquelle gibt es hier nichts. Ihre Änderungen stehen unter "
-            + "„Updates“.";
-    /** Name des ersten Hauptreiters, solange eine Quelle gewählt ist (sonst „Leseansicht“). */
-    static final String UPDATES = "Updates";
+    /** Die übrigen Reiter der Quellenseite bleiben leer, bis sie Quelleninhalte zeigen; kein Hinweistext. */
+    static final String EMPTY_SOURCE = " ";
     private static final int READER_PADDING_TOP = 10;
 
     private final AppContext context;
@@ -578,7 +576,6 @@ public final class PageDetailPanel extends JPanel {
             // Keine Quellenseite mehr: Anmeldung beim Änderungsprotokoll endet, die leere Karte nennt wieder die Seite.
             sourceView.source(null, null);
             empty.setText(EMPTY_PAGE);
-            nameFirstTab(false);
         }
         pageCard = card;
         showDeck();
@@ -586,6 +583,8 @@ public final class PageDetailPanel extends JPanel {
 
     private void showDeck() {
         String selected = tabs.selected();
+        // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
+        sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected));
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
             // Auf der Quellenseite zeigt nur „Leseansicht“ etwas (die Updates); die übrigen Seitenreiter bleiben leer.
@@ -603,24 +602,8 @@ public final class PageDetailPanel extends JPanel {
         title.setText(sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
         empty.setText(EMPTY_SOURCE);
         sourceView.source(sourceId, sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
-        nameFirstTab(true);
         pageCard = SOURCE_CARD;
         showDeck();
-    }
-
-    /**
-     * Der erste Hauptreiter heißt auf der Quellenseite „Updates“ (Symbol: Kreispfeile), sonst „Leseansicht“; Tooltip,
-     * zugänglicher Name und Symbol wechseln, die Umschaltung bleibt dieselbe.
-     */
-    private void nameFirstTab(boolean source) {
-        javax.swing.AbstractButton first = tabs.button(READING);
-        if (first == null) {
-            return;
-        }
-        String name = source ? UPDATES : READING;
-        first.setIcon(source ? PageTabIcons.updates() : PageTabIcons.reading());
-        first.setToolTipText(name);
-        first.getAccessibleContext().setAccessibleName(name);
     }
 
     /** Zeigt den Reiter „Updates“ der Quellenseite (Doppelklick auf eine Quelle). */
@@ -2010,9 +1993,12 @@ public final class PageDetailPanel extends JPanel {
         return heading;
     }
 
-    /** Stern und das Dreieck mit den weiteren Aktionen, rechts in der Zeile der Bereichsanzeige. */
+    /**
+     * Stern und das Dreieck mit den weiteren Aktionen, rechts in der Zeile der Bereichsanzeige; auf der Quellenseite
+     * links davon die Werkzeuge der Updates (keine eigene Leiste, Angelo 17.11.2026).
+     */
     JComponent headerActions() {
-        return Comic.row(star, more);
+        return Comic.row(sourceView.tools(), star, more);
     }
 
     /** Zurück und Vor für die Statuszeile des Hauptfensters. */

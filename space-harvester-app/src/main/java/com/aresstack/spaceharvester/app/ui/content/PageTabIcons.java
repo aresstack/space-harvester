@@ -20,11 +20,6 @@ final class PageTabIcons {
         return ComposerIcons.openBook();
     }
 
-    /** Updates der Quellenseite (ADR 0030): die Kreispfeile. */
-    static Icon updates() {
-        return ComposerIcons.refresh();
-    }
-
     /** Text: das Blatt mit Zeilen. */
     static Icon text() {
         return ComposerIcons.document();

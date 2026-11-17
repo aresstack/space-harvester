@@ -286,6 +286,7 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().shownPage())).isNotNull();
 
         // Die Wurzel derselben Quelle gewählt: Die Seitenreiter zeigen nicht mehr die vorige Seite, Export folgt.
+        javax.swing.Icon[] bar = onEdt(() -> barIcons(view.detail()));
         onEdt(() -> {
             view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
             return null;
@@ -295,7 +296,11 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().showsSource())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceView().sourceId())).isEqualTo("handbuch");
         assertThat(onEdt(() -> view.detail().tabs().button("Leseansicht").getToolTipText()))
-                .as("der erste Reiter heißt auf der Quellenseite „Updates“").isEqualTo("Updates");
+                .as("die Reiterleiste bleibt überall gleich").isEqualTo("Leseansicht");
+        assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible()))
+                .as("Werkzeuge der Updates in der gemeinsamen Kopfzeile").isTrue();
+        assertThat(onEdt(() -> barIcons(view.detail()))).as("die Symbole der Reiterleiste bleiben überall gleich")
+                .containsExactly(bar);
         assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
                 .isTrue();
         onEdt(() -> {
@@ -303,6 +308,7 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> view.detail().sourceView().isVisible())).as("übrige Reiter leer").isFalse();
+        assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
         onEdt(() -> {
             view.detail().tabs().select("Leseansicht");
             return null;
@@ -322,7 +328,14 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().shownPage())).isNull();
         assertThat(onEdt(() -> view.detail().showsSource())).as("ein Space hat keine Quellenseite").isFalse();
         assertThat(onEdt(() -> view.detail().sourceView().sourceId())).as("Anmeldung beendet").isNull();
+        assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
         assertThat(onEdt(() -> view.detail().tabs().button("Leseansicht").getToolTipText())).isEqualTo("Leseansicht");
+        assertThat(onEdt(() -> barIcons(view.detail()))).containsExactly(bar);
+    }
+
+    private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
+        return java.util.stream.Stream.of("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert",
+                "Export", "Chat").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 
     @Test

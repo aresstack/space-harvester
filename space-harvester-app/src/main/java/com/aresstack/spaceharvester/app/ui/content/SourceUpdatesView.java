@@ -6,7 +6,6 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ScrollColumn;
-import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 import com.aresstack.spaceharvester.application.changelog.ChangeKind;
 import com.aresstack.spaceharvester.application.changelog.ChangeLogListener;
@@ -55,13 +54,14 @@ import java.util.function.Supplier;
  */
 final class SourceUpdatesView extends JPanel {
 
-    static final String NO_UPDATES = "Für diese Quelle ist noch keine Änderung festgehalten. Ein Update entsteht mit "
-            + "jeder manuellen Synchronisierung; was im Hintergrund dazukommt, zählt zum nächsten.";
+    /** Kein Hinweistext in der Ansicht; wie Updates entstehen, steht hinter dem ?-Knopf. */
+    static final String NO_UPDATES = "Noch keine Updates.";
     static final String NO_PAGES = "In diesem Update gibt es keine Änderung, die du sehen darfst.";
     static final String NOT_RUNNING = "Die Updates erscheinen, sobald der Dienst läuft.";
-    static final String HELP = "Ein Update ist alles, was sich in der Quelle seit der vorigen manuellen "
-            + "Synchronisierung geändert hat, auch was im Hintergrund geholt wurde. Oben steht, was seit dem letzten "
-            + "Update dazugekommen ist; es zählt zum nächsten. Ein Klick auf eine Seite öffnet sie.\n\n"
+    static final String HELP = "Ein Update entsteht mit jeder manuellen Synchronisierung und umfasst alles, was sich in "
+            + "der Quelle seit der vorigen geändert hat, auch was im Hintergrund geholt wurde. Oben in der Liste steht, "
+            + "was seit dem letzten Update dazugekommen ist; es zählt zum nächsten. Ein Klick auf eine Seite öffnet "
+            + "sie.\n\n"
             + "„Zusammenfassen“ lässt das eingestellte Chat-Modell das gewählte Update in wenigen Sätzen "
             + "zusammenfassen. Es liest nur Seiten, die für die KI freigegeben sind; die Zusammenfassung bleibt "
             + "gespeichert und lässt sich später nachlesen oder neu erstellen. Von selbst wird nie zusammengefasst.";
@@ -75,7 +75,11 @@ final class SourceUpdatesView extends JPanel {
 
     private final Supplier<Actions> actions;
     private final Runner runner;
-    private final TabHeader head = new TabHeader("Updates");
+    /**
+     * Werkzeuge der Ansicht (Zusammenfassen, Kopieren, Hilfe); keine eigene Kopfzeile, sie stehen in der gemeinsamen
+     * Kopfzeile links neben dem Favoritenstern (Angelo, 17.11.2026).
+     */
+    private final JPanel tools = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
     private final JPanel list = new JPanel();
     private final ScrollColumn report = new ScrollColumn(new BorderLayout());
     private final JPanel reportBody = new JPanel();
@@ -122,7 +126,9 @@ final class SourceUpdatesView extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         // Keine Hinweistexte in der Ansicht: die Erklärung steht hinter dem ?-Knopf oben rechts.
-        head.tool(summarize).copy(this::copyText);
+        tools.setOpaque(false);
+        tools.add(summarize);
+        tools.add(new com.aresstack.spaceharvester.app.ui.controls.CopyButton(this::copyText));
         summarize.addActionListener(e -> summarize());
         summarizeEntry.setFont(Comic.semiBold(13f));
         summarizeEntry.setForeground(Comic.BLUE);
@@ -130,7 +136,7 @@ final class SourceUpdatesView extends JPanel {
         summarizeEntry.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
         clickable(this::summarize, "Das Chat-Modell fasst dieses Update zusammen; nur Seiten mit KI-Freigabe",
                 summarizeEntry);
-        head.tool(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
+        tools.add(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
 
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
         list.setOpaque(false);
@@ -145,13 +151,17 @@ final class SourceUpdatesView extends JPanel {
         report.setOpaque(false);
         report.add(reportBody, BorderLayout.NORTH);
 
-        add(head, BorderLayout.NORTH);
         add(listScroll, BorderLayout.WEST);
         reportScroll = Comic.scroll(report);
         busy = new BusyOverlay(reportScroll);
         busy.onCancel(this::cancelSummary);
         add(busy, BorderLayout.CENTER);
         source(null, null);
+    }
+
+    /** Die Werkzeuge für die gemeinsame Kopfzeile. */
+    JComponent tools() {
+        return tools;
     }
 
     /** {@code listener} bekommt Meldungen für die Statuszeile des Hauptfensters. */
@@ -179,7 +189,6 @@ final class SourceUpdatesView extends JPanel {
         summary = null;
         forgetRun();
         offerSummary();
-        head.title(title == null || title.isBlank() ? "Updates" : "Updates · " + title);
         list.removeAll();
         if (id == null) {
             message(" ");
