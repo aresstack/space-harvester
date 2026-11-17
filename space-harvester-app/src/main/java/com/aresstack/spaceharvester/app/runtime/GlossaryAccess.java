@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.application.glossary.GlossaryDerivation;
+import com.aresstack.spaceharvester.application.glossary.GlossaryOverview;
+import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.terms.RelationEvidence;
 import com.aresstack.spaceharvester.application.terms.RelationOrigin;
@@ -8,8 +11,10 @@ import com.aresstack.spaceharvester.application.terms.TermQueries;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 /**
  * Das Fachglossar aus Sicht der App (#122 Stufe 2, Spezifikation Abschnitt 2): dauerhaft gepflegte Glossareinträge
@@ -161,15 +166,58 @@ public interface GlossaryAccess {
     }
 
     /**
-     * Beobachter für die Aufträge „Fachbegriffe ermitteln“ (ADR 0027): meldet jeden neuen Stand eines Auftrags aus
-     * beliebigem Thread, statt dass der Reiter ihn in Abständen liest. Erst anmelden, dann {@link #classification}.
+     * Beobachter für alle sichtbaren Aufträge dieser App (ADR 0027): jeder neue Stand und jedes Ereignis aus beliebigem
+     * Thread, statt dass der Reiter in Abständen liest. Der Reiter liest neu, wenn „Fachbegriffe ermitteln“, „Aussagen
+     * analysieren“ oder „Aussagen prüfen“ endet, und meldet die bewusst ausgelassene Modellphase
+     * ({@code GLOSSARY_MODEL_SKIPPED}). Erst anmelden, dann {@link #classification}.
      *
      * @return meldet den Beobachter wieder ab
      */
-    default Runnable observeJobs(java.util.function.Consumer<JobStatus> onChange) {
+    default Runnable watchJobs(com.aresstack.spaceharvester.application.jobs.JobListener listener) {
         return () -> {
         };
     }
+
+    /**
+     * Eine Zeile der fertigen Sicht des Reiters ({@code GlossaryOverview.ViewRow}): der Eintrag mit seiner Wichtigkeit
+     * in der Auswahl ({@code null}, wenn die Ableitung ihn dort nicht kennt) und seiner Einordnung.
+     */
+    record Row(Entry entry, GlossaryDerivation.Importance importance, GlossaryDerivation.Category category) {
+
+        public Row {
+            Objects.requireNonNull(entry, "entry");
+            Objects.requireNonNull(category, "category");
+        }
+    }
+
+    /**
+     * Die fertige Sicht des Reiters ({@code GlossaryOverview.View}): sortiert, gefiltert und gezählt vom Core.
+     *
+     * @param held die Sicht des Core zum Verfeinern und für die Einzelheiten je Begriff; {@code null} in Tests
+     */
+    record Overview(List<Row> rows, Map<GlossaryDerivation.Category, Integer> byCategory,
+                    Map<ReviewStatus, Integer> byStatus, int pages, int stalePages, GlossaryOverview.View held) {
+
+        public Overview {
+            rows = List.copyOf(rows);
+            byCategory = Map.copyOf(byCategory);
+            byStatus = Map.copyOf(byStatus);
+        }
+    }
+
+    /**
+     * Volle Sicht über die links gewählte Auswahl ({@code GlossaryOverview#view} mit {@code PageSelection}): bei neuer
+     * Auswahl und am Ende eines Auftrags. {@code selection} {@code null} heißt alle Quellen.
+     *
+     * @throws java.util.concurrent.CancellationException sobald {@code cancelled} zutrifft
+     */
+    Overview overview(Selection selection, GlossaryOverview.Query query, BooleanSupplier cancelled);
+
+    /**
+     * Verfeinern mit der gehaltenen Sicht ({@code GlossaryOverview#view} mit voriger Sicht): andere Suche, anderer
+     * Filter oder eine Meldung des Glossars; die Ableitung wird nicht neu gerechnet.
+     */
+    Overview refine(Overview previous, GlossaryOverview.Query query, BooleanSupplier cancelled);
 
     /** Kontext einer Belegstelle, leer wenn die Seite fehlt, nicht sichtbar oder inzwischen anders ist. */
     Optional<TermQueries.Snippet> snippet(RelationEvidence evidence, int chars);

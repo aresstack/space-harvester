@@ -5,6 +5,8 @@ import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.glossary.GlossaryConflictException;
 import com.aresstack.spaceharvester.application.glossary.GlossaryEntry;
+import com.aresstack.spaceharvester.application.glossary.GlossaryOverview;
+import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.glossary.GlossaryUnavailableException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
@@ -18,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 /**
  * Das Fachglossar des Core ({@code Harvester.glossary()}, {@code glossaryClassification()}) mit den Rechten dieser App,
@@ -35,10 +38,16 @@ final class CoreGlossaryAccess implements GlossaryAccess {
 
     private final Harvester harvester;
     private final AccessContext caller;
+    private final java.util.function.Function<com.aresstack.spaceharvester.application.jobs.JobListener,
+            com.aresstack.spaceharvester.application.observe.Subscription> jobWatch;
 
-    CoreGlossaryAccess(Harvester harvester, AccessContext caller) {
+    /** @param jobWatch Anmeldung bei den sichtbaren Aufträgen der App ({@code Workspace#subscribeJobs}) */
+    CoreGlossaryAccess(Harvester harvester, AccessContext caller,
+                       java.util.function.Function<com.aresstack.spaceharvester.application.jobs.JobListener,
+                               com.aresstack.spaceharvester.application.observe.Subscription> jobWatch) {
         this.harvester = Objects.requireNonNull(harvester, "harvester");
         this.caller = Objects.requireNonNull(caller, "caller");
+        this.jobWatch = Objects.requireNonNull(jobWatch, "jobWatch");
     }
 
     @Override
@@ -155,16 +164,33 @@ final class CoreGlossaryAccess implements GlossaryAccess {
     }
 
     @Override
-    public Runnable observeJobs(java.util.function.Consumer<JobStatus> onChange) {
-        // Die Läufe gehören dem Aufrufer der App (wie classification), nicht dem Core-Eigentümer der Abgleiche.
-        com.aresstack.spaceharvester.application.observe.Subscription subscription = jobs().subscribe(
-                caller.jobOwner(), new com.aresstack.spaceharvester.application.jobs.JobListener() {
-                    @Override
-                    public void changed(JobStatus status) {
-                        onChange.accept(status);
-                    }
-                });
+    public Runnable watchJobs(com.aresstack.spaceharvester.application.jobs.JobListener listener) {
+        // Alle sichtbaren Aufträge der App (Core und Aufrufer), wie die Auftragsliste: auch „Aussagen analysieren“.
+        com.aresstack.spaceharvester.application.observe.Subscription subscription = jobWatch.apply(listener);
         return subscription::close;
+    }
+
+    @Override
+    public Overview overview(Selection selection, GlossaryOverview.Query query, BooleanSupplier cancelled) {
+        GlossaryOverview overview = harvester.glossaryOverview();
+        GlossaryOverview.View view = selection == null
+                ? overview.view(caller, RelationScope.GLOBAL, page -> true, query, cancelled)
+                : overview.view(caller, harvester.holdings().resolve(caller, selection), query, cancelled);
+        return overview(view);
+    }
+
+    @Override
+    public Overview refine(Overview previous, GlossaryOverview.Query query, BooleanSupplier cancelled) {
+        return overview(harvester.glossaryOverview().view(caller, previous.held(), query, cancelled));
+    }
+
+    static Overview overview(GlossaryOverview.View view) {
+        List<Row> rows = new ArrayList<>(view.rows().size());
+        for (GlossaryOverview.ViewRow row : view.rows()) {
+            rows.add(new Row(entry(row.entry()), row.importance(), row.category()));
+        }
+        return new Overview(rows, view.countsByCategory(), view.countsByStatus(), view.pages(), view.stalePages(),
+                view);
     }
 
     private Jobs jobs() {
