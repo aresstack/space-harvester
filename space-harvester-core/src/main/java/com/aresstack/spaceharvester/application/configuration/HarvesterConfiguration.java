@@ -556,8 +556,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
 
     /** Eine Wortliste; fehlt sie oder ist sie leer, gilt die Vorgabe. */
     private static List<String> words(Reader read, String key, List<String> fallback) {
-        List<String> words = read.list(key);
-        return words.isEmpty() ? fallback : words;
+        return StandingSettings.words(read.list(key), fallback);
     }
 
     private record Reader(Properties properties, List<ConfigurationProblem> problems) {

@@ -1,11 +1,13 @@
 package com.aresstack.spaceharvester.application.standing;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.glossary.GlossaryDerivation;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.terms.TermText;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -15,7 +17,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -71,7 +72,7 @@ public final class ReadingAdvice {
     /**
      * Die Leseempfehlung.
      *
-     * @param topic Thema (Grundform oder Wortlaut eines Begriffs, ohne Groß/Klein) oder {@code null}; mit Thema
+     * @param topic Thema (Grundform oder Wortlaut eines Begriffs, verglichen wie das Glossar) oder {@code null}; mit Thema
      *              erscheinen nur Seiten, die es erwähnen
      * @throws CancellationException wenn {@code cancelled} zutrifft
      */
@@ -80,40 +81,37 @@ public final class ReadingAdvice {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(pages, "pages");
         Objects.requireNonNull(cancelled, "cancelled");
-        String wanted = topic == null || topic.isBlank() ? null : lower(topic);
+        String wanted = topic == null || topic.isBlank() ? null : TermText.normalize(topic);
         StatusQuoView view = statusQuo.view(caller, pages, cancelled);
+        List<KnowledgeGraph.AnalysedPage> selected = new ArrayList<>();
         Map<KnowledgeGraph.PageRef, Map<String, Integer>> terms = new LinkedHashMap<>();
-        Map<String, String> spelling = new HashMap<>();
         for (KnowledgeGraph.AnalysedPage page : analysed.apply(caller)) {
             check(cancelled);
             if (!pages.test(page.page().key())) {
                 continue;
             }
+            selected.add(page);
             Map<String, Integer> counts = new HashMap<>();
             for (ParsedStatements.Mention mention : page.analysis().result().mentions()) {
-                if (mention.unresolved() || mention.kind() != ParsedStatements.MentionKind.NOUN
-                        && mention.kind() != ParsedStatements.MentionKind.PROPER_NOUN) {
+                if (!GlossaryDerivation.isTerm(mention)) {
                     continue;
                 }
-                String key = mention.key();
-                if (key == null || key.isBlank()) {
-                    continue;
-                }
-                String lower = lower(key);
-                spelling.putIfAbsent(lower, key.strip());
-                counts.merge(lower, 1, Integer::sum);
-                if (wanted != null && !lower.equals(wanted) && lower(mention.text()).equals(wanted)) {
-                    spelling.putIfAbsent(wanted, topic.strip());
+                String key = GlossaryDerivation.keyOf(mention);
+                counts.merge(key, 1, Integer::sum);
+                // Das Thema trifft auch die Wortform im Text („Anträge“), gezählt unter dem Thema.
+                if (wanted != null && !key.equals(wanted)
+                        && TermText.normalize(mention.headForm() == null ? "" : mention.headForm()).equals(wanted)) {
                     counts.merge(wanted, 1, Integer::sum);
                 }
             }
             terms.put(page.page(), counts);
         }
-        Map<String, Integer> spread = new HashMap<>();
-        terms.values().forEach(counts -> counts.keySet().forEach(term -> spread.merge(term, 1, Integer::sum)));
-        List<String> top = spread.entrySet().stream().filter(entry -> entry.getValue() >= 2)
-                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry::getKey))
-                .limit(TOP_TERMS).map(Map.Entry::getKey).toList();
+        // Rangfolge und Schreibweise der Begriffe aus der einen Zählstelle (FL5), nicht selbst gezählt.
+        Map<String, String> spelling = new LinkedHashMap<>();
+        GlossaryDerivation.of(selected, cancelled).terms().stream()
+                .filter(term -> term.importance().pages() >= 2).limit(TOP_TERMS)
+                .forEach(term -> spelling.put(term.normalized(), term.term()));
+        List<String> top = List.copyOf(spelling.keySet());
         Instant since = clock.instant().minus(RECENT);
         Map<String, Set<String>> spaces = new TreeMap<>();
         for (PageStanding standing : view.pages()) {
@@ -149,9 +147,8 @@ public final class ReadingAdvice {
         recommendations.sort(Comparator.comparingInt((ReadingList.Recommendation r) -> -r.score())
                 .thenComparing(r -> r.page().title() == null ? "" : r.page().title())
                 .thenComparing(r -> r.page().key().pageId()));
-        Set<String> seen = new HashSet<>();
-        List<String> topTerms = top.stream().map(spelling::get).filter(seen::add).toList();
-        return new ReadingList(wanted == null ? null : topic.strip(), topTerms, since, recommendations);
+        return new ReadingList(wanted == null ? null : topic.strip(), List.copyOf(spelling.values()), since,
+                recommendations);
     }
 
     private static boolean outdated(PageStanding standing) {
@@ -175,9 +172,5 @@ public final class ReadingAdvice {
         if (cancelled.getAsBoolean()) {
             throw new CancellationException("Leseempfehlung abgebrochen");
         }
-    }
-
-    private static String lower(String text) {
-        return text == null ? "" : text.strip().toLowerCase(Locale.ROOT);
     }
 }
