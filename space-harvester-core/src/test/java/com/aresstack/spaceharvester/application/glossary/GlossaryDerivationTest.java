@@ -210,6 +210,32 @@ class GlossaryDerivationTest {
     }
 
     @Test
+    void ruleProposalsCarryPageEvidenceAndRuleClassificationAndRetainTheRestOverMaxTerms() {
+        GlossaryRuleProposals.Batch batch = GlossaryRuleProposals.of(pages(), 2, () -> false);
+
+        assertThat(batch.proposals()).extracting(Glossary.Proposal::term)
+                .containsExactly("Bewilligungsstelle", "Antrag");
+        assertThat(batch.retained()).as("über maxTerms, mit Beleg").contains("zuschuss", "förderung", "antragssystem")
+                .doesNotContain("prüfer", "kunde", "antragsteller");
+        Glossary.Proposal antrag = batch.proposals().get(1);
+        assertThat(antrag.evidence()).hasSize(GlossaryDerivation.MAX_EVIDENCE)
+                .allSatisfy(item -> assertThat(item.sourceId()).isEqualTo("wiki"));
+        assertThat(antrag.evidence()).extracting(item -> item.pageId()).contains("1", "2");
+        assertThat(antrag.classification()).isEqualTo(new GlossaryEntry.Classification(Category.UNKLAR,
+                GlossaryEntry.ClassifiedBy.RULE, null));
+        assertThat(antrag.definition()).as("erst mit dem Artikel-Merkmal").isNull();
+
+        GlossaryDerivation.Result all = GlossaryDerivation.of(pages(), () -> false);
+        assertThat(GlossaryRuleProposals.classification(all.term("Prüfer"))).isEqualTo(
+                new GlossaryEntry.Classification(Category.ROLLE, GlossaryEntry.ClassifiedBy.RULE, "ROLE_HEAD"));
+        assertThat(GlossaryRuleProposals.evidence(all.term("Prüfer"))).as("unsicherer Handelnder ist kein Beleg")
+                .isEmpty();
+        assertThat(GlossaryRuleProposals.of(pages(), 500, () -> false).retained()).isEmpty();
+        assertThatThrownBy(() -> GlossaryRuleProposals.of(pages(), 500, () -> true))
+                .isInstanceOf(CancellationException.class);
+    }
+
+    @Test
     void onlyPresentStatesGiveIsRelationsAndProperties() {
         PageBuilder page = new PageBuilder("1");
         int s0 = page.sentence(40);

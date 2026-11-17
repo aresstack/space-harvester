@@ -351,7 +351,8 @@ public class GlossaryClassification {
         }
         // Über dem Budget: bisherige Vorschläge bleiben unverändert stehen.
         for (GlossaryEntry entry : earlier.values()) {
-            if (retained.contains(entry.normalized())) {
+            // Nur, was die KI schon stützt: ein reiner Regel-Vorschlag bekommt so keine Stützung der KI.
+            if (retained.contains(entry.normalized()) && entry.supportedBy().contains(RelationOrigin.AI)) {
                 proposals.add(new Glossary.Proposal(entry.term(), entry.evidence()));
             }
         }

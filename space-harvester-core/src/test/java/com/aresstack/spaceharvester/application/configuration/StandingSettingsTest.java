@@ -44,4 +44,19 @@ class StandingSettingsTest {
         assertThat(HarvesterConfiguration.fromProperties(properties).problems())
                 .anySatisfy(problem -> assertThat(problem.toString()).contains(StandingSettings.DRAFT_WORDS));
     }
+
+    @Test
+    void aLoneDashMeansNoWordsAndIsWrittenBackAsSuch() {
+        Properties properties = new Properties();
+        properties.setProperty(StandingSettings.OUTDATED_WORDS, " - ");
+
+        StandingSettings read = HarvesterConfiguration.fromProperties(properties).orThrow().standing();
+
+        assertThat(read.outdatedWords()).isEmpty();
+        assertThat(read.draftWords()).isEqualTo(StandingSettings.DEFAULT_DRAFT_WORDS);
+        assertThat(StandingSettings.written(read.outdatedWords())).containsExactly(StandingSettings.NONE);
+        assertThat(StandingSettings.words(List.of(), List.of("vorgabe"))).containsExactly("vorgabe");
+        assertThatThrownBy(() -> StandingSettings.words(List.of("-", "archiv"), List.of()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

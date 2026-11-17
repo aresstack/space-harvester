@@ -949,7 +949,25 @@ public final class Harvester implements AutoCloseable {
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
                     () -> com.aresstack.spaceharvester.application.standing.StandingWords.of(
-                            this.settings.standing()), clock);
+                            this.settings.standing()), clock,
+                    new com.aresstack.spaceharvester.application.standing.SentenceSource() {
+                        @Override
+                        public Optional<KnowledgeGraph.AnalysedPage> analysis(AccessContext who,
+                                                                              KnowledgeGraph.PageRef page) {
+                            return page.document() == null ? knowledgeGraph.page(who, page.key())
+                                    : knowledgeGraph.page(who, page.document());
+                        }
+
+                        @Override
+                        public Optional<String> text(KnowledgeGraph.PageRef page, String inputSha256) {
+                            // Lesetexte von Anhängen kommen erst mit deren Analyse (ADR 0026); bis dahin kein Satz.
+                            if (page.document() != null) {
+                                return Optional.empty();
+                            }
+                            return cache.find(page.key()).flatMap(readerText)
+                                    .filter(text -> text.inputSha256().equals(inputSha256)).map(PageText::text);
+                        }
+                    });
             this.readingAdvice = new com.aresstack.spaceharvester.application.standing.ReadingAdvice(statusQuo,
                     knowledgeGraph::analysed,
                     new com.aresstack.spaceharvester.application.standing.ChangeLogRecentChanges(changeLog), clock);
