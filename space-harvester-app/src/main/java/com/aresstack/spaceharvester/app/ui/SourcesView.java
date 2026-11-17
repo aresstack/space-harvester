@@ -628,29 +628,28 @@ public final class SourcesView implements View {
                     row(EditableProperty.view("Option " + key, value, Comic.INK));
                 }
             });
+            boolean authenticated = config.auth().type() != SourceSettingsConfig.AuthType.NONE;
+            SecretState secret = !authenticated ? null : SecretState.of(context.settings(), entry,
+                    context.secrets().has(entry), context.vault().has(entry.id(),
+                            AppRuntime.SessionSecrets.login(entry)));
             if (confluence) {
-                String keePassEntry = context.settings() == null ? null
-                        : context.settings().keePassEntry(entry.id());
+                // Keine eigene Zeile „Passwort“ mehr (Angelo): Woher Passwort bzw. Token kommen, steht an der Anmeldung,
+                // und geändert wird beides im selben Dialog (KeePass oder Manuell mit Windows-Tresor). Ein eigener
+                // Tresor-Dialog legte sonst neben einem KeePass-Eintrag einen Wert ab, den der nächste Start nicht nutzt.
                 row(EditableProperty.action("Anmeldung", Texts.auth(config.auth())
-                                + (keePassEntry == null || config.auth().type() == SourceSettingsConfig.AuthType.NONE
-                                ? "" : " · aus KeePass „" + keePassEntry + "“"), Comic.INK,
+                                + (secret == null ? "" : " · " + secret.text()),
+                        secret == null ? Comic.INK : secret.color(),
                         "Zugangsdaten (KeePass oder Manuell), KeePass-Eintrag, Anmeldeart, Benutzer und Token bzw. "
                                 + "Passwort ändern",
                         () -> setting(entry, SettingDialogs::auth)));
             } else {
                 row(EditableProperty.view("Anmeldung", Texts.auth(config.auth()), Comic.INK));
-            }
-            if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
-                boolean token = config.auth().type() == SourceSettingsConfig.AuthType.PAT;
-                SecretState secret = SecretState.of(context.settings(), entry, context.secrets().has(entry),
-                        context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(entry)));
-                // Bei Confluence öffnet der Stift denselben Dialog wie „Anmeldung“: EINE Logik für KeePass und Tresor.
-                // Ein eigener Tresor-Dialog legte sonst neben einem KeePass-Eintrag einen Wert ab, den der nächste
-                // Start nicht nutzt (KeePass geht vor), während er in dieser Sitzung KeePass überdeckte.
-                row(EditableProperty.action(token ? "Token" : "Passwort", secret.text(), secret.color(),
-                        confluence ? "Zugangsdaten im Dialog „Anmeldung“ ändern (KeePass oder Manuell)"
-                                : (token ? "Token" : "Passwort") + " neu eingeben",
-                        confluence ? () -> setting(entry, SettingDialogs::auth) : () -> storeSecret(entry)));
+                if (secret != null) {
+                    // Andere Quellentypen haben keinen Anmeldung-Dialog; hier bleibt die Eingabe an der Zeile.
+                    boolean token = config.auth().type() == SourceSettingsConfig.AuthType.PAT;
+                    row(EditableProperty.action(token ? "Token" : "Passwort", secret.text(), secret.color(),
+                            (token ? "Token" : "Passwort") + " neu eingeben", () -> storeSecret(entry)));
+                }
             }
             if (confluence) {
                 SourceSettingsConfig.ClientCertificate certificate = config.clientCertificate();
