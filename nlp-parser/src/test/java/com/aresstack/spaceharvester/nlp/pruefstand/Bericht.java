@@ -1,0 +1,85 @@
+package com.aresstack.spaceharvester.nlp.pruefstand;
+
+import com.aresstack.spaceharvester.nlp.pruefstand.Bewertung.Zahlen;
+import com.aresstack.spaceharvester.nlp.pruefstand.Textsatz.Text;
+import com.aresstack.spaceharvester.nlp.pruefstand.Textsatz.Variante;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+
+/** Lesbare Tabellen des Prüfstands (Markdown), je Textsatz und Variante, für Testprotokoll und PR-Beschreibung. */
+final class Bericht {
+
+    private final StringBuilder out = new StringBuilder();
+    private final StringBuilder details = new StringBuilder();
+    private final Map<String, Zahlen> gesamt = new LinkedHashMap<>();
+
+    /** Bewertet alle Varianten eines Textsatzes und hängt die Tabellen an. */
+    Map<String, Zahlen> textsatz(Textsatz satz) {
+        Map<String, Zahlen> result = new LinkedHashMap<>();
+        out.append("## Textsatz „").append(satz.name()).append("“ (").append(satz.rolle()).append(")\n\n");
+        StringBuilder uebersicht = new StringBuilder();
+        uebersicht.append("| Variante | vollständig richtig | streng | Verb gefunden | Grundform richtig "
+                + "| falsch trotz PLAUSIBLE | Verb fehlt | ergänzt Ü/K · Abschnitt · sonst |\n");
+        uebersicht.append("|---|---|---|---|---|---|---|---|\n");
+        StringBuilder tabellen = new StringBuilder();
+        for (Variante variante : satz.varianten()) {
+            Zahlen summe = new Zahlen();
+            tabellen.append("### ").append(variante.name()).append(" – ").append(variante.beschreibung())
+                    .append("\n\n");
+            tabellen.append("| Text | Art | erwartet | Verb gefunden | Grundform richtig | vollständig richtig "
+                    + "| streng | PLAUSIBLE | davon falsch | ergänzt Ü/K · Abschnitt · sonst |\n");
+            tabellen.append("|---|---|---|---|---|---|---|---|---|---|\n");
+            for (Text text : satz.texte()) {
+                Zahlen zahlen = Bewertung.bewerten(satz, variante, text);
+                summe.add(zahlen);
+                zeile(tabellen, text.name(), text.art(), zahlen);
+            }
+            zeile(tabellen, "**gesamt**", "", summe);
+            tabellen.append('\n');
+            uebersicht.append("| ").append(variante.name()).append(" | ").append(anteil(summe.richtig, summe.erwartet))
+                    .append(" | ").append(anteil(summe.streng, summe.erwartet))
+                    .append(" | ").append(summe.verbGefunden).append(" | ").append(summe.grundformRichtig)
+                    .append(" | ").append(summe.plausibelFalsch).append(" von ").append(summe.plausibel)
+                    .append(" | ").append(summe.fehlt())
+                    .append(" | ").append(ergaenzt(summe)).append(" |\n");
+            result.put(variante.name(), summe);
+            gesamt.put(satz.name() + "/" + variante.name(), summe);
+            details.append("### ").append(satz.name()).append(" / ").append(variante.name()).append("\n\n");
+            summe.fehler.forEach(f -> details.append("- ").append(f).append('\n'));
+            details.append('\n');
+        }
+        out.append(uebersicht).append('\n');
+        Zahlen heute = result.get(Textsatz.HEUTE);
+        out.append("Merkmale (Verneinung, Verbindlichkeit, Zeitbezug) vorgegeben an ").append(heute.merkmaleVorgegeben)
+                .append(" von ").append(heute.erwartet).append(" Aussagen.\n\n");
+        out.append(tabellen);
+        return result;
+    }
+
+    String text() {
+        return "# Prüfstand Aussagen (ADR 0032)\n\n" + out + "## Einzelbefunde\n\n" + details;
+    }
+
+    /** Nur die Übersicht, ohne Einzelbefunde (Testprotokoll). */
+    String kurz() {
+        return out.toString();
+    }
+
+    private static void zeile(StringBuilder out, String text, String art, Zahlen z) {
+        out.append("| ").append(text).append(" | ").append(art).append(" | ").append(z.erwartet)
+                .append(" | ").append(z.verbGefunden).append(" | ").append(z.grundformRichtig)
+                .append(" | ").append(anteil(z.richtig, z.erwartet)).append(" | ").append(z.streng)
+                .append(" | ").append(z.plausibel).append(" | ").append(z.plausibelFalsch)
+                .append(" | ").append(ergaenzt(z)).append(" |\n");
+    }
+
+    private static String ergaenzt(Zahlen z) {
+        return z.ergaenztKennung + " · " + z.ergaenztAbschnitt + " · " + z.ergaenztSonst;
+    }
+
+    private static String anteil(int wert, int von) {
+        return von == 0 ? String.valueOf(wert)
+                : String.format(Locale.GERMAN, "%d von %d (%d %%)", wert, von, Math.round(100.0 * wert / von));
+    }
+}

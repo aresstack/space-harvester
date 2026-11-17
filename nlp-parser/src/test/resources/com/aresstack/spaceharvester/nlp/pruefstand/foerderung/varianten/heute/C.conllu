@@ -1,0 +1,102 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/C@heute
+# sent_id = 1
+# text = Das Fachverfahren speichert die Anträge in einer relationalen Datenbank.
+1	Das	der	DET	_	_	2	det	_	_
+2	Fachverfahren	fachverfahren	NOUN	_	_	3	nsubj	_	_
+3	speichert	speichern	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Anträge	antrag	NOUN	_	_	3	obj	_	_
+6	in	in	ADP	_	_	9	case	_	_
+7	einer	ein	DET	_	_	9	det	_	_
+8	relationalen	relational	ADJ	_	_	9	amod	_	_
+9	Datenbank	datenbank	NOUN	_	_	5	nmod	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Der Antragsservice stellt eine REST-Schnittstelle bereit.
+1	Der	der	DET	_	_	2	det	_	_
+2	Antragsservice	antragsservice	PROPN	_	_	3	nsubj	_	_
+3	stellt	stellen	VERB	_	_	0	root	_	_
+4	eine	ein	DET	_	_	5	det	_	_
+5	REST-Schnittstelle	rest-schnittstelle	NOUN	_	_	6	nsubj	_	_
+6	bereit	bereit	ADJ	_	_	3	xcomp	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Die Schnittstelle liefert die Antragsdaten im JSON-Format.
+1	Die	der	DET	_	_	2	det	_	_
+2	Schnittstelle	schnittstelle	NOUN	_	_	3	nsubj	_	_
+3	liefert	liefern	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Antragsdaten	antragsdaten	NOUN	_	_	3	obj	_	_
+6-7	im	_	_	_	_	_	_	_	_
+6	in	in	ADP	_	_	8	case	_	_
+7	dem	der	DET	_	_	8	det	_	_
+8	JSON	json	PROPN	_	_	3	obl	_	SpaceAfter=No
+9	-	-	PUNCT	_	_	10	punct	_	SpaceAfter=No
+10	Format	format	NOUN	_	_	8	flat	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 4
+# text = Ein Batch-Job überträgt die Auszahlungsdaten nachts an das Kassensystem.
+1	Ein	ein	DET	_	_	4	det	_	_
+2	Batch	batch	NOUN	_	_	4	compound	_	SpaceAfter=No
+3	-	-	PUNCT	_	_	2	punct	_	SpaceAfter=No
+4	Job	job	NOUN	_	_	5	nsubj	_	_
+5	überträgt	übertragen	VERB	_	_	0	root	_	_
+6	die	der	DET	_	_	7	det	_	_
+7	Auszahlungsdaten	auszahlungsdaten	NOUN	_	_	5	obj	_	_
+8	nachts	nachts	ADV	_	_	5	advmod	_	_
+9	an	an	ADP	_	_	11	case	_	_
+10	das	der	DET	_	_	11	det	_	_
+11	Kassensystem	kassensystem	NOUN	_	_	5	obl	_	SpaceAfter=No
+12	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 5
+# text = Das Kassensystem bestätigt den Empfang über eine Nachrichtenwarteschlange.
+1	Das	der	DET	_	_	2	det	_	_
+2	Kassensystem	kassensystem	NOUN	_	_	3	nsubj	_	_
+3	bestätigt	bestätigen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Empfang	empfang	NOUN	_	_	3	obj	_	_
+6	über	über	ADP	_	_	8	case	_	_
+7	eine	ein	DET	_	_	8	det	_	_
+8	Nachrichtenwarteschlange	nachrichtenwarteschlange	NOUN	_	_	5	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 6
+# text = Der Load Balancer verteilt die Anfragen auf drei Instanzen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Load	load	PROPN	_	_	4	nsubj	_	_
+3	Balancer	balancer	PROPN	_	_	2	flat	_	_
+4	verteilt	verteilen	VERB	_	_	0	root	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Anfragen	anfrage	NOUN	_	_	4	obj	_	_
+7	auf	auf	ADP	_	_	9	case	_	_
+8	drei	drei	NUM	_	_	9	nummod	_	_
+9	Instanzen	instanzen	NOUN	_	_	4	obl	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 7
+# text = Die Authentifizierung erfolgt über OAuth 2.0.
+1	Die	der	DET	_	_	2	det	_	_
+2	Authentifizierung	authentifizierung	NOUN	_	_	3	nsubj	_	_
+3	erfolgt	erfolgen	VERB	_	_	0	root	_	_
+4	über	über	ADP	_	_	5	case	_	_
+5	OAuth	oauth	PROPN	_	_	3	obl	_	_
+6	2.0.	2.0.	PROPN	_	_	5	flat	_	_
+
+# sent_id = 8
+# text = Das Portal ruft den Antragsservice über HTTPS auf.
+1	Das	der	DET	_	_	2	det	_	_
+2	Portal	portal	NOUN	_	_	3	nsubj	_	_
+3	ruft	rufen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Antragsservice	antragsservice	NOUN	_	_	3	obj	_	_
+6	über	über	ADP	_	_	7	case	_	_
+7	HTTPS	https	PROPN	_	_	5	nmod	_	_
+8	auf	auf	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	3	punct	_	_
+

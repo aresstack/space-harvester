@@ -1,0 +1,111 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/foerderung/D@vorstufe-gemma4-12b
+# sent_id = 1
+# text = Die Bewilligungsstelle prüft jeden Antrag innerhalb von vier Wochen.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	jeden	jeder	DET	_	_	5	det	_	_
+5	Antrag	antrag	NOUN	_	_	3	obj	_	_
+6	innerhalb	innerhalb	ADP	_	_	9	case	_	_
+7	von	von	ADP	_	_	9	case	_	_
+8	vier	vier	NUM	_	_	9	nummod	_	_
+9	Wochen	woche	NOUN	_	_	3	obl	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Die Bewilligungsstelle prüft die Vollständigkeit der Unterlagen.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Vollständigkeit	vollständigkeit	NOUN	_	_	3	obj	_	_
+6	der	der	DET	_	_	7	det	_	_
+7	Unterlagen	unterlage	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Die Bewilligungsstelle stellt die Förderfähigkeit fest.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	stellt	stellen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Förderfähigkeit	förderfähigkeit	NOUN	_	_	3	obj	_	_
+6	fest	fest	ADV	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 4
+# text = Die Bewilligungsstelle erstellt den Bescheid.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	erstellt	erstellen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Bescheid	bescheid	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 5
+# text = Die Bewilligungsstelle versendet den Bescheid.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	versendet	versenden	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Bescheid	bescheid	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 6
+# text = Die Bewilligungsstelle plante die Prüfung vollständig zu automatisieren.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	plante	planen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Prüfung	prüfung	NOUN	_	_	8	obj	_	_
+6	vollständig	vollständig	ADJ	_	_	8	advmod	_	_
+7	zu	zu	PART	_	_	8	mark	_	_
+8	automatisieren	automatisieren	VERB	_	_	3	xcomp	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 7
+# text = Die Bewilligungsstelle verwarf diese Überlegung.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bewilligungsstelle	bewilligungsstelle	NOUN	_	_	3	nsubj	_	_
+3	verwarf	verwarfn	VERB	_	_	0	root	_	_
+4	diese	dieser	DET	_	_	5	det	_	_
+5	Überlegung	überlegung	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 8
+# text = Der Sachbearbeiter prüft die Förderfähigkeit manuell.
+1	Der	der	DET	_	_	2	det	_	_
+2	Sachbearbeiter	sachbearbeiter	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Förderfähigkeit	förderfähigkeit	NOUN	_	_	6	nsubj	_	_
+6	manuell	manuell	ADJ	_	_	3	xcomp	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 9
+# text = Ein Regelwerk soll die Förderfähigkeit vorab bewerten.
+1	Ein	ein	DET	_	_	2	det	_	_
+2	Regelwerk	regelwerk	NOUN	_	_	7	nsubj	_	_
+3	soll	sollen	AUX	_	_	7	aux	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Förderfähigkeit	förderfähigkeit	NOUN	_	_	7	obj	_	_
+6	vorab	vorab	ADV	_	_	7	advmod	_	_
+7	bewerten	bewerten	VERB	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 10
+# text = Die Schnittstelle zum Kassensystem ist noch nicht abgestimmt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Schnittstelle	schnittstelle	NOUN	_	_	9	nsubj:pass	_	_
+3-4	zum	_	_	_	_	_	_	_	_
+3	zu	zu	ADP	_	_	5	case	_	_
+4	dem	der	DET	_	_	5	det	_	_
+5	Kassensystem	kassensystem	NOUN	_	_	2	nmod	_	_
+6	ist	sein	AUX	_	_	9	aux:pass	_	_
+7	noch	noch	ADV	_	_	8	advmod	_	_
+8	nicht	nicht	PART	_	_	9	advmod	_	_
+9	abgestimmt	abstimmen	VERB	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+

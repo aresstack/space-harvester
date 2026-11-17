@@ -41,8 +41,10 @@ jobs:
       - name: Rauchtest mit echtem Modell
         if: steps.pin.outputs.tag != ''
         run: >-
-          ./gradlew :nlp-parser:test --tests '*RealModelSmokeTest' --console=plain
+          ./gradlew :nlp-parser:test --tests '*RealModelSmokeTest' --tests '*PruefstandLiveTest' --console=plain
           -PnlpModelDir=nlp-parser/build/nlp-model/${{ steps.pin.outputs.tag }}
       - name: Bericht
         if: always() && steps.pin.outputs.tag != ''
-        run: cat nlp-parser/build/reports/nlp-parser/smoke.txt >> "$GITHUB_STEP_SUMMARY" || true
+        run: |
+          cat nlp-parser/build/reports/nlp-parser/smoke.txt >> "$GITHUB_STEP_SUMMARY" || true
+          cat nlp-parser/build/reports/pruefstand/bericht.md >> "$GITHUB_STEP_SUMMARY" || true

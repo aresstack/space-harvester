@@ -1,0 +1,16 @@
+1|T|Die Bewilligungsstelle bestätigt den vollständigen Antrag.
+2|T|Der Antragsteller erhält eine Eingangsbestätigung.
+3|B|Der Sachbearbeiter entscheidet über die Förderfähigkeit der Maßnahme.
+4|T|Dem Antragsteller obliegt das Einreichen der Unterlagen.
+5|T|Der Sachbearbeiter prüft den Antrag.
+5|T|Der Sachbearbeiter leitet den Antrag an die Kasse weiter.
+6|T|Die Bewilligungsstelle prüft den Antrag.
+6|T|Die Bewilligungsstelle fordert Unterlagen nach.
+6|T|Die Bewilligungsstelle erlässt den Bescheid.
+7|T|Die Bewilligungsstelle prüft den Antrag.
+7|T|Der Antragsteller erhält den Bescheid.
+8|B|Die Voraussetzungen des Antragstellers werden geprüft.
+9|B|Der Zuwendungsempfänger muss die Beanstandung des Prüfers nachbessern.
+10|B|Der Mittelabruf liegt vor.
+10|T|Die Kasse zahlt die Mittel aus.
+10|T|Die Kasse informiert den Zuwendungsempfänger.

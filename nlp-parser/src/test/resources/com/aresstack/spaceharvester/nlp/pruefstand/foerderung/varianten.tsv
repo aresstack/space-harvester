@@ -1,0 +1,4 @@
+# Variante	Beschreibung
+heute	Originaltext direkt in die Kette (OpenNLP + MaltParser + Regeln)
+vorstufe-hand	Vorstufe „reine Hauptsätze“ von Hand (Architekt, obere Schranke); A und C unverändert
+vorstufe-gemma4-12b	Vorstufe mit gemma4:12b, Anweisung v1, Temperatur 0 (Angelos Rechner, 17.11.2026); A und C unverändert
