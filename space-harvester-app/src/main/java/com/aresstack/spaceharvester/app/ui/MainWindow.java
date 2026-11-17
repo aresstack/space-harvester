@@ -145,6 +145,8 @@ public final class MainWindow implements AppContext.Navigator {
         });
         // Quelle oder Space in der Bereichsanzeige angeklickt: im Baum wählen; die Auswahl bestimmt wie immer die Mitte.
         content.onLocate(explorer::reveal);
+        // Zurück/Vor zeigt eine Seite wieder: der Baum wählt sie, ohne die Mitte erneut zu laden.
+        content.onLocatePage(explorer::revealPage);
         // Die Diagnose ist kein eigener Bereich mehr, sondern die Seite „Diagnose“ der Einstellungen.
         settings.diagnosis(statusView);
         views.put(AppContext.Section.SOURCES, sources);

@@ -740,6 +740,28 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Der Entwurf {@code base} mit dem Hintergrund des Bildbetrachters ({@code space-harvester-app.viewer.background},
+     * nur die App, Angelo 17.11.2026); nur dieser Wert ändert sich. Die Vorgabe ({@link ViewerBackground#DEFAULT})
+     * entfernt den Block {@code viewer}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withViewerBackground(Path file, Draft base, ViewerBackground background) {
+        String value = background == ViewerBackground.DEFAULT ? null
+                : "viewer:\n  background: " + background.key();
+        String text = appValue(base.text(), "viewer", value);
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || settings.viewerBackground() != background) {
+            throw new IllegalArgumentException("Der Hintergrund des Bildbetrachters ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte " + ViewerBackground.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
     /** Eine Wartezeit wie {@link #duration}, Bruchteile einer Sekunde in Millisekunden (500ms). */
     public static String delay(java.time.Duration delay) {
         return delay.toMillis() % 1000 == 0 ? duration(delay) : delay.toMillis() + "ms";

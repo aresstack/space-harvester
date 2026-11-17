@@ -192,7 +192,8 @@ class ExplorerTest {
         });
         assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
 
-        // Ein Klick auf die Seite wählt nur, erst der Doppelklick öffnet sie.
+        // Ein Klick öffnet die Seite (Angelo, 17.11.2026, einheitlich mit Quelle und Space); der Doppelklick klappt
+        // nur auf und zu und öffnet nichts ein zweites Mal.
         List<String> opened = new java.util.ArrayList<>();
         context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
                 getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
@@ -204,15 +205,22 @@ class ExplorerTest {
         SwingUtilities.invokeAndWait(() -> {
             javax.swing.JTree tree = explorer[0].tree();
             tree.setSize(400, 400);
+            javax.swing.tree.TreePath parent = tree.getSelectionPath().getParentPath();
+            assertThat(tree.isExpanded(parent)).isTrue();
             java.awt.Rectangle row = tree.getPathBounds(tree.getSelectionPath());
-            for (int clicks = 1; clicks <= 2; clicks++) {
-                tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
-                        System.currentTimeMillis(), 0, row.x + 5, row.y + row.height / 2, clicks, false,
-                        java.awt.event.MouseEvent.BUTTON1));
-                if (clicks == 1) {
-                    assertThat(opened).as("ein Klick öffnet nicht").isEmpty();
-                }
-            }
+            tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, row.x + 5, row.y + row.height / 2, 1, false,
+                    java.awt.event.MouseEvent.BUTTON1));
+            assertThat(opened).as("ein Klick öffnet").containsExactly(wanted);
+            java.awt.Rectangle spaceRow = tree.getPathBounds(parent);
+            tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, spaceRow.x + 5, spaceRow.y + spaceRow.height / 2, 2, false,
+                    java.awt.event.MouseEvent.BUTTON1));
+            assertThat(tree.isExpanded(parent)).as("Doppelklick klappt zu").isFalse();
+            tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, spaceRow.x + 5, spaceRow.y + spaceRow.height / 2, 2, false,
+                    java.awt.event.MouseEvent.BUTTON1));
+            assertThat(tree.isExpanded(parent)).as("Doppelklick klappt auf").isTrue();
         });
         assertThat(opened).containsExactly(wanted);
 

@@ -2,6 +2,10 @@ package com.aresstack.spaceharvester.app.ui.controls;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
+import com.aresstack.spaceharvester.app.ui.Comic;
+
 import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -23,6 +27,50 @@ class ImageViewerTest {
 
     private static ImageViewer.Picture picture(int width, int height, String label) {
         return new ImageViewer.Picture(new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB), label);
+    }
+
+    /**
+     * Angelo 17.11.2026: Die Bildfläche folgt der Einstellung, ohne Angabe die Oberfläche der App (nicht mehr das
+     * Dunkel des EAC); die Knöpfe im Bild bleiben auf hellem wie auf schwarzem Grund lesbar, alles aus der Palette.
+     */
+    @Test
+    void theBackgroundFollowsTheSettingAndTheButtonsStayReadableOnLightAndBlack() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            ImageViewer plain = new ImageViewer(List.of(picture(100, 100, "A")), 0);
+            assertThat(plain.background()).isEqualTo(Comic.SURFACE);
+            assertThat(plain.look()).isEqualTo(Comic.viewerLook(ViewerBackground.THEME));
+            assertThat(plain.look().control()).as("Tinte auf heller Fläche").isEqualTo(Comic.INK);
+            assertThat(contrast(plain.look().control(), plain.background())).isGreaterThan(3.0);
+            assertThat(contrast(plain.look().glyph(), plain.look().control())).isGreaterThan(3.0);
+
+            ImageViewer black = new ImageViewer(List.of(picture(100, 100, "A")), 0,
+                    Comic.viewerLook(ViewerBackground.BLACK));
+            assertThat(black.background()).isEqualTo(ResearchUiPalette.DARK_BASE);
+            assertThat(contrast(black.look().control(), black.background())).as("helle Pille auf Schwarz")
+                    .isGreaterThan(3.0);
+            assertThat(contrast(black.look().glyph(), black.look().control())).isGreaterThan(3.0);
+
+            for (ViewerBackground background : ViewerBackground.values()) {
+                ImageViewer.Look look = Comic.viewerLook(background);
+                assertThat(contrast(look.control(), look.background())).as(background.label()).isGreaterThan(3.0);
+            }
+        });
+    }
+
+    /** Kontrast nach WCAG aus den relativen Leuchtdichten; 3 ist die Grenze für Bedienelemente. */
+    private static double contrast(java.awt.Color a, java.awt.Color b) {
+        double la = luminance(a);
+        double lb = luminance(b);
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+
+    private static double luminance(java.awt.Color color) {
+        return 0.2126 * channel(color.getRed()) + 0.7152 * channel(color.getGreen()) + 0.0722 * channel(color.getBlue());
+    }
+
+    private static double channel(int value) {
+        double c = value / 255.0;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
     }
 
     @Test

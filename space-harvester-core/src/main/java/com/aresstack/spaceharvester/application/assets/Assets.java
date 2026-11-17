@@ -659,6 +659,53 @@ public class Assets implements DocumentInventory {
         }
     }
 
+    /** So lange gilt ein gescheitertes Lesen der Anhangsliste, bevor die Lese-Ansicht es erneut versucht. */
+    static final Duration LISTING_RETRY = Duration.ofMinutes(2);
+
+    private record ListingKey(String sourceId, String pageId, String pageVersion) {
+    }
+
+    /** Die Anhangsliste einer Seitenversion, oder wann ihr Lesen scheiterte. */
+    private record Listing(List<PageAttachment> attachments, Instant failedAt) {
+    }
+
+    /** Je Seitenversion die Anhangsliste für die Diagramme der Lese-Ansicht; der Garbage Collector darf sie einsammeln. */
+    private final Map<ListingKey, java.lang.ref.SoftReference<Listing>> listings = new ConcurrentHashMap<>();
+
+    /**
+     * Die Anhänge einer Seite für die Diagramme der Lese-Ansicht: je Seitenversion einmal von der Quelle, danach aus dem
+     * Speicher, statt für jedes Bild der Seite erneut (Angelo 17.11.2026: die Seite lud Bild für Bild live). Antwortet die
+     * Quelle nicht, gilt die Liste für {@link #LISTING_RETRY} als leer: die Bilder kommen dann aus der Ablage, ohne
+     * je Bild auf die Quelle zu warten. Eine Einmalcode-Abfrage geht weiter an den Aufrufer.
+     */
+    private List<PageAttachment> viewAttachments(HarvestSource source, String pageId, String pageVersion) {
+        if (pageVersion == null) {
+            return source.attachments(pageId).attachments();
+        }
+        ListingKey key = new ListingKey(source.id(), pageId, pageVersion);
+        java.lang.ref.SoftReference<Listing> reference = listings.get(key);
+        Listing known = reference == null ? null : reference.get();
+        if (known != null && (known.failedAt() == null
+                || clock.instant().isBefore(known.failedAt().plus(LISTING_RETRY)))) {
+            return known.attachments();
+        }
+        Listing listing;
+        try {
+            listing = new Listing(List.copyOf(source.attachments(pageId).attachments()), null);
+        } catch (SignInRequiredException e) {
+            throw e;
+        } catch (SourceAccessException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Anhangsliste in {0} für die Lese-Ansicht nicht lesbar ({1})",
+                    source.id(), e.getClass().getName());
+            listing = new Listing(List.of(), clock.instant());
+        }
+        if (listings.size() >= 4096) {
+            listings.values().removeIf(value -> value.get() == null);
+        }
+        listings.put(key, new java.lang.ref.SoftReference<>(listing));
+        return listing.attachments();
+    }
+
     /**
      * Das draw.io-Diagramm hinter einem Bild der Lese-Ansicht als PNG (#190): Ist {@code image} die Vorschau, die das
      * Plugin neben einem Diagramm-Anhang der Seite ablegt ({@link Diagrams#isDrawioPreview}), wird das Diagramm aus
@@ -666,8 +713,10 @@ public class Assets implements DocumentInventory {
      * kommen aus der Ablage oder wie bei {@link #viewImage} über die Quelle.
      *
      * @param pageVersion wie bei {@link #viewImage}; die Grafik hängt nur an den Quelldaten
+     * <p>Die Anhangsliste liest die Quelle je Seitenversion nur einmal ({@link #viewAttachments}).
+     *
      * @return leer, wenn das Bild keine solche Vorschau ist oder das Diagramm nicht darstellbar; dann gilt das Bild selbst
-     * @throws SourceAccessException  beim Laden der Anhangsliste oder der Quelldaten, wie {@link #viewImage}
+     * @throws SourceAccessException  beim Laden der Quelldaten, wie {@link #viewImage}
      * @throws AssetTooLargeException wenn die Quelldaten die Grenze überschreiten
      */
     public Optional<AssetContent> viewDiagram(String sourceId, String pageId, String pageVersion,
@@ -678,7 +727,7 @@ public class Assets implements DocumentInventory {
         }
         HarvestSource source = source(sourceId);
         PageAttachment diagram = null;
-        for (PageAttachment attachment : source.attachments(pageId).attachments()) {
+        for (PageAttachment attachment : viewAttachments(source, pageId, pageVersion)) {
             if (Diagrams.isDrawio(attachment.mediaType(), attachment.title())
                     && Diagrams.isDrawioPreview(filename, Diagrams.drawioName(attachment.title()))) {
                 diagram = attachment;
@@ -734,7 +783,7 @@ public class Assets implements DocumentInventory {
         }
         HarvestSource source = source(sourceId);
         PageAttachment diagram = null;
-        for (PageAttachment attachment : source.attachments(pageId).attachments()) {
+        for (PageAttachment attachment : viewAttachments(source, pageId, pageVersion)) {
             if (Diagrams.isDrawio(attachment.mediaType(), attachment.title())
                     && Diagrams.isDrawioPreview(filename, Diagrams.drawioName(attachment.title()))) {
                 diagram = attachment;
