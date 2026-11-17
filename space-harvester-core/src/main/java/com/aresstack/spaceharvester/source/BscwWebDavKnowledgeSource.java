@@ -240,15 +240,15 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             }
             URI uri = transport.resolve(href);
             String name = firstText(prop, "displayname");
+            String displayName = name == null || name.isBlank() ? filename(uri) : name;
             Element type = firstElement(prop, "resourcetype");
             boolean folderEntry = type != null && type.getElementsByTagNameNS(DAV, "collection").getLength() > 0;
             String etag = firstText(prop, "getetag");
             String date = firstText(prop, "getlastmodified");
             String length = firstText(prop, "getcontentlength");
             String mediaType = firstText(prop, "getcontenttype");
-            entries.add(new DavEntry(uri, name == null || name.isBlank() ? filename(uri) : name,
-                    folderEntry, etag, parseDate(date), length,
-                    mediaType == null || mediaType.isBlank() ? mimeType(uri) : mediaType));
+            entries.add(new DavEntry(uri, displayName, folderEntry, etag, parseDate(date), length,
+                    mediaType == null || mediaType.isBlank() ? mimeType(displayName) : mediaType));
         }
         return entries;
     }
@@ -354,8 +354,8 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         return path.substring(separator + 1);
     }
 
-    private static String mimeType(URI uri) {
-        String name = filename(uri).toLowerCase(java.util.Locale.ROOT);
+    private static String mimeType(String displayName) {
+        String name = displayName.toLowerCase(java.util.Locale.ROOT);
         if (name.endsWith(".pdf")) return "application/pdf";
         if (name.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";

@@ -125,6 +125,29 @@ class SourceFormTest {
      * Client (Pflichtangaben oben, der Rest unter „Erweitert“), nur ihre Anmeldearten und Zertifikate nur mit TLS.
      */
     @Test
+    void bscwClassicSelectsBasicAuthenticationAndExposesTheFolderUrl() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        start(config, null);
+
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm form = new SourceForm(context);
+            form.kind.setSelectedItem("BSCW Classic (WebDAV)");
+            assertThat(form.typeId()).isEqualTo("bscw");
+            assertThat(items(form.auth)).containsExactly("Benutzer und Passwort");
+            assertThat(form.auth.getSelectedItem()).isEqualTo("Benutzer und Passwort");
+            assertThat(form.username.isVisible()).isTrue();
+            JTextField folderUrl = (JTextField) form.fields.input("rootUrl");
+            assertThat(folderUrl).isNotNull();
+            folderUrl.setText("https://bscw.example.org/sec/bscw.cgi/146377797");
+            assertThat(folderUrl.getText()).endsWith("/146377797");
+        });
+    }
+
+    @Test
     void theKindsComeFromTheCoreAndOtherTypesShowTheFieldsOfTheirType() throws Exception {
         Path handbuch = Files.createDirectories(home.resolve("handbuch"));
         Path config = home.resolve("app.yml");

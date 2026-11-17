@@ -53,7 +53,7 @@ public final class BscwSourceAdapter implements SourceAdapter {
 
     @Override
     public List<SourceType.AuthMode> authModes() {
-        return List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC);
+        return List.of(SourceType.AuthMode.BASIC);
     }
 
     @Override

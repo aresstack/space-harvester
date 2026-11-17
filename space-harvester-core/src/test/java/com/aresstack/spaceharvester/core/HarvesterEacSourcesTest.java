@@ -91,6 +91,7 @@ class HarvesterEacSourcesTest {
 
             assertThat(types.get("confluence").authModes()).containsExactly(SourceType.AuthMode.NONE,
                     SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT);
+            assertThat(types.get("bscw").authModes()).containsExactly(SourceType.AuthMode.BASIC);
             assertThat(types.get("ftp").authModes()).containsExactly(SourceType.AuthMode.NONE,
                     SourceType.AuthMode.BASIC);
             assertThat(types.get("files").authModes()).containsExactly(SourceType.AuthMode.NONE);

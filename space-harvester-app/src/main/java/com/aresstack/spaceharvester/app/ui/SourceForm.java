@@ -832,8 +832,8 @@ final class SourceForm {
             } else if (SourceDraft.CONFLUENCE.equals(typeId())) {
                 auth.setSelectedItem(offered ? before : PAT);
             } else {
-                auth.setSelectedItem(type != null && type.needsCredentials() && modes.contains(AuthMode.BASIC) ? BASIC
-                        : NONE);
+                auth.setSelectedItem(type != null && modes.contains(AuthMode.BASIC)
+                        && (type.needsCredentials() || !modes.contains(AuthMode.NONE)) ? BASIC : NONE);
             }
         } finally {
             deriving = was;

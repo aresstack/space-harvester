@@ -11,6 +11,8 @@ import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.source.network.ProxyCredentials;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
@@ -22,6 +24,8 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -83,6 +87,7 @@ final class BscwWebDavSourceTest {
 
         KnowledgeDocument text = port.load(second.resources().get(0).id());
         assertThat(text.text()).contains("Example BSCW document");
+        assertThat(second.resources().get(0).contentType()).isEqualTo("text/plain");
     }
 
     @Test
@@ -99,6 +104,34 @@ final class BscwWebDavSourceTest {
             assertThat(snapshot.payload().bytes()).isEqualTo(TEXT_CONTENT);
             assertThat(harvester.pageText(snapshot)).map(PageText::text)
                     .hasValueSatisfying(text -> assertThat(text).contains("Example BSCW document"));
+            assertThat(harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Example"), null, 10).hits())
+                    .extracting(KeywordSearch.Hit::sourceId).containsExactly("bscw-test");
+        }
+    }
+
+    @Test
+    void synchronizationIndexesEveryBscwDocumentInTheSharedLuceneIndex() throws Exception {
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW test", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("rootUrl", root, "maxDepth", "2"));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
+            assertThat(harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Example"), null, 10).hits()).isEmpty();
+
+            harvester.await(harvester.sync("bscw-test", "bscw-test").id(), Duration.ofSeconds(30));
+            Instant deadline = Instant.now().plusSeconds(30);
+            while (Instant.now().isBefore(deadline)) {
+                if (!harvester.keywordSearch().search(harvester.caller(),
+                        KeywordSearch.Query.of("Example"), null, 10).hits().isEmpty()) {
+                    break;
+                }
+                Thread.sleep(50);
+            }
+
+            assertThat(harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Example"), null, 10).hits())
+                    .extracting(KeywordSearch.Hit::sourceId).containsExactly("bscw-test");
         }
     }
 
@@ -171,7 +204,7 @@ final class BscwWebDavSourceTest {
             xml.append(entry(path, "Root", true, null));
             if (children) {
                 xml.append(entry("/sec/bscw.cgi/444", "Nested", true, null));
-                xml.append(entry("/sec/bscw.cgi/666", "readme.txt", false, "text/plain"));
+                xml.append(entry("/sec/bscw.cgi/666", "readme.txt", false, null));
             }
         } else if ("/sec/bscw.cgi/444".equals(path)) {
             xml.append(entry(path, "Nested", true, null));
@@ -181,7 +214,7 @@ final class BscwWebDavSourceTest {
         } else if ("/sec/bscw.cgi/555".equals(path)) {
             xml.append(entry(path, "archive.zip", false, "application/zip"));
         } else if ("/sec/bscw.cgi/666".equals(path)) {
-            xml.append(entry(path, "readme.txt", false, "text/plain"));
+            xml.append(entry(path, "readme.txt", false, null));
         }
         return xml.append("</d:multistatus>").toString();
     }
