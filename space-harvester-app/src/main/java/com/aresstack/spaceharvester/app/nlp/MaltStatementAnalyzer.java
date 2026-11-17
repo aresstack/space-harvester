@@ -1,8 +1,11 @@
 package com.aresstack.spaceharvester.app.nlp;
 
+import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalyzer;
+import com.aresstack.spaceharvester.application.simplification.SimplificationSection;
+import com.aresstack.spaceharvester.application.simplification.SimplifiedSentence;
 import com.aresstack.spaceharvester.nlp.extraction.Argument;
 import com.aresstack.spaceharvester.nlp.extraction.CoreRelation;
 import com.aresstack.spaceharvester.nlp.extraction.ExtractionSettings;
@@ -13,6 +16,7 @@ import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricAnalysis;
 import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricExtraction;
 import com.aresstack.spaceharvester.nlp.extraction.Resolution;
 import com.aresstack.spaceharvester.nlp.extraction.SalienceProjection;
+import com.aresstack.spaceharvester.nlp.extraction.SimplificationSelection;
 import com.aresstack.spaceharvester.nlp.extraction.Statement;
 import com.aresstack.spaceharvester.nlp.extraction.StatementFeatures;
 import com.aresstack.spaceharvester.nlp.extraction.StatementQuality;
@@ -124,6 +128,164 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
         ParsedDocument document = analysis.analyze(ref(documentId), text, cancelled);
         ObjectCentricAnalysis result = extraction.analyze(document);
         return map(document, result);
+    }
+
+    /**
+     * Mit der Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3): Original parsen, Sätze und Abschnitte wählen
+     * ({@link SimplificationSelection}), nur die vereinfachten Sätze parsen und je Originalsatz mit
+     * {@link SimplificationSelection#merge} zusammenführen, derselben Funktion wie im Prüfstand. PLAUSIBLE-Aussagen des
+     * Originals bleiben; Merkmale kommen aus dem Original, sobald es eine Aussage zum selben Verb hat. Aussagen der
+     * Vorstufe zeigen mit Spannen und Satz auf den Originalsatz und tragen Kennzeichen und vereinfachten Satz.
+     */
+    @Override
+    public ParsedStatements analyze(String documentId, String text, BooleanSupplier cancelled,
+                                    Simplification simplification) {
+        DependencyAnalysis analysis = model();
+        ParsedDocument document = analysis.analyze(ref(documentId), text, cancelled);
+        ObjectCentricAnalysis result = extraction.analyze(document);
+        ParsedStatements original = map(document, result);
+        SimplificationSelection.Mode mode = simplification.mode() == SimplificationSettings.Mode.ALWAYS
+                ? SimplificationSelection.Mode.ALWAYS : SimplificationSelection.Mode.WHERE_NEEDED;
+        Map<Integer, Set<SimplificationSelection.Reason>> selection = SimplificationSelection.select(document, result,
+                mode);
+        List<SimplificationSection> sections = new ArrayList<>();
+        for (SimplificationSelection.Section section : SimplificationSelection.sections(document, selection)) {
+            List<SimplificationSection.Sentence> context = new ArrayList<>();
+            List<SimplificationSection.Sentence> chosen = new ArrayList<>();
+            for (int i = section.first(); i <= section.last(); i++) {
+                SimplificationSection.Sentence line = new SimplificationSection.Sentence(i,
+                        document.sentences().get(i).text());
+                if (line.text().isBlank()) {
+                    continue;
+                }
+                (section.simplify().contains(i) ? chosen : context).add(line);
+            }
+            if (!chosen.isEmpty()) {
+                sections.add(new SimplificationSection(context, chosen));
+            }
+        }
+        if (sections.isEmpty()) {
+            return original;
+        }
+        Map<Integer, List<SimplifiedSentence>> simplified = simplification.simplify(sections);
+        List<SimplifiedSentence> lines = new ArrayList<>();
+        new java.util.TreeMap<>(simplified).values().forEach(lines::addAll);
+        if (lines.isEmpty()) {
+            return original;
+        }
+        return merge(documentId, document, original, lines, simplified.keySet(), analysis, cancelled);
+    }
+
+    /** Parst die vereinfachten Sätze (eine Zeile je Satz) und führt sie mit dem Original zusammen. */
+    private ParsedStatements merge(String documentId, ParsedDocument document, ParsedStatements original,
+                                   List<SimplifiedSentence> lines, Set<Integer> simplify,
+                                   DependencyAnalysis analysis, BooleanSupplier cancelled) {
+        StringBuilder text = new StringBuilder();
+        int[] lineStarts = new int[lines.size()];
+        for (int i = 0; i < lines.size(); i++) {
+            lineStarts[i] = text.length();
+            text.append(lines.get(i).text().replace('\n', ' ')).append('\n');
+        }
+        DocumentRef ref = new DocumentRef("vorstufe", "satz", null);
+        ParsedDocument stage = analysis.analyze(ref, text.toString(), cancelled);
+        ObjectCentricAnalysis stageResult = extraction.analyze(stage);
+        Map<String, Mention> stageMentions = StatementQuality.mentions(stageResult);
+        int[] paragraphs = paragraphs(document.text(), document.sentences());
+        String prefix = ref.key() + "#s";
+        List<ParsedStatements.Statement> fromStage = new ArrayList<>();
+        Map<String, String> renamed = new java.util.HashMap<>();
+        for (Statement statement : stageResult.statements()) {
+            Sentence sentence = stage.sentences().get(statement.sentence());
+            int line = lineOf(lineStarts, sentence.start());
+            SimplifiedSentence source = lines.get(line);
+            Sentence target = document.sentences().get(source.sentence());
+            String from = prefix + (statement.sentence() + 1) + ".";
+            String to = documentId + "#s" + (source.sentence() + 1) + ".p" + (line + 1) + ".";
+            List<ParsedStatements.Argument> arguments = new ArrayList<>();
+            for (Argument argument : statement.arguments()) {
+                String mention = rename(argument.mention(), from, to);
+                if (argument.mention() != null) {
+                    renamed.put(argument.mention(), mention);
+                }
+                arguments.add(new ParsedStatements.Argument(
+                        ParsedStatements.Role.valueOf(argument.role().name()), mention, argument.relation(),
+                        argument.marker(), ParsedStatements.Priority.valueOf(argument.priority().name()),
+                        ParsedStatements.Basis.valueOf(argument.basis().name()), argument.certain()));
+            }
+            Set<String> findings = new HashSet<>();
+            for (Finding finding : statement.findings()) {
+                findings.add(finding.name());
+            }
+            StatementQuality.Assessment quality = StatementQuality.assess(stageMentions, stageResult, statement);
+            fromStage.add(new ParsedStatements.Statement(rename(statement.id(), from, to), source.sentence(),
+                    target.start(), target.end(), statement.predicate().text(), statement.predicate().lemma(),
+                    ParsedStatements.Voice.valueOf(statement.voice().name()),
+                    ParsedStatements.Clause.valueOf(statement.clause().name()), false, arguments, findings,
+                    paragraphs[source.sentence()], ParsedStatements.Quality.valueOf(quality.level().name()),
+                    quality.reasons(), ParsedStatements.Review.UNREVIEWED,
+                    features(stageMentions, stageResult, statement),
+                    ParsedStatements.Derivation.vorstufe(flag(source.flag()), source.text())));
+        }
+        List<ParsedStatements.Statement> merged = SimplificationSelection.merge(original.statements(), fromStage,
+                simplify, ParsedStatements.Statement::sentence,
+                statement -> statement.quality() == ParsedStatements.Quality.PLAUSIBLE,
+                MaltStatementAnalyzer::sameVerb, MaltStatementAnalyzer::withFeaturesOf);
+        // Erwähnungen der Vorstufe nur, soweit eine übernommene Aussage auf sie zeigt; Spannen = Originalsatz
+        Set<String> used = new HashSet<>();
+        merged.stream().filter(statement -> statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE)
+                .forEach(statement -> statement.arguments().forEach(argument -> used.add(argument.mention())));
+        List<ParsedStatements.Mention> mentions = new ArrayList<>(original.mentions());
+        for (Mention mention : stageResult.mentions()) {
+            String id = renamed.get(mention.id());
+            if (id == null || !used.contains(id)) {
+                continue;
+            }
+            Sentence sentence = stage.sentences().get(mention.sentence());
+            SimplifiedSentence source = lines.get(lineOf(lineStarts, sentence.start()));
+            Sentence target = document.sentences().get(source.sentence());
+            mentions.add(new ParsedStatements.Mention(id, source.sentence(), target.start(), target.end(),
+                    mention.text(), mention.headForm(), mention.lemma(),
+                    ParsedStatements.MentionKind.valueOf(mention.kind().name()),
+                    mention.resolution() == Resolution.UNRESOLVED, mention.cases()));
+        }
+        return new ParsedStatements(original.sentences(), mentions, merged, original.attachments(),
+                original.components(), original.conllu());
+    }
+
+    private static int lineOf(int[] lineStarts, int offset) {
+        int line = 0;
+        while (line + 1 < lineStarts.length && lineStarts[line + 1] <= offset) {
+            line++;
+        }
+        return line;
+    }
+
+    private static String rename(String id, String from, String to) {
+        return id != null && id.startsWith(from) ? to + id.substring(from.length()) : id;
+    }
+
+    private static boolean sameVerb(ParsedStatements.Statement a, ParsedStatements.Statement b) {
+        String left = a.predicateLemma() != null ? a.predicateLemma() : a.predicateText();
+        String right = b.predicateLemma() != null ? b.predicateLemma() : b.predicateText();
+        return left.equalsIgnoreCase(right);
+    }
+
+    /** Die Aussage der Vorstufe mit den Merkmalen der Original-Aussage desselben Verbs (ADR 0032, FL3). */
+    private static ParsedStatements.Statement withFeaturesOf(ParsedStatements.Statement stage,
+                                                             ParsedStatements.Statement original) {
+        return new ParsedStatements.Statement(stage.id(), stage.sentence(), stage.start(), stage.end(),
+                stage.predicateText(), stage.predicateLemma(), stage.voice(), stage.clause(), stage.core(),
+                stage.arguments(), stage.findings(), stage.paragraph(), stage.quality(), stage.qualityReasons(),
+                stage.review(), original.features(), stage.derivation());
+    }
+
+    private static ParsedStatements.StageFlag flag(SimplifiedSentence.Flag flag) {
+        return switch (flag) {
+            case FACT -> ParsedStatements.StageFlag.FACT;
+            case CONDITION -> ParsedStatements.StageFlag.CONDITION;
+            case PLANNING -> ParsedStatements.StageFlag.PLANNING;
+            case DISCARDED -> ParsedStatements.StageFlag.DISCARDED;
+        };
     }
 
     private DependencyAnalysis model() {

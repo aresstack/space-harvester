@@ -138,6 +138,7 @@ public final class Simplifications {
         AtomicInteger rejected = new AtomicInteger();
         AtomicInteger added = new AtomicInteger();
         AtomicInteger incomplete = new AtomicInteger();
+        AtomicInteger lost = new AtomicInteger();
         Semaphore slots = new Semaphore(parallel);
         List<Future<?>> futures = new ArrayList<>();
         java.util.concurrent.atomic.AtomicBoolean failed = new java.util.concurrent.atomic.AtomicBoolean();
@@ -187,6 +188,7 @@ public final class Simplifications {
                         rejected.addAndGet(parsed.rejected());
                         added.addAndGet(parsed.added());
                         incomplete.addAndGet(parsed.incomplete().size());
+                        lost.addAndGet(parsed.lost().size());
                     } catch (RuntimeException e) {
                         failed.set(true);
                         throw e;
@@ -219,7 +221,7 @@ public final class Simplifications {
         }
         store.retain(page, version, inputSha256, keys);
         return new Result(Map.copyOf(sentences), new Costs(chosen, pending.size(), fromStore, rejected.get(),
-                added.get(), incomplete.get()));
+                added.get(), incomplete.get(), lost.get()));
     }
 
     private record Pending(SimplificationSection section, Map<Integer, String> keys) {
@@ -242,7 +244,9 @@ public final class Simplifications {
      * @param rejected   verworfene Antwortzeilen außerhalb des Formats
      * @param added      verworfene Sätze mit Wörtern außerhalb des Abschnitts
      * @param incomplete Sätze mit Weglassungen
+     * @param lost       Sätze, deren Verneinung oder Modalverb verloren ging; ihre vereinfachten Sätze sind verworfen
      */
-    public record Costs(int chosen, int modelCalls, int fromStore, int rejected, int added, int incomplete) {
+    public record Costs(int chosen, int modelCalls, int fromStore, int rejected, int added, int incomplete,
+                        int lost) {
     }
 }

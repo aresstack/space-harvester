@@ -155,16 +155,24 @@ public final class SentenceSimplifier {
             result.get(index).add(new SimplifiedSentence(index, flag, text));
         }
         Set<Integer> incomplete = new LinkedHashSet<>();
+        Set<Integer> lost = new LinkedHashSet<>();
         result.forEach((index, sentences) -> {
             Words produced = new Words();
             sentences.forEach(sentence -> produced.add(sentence.text()));
-            if (!produced.covers(new Words().add(chosen.get(index).text()))) {
+            Words original = new Words().add(chosen.get(index).text());
+            if (!produced.covers(original)) {
                 incomplete.add(index);
+            }
+            if (!sentences.isEmpty() && !produced.keepsPolarity(original)) {
+                // Verneinung oder Modalverb fehlt: die Sätze sagten womöglich das Gegenteil, also keiner gilt
+                lost.add(index);
+                sentences.clear();
             }
         });
         Map<Integer, List<SimplifiedSentence>> frozen = new LinkedHashMap<>();
         result.forEach((index, sentences) -> frozen.put(index, List.copyOf(sentences)));
-        return new Parsed(java.util.Collections.unmodifiableMap(frozen), rejected, added, Set.copyOf(incomplete));
+        return new Parsed(java.util.Collections.unmodifiableMap(frozen), rejected, added, Set.copyOf(incomplete),
+                Set.copyOf(lost));
     }
 
     /**
@@ -174,9 +182,12 @@ public final class SentenceSimplifier {
      * @param rejected   Zeilen außerhalb des Formats oder zu einer fremden Nummer
      * @param added      formgerechte Sätze, die verworfen wurden, weil sie Wörter außerhalb des Abschnitts enthalten
      * @param incomplete gewählte Sätze, von deren Inhaltswörtern eines in keinem ihrer vereinfachten Sätze vorkommt
+     * @param lost       gewählte Sätze mit Verneinung oder Modalverb, die in keinem ihrer vereinfachten Sätze mehr
+     *                   vorkommt; deren vereinfachte Sätze sind verworfen (leere Liste), damit keine Aussage mit dem
+     *                   Gegenteil entsteht
      */
     public record Parsed(Map<Integer, List<SimplifiedSentence>> sentences, int rejected, int added,
-                         Set<Integer> incomplete) {
+                         Set<Integer> incomplete, Set<Integer> lost) {
     }
 
     /**
@@ -245,6 +256,11 @@ public final class SentenceSimplifier {
                 }
             }
             return this;
+        }
+
+        /** Ob jede Verneinung und jedes Modalverb aus {@code other} hier vorkommt. */
+        boolean keepsPolarity(Words other) {
+            return negations.containsAll(other.negations) && modals.containsAll(other.modals);
         }
 
         /** Ob alles aus {@code other} hier vorkommt, Inhaltswörter auch als Form desselben Stamms. */

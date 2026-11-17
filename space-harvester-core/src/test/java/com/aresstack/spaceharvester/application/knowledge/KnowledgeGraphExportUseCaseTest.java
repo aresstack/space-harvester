@@ -158,6 +158,29 @@ class KnowledgeGraphExportUseCaseTest {
     }
 
     @Test
+    void stageStatementsCarryOriginFlagAndSimplifiedSentenceAndOriginalsNone() throws Exception {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
+        run(new Scope.Page("wiki", "1"));
+        assertThat(nodes(read(), "Statement")).singleElement().satisfies(node -> assertThat(node.has("origin")
+                || node.has("stageFlag") || node.has("simplifiedSentence")).isFalse());
+
+        parser.derivation = ParsedStatements.Derivation.vorstufe(ParsedStatements.StageFlag.PLANNING,
+                "Der Sachbearbeiter übermittelt den Beleg.");
+        analyse("wiki", "2", "Die Stelle übermittelt den Antrag.");
+        Files.list(out).forEach(path -> path.toFile().delete());
+        run(new Scope.Page("wiki", "2"));
+        JsonNode doc = read();
+        assertThat(nodes(doc, "Statement")).singleElement().satisfies(node -> {
+            assertThat(node.path("origin").asString()).isEqualTo("VORSTUFE");
+            assertThat(node.path("stageFlag").asString()).isEqualTo("PLANNING");
+            assertThat(node.path("simplifiedSentence").asString())
+                    .isEqualTo("Der Sachbearbeiter übermittelt den Beleg.");
+            assertThat(node.has("temporality")).as("Kennzeichen ist kein Zeitbezug").isFalse();
+        });
+        assertThat(doc.path("@context").toString()).contains("\"stageFlag\":\"sh:stageFlag\"");
+    }
+
+    @Test
     void aClauseParticipantPointsToTheStatementOfItsClauseAndIsNoTerm() throws Exception {
         analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg. Die Buchhaltung sendet den Antrag.");
         PageStatementAnalysis stored = store.find(new PageKey("wiki", "1")).orElseThrow();

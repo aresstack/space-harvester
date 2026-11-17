@@ -1,15 +1,16 @@
 # Stand des Prüfstands (ADR 0032), genau festgehalten: schlechter = Rückschritt, besser = im selben PR anheben.
 # (PruefstandTest nennt die neuen Werte.) Merkmale = Verneinung + Verbindlichkeit + Zeitbezug, gemessen an allen
-# Erwartungen mit gefundenem Verb: richtig bei vorgegebenem Merkmal, fälschlich gesetzt bei den übrigen.
+# Erwartungen mit gefundenem Verb: richtig bei vorgegebenem Merkmal, fälschlich gesetzt bei den übrigen. Zusammengesetzte
+# Varianten (gezielt-*, immer-*) übernehmen die Merkmale aus dem Original (FL3): dort ist „fälschlich“ 0 ein Pin.
 # Textsatz	Variante	vollständig richtig	streng	falsch trotz PLAUSIBLE	Merkmale richtig	Merkmale fälschlich
 foerderung	heute	59	59	2	9	0
 foerderung	vorstufe-hand	60	59	4	8	2
 foerderung	vorstufe-gemma4-12b	57	53	6	6	0
 beschaffung	heute	53	53	1	9	0
-foerderung	gezielt-hand	63	62	3	8	2
-foerderung	gezielt-gemma4-12b	63	59	4	8	0
-foerderung	immer-hand	63	62	3	8	2
-foerderung	immer-gemma4-12b	63	59	5	8	0
+foerderung	gezielt-hand	63	62	3	9	0
+foerderung	gezielt-gemma4-12b	63	59	4	9	0
+foerderung	immer-hand	63	62	3	9	0
+foerderung	immer-gemma4-12b	63	59	5	9	0
 beschaffung	vorstufe-hand	55	54	2	8	1
-beschaffung	gezielt-hand	57	56	1	8	1
-beschaffung	immer-hand	57	56	2	8	1
+beschaffung	gezielt-hand	57	56	1	9	0
+beschaffung	immer-hand	57	56	2	9	0

@@ -135,13 +135,32 @@ public class StatementAnalysisJobs {
         context.phase(COMPONENT, PHASE_ANALYSIS);
         long current = 0;
         long withoutText = 0;
+        StatementAnalysis.SimplificationRequest vorstufe = options.simplification();
+        long[] costs = new long[9];
         for (Target target : walk.pages.values()) {
             context.checkpoint();
             try {
                 PageSnapshot snapshot = fetch.page(caller, target.sourceId(), target.pageId());
-                if (!options.reanalyze() && analysis.read(caller, snapshot).state() == PageStatements.State.CURRENT) {
+                // Mit Vorstufe zählt eine aktuelle Analyse nicht als erledigt: Die Ablage je Satz spart die Aufrufe.
+                if (vorstufe == null && !options.reanalyze()
+                        && analysis.read(caller, snapshot).state() == PageStatements.State.CURRENT) {
                     current++;
-                } else if (analysis.analyze(caller, snapshot, context::cancelRequested).analysis() == null) {
+                    context.processed(1);
+                    continue;
+                }
+                if (vorstufe != null && analysis.simplificationUnavailable(snapshot.key()).isPresent()) {
+                    costs[7]++; // ohne Modell oder ohne KI-Freigabe: diese Seite ohne Vorstufe
+                }
+                if (analysis.analyze(caller, snapshot, context::cancelRequested, vorstufe, run -> {
+                    costs[0]++;
+                    costs[1] += run.chosen();
+                    costs[2] += run.modelCalls();
+                    costs[3] += run.fromStore();
+                    costs[4] += run.rejected();
+                    costs[5] += run.added();
+                    costs[6] += run.incomplete();
+                    costs[8] += run.lost();
+                }).analysis() == null) {
                     withoutText++; // ohne Lesetext: nichts zu analysieren
                 } else {
                     context.written(1);
@@ -164,6 +183,16 @@ public class StatementAnalysisJobs {
         }
         context.record(JobEvent.Draft.info(COMPONENT, walk.pages.size() + " Seiten ermittelt, " + current
                 + " aktuell übersprungen, " + withoutText + " ohne Lesetext"));
+        if (vorstufe != null) {
+            // ADR 0032, FL3: Kosten und Zähler der Vorstufe, nur Zahlen
+            context.record(JobEvent.Draft.info(COMPONENT, "Vorstufe „" + (vorstufe.mode()
+                    == com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS
+                    ? "immer" : "nur wo nötig") + "“: " + costs[0] + " Seiten, " + costs[1] + " Sätze gewählt, "
+                    + costs[2] + " Abschnitte mit Modellaufruf, " + costs[3] + " Sätze aus der Ablage, " + costs[4]
+                    + " Antwortzeilen verworfen, " + costs[5] + " Sätze mit ergänzten Wörtern verworfen, " + costs[6]
+                    + " unvollständig, " + costs[8] + " wegen verlorener Verneinung oder Modalverb verworfen; " + costs[7]
+                    + " Seiten ohne Vorstufe (kein Modell oder keine KI-Freigabe)"));
+        }
         if (walk.incomplete) {
             throw new JobFailedException(INCOMPLETE, "Der Umfang konnte nicht vollständig ermittelt werden; die "
                     + "gefundenen Seiten wurden verarbeitet, weitere fehlen.");
@@ -385,10 +414,17 @@ public class StatementAnalysisJobs {
      * @param reanalyze {@code true} analysiert auch aktuelle Seiten neu („Neu analysieren“)
      * @param maxPages  ausdrücklich bestätigte Sicherheitsgrenze; {@code 0} ohne Grenze. Wird sie überschritten,
      *                  scheitert der Auftrag vor der ersten Analyse mit {@link #SCOPE_TOO_LARGE} – nie still gekürzt.
+     * @param simplification Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3) oder {@code null} ohne sie; nur Seiten mit
+     *                  KI-Freigabe gehen an das Modell, die übrigen werden ohne Vorstufe analysiert
      */
-    public record Options(boolean reanalyze, int maxPages) {
+    public record Options(boolean reanalyze, int maxPages, StatementAnalysis.SimplificationRequest simplification) {
 
         public static final Options DEFAULT = new Options(false, 0);
+
+        /** Ohne Vorstufe. */
+        public Options(boolean reanalyze, int maxPages) {
+            this(reanalyze, maxPages, null);
+        }
 
         public Options {
             if (maxPages < 0) {
