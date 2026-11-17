@@ -61,6 +61,59 @@ class StandingTabTest {
     }
 
     @Test
+    void statementsFromStaleAnalysesStayHiddenUntilTheChipShowsThem() {
+        StatusQuoView base = view();
+        List<StatusQuoEntry> entries = new ArrayList<>(base.entries());
+        entries.set(0, stale(entries.get(0)));
+        entries.set(4, stale(entries.get(4)));
+        StatusQuoView view = new StatusQuoView(entries, base.states(), base.pages(), base.counts(),
+                base.certainCounts(), List.of());
+        Fixture fixture = new Fixture(view);
+        StandingTab tab = fixture.shownTab();
+
+        // Angelo 17.11.2026: alte Analysen (MaltParser) mischen sich nicht unter die aktuellen.
+        assertThat(lines(tab)).hasSize(3).noneMatch(StatusQuoEntry::analysisStale);
+        assertThat(tab.staleChip().isVisible()).isTrue();
+        assertThat(tab.staleChip().getText()).isEqualTo("veraltet 2");
+        assertThat(tab.staleChip().getToolTipText()).isEqualTo(StandingTab.STALE_TIP);
+        assertThat(fixture.status.get()).isEqualTo("3 Aussagen auf 2 Seiten");
+
+        tab.staleChip().doClick();
+        assertThat(lines(tab)).hasSize(5);
+        assertThat(tab.staleChip().getToolTipText()).isEqualTo(StandingTab.STALE_HIDE_TIP);
+        assertThat(fixture.status.get()).isEqualTo("5 Aussagen auf 2 Seiten");
+    }
+
+    @Test
+    void anEmptyListSaysWhyInItsArea() {
+        StatusQuoView base = view();
+        StandingTab none = new Fixture(new StatusQuoView(List.of(), List.of(), List.of(), Map.of(), Map.of(),
+                List.of())).shownTab();
+        assertThat(none.placeholder()).isEqualTo("Keine analysierten Aussagen in der Auswahl");
+        assertThat(none.staleChip().isVisible()).isFalse();
+        none.tabs().select(StandingTab.CONFLICTS);
+        assertThat(none.conflictPlaceholder()).isEqualTo("Keine möglichen Widersprüche");
+
+        StandingTab onlyStale = new Fixture(new StatusQuoView(base.entries().stream().map(StandingTabTest::stale)
+                .toList(), List.of(), base.pages(), Map.of(), Map.of(), List.of())).shownTab();
+        assertThat(onlyStale.placeholder()).isEqualTo("Keine aktuellen Aussagen. 5 stammen aus veralteten Analysen.");
+        onlyStale.staleChip().doClick();
+        assertThat(onlyStale.placeholder()).isNull();
+
+        StandingTab searched = new Fixture(base).shownTab();
+        searched.searchField().setText("gibtesnicht");
+        assertThat(searched.placeholder()).isEqualTo("Keine Treffer");
+        assertThat(StandingTab.empty(3, 1, false)).isEqualTo("Keine Treffer");
+        assertThat(StandingTab.empty(1, 1, false)).isEqualTo("Keine aktuellen Aussagen. Eine stammt aus veralteten "
+                + "Analysen.");
+    }
+
+    private static StatusQuoEntry stale(StatusQuoEntry e) {
+        return new StatusQuoEntry(e.page(), e.statement(), e.kind(), e.subject(), e.subjectKey(), e.situation(),
+                e.quality(), e.standing(), e.decision(), true);
+    }
+
+    @Test
     void aChipFiltersOnItsStandingAndASecondClickShowsAllAgain() {
         StandingTab tab = new Fixture(view()).shownTab();
 
