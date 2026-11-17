@@ -45,14 +45,41 @@ public final class StatementFeatures {
      * @param negated     die Aussage ist verneint („erfüllt Auflagen nicht“, „ist noch nicht abgestimmt“)
      * @param modality    Verbindlichkeit
      * @param temporality Zeitbezug
+     * @param article     Begleiter des Rollennomens einer Zustandsaussage ({@link Finding#STATE_ROLE_NOUN}),
+     *                    {@code null} bei allen anderen Aussagen
      */
-    public record Features(boolean negated, Modality modality, Temporality temporality) {
+    public record Features(boolean negated, Modality modality, Temporality temporality, Article article) {
 
         public Features {
             Objects.requireNonNull(modality, "modality");
             Objects.requireNonNull(temporality, "temporality");
         }
+
+        /** Ohne Artikel (Handlungen und Eigenschaften). */
+        public Features(boolean negated, Modality modality, Temporality temporality) {
+            this(negated, modality, temporality, null);
+        }
     }
+
+    /**
+     * Begleiter des Rollennomens einer Zustandsaussage („ist ein/der/kein Ansprechpartner“, ADR 0032): ein neutrales
+     * Merkmal, das der Parser nicht deutet. {@link #KEIN} ändert nichts an der Verneinung.
+     */
+    public enum Article {
+        /** ein, eine, einen, einem, einer, eines. */
+        UNBESTIMMT,
+        /** der, die, das, den, dem, des. */
+        BESTIMMT,
+        /** Kein Begleiter, auch Mehrzahl ohne Artikel („sind Ansprechpartner“). */
+        OHNE,
+        /** kein, keine, keinen, keinem, keiner, keines. */
+        KEIN,
+        /** Jeder andere Begleiter (unser, ihr, dieser, jeder …). */
+        SONSTIGER
+    }
+
+    private static final Set<String> INDEFINITE = Set.of("ein", "eine", "einen", "einem", "einer", "eines");
+    private static final Set<String> DEFINITE = Set.of("der", "die", "das", "den", "dem", "des");
 
     private static final Set<String> NEGATIONS = Set.of("nicht", "nie", "niemals", "nimmer");
     private static final Set<String> NEGATING_DETERMINERS = Set.of("kein", "keine", "keinen", "keinem", "keiner",
@@ -92,7 +119,25 @@ public final class StatementFeatures {
         Token verb = sentence.token(statement.predicate().verb());
         List<Token> scope = scope(sentence, verb);
         return new Features(negated(mentions, sentence, statement, scope), modality(sentence, verb, scope),
-                temporality(sentence, verb, scope));
+                temporality(sentence, verb, scope), statement.has(Finding.STATE_ROLE_NOUN) ? article(sentence, verb)
+                : null);
+    }
+
+    /** Der erste Begleiter ({@code det}) am Rollennomen; ohne einen {@link Article#OHNE}. */
+    static Article article(Sentence sentence, Token noun) {
+        Token determiner = sentence.dependents(noun.id()).stream()
+                .filter(t -> "det".equals(t.baseRelation()) && t.id() < noun.id()).findFirst().orElse(null);
+        if (determiner == null) {
+            return Article.OHNE;
+        }
+        String form = lower(determiner.form());
+        if (INDEFINITE.contains(form)) {
+            return Article.UNBESTIMMT;
+        }
+        if (DEFINITE.contains(form)) {
+            return Article.BESTIMMT;
+        }
+        return NEGATING_DETERMINERS.contains(form) ? Article.KEIN : Article.SONSTIGER;
     }
 
     /** „um/ohne/statt … zu“: eigene Absicht, Merkmale des regierenden Prädikats gelten nicht. */
