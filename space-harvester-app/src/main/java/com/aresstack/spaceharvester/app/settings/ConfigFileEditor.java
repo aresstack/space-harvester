@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.settings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
@@ -507,6 +508,53 @@ public final class ConfigFileEditor {
                     + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Wörtern für überholte Seiten und Entwürfe ({@code space-harvester.statements.
+     * standing.outdated-words} und {@code .draft-words}, ADR 0032), dieselben Schlüssel wie im Dienst; nur der Block
+     * {@code standing} unter {@code statements} ändert sich. Eine Liste gleich der Vorgabe entfällt (fehlend heißt
+     * Vorgabe), eine leere wird als {@value StandingSettings#NONE} geschrieben.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withStanding(Path file, Draft base, StandingSettings standing) {
+        String text = nested(base.text(), "statements", "standing", indent -> {
+            String inner = indent + "  ";
+            String outdated = wordsYaml(inner, "outdated-words", standing.outdatedWords(),
+                    StandingSettings.DEFAULT_OUTDATED_WORDS);
+            String draft = wordsYaml(inner, "draft-words", standing.draftWords(), StandingSettings.DEFAULT_DRAFT_WORDS);
+            return outdated.isEmpty() && draft.isEmpty() ? indent + "standing: {}\n"
+                    : indent + "standing:\n" + outdated + draft;
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        StandingSettings expected = new StandingSettings(
+                sameWords(standing.outdatedWords(), StandingSettings.DEFAULT_OUTDATED_WORDS)
+                        ? StandingSettings.DEFAULT_OUTDATED_WORDS : standing.outdatedWords(),
+                sameWords(standing.draftWords(), StandingSettings.DEFAULT_DRAFT_WORDS)
+                        ? StandingSettings.DEFAULT_DRAFT_WORDS : standing.draftWords());
+        if (newProblem || !settings.standing().equals(expected)) {
+            throw new IllegalArgumentException("Die Wörter für „überholt“ und „Entwurf“ ließen sich nicht sicher in "
+                    + "die Konfigurationsdatei schreiben; bitte space-harvester.statements.standing von Hand "
+                    + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Dieselben Wörter, Reihenfolge egal. */
+    public static boolean sameWords(List<String> words, List<String> other) {
+        return words.size() == other.size() && new java.util.HashSet<>(words).equals(new java.util.HashSet<>(other));
+    }
+
+    /** Eine Wortliste als YAML-Liste; leer bei der Vorgabe (gleiche Wörter, Reihenfolge egal), „-“ für keine Wörter. */
+    private static String wordsYaml(String indent, String key, List<String> words, List<String> fallback) {
+        if (sameWords(words, fallback)) {
+            return "";
+        }
+        return indent + key + ": [" + StandingSettings.written(words).stream().map(ConfigFileEditor::quoted)
+                .collect(java.util.stream.Collectors.joining(", ")) + "]\n";
     }
 
     /**
