@@ -124,6 +124,10 @@ final class SourceUpdatesView extends JPanel {
     /** Ob ein Chat-Modell eingestellt ist. */
     private boolean available = true;
     private int generation;
+    /** Zähler der Update-Liste; Meldungen des Core lesen sie neu, ohne Bericht oder Textfenster zu verwerfen. */
+    private int listGeneration;
+    /** Zähler der Textfenster: wechselt nur bei Auswahl oder Ebenenwechsel, nicht bei Meldungen. */
+    private int textGeneration;
 
     /**
      * Was die Ansicht vom gewählten Update zeigt (Angelo, 17.11.2026): unter „Leseansicht“ die KI-Zusammenfassung,
@@ -231,6 +235,8 @@ final class SourceUpdatesView extends JPanel {
         subscription.close();
         subscription = Subscription.NONE;
         generation++;
+        listGeneration++;
+        textGeneration++;
         sourceId = id;
         spaceKey = id == null || space == null || space.isBlank() ? null : space;
         updates = List.of();
@@ -270,9 +276,9 @@ final class SourceUpdatesView extends JPanel {
         if (current == null || id == null) {
             return;
         }
-        int mine = ++generation;
+        int mine = ++listGeneration;
         runner.run(() -> current.updates(id, space), found -> {
-            if (mine != generation) {
+            if (mine != listGeneration || !Objects.equals(id, sourceId) || !Objects.equals(space, spaceKey)) {
                 return;
             }
             List<ChangeUpdate> fresh = List.copyOf(found);
@@ -301,7 +307,7 @@ final class SourceUpdatesView extends JPanel {
                 renderList();
             }
         }, failure -> {
-            if (mine == generation) {
+            if (mine == listGeneration) {
                 message("Updates nicht geladen: " + Problems.describe(failure).title());
             }
         });
@@ -333,32 +339,48 @@ final class SourceUpdatesView extends JPanel {
         if (!updateId.equals(selected)) {
             summary = null;
         }
+        if (!keepPosition) {
+            textGeneration++;
+        }
         selected = updateId;
         renderList();
         offerSummary();
         int mine = ++generation;
         boolean summaries = mode == Mode.SUMMARY;
         String space = spaceKey;
+        // Neu-Lesen desselben Updates: so viele Seiten wie gezeigt, damit die Ansicht nicht zusammenklappt.
+        int wanted = keepPosition ? loadedPages() : 0;
         runner.run(() -> {
             if (!summaries) {
-                // „Text“: der Update-Text mit den geänderten Absätzen, erster Ausschnitt.
-                UpdateText text = current.updateText(id, updateId, space, 0, TEXT_PAGES);
-                return new Loaded(text.report(), null, false, text);
+                // „Text“: der Update-Text mit den geänderten Absätzen, fensterweise.
+                List<UpdateText> texts = new ArrayList<>();
+                List<ReportedPage> pages = new ArrayList<>();
+                UpdateText window;
+                do {
+                    window = current.updateText(id, updateId, space, pages.size(), TEXT_PAGES);
+                    texts.add(window);
+                    pages.addAll(window.report().pages());
+                } while (window.more() && !window.report().pages().isEmpty() && pages.size() < wanted);
+                return new Loaded(new ChangeReport(texts.getFirst().report().update(), pages), null, false, texts);
             }
             return new Loaded(current.report(id, updateId, space), current.summary(id, updateId, space),
-                    current.summariesAvailable(), null);
+                    current.summariesAvailable(), List.of());
         }, found -> {
-            if (mine != generation) {
+            if (mine != generation || !updateId.equals(selected)) {
                 return;
             }
-            if (keepPosition && found.report().equals(shown) && Objects.equals(found.summary(), summary)) {
+            if (keepPosition && loadedPages() > wanted) {
+                // Inzwischen wurden weitere Seiten nachgeladen: mit der neuen Zahl noch einmal lesen.
+                select(updateId, true);
+                return;
+            }
+            if (keepPosition && found.report().equals(shown) && Objects.equals(found.summary(), summary)
+                    && markdown(found.texts()).equals(markdown(windows))) {
                 return;
             }
             java.awt.Point position = keepPosition ? viewPosition() : new java.awt.Point();
             windows.clear();
-            if (found.text() != null) {
-                windows.add(found.text());
-            }
+            windows.addAll(found.texts());
             shown = found.report();
             summary = found.summary();
             available = found.available();
@@ -372,7 +394,30 @@ final class SourceUpdatesView extends JPanel {
         });
     }
 
-    private record Loaded(ChangeReport report, UpdateSummary summary, boolean available, UpdateText text) {
+    private record Loaded(ChangeReport report, UpdateSummary summary, boolean available, List<UpdateText> texts) {
+    }
+
+    /** Die schon geladenen Seiten des Update-Texts. */
+    private int loadedPages() {
+        return windows.stream().mapToInt(window -> window.report().pages().size()).sum();
+    }
+
+    /**
+     * Die Textform der Fenster am Stück. Jedes Fenster mit weiteren Seiten endet im Core mit „… weitere Seiten ab“;
+     * diese Zeile bleibt nur beim letzten Fenster stehen.
+     */
+    static String markdown(List<UpdateText> texts) {
+        StringBuilder markdown = new StringBuilder();
+        for (int i = 0; i < texts.size(); i++) {
+            UpdateText window = texts.get(i);
+            String text = window.markdown() == null ? "" : window.markdown();
+            if (i < texts.size() - 1 && !window.sections().isEmpty()) {
+                UpdateText.Section end = window.sections().getLast();
+                text = text.substring(0, Math.min(text.length(), end.start() + end.length()));
+            }
+            markdown.append(text);
+        }
+        return markdown.toString();
     }
 
     /** Lädt den nächsten Ausschnitt des Update-Texts und hängt seine Seiten an; die Rollposition bleibt. */
@@ -385,10 +430,11 @@ final class SourceUpdatesView extends JPanel {
         String id = sourceId;
         String space = spaceKey;
         String updateId = last.updateId();
-        int offset = last.offset() + last.report().pages().size();
-        int mine = ++generation;
+        int offset = loadedPages();
+        int mine = textGeneration;
         runner.run(() -> current.updateText(id, updateId, space, offset, TEXT_PAGES), next -> {
-            if (mine != generation || !updateId.equals(selected)) {
+            // Meldungen des Core verwerfen das Nachladen nicht; nur Auswahl, Ebenenwechsel oder ein doppelter Klick.
+            if (mine != textGeneration || !updateId.equals(selected) || offset != loadedPages()) {
                 return;
             }
             java.awt.Point position = viewPosition();
@@ -399,7 +445,7 @@ final class SourceUpdatesView extends JPanel {
             renderReport(shown);
             restore(position);
         }, failure -> {
-            if (mine == generation) {
+            if (mine == textGeneration) {
                 onStatus.accept("Weitere Seiten nicht geladen: " + Problems.describe(failure).title());
             }
         });
@@ -629,7 +675,7 @@ final class SourceUpdatesView extends JPanel {
             add(reportBody, Comic.wrapped(NO_PAGES, Comic.MUTED, 13.5f));
         } else {
             for (Map.Entry<ChangeKind, List<ReportedPage>> group : found.byKind().entrySet()) {
-                JLabel kind = new JLabel(kindLabel(group.getKey()) + " (" + group.getValue().size() + ")");
+                JLabel kind = new JLabel(kindLabel(group.getKey()) + " (" + kindCount(update, group) + ")");
                 kind.setFont(Comic.semiBold(14f));
                 kind.setForeground(Comic.INK);
                 kind.setBorder(BorderFactory.createEmptyBorder(8, 0, 4, 0));
@@ -646,7 +692,7 @@ final class SourceUpdatesView extends JPanel {
         }
         UpdateText last = windows.isEmpty() ? null : windows.getLast();
         if (last != null && last.more()) {
-            int rest = last.totalPages() - last.offset() - last.report().pages().size();
+            int rest = last.totalPages() - loadedPages();
             JLabel more = new JLabel("Weitere " + pages(rest) + " laden");
             more.setFont(Comic.semiBold(13f));
             more.setForeground(Comic.BLUE);
@@ -900,6 +946,16 @@ final class SourceUpdatesView extends JPanel {
         return at == null ? "–" : WHEN.format(at.atZone(zone));
     }
 
+    /** Seiten einer Art: solange Seiten fehlen, die Zahl der ganzen Ebene, nicht nur der geladenen. */
+    private int kindCount(ChangeUpdate update, Map.Entry<ChangeKind, List<ReportedPage>> group) {
+        UpdateText last = windows.isEmpty() ? null : windows.getLast();
+        int loaded = group.getValue().size();
+        if (last == null || !last.more()) {
+            return loaded;
+        }
+        return Math.max(loaded, update.kinds().getOrDefault(group.getKey(), 0));
+    }
+
     private static String pages(int count) {
         return count == 1 ? "1 Seite" : count + " Seiten";
     }
@@ -963,9 +1019,7 @@ final class SourceUpdatesView extends JPanel {
         }
         if (!windows.isEmpty()) {
             // Die feste Textform des Core (update-text/v1) ist die Kopierform des Reiters „Text“.
-            StringBuilder markdown = new StringBuilder();
-            windows.forEach(window -> markdown.append(window.markdown()));
-            return markdown.toString().strip();
+            return markdown(windows).strip();
         }
         if (shown.update().initial()) {
             text.append('\n').append("Erstbefüllung: ").append(pages(shown.update().pages()));

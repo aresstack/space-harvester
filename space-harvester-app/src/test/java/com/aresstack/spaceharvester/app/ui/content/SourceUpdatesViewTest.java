@@ -102,12 +102,68 @@ class SourceUpdatesViewTest {
                 "+ Neu: Notfallkontakt", "− Alter Absatz");
         assertThat(texts).as("erst zwei von drei Seiten").doesNotContain("Alte Seite").contains("Weitere 1 Seite laden");
         assertThat(view.copyText()).as("Kopierform ist der Update-Text des Core").startsWith("# Update wiki")
-                .contains("## Betriebshandbuch");
+                .contains("## Betriebshandbuch").contains("weitere Seiten ab Nr. 3 von 3");
 
         assertThat(view.clickReportLink("Weitere 1 Seite laden")).isTrue();
         assertThat(actions.textOffsets).endsWith(0, 2);
         assertThat(view.reportTexts()).contains("Alte Seite").doesNotContain("Weitere 1 Seite laden");
-        assertThat(view.copyText()).contains("## Alte Seite");
+        assertThat(view.copyText()).contains("## Alte Seite").as("die Zeile des ersten Fensters entfällt")
+                .doesNotContain("weitere Seiten ab");
+    }
+
+    @Test
+    void aMessageBetweenClickAndAnswerDoesNotDropTheNextPages() throws Exception {
+        List<Runnable> waiting = new ArrayList<>();
+        SourceUpdatesView slow = new SourceUpdatesView(() -> actions, new SourceUpdatesView.Runner() {
+            @Override
+            public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
+                waiting.add(() -> {
+                    try {
+                        onSuccess.accept(work.call());
+                    } catch (Exception e) {
+                        onFailure.accept(e);
+                    }
+                });
+            }
+        }, SourceUpdatesView.Mode.CHANGES);
+        actions.textLimit = 2;
+        slow.source("wiki", "Confluence HaVdB");
+        while (!waiting.isEmpty()) {
+            waiting.remove(0).run();
+        }
+        assertThat(slow.clickReportLink("Weitere 1 Seite laden")).isTrue();
+        assertThat(waiting).hasSize(1);
+        Runnable more = waiting.remove(0);
+
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        while (!waiting.isEmpty()) {
+            waiting.remove(0).run();
+        }
+        more.run();
+
+        assertThat(slow.reportTexts()).as("die Antwort nach der Meldung gilt").contains("Alte Seite")
+                .doesNotContain("Weitere 1 Seite laden");
+    }
+
+    @Test
+    void rereadingTheOpenUpdateKeepsThePagesLoadedSoFar() throws Exception {
+        actions.textLimit = 1;
+        actions.openGrows = true;
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("Seit dem letzten Update");
+        assertThat(view.clickReportLink("Weitere 1 Seite laden")).isTrue();
+        assertThat(view.reportTexts()).contains("Neue Seite", "Noch eine Seite");
+        int renders = view.reportRenders();
+
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+
+        assertThat(view.reportTexts()).as("nicht auf das erste Fenster zurückgefallen").contains("Neue Seite",
+                "Noch eine Seite").doesNotContain("Weitere 1 Seite laden");
+        assertThat(view.reportRenders()).as("unverändert: nichts neu gezeichnet, die Ansicht springt nicht")
+                .isEqualTo(renders);
+        assertThat(view.copyText()).doesNotContain("weitere Seiten ab");
     }
 
     @Test
@@ -540,6 +596,11 @@ class SourceUpdatesViewTest {
                 int start = markdown.length();
                 markdown.append("## ").append(page.title()).append('\n');
                 sections.add(new UpdateText.Section(page.pageId(), start, markdown.length() - start, page.kind()));
+            }
+            if (end < pages.size()) {
+                // Wie der Core: ein Fenster mit weiteren Seiten endet mit dieser Zeile.
+                markdown.append("_… weitere Seiten ab Nr. ").append(end + 1).append(" von ").append(pages.size())
+                        .append("_\n");
             }
             return new UpdateText(UpdateText.FORMAT, sourceId, updateId, spaceKey, pages.size(), offset,
                     new ChangeReport(full.update(), window), markdown.toString(), sections);
