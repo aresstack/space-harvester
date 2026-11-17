@@ -42,6 +42,16 @@ import java.util.regex.Pattern;
  *     keinem seiner vereinfachten Sätze vorkommt, macht den Satz „unvollständig“; sein Original bleibt beim
  *     Zusammenführen ohnehin maßgeblich.</li>
  * </ul>
+ *
+ * <p>Bekannte Grenzen, die die Messung mit echtem Modell beziffern soll:
+ * <ul>
+ *     <li>Der Wortabgleich verwirft vorsichtig: Mehrzahl mit Umlaut („Verträge“/„Vertrag“) und starke Formen gelten
+ *     nicht als gleicher Stamm; dann bleibt das Original maßgeblich.</li>
+ *     <li>Eine Verneinung oder ein Modalverb gilt als vorhanden, wenn es irgendwo im Abschnitt steht, nicht nur im
+ *     Originalsatz (nötig für Stichpunkte unter einer verneinten Kennungszeile); eine verschobene Verneinung fällt hier
+ *     also nicht auf. Dagegen schützt das Zusammenführen: Merkmale kommen aus dem Originalsatz, sobald er eine Aussage
+ *     zum selben Verb hat.</li>
+ * </ul>
  */
 public final class SentenceSimplifier {
 
