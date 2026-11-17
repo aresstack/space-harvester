@@ -187,49 +187,56 @@ class TermRelationsViewTest {
             view[0] = new TermsView(context);
             view[0].shown();
         });
+        // Eine Liste Beziehungen mit Filter nach Art: nur Synonym und Schreibvariante entspricht dem alten Reiter
+        // Synonyme; der Filter fragt den Core mit der Art.
         javax.swing.JTable[] synonyms = new javax.swing.JTable[1];
-        SwingUtilities.invokeAndWait(() -> synonyms[0] = view[0].synonyms().directory().table());
-        await("Synonyme und Beziehungen geladen", () -> synonyms[0].getRowCount() == 2 && view[0].relations().table().getRowCount() == 4);
+        SwingUtilities.invokeAndWait(() -> synonyms[0] = view[0].relations().table());
+        await("Beziehungen geladen", () -> synonyms[0].getRowCount() == 4);
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(synonyms[0].getValueAt(0, 0)).isEqualTo("E-Mail");
-            assertThat(synonyms[0].getValueAt(0, 1)).isEqualTo("Email");
-            assertThat(synonyms[0].getValueAt(0, 2)).isEqualTo("Schreibvariante");
-            assertThat(synonyms[0].getValueAt(1, 2)).isEqualTo("Synonym");
-            assertThat(synonyms[0].getValueAt(1, 3)).isEqualTo("Manuell");
-            assertThat(synonyms[0].getValueAt(1, 4)).isEqualTo("Bestätigt");
-            // Ablehnen im Reiter Synonyme: die Zeile bleibt gewählt und steht als abgelehnt am Ende.
-            synonyms[0].setRowSelectionInterval(1, 1);
-            view[0].synonyms().reviewButtons().get(1).doClick();
+            view[0].relationTab().typeChip(RelationType.ABBREVIATION).doClick();
+            view[0].relationTab().typeChip(RelationType.RELATED).doClick();
         });
-        await("Synonym abgelehnt", () -> synonyms[0].getRowCount() == 2 && "Abgelehnt".equals(synonyms[0].getValueAt(1, 4))
+        await("nur Synonyme und Schreibvarianten", () -> synonyms[0].getRowCount() == 2);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(workspace.termRelations(null, RelationType.SYNONYM, null, 10).relations()).hasSize(1);
+            assertThat(synonyms[0].getValueAt(0, 0)).isEqualTo("E-Mail");
+            assertThat(synonyms[0].getValueAt(0, 2)).isEqualTo("Email");
+            assertThat(synonyms[0].getValueAt(0, 1)).isEqualTo("Schreibvariante");
+            assertThat(synonyms[0].getValueAt(1, 1)).isEqualTo("Synonym");
+            assertThat(synonyms[0].getValueAt(1, 4)).isEqualTo("Manuell");
+            assertThat(synonyms[0].getValueAt(1, 3)).isEqualTo("Bestätigt");
+            // Ablehnen: die Zeile bleibt gewählt und an ihrem Platz, zeigt abgelehnt.
+            synonyms[0].setRowSelectionInterval(1, 1);
+            view[0].reviewButtons().get(1).doClick();
+        });
+        await("Synonym abgelehnt", () -> synonyms[0].getRowCount() == 2 && "Abgelehnt".equals(synonyms[0].getValueAt(1, 3))
                 && synonyms[0].getSelectedRow() == 1);
-        // Neu angelegt im Reiter Synonyme erscheint sie dort gewählt.
-        SwingUtilities.invokeAndWait(() -> view[0].synonyms().createRelation("Schnittstelle", RelationType.SYNONYM,
-                "API"));
-        // Ungerichtet steht das kleinere Ende vorn: API, dann Schnittstelle.
+        // Neu angelegt erscheint sie gewählt; ungerichtet steht das kleinere Ende vorn: API, dann Schnittstelle.
+        SwingUtilities.invokeAndWait(() -> view[0].createRelation("Schnittstelle", RelationType.SYNONYM, "API"));
         await("Synonym neu angelegt", () -> synonyms[0].getRowCount() == 3 && synonyms[0].getSelectedRow() >= 0
                 && "API".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 0))
-                && "Schnittstelle".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 1)));
+                && "Schnittstelle".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 2)));
 
-        // #336 „Synonyme vorschlagen“: Knopf oben rechts in der Reiterzeile, nur im Reiter Synonyme sichtbar; der Lauf
-        // zeigt den Wartekreis, endet ohne Chat-Modell nach der Regelstufe und meldet das in der Statuszeile.
+        // #336 „Synonyme vorschlagen“: Knopf oben rechts in der Reiterzeile, nur im Reiter Beziehungen sichtbar; der
+        // Lauf zeigt den Wartekreis, endet ohne Chat-Modell nach der Regelstufe und meldet das in der Statuszeile.
         java.util.List<String> notices = new java.util.concurrent.CopyOnWriteArrayList<>();
         context.events().subscribe(com.aresstack.spaceharvester.app.event.StatusMessageEvent.class,
                 event -> notices.add(event.getPayload().getText()));
+        RelationTab tab = view[0].relationTab();
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(view[0].proposeSynonymsButton().isVisible()).isFalse();
-            view[0].tabs().select(TermsView.SYNONYMS);
-            assertThat(view[0].proposeSynonymsButton().isVisible()).isTrue();
-            assertThat(view[0].proposeSynonymsButton().isEnabled()).isTrue();
-            view[0].startSynonymRun(new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Request(
+            view[0].tabs().select(TermsView.GLOSSARY);
+            assertThat(tab.proposeButton().isVisible()).isFalse();
+            view[0].tabs().select(TermsView.RELATIONS);
+            assertThat(tab.proposeButton().isVisible()).isTrue();
+            assertThat(tab.proposeButton().isEnabled()).isTrue();
+            tab.startSynonymRun(new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Request(
                     com.aresstack.spaceharvester.application.terms.SynonymScope.ALL, null));
-            assertThat(view[0].synonymOverlay().isBusy()).isTrue();
-            assertThat(view[0].proposeSynonymsButton().isEnabled()).isFalse();
+            assertThat(tab.overlay().isBusy()).isTrue();
+            assertThat(tab.proposeButton().isEnabled()).isFalse();
         });
         await("Synonymlauf gemeldet", () -> notices.stream().anyMatch(text ->
-                text.startsWith("Synonymerkennung abgeschlossen") && text.contains(TermsView.RULES_ONLY)));
-        await("Wartekreis weg", () -> !view[0].synonymOverlay().isBusy()
-                && view[0].proposeSynonymsButton().isEnabled());
+                text.startsWith("Synonymerkennung abgeschlossen") && text.contains(RelationTab.RULES_ONLY)));
+        await("Wartekreis weg", () -> !tab.overlay().isBusy() && tab.proposeButton().isEnabled());
         assertThat(synonyms[0].getRowCount()).isEqualTo(3);
 
         // Graph: API in der Mitte, Tiefe 2 bringt auch REST; die abgelehnte Beziehung fehlt.

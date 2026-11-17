@@ -11,8 +11,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * Bildschirmfotos der Reiter „Beziehungen“ und „Synonyme“ mit Buchstabenleiste und Nachladen zur Sichtprüfung; läuft
- * nur mit der Umgebungsvariable {@code SCREENSHOTS_DIR}.
+ * Bildschirmfotos des Reiters „Beziehungen“ mit Buchstabenleiste, Art-Chips und Nachladen zur Sichtprüfung (alle
+ * Arten; nur Synonym und Schreibvariante unter B); läuft nur mit der Umgebungsvariable {@code SCREENSHOTS_DIR}.
  */
 class RelationTabScreenshotTest {
 
@@ -38,19 +38,11 @@ class RelationTabScreenshotTest {
         RelationTab[] relations = new RelationTab[1];
         RelationTab[] synonyms = new RelationTab[1];
         SwingUtilities.invokeAndWait(() -> {
-            relations[0] = new RelationTab(null, "Beziehungen zwischen Begriffen",
-                    new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"},
-                    r -> List.of(r.fromTerm(), Relation.typeText(r.type()), r.toTerm(),
-                            Relation.statusText(r.status()), Relation.originText(r.origin())),
-                    List.of(), RelationType.ABBREVIATION, TermsView.NO_RELATIONS);
-            relations[0].fetch(core);
-            synonyms[0] = new RelationTab(null, "Synonyme und Schreibvarianten",
-                    new String[]{"Begriff", "Synonym", "Art", "Herkunft", "Status"},
-                    r -> List.of(r.fromTerm(), r.toTerm(), Relation.typeText(r.type()),
-                            Relation.originText(r.origin()), Relation.statusText(r.status())),
-                    TermsView.SYNONYM_TYPES, RelationType.SYNONYM, TermsView.NO_SYNONYMS);
-            synonyms[0].fetch(core);
+            relations[0] = newTab(core);
             relations[0].load(null);
+            synonyms[0] = newTab(core);
+            synonyms[0].typeChip(RelationType.ABBREVIATION).doClick();
+            synonyms[0].typeChip(RelationType.RELATED).doClick();
             synonyms[0].directory().letterButton("B").doClick();
         });
         for (int i = 0; i < 200 && (relations[0].directory().table().getRowCount() < 200
@@ -59,27 +51,33 @@ class RelationTabScreenshotTest {
         }
         for (int width : new int[] {1280, 960}) {
             for (RelationTab tab : List.of(relations[0], synonyms[0])) {
-                String selected = tab == relations[0] ? TermsView.RELATIONS : TermsView.SYNONYMS;
                 javax.swing.JPanel[] surface = new javax.swing.JPanel[1];
-                SwingUtilities.invokeAndWait(() -> surface[0] = surface(selected, tab, width));
+                SwingUtilities.invokeAndWait(() -> surface[0] = surface(tab, width));
                 // Die Größenänderung meldet sich erst im nächsten Ereignis; die Buchstabenleiste rückt dann um.
                 SwingUtilities.invokeAndWait(() -> { });
                 SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], out.resolve(
-                        (tab == relations[0] ? "beziehungen-" : "synonyme-") + width + ".png")));
+                        (tab == relations[0] ? "beziehungen-" : "beziehungen-synonyme-b-") + width + ".png")));
             }
         }
     }
 
-    private static javax.swing.JPanel surface(String selected, RelationTab tab, int width) {
+    private static RelationTab newTab(RelationTabTest.FakeCore core) {
+        RelationTab tab = new RelationTab(null, "Beziehungen zwischen Begriffen",
+                new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"},
+                r -> List.of(r.fromTerm(), Relation.typeText(r.type()), r.toTerm(),
+                        Relation.statusText(r.status()), Relation.originText(r.origin())),
+                List.of(), RelationType.ABBREVIATION, TermsView.NO_RELATIONS);
+        tab.fetch(core);
+        return tab;
+    }
+
+    private static javax.swing.JPanel surface(RelationTab tab, int width) {
         PillTabs tabs = new PillTabs();
         tabs.tab(TermsView.ACRONYMS, new javax.swing.JPanel()).tab(TermsView.IDENTIFIERS, new javax.swing.JPanel())
-                .tab(TermsView.RELATIONS, TermsView.RELATIONS.equals(selected) ? tab.directory()
-                        : new javax.swing.JPanel())
-                .tab(TermsView.SYNONYMS, TermsView.SYNONYMS.equals(selected) ? tab.directory()
-                        : new javax.swing.JPanel())
+                .tab(TermsView.RELATIONS, tab.component())
                 .tab(TermsView.GLOSSARY, new javax.swing.JPanel()).tab(TermsView.GRAPH, new javax.swing.JPanel())
-                .actions(tab.createButton());
-        tabs.select(selected);
+                .actions(tab.proposeButton(), tab.createButton());
+        tabs.select(TermsView.RELATIONS);
         javax.swing.JPanel surface = new javax.swing.JPanel(new java.awt.BorderLayout());
         surface.setBackground(Comic.SURFACE);
         surface.setBorder(javax.swing.BorderFactory.createEmptyBorder(12, 14, 12, 14));
