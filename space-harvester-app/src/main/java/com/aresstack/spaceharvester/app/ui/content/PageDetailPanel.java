@@ -710,15 +710,18 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * Zeigt eine Aussage aus „Stand“ im Lesetext: die Seite öffnen (der Explorer folgt), dann die Stelle markieren.
-     * Ist die Seite schon offen, wird sofort markiert.
+     * Ist die Seite schon offen, wird sofort markiert. Ein Ziel ohne Stelle (Anfang negativ) öffnet nur die Seite.
      */
     void openAt(StandingTab.Target target) {
-        TermsTab.Span span = new TermsTab.Span(target.start(), target.end());
+        boolean somewhere = target.start() >= 0 && target.end() > target.start();
         if (shown != null && page != null && target.sourceId().equals(sourceId) && target.pageId().equals(pageId)) {
-            jumpTo(List.of(span));
+            if (somewhere) {
+                jumpTo(List.of(new TermsTab.Span(target.start(), target.end())));
+            }
             return;
         }
-        pendingJump = target;
+        // Ohne Stelle („Zuerst lesen“ öffnet nur die Seite) wird nach dem Laden nichts markiert.
+        pendingJump = somewhere ? target : null;
         if (context.navigator() != null) {
             context.navigator().openPage(target.sourceId(), target.pageId());
         } else {

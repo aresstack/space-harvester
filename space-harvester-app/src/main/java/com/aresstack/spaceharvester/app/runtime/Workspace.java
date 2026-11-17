@@ -1649,6 +1649,16 @@ public final class Workspace {
     }
 
     /**
+     * Die Leseempfehlung der Auswahl links (ADR 0032, FL6): Seiten mit Summe und offenen Teilzahlen. Mit Thema
+     * ({@code topic}) nur Seiten, die es erwähnen; {@code null} oder leer für die ganze Auswahl. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.standing.ReadingList readingList(
+            com.aresstack.spaceharvester.application.holdings.PageSelection selection, String topic,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.readingAdvice().recommend(caller, selection, topic, cancelled);
+    }
+
+    /**
      * Der Wortlaut zu Einträgen der Status-quo-Sicht (FL6): Originalsatz, vereinfachter Satz, Satzgrenzen im Lesetext.
      * Ohne Leserecht am Inhalt fehlt der Eintrag. Nie auf dem EDT, am besten nur für sichtbare Zeilen.
      */

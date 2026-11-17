@@ -21,6 +21,7 @@ import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.standing.BearerStates;
 import com.aresstack.spaceharvester.application.standing.PageMark;
+import com.aresstack.spaceharvester.application.standing.ReadingList;
 import com.aresstack.spaceharvester.application.standing.SentenceText;
 import com.aresstack.spaceharvester.application.standing.Standing;
 import com.aresstack.spaceharvester.application.standing.StandingBasis;
@@ -86,10 +87,10 @@ import java.util.function.Supplier;
 final class StandingTab extends JPanel {
 
     static final String STATEMENTS = "Aussagen";
+    static final String READING = "Zuerst lesen";
     static final String CONFLICTS = "Mögliche Widersprüche";
     static final String REPLACEMENTS = "Ablösungen";
-    /** Höchstens so viele Einträge holen den Wortlaut für „Mögliche Widersprüche“ auf einmal. */
-    private static final int CONFLICT_SENTENCES = 400;
+    static final String SITUATION = "Sachlage: ";
     static final String BUSY = "Stand wird gelesen …";
     static final String BY_BEARER_TIP = "Nach Träger bündeln: Zustände (Eigenschaften, Rollen) unter ihrem Träger";
     static final String AS_LIST_TIP = "Als Liste nach Stand zeigen";
@@ -97,6 +98,7 @@ final class StandingTab extends JPanel {
     static final String STALE_GROUP = "Entscheidungen ohne Aussage";
     static final String OPEN_TEXT = "Im Lesetext zeigen";
     static final String SET_LABEL = "Stand von Hand:";
+    static final String PAGE_SET_LABEL = "Seite von Hand:";
     static final String CLEAR_TIP = "Entscheidung von Hand löschen; danach gilt wieder der berechnete Stand";
     static final String HISTORY_TIP = "Protokoll: wer wann welchen Stand gesetzt oder gelöscht hat";
     static final String CLEAR_QUESTION = "Wirklich die Entscheidung von Hand löschen? Danach gilt wieder der "
@@ -117,6 +119,12 @@ final class StandingTab extends JPanel {
             + "Die Suche findet Handelnde, Träger, Prädikate, die übrigen Beteiligten in Grundform, Seitentitel und "
             + "vereinfachte Sätze, nicht aber Wörter, die nur im Originalsatz stehen. "
             + "Die Zahlen oben zählen alle Aussagen der Auswahl; ein Klick filtert auf den Stand.\n\n"
+            + "„Zuerst lesen“ ist eine Empfehlung zur Lesereihenfolge, keine Bewertung der Seiten. Die Summe zählt "
+            + "Punkte für geltende sichere Aussagen, häufige Begriffe der Auswahl, Erwähnungen des Themas und jüngste "
+            + "Änderungen und zieht Punkte für Überholtes, Entwürfe und veraltete Analysen ab; die Punktwerte kommen "
+            + "aus dem Core und stehen je Seite im Overlay an der Summe. Dort lässt sich auch der Stand der ganzen "
+            + "Seite von Hand setzen; ein Klick auf den Titel öffnet die Seite, ein Thema im Feld oben rechts (▾ für "
+            + "Vorschläge) zeigt nur Seiten, die es erwähnen.\n\n"
             + "„Mögliche Widersprüche“ ist nur ein Hinweis: sichere Aussagen derselben Sachlage, die beide gelten, "
             + "mit gleicher Verbindlichkeit, eine bejaht, eine verneint. Setzt man eine davon von Hand auf "
             + "„überholt“, verschwindet der Hinweis. „Ablösungen“ stehen getrennt darunter und sind kein Konflikt: "
@@ -147,6 +155,9 @@ final class StandingTab extends JPanel {
 
         /** Das Protokoll der Entscheidungen, älteste zuerst. */
         List<StandingDecisionStore.AuditEntry> history(PageKey page, String statementId);
+
+        /** Die Leseempfehlung der Auswahl ({@code ReadingAdvice}), mit Thema oder ({@code null}) ohne; nie auf dem EDT. */
+        ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled);
 
         static Actions of(AppRuntime runtime) {
             if (runtime == null) {
@@ -188,6 +199,12 @@ final class StandingTab extends JPanel {
                 @Override
                 public List<StandingDecisionStore.AuditEntry> history(PageKey page, String statementId) {
                     return runtime.workspace().standingHistory(page, statementId);
+                }
+
+                @Override
+                public ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled) {
+                    return runtime.workspace().readingList(
+                            runtime.workspace().resolveSelection(selection.toCore(runtime)), topic, cancelled);
                 }
             };
         }
@@ -241,8 +258,9 @@ final class StandingTab extends JPanel {
     private final JList<Row> conflictList = new JList<>(conflictModel);
     private StatementConflicts conflicts;
     /** Die Liste, an der das Overlay zuletzt aufging (Aussagen oder Widersprüche). */
-    private JList<Row> popupOwner = list;
+    private JComponent popupOwner = list;
     private final BusyOverlay busy;
+    private final ReadingFirstView reading;
     private final InfoPopup popup = new InfoPopup();
     private Consumer<String> onStatus = text -> { };
     private Consumer<Target> onJump = target -> { };
@@ -327,7 +345,7 @@ final class StandingTab extends JPanel {
         });
         scroll = Comic.scroll(list);
         // Den Wortlaut nur für die sichtbaren Zeilen holen, beim Rollen nach.
-        scroll.getViewport().addChangeListener(e -> fetchSentences());
+        scroll.getViewport().addChangeListener(e -> fetchSentences(list, model));
         busy = new BusyOverlay(scroll);
         busy.setText(BUSY);
         busy.onCancel(() -> cancelled.set(true));
@@ -383,17 +401,37 @@ final class StandingTab extends JPanel {
         JPanel counts = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         counts.setOpaque(false);
         chips.values().forEach(counts::add);
+        reading = new ReadingFirstView(runner, popup);
+        reading.pageControls(this::pageControls);
+        reading.onStatus(text -> {
+            if (READING.equals(tabs.selected())) {
+                onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
+            }
+        });
+        reading.onOpen(page -> onJump.accept(new Target(page.key().sourceId(), page.key().pageId(), -1, -1)));
+        JComponent topic = reading.topicField();
+        topic.setVisible(false);
         tabs.tab(STATEMENTS, busy);
-        tabs.tab(CONFLICTS, Comic.scroll(conflictList));
-        tabs.actions(counts, filter, bearer, field);
-        // Zahlen, Filter und Suche gehören zu „Aussagen“; bei den Widersprüchen stünden sie ohne Wirkung da.
+        tabs.tab(READING, reading);
+        JScrollPane conflictScroll = Comic.scroll(conflictList);
+        conflictScroll.getViewport().addChangeListener(e -> fetchSentences(conflictList, conflictModel));
+        tabs.tab(CONFLICTS, conflictScroll);
+        tabs.actions(counts, filter, bearer, field, topic);
+        // Zahlen, Filter und Suche gehören zu „Aussagen“, das Themenfeld zu „Zuerst lesen“; anderswo stünden sie
+        // ohne Wirkung da.
         tabs.onSelect(name -> {
             boolean statements = STATEMENTS.equals(name);
             for (JComponent tool : List.of(counts, filter, bearer, field)) {
                 tool.setVisible(statements);
             }
+            topic.setVisible(READING.equals(name));
             popup.setVisible(false);
-            status();
+            reading.shown(shown && READING.equals(name));
+            if (READING.equals(name)) {
+                reading.status();
+            } else {
+                status();
+            }
         });
         add(tabs, BorderLayout.CENTER);
     }
@@ -415,6 +453,13 @@ final class StandingTab extends JPanel {
         }
         this.selection = selection;
         dirty = true;
+        reading.source(selection == null ? null : (topic, stop) -> {
+            Actions current = actions.get();
+            if (current == null) {
+                throw new CancellationException("keine laufende App");
+            }
+            return current.reading(selection, topic, stop);
+        });
         if (selection == null) {
             cancelled.set(true);
             generation++;
@@ -434,6 +479,7 @@ final class StandingTab extends JPanel {
         if (!shown) {
             popup.setVisible(false);
         }
+        reading.shown(shown && READING.equals(tabs.selected()));
         loadIfShown();
     }
 
@@ -446,6 +492,7 @@ final class StandingTab extends JPanel {
     /** Liest die Sicht neu, etwa nach einer Entscheidung oder dem Ende einer Aussagenanalyse. */
     private void changed() {
         dirty = true;
+        reading.changed();
         loadIfShown();
     }
 
@@ -481,7 +528,8 @@ final class StandingTab extends JPanel {
             conflicts = loaded.conflicts();
             conflictModel.clear();
             conflictModel.addAll(loaded.conflictRows());
-            fetchConflictSentences(current);
+            conflictLabel();
+            fetchSentences(conflictList, conflictModel);
             status();
         }, failure -> {
             if (request != generation) {
@@ -516,8 +564,8 @@ final class StandingTab extends JPanel {
                 case DARF -> " · darf";
                 case NONE, UNKNOWN -> "";
             };
-            rows.add(new Group(situation(contradiction.situation()) + modal + " · bejaht und verneint",
-                    Comic.STANDING_UNCLEAR, all.size()));
+            String head = SITUATION + situation(contradiction.situation(), all) + modal + " · bejaht und verneint";
+            rows.add(new Group(head, Comic.STANDING_UNCLEAR, all.size()));
             all.forEach(entry -> rows.add(new Line(entry, true)));
         }
         if (!conflicts.replacements().isEmpty()) {
@@ -541,8 +589,19 @@ final class StandingTab extends JPanel {
         };
     }
 
-    private static String situation(com.aresstack.spaceharvester.application.standing.Situation situation) {
-        StringBuilder text = new StringBuilder(situation.subject()).append(' ').append(situation.predicate());
+    /**
+     * Die Sachlage in Grundformen; der Handelnde in der Schreibweise des ersten Eintrags, wenn dort einer steht.
+     */
+    private static String situation(com.aresstack.spaceharvester.application.standing.Situation situation,
+                                     List<StatusQuoEntry> entries) {
+        String subject = situation.subject();
+        for (StatusQuoEntry entry : entries) {
+            if (entry.subject() != null && !entry.subject().isBlank()) {
+                subject = entry.subject();
+                break;
+            }
+        }
+        StringBuilder text = new StringBuilder(subject).append(' ').append(situation.predicate());
         for (com.aresstack.spaceharvester.application.standing.Situation.Participant other : situation.others()) {
             text.append(' ').append(other.marker() == null ? "" : other.marker() + " ").append(other.key());
         }
@@ -550,26 +609,6 @@ final class StandingTab extends JPanel {
     }
 
     /** Beide Sätze im Wortlaut: für die (wenigen) Einträge der Hinweise den Originalsatz auf einmal holen. */
-    private void fetchConflictSentences(Actions current) {
-        List<StatusQuoEntry> missing = new ArrayList<>();
-        for (int i = 0; i < conflictModel.size() && missing.size() < CONFLICT_SENTENCES; i++) {
-            if (conflictModel.get(i) instanceof Line line && asked.add(line.entry().statement().id())) {
-                missing.add(line.entry());
-            }
-        }
-        if (missing.isEmpty()) {
-            return;
-        }
-        int request = sentenceGeneration;
-        runner.run(() -> current.sentences(missing), found -> {
-            if (request == sentenceGeneration) {
-                sentences.putAll(found);
-                conflictList.repaint();
-                list.repaint();
-            }
-        }, failure -> missing.forEach(entry -> asked.remove(entry.statement().id())));
-    }
-
     /** Erst anmelden, dann lesen (ADR 0027): Entscheidungen und das Ende von „Aussagen analysieren“. */
     private void watch(Actions current) {
         if (current == watched) {
@@ -643,6 +682,10 @@ final class StandingTab extends JPanel {
     }
 
     private void status() {
+        if (READING.equals(tabs.selected())) {
+            reading.status();
+            return;
+        }
         if (view == null) {
             return;
         }
@@ -690,7 +733,7 @@ final class StandingTab extends JPanel {
         list.revalidate();
         scroll.getViewport().setViewPosition(clamp(position));
         SwingUtilities.invokeLater(() -> scroll.getViewport().setViewPosition(clamp(position)));
-        fetchSentences();
+        fetchSentences(list, model);
     }
 
     /** Wie viele Zeilen über und unter dem sichtbaren Ausschnitt der Wortlaut mitgeholt wird. */
@@ -700,7 +743,8 @@ final class StandingTab extends JPanel {
      * Holt den Originalsatz für die sichtbaren Zeilen (und einen Rand), die ihn noch nicht haben, im Hintergrund; danach
      * zeichnet die Liste neu. Zehntausende Aussagen bleiben so billig.
      */
-    private void fetchSentences() {
+    /** Holt den Wortlaut für die sichtbaren Zeilen einer Liste (Aussagen oder Widersprüche) samt Rand. */
+    private void fetchSentences(JList<Row> list, DefaultListModel<Row> model) {
         Actions current = actions.get();
         if (current == null || model.isEmpty()) {
             return;
@@ -727,8 +771,17 @@ final class StandingTab extends JPanel {
                 return;
             }
             sentences.putAll(found);
-            list.repaint();
+            this.list.repaint();
+            conflictList.repaint();
         }, failure -> missing.forEach(entry -> asked.remove(entry.statement().id())));
+    }
+
+    /** Die Zahl der möglichen Widersprüche an der Pille, ohne Zahl bei null; Ablösungen zählen nicht mit. */
+    private void conflictLabel() {
+        int found = conflicts == null ? 0 : conflicts.contradictions().size();
+        javax.swing.AbstractButton pill = tabs.button(CONFLICTS);
+        pill.setText(found == 0 ? CONFLICTS : CONFLICTS + " · " + found);
+        pill.revalidate();
     }
 
     private Point clamp(Point position) {
@@ -1062,16 +1115,28 @@ final class StandingTab extends JPanel {
      * Keine Standardknöpfe; das Overlay schließt mit Esc.
      */
     private JComponent decisionControls(StatusQuoEntry entry) {
+        return decisionControls(entry.page().key(), entry.statement().id(), entry.decision(), SET_LABEL);
+    }
+
+    /**
+     * Stand der ganzen Seite von Hand (Overlay in „Zuerst lesen“): dieselben Pillen, Löschen und Protokoll wie an der
+     * Aussage, mit {@code statementId null}.
+     */
+    private JComponent pageControls(com.aresstack.spaceharvester.application.standing.PageStanding standing) {
+        popupOwner = reading.rowList();
+        StandingDecision decision = standing.decision();
+        return decisionControls(standing.page().key(), null, decision != null && decision.statementId() == null
+                ? decision : null, PAGE_SET_LABEL);
+    }
+
+    private JComponent decisionControls(PageKey page, String statementId, StandingDecision decision, String title) {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         row.setOpaque(false);
-        JLabel label = new JLabel(SET_LABEL);
+        JLabel label = new JLabel(title);
         label.setFont(Comic.regular(12.5f));
         label.setForeground(Comic.MUTED);
         row.add(label);
-        StandingDecision decision = entry.decision();
         long revision = decision == null ? 0 : decision.revision();
-        PageKey page = entry.page().key();
-        String statementId = entry.statement().id();
         for (Standing standing : Standing.values()) {
             CountChip chip = CountChip.choice(word(standing), tone(standing));
             chip.setSelected(decision != null && decision.standing() == standing);
@@ -1148,7 +1213,7 @@ final class StandingTab extends JPanel {
         if (current == null) {
             return;
         }
-        JList<Row> owner = popupOwner;
+        JComponent owner = popupOwner;
         Point at = popup.isVisible() && owner.isShowing() ? historyAt(owner) : null;
         runner.run(() -> current.history(page, statementId), entries -> {
             popup.clearLinks();
@@ -1161,7 +1226,7 @@ final class StandingTab extends JPanel {
                 : "Protokoll nicht lesbar (" + failure.getClass().getSimpleName() + ")"));
     }
 
-    private Point historyAt(JList<Row> owner) {
+    private Point historyAt(JComponent owner) {
         Point screen = popup.getLocationOnScreen();
         SwingUtilities.convertPointFromScreen(screen, owner);
         return screen;
@@ -1313,6 +1378,10 @@ final class StandingTab extends JPanel {
 
     InfoPopup popup() {
         return popup;
+    }
+
+    ReadingFirstView reading() {
+        return reading;
     }
 
     PillTabs tabs() {
