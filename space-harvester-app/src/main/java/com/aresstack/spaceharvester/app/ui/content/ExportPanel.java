@@ -1030,10 +1030,14 @@ public final class ExportPanel extends JPanel {
         return null;
     }
 
-    /** Die Rückfrage für „Wissensquellen“: „Wirklich für alle 7 Spaces aller Wissensquellen PDF erzeugen?“ */
+    /**
+     * Die Rückfrage für „Wissensquellen“ (Angelo 17.11.2026): sie erklärt, dass für jede Wissensquelle und jeden
+     * ihrer Spaces ein eigener Auftrag startet und eine eigene Datei entsteht.
+     */
     String allQuestion(String what) {
-        return "Wirklich für alle " + Texts.count(shown.spaces().size(), "Space", "Spaces")
-                + " aller Wissensquellen " + what + " erzeugen? Je Space startet sofort ein eigener Auftrag.";
+        return "Wirklich " + what + " für alle Wissensquellen erzeugen? Für jede Wissensquelle und jeden ihrer "
+                + Texts.count(shown.spaces().size(), "Space", "Spaces") + " startet sofort ein eigener Auftrag, und je "
+                + "Space entsteht eine eigene Datei im Ausgabeordner.";
     }
 
     /** Ob die Format-Knöpfe für die gezeigte Auswahl erst laden müssten: weder Datenbestand noch Bestand. */
