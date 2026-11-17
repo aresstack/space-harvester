@@ -90,9 +90,31 @@ Alles Übrige ist Vorschlag des Architekten.
 - Quelle oder Space gewählt: Wolkenleiste (`DocumentNavigationSky`) mit einer Wolke je Update, das jüngste
   abgeschlossene vorausgewählt und mittig; „Seit dem letzten Update“ gestrichelt am Ende; Erstbefüllung und Updates
   ohne Änderungen in der Ebene blass. Aufgeklappt zeigt die zweite Reihe die Themen des gewählten Updates.
-- „Text“: der Update-Text. „Leseansicht“: die Zusammenfassung als Lesetext, Seiten als Verweise; ohne Zusammenfassung
-  Zähler und der Einstieg „Zusammenfassen“. Aktionen als Icon-Knöpfe oben rechts. Beide Reiter folgen derselben Auswahl.
-- Kein Pop-up, nichts von selbst, kein Polling.
+- „Text“: der Update-Text. „Leseansicht“: die Zusammenfassung als Lesetext, Seiten als Verweise. Aktionen als
+  Icon-Knöpfe oben rechts. Beide Reiter folgen derselben Auswahl.
+- Kein Pop-up, kein Polling.
+
+**Leseansicht (Angelo, 17.11.2026).** Die Leseansicht zeigt immer die KI-Zusammenfassung des gewählten Updates und
+der gewählten Ebene (Quelle oder Space). Fehlt sie, stößt die Leseansicht den Core-Auftrag „Zusammenfassen“ selbst
+an, sobald sie sichtbar ist, und zeigt währenddessen „Zusammenfassung wird erstellt …“. Die Updates selbst stehen
+unter „Text“.
+
+Grenzen, die bleiben:
+- Zusammengefasst wird nur beim Öffnen der Leseansicht, nie im Hintergrund, nie nach einem Abgleich und nie für
+  verdeckte Reiter. Es gibt weiterhin keinen Pop-up-Zwang.
+- Je Update und Ebene höchstens ein selbst angestoßener Auftrag. Nach einem Fehlschlag wird nicht von selbst
+  wiederholt; die Ansicht bietet den Einstieg zum erneuten Versuch.
+- Eine vorhandene, inzwischen veraltete Zusammenfassung (offenes Update mit neuen Änderungen) wird nicht von selbst
+  neu erstellt; die Ansicht nennt, dass sie veraltet ist, „Zusammenfassen“ erstellt sie neu.
+- Erstbefüllung und Updates ohne Änderung bekommen keine Zusammenfassung; ohne eingestelltes Chat-Modell sagt die
+  Ansicht, warum keine da ist.
+- Die Freigabegrenze bleibt im Core: Nur KI-freigegebene Seiten gehen ans Modell (ADR 0028). Namen von Bearbeitern
+  gehen nie ans Modell (ADR 0031).
+- Ein selbst angestoßener Auftrag, der noch nicht begonnen hat, wird abgebrochen, wenn der Benutzer Update oder
+  Ebene wechselt, bevor er läuft. So löst das Durchklicken im Baum keine Reihe von Modellaufrufen aus. Ein
+  laufender Auftrag läuft zu Ende, sein Ergebnis bleibt gespeichert.
+- Der Core startet für dasselbe Update und dieselbe Ebene keinen zweiten Auftrag, solange einer läuft oder wartet;
+  der Aufruf liefert den vorhandenen.
 
 ## Offene Punkte (Empfehlung gilt, bis Angelo widerspricht)
 1. Marke je Quelle, Space als Ausschnitt (statt eigener Marke je Space).

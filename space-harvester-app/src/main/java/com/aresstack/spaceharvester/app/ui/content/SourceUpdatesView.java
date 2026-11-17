@@ -126,8 +126,12 @@ final class SourceUpdatesView extends JPanel {
     private UpdateSummary summary;
     /** Laufender Auftrag „Zusammenfassen“; bleibt nach „Abbrechen“ gesetzt, bis er wirklich endet. */
     private Run running;
+    /** Der zuletzt gesehene Zustand des laufenden Auftrags. */
+    private JobState runState;
     /** Updates, für die die Leseansicht die Zusammenfassung schon von selbst angestoßen hat (je Quelle, Ebene). */
     private final java.util.Set<String> autoStarted = new java.util.HashSet<>();
+    /** Alle Auftragskennungen, die „Zusammenfassen“ dieser Ansicht schon geliefert hat. */
+    private final java.util.Set<String> seenJobs = new java.util.HashSet<>();
     private Subscription jobWatch = Subscription.NONE;
     /** Ob ein Chat-Modell eingestellt ist. */
     private boolean available = true;
@@ -263,7 +267,7 @@ final class SourceUpdatesView extends JPanel {
         windows.clear();
         shown = null;
         summary = null;
-        forgetRun();
+        abandonAutoRun();
         offerSummary();
         renderList();
         if (id == null) {
@@ -329,10 +333,15 @@ final class SourceUpdatesView extends JPanel {
                 || shown.update().initial() || shown.pages().isEmpty() || !showing.getAsBoolean()) {
             return false;
         }
-        if (!autoStarted.add(sourceId + "\u0000" + spaceKey + "\u0000" + selected)) {
+        // Die Zähler der Ebene stehen im Listeneintrag (ein Space kann im Update leer sein).
+        ChangeUpdate level = entry(updates, selected);
+        if (level != null && (level.initial() || level.pages() == 0)) {
             return false;
         }
-        summarize();
+        if (!autoStarted.add(autoKey(sourceId, spaceKey, selected))) {
+            return false;
+        }
+        summarize(true);
         return running != null;
     }
 
@@ -431,7 +440,11 @@ final class SourceUpdatesView extends JPanel {
         if (!keepPosition) {
             textGeneration++;
         }
+        boolean switched = !updateId.equals(selected);
         selected = updateId;
+        if (switched) {
+            abandonAutoRun();
+        }
         renderList();
         offerSummary();
         int mine = ++generation;
@@ -546,7 +559,7 @@ final class SourceUpdatesView extends JPanel {
     }
 
     /** Ein gestarteter Auftrag „Zusammenfassen“; {@code jobId} ist {@code null}, solange der Start unterwegs ist. */
-    private record Run(String jobId, String sourceId, String spaceKey, String updateId) {
+    private record Run(String jobId, String sourceId, String spaceKey, String updateId, boolean auto) {
     }
 
     private static ChangeUpdate entry(List<ChangeUpdate> in, String id) {
@@ -581,6 +594,11 @@ final class SourceUpdatesView extends JPanel {
      * Meldung des Änderungsprotokolls. Nie zwei zugleich aus dieser Ansicht.
      */
     private void summarize() {
+        summarize(false);
+    }
+
+    /** {@code auto}: von der Leseansicht selbst angestoßen; solange er wartet, bricht ein Wechsel ihn ab. */
+    private void summarize(boolean auto) {
         Actions current = actions.get();
         String id = sourceId;
         String space = spaceKey;
@@ -588,17 +606,25 @@ final class SourceUpdatesView extends JPanel {
         if (current == null || id == null || updateId == null || running != null) {
             return;
         }
-        Run starting = new Run(null, id, space, updateId);
+        Run starting = new Run(null, id, space, updateId, auto);
         running = starting;
+        runState = JobState.QUEUED;
         offerSummary();
         onStatus.accept(SUMMARIZING);
         runner.run(() -> current.summarize(id, updateId, space), status -> {
             if (running != starting) {
                 return;
             }
-            Run run = new Run(status.id(), id, space, updateId);
+            // Der Core liefert für dasselbe Update und dieselbe Ebene den schon wartenden oder laufenden Auftrag (#842),
+            // etwa aus einem anderen Fenster. Als eigener Selbst-Auftrag (abbrechbar) gilt nur eine neue Kennung.
+            boolean fresh = seenJobs.add(status.id());
+            Run run = new Run(status.id(), id, space, updateId, auto && fresh);
             running = run;
+            runState = status.state();
             watch(current, run);
+            if (leftBeforeStart(run)) {
+                abandonAutoRun();
+            }
         }, failure -> {
             if (running == starting) {
                 running = null;
@@ -636,7 +662,11 @@ final class SourceUpdatesView extends JPanel {
 
     /** Ein neuer Stand des Auftrags; erst sein Ende gibt „Zusammenfassen“ wieder frei. */
     private void progressed(Run run, JobStatus status) {
-        if (running != run || !status.state().terminal()) {
+        if (running != run) {
+            return;
+        }
+        runState = status.state();
+        if (!status.state().terminal()) {
             return;
         }
         running = null;
@@ -656,6 +686,9 @@ final class SourceUpdatesView extends JPanel {
             select(selected, true, () -> { });
         } else if (here && shown != null && mode == Mode.SUMMARY) {
             // Nicht erstellt: statt „wird erstellt“ wieder der Einstieg zum erneuten Versuch.
+            renderReport(shown);
+        } else if (autoSummarize() && shown != null) {
+            // Höchstens ein Auftrag zur Zeit: erst jetzt bekommt das inzwischen gezeigte Update seinen.
             renderReport(shown);
         }
     }
@@ -677,11 +710,36 @@ final class SourceUpdatesView extends JPanel {
         runner.run(() -> current.cancelJob(run.jobId()), status -> progressed(run, status), failure -> { });
     }
 
-    /** Die Ansicht verlässt die Quelle: der Auftrag läuft in der Auftragsliste weiter, sie hört nur nicht mehr zu. */
-    private void forgetRun() {
-        jobWatch.close();
-        jobWatch = Subscription.NONE;
-        running = null;
+    /**
+     * Der Benutzer wechselt Update oder Ebene. Ein selbst angestoßener Auftrag, der noch wartet, wird abgebrochen
+     * (Durchklicken im Baum startet so keine Modellaufrufe); beim nächsten Öffnen entsteht er neu. Ein laufender läuft
+     * zu Ende, sein Ergebnis bleibt; von Hand gestartete bleiben unberührt. Höchstens ein Auftrag zur Zeit.
+     */
+    private void abandonAutoRun() {
+        Run run = running;
+        Actions current = actions.get();
+        if (run == null || !run.auto() || run.jobId() == null || runState != JobState.QUEUED || current == null) {
+            return;
+        }
+        runner.run(() -> {
+            JobStatus now = current.job(run.jobId());
+            return now.state() == JobState.QUEUED ? current.cancelJob(run.jobId()) : now;
+        }, status -> {
+            if (status.state() == JobState.CANCELLED) {
+                autoStarted.remove(autoKey(run.sourceId(), run.spaceKey(), run.updateId()));
+            }
+            progressed(run, status);
+        }, failure -> { });
+    }
+
+    /** Ob die Ansicht das Update des Auftrags schon verlassen hat, bevor seine Kennung da war. */
+    private boolean leftBeforeStart(Run run) {
+        return !(Objects.equals(run.sourceId(), sourceId) && Objects.equals(run.spaceKey(), spaceKey)
+                && Objects.equals(run.updateId(), selected));
+    }
+
+    private static String autoKey(String sourceId, String spaceKey, String updateId) {
+        return sourceId + "\u0000" + spaceKey + "\u0000" + updateId;
     }
 
     private java.awt.Point viewPosition() {
@@ -1224,17 +1282,18 @@ final class SourceUpdatesView extends JPanel {
 
                 @Override
                 public JobStatus job(String jobId) {
-                    return workspace.job(jobId);
+                    return workspace.summaryJob(jobId);
                 }
 
                 @Override
                 public JobStatus cancelJob(String jobId) {
-                    return workspace.cancelJob(jobId);
+                    return workspace.cancelSummary(jobId);
                 }
 
                 @Override
                 public Subscription subscribeJobs(JobListener listener) {
-                    return workspace.subscribeJobs(listener);
+                    // Die Aufträge „Zusammenfassen“ gehören dem Aufrufer der App, nicht dem Core-Eigentümer.
+                    return workspace.subscribeSummaryJobs(listener);
                 }
             };
         }
