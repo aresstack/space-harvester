@@ -198,5 +198,17 @@ Auswahl (etwa über `holdings().resolve(selection)`), nur mit Leserecht, samt An
 Dateien; Seiten bleiben. Danach meldet `KnowledgeGraph#subscribe(Runnable)`, damit Stand, Graph und Glossar neu lesen.
 Neue Analysen aus Aufträgen melden sich dort noch nicht.
 
+Was mit dem Löschen geschieht:
+
+- Gelöscht wird die gespeicherte Analyse der Seite mit allen Herkünften darin (Original, Vorstufe, Korrekturen des
+  Prüfschritts), dazu die Analysen ihrer Anhänge und enthaltenen Dateien. Ohne Analyse fehlt die Seite in Stand,
+  Graph, Glossar, Leseempfehlung und möglichen Widersprüchen.
+- Urteile des Prüfschritts (FL4) liegen getrennt als Seiteninhalt in der Ablage der Anreicherungen, geschlüsselt nach
+  Satz und Aussage. Sie bleiben beim Löschen stehen und werden beim nächsten Analysieren derselben Sätze wieder
+  verwendet, ohne neuen Modellaufruf; sie fallen mit der Seite, der Quelle oder dem Entzug der KI-Freigabe weg.
+- Entscheidungen von Hand zu einzelnen Aussagen bleiben stehen und erscheinen als `staleDecisions`, bis die Aussage
+  wieder auftaucht oder die Entscheidung gelöscht wird. Entscheidungen zu ganzen Seiten bleiben unberührt und greifen
+  nach dem nächsten Analysieren wieder.
+
 Veraltete Analysen (`analysisStale`, Seite `State.STALE`) liefert die Status-quo-Sicht weiter mit, nichts wird
 versteckt; die Anzeige darf sie standardmäßig ausblenden.
