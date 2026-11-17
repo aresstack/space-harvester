@@ -43,6 +43,8 @@ public final class ContentView implements View {
     private final SignInSlot signIn;
 
     private String sourceId;
+    /** „Wissensquellen“ im Explorer gewählt: die Bereichsanzeige nennt keine Quelle (Architekt 17.11.2026). */
+    private boolean allSources;
     private String spaceKey;
 
     public ContentView(AppContext context) {
@@ -101,8 +103,12 @@ public final class ContentView implements View {
         return root;
     }
 
+    /** Die Bereichsanzeige bei „Wissensquellen“: kein Verweis, keine Quelle. */
+    static final String ALL_SOURCES = "Wissensquellen";
+
     /** Ein Space wurde gewählt (z. B. „Inhalte öffnen“ eines Auftrags): ohne Seite, die wählt man im Explorer. */
     public void openSpace(String sourceId, String spaceKey) {
+        allSources = false;
         // Ein Space hat dieselbe Seite wie die Quelle, als Ausschnitt seiner Updates (ADR-0030-Nachtrag, TZ5).
         if (!detail.showsLevel(sourceId, spaceKey)) {
             detail.showSource(sourceId, spaceKey, spaceKey);
@@ -120,6 +126,7 @@ public final class ContentView implements View {
     }
 
     public void openSource(String sourceId, String title) {
+        allSources = false;
         if (!detail.showsLevel(sourceId, null)) {
             detail.showSource(sourceId, title);
         }
@@ -200,6 +207,10 @@ public final class ContentView implements View {
 
     private void renderCrumbs() {
         signIn.refresh();
+        if (allSources) {
+            crumbs.show(List.of(new LocationBar.Part(ALL_SOURCES, null, null)));
+            return;
+        }
         String source = currentSource();
         if (source == null) {
             crumbs.show(List.of(new LocationBar.Part(sources().isEmpty() ? "Keine Wissensquelle"
@@ -304,8 +315,20 @@ public final class ContentView implements View {
         detail.standing().selection(selection);
         // Eine Seite zeigt unter „Analysen“ ihre eigenen Analysen, jede weitere Ebene den Stand der Auswahl.
         detail.wide(selection == null || selection.global() || !selection.page());
-        // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind.
-        if (selection != null && !selection.global()) {
+        // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind; die Mitte
+        // zeigt leer statt einer alten Seite und unter Eigenschaften die Gesamtsicht (Angelo 17.11.2026).
+        if (selection != null && selection.global()) {
+            allSources = true;
+            if (context.runtime() != null) {
+                List<String> ids = context.runtime().workspace().sources().stream().map(HarvestSource::id).toList();
+                // Hat sich die Quellenliste geändert, baut sich die Gesamtsicht neu auf.
+                if (!detail.showsAllSources(ids)) {
+                    detail.showAllSources(ids, selection.title());
+                }
+            }
+            renderCrumbs();
+        } else if (selection != null) {
+            allSources = false;
             // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite
             // (etwa ein Download aus „Export“ eines nur gewählten Spaces fragt den Code hier ab, nicht erst in Aufträge).
             // Eine andere Quelle, oder eine Quelle bzw. ein Space statt einer Seite: Die Seitenreiter (Leseansicht bis
