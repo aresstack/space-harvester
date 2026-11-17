@@ -164,6 +164,8 @@ public final class ActivitiesView implements View {
     private int sweepOffset;
     /** Jüngste Phase des gewählten Auftrags aus seiner Diagnose, solange er läuft; sonst {@code null}. */
     private String phase;
+    /** Was die Vorstufe „Sätze vereinfachen“ am gewählten Auftrag ausließ ({@link #stageNotes(List)}). */
+    private List<String> stageNotes = List.of();
     /** Bildlauf des Detailbereichs unter der Liste. */
     final javax.swing.JScrollPane detailScroll;
     /** Beim nächsten Zeichnen nach oben: anderer Auftrag gewählt oder Codefeld neu erschienen. */
@@ -400,6 +402,26 @@ public final class ActivitiesView implements View {
         });
     }
 
+    static final String STAGE_LABEL = "Vorstufe";
+
+    /**
+     * Die Zahlen der Vorstufe „Sätze vereinfachen“ einer Aussagenanalyse für die Angaben am Auftrag (ADR 0032, FL3):
+     * Seiten ohne KI-Freigabe und, getrennt davon, Seiten ohne eingestelltes Modell, jeweils ohne Vorstufe analysiert.
+     * Der Core meldet sie als Ereignisse mit Code; je Code zählt das jüngste (nach Fortsetzen).
+     */
+    static List<String> stageNotes(List<JobEvent> events) {
+        java.util.Map<String, String> notes = new java.util.LinkedHashMap<>();
+        for (JobEvent event : events) {
+            if (com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NOT_RELEASED
+                    .equals(event.code())
+                    || com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.STAGE_NO_MODEL
+                    .equals(event.code())) {
+                notes.put(event.code(), event.message());
+            }
+        }
+        return List.copyOf(notes.values());
+    }
+
     /** Liest Aufträge und den gewählten Auftrag einmal; danach lesen nur die Meldungen des Core erneut. */
     private void poll() {
         subscribe();
@@ -429,7 +451,8 @@ public final class ActivitiesView implements View {
                     current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null));
                 }
             }
-            return new Object[] {jobs, current, currentPhase};
+            return new Object[] {jobs, current, currentPhase, stageNotes(id == null ? List.of()
+                    : runtime.workspace().events(id))};
         }, data -> {
             readDone();
             @SuppressWarnings("unchecked")
@@ -454,6 +477,9 @@ public final class ActivitiesView implements View {
             if (java.util.Objects.equals(id, selectedId)) {
                 detail = id == null ? null : data[1];
                 phase = (String) data[2];
+                @SuppressWarnings("unchecked")
+                List<String> notes = (List<String>) data[3];
+                stageNotes = id == null ? List.of() : notes;
                 render();
             }
         }, error -> {
@@ -475,6 +501,7 @@ public final class ActivitiesView implements View {
         if (!id.equals(selectedId)) {
             selectedId = id;
             detail = null;
+            stageNotes = List.of();
             toTop = true;
             details.revalidate();
             details.repaint();
@@ -589,6 +616,9 @@ public final class ActivitiesView implements View {
                 .add(counters.failed(), String.valueOf(p.failed()), p.failed() > 0 ? Comic.RED : Comic.INK);
         if (skipped(status) > 0) {
             facts.add("Bewusst ausgelassen", String.valueOf(skipped(status)));
+        }
+        for (String note : stageNotes) {
+            facts.add(STAGE_LABEL, note);
         }
         facts.add("Auftrags-ID", status.id());
         if (status.error() != null) {
