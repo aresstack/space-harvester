@@ -4,14 +4,17 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -35,6 +38,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -47,6 +51,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -74,6 +79,35 @@ public class GlossaryClassification {
     /** Kennung des Laufs in Protokoll und {@code createdBy}. */
     public static final String ACTOR = "ai:glossary";
     public static final String PHASE = "Fachbegriffe ermitteln";
+    /** Kennung der Regelphase in Protokoll und {@code createdBy} (ADR 0032, FL5b). */
+    public static final String RULE_ACTOR = "rule:glossary";
+    /** Erste Phase, ohne Modell (ADR 0032, FL5b). */
+    public static final String RULE_PHASE = "Begriffe ableiten";
+    /** Fassung der Regelphase im Feld {@code generation}. */
+    static final String RULE_VERSION = "glossary-rules-v1";
+    /** Vorschläge der Regelphase je Teilergebnis. */
+    static final int RULE_CHUNK = 50;
+    /**
+     * Kennung des Ereignisses „Modellphase bewusst ausgelassen“ (ADR 0032, FL5b), mit Grund als Endung:
+     * {@code GLOSSARY_MODEL_SKIPPED:NO_MODEL} oder {@code GLOSSARY_MODEL_SKIPPED:NOT_RELEASED}. Die Auftragsliste
+     * zeigt es gelb (ausgelassen), nie rot, ohne den Text zu deuten.
+     */
+    public static final String MODEL_SKIPPED = "GLOSSARY_MODEL_SKIPPED";
+    /** Kennung des Ereignisses mit den Zahlen der Regelphase. */
+    public static final String RULES_DONE = "GLOSSARY_RULES_DONE";
+
+    /** Warum die Phase mit Modell ausfiel. */
+    public enum SkipReason {
+        /** Kein Chat-Modell eingestellt. */
+        NO_MODEL,
+        /** Quelle nicht für die KI freigegeben. */
+        NOT_RELEASED;
+
+        /** Kennung des Ereignisses, etwa {@code GLOSSARY_MODEL_SKIPPED:NO_MODEL}. */
+        public String code() {
+            return MODEL_SKIPPED + ":" + name();
+        }
+    }
     /** Fassung von Anweisung und Prüfung; eine neue macht den Ergebnis-Cache wirkungslos. */
     static final String PROMPT_VERSION = "glossary-classification-v1";
     static final int MAX_ANSWER_CHARS = 128 * 1024;
@@ -131,6 +165,8 @@ public class GlossaryClassification {
     private final String processorVersion;
     private final Budget budget;
     private final Clock clock;
+    private final Function<AccessContext, Collection<KnowledgeGraph.AnalysedPage>> analysed;
+    private final Supplier<GlossaryRuleSettings> ruleSettings;
     private final Set<String> started = ConcurrentHashMap.newKeySet();
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
 
@@ -145,6 +181,27 @@ public class GlossaryClassification {
                                   Function<PageKey, Optional<PageText>> texts, Glossary glossary,
                                   AcronymExpansionModel model, ResolutionCache cache, Jobs jobs,
                                   String processorVersion, Budget budget, Clock clock) {
+        this(catalog, index, access, headers, texts, glossary, model, cache, jobs, processorVersion, budget, null,
+                () -> GlossaryRuleSettings.DEFAULT, clock);
+    }
+
+    /**
+     * Mit Regelphase „{@value #RULE_PHASE}“ (ADR 0032, FL5b).
+     *
+     * @param analysed     die Seiten mit Aussagenanalyse, die ein Aufrufer lesen darf
+     *                     ({@code KnowledgeGraph#analysed}), oder {@code null} ohne Regelphase (dann startet der
+     *                     Auftrag wie zuvor nur mit Modell und Freigabe)
+     * @param ruleSettings Regeln der Begriffsableitung ({@code space-harvester.glossary.rules.*}), je Lauf gelesen
+     */
+    public GlossaryClassification(SourceCatalog catalog, TermIndex index, AccessGuard access,
+                                  Function<PageKey, Optional<PageHeader>> headers,
+                                  Function<PageKey, Optional<PageText>> texts, Glossary glossary,
+                                  AcronymExpansionModel model, ResolutionCache cache, Jobs jobs,
+                                  String processorVersion, Budget budget,
+                                  Function<AccessContext, Collection<KnowledgeGraph.AnalysedPage>> analysed,
+                                  Supplier<GlossaryRuleSettings> ruleSettings, Clock clock) {
+        this.analysed = analysed;
+        this.ruleSettings = Objects.requireNonNull(ruleSettings, "ruleSettings");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
         this.access = Objects.requireNonNull(access, "access");
@@ -159,8 +216,16 @@ public class GlossaryClassification {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
-    /** Ob ein Modell eingestellt ist; ohne meldet {@link #start} {@code NO_MODEL}, die Pflege von Hand geht weiter. */
+    /**
+     * Ob ein Lauf möglich ist: mit Regelphase immer, sonst nur mit Modell; ohne meldet {@link #start}
+     * {@code NO_MODEL}, die Pflege von Hand geht weiter.
+     */
     public boolean available() {
+        return analysed != null || model.available();
+    }
+
+    /** Ob die Phase „{@value #PHASE}“ mit Modell möglich ist. */
+    public boolean modelAvailable() {
         return model.available();
     }
 
@@ -174,7 +239,9 @@ public class GlossaryClassification {
      * @throws UnknownSourceException       bei unbekannter Quelle
      * @throws InvalidQueryException        bei {@code spaceKey} ohne {@code sourceId}
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne {@code sync}
-     * @throws GlossaryUnavailableException ohne Modell oder ohne freigegebene Quelle im Umfang
+     * @throws GlossaryUnavailableException ohne Regelphase: ohne Modell oder ohne freigegebene Quelle im Umfang. Mit
+     *                                      Regelphase startet der Auftrag auch ohne Modell und Freigabe; die Phase
+     *                                      „{@value #PHASE}“ fällt dann aus, das Ergebnis nennt Grund und Zahlen.
      */
     public List<JobStatus> start(AccessContext caller, String sourceId, String spaceKey) {
         String source = blank(sourceId) ? null : sourceId.trim();
@@ -204,12 +271,15 @@ public class GlossaryClassification {
                 access.require(caller, ResourceScope.source(catalog.all().get(0).id()), AccessKind.SYNC);
             }
         }
-        if (!model.available()) {
-            throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NO_MODEL, source);
-        }
-        List<String> sources = permitted.stream().filter(model::mayProcess).toList();
-        if (sources.isEmpty()) {
-            throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NOT_RELEASED, source);
+        List<String> sources = permitted;
+        if (analysed == null) {
+            if (!model.available()) {
+                throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NO_MODEL, source);
+            }
+            sources = permitted.stream().filter(model::mayProcess).toList();
+            if (sources.isEmpty()) {
+                throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NOT_RELEASED, source);
+            }
         }
         List<JobStatus> submitted = new ArrayList<>();
         try {
@@ -218,7 +288,7 @@ public class GlossaryClassification {
                 JobStatus status = jobs.submit(JobType.GLOSSARY, id, space, caller.jobOwner(),
                         JobTask.blocking(context -> {
                             synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
-                                run(scope, context);
+                                job(scope, context, caller);
                             }
                         }));
                 started.add(status.id());
@@ -237,7 +307,114 @@ public class GlossaryClassification {
         return jobId != null && started.contains(jobId);
     }
 
-    /** Der Lauf für einen Geltungsbereich einer Quelle; ohne Auftrag aufrufbar für Tests. */
+    /**
+     * Ein Auftrag für einen Geltungsbereich: erst die Regelphase (falls eingerichtet), dann die Phase mit Modell, wenn
+     * ein Modell da und die Quelle freigegeben ist. Fällt die Modellphase aus, löscht sie nichts und das Ergebnis nennt
+     * Grund und Zahlen.
+     */
+    Outcome job(RelationScope scope, JobContext context, AccessContext caller) {
+        RuleRun rules = analysed == null ? null : rules(scope, context, caller);
+        if (rules != null && context != null) {
+            context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, RULES_DONE,
+                    "„" + RULE_PHASE + "“: " + rules.describe(), null, null, null));
+        }
+        SkipReason skipped = null;
+        Glossary.ProposalRun modelRun = null;
+        if (!model.available()) {
+            skipped = SkipReason.NO_MODEL;
+        } else if (!model.mayProcess(scope.sourceId())) {
+            skipped = SkipReason.NOT_RELEASED;
+        } else {
+            modelRun = run(scope, context);
+        }
+        if (skipped != null && context != null) {
+            phase(context, PHASE + ": ausgelassen");
+            context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                    skipped.code(), "„" + PHASE + "“ ausgelassen: " + (skipped == SkipReason.NO_MODEL
+                    ? "kein Modell eingestellt" : "Quelle nicht für die KI freigegeben"), null, null, null));
+        }
+        return new Outcome(rules, modelRun, skipped);
+    }
+
+    /**
+     * Ergebnis eines Auftrags.
+     *
+     * @param rules        Ergebnis der Regelphase oder {@code null} ohne Regelphase
+     * @param model        Ergebnis der Phase mit Modell oder {@code null}, wenn sie ausfiel
+     * @param modelSkipped warum die Phase mit Modell ausfiel, oder {@code null}
+     */
+    record Outcome(RuleRun rules, Glossary.ProposalRun model, SkipReason modelSkipped) {
+    }
+
+    /**
+     * Ergebnis der Regelphase.
+     *
+     * @param pages     ausgewertete Seiten
+     * @param terms     abgeleitete Begriffe
+     * @param proposed  davon vorgeschlagen (mit Seitenbeleg, höchstens {@code maxTerms})
+     * @param retained  über {@code maxTerms}, unverändert gelassen
+     * @param run       Änderungen im Glossar
+     */
+    record RuleRun(int pages, int terms, int proposed, int retained, Glossary.ProposalRun run) {
+
+        String describe() {
+            return pages + " Seiten, " + terms + " Begriffe, " + proposed + " vorgeschlagen, " + retained
+                    + " zurückgestellt; " + run.added() + " neu, " + run.updated() + " geändert, " + run.withdrawn()
+                    + " entfallen, " + run.stale() + " veraltet.";
+        }
+    }
+
+    /** Die Regelphase „{@value #RULE_PHASE}“: ohne Modell, abbrechbar, Teilergebnisse sofort. */
+    RuleRun rules(RelationScope scope, JobContext context, AccessContext caller) {
+        phase(context, RULE_PHASE);
+        GlossaryRuleSettings settings = ruleSettings.get();
+        List<KnowledgeGraph.AnalysedPage> pages = GlossaryOverview.inScope(analysed.apply(caller),
+                scope.sourceId(), scope.spaceKey());
+        GlossaryRuleProposals.Batch batch = GlossaryRuleProposals.of(pages, settings, () -> {
+            if (context != null) {
+                context.checkpoint();
+            }
+            return false;
+        });
+        String generation = RULE_VERSION + "@" + clock.instant();
+        int added = 0;
+        int updated = 0;
+        List<Glossary.Proposal> proposals = batch.proposals();
+        if (context != null) {
+            context.discovered(proposals.size());
+        }
+        for (int from = 0; from < proposals.size(); from += RULE_CHUNK) {
+            if (context != null) {
+                context.checkpoint();
+            }
+            List<Glossary.Proposal> chunk = proposals.subList(from, Math.min(proposals.size(), from + RULE_CHUNK));
+            Glossary.ProposalRun part = glossary.proposeSome(RelationOrigin.RULE, RULE_ACTOR, scope, generation,
+                    chunk);
+            added += part.added();
+            updated += part.updated();
+            if (context != null) {
+                context.processed(chunk.size());
+                if (part.added() + part.updated() > 0) {
+                    context.written(part.added() + part.updated());
+                }
+            }
+        }
+        if (context != null) {
+            context.checkpoint();
+        }
+        phase(context, RULE_PHASE + ": Abgleich");
+        Glossary.ProposalRun last = glossary.propose(RelationOrigin.RULE, RULE_ACTOR, scope, generation, proposals,
+                batch.retained());
+        Glossary.ProposalRun run = new Glossary.ProposalRun(added + last.added(), updated + last.updated(),
+                last.withdrawn(), last.suppressed(), last.stale());
+        LOG.log(System.Logger.Level.INFO, "Begriffe ableiten in {0}: {1} Seiten, {2} Begriffe, {3} vorgeschlagen, "
+                        + "{4} neu, {5} geändert, {6} entfallen", scope.sourceId(), pages.size(),
+                batch.derivation().terms().size(), proposals.size(), run.added(), run.updated(), run.withdrawn());
+        return new RuleRun(batch.derivation().pages(), batch.derivation().terms().size(), proposals.size(),
+                batch.retained().size(), run);
+    }
+
+    /** Die Phase mit Modell für einen Geltungsbereich einer Quelle; ohne Auftrag aufrufbar für Tests. */
     Glossary.ProposalRun run(RelationScope scope, JobContext context) {
         String sourceId = scope.sourceId();
         phase(context, PHASE + ": Fundstellen");
@@ -351,7 +528,8 @@ public class GlossaryClassification {
         }
         // Über dem Budget: bisherige Vorschläge bleiben unverändert stehen.
         for (GlossaryEntry entry : earlier.values()) {
-            if (retained.contains(entry.normalized())) {
+            // Nur, was die KI schon stützt: ein reiner Regel-Vorschlag bekommt so keine Stützung der KI.
+            if (retained.contains(entry.normalized()) && entry.supportedBy().contains(RelationOrigin.AI)) {
                 proposals.add(new Glossary.Proposal(entry.term(), entry.evidence()));
             }
         }

@@ -331,6 +331,7 @@ public final class Harvester implements AutoCloseable {
     private final AcronymResolution acronymResolution;
     private final Glossary glossary;
     private final GlossaryClassification glossaryClassification;
+    private final com.aresstack.spaceharvester.application.glossary.GlossaryOverview glossaryOverview;
     private final SynonymDiscovery synonymDiscovery;
     private final FactEdits factEdits;
     private final Jobs jobs;
@@ -354,6 +355,7 @@ public final class Harvester implements AutoCloseable {
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
+    private final com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice;
     private final StatementAnalysisJobs statementAnalysisJobs;
     private final KnowledgeGraphExportUseCase knowledgeGraphExport;
     private final SourceQueryExports sourceQueryExports;
@@ -677,10 +679,15 @@ public final class Harvester implements AutoCloseable {
             // #122 Stufe 2: Fachglossar als Nutzerdaten neben den Beziehungen; KI nur auf Knopfdruck, dasselbe Modell.
             this.glossary = new Glossary(catalog, new FileGlossaryStore(builder.dataDirectory.resolve("glossary")),
                     access, cache::findHeader, clock);
+            // ADR 0032, FL5b: erste Phase „Begriffe ableiten“ aus den Aussagenanalysen, ohne Modell; Regeln aus
+            // glossary.rules.* der wirksamen Konfiguration.
+            TermSettings glossaryTerms = builder.terms;
+            Harvester self = this; // der Wissensgraph entsteht weiter unten, gefragt wird erst im Auftrag
             this.glossaryClassification = new GlossaryClassification(catalog, enrichmentStore, access,
                     cache::findHeader, key -> cache.find(key).flatMap(projector::project), glossary, chatModel,
                     ResolutionCache.inMemory(), jobs, termProcessor.version(), GlossaryClassification.Budget.DEFAULT,
-                    clock);
+                    who -> self.knowledgeGraph.analysed(who),
+                    () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(), clock);
             // #336: Synonymerkennung auf Knopfdruck; Embedding- und Chat-Modell folgen der Konfiguration, Text nur
             // aus freigegebenen Quellen, Budget aus terms.synonyms.*.
             EmbeddingProcessor embeddingForTerms = embedding;
@@ -957,10 +964,36 @@ public final class Harvester implements AutoCloseable {
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
             // ADR 0032, FL6: Stand und Status-quo-Sicht aus gespeicherten Aussagen; Entscheidungen als Nutzerdaten.
+            // ADR 0032, FL5b: Teilzahlen der Begriffsableitung je Aufrufer für den Glossar-Reiter.
+            this.glossaryOverview = new com.aresstack.spaceharvester.application.glossary.GlossaryOverview(
+                    knowledgeGraph::analysed,
+                    () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules(), glossary);
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
-                    () -> com.aresstack.spaceharvester.application.standing.StandingWords.DEFAULT, clock);
+                    () -> com.aresstack.spaceharvester.application.standing.StandingWords.of(
+                            this.settings.standing()), clock,
+                    new com.aresstack.spaceharvester.application.standing.SentenceSource() {
+                        @Override
+                        public Optional<KnowledgeGraph.AnalysedPage> analysis(AccessContext who,
+                                                                              KnowledgeGraph.PageRef page) {
+                            return page.document() == null ? knowledgeGraph.page(who, page.key())
+                                    : knowledgeGraph.page(who, page.document());
+                        }
+
+                        @Override
+                        public Optional<String> text(KnowledgeGraph.PageRef page, String inputSha256) {
+                            // Lesetexte von Anhängen kommen erst mit deren Analyse (ADR 0026); bis dahin kein Satz.
+                            if (page.document() != null) {
+                                return Optional.empty();
+                            }
+                            return cache.find(page.key()).flatMap(readerText)
+                                    .filter(text -> text.inputSha256().equals(inputSha256)).map(PageText::text);
+                        }
+                    });
+            this.readingAdvice = new com.aresstack.spaceharvester.application.standing.ReadingAdvice(statusQuo,
+                    knowledgeGraph::analysed,
+                    new com.aresstack.spaceharvester.application.standing.ChangeLogRecentChanges(changeLog), clock);
             this.statementAnalysisJobs = new StatementAnalysisJobs(jobs, new StatementAnalysisJobs.Discovery() {
                 @Override
                 public PageNavigation.Children children(AccessContext who, String sourceId, String spaceKey,
@@ -1526,6 +1559,11 @@ public final class Harvester implements AutoCloseable {
         return glossaryClassification;
     }
 
+    /** Teilzahlen und Einzelheiten der Begriffsableitung je Aufrufer (ADR 0032, FL5b), nichts gespeichert. */
+    public com.aresstack.spaceharvester.application.glossary.GlossaryOverview glossaryOverview() {
+        return glossaryOverview;
+    }
+
     /**
      * Synonymerkennung auf Knopfdruck (#336): Kandidaten aus Regeln und Embedding-Vorauswahl, Bedeutungsprüfung über
      * das Chat-Modell, Vorschläge in {@link #termRelations()}. Nie beim Start, Abgleich, Suchen oder Öffnen.
@@ -1686,6 +1724,11 @@ public final class Harvester implements AutoCloseable {
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */
     public com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo() {
         return statusQuo;
+    }
+
+    /** Leseempfehlung je Auswahl und Thema (ADR 0032, FL6). */
+    public com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice() {
+        return readingAdvice;
     }
 
     /**

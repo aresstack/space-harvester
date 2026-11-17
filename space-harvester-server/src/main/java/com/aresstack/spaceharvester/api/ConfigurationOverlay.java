@@ -7,6 +7,8 @@ import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
+import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
@@ -33,7 +35,7 @@ import java.util.regex.Pattern;
 public final class ConfigurationOverlay {
 
     /** Schlüssel ohne Präfix, die {@link #overlay} annimmt. */
-    static final Set<String> KEYS = Set.of(
+    static final Set<String> KEYS = withGlossaryRules(true, Set.of(
             "ai." + AiServiceSettings.BASE_URL, "ai." + AiServiceSettings.API_KEY,
             "ai." + AiServiceSettings.CHAT_MODEL, "ai." + AiServiceSettings.EMBEDDING_MODEL,
             "ai." + AiServiceSettings.EMBEDDING_DIMENSIONS, "ai." + AiServiceSettings.TIMEOUT,
@@ -51,11 +53,27 @@ public final class ConfigurationOverlay {
             TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS,
             EnrichmentSettings.DOCUMENTS_ENABLED, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
             SimplificationSettings.MODE, SimplificationSettings.PARALLEL, SimplificationSettings.MODEL,
-            CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL);
+            StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS, CheckSettings.SCOPE, CheckSettings.PARALLEL,
+            CheckSettings.MODEL));
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
-    private static final Set<String> LISTS = Set.of("ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
-            SyncSettings.SPACES, LocalFileSettings.ROOTS, ExportSettings.ATTACHMENTS_MEDIA_TYPES);
+    private static final Set<String> LISTS = withGlossaryRules(false, Set.of(
+            "ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
+            SyncSettings.SPACES, LocalFileSettings.ROOTS, ExportSettings.ATTACHMENTS_MEDIA_TYPES,
+            StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS));
+
+    /** Dazu die Schlüssel der Begriffsableitung (ADR 0032, FL5b): Wortlisten je Art, mit {@code all} die Höchstzahl. */
+    private static Set<String> withGlossaryRules(boolean all, Set<String> keys) {
+        Set<String> result = new java.util.HashSet<>(keys);
+        if (all) {
+            result.add(GlossaryRuleSettings.MAX_TERMS);
+        }
+        for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
+            result.add(kind.addKey());
+            result.add(kind.excludeKey());
+        }
+        return Set.copyOf(result);
+    }
 
     private static final Pattern INDEXED = Pattern.compile("(.+)\\[\\d+]");
 
@@ -130,9 +148,23 @@ public final class ConfigurationOverlay {
         put(properties, SimplificationSettings.MODE, configuration.simplification().mode().value());
         put(properties, SimplificationSettings.PARALLEL, configuration.simplification().parallel());
         put(properties, SimplificationSettings.MODEL, configuration.simplification().model());
+        put(properties, StandingSettings.OUTDATED_WORDS, String.join(",",
+                StandingSettings.written(configuration.standing().outdatedWords())));
+        put(properties, StandingSettings.DRAFT_WORDS, String.join(",",
+                StandingSettings.written(configuration.standing().draftWords())));
         put(properties, CheckSettings.SCOPE, configuration.check().scope().value());
         put(properties, CheckSettings.PARALLEL, configuration.check().parallel());
         put(properties, CheckSettings.MODEL, configuration.check().model());
+        GlossaryRuleSettings rules = configuration.terms().glossaryRules();
+        put(properties, GlossaryRuleSettings.MAX_TERMS, rules.maxTerms());
+        for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
+            if (!rules.added(kind).isEmpty()) {
+                put(properties, kind.addKey(), String.join(",", rules.added(kind)));
+            }
+            if (!rules.excluded(kind).isEmpty()) {
+                put(properties, kind.excludeKey(), String.join(",", rules.excluded(kind)));
+            }
+        }
         return properties;
     }
 

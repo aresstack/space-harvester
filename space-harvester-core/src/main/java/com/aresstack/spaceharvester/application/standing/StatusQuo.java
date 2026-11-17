@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -52,6 +53,7 @@ public final class StatusQuo {
     private final Function<PageKey, Optional<PageHeader>> headers;
     private final Supplier<StandingWords> words;
     private final Clock clock;
+    private final SentenceSource sentences;
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
     /**
@@ -62,6 +64,14 @@ public final class StatusQuo {
     public StatusQuo(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed,
                      Function<PageKey, Optional<PageHeader>> headers, StandingDecisionStore store, AccessGuard access,
                      Supplier<StandingWords> words, Clock clock) {
+        this(analysed, headers, store, access, words, clock, SentenceSource.NONE);
+    }
+
+    /** Wie oben, mit Satzgrenzen und Lesetexten für {@link #sentences}. */
+    public StatusQuo(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed,
+                     Function<PageKey, Optional<PageHeader>> headers, StandingDecisionStore store, AccessGuard access,
+                     Supplier<StandingWords> words, Clock clock, SentenceSource sentences) {
+        this.sentences = Objects.requireNonNull(sentences, "sentences");
         this.analysed = Objects.requireNonNull(analysed, "analysed");
         this.headers = Objects.requireNonNull(headers, "headers");
         this.store = Objects.requireNonNull(store, "store");
@@ -142,7 +152,8 @@ public final class StatusQuo {
                 StatementKind kind = StandingRules.kind(statement);
                 ParsedStatements.Mention subject = subject(statement, kind, mentions);
                 entries.add(new StatusQuoEntry(ref, statement, kind, subject == null ? null : subject.text(),
-                        subject == null ? null : subject.key(), quality.get(), standing, decision, stale));
+                        subject == null ? null : subject.key(), situation(statement, kind, mentions), quality.get(),
+                        standing, decision, stale));
             }
             pageStandings.add(pageStanding(ref, pageDecision, marks, cap, counts, certain));
         }
@@ -264,6 +275,52 @@ public final class StatusQuo {
         return visible;
     }
 
+    /**
+     * Der Wortlaut zu Einträgen der Sicht, auch zu denen möglicher Widersprüche und Ablösungen, für den sichtbaren
+     * Ausschnitt einer Liste (nicht in der Sicht selbst, damit sie schnell bleibt). Nur mit Leserecht
+     * {@link AccessKind#CONTENT} auf die Seite; ohne fehlt der Eintrag. Der Originalsatz nur, wenn der Lesetext genau
+     * der analysierte ist; der vereinfachte Satz aus der Aussage. Speichert nichts.
+     *
+     * @return Wortlaut je Aussage-ID
+     */
+    public Map<String, SentenceText> sentences(AccessContext caller, Collection<StatusQuoEntry> entries) {
+        Objects.requireNonNull(caller, "caller");
+        Map<KnowledgeGraph.PageRef, List<StatusQuoEntry>> byPage = new LinkedHashMap<>();
+        for (StatusQuoEntry entry : Objects.requireNonNull(entries, "entries")) {
+            byPage.computeIfAbsent(entry.page(), ignored -> new ArrayList<>()).add(entry);
+        }
+        Map<String, SentenceText> texts = new LinkedHashMap<>();
+        byPage.forEach((page, list) -> {
+            PageKey key = page.key();
+            ResourceScope scope = page.spaceKey() == null ? ResourceScope.source(key.sourceId())
+                    : ResourceScope.page(key.sourceId(), page.spaceKey(), key.pageId());
+            if (!access.permits(caller, scope, AccessKind.CONTENT)) {
+                return;
+            }
+            Optional<KnowledgeGraph.AnalysedPage> analysis = sentences.analysis(caller, page);
+            Map<Integer, ParsedStatements.Sentence> bounds = new HashMap<>();
+            analysis.ifPresent(found -> found.analysis().result().sentences()
+                    .forEach(sentence -> bounds.put(sentence.index(), sentence)));
+            Optional<String> text = analysis.flatMap(found -> sentences.text(page,
+                    found.analysis().inputSha256()));
+            for (StatusQuoEntry entry : list) {
+                ParsedStatements.Statement statement = entry.statement();
+                ParsedStatements.Sentence sentence = bounds.get(statement.sentence());
+                boolean known = analysis.isPresent() && analysis.get().analysis().result().statements().stream()
+                        .anyMatch(candidate -> candidate.id().equals(statement.id()));
+                String original = null;
+                if (known && sentence != null && text.isPresent() && sentence.end() <= text.get().length()
+                        && sentence.start() >= 0 && sentence.start() <= sentence.end()) {
+                    original = text.get().substring(sentence.start(), sentence.end()).strip();
+                }
+                texts.put(statement.id(), new SentenceText(original, statement.derivation().simplifiedSentence(),
+                        sentence == null ? -1 : sentence.start(), sentence == null ? -1 : sentence.end(),
+                        statement.start(), statement.end(), original == null));
+            }
+        });
+        return texts;
+    }
+
     private void requireWritable(AccessContext caller, PageKey page, String statementId, boolean mustExist) {
         List<KnowledgeGraph.AnalysedPage> visible = visible(caller, page);
         if (mustExist && statementId != null && visible.stream().noneMatch(candidate -> candidate.analysis()
@@ -317,8 +374,49 @@ public final class StatusQuo {
 
     private static ParsedStatements.Mention subject(ParsedStatements.Statement statement, StatementKind kind,
                                                     Map<String, ParsedStatements.Mention> mentions) {
+        return first(statement, kind == StatementKind.STATE ? ParsedStatements.Role.BEARER
+                : ParsedStatements.Role.ACTOR, mentions);
+    }
+
+    /** Die Sachlage oder {@code null}, wenn ein Beteiligter fehlt, offen ist oder kein Begriff ist. */
+    private static Situation situation(ParsedStatements.Statement statement, StatementKind kind,
+                                       Map<String, ParsedStatements.Mention> mentions) {
         ParsedStatements.Role role = kind == StatementKind.STATE ? ParsedStatements.Role.BEARER
                 : ParsedStatements.Role.ACTOR;
+        String predicate = statement.predicateLemma();
+        if (predicate == null || predicate.isBlank()) {
+            return null;
+        }
+        String subject = null;
+        List<Situation.Participant> others = new ArrayList<>();
+        for (ParsedStatements.Argument argument : statement.arguments()) {
+            String key = termKey(mentions.get(argument.mention()));
+            if (key == null) {
+                return null;
+            }
+            if (subject == null && argument.role() == role) {
+                subject = key;
+            } else {
+                String marker = argument.marker() == null || argument.marker().isBlank() ? null
+                        : argument.marker().strip().toLowerCase(Locale.ROOT);
+                others.add(new Situation.Participant(argument.role(), marker, key));
+            }
+        }
+        return subject == null ? null
+                : new Situation(kind, subject, predicate.strip().toLowerCase(Locale.ROOT), others);
+    }
+
+    private static String termKey(ParsedStatements.Mention mention) {
+        if (mention == null || mention.unresolved() || mention.kind() == ParsedStatements.MentionKind.CLAUSE
+                || mention.kind() == ParsedStatements.MentionKind.PRONOUN) {
+            return null;
+        }
+        String key = com.aresstack.spaceharvester.application.glossary.GlossaryDerivation.keyOf(mention);
+        return key == null || key.isBlank() ? null : key;
+    }
+
+    private static ParsedStatements.Mention first(ParsedStatements.Statement statement, ParsedStatements.Role role,
+                                                  Map<String, ParsedStatements.Mention> mentions) {
         return statement.withRole(role).stream().map(argument -> mentions.get(argument.mention()))
                 .filter(Objects::nonNull).findFirst().orElse(null);
     }

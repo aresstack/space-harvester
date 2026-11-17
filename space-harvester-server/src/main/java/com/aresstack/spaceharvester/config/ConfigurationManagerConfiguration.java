@@ -10,6 +10,8 @@ import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
+import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
@@ -132,13 +134,26 @@ class ConfigurationManagerConfiguration {
                 TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, EnrichmentSettings.DOCUMENTS_ENABLED,
                 EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, ChangeLogSettings.RETENTION,
                 ChangeLogSettings.SHOW_AFTER_UPDATE, SimplificationSettings.MODE, SimplificationSettings.PARALLEL,
-                SimplificationSettings.MODEL, CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL)) {
+                SimplificationSettings.MODEL, CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL,
+                GlossaryRuleSettings.MAX_TERMS)) {
             binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
                     .ifBound(value -> properties.setProperty(key, value));
         }
         binder.bind(HarvesterConfiguration.PREFIX + ExportSettings.ATTACHMENTS_MEDIA_TYPES,
                 Bindable.listOf(String.class)).ifBound(types ->
                 properties.setProperty(ExportSettings.ATTACHMENTS_MEDIA_TYPES, String.join(",", types)));
+        // Stand (ADR 0032, FL6): Wortlisten als Text mit Kommas oder als YAML-Liste.
+        List<String> wordLists = new java.util.ArrayList<>(List.of(StandingSettings.OUTDATED_WORDS,
+                StandingSettings.DRAFT_WORDS));
+        // Begriffsableitung (ADR 0032, FL5b): Wortlisten je Art.
+        for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
+            wordLists.add(kind.addKey());
+            wordLists.add(kind.excludeKey());
+        }
+        for (String key : wordLists) {
+            binder.bind(HarvesterConfiguration.PREFIX + key, Bindable.listOf(String.class)).ifBound(words ->
+                    properties.setProperty(key, String.join(",", words)));
+        }
         binder.bind(HarvesterConfiguration.PREFIX + SyncSettings.SOURCES, SOURCE_RULES).ifBound(rules ->
                 rules.forEach((id, fields) -> fields.forEach((field, value) ->
                         properties.setProperty(SourceSyncOverride.key(id, field), value))));
@@ -146,6 +161,7 @@ class ConfigurationManagerConfiguration {
         return base.withSync(read.sync()).withSearch(read.search()).withLocalFiles(read.localFiles())
                 .withExport(read.export()).withTerms(read.terms()).withEnrichment(read.enrichment())
                 .withChangeLog(read.changeLog()).withSimplification(read.simplification())
+                .withStanding(read.standing())
                 .withCheck(read.check());
     }
 

@@ -103,6 +103,15 @@ class ConfigurationParityTest {
                   max-terms: 300
                   max-embedded-terms: 100
                   max-judged-pairs: 50
+              glossary:
+                rules:
+                  max-terms: 200
+                  technical-heads:
+                    add:
+                      - Fachverfahren
+                    exclude: datei
+                  role-words:
+                    add: Sachgebiet, amt
               enrichment:
                 documents:
                   enabled: false
@@ -112,6 +121,11 @@ class ConfigurationParityTest {
                   mode: always
                   parallel: 3
                   model: step-model
+                standing:
+                  outdated-words:
+                    - Archiv
+                    - abgelöst
+                  draft-words: Entwurf, idee
                 check:
                   scope: all
                   parallel: 4
@@ -177,6 +191,14 @@ class ConfigurationParityTest {
                 HarvesterConfiguration.DEFAULT, binder);
         SynonymBudget budget = service2.terms().synonyms();
         assertThat(app.terms().synonyms()).isEqualTo(budget);
+        // ADR 0032, FL5b: Regeln der Begriffsableitung, als YAML-Liste und als Text mit Kommas.
+        com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings rules =
+                com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.DEFAULT.withMaxTerms(200)
+                        .with(com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.Kind
+                                .TECHNICAL_HEADS, java.util.List.of("fachverfahren"), java.util.List.of("datei"))
+                        .with(com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.Kind
+                                .ROLE_WORDS, java.util.List.of("sachgebiet", "amt"), java.util.List.of());
+        assertThat(app.terms().glossaryRules()).isEqualTo(service2.terms().glossaryRules()).isEqualTo(rules);
         assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
 
         // ADR 0030: Aufbewahrung des Änderungsprotokolls, beim Dienst über withSyncRules.
@@ -195,6 +217,10 @@ class ConfigurationParityTest {
                         com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 3,
                         "step-model"));
 
+        // ADR 0032, FL6: Wörter des Stands, als YAML-Liste und als Text mit Kommas.
+        assertThat(app.standing()).isEqualTo(service2.standing())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.StandingSettings(
+                        java.util.List.of("archiv", "abgelöst"), java.util.List.of("entwurf", "idee")));
         // ADR 0032, FL4: Prüfschritt, beim Dienst über withSyncRules.
         assertThat(app.check()).isEqualTo(service2.check())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.CheckSettings(
@@ -235,6 +261,32 @@ class ConfigurationParityTest {
         assertThat(app.consoleOutput()).isEqualTo(ConsoleOutput.OFF);
         // YAML liest ein unquotiertes off als false; Spring Boot macht daraus wieder OFF.
         assertThat(springConsoleThreshold(environment)).isEqualTo("OFF").isEqualTo(app.consoleOutput().name());
+    }
+
+    /** ADR 0032, FL6: „-“ allein heißt in beiden Loadern keine Wörter, als Text und als YAML-Liste. */
+    @Test
+    void aLoneDashMeansNoStandingWordsInServiceAndApp(@TempDir Path home) throws IOException {
+        String yaml = """
+                space-harvester:
+                  statements:
+                    standing:
+                      outdated-words: "-"
+                      draft-words:
+                        - "-"
+                """;
+        Path file = home.resolve("space-harvester.yml");
+        Files.writeString(file, yaml);
+        AppSettings app = new AppSettingsLoader(new Placeholders(name -> null), home).load(file);
+        StandardEnvironment environment = new StandardEnvironment();
+        new YamlPropertySourceLoader().load("yaml", new ByteArrayResource(yaml.getBytes()))
+                .forEach(source -> environment.getPropertySources().addLast(source));
+        HarvesterConfiguration service = ConfigurationManagerConfiguration.withSyncRules(
+                HarvesterConfiguration.DEFAULT, Binder.get(environment));
+
+        assertThat(app.problems()).isEmpty();
+        assertThat(app.standing()).isEqualTo(service.standing())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.StandingSettings(
+                        List.of(), List.of()));
     }
 
     /** Was Spring Boot dem Logback-Filter am Konsolen-Appender gibt ({@code CONSOLE_LOG_THRESHOLD}). */

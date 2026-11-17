@@ -14,6 +14,8 @@ import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings
 import com.aresstack.spaceharvester.application.check.CheckScope;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
+import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -224,11 +226,56 @@ public final class AppSettingsLoader {
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
                 sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
                 localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
-                inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems),
+                inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), map(get(root, "glossary")), problems),
                 consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems),
                 enrichment(map(get(root, "enrichment")), problems), analytics(map(get(app, "analytics")), problems),
                 simplification(map(get(map(get(root, "statements")), "simplification")), problems),
+                standing(map(get(map(get(root, "statements")), "standing")), problems),
                 check(map(get(map(get(root, "statements")), "check")), problems));
+    }
+
+    /**
+     * {@code space-harvester.statements.standing.*}: Wörter für überholte Seiten und Entwürfe (ADR 0032, FL6), wie beim
+     * Dienst ({@link StandingSettings}): YAML-Liste oder Text mit Kommas; fehlend oder leer heißt Vorgabe, „-“ allein
+     * heißt keine Wörter. Ein
+     * unlesbarer Wert ist ein Problem und lässt die Vorgabe stehen.
+     */
+    private StandingSettings standing(Map<?, ?> standing, List<String> problems) {
+        List<String> outdated = StandingSettings.DEFAULT_OUTDATED_WORDS;
+        List<String> draft = StandingSettings.DEFAULT_DRAFT_WORDS;
+        String outdatedKey = ROOT + "." + StandingSettings.OUTDATED_WORDS;
+        String draftKey = ROOT + "." + StandingSettings.DRAFT_WORDS;
+        try {
+            outdated = new StandingSettings(words(get(standing, "outdated-words"), outdated, problems), draft)
+                    .outdatedWords();
+        } catch (IllegalArgumentException e) {
+            problems.add(outdatedKey + ": " + e.getMessage());
+        }
+        try {
+            draft = new StandingSettings(outdated, words(get(standing, "draft-words"), draft, problems))
+                    .draftWords();
+        } catch (IllegalArgumentException e) {
+            problems.add(draftKey + ": " + e.getMessage());
+        }
+        return new StandingSettings(outdated, draft);
+    }
+
+    private List<String> words(Object raw, List<String> fallback, List<String> problems) {
+        List<String> words = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            list.forEach(word -> {
+                String value = text(word, problems);
+                if (value != null) {
+                    words.add(value);
+                }
+            });
+        } else if (raw != null) {
+            String value = text(raw, problems);
+            if (value != null) {
+                words.addAll(List.of(value.split(",")));
+            }
+        }
+        return StandingSettings.words(words, fallback);
     }
 
     /**
@@ -352,6 +399,35 @@ public final class AppSettingsLoader {
     }
 
     /** {@code space-harvester.terms.synonyms.*}: Budget der Synonymerkennung (#336), dieselben Schlüssel wie beim Dienst. */
+    private TermSettings terms(Map<?, ?> terms, Map<?, ?> glossary, List<String> problems) {
+        return terms(terms, problems).withGlossaryRules(glossaryRules(map(get(glossary, "rules")), problems));
+    }
+
+    /**
+     * {@code space-harvester.glossary.rules.*}: Regeln der Begriffsableitung (ADR 0032, FL5b), wie beim Dienst
+     * ({@link GlossaryRuleSettings}): Höchstzahl und je Art zusätzliche und ausgeschlossene Wörter als YAML-Liste oder
+     * Text mit Kommas. Ein unlesbarer Wert ist ein Problem und lässt die Vorgabe stehen.
+     */
+    private GlossaryRuleSettings glossaryRules(Map<?, ?> rules, List<String> problems) {
+        GlossaryRuleSettings result = GlossaryRuleSettings.DEFAULT;
+        try {
+            result = result.withMaxTerms(integer(get(rules, "max-terms"), GlossaryRuleSettings.DEFAULT_MAX_TERMS,
+                    ROOT + "." + GlossaryRuleSettings.MAX_TERMS, problems));
+        } catch (IllegalArgumentException e) {
+            problems.add(ROOT + "." + GlossaryRuleSettings.MAX_TERMS + ": " + e.getMessage());
+        }
+        for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
+            // Ein unbrauchbares Wort ist ein Problem; die übrigen Wörter seiner Liste gelten.
+            Map<?, ?> lists = map(get(rules, kind.key()));
+            List<String> add = GlossaryRuleSettings.accepted(kind, true, words(get(lists, "add"), List.of(),
+                    problems), message -> problems.add(ROOT + "." + kind.addKey() + ": " + message));
+            List<String> exclude = GlossaryRuleSettings.accepted(kind, false, words(get(lists, "exclude"),
+                    List.of(), problems), message -> problems.add(ROOT + "." + kind.excludeKey() + ": " + message));
+            result = result.with(kind, add, exclude);
+        }
+        return result;
+    }
+
     private TermSettings terms(Map<?, ?> terms, List<String> problems) {
         Map<?, ?> synonyms = map(get(terms, "synonyms"));
         String prefix = SynonymBudget.PREFIX;

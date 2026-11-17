@@ -48,6 +48,20 @@ final class PageTabIcons {
         };
     }
 
+    /** Stand: eine Waage (gilt, geplant, unklar, überholt abwägen). */
+    static Icon standing() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawLine(7, 2, 7, 13);
+                g2.drawLine(4, 13, 10, 13);
+                g2.drawLine(2, 4, 12, 4);
+                g2.drawPolyline(new int[] {2, 0, 4, 2}, new int[] {4, 9, 9, 4}, 4);
+                g2.drawPolyline(new int[] {12, 10, 14, 12}, new int[] {4, 9, 9, 4}, 4);
+            }
+        };
+    }
+
     /** Export: ein Fach mit Pfeil heraus nach oben (Ausgabe in den Ausgabeordner). */
     static Icon export() {
         return new StrokeIcon() {

@@ -1637,6 +1637,49 @@ public final class Workspace {
         return harvester.changeLog().summary(caller, sourceId, updateId);
     }
 
+    /**
+     * Die Status-quo-Sicht der Auswahl links (ADR 0032, FL6): alle Aussagen mit Stand, fertig sortiert und gezählt.
+     * Reine Auswertung im Core; trotzdem nie auf dem EDT rufen. {@code cancelled} bricht mit
+     * {@link java.util.concurrent.CancellationException} ab.
+     */
+    public com.aresstack.spaceharvester.application.standing.StatusQuoView statusQuo(
+            com.aresstack.spaceharvester.application.holdings.PageSelection selection,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.statusQuo().view(caller, selection, cancelled);
+    }
+
+    /**
+     * Der Wortlaut zu Einträgen der Status-quo-Sicht (FL6): Originalsatz, vereinfachter Satz, Satzgrenzen im Lesetext.
+     * Ohne Leserecht am Inhalt fehlt der Eintrag. Nie auf dem EDT, am besten nur für sichtbare Zeilen.
+     */
+    public java.util.Map<String, com.aresstack.spaceharvester.application.standing.SentenceText> standingSentences(
+            java.util.Collection<com.aresstack.spaceharvester.application.standing.StatusQuoEntry> entries) {
+        return harvester.statusQuo().sentences(caller, entries);
+    }
+
+    /** Setzt den Stand einer Aussage ({@code statementId}) oder Seite ({@code null}) von Hand (ADR 0032). */
+    public com.aresstack.spaceharvester.application.standing.StandingDecision decideStanding(
+            PageKey page, String statementId, com.aresstack.spaceharvester.application.standing.Standing standing,
+            long expectedRevision) {
+        return harvester.statusQuo().decide(caller, page, statementId, standing, expectedRevision);
+    }
+
+    /** Löscht eine Entscheidung zum Stand; danach gelten wieder die Regeln. */
+    public boolean clearStanding(PageKey page, String statementId, long expectedRevision) {
+        return harvester.statusQuo().clear(caller, page, statementId, expectedRevision);
+    }
+
+    /** Das Protokoll der Entscheidungen zu Aussage oder Seite, älteste zuerst. */
+    public List<com.aresstack.spaceharvester.application.standing.StandingDecisionStore.AuditEntry> standingHistory(
+            PageKey page, String statementId) {
+        return harvester.statusQuo().history(caller, page, statementId);
+    }
+
+    /** Meldet Entscheidungen zum Stand (ADR 0027), auf dem Zustell-Thread des Core; danach die Sicht neu lesen. */
+    public Subscription subscribeStanding(Runnable listener) {
+        return harvester.statusQuo().subscribe(Objects.requireNonNull(listener, "listener"));
+    }
+
     /** Die gespeicherte Zusammenfassung eines Updates in einer Ebene (ADR 0031); {@code spaceKey == null} die Quelle. */
     public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> changeSummary(
             String sourceId, String updateId, String spaceKey) {

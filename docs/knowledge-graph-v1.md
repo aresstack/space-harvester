@@ -63,6 +63,9 @@ Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName
   `sh:modality` (`NONE`/`MUSS`/`SOLL`/`KANN`/`DARF`), `sh:temporality` (`GILT`/`GEPLANT`/`FRUEHER`/`VERWORFEN`, nur aus
   Grammatik und Wörtern, nie aus einem Vergleich mit dem heutigen Datum; Präteritum und Plusquamperfekt im Indikativ
   sind `FRUEHER`, auch beim Vollverb, Perfekt und Konjunktiv II nie),
+  `sh:roleNounArticle` (nur bei Zustandsaussagen mit Rollennomen, ab rules-13: Begleiter des Rollennomens
+  `UNBESTIMMT`/`BESTIMMT`/`OHNE`/`KEIN`/`SONSTIGER`; Mehrzahl ohne Artikel ist `OHNE`; ein neutrales Merkmal ohne
+  Deutung, `KEIN` ändert nichts an `sh:negated`: „ist keine Förderung“ ist verneint),
   Herkunft (ADR 0032, FL3; fehlt bei Aussagen aus dem Original): `sh:origin` (`VORSTUFE`, wenn die Aussage aus einem
   vereinfachten Satz der Vorstufe „Sätze vereinfachen“ stammt), `sh:stageFlag` (Kennzeichen der Vorstufe: `FACT`,
   `CONDITION`, `PLANNING`, `DISCARDED`; ein eigenes Feld, kein Zeitbezug) und `sh:simplifiedSentence` (der vereinfachte

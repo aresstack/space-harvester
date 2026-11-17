@@ -204,7 +204,7 @@ public final class KnowledgeGraphJsonLd {
                 "staleReason", "analyzer",
                 "analyzerVersion", "text", "lemma", "headForm", "mentionKind", "unresolved", "lexicalKey", "start",
                 "end", "sentence", "paragraph", "predicate", "predicateLemma", "voice", "clause", "core",
-                "verificationStatus", "negated", "modality", "temporality", "origin", "stageFlag",
+                "verificationStatus", "negated", "modality", "temporality", "roleNounArticle", "origin", "stageFlag",
                 "simplifiedSentence", "featuresFrom", "checkVerdict", "checkVersion", "effectiveQuality", "role", "relation", "marker", "basis", "priority", "certain", "attachmentKind")) {
             json.writeStringProperty(term, "sh:" + term);
         }
@@ -393,6 +393,10 @@ public final class KnowledgeGraphJsonLd {
             }
             if (features.temporality() != ParsedStatements.Temporality.UNKNOWN) {
                 json.writeStringProperty("temporality", features.temporality().name());
+            }
+            if (features.article() != null) {
+                // ADR 0032: Begleiter des Rollennomens einer Zustandsaussage, neutral und ohne Deutung
+                json.writeStringProperty("roleNounArticle", features.article().name());
             }
             if (statement.derivation().origin() != ParsedStatements.Origin.ORIGINAL) {
                 // ADR 0032, FL3: Aussage aus der Vorstufe; das Kennzeichen ist kein Zeitbezug

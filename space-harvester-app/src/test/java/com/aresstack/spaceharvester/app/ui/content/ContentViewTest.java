@@ -216,7 +216,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
+                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Stand", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
@@ -232,7 +232,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
+        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Stand", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -247,6 +247,13 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.export().selection().sourceId())).isEqualTo("handbuch");
+        // „Stand“ (ADR 0032) zeigt wie „Export“ seine eigene Karte zur Auswahl, mit Hilfe als ?-Knopf oben rechts.
+        onEdt(() -> {
+            detail.tabs().select("Stand");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.standing().isVisible())).isTrue();
+        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         onEdt(() -> {
             detail.tabs().select("Leseansicht");
             return null;
@@ -358,7 +365,7 @@ class ContentViewTest {
     }
 
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
-        return java.util.stream.Stream.of("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert",
+        return java.util.stream.Stream.of("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Stand", "Erweitert",
                 "Export", "Chat").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 
