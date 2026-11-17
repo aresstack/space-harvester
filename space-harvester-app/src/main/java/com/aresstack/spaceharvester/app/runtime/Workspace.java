@@ -1607,42 +1607,6 @@ public final class Workspace {
         return harvester.changeLog().summary(caller, sourceId, updateId, spaceKey);
     }
 
-    /**
-     * Der Stand eines Auftrags „Zusammenfassen“. Er gehört dem Aufrufer der App ({@code caller.jobOwner()}), nicht dem
-     * Core-Eigentümer der Abgleiche; {@link #job(String)} fände ihn deshalb nicht.
-     */
-    public JobStatus summaryJob(String jobId) {
-        return harvester.jobs().status(jobId, caller.jobOwner());
-    }
-
-    /** Bricht einen Auftrag „Zusammenfassen“ ab; Eigentümer wie {@link #summaryJob(String)}. */
-    public JobStatus cancelSummary(String jobId) {
-        return harvester.jobs().cancel(jobId, caller.jobOwner());
-    }
-
-    /**
-     * Meldet einen Empfänger für die Aufträge „Zusammenfassen“ an (ADR 0027), auf dem Zustell-Thread des Core. Sie
-     * gehören dem Aufrufer der App, deshalb nicht über {@link #subscribeJobs}.
-     */
-    public Subscription subscribeSummaryJobs(JobListener listener) {
-        Objects.requireNonNull(listener, "listener");
-        return harvester.jobs().subscribe(caller.jobOwner(), new JobListener() {
-            @Override
-            public void changed(JobStatus status) {
-                if (status.type() == JobType.UPDATE_SUMMARY) {
-                    listener.changed(status);
-                }
-            }
-
-            @Override
-            public void removed(JobStatus last) {
-                if (last.type() == JobType.UPDATE_SUMMARY) {
-                    listener.removed(last);
-                }
-            }
-        });
-    }
-
     /** Startet „Zusammenfassen“ für ein Update in einer Ebene (ADR 0031); {@code spaceKey == null} die ganze Quelle. */
     public JobStatus summarizeUpdate(String sourceId, String updateId, String spaceKey) {
         return harvester.changeLog().summarize(caller, sourceId, updateId, spaceKey);

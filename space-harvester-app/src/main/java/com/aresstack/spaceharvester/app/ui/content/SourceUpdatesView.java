@@ -1286,18 +1286,17 @@ final class SourceUpdatesView extends JPanel {
 
                 @Override
                 public JobStatus job(String jobId) {
-                    return workspace.summaryJob(jobId);
+                    return workspace.job(jobId);
                 }
 
                 @Override
                 public JobStatus cancelJob(String jobId) {
-                    return workspace.cancelSummary(jobId);
+                    return workspace.cancelJob(jobId);
                 }
 
                 @Override
                 public Subscription subscribeJobs(JobListener listener) {
-                    // Die Aufträge „Zusammenfassen“ gehören dem Aufrufer der App, nicht dem Core-Eigentümer.
-                    return workspace.subscribeSummaryJobs(listener);
+                    return workspace.subscribeJobs(listener);
                 }
             };
         }

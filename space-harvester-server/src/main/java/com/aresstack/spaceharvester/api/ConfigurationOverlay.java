@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.configuration.HarvesterConfigura
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
@@ -49,11 +50,13 @@ public final class ConfigurationOverlay {
             ExportSettings.ATTACHMENTS_MAX_SIZE, TermSettings.SYNONYMS_MAX_TERMS,
             TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS,
             EnrichmentSettings.DOCUMENTS_ENABLED, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
-            SimplificationSettings.MODE, SimplificationSettings.PARALLEL, SimplificationSettings.MODEL);
+            SimplificationSettings.MODE, SimplificationSettings.PARALLEL, SimplificationSettings.MODEL,
+            StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS);
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
     private static final Set<String> LISTS = Set.of("ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
-            SyncSettings.SPACES, LocalFileSettings.ROOTS, ExportSettings.ATTACHMENTS_MEDIA_TYPES);
+            SyncSettings.SPACES, LocalFileSettings.ROOTS, ExportSettings.ATTACHMENTS_MEDIA_TYPES,
+            StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS);
 
     private static final Pattern INDEXED = Pattern.compile("(.+)\\[\\d+]");
 
@@ -128,6 +131,8 @@ public final class ConfigurationOverlay {
         put(properties, SimplificationSettings.MODE, configuration.simplification().mode().value());
         put(properties, SimplificationSettings.PARALLEL, configuration.simplification().parallel());
         put(properties, SimplificationSettings.MODEL, configuration.simplification().model());
+        put(properties, StandingSettings.OUTDATED_WORDS, String.join(",", configuration.standing().outdatedWords()));
+        put(properties, StandingSettings.DRAFT_WORDS, String.join(",", configuration.standing().draftWords()));
         return properties;
     }
 

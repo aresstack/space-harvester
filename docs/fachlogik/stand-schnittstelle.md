@@ -3,7 +3,8 @@
 Für den Fable-Strang, der die Anzeige baut. Der Core-Teil liegt in
 `space-harvester-core/src/main/java/com/aresstack/spaceharvester/application/standing/`, erreichbar über
 `Harvester#statusQuo()`. Die Oberfläche rechnet nichts selbst: Stand, Gründe, Sortierung und Zahlen kommen fertig aus
-dem Core. Wörter für Archiv und Entwurf werden ab PR 1b einstellbar; bis dahin gilt `StandingWords.DEFAULT`.
+dem Core. Die Wörter für Archiv und Entwurf sind Einstellungen (`space-harvester.statements.standing.outdated-words`
+und `.draft-words`, siehe `docs/CONFIGURATION.md`); sie wirken beim nächsten Lesen der Sicht.
 
 ## Lesen: `StatusQuo#view`
 
@@ -83,6 +84,9 @@ Subscription subscribe(Runnable listener)
   (0 ohne Entscheidung); passt sie nicht, kommt `StandingConflictException` mit der aktuellen Revision.
 - `UnknownStandingTargetException`: Seite nicht analysiert oder nicht sichtbar, oder Aussage nicht in der aktuellen
   Analyse.
+- Wird eine Seite aus dem Bestand entfernt, bleiben ihre Entscheidungen wie ihre Analyse im Knowledge Graph (dort
+  „veraltet: Seite fehlt“) und wie geprüfte Fakten stehen; sie gehen mit der Quelle („Daten bereinigen“, „Quelle
+  entfernen“). Kommt die Seite zurück, gelten sie wieder.
 - Die Prüfung einer Aussage (bestätigt/abgelehnt, FL4) kommt später in denselben Eintrag; die Oberfläche plant dafür
   keinen zweiten Mechanismus.
 
@@ -93,7 +97,8 @@ Subscription subscribe(Runnable listener)
 - Liste der Aussagen nach Stand gruppiert, Überholtes blass am Ende; darunter oder als Unterreiter „Zustände“ je Träger.
 - Aktionen zu einer Zeile (Stand setzen, Entscheidung löschen, Protokoll) erst im Overlay am Mausklick; Ja/Nein-Rückfrage
   beim Löschen.
-- Wortlisten (ab PR 1b) unter Einstellungen und auf der Abschlussseite des Assistenten.
+- Wortlisten unter Einstellungen (mehrwertig: Tabelle mit Icon-Zeilenaktionen) und auf der Abschlussseite des
+  Assistenten; die App schreibt sie als YAML-Liste in die Konfigurationsdatei.
 
 ## Leseempfehlung: `ReadingAdvice#recommend` (PR 2)
 
