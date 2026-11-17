@@ -49,12 +49,18 @@ tasks.withType(AbstractArchiveTask).configureEach {
 // Optionales echtes Modell für den Rauchtest: ./gradlew :nlp-parser:test -PnlpModelDir=<entpacktes Release>
 // (relativer Pfad gilt ab dem Wurzelverzeichnis, wie im Workflow nlp-parser-model.yml)
 def realModelDir = providers.gradleProperty('nlpModelDir')
+// Prüfstand über echte Seiten (ADR 0032), nur lokal: ./gradlew :nlp-parser:test --tests '*PruefstandLiveTest'
+// -PnlpModelDir=… -PpruefstandSeiten=<Verzeichnis mit .txt/.md>; ausgegeben werden nur Zahlen
+def pruefstandSeiten = providers.gradleProperty('pruefstandSeiten')
 
 tasks.named('test') {
     useJUnitPlatform()
     maxHeapSize = '1g'
     if (realModelDir.isPresent()) {
         systemProperty 'nlp.parser.modelDir', rootProject.file(realModelDir.get()).absolutePath
+    }
+    if (pruefstandSeiten.isPresent()) {
+        systemProperty 'pruefstand.seiten', rootProject.file(pruefstandSeiten.get()).absolutePath
     }
 }
 

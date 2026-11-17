@@ -67,17 +67,23 @@ final class SourceUpdatesView extends JPanel {
             + "oben, das jüngste ganz rechts und vorgewählt; „Seit dem letzten Update“ ist, was danach dazugekommen ist, "
             + "es zählt zum nächsten. Ein Klick auf eine Seite öffnet "
             + "sie.\n\n"
-            + "„Zusammenfassen“ lässt das eingestellte Chat-Modell das gewählte Update in wenigen Sätzen "
-            + "zusammenfassen. Es liest nur Seiten, die für die KI freigegeben sind; die Zusammenfassung bleibt "
-            + "gespeichert und lässt sich später nachlesen oder neu erstellen. Von selbst wird nie zusammengefasst.";
+            + "Die Leseansicht zeigt die KI-Zusammenfassung des gewählten Updates. Fehlt sie, erstellt das eingestellte "
+            + "Chat-Modell sie beim Öffnen von selbst; „Zusammenfassen“ erstellt sie neu. Es liest nur Seiten, die für "
+            + "die KI freigegeben sind; die Zusammenfassung bleibt gespeichert. Die Erstbefüllung und Updates ohne "
+            + "Änderung bekommen keine.";
     /** Vor den Zahlen von „Seit dem letzten Update“: kein hängender Auftrag, sondern was seither dazukam. */
     static final String OPEN_COUNTS = "Änderungen seit dem letzten manuellen Update: ";
     static final String SUMMARIZE = "Zusammenfassen";
     static final String RESUMMARIZE = "Neu zusammenfassen";
-    static final String SUMMARIZING = "Wird zusammengefasst …";
+    static final String SUMMARIZING = "Zusammenfassung wird erstellt …";
     static final String SUMMARIZE_TIP = "Update zusammenfassen";
     static final String RESUMMARIZE_TIP = "Zusammenfassung neu erstellen";
     static final String NO_MODEL = "Kein Chat-Modell eingestellt; unter Einstellungen › Modelle wählen";
+    /** Leseansicht ohne Chat-Modell: warum dort keine Zusammenfassung steht. */
+    static final String NO_MODEL_PAGE = "Für die KI-Zusammenfassung ist kein Chat-Modell eingestellt. Unter "
+            + "Einstellungen › Modelle wählen; danach entsteht sie beim Öffnen von selbst.";
+    static final String INITIAL_TIP = "Für die Erstbefüllung gibt es keine Zusammenfassung";
+    static final String EMPTY_TIP = "In diesem Update hat sich nichts geändert";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
 
     private final Supplier<Actions> actions;
@@ -122,6 +128,8 @@ final class SourceUpdatesView extends JPanel {
     private UpdateSummary summary;
     /** Laufender Auftrag „Zusammenfassen“; bleibt nach „Abbrechen“ gesetzt, bis er wirklich endet. */
     private Run running;
+    /** Updates, für die die Leseansicht die Zusammenfassung schon von selbst angestoßen hat (je Quelle, Ebene). */
+    private final java.util.Set<String> autoStarted = new java.util.HashSet<>();
     private Subscription jobWatch = Subscription.NONE;
     /** Ob ein Chat-Modell eingestellt ist. */
     private boolean available = true;
@@ -130,6 +138,10 @@ final class SourceUpdatesView extends JPanel {
     private int listGeneration;
     /** Zähler der Textfenster: wechselt nur bei Auswahl oder Ebenenwechsel, nicht bei Meldungen. */
     private int textGeneration;
+    /** Meldungen des Core: höchstens ein Lauf zur Zeit und ein vorgemerkter Nachlauf, nur bei sichtbarem Reiter. */
+    private boolean messageRunning;
+    private boolean messagePending;
+    private java.util.function.BooleanSupplier showing = this::isShowing;
 
     /**
      * Was die Ansicht vom gewählten Update zeigt (Angelo, 17.11.2026): unter „Leseansicht“ die KI-Zusammenfassung,
@@ -198,6 +210,12 @@ final class SourceUpdatesView extends JPanel {
         busy = new BusyOverlay(reportScroll);
         busy.onCancel(this::cancelSummary);
         add(new SkyLayer(busy, sky, report), BorderLayout.CENTER);
+        // Beim Sichtbarwerden einmal nachholen, was verdeckt gemeldet wurde.
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                becameVisible();
+            }
+        });
         source(null, null);
     }
 
@@ -239,6 +257,7 @@ final class SourceUpdatesView extends JPanel {
         generation++;
         listGeneration++;
         textGeneration++;
+        messagePending = false;
         sourceId = id;
         spaceKey = id == null || space == null || space.isBlank() ? null : space;
         updates = List.of();
@@ -261,7 +280,7 @@ final class SourceUpdatesView extends JPanel {
         try {
             subscription = current.subscribe(id, changed -> SwingUtilities.invokeLater(() -> {
                 if (Objects.equals(changed, sourceId)) {
-                    reload();
+                    changed();
                 }
             }));
         } catch (RuntimeException e) {
@@ -270,17 +289,78 @@ final class SourceUpdatesView extends JPanel {
         reload();
     }
 
+    /**
+     * Eine Meldung des Core. Während eines Abgleichs kommen viele; gelesen wird höchstens ein Lauf zur Zeit (Liste samt
+     * Neu-Lesen des gezeigten Updates) mit einem vorgemerkten Nachlauf, und nur, solange der Reiter sichtbar ist.
+     */
+    private void changed() {
+        if (messageRunning || !showing.getAsBoolean()) {
+            messagePending = true;
+            return;
+        }
+        messagePending = false;
+        messageRunning = true;
+        reload(this::messageDone);
+    }
+
+    private void messageDone() {
+        messageRunning = false;
+        if (messagePending) {
+            SwingUtilities.invokeLater(this::changed);
+        }
+    }
+
+    /** Der Reiter ist sichtbar geworden: einmal nachholen, falls verdeckt etwas gemeldet wurde. */
+    void becameVisible() {
+        if (messagePending && !messageRunning) {
+            changed();
+        }
+        if (autoSummarize() && shown != null) {
+            renderReport(shown);
+        }
+    }
+
+    /**
+     * Die Leseansicht zeigt immer die KI-Zusammenfassung (Angelo, 17.11.2026): Fehlt sie für das gezeigte Update, wird
+     * sie beim Öffnen von selbst erstellt, einmal je Update und Ebene, nur bei sichtbarem Reiter und nur mit
+     * Chat-Modell. Die Erstbefüllung und Updates ohne Änderung bekommen keine. {@code true}, wenn gestartet.
+     */
+    private boolean autoSummarize() {
+        if (mode != Mode.SUMMARY || shown == null || summary != null || running != null || !available
+                || sourceId == null || selected == null || !shown.update().id().equals(selected)
+                || shown.update().initial() || shown.pages().isEmpty() || !showing.getAsBoolean()) {
+            return false;
+        }
+        if (!autoStarted.add(sourceId + "\u0000" + spaceKey + "\u0000" + selected)) {
+            return false;
+        }
+        summarize();
+        return running != null;
+    }
+
+    /** Tests: ob der Reiter als sichtbar gilt (sonst {@link #isShowing()}). */
+    void showingForTest(java.util.function.BooleanSupplier visible) {
+        showing = Objects.requireNonNull(visible, "visible");
+    }
+
     /** Liest die Updates neu; die Auswahl bleibt, solange es das Update noch gibt. */
     void reload() {
+        reload(() -> { });
+    }
+
+    /** {@code done} läuft auf dem EDT, sobald Liste und ein etwaiges Neu-Lesen des Updates fertig sind. */
+    private void reload(Runnable done) {
         Actions current = actions.get();
         String id = sourceId;
         String space = spaceKey;
         if (current == null || id == null) {
+            done.run();
             return;
         }
         int mine = ++listGeneration;
         runner.run(() -> current.updates(id, space), found -> {
             if (mine != listGeneration || !Objects.equals(id, sourceId) || !Objects.equals(space, spaceKey)) {
+                done.run();
                 return;
             }
             List<ChangeUpdate> fresh = List.copyOf(found);
@@ -296,6 +376,7 @@ final class SourceUpdatesView extends JPanel {
                 offerSummary();
                 renderList();
                 message(NO_UPDATES);
+                done.run();
                 return;
             }
             // Während eines Abgleichs kommen laufend Meldungen: Ein abgeschlossenes Update ändert sich nie mehr, sein
@@ -304,14 +385,18 @@ final class SourceUpdatesView extends JPanel {
             boolean reread = !keep.equals(selected) || shown == null || ChangeUpdate.OPEN.equals(keep)
                     || !Objects.equals(before, entry(fresh, keep));
             if (reread) {
-                select(keep, keep.equals(selected));
-            } else if (changed) {
+                select(keep, keep.equals(selected), done);
+                return;
+            }
+            if (changed) {
                 renderList();
             }
+            done.run();
         }, failure -> {
             if (mine == listGeneration) {
                 message("Updates nicht geladen: " + Problems.describe(failure).title());
             }
+            done.run();
         });
     }
 
@@ -328,14 +413,18 @@ final class SourceUpdatesView extends JPanel {
 
     /** Wählt ein Update und lädt seinen Bericht. */
     void select(String updateId) {
-        select(updateId, false);
+        select(updateId, false, () -> { });
     }
 
-    /** {@code keepPosition}: dasselbe Update neu gelesen, die Rollposition im Bericht bleibt. */
-    private void select(String updateId, boolean keepPosition) {
+    /**
+     * {@code keepPosition}: dasselbe Update neu gelesen, die Rollposition im Bericht bleibt. {@code done} läuft, wenn
+     * das Ergebnis da ist (gezeichnet oder verworfen).
+     */
+    private void select(String updateId, boolean keepPosition, Runnable done) {
         Actions current = actions.get();
         String id = sourceId;
         if (current == null || id == null || updateId == null) {
+            done.run();
             return;
         }
         if (!updateId.equals(selected)) {
@@ -369,15 +458,17 @@ final class SourceUpdatesView extends JPanel {
                     current.summariesAvailable(), List.of());
         }, found -> {
             if (mine != generation || !updateId.equals(selected)) {
+                done.run();
                 return;
             }
             if (keepPosition && loadedPages() > wanted) {
                 // Inzwischen wurden weitere Seiten nachgeladen: mit der neuen Zahl noch einmal lesen.
-                select(updateId, true);
+                select(updateId, true, done);
                 return;
             }
             if (keepPosition && found.report().equals(shown) && Objects.equals(found.summary(), summary)
                     && markdown(found.texts()).equals(markdown(windows))) {
+                done.run();
                 return;
             }
             java.awt.Point position = keepPosition ? viewPosition() : new java.awt.Point();
@@ -386,13 +477,16 @@ final class SourceUpdatesView extends JPanel {
             shown = found.report();
             summary = found.summary();
             available = found.available();
+            autoSummarize();
             renderReport(shown);
             offerSummary();
             restore(position);
+            done.run();
         }, failure -> {
             if (mine == generation) {
                 message("Änderungen nicht geladen: " + Problems.describe(failure).title());
             }
+            done.run();
         });
     }
 
@@ -469,14 +563,14 @@ final class SourceUpdatesView extends JPanel {
         ChangeUpdate update = shown != null && shown.update().id().equals(selected) ? shown.update()
                 : entry(updates, selected);
         boolean possible = sourceId != null && update != null && !update.initial() && update.pages() > 0;
-        String tip = !available ? NO_MODEL : summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP;
+        String tip = !available ? NO_MODEL : update != null && update.initial() ? INITIAL_TIP
+                : update != null && update.pages() == 0 ? EMPTY_TIP : summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP;
         summarize.setVisible(mode == Mode.SUMMARY && sourceId != null);
         summarize.setEnabled(possible && available && running == null);
         summarize.setToolTipText(tip);
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SUMMARIZE : RESUMMARIZE);
         summarizeEntry.setVisible(summary == null && summarize.isEnabled());
-        boolean mine = running != null && Objects.equals(running.sourceId(), sourceId)
-                && Objects.equals(running.spaceKey(), spaceKey) && Objects.equals(running.updateId(), selected);
+        boolean mine = runningHere();
         if (mine != busy.isBusy()) {
             busy.setText(SUMMARIZING);
             busy.setBusy(mine);
@@ -511,6 +605,9 @@ final class SourceUpdatesView extends JPanel {
             if (running == starting) {
                 running = null;
                 offerSummary();
+                if (shown != null && mode == Mode.SUMMARY) {
+                    renderReport(shown);
+                }
             }
             onStatus.accept("Zusammenfassen nicht möglich: " + Problems.describe(failure).title());
         });
@@ -555,10 +652,20 @@ final class SourceUpdatesView extends JPanel {
                     + (status.error() == null ? "" : ": " + status.error().message());
         });
         offerSummary();
-        if (status.state() == JobState.COMPLETED && Objects.equals(run.sourceId(), sourceId)
-                && Objects.equals(run.spaceKey(), spaceKey) && Objects.equals(run.updateId(), selected)) {
-            select(selected, true);
+        boolean here = Objects.equals(run.sourceId(), sourceId) && Objects.equals(run.spaceKey(), spaceKey)
+                && Objects.equals(run.updateId(), selected);
+        if (status.state() == JobState.COMPLETED && here) {
+            select(selected, true, () -> { });
+        } else if (here && shown != null && mode == Mode.SUMMARY) {
+            // Nicht erstellt: statt „wird erstellt“ wieder der Einstieg zum erneuten Versuch.
+            renderReport(shown);
         }
+    }
+
+    /** Ob der Auftrag „Zusammenfassen“ für das gezeigte Update und die gezeigte Ebene läuft. */
+    private boolean runningHere() {
+        return running != null && Objects.equals(running.sourceId(), sourceId)
+                && Objects.equals(running.spaceKey(), spaceKey) && Objects.equals(running.updateId(), selected);
     }
 
     /** Bricht den laufenden Auftrag ab; die bisherige Zusammenfassung bleibt. Das Ende meldet der Auftrag selbst. */
@@ -717,10 +824,14 @@ final class SourceUpdatesView extends JPanel {
         if (summary != null) {
             renderSummary(found);
         } else if (update.initial()) {
-            add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand.",
-                    Comic.TEXT, 13.5f));
+            add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
+                    + "Zusammenfassung gibt es ab dem ersten Update mit Änderungen.", Comic.TEXT, 13.5f));
         } else if (found.pages().isEmpty()) {
             add(reportBody, Comic.wrapped(NO_PAGES, Comic.MUTED, 13.5f));
+        } else if (!available) {
+            add(reportBody, Comic.wrapped(NO_MODEL_PAGE, Comic.MUTED, 13.5f));
+        } else if (runningHere()) {
+            add(reportBody, Comic.wrapped(SUMMARIZING, Comic.MUTED, 13.5f));
         } else {
             add(reportBody, Comic.wrapped(NO_SUMMARY, Comic.MUTED, 13.5f));
             reportBody.add(Box.createVerticalStrut(8));

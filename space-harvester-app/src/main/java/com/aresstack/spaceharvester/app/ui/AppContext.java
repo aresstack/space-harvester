@@ -197,8 +197,13 @@ public final class AppContext {
     private final SecretVault vault;
     private final List<Consumer<AppContext>> listeners = new ArrayList<>();
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
-    private AppSettings settings;
-    private AppRuntime runtime;
+    private volatile AppSettings settings;
+    private volatile AppRuntime runtime;
+    /** Wie viele {@link #reload} gerade laufen; solange holt die App keine Zugangsdaten aus KeePass nach. */
+    private final java.util.concurrent.atomic.AtomicInteger reloads = new java.util.concurrent.atomic.AtomicInteger();
+    /** Ob gerade Zugangsdaten aus KeePass nachgeholt werden ({@link #recoverFromKeePass}). */
+    private final java.util.concurrent.atomic.AtomicBoolean recovering =
+            new java.util.concurrent.atomic.AtomicBoolean();
     private Throwable startProblem;
     /** Ob beim letzten Laden aus dem KeePass-Eintrag ein API-Key kam. */
     private volatile boolean keePassKeyRead;
@@ -527,6 +532,7 @@ public final class AppContext {
         if (keePass == null) {
             keePass = new KeePassLink(configFile.toAbsolutePath().getParent().resolve(KeePassLink.PAIRING_DIRECTORY),
                     new SwingPairing());
+            keePass.onReachable(this::keePassReachable);
         }
         return keePass;
     }
@@ -534,6 +540,106 @@ public final class AppContext {
     /** Für Tests: eine andere KeePass-Anbindung. */
     synchronized void keePass(KeePassLink link) {
         this.keePass = link;
+        link.onReachable(this::keePassReachable);
+    }
+
+    /**
+     * Pausen der Nachprüfung nach dem Start, wenn Quellen ohne ihre Zugangsdaten aus KeePass starteten: wie die
+     * Nachprüfung im Einrichtungsassistenten des EAC ({@code security.keepass.setupRecheck*}: vier Versuche ab 2 s,
+     * Faktor 2,5, höchstens 30 s). Danach endet sie; ein späterer gelungener KeePass-Zugriff holt sie trotzdem nach.
+     */
+    static final long[] RECHECK_PAUSES_MILLIS = {2_000, 5_000, 12_500, 30_000};
+
+    private boolean reloading() {
+        return reloads.get() > 0;
+    }
+
+    /**
+     * Quellen, die laut {@code started} auf ihr Geheimnis warten, obwohl ihr Passwort bzw. Token aus einem
+     * KeePass-Eintrag kommt: Beim Start antwortete KeePass nicht (rechtzeitig).
+     */
+    private static List<AppSettings.SourceEntry> keePassWaiting(AppSettings current, AppRuntime started) {
+        if (current == null || started == null || started.waitingForSecret().isEmpty()) {
+            return List.of();
+        }
+        return current.sources().stream().filter(entry -> started.waitingForSecret().contains(entry.id())
+                && current.keePassEntry(entry.id()) != null).toList();
+    }
+
+    /**
+     * Beobachter der KeePass-Anbindung: KeePass hat gerade geantwortet. Warten Quellen noch auf ihre Zugangsdaten aus
+     * KeePass, holt die App sie im Hintergrund nach (kein Polling: nur auf dieses Ereignis und die begrenzte
+     * Nachprüfung nach dem Start).
+     */
+    private void keePassReachable() {
+        if (reloading() || recovering.get() || keePassWaiting(settings, runtime).isEmpty()) {
+            return;
+        }
+        Thread.ofVirtual().name("keepass-recover").start(this::recoverFromKeePass);
+    }
+
+    /**
+     * Liest die Zugangsdaten der Quellen, die beim Start ohne ihren KeePass-Eintrag blieben, erneut aus KeePass. Gelingt
+     * das für mindestens eine, starten die Quellen neu, damit die Karte ohne Neustart der App „Verbunden“ zeigt.
+     * Blockiert; nie auf dem EDT.
+     *
+     * @return ob dabei Zugangsdaten nachgeholt wurden
+     */
+    boolean recoverFromKeePass() {
+        if (reloading() || !recovering.compareAndSet(false, true)) {
+            return false;
+        }
+        try {
+            AppSettings current = settings;
+            AppRuntime started = runtime;
+            List<AppSettings.SourceEntry> waiting = keePassWaiting(current, started);
+            if (waiting.isEmpty() || !keePass().paired()) {
+                return false;
+            }
+            boolean unlocked = false;
+            for (AppSettings.SourceEntry entry : waiting) {
+                if (!secrets.has(entry)) {
+                    unlockFromKeePass(entry, current.keePassEntry(entry.id()));
+                }
+                unlocked |= secrets.has(entry);
+            }
+            if (unlocked) {
+                SwingUtilities.invokeLater(() -> restartWithKeePass(started));
+            }
+            return unlocked;
+        } finally {
+            recovering.set(false);
+        }
+    }
+
+    /** Startet die Quellen mit den nachgeholten Zugangsdaten neu, solange das keinen laufenden Auftrag beendet. */
+    private void restartWithKeePass(AppRuntime started) {
+        if (runtime != started || reloading()) {
+            return;
+        }
+        if (!runningJobs().isEmpty()) {
+            LOG.info("Zugangsdaten aus KeePass nachgeholt; die Quellen starten neu, sobald sie neu geladen werden "
+                    + "(laufende Aufträge bleiben)");
+            return;
+        }
+        LOG.info("Zugangsdaten aus KeePass nachgeholt; die Quellen starten neu");
+        reload(() -> { });
+    }
+
+    /** Nach einem Start mit fehlenden KeePass-Zugangsdaten: begrenzt nachprüfen ({@link #RECHECK_PAUSES_MILLIS}). */
+    private void recheckKeePass(AppRuntime started) {
+        Thread.ofVirtual().name("keepass-recheck").start(() -> {
+            for (long pause : RECHECK_PAUSES_MILLIS) {
+                try {
+                    Thread.sleep(pause);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (runtime != started || keePassWaiting(settings, started).isEmpty() || recoverFromKeePass()) {
+                    return;
+                }
+            }
+        });
     }
 
     /** Fragt auf dem EDT nach dem Einmal-Passwort, das KeePass beim Koppeln anzeigt; Abbrechen heißt {@code null}. */
@@ -648,6 +754,7 @@ public final class AppContext {
      */
     public void reload(Runnable done) {
         AppRuntime previous = runtime;
+        reloads.incrementAndGet();
         Background.run(() -> {
             AppSettings loaded = loader.load(configFile);
             // Gleich nach dem Lesen, damit schon der Start der Laufzeit der Terminal-Ausgabe folgt.
@@ -679,6 +786,7 @@ public final class AppContext {
             settings = started.settings();
             runtime = started.runtime();
             startProblem = started.problem();
+            reloads.decrementAndGet();
             if (restarted) {
                 connections.clear();
             }
@@ -686,9 +794,14 @@ public final class AppContext {
             if (runtime != null && restarted) {
                 // Verbindungen gleich prüfen, damit Spaces und Zustand ohne weiteren Klick da sind.
                 runtime.workspace().sources().forEach(source -> checkConnection(source.id(), () -> { }));
+                // Antwortete KeePass beim Start nicht, holt die App die Zugangsdaten nach, ohne dass neu zu starten ist.
+                if (!keePassWaiting(settings, runtime).isEmpty()) {
+                    recheckKeePass(runtime);
+                }
             }
             done.run();
         }, error -> {
+            reloads.decrementAndGet();
             runtime = null;
             startProblem = error;
             fire();

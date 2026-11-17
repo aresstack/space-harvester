@@ -1,0 +1,12 @@
+Antragsprüfung
+Zuständigkeit: Die Bewilligungsstelle prüft jeden Antrag innerhalb von vier Wochen.
+Prüfschritte:
+- Vollständigkeit der Unterlagen prüfen
+- Förderfähigkeit feststellen
+- Bescheid erstellen und versenden
+Stand 2023: Es war geplant, die Prüfung vollständig zu automatisieren.
+Diese Überlegung wurde verworfen.
+Aktuell prüft der Sachbearbeiter die Förderfähigkeit manuell.
+Künftig soll ein Regelwerk die Förderfähigkeit vorab bewerten.
+Offene Punkte
+Die Schnittstelle zum Kassensystem ist noch nicht abgestimmt.

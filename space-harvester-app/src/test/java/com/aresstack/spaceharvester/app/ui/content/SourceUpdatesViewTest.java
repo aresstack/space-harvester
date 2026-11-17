@@ -51,6 +51,7 @@ class SourceUpdatesViewTest {
             SourceUpdatesView.Mode.SUMMARY);
     private final List<ReportedPage> opened = new ArrayList<>();
     private final List<String> status = new ArrayList<>();
+    private boolean visible = true;
 
     @BeforeEach
     void setUp() {
@@ -58,6 +59,7 @@ class SourceUpdatesViewTest {
             each.zone(ZoneOffset.UTC);
             each.onOpen(opened::add);
             each.onStatus(status::add);
+            each.showingForTest(() -> visible);
         }
     }
 
@@ -138,6 +140,7 @@ class SourceUpdatesViewTest {
                 });
             }
         }, SourceUpdatesView.Mode.CHANGES);
+        slow.showingForTest(() -> true);
         actions.textLimit = 2;
         slow.source("wiki", "Confluence HaVdB");
         while (!waiting.isEmpty()) {
@@ -156,6 +159,68 @@ class SourceUpdatesViewTest {
 
         assertThat(slow.reportTexts()).as("die Antwort nach der Meldung gilt").contains("Alte Seite")
                 .doesNotContain("Weitere 1 Seite laden");
+    }
+
+    @Test
+    void messagesDuringARunGiveExactlyOneFollowUp() throws Exception {
+        List<Runnable> waiting = new ArrayList<>();
+        SourceUpdatesView slow = new SourceUpdatesView(() -> actions, new SourceUpdatesView.Runner() {
+            @Override
+            public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
+                waiting.add(() -> {
+                    try {
+                        onSuccess.accept(work.call());
+                    } catch (Exception e) {
+                        onFailure.accept(e);
+                    }
+                });
+            }
+        }, SourceUpdatesView.Mode.CHANGES);
+        slow.showingForTest(() -> true);
+        slow.source("wiki", "Confluence HaVdB");
+        while (!waiting.isEmpty()) {
+            waiting.remove(0).run();
+        }
+        slow.clickUpdate("Seit dem letzten Update");
+        waiting.remove(0).run();
+        int updates = actions.updateCalls;
+
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(waiting).as("ein Lauf").hasSize(1);
+        actions.listener.changed("wiki");
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(waiting).as("kein zweiter Lauf, solange einer läuft").hasSize(1);
+
+        waiting.remove(0).run();
+        assertThat(waiting).as("das offene Update wird im selben Lauf neu gelesen").hasSize(1);
+        waiting.remove(0).run();
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(waiting).as("genau ein Nachlauf").hasSize(1);
+        while (!waiting.isEmpty()) {
+            waiting.remove(0).run();
+            javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        }
+        assertThat(actions.updateCalls).isEqualTo(updates + 2);
+    }
+
+    @Test
+    void aHiddenTabReadsNothingAndCatchesUpOnceWhenShown() throws Exception {
+        view.source("wiki", "Confluence HaVdB");
+        int updates = actions.updateCalls;
+        visible = false;
+
+        actions.listener.changed("wiki");
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(actions.updateCalls).as("verdeckt wird nicht gelesen").isEqualTo(updates);
+
+        visible = true;
+        view.becameVisible();
+        assertThat(actions.updateCalls).isEqualTo(updates + 1);
+        view.becameVisible();
+        assertThat(actions.updateCalls).as("nur einmal nachholen").isEqualTo(updates + 1);
     }
 
     @Test
@@ -316,20 +381,41 @@ class SourceUpdatesViewTest {
     }
 
     @Test
-    void anUpdateWithoutSummaryOffersToSummarizeButNotTheInitialFill() {
+    void openingTheReadingViewCreatesTheMissingSummaryByItselfOnceAndSaysSo() throws Exception {
         summary.source("wiki", "Confluence HaVdB");
-        summary.clickUpdate("16.11.2026, 18:30 · angelo");
 
-        assertThat(summary.summarizeOffered()).isTrue();
-        assertThat(summary.summarizeLabel()).isEqualTo(SourceUpdatesView.SUMMARIZE);
-        assertThat(summary.summarizeTip()).isEqualTo(SourceUpdatesView.SUMMARIZE_TIP);
-        assertThat(summary.summarizeEntryShown()).as("sichtbarer Einstieg im Bericht").isTrue();
-        assertThat(summary.reportTexts()).doesNotContain("Zusammenfassung");
+        assertThat(summary.selectedUpdate()).isEqualTo(actions.second().id());
+        assertThat(actions.summarizeCalls).as("von selbst beim Öffnen").isEqualTo(1);
+        assertThat(summary.busy()).isTrue();
+        assertThat(summary.reportTexts()).contains(SourceUpdatesView.SUMMARIZING);
+        assertThat(SourceUpdatesView.SUMMARIZING).isEqualTo("Zusammenfassung wird erstellt …");
+
+        actions.finish(JobState.FAILED);
+        assertThat(summary.reportTexts()).as("nicht erstellt: Einstieg zum erneuten Versuch")
+                .contains(SourceUpdatesView.NO_SUMMARY).doesNotContain(SourceUpdatesView.SUMMARIZING);
+        assertThat(summary.summarizeEntryShown()).isTrue();
 
         summary.clickUpdate("10.11.2026, 08:00 · angelo");
+        summary.clickUpdate("16.11.2026, 18:30 · angelo");
+        assertThat(actions.summarizeCalls).as("einmal je Update und Ebene, nicht bei jedem Klick").isEqualTo(1);
+    }
+
+    @Test
+    void theInitialFillAndAHiddenTabStartNothing() throws Exception {
+        visible = false;
+        summary.source("wiki", "Confluence HaVdB");
+        assertThat(actions.summarizeCalls).as("verdeckt nichts erstellen").isZero();
+
+        visible = true;
+        summary.becameVisible();
+        assertThat(actions.summarizeCalls).as("erst beim Öffnen").isEqualTo(1);
+
+        actions.finish(JobState.COMPLETED);
+        summary.clickUpdate("10.11.2026, 08:00 · angelo");
         assertThat(summary.summarizeOffered()).as("Erstbefüllung").isFalse();
+        assertThat(summary.summarizeTip()).isEqualTo(SourceUpdatesView.INITIAL_TIP);
         assertThat(summary.summarizeEntryShown()).isFalse();
-        assertThat(actions.summarizeCalls).as("nie von selbst").isZero();
+        assertThat(actions.summarizeCalls).isEqualTo(1);
     }
 
     @Test
@@ -337,9 +423,7 @@ class SourceUpdatesViewTest {
         summary.source("wiki", "Confluence HaVdB");
         summary.clickUpdate("16.11.2026, 18:30 · angelo");
 
-        summary.clickSummarizeEntry();
-
-        assertThat(actions.summarizeCalls).isEqualTo(1);
+        assertThat(actions.summarizeCalls).as("beim Öffnen von selbst gestartet").isEqualTo(1);
         assertThat(summary.busy()).as("BusyOverlay über dem Bericht").isTrue();
         assertThat(summary.summarizeEntryShown()).isFalse();
         assertThat(summary.summarizeOffered()).as("nie zwei zugleich").isFalse();

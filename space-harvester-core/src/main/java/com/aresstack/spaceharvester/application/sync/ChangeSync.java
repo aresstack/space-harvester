@@ -116,6 +116,8 @@ public class ChangeSync {
         Set<String> trashed = new LinkedHashSet<>();
         removed.forEach(entry -> trashed.add(entry.page().pageId()));
         trashed.forEach(current::remove);
+        Set<String> reload = from == null || !mode.refreshesContent() ? Set.of()
+                : stale(sourceId, spaceKey, baseline, current, trashed, listener);
         Inventory inventory = new Inventory(sourceId, spaceKey, Inventory.Status.CHANGES, null,
                 List.copyOf(current.values()), startedAt, clock.instant());
         listener.inventoried(inventory);
@@ -125,7 +127,12 @@ public class ChangeSync {
         List<PageChange> changes = new ArrayList<>();
         current.forEach((pageId, entry) -> {
             BaselineEntry previous = known.get(pageId);
-            changes.add(SyncPlanner.within(mode, SyncPlanner.classify(previous, entry)));
+            if (reload.contains(pageId) && previous != null) {
+                // Veraltet aus einem früheren Lauf ohne Inhalte: immer laden, auch wenn die Version schon bekannt ist.
+                changes.add(new PageChange(pageId, PageChange.Kind.CONTENT_CHANGED, previous, entry));
+            } else {
+                changes.add(SyncPlanner.within(mode, SyncPlanner.classify(previous, entry)));
+            }
         });
         Map<String, RemovalCheck.Result> removals = new HashMap<>();
         for (String pageId : trashed) {
@@ -144,6 +151,44 @@ public class ChangeSync {
             staged.commit(next);
             return new SpaceSync.SyncRun(plan, failed, next, null);
         }
+    }
+
+    /**
+     * Seiten, die die Generation als veraltet führt und die die Änderungssuche nicht nennt (etwa aus einem früheren Lauf
+     * „nur katalogisieren“, dessen Änderungen vor {@code changesSince} liegen): Lädt der Lauf Inhalte, fragt er ihre
+     * Kopfdaten einzeln nach und nimmt sie in {@code current} auf, damit „Cache synchronisieren“ sie wirklich auffrischt.
+     * Was die Quelle nicht liefert, bleibt veraltet für den nächsten Lauf.
+     *
+     * @return die aufgenommenen Seiten
+     */
+    private Set<String> stale(String sourceId, String spaceKey, SyncBaseline baseline,
+                              Map<String, PageMetadataListing.Entry> current, Set<String> trashed,
+                              SyncListener listener) {
+        if (baseline == null || baseline.stalePageIds().isEmpty()) {
+            return Set.of();
+        }
+        Set<String> added = new HashSet<>();
+        for (String pageId : baseline.stalePageIds()) {
+            if (current.containsKey(pageId) || trashed.contains(pageId)) {
+                continue;
+            }
+            listener.checkpoint();
+            PageMetadataListing.Entry entry;
+            try {
+                entry = queries.pageMetadata(sourceId, pageId).entry();
+            } catch (SourceAccessException e) {
+                if (e.reason() == SourceAccessException.Reason.NOT_FOUND) {
+                    continue;
+                }
+                // Quelle gerade nicht erreichbar: der Rest bleibt veraltet für den nächsten Lauf.
+                break;
+            }
+            if (spaceKey.equals(entry.page().partitionKey()) && pageId.equals(entry.page().pageId())) {
+                current.put(pageId, entry);
+                added.add(pageId);
+            }
+        }
+        return added;
     }
 
     /** Die bisherige Generation, fortgeschrieben um die Änderungen; ohne Generation das, was der Cache kennt. */
