@@ -452,6 +452,55 @@ class SourceUpdatesViewTest {
                 "2 Änderungen durfte die KI nicht lesen; sie fehlen in der Zusammenfassung.");
         assertThat(summary.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
         assertThat(summary.counts(summarized(actions.second()))).endsWith(" · zusammengefasst");
+        assertThat(actions.summarizeCalls).as("eine vorhandene Zusammenfassung entsteht nie von selbst neu").isZero();
+    }
+
+    @Test
+    void aNewChangeAfterTheSummaryOfTheOpenUpdateGivesTheNoteButNoJob() throws Exception {
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, "Eine neue Seite.", List.of(
+                new SummaryStatement("Eine neue Seite.", List.of(new SummaryPage("20", "Neue Seite")))), "gpt-test",
+                SECOND, 0, false);
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("Seit dem letzten Update");
+        assertThat(summary.reportTexts()).doesNotContain(
+                "Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht alles.");
+
+        actions.openGrows = true;
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, "Eine neue Seite.", List.of(
+                new SummaryStatement("Eine neue Seite.", List.of(new SummaryPage("20", "Neue Seite")))), "gpt-test",
+                SECOND, 0, true);
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+
+        assertThat(summary.reportTexts()).contains(
+                "Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht alles.");
+        assertThat(actions.summarizeCalls).as("kein Modellaufruf je Abgleich").isZero();
+    }
+
+    @Test
+    void clickingThroughLevelsCancelsWaitingAutoJobsSoAtMostOneIsActive() {
+        actions.jobNow = JobState.QUEUED;
+        summary.source("wiki", "Confluence HaVdB");
+        summary.source("wiki", "CLUK", "CLUK");
+        summary.source("wiki", "ARCH", "ARCH");
+
+        assertThat(actions.summarizeCalls).isEqualTo(3);
+        assertThat(actions.cancels).as("die zwei wartenden abgebrochen").isEqualTo(2);
+        assertThat(actions.mostActive).as("höchstens ein Auftrag zur Zeit").isEqualTo(1);
+        assertThat(summary.busy()).as("der letzte wartet für die gezeigte Ebene").isTrue();
+    }
+
+    @Test
+    void aRunningAutoJobFinishesAndTheNextLevelGetsItsJobAfterwards() throws Exception {
+        summary.source("wiki", "Confluence HaVdB");
+        summary.source("wiki", "CLUK", "CLUK");
+
+        assertThat(actions.summarizeCalls).as("ein laufender bleibt, kein zweiter").isEqualTo(1);
+        assertThat(actions.cancels).isZero();
+
+        actions.finish(JobState.COMPLETED);
+        assertThat(actions.summarizeCalls).as("danach der für die gezeigte Ebene").isEqualTo(2);
+        assertThat(summary.spaceKey()).isEqualTo("CLUK");
     }
 
     @Test
@@ -563,6 +612,11 @@ class SourceUpdatesViewTest {
         int summarizeCalls;
         boolean available = true;
         String cancelled;
+        /** Zustand, den der Core für den Auftrag meldet; wartend oder laufend. */
+        JobState jobNow = JobState.RUNNING;
+        int cancels;
+        int active;
+        int mostActive;
         JobListener jobs;
         UpdateSummary stored;
 
@@ -717,17 +771,21 @@ class SourceUpdatesViewTest {
         public JobStatus summarize(String sourceId, String updateId, String spaceKey) {
             summarizeCalls++;
             summarizedLevel = spaceKey;
+            active++;
+            mostActive = Math.max(mostActive, active);
             return job(JobState.QUEUED);
         }
 
         @Override
         public JobStatus job(String jobId) {
-            return job(JobState.RUNNING);
+            return job(jobNow);
         }
 
         @Override
         public JobStatus cancelJob(String jobId) {
             cancelled = jobId;
+            cancels++;
+            active--;
             return job(JobState.CANCELLED);
         }
 
