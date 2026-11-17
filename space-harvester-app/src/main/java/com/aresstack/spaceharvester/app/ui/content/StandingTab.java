@@ -96,6 +96,8 @@ final class StandingTab extends JPanel {
             + "Verneinung und Verbindlichkeit („muss nicht“) ändern den Stand nie und stehen deshalb in jeder Zeile. "
             + "„unsicher“ heißt: Der Parser ist sich nicht sicher, die Aussage zählt nicht für den Stand der Seite.\n\n"
             + "Ein Klick auf eine Zeile zeigt Grund und Herkunft, ein Doppelklick springt an die Stelle im Lesetext. "
+            + "Die Suche findet Handelnde, Träger, Prädikate, die übrigen Beteiligten in Grundform, Seitentitel und "
+            + "vereinfachte Sätze, nicht aber Wörter, die nur im Originalsatz stehen. "
             + "Die Zahlen oben zählen alle Aussagen der Auswahl; ein Klick filtert auf den Stand.";
     private static final int ROW_HEIGHT = 46;
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY)
@@ -440,8 +442,7 @@ final class StandingTab extends JPanel {
         }
         Filter filter = filter();
         int request = ++generation;
-        Map<String, SentenceText> known = Map.copyOf(sentences);
-        runner.run(() -> rows(current, filter, known), rows -> {
+        runner.run(() -> rows(current, filter), rows -> {
             if (request == generation) {
                 show(rows);
                 status();
@@ -556,11 +557,6 @@ final class StandingTab extends JPanel {
      * welche gibt; „nach Träger“ bündelt die Zustände unter ihrem Träger.
      */
     static List<Row> rows(StatusQuoView view, Filter filter) {
-        return rows(view, filter, Map.of());
-    }
-
-    /** Wie {@link #rows(StatusQuoView, Filter)}; die Suche findet auch den schon geholten Originalsatz. */
-    static List<Row> rows(StatusQuoView view, Filter filter, Map<String, SentenceText> known) {
         List<Row> rows = new ArrayList<>();
         if (!view.staleDecisions().isEmpty()) {
             rows.add(new Group(STALE_GROUP, Comic.STANDING_UNCLEAR, view.staleDecisions().size()));
@@ -568,7 +564,7 @@ final class StandingTab extends JPanel {
         }
         if (filter.byBearer()) {
             for (BearerStates states : view.states()) {
-                List<StatusQuoEntry> kept = states.states().stream().filter(entry -> keeps(entry, filter, known)).toList();
+                List<StatusQuoEntry> kept = states.states().stream().filter(entry -> keeps(entry, filter)).toList();
                 if (!kept.isEmpty()) {
                     rows.add(new Group(states.bearer(), Comic.INK, kept.size()));
                     kept.forEach(entry -> rows.add(new Line(entry, true)));
@@ -581,7 +577,7 @@ final class StandingTab extends JPanel {
             groups.put(standing, new ArrayList<>());
         }
         for (StatusQuoEntry entry : view.entries()) {
-            if (keeps(entry, filter, known)) {
+            if (keeps(entry, filter)) {
                 groups.get(entry.standing().standing()).add(entry);
             }
         }
@@ -594,7 +590,7 @@ final class StandingTab extends JPanel {
         return rows;
     }
 
-    static boolean keeps(StatusQuoEntry entry, Filter filter, Map<String, SentenceText> known) {
+    static boolean keeps(StatusQuoEntry entry, Filter filter) {
         if (filter.only() != null && entry.standing().standing() != filter.only()) {
             return false;
         }
@@ -610,13 +606,21 @@ final class StandingTab extends JPanel {
             return false;
         }
         String text = filter.text() == null ? "" : filter.text().strip().toLowerCase(Locale.ROOT);
-        return text.isEmpty() || haystack(entry, known.get(entry.statement().id())).contains(text);
+        return text.isEmpty() || haystack(entry).contains(text);
     }
 
-    private static String haystack(StatusQuoEntry entry, SentenceText sentence) {
+    /**
+     * Worin gesucht wird: Handelnder bzw. Träger, Prädikat, die übrigen Beteiligten (Grundform, Präposition), Seite und
+     * vereinfachter Satz. Alles liegt an jedem Eintrag; der nachgeladene Originalsatz zählt bewusst nicht, sonst hinge
+     * das Ergebnis vom Rollstand ab.
+     */
+    static String haystack(StatusQuoEntry entry) {
         StringBuilder all = new StringBuilder();
-        if (sentence != null && sentence.original() != null) {
-            all.append(sentence.original()).append(' ');
+        if (entry.situation() != null) {
+            for (com.aresstack.spaceharvester.application.standing.Situation.Participant other
+                    : entry.situation().others()) {
+                all.append(other.marker() == null ? "" : other.marker() + " ").append(other.key()).append(' ');
+            }
         }
         all.append(entry.subject() == null ? "" : entry.subject()).append(' ')
                 .append(entry.statement().predicateText()).append(' ')

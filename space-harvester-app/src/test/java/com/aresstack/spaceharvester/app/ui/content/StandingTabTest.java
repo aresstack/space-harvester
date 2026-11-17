@@ -199,9 +199,42 @@ class StandingTabTest {
         assertThat(tab.popup().bodyText()).contains("Originalsatz: „Der Sachbearbeiter prüft den Antrag.“");
         tab.doubleClick(line);
         assertThat(fixture.jumps).containsExactly(new StandingTab.Target("wiki", "1", 20, 56));
-        // Die Suche findet danach auch Wörter, die nur im Originalsatz stehen.
-        tab.searchField().setText("antrag.");
-        assertThat(lines(tab)).extracting(entry -> entry.statement().id()).containsExactly("wiki/1@h#s1.v1");
+    }
+
+    @Test
+    void theSameSearchGivesTheSameLinesBeforeAndAfterScrolling() {
+        // „Antrag“ steht nur im Originalsatz und als Beteiligter in der Sachlage: gefunden über die Sachlage, die an
+        // jedem Eintrag liegt, nie über den nachgeladenen Satz.
+        StatusQuoView base = view();
+        StatusQuoEntry first = base.entries().get(0);
+        StatusQuoEntry withObject = new StatusQuoEntry(first.page(), first.statement(), first.kind(), first.subject(),
+                first.subjectKey(), new com.aresstack.spaceharvester.application.standing.Situation(first.kind(),
+                "sachbearbeiter", "prüfen", List.of(new com.aresstack.spaceharvester.application.standing.Situation
+                .Participant(ParsedStatements.Role.AFFECTED_OBJECT, null, "antrag"))), first.quality(),
+                first.standing(), null, false);
+        List<StatusQuoEntry> entries = new ArrayList<>(base.entries());
+        entries.set(0, withObject);
+        StatusQuoView view = new StatusQuoView(entries, base.states(), base.pages(), base.counts(),
+                base.certainCounts(), List.of());
+        Fixture before = new Fixture(view);
+        StandingTab unscrolled = before.tab;
+        unscrolled.searchField().setText("nachweis");
+        unscrolled.shown(true);
+        unscrolled.selection(SPACE);
+        assertThat(lines(unscrolled)).isEmpty();
+        unscrolled.searchField().setText("antrag");
+        List<String> found = lines(unscrolled).stream().map(entry -> entry.statement().id()).toList();
+
+        Fixture after = new Fixture(view);
+        after.sentences.put("wiki/1@h#s1.v1", new SentenceText("Der Sachbearbeiter prüft den Antrag und den Nachweis.",
+                null, 0, 50, 19, 24, false));
+        StandingTab scrolled = after.shownTab();
+        scrolled.searchField().setText("nachweis");
+        assertThat(lines(scrolled)).as("nur im Originalsatz: nicht gesucht").isEmpty();
+        scrolled.searchField().setText("antrag");
+
+        assertThat(lines(scrolled).stream().map(entry -> entry.statement().id()).toList()).isEqualTo(found)
+                .containsExactly("wiki/1@h#s1.v1", "wiki/2@h#s1.v3");
     }
 
     @Test
