@@ -47,7 +47,7 @@ class GlossaryTabScreenshotTest {
                     new javax.swing.JPanel()).tab(TermsView.RELATIONS, new javax.swing.JPanel())
                     .tab(TermsView.SYNONYMS, new javax.swing.JPanel()).tab(TermsView.GLOSSARY, tab[0].component())
                     .tab(TermsView.GRAPH, new javax.swing.JPanel())
-                    .actions(tab[0].addButton(), tab[0].detectButton());
+                    .actions(tab[0].tools(), tab[0].addButton(), tab[0].detectButton());
             tabs[0].select(TermsView.GLOSSARY);
             tab[0].load();
         });

@@ -90,7 +90,7 @@ public final class ExportPanel extends JPanel {
          * Dieselbe Auswahl für den Core (ADR 0029): Quelle, Space oder Seite samt allen Unterseiten; die globale
          * Auswahl als eine Wurzel je Wissensquelle der Laufzeit.
          */
-        com.aresstack.spaceharvester.application.holdings.Selection toCore(AppRuntime runtime) {
+        public com.aresstack.spaceharvester.application.holdings.Selection toCore(AppRuntime runtime) {
             if (global()) {
                 return new com.aresstack.spaceharvester.application.holdings.Selection(
                         runtime.workspace().sources().stream().map(source ->

@@ -100,6 +100,9 @@ public final class TermsView implements View {
     static final String NEW_RELATION = "Neue Beziehung …";
 
     private final AppContext context;
+    /** Stand des Fachglossars (Anzahl, ausgewertete Seiten) in der Statuszeile, solange sein Reiter gewählt ist. */
+    private final JLabel statusLabel = Comic.muted(" ");
+    private String glossaryStatus = " ";
     private int acronymRequest;
     private int identifierRequest;
     private IdentifierPager identifierPager;
@@ -129,12 +132,19 @@ public final class TermsView implements View {
                 .tab(SYNONYMS, createSynonymOverlay())
                 .tab(GLOSSARY, glossaryTab.component())
                 .tab(GRAPH, graph.component())
-                .actions(proposeSynonyms, glossaryTab.addButton(), glossaryTab.detectButton());
+                .actions(proposeSynonyms, glossaryTab.tools(), glossaryTab.addButton(), glossaryTab.detectButton());
         proposeSynonyms.setVisible(false);
         proposeSynonyms.setEnabled(context != null);
         proposeSynonyms.addActionListener(e -> askSynonymRun());
+        glossaryTab.tools().setVisible(false);
         glossaryTab.addButton().setVisible(false);
         glossaryTab.detectButton().setVisible(false);
+        glossaryTab.onStatus(text -> {
+            glossaryStatus = text;
+            if (GLOSSARY.equals(tabs.selected())) {
+                statusLabel.setText(text);
+            }
+        });
         root.add(Comic.plate("Begriffe", Comic.PETROL, tabs), BorderLayout.CENTER);
         acronyms.show(List.of(), PENDING);
         identifiers.show(List.of(), PENDING);
@@ -163,6 +173,19 @@ public final class TermsView implements View {
         }
     }
 
+    /**
+     * Die Auswahl links im Explorer (ADR 0029): das Fachglossar zeigt die Einträge und die Wichtigkeit dieser Auswahl;
+     * die übrigen Reiter bleiben quellenübergreifend.
+     */
+    public void selection(com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection selection) {
+        glossaryTab.selection(selection);
+    }
+
+    @Override
+    public JComponent statusInfo() {
+        return statusLabel;
+    }
+
     @Override
     public void shown() {
         if (context != null) {
@@ -184,8 +207,10 @@ public final class TermsView implements View {
         synonymTab.forgetRemoved();
         // Die Knöpfe der Reiterzeile gelten nur auf ihrem Reiter; auf den anderen bleibt die Reiterzeile frei.
         proposeSynonyms.setVisible(SYNONYMS.equals(name));
+        glossaryTab.tools().setVisible(GLOSSARY.equals(name));
         glossaryTab.addButton().setVisible(GLOSSARY.equals(name));
         glossaryTab.detectButton().setVisible(GLOSSARY.equals(name));
+        statusLabel.setText(GLOSSARY.equals(name) ? glossaryStatus : " ");
         if (context == null) {
             return;
         }
@@ -855,6 +880,11 @@ public final class TermsView implements View {
                 }
             };
             table.setRowSorter(sorter);
+        }
+
+        /** Ohne Kopfzeile: Suche und Filter stehen in der Reiterzeile (Fachglossar). */
+        void withoutHead() {
+            remove(head);
         }
 
         /** Ein Element mittig zwischen Überschrift und Suchfeld. */

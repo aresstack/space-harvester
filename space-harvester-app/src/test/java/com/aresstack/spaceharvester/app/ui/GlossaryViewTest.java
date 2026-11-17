@@ -17,8 +17,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Der Reiter „Fachglossar“ mit echtem Core: Anlegen, Ablehnen und Zurücknehmen gehen an das Glossar des Core, „Alle“
- * zeigt die abgelehnten hinter den offenen, ohne KI-Dienst bleibt „Fachbegriffe ermitteln“ gesperrt.
+ * Der Reiter „Fachglossar“ mit echtem Core: die Sicht kommt aus {@code GlossaryOverview} über die Auswahl links;
+ * Anlegen, Ablehnen und Zurücknehmen gehen an das Glossar des Core, abgelehnte stehen auf der Sperrliste (Chip
+ * „abgelehnt“), „Fachbegriffe ermitteln“ geht auch ohne Chat-Modell.
  */
 class GlossaryViewTest {
 
@@ -35,7 +36,7 @@ class GlossaryViewTest {
     }
 
     @Test
-    void manualEntriesLiveInTheCoreAndRejectedOnesFollowTheOpenOnes() throws Exception {
+    void manualEntriesLiveInTheCoreAndRejectedOnesStandOnTheBlockList() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
         Files.writeString(files.resolve("datenhaus.md"), "# Datenhaus\n\nJedes Datenprodukt hat ein "
                 + "Berechtigungsmanagement.\n");
@@ -74,24 +75,35 @@ class GlossaryViewTest {
         });
         await("zwei Einträge", () -> tab.directory().table().getRowCount() == 2);
         SwingUtilities.invokeAndWait(() -> {
+            // Ohne Analyse keine Wichtigkeit: beide hinten, alphabetisch, ohne Einordnung „unklar“ (Core).
             assertThat(tab.directory().table().getValueAt(0, 0)).isEqualTo("Datenprodukt");
-            assertThat(tab.directory().table().getValueAt(0, 1)).isEqualTo("handbuch");
-            assertThat(tab.directory().table().getValueAt(0, 2)).isEqualTo("Manuell");
+            assertThat(tab.directory().table().getValueAt(0, 1)).isEqualTo("unklar");
+            assertThat(tab.directory().table().getValueAt(0, 2)).isEqualTo(GlossaryTab.NO_IMPORTANCE);
             assertThat(tab.directory().table().getValueAt(0, 3)).isEqualTo("Bestätigt");
-            assertThat(tab.directory().table().getValueAt(1, 1)).isEqualTo("Alle Quellen");
-            // Ablehnen: der Eintrag rückt grau ans Ende, hinter die offenen.
+            assertThat(tab.directory().table().getValueAt(0, 4)).isEqualTo("Manuell");
+            assertThat(tab.status(com.aresstack.spaceharvester.application.terms.ReviewStatus.CONFIRMED).count())
+                    .isEqualTo(2);
+            // Ablehnen: der Eintrag verlässt die Liste und steht auf der Sperrliste.
             tab.actions(tab.entryAtView(0)).get(1).run().run();
         });
-        await("Datenprodukt abgelehnt am Ende", () -> tab.directory().table().getRowCount() == 2
-                && "Datenprodukt".equals(tab.directory().table().getValueAt(1, 0))
-                && "Abgelehnt".equals(tab.directory().table().getValueAt(1, 3)));
+        await("Datenprodukt abgelehnt", () -> tab.directory().table().getRowCount() == 1
+                && "Haushaltsverfahren".equals(tab.directory().table().getValueAt(0, 0))
+                && tab.status(com.aresstack.spaceharvester.application.terms.ReviewStatus.REJECTED).count() == 1);
         assertThat(workspace.glossary().get().search(new GlossaryAccess.Search(null, null, null, null, null, null,
                 10, null)).entries()).extracting(GlossaryAccess.Entry::term).containsExactly("Haushaltsverfahren");
-        SwingUtilities.invokeAndWait(() -> tab.actions(tab.entryAtView(1)).get(1).run().run());
-        // Ein manueller Eintrag ist nach dem Zurücknehmen wieder bestätigt, ein KI-Vorschlag wäre vorgeschlagen.
-        await("zurückgenommen: wieder bestätigt", () ->
-                "Bestätigt".equals(tab.directory().table().getValueAt(0, 3))
-                        && "Datenprodukt".equals(tab.directory().table().getValueAt(0, 0)));
+        SwingUtilities.invokeAndWait(() ->
+                tab.status(com.aresstack.spaceharvester.application.terms.ReviewStatus.REJECTED).doClick());
+        await("Sperrliste", () -> tab.directory().table().getRowCount() == 1
+                && "Datenprodukt".equals(tab.directory().table().getValueAt(0, 0))
+                && "Abgelehnt".equals(tab.directory().table().getValueAt(0, 3)));
+        SwingUtilities.invokeAndWait(() -> tab.actions(tab.entryAtView(0)).get(1).run().run());
+        await("Sperrliste leer", () -> tab.directory().table().getRowCount() == 0);
+        SwingUtilities.invokeAndWait(() ->
+                tab.status(com.aresstack.spaceharvester.application.terms.ReviewStatus.REJECTED).doClick());
+        // Ein manueller Eintrag ist nach dem Zurücknehmen wieder bestätigt, ein Vorschlag wäre vorgeschlagen.
+        await("zurückgenommen: wieder bestätigt", () -> tab.directory().table().getRowCount() == 2
+                && "Datenprodukt".equals(tab.directory().table().getValueAt(0, 0))
+                && "Bestätigt".equals(tab.directory().table().getValueAt(0, 3)));
         // Entfernen löscht den manuellen Eintrag im Core.
         SwingUtilities.invokeAndWait(() -> tab.actions(tab.entryAtView(0)).get(3).run().run());
         await("nur noch einer", () -> tab.directory().table().getRowCount() == 1);

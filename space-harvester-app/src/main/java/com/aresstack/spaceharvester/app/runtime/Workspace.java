@@ -101,7 +101,7 @@ public final class Workspace {
         this.harvester = Objects.requireNonNull(harvester, "harvester");
         this.access = access;
         this.caller = harvester.caller();
-        this.glossary = new CoreGlossaryAccess(harvester, caller);
+        this.glossary = new CoreGlossaryAccess(harvester, caller, this::subscribeJobs);
         this.activities = Objects.requireNonNull(activities, "activities");
     }
 

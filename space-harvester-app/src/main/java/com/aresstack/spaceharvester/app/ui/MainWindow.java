@@ -129,7 +129,11 @@ public final class MainWindow implements AppContext.Navigator {
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
         // Links gewählt bestimmt rechts (Angelo, 13.11.2026): der Reiter „Export“ folgt der Auswahl im Explorer.
-        explorer.onSelection(content::selection);
+        // Die Auswahl links bestimmt Inhalte und das Fachglossar unter Begriffe (ADR 0029).
+        explorer.onSelection(selection -> {
+            content.selection(selection);
+            terms.selection(selection);
+        });
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
