@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.CountChip;
+import com.aresstack.spaceharvester.app.ui.controls.PlaceholderList;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
@@ -103,6 +104,12 @@ final class StandingTab extends JPanel {
     static final String HISTORY_TIP = "Protokoll: wer wann welchen Stand gesetzt oder gelöscht hat";
     static final String CLEAR_QUESTION = "Wirklich die Entscheidung von Hand löschen? Danach gilt wieder der "
             + "berechnete Stand.";
+    static final String NO_STATEMENTS = "Keine analysierten Aussagen in der Auswahl";
+    static final String NO_MATCH = "Keine Treffer";
+    static final String STALE_WORD = "veraltet";
+    static final String STALE_TIP = "Aussagen aus veralteten Analysen einblenden; sie zählen nirgends mit";
+    static final String STALE_HIDE_TIP = "Aussagen aus veralteten Analysen wieder ausblenden";
+    static final String NO_CONFLICTS = "Keine möglichen Widersprüche";
     static final String NO_RIGHT_TO_DECIDE = "Keine Berechtigung, den Stand in dieser Quelle zu setzen";
     static final String NO_RIGHT_TO_HISTORY = "Keine Berechtigung, das Protokoll in dieser Quelle zu lesen";
     static final String NOT_WATCHING = "Stand erneuert sich nicht von selbst (Anmeldung beim Core fehlgeschlagen)";
@@ -219,9 +226,13 @@ final class StandingTab extends JPanel {
     record Target(String sourceId, String pageId, int start, int end) {
     }
 
-    /** Was die Liste gerade filtert. {@code only == null} zeigt jeden Stand. */
-    record Filter(Standing only, boolean actions, boolean states, boolean certainOnly, String text, boolean byBearer) {
-        static final Filter ALL = new Filter(null, true, true, false, "", false);
+    /**
+     * Was die Liste gerade filtert. {@code only == null} zeigt jeden Stand; {@code stale} zeigt auch Aussagen aus
+     * veralteten Analysen (Chip „veraltet N“), sonst bleiben sie weg.
+     */
+    record Filter(Standing only, boolean actions, boolean states, boolean certainOnly, String text, boolean byBearer,
+                  boolean stale) {
+        static final Filter ALL = new Filter(null, true, true, false, "", false, true);
     }
 
     /** Eine Zeile der Liste: Gruppenkopf, Aussage oder Entscheidung ohne Aussage. */
@@ -244,6 +255,7 @@ final class StandingTab extends JPanel {
     private final Runner runner;
     private final PillTabs tabs = new PillTabs();
     private final Map<Standing, CountChip> chips = new EnumMap<>(Standing.class);
+    private final CountChip staleChip = new CountChip(STALE_WORD, Comic.MUTED);
     private final JPopupMenu filterMenu = new JPopupMenu();
     private final JCheckBoxMenuItem showActions = new JCheckBoxMenuItem("Handlungen", true);
     private final JCheckBoxMenuItem showStates = new JCheckBoxMenuItem("Zustände", true);
@@ -252,10 +264,10 @@ final class StandingTab extends JPanel {
     private final IconButton bearer = new IconButton(Glyph.NEIGHBOURS, BY_BEARER_TIP);
     private final JTextField search = new JTextField(9);
     private final DefaultListModel<Row> model = new DefaultListModel<>();
-    private final JList<Row> list = new JList<>(model);
+    private final PlaceholderList<Row> list = new PlaceholderList<>(model);
     private final JScrollPane scroll;
     private final DefaultListModel<Row> conflictModel = new DefaultListModel<>();
-    private final JList<Row> conflictList = new JList<>(conflictModel);
+    private final PlaceholderList<Row> conflictList = new PlaceholderList<>(conflictModel);
     private StatementConflicts conflicts;
     /** Die Liste, an der das Overlay zuletzt aufging (Aussagen oder Widersprüche). */
     private JComponent popupOwner = list;
@@ -363,6 +375,10 @@ final class StandingTab extends JPanel {
             });
             chips.put(standing, chip);
         }
+        // Unabhängig vom Stand-Chip: blendet die Aussagen aus veralteten Analysen zusätzlich ein.
+        staleChip.tips(STALE_TIP, STALE_HIDE_TIP);
+        staleChip.setVisible(false);
+        staleChip.addActionListener(e -> refilter());
         for (JCheckBoxMenuItem box : List.of(showActions, showStates, certainOnly)) {
             if (box == certainOnly) {
                 filterMenu.addSeparator();
@@ -401,6 +417,7 @@ final class StandingTab extends JPanel {
         JPanel counts = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         counts.setOpaque(false);
         chips.values().forEach(counts::add);
+        counts.add(staleChip);
         reading = new ReadingFirstView(runner, popup);
         reading.pageControls(this::pageControls);
         reading.onStatus(text -> {
@@ -679,13 +696,16 @@ final class StandingTab extends JPanel {
             }
         }
         return new Filter(only, showActions.isSelected(), showStates.isSelected(), certainOnly.isSelected(),
-                search.getText(), byBearer);
+                search.getText(), byBearer, staleChip.isSelected());
     }
 
     private void counts(StatusQuoView view) {
         for (Map.Entry<Standing, CountChip> chip : chips.entrySet()) {
             chip.getValue().count(view == null ? 0 : view.counts().getOrDefault(chip.getKey(), 0));
         }
+        int stale = view == null ? 0 : view.staleEntries();
+        staleChip.count(stale);
+        staleChip.setVisible(stale > 0);
     }
 
     private void status() {
@@ -699,7 +719,8 @@ final class StandingTab extends JPanel {
         if (CONFLICTS.equals(tabs.selected())) {
             int found = conflicts == null ? 0 : conflicts.contradictions().size();
             int replaced = conflicts == null ? 0 : conflicts.replacements().size();
-            String text = (found == 0 ? "Keine möglichen Widersprüche"
+            conflictList.placeholder(NO_CONFLICTS);
+            String text = (found == 0 ? NO_CONFLICTS
                     : Texts.count(found, "möglicher Widerspruch", "mögliche Widersprüche"))
                     + " · " + Texts.count(replaced, "Ablösung", "Ablösungen");
             onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
@@ -711,13 +732,30 @@ final class StandingTab extends JPanel {
                 shownLines++;
             }
         }
-        int all = view.entries().size();
+        int stale = view.staleEntries();
+        boolean staleShown = staleChip.isSelected();
+        int all = view.entries().size() - (staleShown ? 0 : stale);
         int pages = view.pages().size();
-        String text = all == 0 ? "Keine analysierten Aussagen in der Auswahl"
+        list.placeholder(empty(view.entries().size(), stale, staleShown));
+        String text = all == 0 ? empty(view.entries().size(), stale, staleShown)
                 : (shownLines == all ? Texts.count(all, "Aussage", "Aussagen")
                 : shownLines + " von " + Texts.count(all, "Aussage", "Aussagen"))
                 + " auf " + Texts.count(pages, "Seite", "Seiten");
         onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
+    }
+
+    /**
+     * Der Satz in der leeren Liste: ganz ohne Analyse, nur veraltete (solange ausgeblendet) oder ohne Treffer.
+     */
+    static String empty(int entries, int stale, boolean staleShown) {
+        if (entries == 0) {
+            return NO_STATEMENTS;
+        }
+        if (!staleShown && entries == stale) {
+            return "Keine aktuellen Aussagen. " + (stale == 1 ? "Eine stammt" : stale + " stammen")
+                    + " aus veralteten Analysen.";
+        }
+        return NO_MATCH;
     }
 
     /**
@@ -814,6 +852,7 @@ final class StandingTab extends JPanel {
                     kept.forEach(entry -> rows.add(new Line(entry, true)));
                 }
             }
+            staleGroup(view, filter, rows);
             return rows;
         }
         Map<Standing, List<StatusQuoEntry>> groups = new LinkedHashMap<>();
@@ -821,7 +860,7 @@ final class StandingTab extends JPanel {
             groups.put(standing, new ArrayList<>());
         }
         for (StatusQuoEntry entry : view.entries()) {
-            if (keeps(entry, filter)) {
+            if (!entry.analysisStale() && keeps(entry, filter)) {
                 groups.get(entry.standing().standing()).add(entry);
             }
         }
@@ -831,10 +870,28 @@ final class StandingTab extends JPanel {
                 entries.forEach(entry -> rows.add(new Line(entry, false)));
             }
         });
+        staleGroup(view, filter, rows);
         return rows;
     }
 
+    /**
+     * Eingeblendete Einträge aus veralteten Analysen als eigene Gruppe „veraltet“ am Ende: Ihr Stand sagt nichts aus,
+     * also stehen sie unter keinem Stand und die Gruppen der Stände zählen wie die Chips nur Aktuelles.
+     */
+    private static void staleGroup(StatusQuoView view, Filter filter, List<Row> rows) {
+        List<StatusQuoEntry> stale = view.entries().stream()
+                .filter(entry -> entry.analysisStale() && keeps(entry, filter)).toList();
+        if (!stale.isEmpty()) {
+            rows.add(new Group(STALE_WORD, Comic.MUTED, stale.size()));
+            stale.forEach(entry -> rows.add(new Line(entry, false)));
+        }
+    }
+
     static boolean keeps(StatusQuoEntry entry, Filter filter) {
+        if (entry.analysisStale()) {
+            // Nur die Suche wirkt auf sie; Stand-Chips und Filter beziehen sich auf aktuelle Aussagen.
+            return filter.stale() && matches(entry, filter);
+        }
         if (filter.only() != null && entry.standing().standing() != filter.only()) {
             return false;
         }
@@ -849,6 +906,10 @@ final class StandingTab extends JPanel {
         if (filter.certainOnly() && entry.uncertain()) {
             return false;
         }
+        return matches(entry, filter);
+    }
+
+    private static boolean matches(StatusQuoEntry entry, Filter filter) {
         String text = filter.text() == null ? "" : filter.text().strip().toLowerCase(Locale.ROOT);
         return text.isEmpty() || haystack(entry).contains(text);
     }
@@ -951,9 +1012,6 @@ final class StandingTab extends JPanel {
         }
         if (entry.uncertain()) {
             parts.add("unsicher");
-        }
-        if (entry.analysisStale()) {
-            parts.add("Analyse veraltet");
         }
         if (entry.decision() != null) {
             parts.add("von Hand");
@@ -1355,9 +1413,10 @@ final class StandingTab extends JPanel {
                 markText = "";
                 metaText = "Seite " + pageName(decision.page()) + " · löschen im Overlay";
             }
-            Color tone = tone(standing);
-            boolean faded = standing == Standing.UEBERHOLT;
-            badge.setText(word(standing));
+            boolean stale = row instanceof Line l && l.entry().analysisStale();
+            Color tone = stale ? Comic.MUTED : tone(standing);
+            boolean faded = stale || standing == Standing.UEBERHOLT;
+            badge.setText(stale ? STALE_WORD : word(standing));
             badge.setForeground(tone);
             badge.setBackground(Comic.SURFACE);
             badge.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),
@@ -1389,6 +1448,20 @@ final class StandingTab extends JPanel {
 
     CountChip chip(Standing standing) {
         return chips.get(standing);
+    }
+
+    CountChip staleChip() {
+        return staleChip;
+    }
+
+    /** Der Satz, den die leere Aussagenliste zeigt. */
+    String placeholder() {
+        return list.showsPlaceholder() ? list.placeholder() : null;
+    }
+
+    /** Der Satz, den die leere Liste „Mögliche Widersprüche“ zeigt. */
+    String conflictPlaceholder() {
+        return conflictList.showsPlaceholder() ? conflictList.placeholder() : null;
     }
 
     JCheckBoxMenuItem certainOnlyBox() {
