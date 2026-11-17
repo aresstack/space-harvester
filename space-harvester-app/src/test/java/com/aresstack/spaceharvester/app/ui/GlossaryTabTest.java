@@ -343,21 +343,37 @@ class GlossaryTabTest {
                 new GlossaryDerivation.Use("ablehnen", original, true, 1, List.of()),
                 new GlossaryDerivation.Use("genehmigen", staged, false, 2, List.of())),
                 List.of(new GlossaryDerivation.Use("liefern", original, false, 3, List.of())), List.of(),
-                List.of(new GlossaryDerivation.Use("Angebot", original, false, 2, List.of())), List.of(),
+                List.of(new GlossaryDerivation.Use("Datenangebot", original, false, 2, List.of(),
+                                GlossaryDerivation.Relation.BESTIMMUNG, 2),
+                        new GlossaryDerivation.Use("Prüfstelle", original, false, 1, List.of(),
+                                GlossaryDerivation.Relation.ROLLE, 1),
+                        new GlossaryDerivation.Use("Datenset", original, false, 1, List.of(),
+                                GlossaryDerivation.Relation.GLEICHSETZUNG, 1),
+                        new GlossaryDerivation.Use("Angebot", original, false, 1, List.of())), List.of(),
                 GlossaryDerivation.Category.ROLLE, GlossaryDerivation.CategoryRule.ROLE_HEAD);
         String text = GlossaryTab.overlayText(stale, row, term, List.of("Seite A: … das Datenprodukt liefert …"),
-                List.of(new GlossaryAccess.History("confirm", "angelo", T, ReviewStatus.CONFIRMED)));
-        assertThat(text).startsWith("Beschreibt ein Produkt\n\nEinordnung: Rolle (Regel: Wortende aus der Liste der "
-                + "Rollen und Stellen)\nGilt für: wiki · DH\nHerkunft: KI (gpt-4o/p1) · Stand: Bestätigt am ");
+                List.of(new GlossaryAccess.History("propose", "rule:glossary", T, ReviewStatus.PROPOSED),
+                        new GlossaryAccess.History("confirm", "USER:angelo@app", T, ReviewStatus.CONFIRMED)));
+        assertThat(text).startsWith("Beschreibt ein Produkt\n\nEinordnung: Rolle · nach Regel (Rollenwort am "
+                + "Wortende)\nGilt für: wiki · DH\nHerkunft: KI (gpt-4o/p1)\nStatus: bestätigt am ");
         assertThat(text).contains("Wichtigkeit: Auf 12 Seiten, 30 Erwähnungen, handelnd 4×, betroffen 1×, als "
                         + "Träger 0×")
-                .contains("Handelt: prüfen 5×\nHandelt nicht: ablehnen 1×\nIst betroffen: liefern 3×\nIst ein: "
-                        + "Angebot 2×\n")
-                .contains("Aus der Vorstufe (KI), zählt nicht für die Wichtigkeit: Handelt: genehmigen 2×")
+                .contains("Handelt: prüfen 5×\nHandelt nicht: ablehnen 1×\nIst betroffen: liefern 3×\n"
+                        + "Ist ein (Begriffsbestimmung): Datenangebot 2×\nIst (Rolle): Prüfstelle 1×\n"
+                        + "Ist gleich (Gleichsetzung): Datenset 1×\nIst ein: Angebot 1×\n")
+                .contains("Aus der Vorstufe (KI), zählt nicht für die Wichtigkeit:\n   Handelt: genehmigen 2×")
                 .contains("2 Belege · Beleg veraltet").contains("• Seite A: … das Datenprodukt liefert …")
                 .contains("… und 1 weitere")
-                .contains("Protokoll:\n• ").contains(" bestätigt → Bestätigt · angelo");
-        assertThat(GlossaryTab.classifiedText(null)).isEqualTo(" (noch nicht eingeordnet)");
+                .contains("Protokoll:\n• " + GlossaryTab.minute(T) + " · von der Regel vorgeschlagen\n• "
+                        + GlossaryTab.minute(T) + " · von angelo bestätigt")
+                .doesNotContain("→").doesNotContain("rule:glossary").doesNotContain("USER:");
+        assertThat(GlossaryTab.categorized(GlossaryDerivation.Category.UNKLAR, null))
+                .isEqualTo("unklar (noch nicht eingeordnet)");
+        assertThat(GlossaryTab.categorized(GlossaryDerivation.Category.FACHLICH, new com.aresstack.spaceharvester
+                .application.glossary.GlossaryEntry.Classification(GlossaryDerivation.Category.FACHLICH,
+                com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy.RULE, null)))
+                .isEqualTo("fachlich · nach Regel (kein Technik- oder Rollenwort)");
+        assertThat(GlossaryTab.actorText("ai:glossary")).isEqualTo("von der KI");
         assertThat(GlossaryTab.invalidTerm("  ")).isEqualTo("Den Fachbegriff angeben.");
         assertThat(GlossaryTab.invalidTerm("RSL")).isNull();
         assertThat(GlossaryTab.snippetText(new TermQueries.Snippet("vor  dem ", "Begriff", " danach", true, false)))

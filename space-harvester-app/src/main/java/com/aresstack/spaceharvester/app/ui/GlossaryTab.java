@@ -1083,17 +1083,17 @@ final class GlossaryTab {
             text.append(entry.explanation().trim()).append("\n\n");
         }
         if (row != null) {
-            text.append("Einordnung: ").append(categoryWord(row.category()))
-                    .append(classifiedText(row.classification())).append('\n');
+            text.append("Einordnung: ").append(categorized(row.category(), row.classification())).append('\n');
         }
         text.append("Gilt für: ").append(scopeText(entry)).append('\n');
         text.append("Herkunft: ").append(Relation.originText(entry.origin().name()));
         if (entry.generation() != null && !entry.generation().isBlank()) {
             text.append(" (").append(entry.generation()).append(')');
         }
-        text.append(" · Stand: ").append(Relation.statusText(entry.status().name()));
+        text.append('\n');
+        text.append("Status: ").append(statusWord(entry.status()));
         if (entry.reviewedAt() != null) {
-            text.append(" am ").append(Texts.time(entry.reviewedAt()));
+            text.append(" am ").append(minute(entry.reviewedAt()));
         }
         text.append('\n');
         if (row != null) {
@@ -1120,30 +1120,63 @@ final class GlossaryTab {
         if (history != null && !history.isEmpty()) {
             text.append("\n\nProtokoll:");
             for (GlossaryAccess.History step : history) {
-                text.append("\n• ").append(Texts.time(step.at())).append(' ').append(actionText(step.action()))
-                        .append(step.status() == null ? "" : " → " + Relation.statusText(step.status().name()))
-                        .append(step.actor() == null || step.actor().isBlank() ? "" : " · " + step.actor());
+                text.append("\n• ").append(historyLine(step));
             }
         }
         return text.toString();
     }
 
-    /** „ (von Hand)“, „ (vom Modell)“ oder der Grund der Regel in Worten; leer ohne Einordnung. */
-    static String classifiedText(com.aresstack.spaceharvester.application.glossary.GlossaryEntry.Classification
-                                         classification) {
+    /**
+     * „fachlich · nach Regel (kein Technik- oder Rollenwort)“, „Rolle · von Hand“, „unklar · von der KI“; ohne
+     * Einordnung „unklar (noch nicht eingeordnet)“.
+     */
+    static String categorized(GlossaryDerivation.Category category,
+                              com.aresstack.spaceharvester.application.glossary.GlossaryEntry.Classification
+                                      classification) {
         if (classification == null) {
-            return " (noch nicht eingeordnet)";
+            return categoryWord(GlossaryDerivation.Category.UNKLAR) + " (noch nicht eingeordnet)";
         }
-        return switch (classification.by()) {
-            case MANUAL -> " (von Hand)";
-            case AI -> " (vom Modell)";
-            case RULE -> " (Regel: " + switch (String.valueOf(classification.reason())) {
-                case "TECHNICAL_HEAD" -> "Wortende aus der Liste technischer Begriffe";
+        return categoryWord(category) + " · " + switch (classification.by()) {
+            case MANUAL -> "von Hand";
+            case AI -> "von der KI";
+            case RULE -> "nach Regel (" + switch (String.valueOf(classification.reason())) {
+                case "TECHNICAL_HEAD" -> "Technikwort am Wortende";
                 case "TECHNICAL_SHAPE" -> "Schreibweise eines Bezeichners";
-                case "ROLE_HEAD" -> "Wortende aus der Liste der Rollen und Stellen";
-                default -> "keine Regel greift";
+                case "ROLE_HEAD" -> "Rollenwort am Wortende";
+                default -> "kein Technik- oder Rollenwort";
             } + ")";
         };
+    }
+
+    private static final java.time.format.DateTimeFormatter MINUTE =
+            java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
+
+    /** „10.11.2026 08:00“ in der Zeitzone des Rechners. */
+    static String minute(java.time.Instant at) {
+        return MINUTE.format(at.atZone(java.time.ZoneId.systemDefault()));
+    }
+
+    /** Wer im Protokoll gehandelt hat: „von der Regel“, „von der KI“ oder „von angelo“, nie interne Kennungen. */
+    static String actorText(String actor) {
+        if (actor == null || actor.isBlank()) {
+            return "";
+        }
+        if (actor.startsWith("rule:")) {
+            return "von der Regel";
+        }
+        if (actor.startsWith("ai:")) {
+            return "von der KI";
+        }
+        int colon = actor.indexOf(':');
+        int at = actor.indexOf('@');
+        String principal = actor.substring(colon + 1, at > colon ? at : actor.length());
+        return principal.isBlank() ? "" : "von " + principal;
+    }
+
+    /** Eine Protokollzeile: „10.11.2026 08:00 · von der Regel vorgeschlagen“. */
+    static String historyLine(GlossaryAccess.History step) {
+        String who = actorText(step.actor());
+        return minute(step.at()) + " · " + (who.isEmpty() ? "" : who + " ") + actionText(step.action());
     }
 
     /** Was im Protokoll geschah, in Worten. */
@@ -1154,10 +1187,14 @@ final class GlossaryTab {
             case "reject" -> "abgelehnt";
             case "restore" -> "Ablehnung zurückgenommen";
             case "explain" -> "Erläuterung geändert";
-            case "categorize" -> "von Hand eingeordnet";
+            case "categorize" -> "eingeordnet";
             case "remove" -> "entfernt";
             case "propose" -> "vorgeschlagen";
-            default -> String.valueOf(action);
+            case "unsupport" -> "nicht mehr gestützt";
+            case "withdraw" -> "zurückgezogen";
+            case "stale" -> "als „Beleg veraltet“ markiert";
+            case "purge" -> "bereinigt";
+            default -> "geändert";
         };
     }
 
@@ -1174,18 +1211,48 @@ final class GlossaryTab {
             addUses(parts, "Ist betroffen", term.undergoes(), origin.value, false);
             addUses(parts, "Ist nicht betroffen", term.undergoes(), origin.value, true);
             addUses(parts, "Eigenschaften", term.properties(), origin.value, false);
-            addUses(parts, "Ist ein", term.isA(), origin.value, false);
-            addUses(parts, "Beispiele", term.instances(), origin.value, false);
+            addRelations(parts, true, term.isA(), origin.value);
+            addRelations(parts, false, term.instances(), origin.value);
             if (parts.isEmpty()) {
                 continue;
             }
-            if (origin == ParsedStatementsOrigin.ORIGINAL) {
-                lines.addAll(parts);
+            if (origin == ParsedStatementsOrigin.VORSTUFE) {
+                lines.add("Aus der Vorstufe (KI), zählt nicht für die Wichtigkeit:");
+                parts.forEach(part -> lines.add("   " + part));
             } else {
-                lines.add("Aus der Vorstufe (KI), zählt nicht für die Wichtigkeit: " + String.join("; ", parts));
+                lines.addAll(parts);
             }
         }
         return lines;
+    }
+
+    /**
+     * Ist-Beziehungen je Art: „Ist ein (Begriffsbestimmung)“, „Ist (Rolle)“, „Ist gleich (Gleichsetzung)“; eine
+     * unbekannte Art (alte Analyse) ohne Zusatz. Eine Gleichsetzung wird nur gezeigt, sie führt nichts zusammen.
+     */
+    private static void addRelations(List<String> parts, boolean isA, List<GlossaryDerivation.Use> uses,
+                                     com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Origin origin) {
+        Map<String, List<String>> byLabel = new LinkedHashMap<>();
+        for (GlossaryDerivation.Use use : uses) {
+            if (use.origin() != origin) {
+                continue;
+            }
+            String label = relationLabel(isA, use.relation());
+            byLabel.computeIfAbsent(label, key -> new ArrayList<>()).add(use.lemma() + " " + use.count() + "×");
+        }
+        byLabel.forEach((label, words) -> parts.add(label + ": " + String.join(", ", words)));
+    }
+
+    static String relationLabel(boolean isA, GlossaryDerivation.Relation relation) {
+        if (relation == null || relation == GlossaryDerivation.Relation.UNBEKANNT) {
+            return isA ? "Ist ein" : "Beispiele";
+        }
+        return switch (relation) {
+            case BESTIMMUNG -> isA ? "Ist ein (Begriffsbestimmung)" : "Beispiele (Begriffsbestimmung)";
+            case ROLLE -> isA ? "Ist (Rolle)" : "In dieser Rolle";
+            case GLEICHSETZUNG -> isA ? "Ist gleich (Gleichsetzung)" : "Gleichgesetzt mit";
+            case UNBEKANNT -> isA ? "Ist ein" : "Beispiele";
+        };
     }
 
     private enum ParsedStatementsOrigin {
