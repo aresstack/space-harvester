@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.persistence.files;
 
+import com.aresstack.spaceharvester.application.glossary.GlossaryDerivation;
 import com.aresstack.spaceharvester.application.glossary.GlossaryEntry;
 import com.aresstack.spaceharvester.application.glossary.GlossaryStore;
 import com.aresstack.spaceharvester.application.terms.RelationEvidence;
@@ -17,11 +18,13 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -158,12 +161,7 @@ public final class FileGlossaryStore implements GlossaryStore {
         node.put("status", entry.status().name());
         ArrayNode evidence = node.putArray("evidence");
         for (RelationEvidence item : entry.evidence()) {
-            ObjectNode line = evidence.addObject();
-            line.put("sourceId", item.sourceId());
-            line.put("pageId", item.pageId());
-            line.put("start", item.start());
-            line.put("end", item.end());
-            line.put("inputSha256", item.inputSha256());
+            evidence(evidence.addObject(), item);
         }
         node.put("evidenceStale", entry.evidenceStale());
         node.put("explanation", entry.explanation());
@@ -174,24 +172,64 @@ public final class FileGlossaryStore implements GlossaryStore {
         node.put("reviewedBy", entry.reviewedBy());
         node.put("reviewedAt", entry.reviewedAt() == null ? null : entry.reviewedAt().toString());
         node.put("revision", entry.revision());
+        // ADR 0032, FL5: zusätzliche Felder; Dateien ohne sie bleiben lesbar.
+        if (entry.classification() != null) {
+            ObjectNode classification = node.putObject("classification");
+            classification.put("category", entry.classification().category().name());
+            classification.put("by", entry.classification().by().name());
+            classification.put("reason", entry.classification().reason());
+        }
+        if (entry.definitionProposal() != null) {
+            evidence(node.putObject("definitionProposal"), entry.definitionProposal());
+        }
+        ArrayNode support = node.putArray("supportedBy");
+        entry.supportedBy().stream().map(Enum::name).sorted().forEach(support::add);
         return node;
+    }
+
+    private static void evidence(ObjectNode line, RelationEvidence item) {
+        line.put("sourceId", item.sourceId());
+        line.put("pageId", item.pageId());
+        line.put("start", item.start());
+        line.put("end", item.end());
+        line.put("inputSha256", item.inputSha256());
+    }
+
+    private static RelationEvidence evidence(JsonNode item) {
+        return new RelationEvidence(item.path("sourceId").asString(), item.path("pageId").asString(),
+                item.path("start").asInt(), item.path("end").asInt(), item.path("inputSha256").asString(null));
     }
 
     private static GlossaryEntry entry(JsonNode node) {
         List<RelationEvidence> evidence = new ArrayList<>();
         for (JsonNode item : node.path("evidence")) {
-            evidence.add(new RelationEvidence(item.path("sourceId").asString(), item.path("pageId").asString(),
-                    item.path("start").asInt(), item.path("end").asInt(), item.path("inputSha256").asString(null)));
+            evidence.add(evidence(item));
+        }
+        RelationOrigin origin = RelationOrigin.valueOf(node.path("origin").asString());
+        GlossaryEntry.Classification classification = null;
+        if (node.hasNonNull("classification")) {
+            JsonNode item = node.get("classification");
+            classification = new GlossaryEntry.Classification(
+                    GlossaryDerivation.Category.valueOf(item.path("category").asString()),
+                    GlossaryEntry.ClassifiedBy.valueOf(item.path("by").asString()), text(item, "reason"));
+        }
+        Set<RelationOrigin> support = null;
+        if (node.has("supportedBy")) {
+            support = EnumSet.noneOf(RelationOrigin.class);
+            for (JsonNode item : node.get("supportedBy")) {
+                support.add(RelationOrigin.valueOf(item.asString()));
+            }
         }
         return new GlossaryEntry(node.path("id").asString(), node.path("term").asString(),
                 node.path("normalized").asString(), new RelationScope(text(node, "sourceId"), text(node, "spaceKey")),
-                RelationOrigin.valueOf(node.path("origin").asString()),
+                origin,
                 ReviewStatus.valueOf(node.path("status").asString()), evidence,
                 node.path("evidenceStale").asBoolean(), text(node, "explanation"), text(node, "generation"),
                 node.path("createdBy").asString(), Instant.parse(node.path("createdAt").asString()),
                 Instant.parse(node.path("updatedAt").asString()), text(node, "reviewedBy"),
                 node.hasNonNull("reviewedAt") ? Instant.parse(node.get("reviewedAt").asString()) : null,
-                node.path("revision").asLong());
+                node.path("revision").asLong(), classification,
+                node.hasNonNull("definitionProposal") ? evidence(node.get("definitionProposal")) : null, support);
     }
 
     private static ObjectNode json(AuditEntry entry) {

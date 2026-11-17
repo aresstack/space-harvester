@@ -44,6 +44,7 @@ final class StandingFixtures {
         final String input;
         final List<Mention> mentions = new ArrayList<>();
         final List<Statement> statements = new ArrayList<>();
+        final List<ParsedStatements.Sentence> sentences = new ArrayList<>();
         PageStatements.State state = PageStatements.State.CURRENT;
 
         PageBuilder(String pageId, String title, char hash) {
@@ -94,14 +95,54 @@ final class StandingFixtures {
             return this;
         }
 
+        /** Ändert die zuletzt angehängte Aussage, etwa Satzart, Befunde oder Herkunft. */
+        PageBuilder edit(java.util.function.UnaryOperator<Statement> change) {
+            statements.set(statements.size() - 1, change.apply(statements.getLast()));
+            return this;
+        }
+
+        /** Hängt der zuletzt angehängten Aussage einen weiteren Beteiligten an. */
+        PageBuilder with(Role role, String marker, String word) {
+            Statement last = statements.getLast();
+            String id = prefix() + "#s" + last.sentence() + ".t" + (10 + last.arguments().size());
+            mentions.add(new Mention(id, last.sentence(), 0, word.length(), word, word, word, MentionKind.NOUN, false,
+                    Set.of()));
+            List<Argument> arguments = new ArrayList<>(last.arguments());
+            arguments.add(new Argument(role, id, "obl", marker, Priority.CORE, Basis.PARSER, true));
+            return edit(statement -> copy(statement, arguments, statement.findings(), statement.clause(),
+                    statement.derivation()));
+        }
+
+        /** Hängt eine weitere Aussage im selben Satz wie die letzte an (etwa die Vorstufe zum selben Satz). */
+        PageBuilder sameSentence(String subject, String predicate, String object, Features features,
+                                 ParsedStatements.Derivation derivation) {
+            int sentence = statements.getLast().sentence();
+            add(subject, predicate, object, features, false, ParsedStatements.Quality.PLAUSIBLE,
+                    ParsedStatements.Review.UNREVIEWED, derivation);
+            Statement added = statements.getLast();
+            return edit(statement -> new Statement(statement.id() + "b", sentence, statement.start(),
+                    statement.end(), statement.predicateText(), statement.predicateLemma(), statement.voice(),
+                    statement.clause(), statement.core(), statement.arguments(), statement.findings(),
+                    statement.paragraph(), statement.quality(), statement.qualityReasons(), statement.review(),
+                    statement.features(), added.derivation()));
+        }
+
         KnowledgeGraph.AnalysedPage build() {
-            ParsedStatements result = new ParsedStatements(List.of(), mentions, statements, List.of(),
+            ParsedStatements result = new ParsedStatements(sentences, mentions, statements, List.of(),
                     List.of("parser=schein"), null);
             PageStatementAnalysis analysis = new PageStatementAnalysis(key, spaceKey, title, "1", input, "schein",
                     "1", AT, result);
             return new KnowledgeGraph.AnalysedPage(new KnowledgeGraph.PageRef(key, spaceKey, title, state,
                     state == PageStatements.State.STALE ? PageStatements.TEXT_CHANGED : null), analysis);
         }
+    }
+
+    static Statement copy(Statement statement, List<Argument> arguments, Set<String> findings,
+                          ParsedStatements.Clause clause, ParsedStatements.Derivation derivation) {
+        return new Statement(statement.id(), statement.sentence(), statement.start(), statement.end(),
+                statement.predicateText(), statement.predicateLemma(), statement.voice(), clause, statement.core(),
+                arguments, findings, statement.paragraph(), statement.quality(), statement.qualityReasons(),
+                statement.review(), statement.features(), derivation);
     }
 
     static PageBuilder page(String pageId, String title, char hash) {
