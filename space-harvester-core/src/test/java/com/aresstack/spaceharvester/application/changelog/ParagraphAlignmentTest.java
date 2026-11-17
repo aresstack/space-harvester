@@ -49,6 +49,38 @@ class ParagraphAlignmentTest {
     }
 
     @Test
+    void theStepsAreExactlyWhatTheTextTabShowsAsChangedRemovedAndAdded() {
+        List<List<List<String>>> cases = List.of(
+                List.of(List.of("a", "b", "c", "d"), List.of("a", "x", "c", "e", "f")),
+                List.of(List.of("a", "b", "c", "z"), List.of("x", "z")),
+                List.of(List.of("k", "a", "b", "k", "c", "d", "e", "k"), List.of("a", "k", "x", "c", "k", "e", "y", "k", "k")),
+                List.of(List.of(), List.of("neu", "auch neu")),
+                List.of(List.of("weg", "auch weg"), List.of()),
+                List.of(List.of("p", "q", "r"), List.of("r", "q", "p")),
+                List.of(List.of("a", "b"), List.of("a", "b")));
+        for (List<List<String>> pair : cases) {
+            List<String> before = pair.get(0);
+            List<String> after = pair.get(1);
+
+            List<String> fromSteps = steps(before, after).stream().filter(step -> step.kind() != Kind.EQUAL)
+                    .map(step -> switch (step.kind()) {
+                        case CHANGE -> "~ " + before.get(step.before()) + " -> " + after.get(step.after());
+                        case REMOVE -> "- " + before.get(step.before());
+                        case ADD -> "+ " + after.get(step.after());
+                        case EQUAL -> throw new IllegalStateException();
+                    }).toList();
+            List<String> fromTab = TextContentDiffer.diff(before, after).paragraphs().stream()
+                    .map(change -> switch (change.kind()) {
+                        case CHANGED -> "~ " + change.before() + " -> " + change.after();
+                        case REMOVED -> "- " + change.before();
+                        case ADDED -> "+ " + change.after();
+                    }).toList();
+
+            assertThat(fromSteps).as("%s -> %s", before, after).isEqualTo(fromTab);
+        }
+    }
+
+    @Test
     void noCutAndNoLimitOnTheNumberOfStepsWhileTheTabMarksTheSameParagraphsAsChanged() {
         List<String> before = new ArrayList<>();
         List<String> after = new ArrayList<>();
