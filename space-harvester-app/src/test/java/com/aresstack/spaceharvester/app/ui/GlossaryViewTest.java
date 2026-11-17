@@ -67,7 +67,8 @@ class GlossaryViewTest {
         await("leer geladen", () -> GlossaryTab.EMPTY.equals(tab.directory().hint()));
         SwingUtilities.invokeAndWait(() -> {
             assertThat(tab.addButton().isEnabled()).isTrue();
-            assertThat(tab.detectButton().isEnabled()).as("ohne Chat-Modell gesperrt").isFalse();
+            // ADR 0032, FL5b: die Regelphase „Begriffe ableiten“ läuft auch ohne Chat-Modell.
+            assertThat(tab.detectButton().isEnabled()).as("ohne Chat-Modell mit Regelphase").isTrue();
             tab.create(new GlossaryAccess.NewEntry("Datenprodukt", "handbuch", null, "Ein Datenangebot."));
             tab.create(new GlossaryAccess.NewEntry("Haushaltsverfahren", null, null, null));
         });
