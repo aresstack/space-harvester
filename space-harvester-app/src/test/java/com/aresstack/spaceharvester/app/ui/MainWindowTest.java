@@ -48,6 +48,59 @@ class MainWindowTest {
         }
     }
 
+    /** Eine Meldung mit ✕ (etwa das Ergebnis eines Exports) bleibt in der Statuszeile stehen, bis sie weggeklickt wird. */
+    @Test
+    void aClosableStatusMessageStaysUntilItsCrossIsClicked() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("betrieb.md"), "# Betrieb\n\nText.\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Betriebshandbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        MainWindow[] window = new MainWindow[1];
+        SwingUtilities.invokeAndWait(() -> {
+            window[0] = new MainWindow(context);
+            window[0].content(() -> { }, () -> { }).setSize(1280, 820);
+            context.events().publish(new com.aresstack.spaceharvester.app.event.StatusMessageEvent(
+                    "PDF wird eingeplant …", Integer.MAX_VALUE,
+                    com.aresstack.spaceharvester.app.event.Severity.INFO, false));
+            assertThat(window[0].statusText().getText()).isEqualTo("PDF wird eingeplant …");
+            assertThat(window[0].statusClose().isVisible()).as("Laufmeldung ohne ✕").isFalse();
+            context.events().publish(new com.aresstack.spaceharvester.app.event.StatusMessageEvent(
+                    "handbuch.pdf gespeichert in Ausgabe", 8000,
+                    com.aresstack.spaceharvester.app.event.Severity.INFO, true));
+            assertThat(window[0].statusText().getText()).isEqualTo("handbuch.pdf gespeichert in Ausgabe");
+            assertThat(window[0].statusClose().isVisible()).as("Ergebnis mit ✕").isTrue();
+            assertThat(SwingUtilities.isDescendingFrom(window[0].statusClose(), window[0].statusLine())).isTrue();
+            window[0].statusClose().doClick();
+            assertThat(window[0].statusText().getText()).isEqualTo(" ");
+            assertThat(window[0].statusClose().isVisible()).isFalse();
+            // Eine Ansicht beendet nur ihre eigene Meldung: steht inzwischen eine andere dort, bleibt sie.
+            context.events().publish(new com.aresstack.spaceharvester.app.event.StatusMessageEvent(
+                    "Anhänge eingeplant", Integer.MAX_VALUE,
+                    com.aresstack.spaceharvester.app.event.Severity.INFO, true));
+            context.events().publish(com.aresstack.spaceharvester.app.event.StatusMessageEvent.clear(
+                    "Seite wird geladen …"));
+            assertThat(window[0].statusText().getText()).isEqualTo("Anhänge eingeplant");
+            context.events().publish(com.aresstack.spaceharvester.app.event.StatusMessageEvent.clear(
+                    "Anhänge eingeplant"));
+            assertThat(window[0].statusText().getText()).isEqualTo(" ");
+            assertThat(window[0].statusClose().isVisible()).isFalse();
+        });
+    }
+
     @Test
     void everySectionRendersAndNavigationReachesAPage() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
