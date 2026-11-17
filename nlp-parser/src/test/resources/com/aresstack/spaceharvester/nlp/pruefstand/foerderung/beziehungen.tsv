@@ -22,3 +22,5 @@ S02	Kanzlei	Poststelle	GLEICHSETZUNG	„die“, Angabe davor
 S03	Rechenzentrum	Dienstleister	ROLLE	ohne Artikel, Angabe danach
 S04	Sitzung	Montag	KEINE	Präpositionalgruppe, kein Rollennomen
 S05	Roth|Herr Roth	Vertreter	ROLLE	ohne Artikel, Genitiv danach
+N04	Lang|Frau Lang	Vorsitzende	GLEICHSETZUNG	Text N von FL (rules-15), „die“, Genitiv danach
+N05	Wolf|Herr Wolf	Bevollmächtigte	BESTIMMUNG	„ein“, Grundform schwach (rules-15)

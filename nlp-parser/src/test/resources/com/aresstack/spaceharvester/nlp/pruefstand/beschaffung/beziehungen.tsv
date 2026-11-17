@@ -19,4 +19,5 @@ J04	Brandt	Vertreter	GLEICHSETZUNG	Person als Träger; „Urlaub“ ist nie das 
 J05	Poststelle	Annahmestelle	GLEICHSETZUNG	„Erdgeschoss“ ist nie das Nomen
 J06	Pförtner	Ansprechpartner	ROLLE	„Wochenende“ ist nie das Nomen
 J07	Lindner	Stellvertreterin	ROLLE	Person als Träger; weder „Einkaufsleitung“ noch „Krankheitsfall“ ist das Nomen
-J08	Schichtführer	Vorgesetzter	ROLLE	weder „Lagerist“ noch „Nachtdienst“ ist das Nomen
+J08	Schichtführer	Vorgesetzte	ROLLE	weder „Lagerist“ noch „Nachtdienst“ ist das Nomen
+K03	Kern	Vorsitzende	ROLLE	Person als Träger; nominalisiertes Adjektiv
