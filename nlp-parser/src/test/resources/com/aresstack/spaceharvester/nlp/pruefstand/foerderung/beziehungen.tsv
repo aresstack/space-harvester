@@ -1,0 +1,11 @@
+# Erwartete Ist-Beziehungen (Entwicklungssatz „foerderung“, Strang FL5 17.11.2026, 04:45 MEZ), für FL5.
+# Von Hand festgelegt, BEVOR die Ableitung lief. art: BESTIMMUNG (X ist ein Y), ROLLE (X ist Y ohne Artikel),
+# GLEICHSETZUNG (X ist der/die/das Y), KEINE (darf weder Ist-Beziehung noch Eigenschaft ergeben; Grund in der Bemerkung).
+# zeile	traeger	nomen	art	bemerkung
+F03	Sachbearbeiter	Ansprechpartner	ROLLE	Rollennomen ohne Artikel
+F10	Zuschuss	Förderung	BESTIMMUNG	unbestimmter Artikel
+F04	Zuschuss	rückzahlbar	KEINE	verneint
+F05	Unterlage	vollständig	KEINE	Modalverb
+F06	Bescheid	fehlerhaft	KEINE	früher
+F07	Schnittstelle	freigegeben	KEINE	verneint
+F09	Bescheid	bestandskräftig	KEINE	Zustandswechsel
