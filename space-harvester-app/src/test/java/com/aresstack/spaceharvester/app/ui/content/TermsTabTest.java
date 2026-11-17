@@ -144,14 +144,30 @@ class TermsTabTest {
             assertThat(tab[0].chips()).isEmpty();
             assertThat(tab[0].hint()).isEqualTo("Kein Begriff passt zum Filter.");
             // Die Gesamtzahlen kommen getrennt im Hintergrund vom Core (BG1b), nie die Zahl der geladenen Chips.
-            known[0] = new TermsTab.Totals(4, 120, 7);
+            List<String> status = new ArrayList<>();
+            tab[0].onStatus(status::add);
+            known[0] = new TermsTab.Totals(4, 120, 7, 2, 3);
             tab[0].selection(selection);
             assertThat(tab[0].counts()).containsExactly("4", "120", "7");
+            assertThat(status).last().isEqualTo("Begriffe aus 2 von 3 Seiten · übrige nicht lokal gespeichert");
+            // Der Bestand ändert sich (Beobachter): nur neu zählen, die Listen bleiben.
+            known[0] = new TermsTab.Totals(5, 121, 7, 3, 3);
+            tab[0].recount();
+            assertThat(tab[0].counts()).containsExactly("5", "121", "7");
+            assertThat(status).last().isEqualTo("Begriffe aus 3 Seiten");
             // Zurück auf eine Seite: wieder die Darstellung der Seite.
             tab[0].show(null);
             assertThat(tab[0].title()).isEqualTo("Begriffe dieser Seite");
             assertThat(tab[0].analysisShown()).isTrue();
         });
+    }
+
+    @Test
+    void theStatusLineSaysFromHowManyPagesTheTermsCome() throws Exception {
+        assertThat(TermsTab.coverage(new TermsTab.Totals(1, 2, 3, 1240, 1300)))
+                .isEqualTo("Begriffe aus 1.240 von 1.300 Seiten · übrige nicht lokal gespeichert");
+        assertThat(TermsTab.coverage(new TermsTab.Totals(1, 2, 3, 1300, 1300))).isEqualTo("Begriffe aus 1.300 Seiten");
+        assertThat(TermsTab.coverage(new TermsTab.Totals(1, 2, 3))).as("Bestand unbekannt").isNull();
     }
 
     private static <T> com.aresstack.spaceharvester.app.ui.Pager<T> pager(List<T> items) {

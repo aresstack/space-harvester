@@ -148,6 +148,11 @@ public final class PageDetailPanel extends JPanel {
     static final String OVERVIEW_TERMS = "Begriffe der Auswahl";
     /** Ob die Begriffe der Auswahl gerade zu sehen sind (Analysen ohne Seite, Reiter „Begriffe“). */
     private boolean overviewTermsShown;
+    /** Anmeldungen beim Bestand der Auswahl (ADR 0027): ändert er sich, zählen die Begriffe neu. */
+    private final List<com.aresstack.spaceharvester.application.observe.Subscription> overviewHoldings =
+            new ArrayList<>();
+    /** Der Bestand hat sich geändert, während die Begriffe verdeckt waren: beim Zeigen neu zählen. */
+    private boolean overviewRecount;
     private final com.aresstack.spaceharvester.app.ui.controls.HelpButton standingHelp =
             new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, STAND, StandingTab.HELP);
     /** Wohin nach dem Laden gesprungen wird (aus „Stand“); {@code null} ohne. */
@@ -591,9 +596,14 @@ public final class PageDetailPanel extends JPanel {
             standingHelp.setVisible(standingShown() && !visible);
             if (visible) {
                 loadOverviewTerms();
+                if (overviewRecount) {
+                    overviewRecount = false;
+                    overviewTerms.recount();
+                }
             }
         });
         overviewTerms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
+        overviewTerms.onStatus(text -> tabStatus(OVERVIEW_TERMS, text));
         deck.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
@@ -827,7 +837,10 @@ public final class PageDetailPanel extends JPanel {
         }
         overviewSelection = selection;
         overviewTermsDirty = true;
+        overviewRecount = false;
+        tabStatus(OVERVIEW_TERMS, " ");
         AppRuntime runtime = context.runtime();
+        watchOverviewHoldings(runtime, selection);
         wideAnalysis.scope(selection == null || runtime == null ? null : new AnalysisView.Scope() {
             @Override
             public PageSet pages() {
@@ -843,6 +856,53 @@ public final class PageDetailPanel extends JPanel {
         });
         if (overviewTermsShown) {
             loadOverviewTerms();
+        }
+    }
+
+    /**
+     * Meldet sich beim Bestand der Auswahl an (eine Quelle samt Space, bei „Wissensquellen“ jede Quelle), damit Zahlen
+     * und Herkunft der Begriffe nach Laden, Abgleich oder Bereinigung stimmen; kein Zeitgeber.
+     */
+    private void watchOverviewHoldings(AppRuntime runtime, ExportPanel.Selection selection) {
+        overviewHoldings.forEach(com.aresstack.spaceharvester.application.observe.Subscription::close);
+        overviewHoldings.clear();
+        if (runtime == null || selection == null) {
+            return;
+        }
+        List<String> sourceIds = selection.global()
+                ? runtime.workspace().sources().stream()
+                        .map(com.aresstack.spaceharvester.application.sources.HarvestSource::id).toList()
+                : List.of(selection.sourceId());
+        String spaceKey = selection.global() ? null : selection.spaceKey();
+        com.aresstack.spaceharvester.application.holdings.HoldingsListener listener =
+                new com.aresstack.spaceharvester.application.holdings.HoldingsListener() {
+                    @Override
+                    public void pagesChanged(String source, String space, java.util.Set<String> pageIds) {
+                        javax.swing.SwingUtilities.invokeLater(() -> holdingsChanged(selection));
+                    }
+
+                    @Override
+                    public void spaceChanged(String source, String space) {
+                        javax.swing.SwingUtilities.invokeLater(() -> holdingsChanged(selection));
+                    }
+                };
+        for (String source : sourceIds) {
+            try {
+                overviewHoldings.add(runtime.workspace().subscribeHoldings(source, spaceKey, listener));
+            } catch (RuntimeException gone) {
+                // Die Quelle gibt es in dieser Laufzeit nicht mehr; der Baum räumt die Auswahl gleich weg.
+            }
+        }
+    }
+
+    private void holdingsChanged(ExportPanel.Selection selection) {
+        if (!java.util.Objects.equals(selection, overviewSelection) || overviewTermsDirty) {
+            return;
+        }
+        if (overviewTermsShown) {
+            overviewTerms.recount();
+        } else {
+            overviewRecount = true;
         }
     }
 
