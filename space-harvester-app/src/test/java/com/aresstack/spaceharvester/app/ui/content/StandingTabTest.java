@@ -353,6 +353,30 @@ class StandingTabTest {
     }
 
     @Test
+    void aMissingRightIsSaidInWords() {
+        Fixture fixture = new Fixture(view());
+        fixture.denied = true;
+        StandingTab tab = fixture.shownTab();
+        tab.click(indexOf(tab, "Der Sachbearbeiter prüft"));
+
+        tab.decisionChip(Standing.UEBERHOLT).doClick();
+
+        assertThat(fixture.status.get()).isEqualTo(StandingTab.NO_RIGHT_TO_DECIDE);
+    }
+
+    @Test
+    void withoutASubscriptionTheViewIsReadAgainAfterOwnWrites() {
+        Fixture fixture = new Fixture(view());
+        fixture.failSubscribe = true;
+        StandingTab tab = fixture.shownTab();
+        tab.click(indexOf(tab, "Der Sachbearbeiter prüft"));
+
+        tab.decisionChip(Standing.UEBERHOLT).doClick();
+
+        assertThat(fixture.reads.get()).isEqualTo(2);
+    }
+
+    @Test
     void theEndOfAnAnalysisRereadsButARunningOneOrASyncDoesNot() {
         assertThat(StandingTab.rereads(job(com.aresstack.spaceharvester.application.jobs.JobType.STATEMENT_ANALYSIS,
                 com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED))).isTrue();
@@ -368,6 +392,60 @@ class StandingTabTest {
         return new com.aresstack.spaceharvester.application.jobs.JobStatus("j1", type, "wiki", "DEV", "local", state,
                 new com.aresstack.spaceharvester.application.jobs.JobProgress(1, 1, 1, 0), null, false,
                 Instant.parse("2026-11-17T05:00:00Z"), null, null, null, null, Map.of(), false, false, null, null);
+    }
+
+    @Test
+    void possibleContradictionsShowBothStatementsAndReplacementsStandApart() {
+        com.aresstack.spaceharvester.application.standing.Situation same =
+                new com.aresstack.spaceharvester.application.standing.Situation(StatementKind.ACTION, "sachbearbeiter",
+                        "prüfen", List.of(new com.aresstack.spaceharvester.application.standing.Situation.Participant(
+                        ParsedStatements.Role.AFFECTED_OBJECT, null, "antrag")));
+        StatusQuoEntry affirmed = compared("1", "v1", same, Standing.GILT, ParsedStatements.Negation.AFFIRMED);
+        StatusQuoEntry negated = compared("2", "v1", same, Standing.GILT, ParsedStatements.Negation.NEGATED);
+        StatusQuoEntry earlier = compared("3", "v1", same, Standing.UEBERHOLT, ParsedStatements.Negation.NEGATED);
+        Map<Standing, Integer> counts = new EnumMap<>(Standing.class);
+        counts.put(Standing.GILT, 2);
+        counts.put(Standing.UEBERHOLT, 1);
+        StatusQuoView view = new StatusQuoView(List.of(affirmed, negated, earlier), List.of(), List.of(), counts,
+                counts, List.of());
+        Fixture fixture = new Fixture(view);
+        fixture.sentences.put(negated.statement().id(), new SentenceText("Der Sachbearbeiter muss den Antrag nicht "
+                + "prüfen.", null, 0, 40, 30, 36, false));
+        StandingTab tab = fixture.shownTab();
+
+        List<StandingTab.Row> rows = tab.conflictRows();
+        assertThat(rows.get(0)).isInstanceOf(StandingTab.Group.class);
+        StandingTab.Group head = (StandingTab.Group) rows.get(0);
+        assertThat(head.title()).isEqualTo("sachbearbeiter prüfen antrag · muss · bejaht und verneint");
+        assertThat(head.tone()).isNotEqualTo(Comic.RED);
+        assertThat(rows.subList(1, 3)).extracting(row -> ((StandingTab.Line) row).entry())
+                .containsExactly(affirmed, negated);
+        assertThat(rows).contains(new StandingTab.Group(StandingTab.REPLACEMENTS, Comic.INK, 1));
+        assertThat(rows.stream().filter(StandingTab.Group.class::isInstance).map(row -> ((StandingTab.Group) row)
+                .title())).anyMatch(title -> title.startsWith("anders verneint: prüfen · antrag"));
+        // Beide Sätze im Wortlaut: der Originalsatz ist für die Einträge der Hinweise schon geholt.
+        assertThat(StandingTab.mark(negated)).isEqualTo("muss nicht");
+
+        tab.tabs().select(StandingTab.CONFLICTS);
+        assertThat(fixture.status.get()).isEqualTo("1 möglicher Widerspruch · 1 Ablösung");
+        assertThat(tab.chip(Standing.GILT).getParent().isVisible()).as("Zahlen nur bei „Aussagen“").isFalse();
+        tab.tabs().select(StandingTab.STATEMENTS);
+        assertThat(tab.chip(Standing.GILT).getParent().isVisible()).isTrue();
+    }
+
+    private static StatusQuoEntry compared(String page, String id,
+                                           com.aresstack.spaceharvester.application.standing.Situation situation,
+                                           Standing standing, ParsedStatements.Negation negation) {
+        ParsedStatements.Statement statement = new ParsedStatements.Statement("wiki/" + page + "@h#s1." + id, 0, 4, 10,
+                "prüft", "prüfen", ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(),
+                Set.of(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
+                new ParsedStatements.Features(negation, ParsedStatements.Modality.MUSS,
+                        standing == Standing.GILT ? ParsedStatements.Temporality.GILT
+                                : ParsedStatements.Temporality.FRUEHER));
+        return new StatusQuoEntry(page(page, "Seite " + page), statement, StatementKind.ACTION, "Der Sachbearbeiter",
+                "sachbearbeiter", situation, ParsedStatements.Quality.PLAUSIBLE, new StatementStanding(standing,
+                StandingBasis.FEATURES, standing == Standing.GILT ? StandingReason.TEMPORALITY_GILT
+                : StandingReason.TEMPORALITY_FRUEHER), null, false);
     }
 
     @Test
@@ -395,6 +473,7 @@ class StandingTabTest {
         final List<String> writes = new ArrayList<>();
         boolean conflict;
         boolean failSubscribe;
+        boolean denied;
         final StandingTab tab;
 
         Fixture(StatusQuoView view) {
@@ -424,6 +503,9 @@ class StandingTabTest {
                 public StandingDecision decide(PageKey page, String statementId, Standing standing,
                                                long expectedRevision) {
                     writes.add("decide " + page.pageId() + " " + statementId + " " + standing + " " + expectedRevision);
+                    if (denied) {
+                        throw denied();
+                    }
                     if (conflict) {
                         throw new com.aresstack.spaceharvester.application.standing.StandingConflictException(
                                 expectedRevision + 1);
@@ -480,6 +562,18 @@ class StandingTabTest {
             tab.shown(true);
             tab.selection(SPACE);
             return tab;
+        }
+    }
+
+    /** Wie der Core sie wirft; der Konstruktor ist nur im Paket sichtbar. */
+    private static RuntimeException denied() {
+        try {
+            var constructor = com.aresstack.spaceharvester.application.access.AccessDeniedException.class
+                    .getDeclaredConstructor(boolean.class, String.class);
+            constructor.setAccessible(true);
+            return constructor.newInstance(false, "wiki");
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
         }
     }
 
