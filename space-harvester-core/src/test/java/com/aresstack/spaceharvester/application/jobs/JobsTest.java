@@ -503,6 +503,37 @@ class JobsTest {
     }
 
     @Test
+    void aStepThatFailsDifferentlyAfterTheCancelStillEndsAsCancelled() {
+        Jobs jobs = jobs(1, 5);
+        AtomicReference<String> id = new AtomicReference<>();
+        id.set(jobs.submit(JobType.UPDATE_SUMMARY, "confluence", null, "client-a", JobTask.blocking(context -> {
+            jobs.cancel(id.get());
+            // Wie eine Modellanfrage, die der Abbruch unterbricht und die dabei mit eigenem Fehler endet.
+            throw new IllegalStateException("Anfrage unterbrochen");
+        })).id());
+
+        executor.runNext();
+
+        JobStatus status = jobs.status(id.get());
+        assertThat(status.state()).isEqualTo(JobState.CANCELLED);
+        assertThat(status.error()).isNull();
+        assertThat(jobs.events(id.get(), "client-a")).anySatisfy(event -> assertThat(event.message())
+                .isEqualTo("Schritt endete nach dem Abbruch mit java.lang.IllegalStateException"));
+    }
+
+    @Test
+    void aStepThatFailsWithoutACancelStillFails() {
+        Jobs jobs = jobs(1, 5);
+        String id = jobs.submit(JobType.UPDATE_SUMMARY, "confluence", null, "client-a", JobTask.blocking(context -> {
+            throw new IllegalStateException("Modell nicht erreichbar");
+        })).id();
+
+        executor.runNext();
+
+        assertThat(jobs.status(id).state()).isEqualTo(JobState.FAILED);
+    }
+
+    @Test
     void cancellingAFinishedJobChangesNothing() {
         Jobs jobs = jobs(1, 5);
         JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));

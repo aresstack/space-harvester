@@ -1548,7 +1548,9 @@ public class Jobs implements AutoCloseable {
             Instant now = clock.instant();
             if (cause == null) {
                 job.finish(JobState.COMPLETED, null, now);
-            } else if (cause instanceof JobCancelledException) {
+            } else if (cause instanceof JobCancelledException || job.cancelRequested) {
+                // Auch wenn der Schritt nach dem angeforderten Abbruch anders scheitert, etwa eine abgebrochene
+                // Modellanfrage: Der Benutzer hat abgebrochen oder angehalten, ein Fehler war es nicht.
                 job.finish(job.pauseRequested ? JobState.PAUSED : JobState.CANCELLED, null, now);
             } else {
                 job.finish(JobState.FAILED, errorOf(cause), now);
@@ -1558,6 +1560,11 @@ public class Jobs implements AutoCloseable {
             open.remove(job.id);
             lock.notifyAll();
             finished = job.snapshot();
+            if (cause != null && !(cause instanceof JobCancelledException) && finished.state() != JobState.FAILED) {
+                // Nach Abbruch oder Anhalten anders gescheitert: nur die Klasse als Hinweis, kein Fehler am Auftrag.
+                job.emit(true, JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
+                        "Schritt endete nach dem Abbruch mit " + cause.getClass().getName(), null, null, null, null);
+            }
             // Erst das Endereignis, dann der Endzustand: Wer den Endzustand sieht, findet auch die Diagnose.
             recordEnd(job, finished, cause);
             store.save(finished);
