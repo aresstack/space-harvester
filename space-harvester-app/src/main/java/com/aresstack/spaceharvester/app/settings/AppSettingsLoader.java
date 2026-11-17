@@ -987,7 +987,6 @@ public final class AppSettingsLoader {
     }
 
     private JobLimits jobLimits(Map<?, ?> jobs, List<String> problems) {
-        int concurrent = integer(get(jobs, "max-concurrent"), 2, "space-harvester.jobs.max-concurrent", problems);
         int queued = integer(get(jobs, "max-queued"), 20, "space-harvester.jobs.max-queued", problems);
         Duration runTime = duration(get(jobs, "max-run-time"), Duration.ofHours(6), "space-harvester.jobs.max-run-time",
                 problems);
@@ -1002,7 +1001,7 @@ public final class AppSettingsLoader {
                 JobLimits::requireConnections, problems);
         // Ein Bediener: die Grenze je Auslöser ist die Gesamtgrenze.
         try {
-            return new JobLimits(concurrent, queued, runTime, retention).withRetry(retry)
+            return new JobLimits(preparations, queued, runTime, retention).withRetry(retry)
                     .withParallel(preparations, downloads).withConnections(connections);
         } catch (IllegalArgumentException e) {
             problems.add("space-harvester.jobs: " + e.getMessage() + "; es gelten die Standards");

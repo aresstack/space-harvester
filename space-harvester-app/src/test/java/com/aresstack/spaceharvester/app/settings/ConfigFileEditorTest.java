@@ -563,7 +563,7 @@ class ConfigFileEditorTest {
     void theSynonymBudgetGoesUnderTermsSynonymsAndKeepsTheOtherKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  terms:\n    synonyms:\n      max-terms: 300   # bleibt\n"
-                + "      max-judged-pairs: 5\n  jobs:\n    max-concurrent: 3\n");
+                + "      max-judged-pairs: 5\n  jobs:\n    max-queued: 3\n");
         var budget = new com.aresstack.spaceharvester.application.terms.SynonymBudget(300, 500, 40);
         editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
                 budget));
@@ -572,14 +572,14 @@ class ConfigFileEditorTest {
 
         String text = Files.readString(file);
         assertThat(text).contains("    synonyms:\n      max-terms: 300\n      max-embedded-terms: 500\n"
-                + "      max-judged-pairs: 40\n", "max-concurrent: 3").doesNotContain("max-judged-pairs: 5");
+                + "      max-judged-pairs: 40\n", "max-queued: 3").doesNotContain("max-judged-pairs: 5");
         assertThat(text.indexOf("synonyms:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("synonyms:"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.terms().synonyms()).isEqualTo(budget);
-        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
 
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");
         editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
                 com.aresstack.spaceharvester.application.terms.SynonymBudget.DEFAULT.withMaxJudgedPairs(20)));
         assertThat(loader.load(file).terms().synonyms().maxJudgedPairs()).as("Block ohne terms neu angelegt")
@@ -590,7 +590,7 @@ class ConfigFileEditorTest {
     void theCheckStepGoesUnderStatementsCheckAndLeavesTheStageAlone() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: always\n"
-                + "      model: einfach\n  jobs:\n    max-concurrent: 3\n");
+                + "      model: einfach\n  jobs:\n    max-queued: 3\n");
         var all = new com.aresstack.spaceharvester.application.configuration.CheckSettings(
                 com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "pruef:1b");
         editor.save(file, editor.withCheck(file, new ConfigFileEditor.Draft(Files.readString(file), null), all));
@@ -598,14 +598,14 @@ class ConfigFileEditorTest {
 
         String text = Files.readString(file);
         assertThat(text).contains("    check:\n      scope: all\n      parallel: 4\n      model: \"pruef:1b\"\n",
-                "      mode: always\n      model: einfach\n", "max-concurrent: 3");
+                "      mode: always\n      model: einfach\n", "max-queued: 3");
         assertThat(text.indexOf("check:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("check:"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.check()).isEqualTo(all);
         assertThat(settings.simplification().model()).as("Vorstufe unberührt").isEqualTo("einfach");
 
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");
         var plain = new com.aresstack.spaceharvester.application.configuration.CheckSettings(
                 com.aresstack.spaceharvester.application.check.CheckScope.UNCERTAIN_AND_STAGE, 1, null);
         editor.save(file, editor.withCheck(file, new ConfigFileEditor.Draft(Files.readString(file), null), plain));
@@ -618,7 +618,7 @@ class ConfigFileEditorTest {
     void theSimplificationStageGoesUnderStatementsSimplificationAndKeepsTheOtherKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: where-needed\n"
-                + "      model: alt\n  jobs:\n    max-concurrent: 3\n");
+                + "      model: alt\n  jobs:\n    max-queued: 3\n");
         var always = new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
                 com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 4,
                 "gemma4:12b");
@@ -629,15 +629,15 @@ class ConfigFileEditorTest {
 
         String text = Files.readString(file);
         assertThat(text).contains("    simplification:\n      mode: always\n      parallel: 4\n"
-                + "      model: \"gemma4:12b\"\n", "max-concurrent: 3").doesNotContain("model: alt");
+                + "      model: \"gemma4:12b\"\n", "max-queued: 3").doesNotContain("model: alt");
         assertThat(text.indexOf("simplification:")).as("zweimal gespeichert, ein Block")
                 .isEqualTo(text.lastIndexOf("simplification:"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.simplification()).isEqualTo(always);
-        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
 
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");
         var plain = new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
                 com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.WHERE_NEEDED, 1,
                 null);
@@ -650,39 +650,39 @@ class ConfigFileEditorTest {
     @Test
     void retriesGoUnderJobsRetryAndKeepTheOtherJobLimits() throws Exception {
         Path file = home.resolve("app.yml");
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3   # bleibt\n");
         var retry = new com.aresstack.spaceharvester.application.jobs.RetrySettings(4, Duration.ofMillis(500),
                 Duration.ofSeconds(20), 7, Duration.ofSeconds(15), Duration.ofMinutes(20));
         editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null), retry));
         editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null), retry));
 
         String text = Files.readString(file);
-        assertThat(text).contains("max-concurrent: 3   # bleibt", "    retry:\n      max-attempts: 4\n",
+        assertThat(text).contains("max-queued: 3   # bleibt", "    retry:\n      max-attempts: 4\n",
                 "      initial-delay: 500ms\n", "      max-delay: 20s\n", "      pause-after-failures: 7\n",
                 "      resume-initial-delay: 15s\n", "      resume-max-delay: 20m\n");
         assertThat(text.indexOf("retry:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("retry:"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.jobLimits().retry()).isEqualTo(retry);
-        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
     }
 
     @Test
     void downloadLimitsGoUnderJobsAndZeroDownloadsIsAllowed() throws Exception {
         Path file = home.resolve("app.yml");
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3   # bleibt\n");
         editor.save(file, editor.withParallel(file, new ConfigFileEditor.Draft(Files.readString(file), null), 3, 0));
         editor.save(file, editor.withParallel(file, new ConfigFileEditor.Draft(Files.readString(file), null), 3, 0));
 
         String text = Files.readString(file);
-        assertThat(text).contains("max-concurrent: 3   # bleibt", "    parallel-preparations: 3\n",
+        assertThat(text).contains("max-queued: 3   # bleibt", "    parallel-preparations: 3\n",
                 "    parallel-downloads: 0\n");
         assertThat(text.indexOf("parallel-downloads")).isEqualTo(text.lastIndexOf("parallel-downloads"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.jobLimits().parallelPreparations()).isEqualTo(3);
         assertThat(settings.jobLimits().parallelDownloads()).isZero();
-        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
         assertThatThrownBy(() -> editor.withParallel(file, new ConfigFileEditor.Draft(text, null), 0, 4))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> editor.withParallel(file, new ConfigFileEditor.Draft(text, null), 2, -1))
