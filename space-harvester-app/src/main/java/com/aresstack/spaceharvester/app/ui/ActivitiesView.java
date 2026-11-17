@@ -86,7 +86,16 @@ public final class ActivitiesView implements View {
     /** Zuletzt gelesene Zahl paralleler Downloads; bei 0 keine Restzeit. */
     private int parallelNow = JobLimits.DEFAULT_PARALLEL_DOWNLOADS;
     /** Ein Knopf für alle Aufträge (Angelo 10.11.2026): löscht alles, laufende werden vorher abgebrochen. */
-    final IconButton deleteAll = new IconButton(Glyph.BROOM, "Alle Aufträge löschen");
+    final IconButton deleteFinished = new IconButton(Glyph.BROOM, DELETE_FINISHED);
+    /**
+     * Rechts neben dem Besen das Dreieck der Leseansicht (Angelo 17.11.2026); im Menü „Alle Aufträge löschen“, das
+     * laufende vorher abbricht, damit nichts unsichtbar weiterläuft.
+     */
+    final IconButton moreJobs = new IconButton(new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(),
+            MORE_JOB_ACTIONS);
+    static final String DELETE_FINISHED = "Abgeschlossene Aufträge löschen";
+    static final String DELETE_ALL = "Alle Aufträge löschen";
+    static final String MORE_JOB_ACTIONS = "Weitere Aktionen zu den Aufträgen";
     /** Links neben den Auswahlen (Angelo 11.11.2026): alle Bilder- und Anhänge-Unterzeilen auf- bzw. zuklappen. */
     final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Bilder und Anhänge aufklappen");
     final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Bilder und Anhänge zuklappen");
@@ -219,7 +228,7 @@ public final class ActivitiesView implements View {
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
         JPanel listTools = Comic.row(expandAll, collapseAll, preparationsLabel, preparations.box(), downloadsLabel,
-                downloads.box(), connectionsLabel, connections.box(), deleteAll);
+                downloads.box(), connectionsLabel, connections.box(), deleteFinished, moreJobs);
         // Mittig in der Kopfzeile, für alle Aufträge zugleich (Angelo 11.11.2026).
         pauseAll.addActionListener(e -> pauseOrResumeAll());
         cancelAll.addActionListener(e -> cancelAll());
@@ -246,7 +255,9 @@ public final class ActivitiesView implements View {
         title.setFont(Comic.semiBold(17f));
         title.setForeground(Comic.INK);
         again.addActionListener(e -> restart());
-        deleteAll.addActionListener(e -> deleteAll());
+        deleteFinished.addActionListener(e -> deleteFinished());
+        moreJobs.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
+                moreJobsMenu(), moreJobs).show(moreJobs, 0, moreJobs.getHeight()));
 
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
@@ -510,7 +521,8 @@ public final class ActivitiesView implements View {
             model.set(jobs);
             context.events().publish(overall.event(jobs, now, averages::get, parallelNow));
             updateGlobalButtons(jobs);
-            deleteAll.setEnabled(!jobs.isEmpty());
+            deleteFinished.setEnabled(jobs.stream().anyMatch(ActivitiesView::finished));
+            moreJobs.setEnabled(!jobs.isEmpty());
             downloads.refresh(runtime.workspace().parallelDownloads());
             preparations.refresh(runtime.workspace().parallelPreparations());
             connections.refresh(runtime.workspace().downloadConnections());
@@ -1277,9 +1289,59 @@ public final class ActivitiesView implements View {
         feedback.warning("Nicht übernommen", message);
     }
 
+    /** Das Menü hinter dem Dreieck neben dem Besen. */
+    javax.swing.JPopupMenu moreJobsMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem all = new javax.swing.JMenuItem(DELETE_ALL, Glyph.TRASH);
+        all.setFont(Comic.regular(13f));
+        all.setToolTipText("Alle Aufträge samt Diagnose löschen; laufende werden vorher abgebrochen");
+        all.setEnabled(!model.rows.isEmpty());
+        all.addActionListener(e -> deleteAll());
+        menu.add(all);
+        return menu;
+    }
+
+    /** Abgeschlossen: fertig, gescheitert oder abgebrochen; ein angehaltener lässt sich fortsetzen und bleibt. */
+    static boolean finished(JobStatus job) {
+        return job.state() == JobState.COMPLETED || job.state() == JobState.FAILED
+                || job.state() == JobState.CANCELLED;
+    }
+
     /**
-     * Löscht alle Aufträge nach „Wirklich alle Aufträge löschen?“, in jedem Zustand; laufende und wartende bricht der
-     * Core dafür ab ({@code Workspace#deleteAllJobs}).
+     * Der Besen (Angelo 17.11.2026, wie früher): löscht nach „Wirklich … löschen?“ (Ja/Nein) genau die abgeschlossenen
+     * Aufträge, die der Dialog nennt; laufende, wartende und angehaltene bleiben.
+     */
+    void deleteFinished() {
+        AppRuntime runtime = context.runtime();
+        List<String> confirmed = model.rows.stream().filter(ActivitiesView::finished).map(JobStatus::id).toList();
+        if (runtime == null || confirmed.isEmpty()) {
+            return;
+        }
+        long kept = model.rows.size() - confirmed.size();
+        if (!Dialogs.confirm(root, "Abgeschlossene Aufträge löschen?", Texts.count(confirmed.size(),
+                "abgeschlossenen Auftrag", "abgeschlossene Aufträge") + " wirklich löschen? Sie (fertig, gescheitert, "
+                + "abgebrochen) und ihre Diagnoseereignisse werden dauerhaft gelöscht."
+                + (kept == 0 ? "" : " " + Texts.count(kept, "anderer Auftrag bleibt", "andere Aufträge bleiben") + ".")
+                + " " + KEPT)) {
+            return;
+        }
+        boolean selectedGone = selectedId != null && confirmed.contains(selectedId);
+        Background.run(() -> runtime.workspace().deleteJobs(confirmed), deleted -> {
+            if (selectedGone) {
+                selectedId = null;
+                detail = null;
+                table.clearSelection();
+                render();
+            }
+            feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            poll();
+        }, feedback::problem);
+    }
+
+    /**
+     * „Alle Aufträge löschen“ im Menü neben dem Besen: löscht alle Aufträge in jedem Zustand; laufende und wartende
+     * bricht der Core dafür ab ({@code Workspace#deleteAllJobs}), damit kein Auftrag unsichtbar weiterläuft. Laufen
+     * welche, warnt der Dialog wie beim Beenden der App.
      */
     void deleteAll() {
         AppRuntime runtime = context.runtime();
@@ -1287,9 +1349,16 @@ public final class ActivitiesView implements View {
         if (runtime == null || count == 0) {
             return;
         }
-        if (!Dialogs.confirm(root, "Alle Aufträge löschen?", "Wirklich alle Aufträge löschen? "
-                + Texts.count(count, "Auftrag", "Aufträge") + " samt Diagnoseereignissen werden dauerhaft "
-                + "gelöscht; laufende werden vorher abgebrochen. " + KEPT)) {
+        long running = model.rows.stream().filter(job -> !job.state().terminal()).count();
+        String question = running == 0
+                ? "Wirklich alle Aufträge löschen? " + Texts.count(count, "Auftrag", "Aufträge")
+                        + " samt Diagnoseereignissen werden dauerhaft gelöscht. " + KEPT
+                : "Wirklich alle Aufträge abbrechen und löschen? " + Texts.count(running, "Auftrag läuft",
+                        "Aufträge laufen") + " noch; sie werden vorher abgebrochen, ihr Ergebnis bleibt unbestätigt. "
+                        + "Insgesamt werden " + Texts.count(count, "Auftrag", "Aufträge")
+                        + " samt Diagnoseereignissen dauerhaft gelöscht. " + KEPT;
+        if (!Dialogs.confirm(root, running == 0 ? "Alle Aufträge löschen?" : "Alle Aufträge abbrechen und löschen?",
+                question)) {
             return;
         }
         Background.run(() -> runtime.workspace().deleteAllJobs(), deleted -> {

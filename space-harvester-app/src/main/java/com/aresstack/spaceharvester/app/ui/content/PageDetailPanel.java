@@ -230,7 +230,8 @@ public final class PageDetailPanel extends JPanel {
     };
     /** Weitere Aktionen zur Seite hinter einem Dreieck neben dem Stern, wie im Audio Studio (Angelo, 16.11.2026). */
     private final com.aresstack.spaceharvester.app.ui.IconButton more =
-            new com.aresstack.spaceharvester.app.ui.IconButton(new DownTriangle(), MORE_ACTIONS);
+            new com.aresstack.spaceharvester.app.ui.IconButton(
+                    new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), MORE_ACTIONS);
     static final String MORE_ACTIONS = "Weitere Aktionen zur Seite";
     private final ComposerButton bookmark = Comic.button("Lesezeichen kopieren",
             "Stabile Adresse dieser Seite und Version (space-harvester://…); unter Suche wieder zu öffnen");
@@ -2343,28 +2344,6 @@ public final class PageDetailPanel extends JPanel {
             menu.add(item);
         }
         return menu;
-    }
-
-    /** Gefülltes Dreieck nach unten, in der Vordergrundfarbe des Knopfs. */
-    private static final class DownTriangle implements javax.swing.Icon {
-        @Override
-        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
-            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
-            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(c.isEnabled() ? c.getForeground() : Comic.MUTED);
-            g2.fillPolygon(new int[] {x + 3, x + 13, x + 8}, new int[] {y + 5, y + 5, y + 11}, 3);
-            g2.dispose();
-        }
-
-        @Override
-        public int getIconWidth() {
-            return 16;
-        }
-
-        @Override
-        public int getIconHeight() {
-            return 16;
-        }
     }
 
     Breadcrumbs breadcrumbs() {

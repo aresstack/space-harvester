@@ -446,6 +446,17 @@ class ActivitiesActionsTest {
     }
 
     /** @param pausing laufend mit angefordertem Anhalten (cancelRequested + pauseRequested) */
+    /** Der Besen löscht nur abgeschlossene Aufträge (Angelo 17.11.2026); angehaltene lassen sich fortsetzen. */
+    @Test
+    void theBroomOnlyCountsFinishedJobs() {
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.COMPLETED, false))).isTrue();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.FAILED, false))).isTrue();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.CANCELLED, false))).isTrue();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.PAUSED, false))).isFalse();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.RUNNING, false))).isFalse();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.QUEUED, false))).isFalse();
+    }
+
     private static JobStatus job(JobType type, JobState state, boolean pausing) {
         return new JobStatus("j1", type, "wiki", "OPS", "local", state, new JobProgress(0, 0, 0, 0),
                 state == JobState.FAILED ? new JobError("X", "kaputt") : null, pausing, Instant.EPOCH, null, null,
