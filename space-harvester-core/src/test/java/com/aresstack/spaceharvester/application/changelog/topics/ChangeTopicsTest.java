@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /** Abfrage der Themen über dem Änderungsprotokoll: Ebene, Rückfall ohne Dienst, Ablage. Erfundene Beispieldaten. */
@@ -38,14 +39,18 @@ class ChangeTopicsTest {
     };
 
     private final List<Boolean> diffsRequested = new ArrayList<>();
+    private final List<String> spacesRequested = new ArrayList<>();
 
     @Test
     void theSpaceLevelSeesOnlyItsPagesAndWithoutServiceStructureGroups() {
-        ChangeTopics.Reports reports = (caller, sourceId, update, withDiffs) -> {
+        ChangeTopics.Reports reports = (caller, sourceId, update, space, withDiffs) -> {
             diffsRequested.add(withDiffs);
-            return report(page("1", "DEV", "Archivierung von Akten ist neu geregelt."),
+            spacesRequested.add(space);
+            // Die Ebene filtert das Änderungsprotokoll (ADR 0031); hier nachgebildet.
+            return report(Stream.of(page("1", "DEV", "Archivierung von Akten ist neu geregelt."),
                     page("2", "DEV", "Die Archivierung beginnt nach der Frist."),
-                    page("3", "OPS", "Der Speiseplan der Kantine wechselt."));
+                    page("3", "OPS", "Der Speiseplan der Kantine wechselt."))
+                    .filter(page -> space == null || space.equals(page.spaceKey())).toArray(ReportedPage[]::new));
         };
         ChangeTopics topics = ChangeTopics.structureOnly(reports, key -> true, SENTENCES);
 
@@ -53,6 +58,7 @@ class ChangeTopicsTest {
         TopicSet all = topics.topics(caller(), "wiki", "1", Optional.empty(), job());
 
         assertThat(diffsRequested).containsOnly(true);
+        assertThat(spacesRequested).containsExactly("DEV", null);
         assertThat(dev.spaceKey()).contains("DEV");
         assertThat(dev.topics()).allSatisfy(topic -> assertThat(topic.spaces()).containsExactly("DEV"));
         assertThat(dev.units()).hasSize(2);
@@ -64,7 +70,7 @@ class ChangeTopicsTest {
     @Test
     void theSameFilteredReportIsServedFromTheCacheAnotherOneIsNot() {
         List<ReportedPage> pages = new ArrayList<>(List.of(page("1", "DEV", "Neue Regel zur Löschung.")));
-        ChangeTopics topics = ChangeTopics.structureOnly((caller, sourceId, update, withDiffs) -> report(
+        ChangeTopics topics = ChangeTopics.structureOnly((caller, sourceId, update, space, withDiffs) -> report(
                 pages.toArray(ReportedPage[]::new)), key -> true, SENTENCES);
 
         TopicSet first = topics.topics(caller(), "wiki", "1", Optional.empty(), job());
@@ -79,7 +85,7 @@ class ChangeTopicsTest {
 
     @Test
     void pagesWithoutAiReleaseGiveNoTopic() {
-        ChangeTopics topics = ChangeTopics.structureOnly((caller, sourceId, update, withDiffs) -> report(
+        ChangeTopics topics = ChangeTopics.structureOnly((caller, sourceId, update, space, withDiffs) -> report(
                 page("1", "DEV", "Freigegebener Absatz."), page("2", "DEV", "Nicht freigegebener Absatz.")),
                 key -> key.pageId().equals("1"), SENTENCES);
 

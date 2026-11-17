@@ -2,7 +2,6 @@ package com.aresstack.spaceharvester.application.changelog.topics;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.changelog.ChangeReport;
-import com.aresstack.spaceharvester.application.changelog.ReportedPage;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
@@ -20,8 +19,8 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
- * {@link ChangeTopicsQuery} über dem Änderungsprotokoll. Holt den Bericht mit Unterschieden für den Aufrufer, beschränkt
- * ihn auf die Ebene, bildet Änderungseinheiten, bettet freigegebene Einheiten ein (wenn ein Dienst da ist) und schlägt
+ * {@link ChangeTopicsQuery} über dem Änderungsprotokoll. Holt den Bericht mit Unterschieden für den Aufrufer auf der Ebene
+ * (Quelle oder Space, ADR 0031), bildet Änderungseinheiten, bettet freigegebene Einheiten ein (wenn ein Dienst da ist) und schlägt
  * Themen vor. Ohne Embedding-Dienst gruppiert sie nur nach Struktur und Begriffen; {@link TopicSet#missingSignals()}
  * sagt das.
  *
@@ -35,11 +34,14 @@ public final class ChangeTopics implements ChangeTopicsQuery {
     /** Abgelegte Ergebnisse höchstens. */
     static final int CACHED = 16;
 
-    /** Liefert den Bericht eines Updates für den Aufrufer, etwa {@code ChangeLog::report}. */
+    /**
+     * Liefert den Bericht eines Updates für den Aufrufer auf einer Ebene (ADR 0031), etwa {@code ChangeLog::report}.
+     * {@code spaceKey} {@code null} für die ganze Quelle; eine verschobene Seite steht in beiden Spaces.
+     */
     @FunctionalInterface
     public interface Reports {
 
-        ChangeReport report(AccessContext caller, String sourceId, String update, boolean withDiffs);
+        ChangeReport report(AccessContext caller, String sourceId, String update, String spaceKey, boolean withDiffs);
     }
 
     private final Reports reports;
@@ -89,7 +91,7 @@ public final class ChangeTopics implements ChangeTopicsQuery {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(job, "job");
         Optional<String> level = spaceKey == null ? Optional.empty() : spaceKey;
-        ChangeReport report = level(reports.report(caller, sourceId, updateId, true), level);
+        ChangeReport report = reports.report(caller, sourceId, updateId, level.orElse(null), true);
         job.checkpoint();
         ChangeUnits.Result built = units.build(report, released);
         EmbeddingProvider service = provider.get();
@@ -111,17 +113,6 @@ public final class ChangeTopics implements ChangeTopicsQuery {
             }
         }
         return set;
-    }
-
-    /** Nur die Seiten des Space; eine verschobene Seite zählt in beiden Spaces. */
-    static ChangeReport level(ChangeReport report, Optional<String> spaceKey) {
-        if (spaceKey.isEmpty()) {
-            return report;
-        }
-        String space = spaceKey.get();
-        List<ReportedPage> pages = report.pages().stream().filter(page -> space.equals(page.spaceKey())
-                || space.equals(page.oldSpaceKey()) || space.equals(page.newSpaceKey())).toList();
-        return new ChangeReport(report.update(), pages);
     }
 
     /** Hash über den gefilterten Bericht, die daraus gebildeten Einheiten samt Freigabe und das Modell. */
