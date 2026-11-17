@@ -335,7 +335,8 @@ public class SourceQueryExports {
     }
 
     /**
-     * Blättert die Seitenliste des Space: {@code contentViews[]} je Antwort, weiter mit {@code nextPageToken} als
+     * Blättert die Seitenliste des Space: {@code contentViews[]} je Antwort, weiter mit {@code nextPageToken} an der
+     * Stelle von {@link AnalyticsQueries#TOKEN_PLACEHOLDER} der Vorlage, sonst als
      * Parameter {@link AnalyticsQueries#PAGE_TOKEN}, bis kein Token mehr kommt. Wiederholt die Quelle ein Token oder
      * dieselbe erste Seite (der Parameter heißt dort anders), endet die Liste als unvollständig statt endlos.
      */

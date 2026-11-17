@@ -4,7 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException;
+import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
+import com.aresstack.spaceharvester.application.knowledge.StatementAnalyzer;
+import com.aresstack.spaceharvester.application.simplification.SimplificationSection;
+import com.aresstack.spaceharvester.application.simplification.SimplifiedSentence;
 import com.aresstack.spaceharvester.nlp.malt.ExpectedModel;
 import com.aresstack.spaceharvester.nlp.malt.TestModel;
 import com.aresstack.spaceharvester.nlp.syntax.Sentence;
@@ -12,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CancellationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -111,6 +116,73 @@ class MaltStatementAnalyzerTest {
             assertThat(attachment.kind()).isEqualTo(ParsedStatements.AttachmentKind.GENITIVE);
             assertThat(mention(result, attachment.dependent()).text()).isEqualTo("des Kunden");
         });
+    }
+
+    @Test
+    void withoutSentencesToSimplifyTheModelIsNotCalledAndTheResultEqualsTheOriginal() {
+        MaltStatementAnalyzer analyzer = new MaltStatementAnalyzer(TestModel.directory(), TestModel.EXPECTED);
+        List<List<SimplificationSection>> calls = new ArrayList<>();
+
+        ParsedStatements result = analyzer.analyze(DOC, TEXT, () -> false,
+                stage(SimplificationSettings.Mode.WHERE_NEEDED, calls, Map.of()));
+
+        assertThat(calls).isEmpty();
+        assertThat(result).isEqualTo(analyzer.analyze(DOC, TEXT, () -> false));
+    }
+
+    @Test
+    void stageStatementsPointToTheOriginalSentenceAndCarryFlagAndSimplifiedSentence() {
+        MaltStatementAnalyzer analyzer = new MaltStatementAnalyzer(TestModel.directory(), TestModel.EXPECTED);
+        String text = "- Beleg übermittelt.";
+        List<List<SimplificationSection>> calls = new ArrayList<>();
+        String simplified = "Der Sachbearbeiter übermittelt den Beleg des Kunden.";
+
+        ParsedStatements result = analyzer.analyze(DOC, text, () -> false,
+                stage(SimplificationSettings.Mode.WHERE_NEEDED, calls, Map.of(0, List.of(new SimplifiedSentence(0,
+                        SimplifiedSentence.Flag.PLANNING, simplified)))));
+
+        assertThat(calls).hasSize(1);
+        assertThat(calls.getFirst().getFirst().lines()).extracting(SimplificationSection.Sentence::text)
+                .containsExactly("- Beleg übermittelt.");
+        ParsedStatements.Statement added = result.statements().stream()
+                .filter(statement -> statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE)
+                .findFirst().orElseThrow();
+        assertThat(added.id()).startsWith(DOC + "#s1.p1.v");
+        assertThat(added.sentence()).isZero();
+        assertThat(text.substring(added.start(), added.end())).isEqualTo(text);
+        assertThat(added.derivation().stageFlag()).isEqualTo(ParsedStatements.StageFlag.PLANNING);
+        assertThat(added.derivation().simplifiedSentence()).isEqualTo(simplified);
+        assertThat(added.derivation().featuresFrom()).as("Original hat eine Aussage zu „übermitteln“")
+                .isEqualTo(ParsedStatements.Origin.ORIGINAL);
+        assertThat(added.predicateLemma()).isEqualTo("übermitteln");
+        // Rollen zeigen auf Erwähnungen der Vorstufe, die im Ergebnis stehen und auf den Originalsatz zeigen
+        assertThat(added.arguments()).isNotEmpty().allSatisfy(argument -> {
+            ParsedStatements.Mention mention = mention(result, argument.mention());
+            assertThat(mention.id()).startsWith(DOC + "#s1.p1.t");
+            assertThat(mention.sentence()).isZero();
+        });
+        assertThat(text(result, added, ParsedStatements.Role.ACTOR)).isEqualTo("Der Sachbearbeiter");
+        // Die ungültige Aussage des Originals zum selben Verb ist ersetzt; CoNLL-U bleibt das des Originals
+        assertThat(result.statements()).noneMatch(statement -> statement.quality()
+                == ParsedStatements.Quality.INVALID);
+        assertThat(result.conllu()).doesNotContain("Sachbearbeiter");
+    }
+
+    private static StatementAnalyzer.Simplification stage(SimplificationSettings.Mode mode,
+                                                          List<List<SimplificationSection>> calls,
+                                                          Map<Integer, List<SimplifiedSentence>> answer) {
+        return new StatementAnalyzer.Simplification() {
+            @Override
+            public SimplificationSettings.Mode mode() {
+                return mode;
+            }
+
+            @Override
+            public Map<Integer, List<SimplifiedSentence>> simplify(List<SimplificationSection> sections) {
+                calls.add(sections);
+                return answer;
+            }
+        };
     }
 
     @Test

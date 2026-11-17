@@ -214,6 +214,25 @@ class SourceQueryExportsTest {
     }
 
     @Test
+    void theTokenParameterComesFromTheTemplateAndIsDroppedOnTheFirstPage() {
+        Instant now = CLOCK.instant();
+        AnalyticsQueries.Query renamed = new AnalyticsQueries.Query("x",
+                "/rest/confanalytics/1.0/space/paginated/contentViews?spaceKey={spaceKey}&pageToken={nextPageToken}"
+                        + "&limit=50");
+        assertThat(renamed.path("DEV", now, now)).isEqualTo(
+                "/rest/confanalytics/1.0/space/paginated/contentViews?spaceKey=DEV&limit=50");
+        assertThat(renamed.path("DEV", now, now, "a/b")).endsWith("?spaceKey=DEV&pageToken=a%2Fb&limit=50");
+        AnalyticsQueries.Query first = new AnalyticsQueries.Query("x", "/rest/x?cursor={nextPageToken}&a=1");
+        assertThat(first.path("DEV", now, now)).isEqualTo("/rest/x?a=1");
+        assertThat(first.path("DEV", now, now, "t")).isEqualTo("/rest/x?cursor=t&a=1");
+        AnalyticsQueries.Query only = new AnalyticsQueries.Query("x", "/rest/x?cursor={nextPageToken}");
+        assertThat(only.path("DEV", now, now)).isEqualTo("/rest/x");
+        AnalyticsQueries.Query none = new AnalyticsQueries.Query("x", "/rest/x?a=1");
+        assertThat(none.path("DEV", now, now, "t")).isEqualTo("/rest/x?a=1&nextPageToken=t");
+        assertThat(AnalyticsQueries.DEFAULT.contentViews().pathTemplate()).endsWith("&nextPageToken={nextPageToken}");
+    }
+
+    @Test
     void aRepeatedTokenWithNewEntriesIsIncompleteTooAndEveryListPageIsACheckpoint() {
         String period = period(CLOCK.instant(), AnalyticsQueries.DEFAULT_DAYS);
         wiki.stub(contentViews(period, null), "{\"contentViews\":[{\"id\":1,\"views\":3}],\"nextPageToken\":\"x\"}");

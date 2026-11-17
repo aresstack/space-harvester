@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.KeyboardFocusRing;
+
 import javax.swing.Icon;
 import javax.swing.JButton;
 import java.awt.Dimension;
@@ -8,6 +10,9 @@ import java.awt.Graphics;
 /**
  * Ein runder Knopf nur mit Symbol; der Text steht im Tooltip und als zugänglicher Name (Bildschirmleser, Tastatur:
  * Tab und Leertaste). Durchsichtig in Ruhe, beim Darüberfahren der Kreis aus {@link RoundHover}.
+ *
+ * <p>Den Fokus zeigt der Kreis nur, wenn er über die Tastatur kam (Tab, Umschalt+Tab). Nach einem Mausklick und wenn
+ * ein Menü den Fokus beim Schließen zurückgibt, bleibt der Knopf durchsichtig; sonst blieb ⋯ nach dem Menü gelb.
  */
 public final class IconButton extends JButton {
 
@@ -15,6 +20,8 @@ public final class IconButton extends JButton {
     /** Kantenlänge in engen Zeilen wie der Statuszeile ({@link #compact()}). */
     static final int COMPACT_SIZE = 22;
     private int size = SIZE;
+    /** Den Fokus zeigt der Kreis nur, wenn er über die Tastatur kam. */
+    private final KeyboardFocusRing focusRing;
 
     public IconButton(Icon icon, String tooltip) {
         super(icon);
@@ -26,11 +33,17 @@ public final class IconButton extends JButton {
         setOpaque(false);
         setRolloverEnabled(true);
         setForeground(Comic.INK);
+        focusRing = KeyboardFocusRing.install(this);
+    }
+
+    /** Ob der Kreis den Fokus zeigen würde, sobald der Knopf ihn hat (für Tests). */
+    boolean showsKeyboardFocus() {
+        return focusRing.fromKeyboard();
     }
 
     @Override
     protected void paintComponent(Graphics graphics) {
-        if (isEnabled() && (getModel().isRollover() || getModel().isPressed() || hasFocus())) {
+        if (isEnabled() && (getModel().isRollover() || getModel().isPressed() || focusRing.shown())) {
             RoundHover.paint(graphics, 0, 0, getWidth(), getHeight(), getModel().isPressed());
         }
         super.paintComponent(graphics);

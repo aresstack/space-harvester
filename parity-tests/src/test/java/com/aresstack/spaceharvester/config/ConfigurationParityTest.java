@@ -107,6 +107,11 @@ class ConfigurationParityTest {
                 documents:
                   enabled: false
                   embedding-max-chars: 3000000000
+              statements:
+                simplification:
+                  mode: always
+                  parallel: 3
+                  model: step-model
             """;
 
     private static final String TOKEN = "parity-token";
@@ -179,6 +184,12 @@ class ConfigurationParityTest {
         assertThat(app.enrichment()).isEqualTo(service2.enrichment())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.EnrichmentSettings(false,
                         3_000_000_000L));
+
+        // ADR 0032, FL3: Vorstufe „Sätze vereinfachen“, beim Dienst über withSyncRules.
+        assertThat(app.simplification()).isEqualTo(service2.simplification())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
+                        com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 3,
+                        "step-model"));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder
