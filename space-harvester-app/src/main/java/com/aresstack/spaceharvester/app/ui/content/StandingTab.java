@@ -612,8 +612,8 @@ final class StandingTab extends JPanel {
      * ändern die wirksame Stufe, also auch „unsicher“).
      */
     static boolean rereads(JobStatus status) {
-        return status.state().terminal() && (status.type() == JobType.STATEMENT_ANALYSIS
-                || "STATEMENT_CHECK".equals(status.type().name()));
+        return status.state().terminal()
+                && (status.type() == JobType.STATEMENT_ANALYSIS || status.type() == JobType.STATEMENT_CHECK);
     }
 
     /** Filter, Träger oder Suche geändert: die Zeilen im Hintergrund neu bilden, nichts neu lesen. */
@@ -994,8 +994,22 @@ final class StandingTab extends JPanel {
             if (simplified != null && !simplified.isBlank()) {
                 lines.add("Vereinfachter Satz: „" + simplified.strip() + "“");
             }
+        } else if (entry.origin() == ParsedStatements.Origin.MODELL) {
+            // ADR 0032, FL4: aus dem Satz, mit dem das Modell eine andere Aussage vervollständigt hat.
+            lines.add(CheckTexts.ORIGIN_LABEL + ": " + CheckTexts.ORIGIN_MODEL);
+            String corrected = entry.statement().derivation().simplifiedSentence();
+            if (corrected != null && !corrected.isBlank()) {
+                lines.add(CheckTexts.MODEL_SENTENCE_LABEL + ": „" + corrected.strip() + "“");
+            }
         } else {
             lines.add("Herkunft: Originalsatz");
+        }
+        if (entry.statement().check() != null) {
+            lines.add(CheckTexts.VERDICT_LABEL + ": " + CheckTexts.verdict(entry.statement().check()));
+            String lowered = CheckTexts.lowered(entry.statement());
+            if (lowered != null) {
+                lines.add(CheckTexts.QUALITY_LABEL + ": " + lowered);
+            }
         }
         if (entry.uncertain()) {
             lines.add("Unsicher: zählt nicht für den Stand der Seite.");
