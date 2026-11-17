@@ -1482,6 +1482,16 @@ public final class Workspace {
         return harvester.changeLog().report(caller, sourceId, updateId, spaceKey);
     }
 
+    /**
+     * Ein Ausschnitt des Update-Texts einer Ebene (ADR 0031, {@code update-text/v1}): {@code limit} Seiten ab
+     * {@code offset} samt Bericht mit Unterschieden und Lage jeder Seite im Text. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.changelog.UpdateText updateText(String sourceId, String updateId,
+                                                                                    String spaceKey, int offset,
+                                                                                    int limit) {
+        return harvester.changeLog().updateText(caller, sourceId, updateId, spaceKey, offset, limit);
+    }
+
     /** Der Änderungsbericht eines Updates (ADR 0030): die geänderten Seiten nach Art; bei der Erstbefüllung nur Zähler. */
     public com.aresstack.spaceharvester.application.changelog.ChangeReport changeReport(String sourceId,
                                                                                        String updateId) {

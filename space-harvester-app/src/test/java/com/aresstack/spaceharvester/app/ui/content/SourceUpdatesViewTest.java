@@ -9,6 +9,10 @@ import com.aresstack.spaceharvester.application.changelog.SummaryPage;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
+import com.aresstack.spaceharvester.application.changelog.UpdateText;
+import com.aresstack.spaceharvester.application.changelog.ContentDiff;
+import com.aresstack.spaceharvester.application.changelog.ContentChange;
+import com.aresstack.spaceharvester.application.changelog.ParagraphChange;
 import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
@@ -88,6 +92,25 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void theTextTabShowsTheChangedParagraphsByHeadingAndLoadsLargeUpdatesInWindows() {
+        actions.textLimit = 2;
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("16.11.2026, 18:30 · angelo");
+
+        List<String> texts = view.reportTexts();
+        assertThat(texts).containsSubsequence("Betriebshandbuch", "Betrieb › Fristen", "~ Frist 10 Tage → Frist 14 Tage",
+                "+ Neu: Notfallkontakt", "− Alter Absatz");
+        assertThat(texts).as("erst zwei von drei Seiten").doesNotContain("Alte Seite").contains("Weitere 1 Seite laden");
+        assertThat(view.copyText()).as("Kopierform ist der Update-Text des Core").startsWith("# Update wiki")
+                .contains("## Betriebshandbuch");
+
+        assertThat(view.clickReportLink("Weitere 1 Seite laden")).isTrue();
+        assertThat(actions.textOffsets).endsWith(0, 2);
+        assertThat(view.reportTexts()).contains("Alte Seite").doesNotContain("Weitere 1 Seite laden");
+        assertThat(view.copyText()).contains("## Alte Seite");
+    }
+
+    @Test
     void aSpaceShowsTheSameUpdatesAsAnExcerptAndSummarizesForItsLevel() {
         summary.source("wiki", "DEV", "DEV");
 
@@ -141,7 +164,7 @@ class SourceUpdatesViewTest {
                 .contains("Außerdem im Bestand: 4 Inhalte erstmals lokal geladen, 1 geänderter Inhalt nachgeladen.");
         assertThat(texts).as("geladen und nachgeladen sind keine Änderungen der Quelle")
                 .noneMatch(text -> text.startsWith("Erstmals geladen") || text.startsWith("Nachgeladen"));
-        assertThat(view.copyText()).contains("Geändert\n- Betriebshandbuch");
+        assertThat(view.copyText()).as("Update-Text des Core").contains("## Betriebshandbuch");
     }
 
     @Test
@@ -495,6 +518,44 @@ class SourceUpdatesViewTest {
                     page("12", ChangeKind.RENAMED, "Kurzbeschreibung DATENH", List.of("CLUK"), "Kurzbeschreibung",
                             null, null, false),
                     page("13", ChangeKind.REMOVED, "Alte Seite", List.of(), null, null, null, false)));
+        }
+
+        int textLimit = SourceUpdatesView.TEXT_PAGES;
+        final List<Integer> textOffsets = new ArrayList<>();
+
+        /** Wie der Core: der Bericht mit Unterschieden, seitenweise, dazu die Textform. */
+        @Override
+        public UpdateText updateText(String sourceId, String updateId, String spaceKey, int offset, int limit) {
+            textOffsets.add(offset);
+            ChangeReport full = report(sourceId, updateId, spaceKey);
+            List<ReportedPage> pages = new ArrayList<>();
+            for (ReportedPage page : full.pages()) {
+                pages.add(page.pageId().equals("11") ? withDiff(page) : page);
+            }
+            int end = Math.min(pages.size(), offset + Math.min(limit, textLimit));
+            List<ReportedPage> window = pages.subList(Math.min(offset, end), end);
+            StringBuilder markdown = new StringBuilder(offset == 0 ? "# Update wiki\n\n" : "");
+            List<UpdateText.Section> sections = new ArrayList<>();
+            for (ReportedPage page : window) {
+                int start = markdown.length();
+                markdown.append("## ").append(page.title()).append('\n');
+                sections.add(new UpdateText.Section(page.pageId(), start, markdown.length() - start, page.kind()));
+            }
+            return new UpdateText(UpdateText.FORMAT, sourceId, updateId, spaceKey, pages.size(), offset,
+                    new ChangeReport(full.update(), window), markdown.toString(), sections);
+        }
+
+        private static ReportedPage withDiff(ReportedPage p) {
+            ContentDiff diff = new ContentDiff(ContentDiff.Status.AVAILABLE, List.of(new ContentChange("wiki", p.pageId(),
+                    "6", "7", SECOND, List.of(
+                    new ParagraphChange(ParagraphChange.Kind.CHANGED, "Frist 10 Tage", "Frist 14 Tage",
+                            List.of("Betrieb", "Fristen")),
+                    new ParagraphChange(ParagraphChange.Kind.ADDED, null, "Neu: Notfallkontakt",
+                            List.of("Betrieb", "Fristen")),
+                    new ParagraphChange(ParagraphChange.Kind.REMOVED, "Alter Absatz", null, List.of())), false)));
+            return new ReportedPage(p.sourceId(), p.spaceKey(), p.pageId(), p.kind(), p.kinds(), p.title(), p.path(),
+                    p.url(), p.oldVersion(), p.newVersion(), p.oldTitle(), p.newTitle(), p.oldParentId(),
+                    p.newParentId(), p.oldSpaceKey(), p.newSpaceKey(), p.contentPending(), p.at(), diff);
         }
 
         @Override

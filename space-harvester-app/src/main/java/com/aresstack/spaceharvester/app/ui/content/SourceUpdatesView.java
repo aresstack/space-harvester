@@ -11,6 +11,10 @@ import com.aresstack.spaceharvester.application.changelog.ChangeKind;
 import com.aresstack.spaceharvester.application.changelog.ChangeLogListener;
 import com.aresstack.spaceharvester.application.changelog.ChangeReport;
 import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
+import com.aresstack.spaceharvester.application.changelog.ContentChange;
+import com.aresstack.spaceharvester.application.changelog.ContentDiff;
+import com.aresstack.spaceharvester.application.changelog.ParagraphChange;
+import com.aresstack.spaceharvester.application.changelog.UpdateText;
 import com.aresstack.spaceharvester.application.changelog.ReportedPage;
 import com.aresstack.spaceharvester.application.changelog.SummaryPage;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
@@ -107,6 +111,10 @@ final class SourceUpdatesView extends JPanel {
     private String selected;
     /** Der gewählte Space der Quelle, {@code null} für die ganze Quelle. */
     private String spaceKey;
+    /** „Text“: der Update-Text des Core (ADR 0031), seitenweise nachgeladen; leer in der Leseansicht. */
+    private final List<UpdateText> windows = new ArrayList<>();
+    /** Seiten je Ausschnitt des Update-Texts: große Updates blockieren den Reiter nicht. */
+    static final int TEXT_PAGES = 50;
     private ChangeReport shown;
     /** Die Zusammenfassung des gezeigten Updates, {@code null} ohne. */
     private UpdateSummary summary;
@@ -227,6 +235,7 @@ final class SourceUpdatesView extends JPanel {
         spaceKey = id == null || space == null || space.isBlank() ? null : space;
         updates = List.of();
         selected = null;
+        windows.clear();
         shown = null;
         summary = null;
         forgetRun();
@@ -330,9 +339,15 @@ final class SourceUpdatesView extends JPanel {
         int mine = ++generation;
         boolean summaries = mode == Mode.SUMMARY;
         String space = spaceKey;
-        runner.run(() -> new Loaded(current.report(id, updateId, space),
-                summaries ? current.summary(id, updateId, space) : null,
-                summaries && current.summariesAvailable()), found -> {
+        runner.run(() -> {
+            if (!summaries) {
+                // „Text“: der Update-Text mit den geänderten Absätzen, erster Ausschnitt.
+                UpdateText text = current.updateText(id, updateId, space, 0, TEXT_PAGES);
+                return new Loaded(text.report(), null, false, text);
+            }
+            return new Loaded(current.report(id, updateId, space), current.summary(id, updateId, space),
+                    current.summariesAvailable(), null);
+        }, found -> {
             if (mine != generation) {
                 return;
             }
@@ -340,6 +355,10 @@ final class SourceUpdatesView extends JPanel {
                 return;
             }
             java.awt.Point position = keepPosition ? viewPosition() : new java.awt.Point();
+            windows.clear();
+            if (found.text() != null) {
+                windows.add(found.text());
+            }
             shown = found.report();
             summary = found.summary();
             available = found.available();
@@ -353,7 +372,37 @@ final class SourceUpdatesView extends JPanel {
         });
     }
 
-    private record Loaded(ChangeReport report, UpdateSummary summary, boolean available) {
+    private record Loaded(ChangeReport report, UpdateSummary summary, boolean available, UpdateText text) {
+    }
+
+    /** Lädt den nächsten Ausschnitt des Update-Texts und hängt seine Seiten an; die Rollposition bleibt. */
+    private void loadMore() {
+        Actions current = actions.get();
+        UpdateText last = windows.isEmpty() ? null : windows.getLast();
+        if (current == null || last == null || !last.more()) {
+            return;
+        }
+        String id = sourceId;
+        String space = spaceKey;
+        String updateId = last.updateId();
+        int offset = last.offset() + last.report().pages().size();
+        int mine = ++generation;
+        runner.run(() -> current.updateText(id, updateId, space, offset, TEXT_PAGES), next -> {
+            if (mine != generation || !updateId.equals(selected)) {
+                return;
+            }
+            java.awt.Point position = viewPosition();
+            windows.add(next);
+            List<ReportedPage> pages = new ArrayList<>(shown.pages());
+            pages.addAll(next.report().pages());
+            shown = new ChangeReport(shown.update(), pages);
+            renderReport(shown);
+            restore(position);
+        }, failure -> {
+            if (mine == generation) {
+                onStatus.accept("Weitere Seiten nicht geladen: " + Problems.describe(failure).title());
+            }
+        });
     }
 
     /** Ein gestarteter Auftrag „Zusammenfassen“; {@code jobId} ist {@code null}, solange der Start unterwegs ist. */
@@ -587,9 +636,23 @@ final class SourceUpdatesView extends JPanel {
                 add(reportBody, kind);
                 for (ReportedPage page : group.getValue()) {
                     add(reportBody, pageRow(page));
+                    JComponent diff = diffBlock(page);
+                    if (diff != null) {
+                        add(reportBody, diff);
+                    }
                     reportBody.add(Box.createVerticalStrut(4));
                 }
             }
+        }
+        UpdateText last = windows.isEmpty() ? null : windows.getLast();
+        if (last != null && last.more()) {
+            int rest = last.totalPages() - last.offset() - last.report().pages().size();
+            JLabel more = new JLabel("Weitere " + pages(rest) + " laden");
+            more.setFont(Comic.semiBold(13f));
+            more.setForeground(Comic.BLUE);
+            more.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+            clickable(this::loadMore, "Die nächsten " + Math.min(rest, TEXT_PAGES) + " Seiten des Updates laden", more);
+            add(reportBody, more);
         }
         String local = localCounts(update);
         if (!local.isEmpty()) {
@@ -701,6 +764,53 @@ final class SourceUpdatesView extends JPanel {
             clickable(() -> onOpen.accept(page), "Seite öffnen", parts.toArray(Component[]::new));
         }
         return row;
+    }
+
+    /**
+     * Die geänderten Absätze einer Seite (ADR 0031), nach Überschriftenpfad gruppiert: „+“ neu, „−“ entfallen, „~“ alt
+     * → neu. Was fehlt, steht als Zustand da; geschätzt wird nichts. {@code null} ohne Unterschied.
+     */
+    private static JComponent diffBlock(ReportedPage page) {
+        ContentDiff diff = page.diff();
+        if (diff == null) {
+            return null;
+        }
+        JPanel block = new JPanel();
+        block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
+        block.setOpaque(false);
+        block.setBorder(BorderFactory.createEmptyBorder(0, 20, 4, 8));
+        switch (diff.status()) {
+            case NOT_PERMITTED -> add(block, Comic.wrapped("Den Inhalt darfst du nicht lesen.", Comic.MUTED, 12.5f));
+            case PREVIOUS_MISSING -> add(block, Comic.wrapped("Kein Vergleich möglich: Der bisherige Inhalt war nicht "
+                    + "lokal, als der neue kam.", Comic.MUTED, 12.5f));
+            default -> {
+            }
+        }
+        List<String> headings = null;
+        for (ContentChange step : diff.steps()) {
+            for (ParagraphChange paragraph : step.paragraphs()) {
+                if (!paragraph.headings().equals(headings)) {
+                    headings = paragraph.headings();
+                    if (!headings.isEmpty()) {
+                        JLabel path = new JLabel(String.join(" › ", headings));
+                        path.setFont(Comic.semiBold(12f));
+                        path.setForeground(Comic.MUTED);
+                        path.setBorder(BorderFactory.createEmptyBorder(4, 0, 1, 0));
+                        add(block, path);
+                    }
+                }
+                add(block, switch (paragraph.kind()) {
+                    case ADDED -> Comic.wrapped("+ " + paragraph.after(), Comic.GREEN, 12.5f);
+                    case REMOVED -> Comic.wrapped("− " + paragraph.before(), Comic.RED, 12.5f);
+                    case CHANGED -> Comic.wrapped("~ " + paragraph.before() + " → " + paragraph.after(), Comic.TEXT,
+                            12.5f);
+                });
+            }
+            if (step.truncated()) {
+                add(block, Comic.wrapped("… gekürzt", Comic.MUTED, 12f));
+            }
+        }
+        return block.getComponentCount() == 0 ? null : block;
     }
 
     private static boolean openable(ReportedPage page) {
@@ -851,6 +961,12 @@ final class SourceUpdatesView extends JPanel {
             }
             return text.toString();
         }
+        if (!windows.isEmpty()) {
+            // Die feste Textform des Core (update-text/v1) ist die Kopierform des Reiters „Text“.
+            StringBuilder markdown = new StringBuilder();
+            windows.forEach(window -> markdown.append(window.markdown()));
+            return markdown.toString().strip();
+        }
         if (shown.update().initial()) {
             text.append('\n').append("Erstbefüllung: ").append(pages(shown.update().pages()));
         }
@@ -879,6 +995,9 @@ final class SourceUpdatesView extends JPanel {
         List<ChangeUpdate> updates(String sourceId, String spaceKey);
 
         ChangeReport report(String sourceId, String updateId, String spaceKey);
+
+        /** Ein Ausschnitt des Update-Texts (ADR 0031): {@code limit} Seiten ab {@code offset}, mit Unterschieden. */
+        UpdateText updateText(String sourceId, String updateId, String spaceKey, int offset, int limit);
 
         Subscription subscribe(String sourceId, ChangeLogListener listener);
 
@@ -910,6 +1029,12 @@ final class SourceUpdatesView extends JPanel {
                 @Override
                 public ChangeReport report(String sourceId, String updateId, String spaceKey) {
                     return workspace.changeReport(sourceId, updateId, spaceKey);
+                }
+
+                @Override
+                public UpdateText updateText(String sourceId, String updateId, String spaceKey, int offset,
+                                             int limit) {
+                    return workspace.updateText(sourceId, updateId, spaceKey, offset, limit);
                 }
 
                 @Override
@@ -1051,6 +1176,11 @@ final class SourceUpdatesView extends JPanel {
                 collect(child, texts);
             }
         }
+    }
+
+    /** Klickt einen Verweis (etwa „Weitere … laden“) im Bericht an. */
+    boolean clickReportLink(String text) {
+        return clickLink(reportBody, text);
     }
 
     /** Klickt die Seite mit diesem Titel im Bericht an; {@code false}, wenn sie nicht anklickbar ist. */
