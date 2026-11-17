@@ -119,6 +119,45 @@ class StandingTabTest {
                 + "Analysen.");
     }
 
+    @Test
+    void theTrashDeletesTheAnalysesOfTheChosenNodeAfterYesAndRereads() {
+        Fixture fixture = new Fixture(view());
+        StandingTab tab = fixture.shownTab();
+        List<String> questions = new ArrayList<>();
+        tab.confirmDeleteWith(question -> {
+            questions.add(question);
+            return false;
+        });
+        assertThat(tab.deleteAnalysesButton().getToolTipText()).isEqualTo("Aussagen-Analysen löschen");
+
+        // Nein: nichts geschieht.
+        tab.deleteAnalysesButton().doClick();
+        assertThat(questions).containsExactly("Wirklich die Aussagen-Analysen von „DEV“ samt Unterseiten löschen? "
+                + "Die Seiten bleiben.");
+        assertThat(fixture.deletions).isEmpty();
+
+        // Ja: der gewählte Knoten geht an den Core, der Beobachter lässt neu lesen, die Zahl steht in der Statuszeile.
+        tab.confirmDeleteWith(question -> true);
+        fixture.deleted = 4;
+        int reads = fixture.reads.get();
+        tab.deleteAnalysesButton().doClick();
+        flush();
+        assertThat(fixture.deletions).containsExactly(SPACE);
+        assertThat(fixture.reads.get()).isGreaterThan(reads);
+        assertThat(lines(tab)).isEmpty();
+        assertThat(fixture.status.get()).isEqualTo("4 Aussagen-Analysen gelöscht · Keine analysierten Aussagen in "
+                + "der Auswahl");
+        assertThat(tab.placeholder()).isEqualTo("Keine analysierten Aussagen in der Auswahl");
+
+        // Nichts mehr da: kein Neulesen, eine Zeile dazu.
+        fixture.deleted = 0;
+        tab.deleteAnalysesButton().doClick();
+        assertThat(fixture.status.get()).startsWith("Keine Aussagen-Analysen unter „DEV“");
+
+        assertThat(StandingTab.deleteQuestion(ExportPanel.Selection.ALL))
+                .isEqualTo("Wirklich die Aussagen-Analysen aller Wissensquellen löschen? Die Seiten bleiben.");
+    }
+
     private static StatusQuoEntry stale(StatusQuoEntry e) {
         return new StatusQuoEntry(e.page(), e.statement(), e.kind(), e.subject(), e.subjectKey(), e.situation(),
                 e.quality(), e.standing(), e.decision(), true);
@@ -650,7 +689,10 @@ class StandingTabTest {
     // ---- Hilfen
 
     private static final class Fixture {
-        final StatusQuoView view;
+        StatusQuoView view;
+        final List<ExportPanel.Selection> deletions = new ArrayList<>();
+        final AtomicReference<Runnable> analysesListener = new AtomicReference<>();
+        int deleted;
         final AtomicInteger reads = new AtomicInteger();
         final AtomicReference<Runnable> standingListener = new AtomicReference<>();
         final AtomicReference<String> status = new AtomicReference<>();
@@ -720,6 +762,27 @@ class StandingTabTest {
                 public ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled) {
                     topics.add(String.valueOf(topic));
                     return StandingTabTest.reading(topic, Fixture.this.view);
+                }
+
+                @Override
+                public int deleteAnalyses(ExportPanel.Selection selection) {
+                    deletions.add(selection);
+                    int count = deleted;
+                    if (count > 0) {
+                        Fixture.this.view = new StatusQuoView(List.of(), List.of(), List.of(), Map.of(), Map.of(),
+                                List.of());
+                        Runnable listener = analysesListener.get();
+                        if (listener != null) {
+                            listener.run();
+                        }
+                    }
+                    return count;
+                }
+
+                @Override
+                public Subscription subscribeAnalyses(Runnable listener) {
+                    analysesListener.set(listener);
+                    return Subscription.NONE;
                 }
 
                 @Override

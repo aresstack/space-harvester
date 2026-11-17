@@ -3,6 +3,10 @@ package com.aresstack.spaceharvester.app.ui.content;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Dialogs;
+import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.IconButton;
+import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.ParserModelSetup;
 import com.aresstack.spaceharvester.app.ui.Problems;
@@ -37,6 +41,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -52,6 +57,9 @@ import java.util.function.Supplier;
 final class StatementsTab extends JPanel {
 
     static final String ANALYZE = "Mit MaltParser analysieren";
+    static final String DELETE_TIP = "Aussagen-Analyse dieser Seite löschen";
+    static final String DELETE_QUESTION = "Wirklich die Aussagen-Analyse dieser Seite samt Anhängen löschen? Die Seite "
+            + "bleibt.";
     static final String CANCEL = "Abbrechen";
     static final String NOT_ANALYSED = "Noch nicht analysiert. „" + ANALYZE + "“ zerlegt die Sätze dieser Seite "
             + "lokal; beim ersten Mal wird das Modell geladen (einige Sekunden).";
@@ -97,6 +105,12 @@ final class StatementsTab extends JPanel {
     /** „Aussagen prüfen“ (ADR 0032, FL4) für die offene Seite; nur mit aktueller Analyse. */
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton check = Comic.button(CheckTexts.JOB,
             "Lässt das Chat-Modell die Aussagen dieser Seite beurteilen; nur für Seiten mit KI-Freigabe");
+    /** „Aussagen-Analyse löschen“ für die offene Seite (Angelo 17.11.2026); nur mit gespeicherter Analyse. */
+    private final IconButton delete = new IconButton(Glyph.TRASH, DELETE_TIP);
+    private Predicate<String> confirmDelete = question -> Dialogs.confirm(this, "Aussagen-Analyse löschen?",
+            question);
+    /** Ob eine Analyse gespeichert ist (aktuell oder veraltet): nur dann lässt sie sich löschen. */
+    private boolean stored;
     /** Ob die angezeigte Analyse aktuell ist: nur dann lässt sie sich prüfen. */
     private boolean current;
     /** „mit Vorstufe“ (ADR 0032, FL3): gilt für den nächsten Klick auf „Mit MaltParser analysieren“. */
@@ -152,8 +166,11 @@ final class StatementsTab extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         simplify.setToolTipText(SIMPLIFY_TIP);
-        head.badge("Experimentell", Comic.PETROL).action(progress, cancel, analyze).copy(copyText::toString);
+        head.badge("Experimentell", Comic.PETROL).action(progress, cancel, analyze, delete)
+                .copy(copyText::toString);
         analyze.addActionListener(e -> analyze());
+        delete.addActionListener(e -> deleteAnalysis());
+        delete.setEnabled(false);
         check.addActionListener(e -> check());
         check.setEnabled(false);
         cancel.addActionListener(e -> cancelRun());
@@ -410,7 +427,9 @@ final class StatementsTab extends JPanel {
         hint.setText(message);
         analyze.setEnabled(false);
         current = false;
+        stored = false;
         check.setEnabled(false);
+        delete.setEnabled(false);
         list.revalidate();
         list.repaint();
     }
@@ -527,6 +546,44 @@ final class StatementsTab extends JPanel {
     }
 
     /** Eine Meldung zum letzten Vorgang in der Statuszeile; die Aussagen bleiben stehen. */
+    /**
+     * Löscht nach der Rückfrage die gespeicherte Aussagen-Analyse der offenen Seite samt Anhängen und enthaltenen
+     * Dateien; die Seite bleibt. Danach zeigt der Reiter „Nicht analysiert“, Graph und Stand lesen neu.
+     */
+    void deleteAnalysis() {
+        Actions actions = workspace.get();
+        PageSnapshot page = snapshot;
+        if (actions == null || page == null || running != null || !stored || !confirmDelete.test(DELETE_QUESTION)) {
+            return;
+        }
+        delete.setEnabled(false);
+        int mine = generation;
+        runner.run(() -> actions.deleteAnalysis(page.key()), deleted -> {
+            if (mine != generation) {
+                return;
+            }
+            status(deleted == 0 ? "Keine Aussagen-Analyse zu dieser Seite"
+                    : Texts.count(deleted, "Aussagen-Analyse", "Aussagen-Analysen") + " gelöscht");
+            reload();
+            onAnalysed.run();
+        }, error -> {
+            if (mine != generation) {
+                return;
+            }
+            delete.setEnabled(stored);
+            status("Aussagen-Analyse nicht gelöscht: " + error.getClass().getSimpleName());
+        });
+    }
+
+    /** Für Tests: statt des Dialogs; bekommt die Frage. */
+    void confirmDeleteWith(Predicate<String> confirm) {
+        confirmDelete = Objects.requireNonNull(confirm, "confirm");
+    }
+
+    IconButton deleteButton() {
+        return delete;
+    }
+
     private void status(String message) {
         explanation = message;
         onStatus.accept(message);
@@ -538,6 +595,7 @@ final class StatementsTab extends JPanel {
             running = null;
             analyze.setEnabled(snapshot != null && !modelMissing());
             check.setEnabled(snapshot != null && current);
+            delete.setEnabled(snapshot != null && stored);
             cancel.setVisible(false);
             progress.setText(" ");
         }
@@ -618,7 +676,9 @@ final class StatementsTab extends JPanel {
     void render(PageStatements statements, List<KnowledgeGraph.Link> links) {
         analyze.setEnabled(running == null && snapshot != null && !modelMissing());
         current = statements.state() == PageStatements.State.CURRENT && statements.analysis() != null;
+        stored = statements.analysis() != null;
         check.setEnabled(running == null && snapshot != null && current);
+        delete.setEnabled(running == null && snapshot != null && stored);
         list.removeAll();
         lines.clear();
         jumps.clear();
@@ -1022,6 +1082,14 @@ final class StatementsTab extends JPanel {
             return Optional.empty();
         }
 
+        /**
+         * Löscht die gespeicherte Aussagen-Analyse der Seite samt Anhängen und enthaltenen Dateien; die Seite bleibt.
+         * Liefert die Zahl der gelöschten Analysen.
+         */
+        default int deleteAnalysis(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+            return 0;
+        }
+
         /** „Aussagen prüfen“: Das Modell beurteilt die Aussagen der gespeicherten, aktuellen Analyse der Seite. */
         default PageStatements checkStatements(PageSnapshot page, java.util.function.BooleanSupplier cancelled) {
             return statements(page);
@@ -1035,6 +1103,11 @@ final class StatementsTab extends JPanel {
                 return null;
             }
             return new Actions() {
+                @Override
+                public int deleteAnalysis(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                    return workspace.deleteStatementAnalysis(key);
+                }
+
                 @Override
                 public Optional<CheckUnavailableException.Reason> checkUnavailable(
                         com.aresstack.spaceharvester.application.snapshot.PageKey key) {
