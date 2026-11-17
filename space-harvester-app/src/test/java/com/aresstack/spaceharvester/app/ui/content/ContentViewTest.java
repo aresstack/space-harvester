@@ -71,6 +71,28 @@ class ContentViewTest {
         view = onEdt(() -> new ContentView(context));
     }
 
+    /** Bild für die Abnahme: Quelle links gewählt, „Analysen“ zeigt die drei Unterreiter des Stands. */
+    @Test
+    void renderSourceAnalyses() throws Exception {
+        String directory = System.getenv("SCREENSHOTS_DIR");
+        org.junit.jupiter.api.Assumptions.assumeTrue(directory != null && !directory.isBlank());
+        Files.createDirectories(Path.of(directory));
+        PageDetailPanel detail = view.detail();
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            detail.tabs().select("Analysen");
+            return null;
+        });
+        Thread.sleep(2000);
+        onEdt(() -> {
+            javax.swing.JPanel page = new javax.swing.JPanel(new java.awt.BorderLayout());
+            page.add(view.tabBar(), java.awt.BorderLayout.NORTH);
+            page.add(view.component(), java.awt.BorderLayout.CENTER);
+            AnalysisTabsScreenshotTest.write(page, Path.of(directory, "analysen-quelle-1280.png"), 640);
+            return null;
+        });
+    }
+
     @AfterEach
     void close() throws Exception {
         if (context != null) {
@@ -219,7 +241,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Stand", "Erweitert", "Export", "Chat");
+                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
@@ -235,7 +257,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Stand", "Erweitert", "Export", "Chat");
+        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -250,13 +272,29 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.export().selection().sourceId())).isEqualTo("handbuch");
-        // „Stand“ (ADR 0032) zeigt wie „Export“ seine eigene Karte zur Auswahl, mit Hilfe als ?-Knopf oben rechts.
+        // Der Stand (ADR 0032) hat kein eigenes Symbol: „Analysen“ zeigt ihn, solange links keine Seite gewählt ist
+        // (Quelle, Space, Wissensquellen-Kopf), mit Hilfe als ?-Knopf oben rechts (Angelo 17.11.2026).
         onEdt(() -> {
-            detail.tabs().select("Stand");
+            detail.tabs().select("Analysen");
             return null;
         });
+        assertThat(onEdt(() -> detail.showsStanding())).isTrue();
         assertThat(onEdt(() -> detail.standing().isVisible())).isTrue();
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        // Eine Seite links: „Analysen“ zeigt wieder die Analysen der Seite.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", "DH", "p1", "Seite"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.showsStanding())).isFalse();
+        assertThat(onEdt(() -> detail.standing().isVisible())).isFalse();
+        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Absätze");
+        // Der Wissensquellen-Kopf: wieder der Stand.
+        onEdt(() -> {
+            view.selection(ExportPanel.Selection.ALL);
+            return null;
+        });
+        assertThat(onEdt(() -> detail.showsStanding())).isTrue();
         onEdt(() -> {
             detail.tabs().select("Leseansicht");
             return null;
@@ -368,7 +406,7 @@ class ContentViewTest {
     }
 
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
-        return java.util.stream.Stream.of("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Stand", "Erweitert",
+        return java.util.stream.Stream.of("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert",
                 "Export", "Chat").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 
@@ -553,6 +591,68 @@ class ContentViewTest {
         });
         await(() -> shown(detail, pages.get(1)));
         assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+    }
+
+    @Test
+    void backAndForwardAlsoReturnToSourcesAndSpacesChosenInTheTree() throws Exception {
+        // Angelo, 17.11.2026: Bereich um Bereich im Baum gewählt, dann Zurück – nichts passierte, weil nur Seiten im
+        // Verlauf standen. Jetzt stehen Quelle und Space darin, und Bereichsanzeige und Baum folgen jedem Schritt.
+        PageDetailPanel detail = view.detail();
+        String handbuch = space("handbuch");
+        String notizen = space("notizen");
+        String page = firstPage("handbuch", handbuch);
+        List<String> located = new java.util.ArrayList<>();
+        onEdt(() -> {
+            view.onLocate((source, space) -> located.add(source + "/" + space));
+            view.onLocatePage((source, pageId) -> located.add(source + "#" + pageId));
+            view.openPage("handbuch", page);
+            return null;
+        });
+        await(() -> shown(detail, page));
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("notizen", notizen, null, "notizen"));
+            view.selection(new ExportPanel.Selection("notizen", null, null, "notizen"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.showsLevel("notizen", null))).isTrue();
+        assertThat(onEdt(() -> detail.backButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+
+        assertThat(onEdt(detail::back)).isTrue();
+        assertThat(onEdt(() -> detail.showsLevel("notizen", notizen))).isTrue();
+        assertThat(located).containsExactly("notizen/" + notizen);
+        assertThat(onEdt(detail::back)).isTrue();
+        await(() -> shown(detail, page));
+        assertThat(located).containsExactly("notizen/" + notizen, "handbuch#" + page);
+        assertThat(onEdt(() -> detail.backButton().isEnabled())).isFalse();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isTrue();
+        // Der Baum wählt die Seite wieder: die Auswahl kommt an der Mitte an, ohne die gezeigte Seite zu leeren.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", handbuch, page, "handbuch 0"));
+            return null;
+        });
+        assertThat(onEdt(() -> shown(detail, page))).isTrue();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isTrue();
+
+        assertThat(onEdt(detail::forward)).isTrue();
+        assertThat(onEdt(() -> detail.showsLevel("notizen", notizen))).isTrue();
+        assertThat(onEdt(detail::forward)).isTrue();
+        assertThat(onEdt(() -> detail.showsLevel("notizen", null))).isTrue();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+
+        // Von der Quellenseite zu einer Seite einer anderen Quelle (Baum: Auswahl, dann Öffnen): Zurück führt zur Quelle.
+        String other = context.runtime().workspace().liveMetadata("handbuch", handbuch, null, 10).entries().get(1)
+                .page().pageId();
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", handbuch, other, "handbuch 1"));
+            view.openPage("handbuch", other);
+            return null;
+        });
+        await(() -> shown(detail, other));
+        assertThat(onEdt(detail::back)).isTrue();
+        assertThat(onEdt(() -> detail.showsLevel("notizen", null))).isTrue();
+        assertThat(onEdt(detail::forward)).isTrue();
+        await(() -> shown(detail, other));
     }
 
     @Test
