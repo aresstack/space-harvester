@@ -201,6 +201,17 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   `beziehungen-stand.tsv` (falsche Art und KEINE verletzt sind Fehler, nicht gefunden ist eine Lücke); Kontrollsatz
   „beschaffung“ nur berichtet.
 
+## Umsetzung FL5c (Phase mit Modell, Freigabe je Seite)
+
+- `GlossaryModelPhase`: fragt nur ungeprüfte, nicht manuelle Einträge ohne Einordnung oder mit `UNKLAR`, 25 je
+  Anfrage. Alles, was hinausgeht, wird nur über jetzt freigegebene Seiten gerechnet (`AiRelease#mayProcess`), vor jeder
+  Anfrage neu geprüft; Belege nur aus gezählten Aussagen des Originals, Zahlen grob gestuft.
+- Das Modell nennt nur eine Kennung; die Kategorie folgt aus einer festen Tabelle (`glossar-schnittstelle.md`).
+- Die KI-Einordnung trägt die Seiten ihrer Belege; Entzug (`ReleaseRecomputation`) setzt sie auf den Regelstand
+  zurück (`Glossary#withdrawAi`), der nächste Lauf fragt neu. ADR 0028 entsprechend angepasst.
+- Die Anweisung ist ungemessen. Die Tests nutzen nur ein Fake-Modell; Handantworten prüfen Verarbeitung und Vorrang,
+  nie Qualität.
+
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
   [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).

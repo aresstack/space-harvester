@@ -34,6 +34,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 /**
  * Das Fachglossar (#122 Stufe 2, ADR 0019): Fachbegriffe je Geltungsbereich mit Herkunft, Prüfstatus, Belegen und
@@ -539,6 +540,81 @@ public class Glossary {
             write(put, removed, audit);
         }
         return removed.size();
+    }
+
+    /**
+     * Einordnung durch das Modell (ADR 0032, FL5c), ohne Rechteprüfung, nur für Läufe: setzt sie an ungeprüften
+     * Vorschlägen des Geltungsbereichs, soweit der Vorrang es erlaubt (Mensch vor KI vor Regel; die KI ersetzt eine
+     * Regel nur bei {@code UNKLAR}). Belege, Stützung und Status bleiben.
+     *
+     * @param classified je Suchwert die Einordnung mit {@link GlossaryEntry.ClassifiedBy#AI} und den Seiten der Belege
+     * @return Anzahl geänderter Einträge
+     */
+    public synchronized int classify(String actor, RelationScope scope,
+                                     Map<String, GlossaryEntry.Classification> classified) {
+        Objects.requireNonNull(actor, "actor");
+        Objects.requireNonNull(scope, "scope");
+        List<GlossaryEntry> put = new ArrayList<>();
+        List<GlossaryStore.AuditEntry> audit = new ArrayList<>();
+        Instant now = clock.instant();
+        for (GlossaryEntry entry : inScope(scope)) {
+            GlossaryEntry.Classification proposed = classified.get(entry.normalized());
+            if (proposed == null || entry.status() != ReviewStatus.PROPOSED
+                    || entry.origin() == RelationOrigin.MANUAL) {
+                continue;
+            }
+            if (proposed.by() != GlossaryEntry.ClassifiedBy.AI) {
+                throw new IllegalArgumentException("Nur Einordnungen der KI");
+            }
+            GlossaryEntry.Classification next = nextClassification(entry.classification(), proposed);
+            if (Objects.equals(next, entry.classification())) {
+                continue;
+            }
+            GlossaryEntry fresh = entry.classified(next, entry.definitionProposal(), now);
+            put.add(fresh);
+            audit.add(new GlossaryStore.AuditEntry(fresh.id(), "classify", actor, now, fresh.status(),
+                    fresh.revision()));
+        }
+        if (!put.isEmpty()) {
+            write(put, List.of(), audit);
+        }
+        return put.size();
+    }
+
+    /**
+     * Entzug der KI-Freigabe (ADR 0028, je Beleg die Seite): Eine Einordnung der KI, von deren Belegseiten eine nicht
+     * mehr freigegeben ist, fällt auf den Regelstand zurück ({@code UNKLAR} der Regel, wenn die Regel den Eintrag
+     * stützt, sonst keine); Mensch und Regel bleiben. Der nächste Lauf fragt mit den übrigen Belegen neu.
+     *
+     * @param pages    Seiten, deren Freigabe sich geändert hat
+     * @param released ob eine Seite jetzt freigegeben ist
+     * @return Anzahl zurückgesetzter Einordnungen
+     */
+    public synchronized int withdrawAi(java.util.Collection<PageKey> pages, Predicate<PageKey> released) {
+        Objects.requireNonNull(pages, "pages");
+        Objects.requireNonNull(released, "released");
+        Set<PageKey> changed = new HashSet<>(pages);
+        List<GlossaryEntry> put = new ArrayList<>();
+        List<GlossaryStore.AuditEntry> audit = new ArrayList<>();
+        Instant now = clock.instant();
+        for (GlossaryEntry entry : store.all()) {
+            GlossaryEntry.Classification current = entry.classification();
+            if (current == null || current.by() != GlossaryEntry.ClassifiedBy.AI || current.pages().stream()
+                    .noneMatch(page -> changed.contains(page) && !released.test(page))) {
+                continue;
+            }
+            GlossaryEntry.Classification rule = entry.supportedBy().contains(RelationOrigin.RULE)
+                    ? new GlossaryEntry.Classification(GlossaryDerivation.Category.UNKLAR,
+                    GlossaryEntry.ClassifiedBy.RULE, null) : null;
+            GlossaryEntry fresh = entry.classified(rule, entry.definitionProposal(), now);
+            put.add(fresh);
+            audit.add(new GlossaryStore.AuditEntry(fresh.id(), "unclassify", "ai-release", now, fresh.status(),
+                    fresh.revision()));
+        }
+        if (!put.isEmpty()) {
+            write(put, List.of(), audit);
+        }
+        return put.size();
     }
 
     /** Die Einträge eines Geltungsbereichs, ohne Rechteprüfung; nur für Läufe. */

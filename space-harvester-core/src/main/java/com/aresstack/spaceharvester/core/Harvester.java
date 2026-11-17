@@ -687,7 +687,8 @@ public final class Harvester implements AutoCloseable {
                     cache::findHeader, key -> cache.find(key).flatMap(projector::project), glossary, chatModel,
                     ResolutionCache.inMemory(), jobs, termProcessor.version(), GlossaryClassification.Budget.DEFAULT,
                     who -> self.knowledgeGraph.analysed(who),
-                    () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(), clock);
+                    () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(),
+                    this.aiRelease::mayProcess, clock);
             // #336: Synonymerkennung auf Knopfdruck; Embedding- und Chat-Modell folgen der Konfiguration, Text nur
             // aus freigegebenen Quellen, Budget aus terms.synonyms.*.
             EmbeddingProcessor embeddingForTerms = embedding;
@@ -943,6 +944,8 @@ public final class Harvester implements AutoCloseable {
                     graph.withdrawChecks(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 }
                 documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
+                // ADR 0032, FL5c: KI-Einordnungen mit Belegen von entzogenen Seiten fallen auf den Regelstand zurück
+                this.glossary.withdrawAi(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
             });

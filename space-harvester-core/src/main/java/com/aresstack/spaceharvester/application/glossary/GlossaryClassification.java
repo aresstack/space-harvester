@@ -51,6 +51,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -95,6 +96,8 @@ public class GlossaryClassification {
     public static final String MODEL_SKIPPED = "GLOSSARY_MODEL_SKIPPED";
     /** Kennung des Ereignisses mit den Zahlen der Regelphase. */
     public static final String RULES_DONE = "GLOSSARY_RULES_DONE";
+    /** Kennung des Ereignisses „Modellphase je Seite fertig“ (ADR 0032, FL5c), nur Anzahlen. */
+    public static final String MODEL_DONE = "GLOSSARY_MODEL_DONE";
 
     /** Warum die Phase mit Modell ausfiel. */
     public enum SkipReason {
@@ -167,6 +170,7 @@ public class GlossaryClassification {
     private final Clock clock;
     private final Function<AccessContext, Collection<KnowledgeGraph.AnalysedPage>> analysed;
     private final Supplier<GlossaryRuleSettings> ruleSettings;
+    private final Predicate<PageKey> released;
     private final Set<String> started = ConcurrentHashMap.newKeySet();
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
 
@@ -200,7 +204,27 @@ public class GlossaryClassification {
                                   String processorVersion, Budget budget,
                                   Function<AccessContext, Collection<KnowledgeGraph.AnalysedPage>> analysed,
                                   Supplier<GlossaryRuleSettings> ruleSettings, Clock clock) {
+        this(catalog, index, access, headers, texts, glossary, model, cache, jobs, processorVersion, budget, analysed,
+                ruleSettings, null, clock);
+    }
+
+    /**
+     * Mit Regelphase und Modellphase je Seite (ADR 0032, FL5c): Die Phase mit Modell ordnet nur ein, was die Regel
+     * {@code UNKLAR} ließ, und schickt nur, was von freigegebenen Seiten stammt ({@link GlossaryModelPhase}).
+     *
+     * @param released ob eine Seite jetzt an den KI-Dienst darf ({@code AiRelease#mayProcess}); {@code null} lässt
+     *                 die bisherige Kandidatenwahl aus dem Begriffsindex
+     */
+    public GlossaryClassification(SourceCatalog catalog, TermIndex index, AccessGuard access,
+                                  Function<PageKey, Optional<PageHeader>> headers,
+                                  Function<PageKey, Optional<PageText>> texts, Glossary glossary,
+                                  AcronymExpansionModel model, ResolutionCache cache, Jobs jobs,
+                                  String processorVersion, Budget budget,
+                                  Function<AccessContext, Collection<KnowledgeGraph.AnalysedPage>> analysed,
+                                  Supplier<GlossaryRuleSettings> ruleSettings, Predicate<PageKey> released,
+                                  Clock clock) {
         this.analysed = analysed;
+        this.released = released;
         this.ruleSettings = Objects.requireNonNull(ruleSettings, "ruleSettings");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
@@ -313,15 +337,32 @@ public class GlossaryClassification {
      * Grund und Zahlen.
      */
     Outcome job(RelationScope scope, JobContext context, AccessContext caller) {
-        RuleRun rules = analysed == null ? null : rules(scope, context, caller);
+        List<KnowledgeGraph.AnalysedPage> pages = analysed == null ? null
+                : GlossaryOverview.inScope(analysed.apply(caller), scope.sourceId(), scope.spaceKey());
+        RuleRun rules = pages == null ? null : rules(scope, context, pages);
         if (rules != null && context != null) {
             context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, RULES_DONE,
                     "„" + RULE_PHASE + "“: " + rules.describe(), null, null, null));
         }
         SkipReason skipped = null;
         Glossary.ProposalRun modelRun = null;
+        GlossaryModelPhase.Run classified = null;
+        GlossaryModelPhase phase = pages == null || released == null ? null
+                : new GlossaryModelPhase(glossary, model, texts, released, cache, ruleSettings, budget.maxTerms(),
+                budget.maxInputChars());
         if (!model.available()) {
             skipped = SkipReason.NO_MODEL;
+        } else if (phase != null) {
+            if (!phase.anyReleased(pages)) {
+                skipped = SkipReason.NOT_RELEASED;
+            } else {
+                phase(context, PHASE);
+                classified = phase.run(scope, pages, context);
+                if (context != null) {
+                    context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                            MODEL_DONE, "„" + PHASE + "“: " + classified.describe(), null, null, null));
+                }
+            }
         } else if (!model.mayProcess(scope.sourceId())) {
             skipped = SkipReason.NOT_RELEASED;
         } else {
@@ -333,7 +374,7 @@ public class GlossaryClassification {
                     skipped.code(), "„" + PHASE + "“ ausgelassen: " + (skipped == SkipReason.NO_MODEL
                     ? "kein Modell eingestellt" : "Quelle nicht für die KI freigegeben"), null, null, null));
         }
-        return new Outcome(rules, modelRun, skipped);
+        return new Outcome(rules, modelRun, skipped, classified);
     }
 
     /**
@@ -343,7 +384,12 @@ public class GlossaryClassification {
      * @param model        Ergebnis der Phase mit Modell oder {@code null}, wenn sie ausfiel
      * @param modelSkipped warum die Phase mit Modell ausfiel, oder {@code null}
      */
-    record Outcome(RuleRun rules, Glossary.ProposalRun model, SkipReason modelSkipped) {
+    record Outcome(RuleRun rules, Glossary.ProposalRun model, SkipReason modelSkipped,
+                   GlossaryModelPhase.Run classified) {
+
+        Outcome(RuleRun rules, Glossary.ProposalRun model, SkipReason modelSkipped) {
+            this(rules, model, modelSkipped, null);
+        }
     }
 
     /**
@@ -366,10 +412,13 @@ public class GlossaryClassification {
 
     /** Die Regelphase „{@value #RULE_PHASE}“: ohne Modell, abbrechbar, Teilergebnisse sofort. */
     RuleRun rules(RelationScope scope, JobContext context, AccessContext caller) {
+        return rules(scope, context, GlossaryOverview.inScope(analysed.apply(caller), scope.sourceId(),
+                scope.spaceKey()));
+    }
+
+    private RuleRun rules(RelationScope scope, JobContext context, List<KnowledgeGraph.AnalysedPage> pages) {
         phase(context, RULE_PHASE);
         GlossaryRuleSettings settings = ruleSettings.get();
-        List<KnowledgeGraph.AnalysedPage> pages = GlossaryOverview.inScope(analysed.apply(caller),
-                scope.sourceId(), scope.spaceKey());
         GlossaryRuleProposals.Batch batch = GlossaryRuleProposals.of(pages, settings, () -> {
             if (context != null) {
                 context.checkpoint();

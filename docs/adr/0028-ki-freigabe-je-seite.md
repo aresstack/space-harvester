@@ -28,7 +28,8 @@ Quelle:
 | Satzanalyse mit dem Chat-Modell (`StatementProcessor`, #108) | `StatementChatModels.mayProcessExternally(sourceId)` |
 | Reranking (`ModelReranker`, `ExcerptPriority`) | je Treffer die Quelle |
 | Bildbeschreibungen (`Assets.describer`, `PageImageAnalysis`) | `mayDescribe(sourceId)`; „einmalig beschreiben“ je Seite speichert nichts |
-| Synonyme, Abkürzungen, Glossar-Einordnung | je Beleg die Quelle |
+| Synonyme, Abkürzungen | je Beleg die Quelle |
+| Glossar-Einordnung | in der App je Beleg die Seite (ADR 0032, FL5c); im Dienst je Beleg die Quelle |
 
 Die Aussagenanalyse nach ADR 0024 läuft lokal (MaltParser) und fragt den KI-Dienst nie; sie braucht keine Freigabe.
 
@@ -51,7 +52,10 @@ Startabgleich entscheidet je Quelle.
 - Die Synonymsuche fragt je Fundstelle deren Seite: Textstellen einer Seite der Liste gehen an das Modell (und an das
   Embedding der Vorauswahl), die übrigen Textstellen derselben Quelle nicht. Ein Paar ohne freigegebene Fundstelle auf
   einer Seite bleibt übersprungen.
-- Das Auflösen von Abkürzungen und die Glossar-Einordnung behalten die Prüfung je Quelle. Beide laufen als Auftrag
+- Die Glossar-Einordnung der App fragt seit ADR 0032 (FL5c) je Beleg die Seite: Sie ersetzt kein Ergebnis als
+  Ganzes, sondern ordnet einzelne Einträge ein und merkt sich die Seiten ihrer Belege; verliert eine die Freigabe,
+  fällt die Einordnung auf den Regelstand zurück.
+- Das Auflösen von Abkürzungen und die Glossar-Einordnung im Dienst behalten die Prüfung je Quelle. Beide laufen als Auftrag
   über eine ganze Quelle und ersetzen deren Ergebnis als Ganzes; ein Lauf nur über die Seiten der Liste würde die
   Befunde der übrigen Seiten als fehlend oder veraltet führen. Für sie braucht es weiter die Freigabe der Quelle.
 

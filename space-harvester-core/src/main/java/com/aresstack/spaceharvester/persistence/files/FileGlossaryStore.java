@@ -178,6 +178,11 @@ public final class FileGlossaryStore implements GlossaryStore {
             classification.put("category", entry.classification().category().name());
             classification.put("by", entry.classification().by().name());
             classification.put("reason", entry.classification().reason());
+            if (!entry.classification().pages().isEmpty()) {
+                ArrayNode pages = classification.putArray("pages");
+                entry.classification().pages().forEach(page -> pages.addObject().put("sourceId", page.sourceId())
+                        .put("pageId", page.pageId()));
+            }
         }
         if (entry.definitionProposal() != null) {
             evidence(node.putObject("definitionProposal"), entry.definitionProposal());
@@ -211,7 +216,8 @@ public final class FileGlossaryStore implements GlossaryStore {
             JsonNode item = node.get("classification");
             classification = new GlossaryEntry.Classification(
                     GlossaryDerivation.Category.valueOf(item.path("category").asString()),
-                    GlossaryEntry.ClassifiedBy.valueOf(item.path("by").asString()), text(item, "reason"));
+                    GlossaryEntry.ClassifiedBy.valueOf(item.path("by").asString()), text(item, "reason"),
+                    pages(item.path("pages")));
         }
         Set<RelationOrigin> support = null;
         if (node.has("supportedBy")) {
@@ -230,6 +236,15 @@ public final class FileGlossaryStore implements GlossaryStore {
                 node.hasNonNull("reviewedAt") ? Instant.parse(node.get("reviewedAt").asString()) : null,
                 node.path("revision").asLong(), classification,
                 node.hasNonNull("definitionProposal") ? evidence(node.get("definitionProposal")) : null, support);
+    }
+
+    private static List<com.aresstack.spaceharvester.application.snapshot.PageKey> pages(JsonNode items) {
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> pages = new ArrayList<>();
+        for (JsonNode item : items) {
+            pages.add(new com.aresstack.spaceharvester.application.snapshot.PageKey(item.path("sourceId").asString(),
+                    item.path("pageId").asString()));
+        }
+        return pages;
     }
 
     private static ObjectNode json(AuditEntry entry) {

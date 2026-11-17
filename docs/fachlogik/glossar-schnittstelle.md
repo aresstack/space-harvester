@@ -21,7 +21,7 @@ Einträge, Einordnung, Wichtigkeit, Belege und Zahlen kommen fertig aus dem Core
 | `scope` | Geltungsbereich: global, Quelle oder Space |
 | `origin` | wer angelegt hat: `MANUAL` (Mensch), `RULE` (Regel), `AI` (Modell); ändert sich nie |
 | `status` | `PROPOSED`, `CONFIRMED`, `REJECTED` |
-| `classification` | Einordnung: `category` (`FACHLICH`, `TECHNISCH`, `ROLLE`, `UNKLAR`), `by` (`RULE`, `AI`, `MANUAL`), `reason` (Kennung wie `TECHNICAL_HEAD`, `TECHNICAL_SHAPE`, `ROLE_HEAD`; nie Freitext, Text dazu in der App) oder `null` (alte Einträge: als `UNKLAR` zeigen) |
+| `classification` | Einordnung: `category` (`FACHLICH`, `TECHNISCH`, `ROLLE`, `UNKLAR`), `by` (`RULE`, `AI`, `MANUAL`), `reason` (Kennung wie `TECHNICAL_HEAD`, `TECHNICAL_SHAPE`, `ROLE_HEAD` der Regel oder eine Kennung der KI, siehe unten; nie Freitext, Text dazu in der App), `pages` (nur bei der KI: Seiten ihrer Belege, für den Entzug) oder `null` (alte Einträge: als `UNKLAR` zeigen) |
 | `supportedBy` | welche Läufe den Begriff zuletzt nannten (`RULE`, `AI`); leer bei manuellen Einträgen |
 | `evidence` | bis zu drei Belegstellen (Seite, Position, Hash); nur lesbare, der Core filtert |
 | `definitionProposal` | Beleg einer Begriffsbestimmung („X ist ein Y“, Art `BESTIMMUNG`) als Position oder `null`: nur mit dem Begriff selbst als Träger, aus dem Original; bei mehreren die mit den meisten Seiten. Der Eintrag sagt nicht, ob es weitere gab; die Einzelheiten (`isA`) zeigen alle |
@@ -138,7 +138,32 @@ boolean modelAvailable()  // ob die Phase mit Modell möglich ist
     entfallen, veraltet) im Text.
   - `GLOSSARY_MODEL_SKIPPED:NO_MODEL` oder `GLOSSARY_MODEL_SKIPPED:NOT_RELEASED`: Modellphase bewusst ausgelassen;
     in der Auftragsliste **gelb** (Ampel: bewusst ausgelassen), nie rot. Sie löscht nichts.
+  - `GLOSSARY_MODEL_DONE`: Zahlen der Modellphase (gefragt, aus dem Cache, eingeordnet, ausgelassen, Antworten
+    verworfen) im Text, nie Begriffe.
 - Abbruch lässt die Teilergebnisse stehen; entfernt oder als veraltet markiert wird erst im Abgleich am Ende.
+
+### Phase mit Modell in der App (FL5c)
+
+- Gefragt werden nur ungeprüfte Vorschläge (nicht `MANUAL`), die ohne Einordnung sind oder `UNKLAR` (Regel oder KI);
+  in Gruppen zu 25. Die Modellphase läuft, wenn mindestens eine Seite des Geltungsbereichs freigegeben ist
+  (ADR 0028, je Seite), sonst `GLOSSARY_MODEL_SKIPPED:NOT_RELEASED`.
+- Alles, was hinausgeht (Begriff, grob gestufte Zahlen `0`, `1`, `2-3`, `4-9`, `10-49`, `50+`, Verben,
+  Ist-Beziehungen, bis zu drei Belegsätze), stammt nur von freigegebenen Seiten und nur aus gezählten Aussagen des
+  Originals. Ein Begriff, der nur auf anderen Seiten steht, geht nie hinaus.
+- Das Modell nennt je Begriff nur eine Kennung; die Kategorie leitet diese feste Tabelle im Code ab:
+
+  | Kennung | Kategorie |
+  |---|---|
+  | `DOMAIN_OBJECT`, `DOMAIN_PROCESS`, `LEGAL_TERM` | `FACHLICH` |
+  | `PERSON_ROLE`, `ORGANISATION` | `ROLLE` |
+  | `SYSTEM_COMPONENT`, `DATA_FORMAT` | `TECHNISCH` |
+  | `GENERIC_WORD`, `CONTEXT_UNCLEAR` | `UNKLAR` |
+
+  Fremde Kennungen und Begriffe fallen weg; eine unlesbare Antwort ändert nichts.
+- Die Einordnung merkt sich die Seiten ihrer Belege (`classification.pages`). Verliert eine davon die Freigabe, fällt
+  sie auf den Regelstand zurück (Verlauf `unclassify`), der nächste Lauf fragt neu.
+- Die Anweisung ist **ungemessen** (`glossary-classify-1-ungemessen`), bis ein Lauf mit echtem Modell gemessen ist.
+- Der Dienst (ohne Wissensgraph) behält die bisherige Kandidatenwahl aus dem Begriffsindex mit Freigabe je Quelle.
 
 ## Beobachter (kein Polling, ADR 0027)
 
