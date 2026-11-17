@@ -358,6 +358,38 @@ public final class ChangeLog implements AutoCloseable {
         }, filter.offset(), filter.limit());
     }
 
+    /**
+     * Jüngste Inhaltsänderung (neu oder Inhalt geändert) je Seite seit {@code from} (einschließlich), nur in
+     * {@code sourceId} und, wenn angegeben, in {@code spaceKey}; nur Zeilen, die der Aufrufer sehen darf. Nur gelesen,
+     * in einem Gang durch den Index, ohne die Zeilen vorzuhalten (für die Leseempfehlung, ADR 0032 FL6). Eine
+     * unbekannte oder nicht lesbare Quelle liefert nichts.
+     *
+     * @param spaceKey ein Space, {@code null} für die ganze Quelle
+     */
+    public Map<PageKey, Instant> latestContentChanges(AccessContext caller, String sourceId, String spaceKey,
+                                                      Instant from) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(from, "from");
+        if (!sources.get().contains(sourceId)
+                || !access.permits(caller, ResourceScope.source(sourceId), AccessKind.METADATA)) {
+            return Map.of();
+        }
+        Visibility visible = new Visibility(caller);
+        ChangeQuery query = new ChangeQuery(Set.of(sourceId), Set.of(ChangeKind.NEW, ChangeKind.CONTENT_CHANGED),
+                Set.of(), spaceKey, null, from, true, null, false, true);
+        Map<PageKey, Instant> latest = new HashMap<>();
+        // Neueste zuerst: die erste sichtbare Zeile je Seite ist die jüngste. Die Zeilen selbst bleiben nicht liegen.
+        store.changeEntries(query, entry -> {
+            ChangeEntry seen = visible.within(entry, query);
+            if (seen != null && seen.pageId() != null && seen.at() != null) {
+                latest.putIfAbsent(new PageKey(seen.sourceId(), seen.pageId()), seen.at());
+            }
+            return null;
+        }, 0, 0);
+        return latest;
+    }
+
     // --- Zusammenfassung (ADR 0030, Abschnitt 5) ---------------------------------------------------------------
 
     /** Ob ein Chat-Modell für Zusammenfassungen eingestellt ist. */

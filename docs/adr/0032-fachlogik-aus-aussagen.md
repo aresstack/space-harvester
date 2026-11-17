@@ -113,6 +113,46 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Mehrteilige Namen mit Bindestrich (`compound`) und `flat` bilden Kopfform und Grundform („Batch-Job“, „Load Balancer“).
 - Gespeicherte Analysen mit rules-6 gelten als veraltet (Analyzer-Version).
 
+## Umsetzung FL5a (Begriffe ableiten, reine Auswertung)
+- `application.glossary.GlossaryDerivation`: rechnet auf Anfrage über die lesbaren, aktuellen Analysen
+  (`KnowledgeGraph#analysed`), abbrechbar, schreibt nichts. Je Begriff: Wichtigkeit als offene Teilzahlen (Seiten,
+  Erwähnungen, als Handelnder, als Betroffenes, als Träger; nur Original), Verhalten (Verben als Handelnder und als
+  Betroffenes, Vorstufe und verneinte getrennt), Eigenschaften und Ist-Beziehungen (nur Ist-Zustand: bejaht, ohne
+  Modalverb, `GILT`, kein `STATE_CHANGE`, nur `ORIGINAL`, sicherer Träger), Belege als Position (Satzspanne,
+  Eingabe-Hash), Einordnung nach Regeln.
+- `application.knowledge.CountedStatements`: die eine Stelle, ob eine Aussage zählt und mit welcher Stufe (vom
+  Menschen abgelehnte nie); FL4 (`Statement#effectiveQuality`) und FL6 hängen sich dort ein. Aussagen anderer Herkunft
+  als das Original (Vorstufe, später Modell) zählen getrennt und sind nie Beleg.
+- Schlüssel: `GlossaryDerivation#keyOf` = Grundform in der Schreibung des Textes (`spelling`: Großschreibung aus dem
+  Text, „ss“ des Textes statt „ß“ der alten Rechtschreibung), normalisiert wie das Glossar.
+- Einordnung: technisch (Schreibweise; Kopf-Wortliste), Rolle/Stelle (Kopf-Wortliste), sonst `UNKLAR`. Wortlisten an
+  einer Stelle: `glossar-regeln.tsv`. Köpfe unter fünf Buchstaben und mehrdeutige Köpfe gelten nur als ganzes Wort oder
+  nach Bindestrich/Leerzeichen (`technik-wort`, `rolle-wort`), nie als Ende eines zusammengeschriebenen Worts
+  („Import“, „Rechtssystem“, „Leerstelle“); lieber `UNKLAR` als falsch. Belegt am Entwicklungstext W (trügerische
+  Wortenden). Ist-Beziehungen ordnen noch nicht ein und geben keinen Definitionsvorschlag, bis
+  der Parser den Artikel am Rollennomen festhält (Strang FL).
+- Messung: `GlossarBerichtTest` gegen von Hand vorab festgelegte `begriffe.tsv`/`beziehungen.tsv` je Textsatz
+  (Bericht `build/reports/pruefstand/glossar.md`, kein Pin; beim Kontrollsatz nur Zahlen und Kennungen).
+
+## Umsetzung FL5b-1 (Ablage im Glossar)
+
+- `GlossaryEntry` trägt zusätzlich `classification` (Kategorie, Urheber `RULE`/`AI`/`MANUAL`, Grund nur als
+  Kennung wie `TECHNICAL_HEAD`, nie freier Text eines Modells), `definitionProposal` (Belegposition, nie Text; bleibt
+  leer, bis das Artikel-Merkmal auf main ist) und `supportedBy` (welche Läufe den Begriff zuletzt nannten). Wichtigkeit
+  wird nicht gespeichert. Alte Ablagen bleiben lesbar (fehlende Felder: keine Einordnung, gestützt vom anlegenden Lauf).
+- Herkunft `RULE` ist zugelassen und verhält sich wie `AI`: ohne lesbaren Beleg unsichtbar, Belege und
+  Definitionsvorschlag nach Leserecht gefiltert. Die Herkunft ändert sich nie; Regel und KI teilen die Kennung je
+  Begriff und Geltungsbereich.
+- Stützung: Jede Phase trägt nur sich ein oder aus. Ein ungeprüfter Vorschlag fällt erst, wenn ihn kein Lauf mehr
+  stützt; ein bestätigter wird erst dann „Beleg veraltet“. Ein Lauf, der nicht stattfindet, löscht nichts.
+- Einordnung: Mensch vor KI vor Regel; die KI ersetzt eine Regel-Einordnung nur bei `UNKLAR`, die Regel nie die KI.
+  `Glossary.categorize` setzt die Einordnung des Menschen (Protokoll `categorize`).
+- `Glossary.Search` filtert nach Kategorien (ohne Einordnung zählt `UNKLAR`).
+- `GlossaryRuleProposals` macht aus `GlossaryDerivation` die Vorschläge eines Geltungsbereichs: nur Seitenbelege
+  (keine Anhänge), bis zu 3 aus dem Original, höchstens `maxTerms` (Standard 500) nach Wichtigkeit, der Rest bleibt
+  unverändert. Belege der Regel dürfen von Seiten ohne KI-Freigabe stammen; FL5c zeigt dem Modell nur Belege
+  freigegebener Seiten.
+
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
   [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).
@@ -130,4 +170,20 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   gelöscht mit der Quelle; Änderungen per Beobachter.
 - Reine Auswertung, abbrechbar, speichert nichts; nur Kopfdaten aus dem Bestand. Laufzeit: 3000 erzeugte Seiten mit
   60 000 Aussagen rund 0,1 s im Container.
+- Wortlisten (FL6 Teil 1b): einzige Stelle `StandingSettings` (`space-harvester.statements.standing.outdated-words`,
+  `.draft-words`), beide Loader und `ConfigurationParityTest`; fehlend oder leer heißt Vorgabe. Entscheidungen bleiben
+  beim Entfernen einer Seite aus dem Bestand stehen wie ihre Analyse und geprüfte Fakten, sie fallen mit der Quelle.
+
+## Umsetzung FL6 Teil 2 (Leseempfehlung, Core)
+- `Harvester#readingAdvice()`: Seiten einer Auswahl, wahlweise zu einem Thema, nach Summe offener Teilzahlen mit Grund
+  (`ReadingReason`, Punkte als Konstanten in `ReadingAdvice`; Tabelle in
+  [stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md)). Keine verdeckte Formel, keine KI.
+- Grundlage: Status-quo-Sicht (sichere Aussagen „gilt“/„überholt“, Seite überholt/Entwurf), Begriffe aus den
+  gespeicherten Erwähnungen (Nomen und Eigennamen), Änderungsprotokoll nur gelesen (neu oder Inhalt geändert, 90 Tage).
+- Verweise zwischen Seiten und Aufrufe zählen noch nicht, weil der Core dafür keinen Bestand hat.
+- Das Protokoll liest nur die Quellen der Auswahl (bei genau einem Space nur diesen), je Quelle in einem Gang durch den
+  Index (`ChangeLog#latestContentChanges`), ohne Zeilen vorzuhalten. Gemessen mit 72 000 Zeilen: 83 ms für einen Space,
+  283 ms für eine ganze Quelle.
+- Reine Auswertung, abbrechbar, speichert nichts. Laufzeit: 3000 erzeugte Seiten mit 60 000 Aussagen rund 0,16 s im
+  Container (mit Thema 0,12 s).
 

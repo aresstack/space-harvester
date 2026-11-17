@@ -3,7 +3,8 @@
 Für den Fable-Strang, der die Anzeige baut. Der Core-Teil liegt in
 `space-harvester-core/src/main/java/com/aresstack/spaceharvester/application/standing/`, erreichbar über
 `Harvester#statusQuo()`. Die Oberfläche rechnet nichts selbst: Stand, Gründe, Sortierung und Zahlen kommen fertig aus
-dem Core. Wörter für Archiv und Entwurf werden ab PR 1b einstellbar; bis dahin gilt `StandingWords.DEFAULT`.
+dem Core. Die Wörter für Archiv und Entwurf sind Einstellungen (`space-harvester.statements.standing.outdated-words`
+und `.draft-words`, siehe `docs/CONFIGURATION.md`); sie wirken beim nächsten Lesen der Sicht.
 
 ## Lesen: `StatusQuo#view`
 
@@ -83,6 +84,9 @@ Subscription subscribe(Runnable listener)
   (0 ohne Entscheidung); passt sie nicht, kommt `StandingConflictException` mit der aktuellen Revision.
 - `UnknownStandingTargetException`: Seite nicht analysiert oder nicht sichtbar, oder Aussage nicht in der aktuellen
   Analyse.
+- Wird eine Seite aus dem Bestand entfernt, bleiben ihre Entscheidungen wie ihre Analyse im Knowledge Graph (dort
+  „veraltet: Seite fehlt“) und wie geprüfte Fakten stehen; sie gehen mit der Quelle („Daten bereinigen“, „Quelle
+  entfernen“). Kommt die Seite zurück, gelten sie wieder.
 - Die Prüfung einer Aussage (bestätigt/abgelehnt, FL4) kommt später in denselben Eintrag; die Oberfläche plant dafür
   keinen zweiten Mechanismus.
 
@@ -93,4 +97,40 @@ Subscription subscribe(Runnable listener)
 - Liste der Aussagen nach Stand gruppiert, Überholtes blass am Ende; darunter oder als Unterreiter „Zustände“ je Träger.
 - Aktionen zu einer Zeile (Stand setzen, Entscheidung löschen, Protokoll) erst im Overlay am Mausklick; Ja/Nein-Rückfrage
   beim Löschen.
-- Wortlisten (ab PR 1b) unter Einstellungen und auf der Abschlussseite des Assistenten.
+- Wortlisten unter Einstellungen (mehrwertig: Tabelle mit Icon-Zeilenaktionen) und auf der Abschlussseite des
+  Assistenten; die App schreibt sie als YAML-Liste in die Konfigurationsdatei.
+
+## Leseempfehlung: `ReadingAdvice#recommend` (PR 2)
+
+`Harvester#readingAdvice().recommend(caller, selection, topic, cancelled)` liefert eine `ReadingList`: die Seiten der
+Auswahl in der Reihenfolge, in der sie sich zum Lesen lohnen. Mit `topic` (Begriff, ohne Groß/Klein, Grundform oder
+Wortlaut) nur Seiten, die das Thema erwähnen. Reine Auswertung, abbrechbar (`CancellationException`), speichert nichts,
+liest das Änderungsprotokoll nur. Keine KI.
+
+- `ReadingList`: `topic`, `topTerms` (häufigste Begriffe der Auswahl nach Zahl der Seiten, mindestens zwei Seiten,
+  höchstens 10), `changesSince` (Beginn des Zeitraums für „kürzlich geändert“, 90 Tage), `pages`.
+- `Recommendation`: `page`, `score` (= Summe der Teilzahlen), `parts`, `standing` (der `PageStanding` der Status-quo-Sicht).
+- `Part`: `reason`, `count`, `points` (= count × Punkte je Grund), `terms` (nur bei `TOP_TERMS`). Teilzahlen mit 0 fehlen.
+
+| Grund (`ReadingReason`) | Punkte | Wann |
+|---|---|---|
+| `CURRENT_STATEMENTS` | +1 je Aussage | sichere Aussage mit Stand „gilt“ |
+| `OUTDATED_STATEMENTS` | −1 je Aussage | sichere Aussage mit Stand „überholt“ |
+| `TOP_TERMS` | +2 je Begriff | häufigster Begriff der Auswahl kommt auf der Seite vor |
+| `TOPIC_MENTIONS` | +1 je Erwähnung | gewähltes Thema |
+| `RECENT_CHANGE` | +3 | Änderungsprotokoll: neu oder Inhalt geändert in den letzten 90 Tagen |
+| `PAGE_OUTDATED` | −10 | Seite überholt (Label, Titel, Lage oder Entscheidung) |
+| `PAGE_DRAFT` | −5 | Seite Entwurf oder vom Menschen als geplant/unklar eingestuft |
+| `STALE_ANALYSIS` | −2 | Analyse passt nicht mehr zum Text |
+
+Die Punkte stehen als Konstanten in `ReadingAdvice`; die Anzeige zeigt jede Teilzahl mit Grund (etwa als Overlay am
+Mausklick auf die Summe), nie nur die Summe. Verweise zwischen Seiten und Aufrufe (Analytics) zählen noch nicht: Der
+Core hat dafür keinen abgelegten Bestand.
+
+Bekannte Schwäche bis zur Einordnung durch FL5: Unter den häufigsten Begriffen (`topTerms`, `TOP_TERMS`) stehen auch
+Allerweltsnomen (etwa „Seite“, „Fall“). Schlüssel und Rangfolge der Begriffe kommen künftig aus der einen Zählstelle
+von FL5 (`GlossaryDerivation`), sobald diese auf main ist. Das Änderungsprotokoll wird nur für die Quellen der Auswahl
+gelesen, und nur für ihren Space, wenn die Auswahl einer Quelle in genau einem Space liegt.
+
+Vorschlag für die Oberfläche: Unterreiter „Leseempfehlung“ neben der Status-quo-Sicht, Themenfeld mit ✕ oben rechts
+(Vorschläge aus `topTerms`), Liste mit Titel, Summe und Stand; Klick öffnet die Seite.
