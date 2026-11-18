@@ -14,6 +14,9 @@ import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.Timer;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Color;
+import java.awt.Font;
 import java.awt.GraphicsEnvironment;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -32,8 +35,13 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     private static final long START_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(15);
     private static final long SEEK_FEEDBACK_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(10);
+    private static final String VIDEO_CARD = "video";
+    private static final String AUDIO_CARD = "audio";
 
     private final JLabel message = new JLabel(" ");
+    private final CardLayout displayLayout = new CardLayout();
+    private final JPanel display = new JPanel(displayLayout);
+    private final JPanel audioDisplay = new JPanel(new BorderLayout());
     private final VideoTransportBar transport = new VideoTransportBar(this::seek);
     private final VideoFullScreenController fullScreen =
             new VideoFullScreenController(this, this::reattachVideoSurface, transport::setFullScreen);
@@ -43,14 +51,21 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         thread.setDaemon(true);
         return thread;
     });
+    private final ExecutorService trackWorker = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "space-harvester-video-track");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final String fileName;
     private final long fileSize;
     private final MediaStreamBridge.ChunkSource reader;
 
     private EmbeddedMediaPlayerComponent player;
     private MediaStreamBridge bridge;
+    private VideoTrackMode videoTrackMode;
     private SwingWorker<Void, Long> downloadTask;
     private volatile boolean closed;
+    private volatile boolean audioOnly;
     private boolean started;
     private boolean actuallyPlaying;
     private long startRequestedAtNanos;
@@ -72,13 +87,25 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         message.setBorder(BorderFactory.createEmptyBorder(9, 8, 9, 8));
         add(message, BorderLayout.NORTH);
         add(transport, BorderLayout.SOUTH);
+        display.setOpaque(true);
+        display.setBackground(new Color(0x171E27));
+        audioDisplay.setOpaque(true);
+        audioDisplay.setBackground(new Color(0x171E27));
+        JLabel audioTitle = new JLabel("Nur Audio – Videobild ausgeschaltet", SwingConstants.CENTER);
+        audioTitle.setForeground(new Color(0xD6E8F6));
+        audioTitle.setFont(audioTitle.getFont().deriveFont(Font.BOLD, 17f));
+        audioDisplay.add(audioTitle, BorderLayout.CENTER);
+        display.add(audioDisplay, AUDIO_CARD);
+        add(display, BorderLayout.CENTER);
         transport.play().addActionListener(event -> play());
         transport.pause().addActionListener(event -> pause());
         transport.stop().addActionListener(event -> stop());
         transport.download().addActionListener(event -> chooseDownload());
         transport.cancelDownload().addActionListener(event -> cancelDownload());
         transport.fullScreen().addActionListener(event -> fullScreen.toggle());
+        transport.audioOnly().addActionListener(event -> toggleAudioOnly());
         transport.fullScreen().setEnabled(false);
+        transport.audioOnly().setEnabled(false);
         transport.seekBar().reset();
 
         if (size < 1) {
@@ -101,7 +128,10 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             player.mediaPlayer().input().enableMouseInputHandling(false);
             VideoFullScreenController.installDoubleClick(
                     player.videoSurfaceComponent(), fullScreen::toggle);
-            add(player, BorderLayout.CENTER);
+            display.add(player, VIDEO_CARD);
+            displayLayout.show(display, VIDEO_CARD);
+            videoTrackMode = new VideoTrackMode(new VlcVideoTracks(player.mediaPlayer()));
+            transport.audioOnly().setEnabled(true);
             transport.fullScreen().setEnabled(true);
             message.setText("Video „" + fileName + "“ – zum Starten Abspielen wählen.");
             progress.start();
@@ -117,6 +147,64 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             unavailable("VLC kann nicht initialisiert werden: " + failure.getClass().getSimpleName()
                     + (failure.getMessage() == null ? "" : " – " + failure.getMessage()));
         }
+    }
+
+    /** Change only the selected video track; leave the audio decoder, player, and timeline running. */
+    private void toggleAudioOnly() {
+        if (closed || player == null) {
+            return;
+        }
+        if (!audioOnly && fullScreen.isFullScreen()) {
+            fullScreen.toggle();
+        }
+        audioOnly = !audioOnly;
+        transport.setAudioOnly(audioOnly);
+        transport.fullScreen().setEnabled(!audioOnly);
+        displayLayout.show(display, audioOnly ? AUDIO_CARD : VIDEO_CARD);
+        display.revalidate();
+        display.repaint();
+        if (!audioOnly) {
+            SwingUtilities.invokeLater(this::reattachVideoSurface);
+        }
+        if (started) {
+            applyVideoTrackMode();
+        }
+        message.setText(started ? (audioOnly ? "Videospur wird deaktiviert …" : "Videobild wird aktiviert …")
+                : (audioOnly ? "Nur Audio ausgewählt – zum Starten Abspielen wählen."
+                : "Video ausgewählt – zum Starten Abspielen wählen."));
+    }
+
+    private void applyVideoTrackMode() {
+        final boolean requestedAudioOnly = audioOnly;
+        try {
+            trackWorker.execute(() -> {
+                try {
+                    if (closed || videoTrackMode == null) {
+                        return;
+                    }
+                    boolean changed = videoTrackMode.apply(requestedAudioOnly);
+                    SwingUtilities.invokeLater(() -> {
+                        if (!closed && audioOnly == requestedAudioOnly) {
+                            message.setText(changed ? playbackMessage()
+                                    : "VLC konnte die Videospur nicht umschalten.");
+                        }
+                    });
+                } catch (RuntimeException failure) {
+                    SwingUtilities.invokeLater(() -> {
+                        if (!closed) {
+                            message.setText("Videospur nicht umschaltbar: "
+                                    + failure.getClass().getSimpleName());
+                        }
+                    });
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // Ignore pending mode changes while the viewer closes.
+        }
+    }
+
+    private String playbackMessage() {
+        return audioOnly ? "Nur Audio über BSCW-Streaming" : "Wiedergabe über BSCW-Streaming";
     }
 
     /** Rebind the existing video player to its new native window after entering or leaving full-screen. */
@@ -171,7 +259,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         try {
             transport.play().setEnabled(false);
             startRequestedAtNanos = System.nanoTime();
-            message.setText("Video wird gestartet …");
+            message.setText(audioOnly ? "Audio wird gestartet …" : "Video wird gestartet …");
             boolean accepted = true;
             if (started) {
                 player.mediaPlayer().controls().play();
@@ -184,7 +272,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                 started = true;
             }
         } catch (RuntimeException failure) {
-            playbackFailed("Video nicht abspielbar: " + failure.getMessage());
+            playbackFailed((audioOnly ? "Audio" : "Video") + " nicht abspielbar: " + failure.getMessage());
         }
     }
 
@@ -253,7 +341,10 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.play().setEnabled(false);
         transport.pause().setEnabled(true);
         transport.stop().setEnabled(true);
-        message.setText("Wiedergabe über BSCW-Streaming");
+        message.setText(playbackMessage());
+        if (audioOnly) {
+            applyVideoTrackMode();
+        }
     }
 
     private void playbackPaused() {
@@ -319,7 +410,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                         : hasFraction && Math.abs(share - requestedSeekShare) < 0.02;
                 if (reached) {
                     seekRequestedAtNanos = 0;
-                    message.setText(actuallyPlaying ? "Wiedergabe über BSCW-Streaming" : "Pausiert");
+                    message.setText(actuallyPlaying ? playbackMessage() : "Pausiert");
                 } else if (System.nanoTime() - seekRequestedAtNanos < SEEK_FEEDBACK_TIMEOUT_NANOS) {
                     if (!transport.seekBar().isDragging()) {
                         showSeekProgress(duration, current, hasFraction ? share : -1, true);
@@ -432,6 +523,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.pause().setEnabled(false);
         transport.stop().setEnabled(false);
         transport.fullScreen().setEnabled(false);
+        transport.audioOnly().setEnabled(false);
         transport.seekBar().reset();
     }
 
@@ -459,10 +551,12 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         closed = true;
         progress.stop();
         seekWorker.shutdownNow();
+        trackWorker.shutdownNow();
         transport.play().setEnabled(false);
         transport.pause().setEnabled(false);
         transport.stop().setEnabled(false);
         transport.fullScreen().setEnabled(false);
+        transport.audioOnly().setEnabled(false);
         if (downloadTask != null) {
             downloadTask.cancel(true);
             downloadTask = null;

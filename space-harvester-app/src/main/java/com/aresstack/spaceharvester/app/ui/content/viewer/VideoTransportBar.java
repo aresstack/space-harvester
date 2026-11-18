@@ -30,6 +30,7 @@ final class VideoTransportBar extends JPanel {
     private final JButton download = iconButton("Herunterladen", ComposerIcons.download());
     private final JButton cancelDownload = iconButton("Download abbrechen", ComposerIcons.stop());
     private final JButton fullScreen = iconButton("Vollbild", new VideoFullScreenIcon(false));
+    private final JButton audioOnly = iconButton("Nur Audio", new VideoAudioModeIcon(false));
     private final VideoSeekBar seekBar;
 
     VideoTransportBar(DoubleConsumer seek) {
@@ -55,6 +56,10 @@ final class VideoTransportBar extends JPanel {
         cancelDownload.setHorizontalTextPosition(SwingConstants.RIGHT);
         cancelDownload.setIconTextGap(7);
         cancelDownload.setVisible(false);
+        audioOnly.setText("Nur Audio");
+        audioOnly.setHorizontalTextPosition(SwingConstants.RIGHT);
+        audioOnly.setIconTextGap(7);
+        transfers.add(audioOnly);
         transfers.add(download);
         transfers.add(cancelDownload);
         transfers.add(fullScreen);
@@ -89,6 +94,20 @@ final class VideoTransportBar extends JPanel {
 
     JButton fullScreen() {
         return fullScreen;
+    }
+
+    JButton audioOnly() {
+        return audioOnly;
+    }
+
+    void setAudioOnly(boolean active) {
+        String label = active ? "Video anzeigen" : "Nur Audio";
+        VideoAudioModeIcon icon = new VideoAudioModeIcon(active);
+        audioOnly.setText(label);
+        audioOnly.setIcon(icon);
+        audioOnly.setDisabledIcon(icon);
+        audioOnly.setToolTipText(active ? "Videobild wieder einschalten" : "Videobild ausschalten; Ton weiter abspielen");
+        audioOnly.getAccessibleContext().setAccessibleName(label);
     }
 
     void setFullScreen(boolean active) {
