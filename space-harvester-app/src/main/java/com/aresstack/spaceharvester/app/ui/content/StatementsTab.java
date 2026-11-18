@@ -597,8 +597,9 @@ final class StatementsTab extends JPanel {
             if (mine != generation) {
                 return;
             }
-            status(deleted == 0 ? "Keine Aussagen-Analyse zu dieser Seite"
-                    : Texts.count(deleted, "Aussagen-Analyse", "Aussagen-Analysen") + " gelöscht");
+            status((deleted == 0 ? "Keine Aussagen-Analyse zu dieser Seite"
+                    : Texts.count(deleted, "Aussagen-Analyse", "Aussagen-Analysen") + " gelöscht")
+                    + (everything ? " · KI-Urteile aus „Aussagen prüfen“ gelöscht" : ""));
             reload();
             onAnalysed.run();
         }, error -> {
@@ -1155,6 +1156,16 @@ final class StatementsTab extends JPanel {
                 @Override
                 public int deleteAnalysis(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
                     return workspace.deleteStatementAnalysis(key);
+                }
+
+                @Override
+                public boolean canDeleteEverything() {
+                    return true;
+                }
+
+                @Override
+                public int deleteEverything(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                    return workspace.deleteStatementAnalysis(key, true);
                 }
 
                 @Override

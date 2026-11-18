@@ -798,7 +798,24 @@ public final class Workspace {
      * @return Zahl der gelöschten Analysen (Seiten und Dokumente)
      */
     public int deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection selection) {
-        return harvester.knowledgeGraph().delete(caller, analysesOf(selection, resolveSelection(selection)));
+        return deleteStatementAnalyses(selection, false);
+    }
+
+    /**
+     * Wie {@link #deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection)}; mit
+     * {@code withChecks} danach auch die KI-Urteile aus „Aussagen prüfen“ derselben Seiten
+     * ({@code StatementChecks.delete}, „Alles löschen“, Angelo 17.11.2026). Synchron, also außerhalb des EDT.
+     *
+     * @return Zahl der gelöschten Analysen (Seiten und Dokumente)
+     */
+    public int deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                       boolean withChecks) {
+        java.util.function.Predicate<PageKey> pages = analysesOf(selection, resolveSelection(selection));
+        int deleted = harvester.knowledgeGraph().delete(caller, pages);
+        if (withChecks) {
+            harvester.statementChecks().delete(caller, pages);
+        }
+        return deleted;
     }
 
     /**
@@ -825,7 +842,16 @@ public final class Workspace {
      * @return Zahl der gelöschten Analysen (Seite und Dokumente)
      */
     public int deleteStatementAnalysis(PageKey key) {
-        return harvester.knowledgeGraph().delete(caller, key::equals);
+        return deleteStatementAnalysis(key, false);
+    }
+
+    /** Wie {@link #deleteStatementAnalysis(PageKey)}; mit {@code withChecks} auch die KI-Urteile dieser Seite. */
+    public int deleteStatementAnalysis(PageKey key, boolean withChecks) {
+        int deleted = harvester.knowledgeGraph().delete(caller, key::equals);
+        if (withChecks) {
+            harvester.statementChecks().delete(caller, key::equals);
+        }
+        return deleted;
     }
 
     /** Meldet sich, nachdem Aussagen-Analysen gelöscht wurden ({@code KnowledgeGraph.subscribe}); kein Polling. */

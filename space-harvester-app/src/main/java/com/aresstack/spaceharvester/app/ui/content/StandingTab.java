@@ -146,6 +146,9 @@ final class StandingTab extends JPanel {
             + "aus dem Core und stehen je Seite im Overlay an der Summe. Dort lässt sich auch der Stand der ganzen "
             + "Seite von Hand setzen; ein Klick auf den Titel öffnet die Seite, ein Thema im Feld oben rechts (▾ für "
             + "Vorschläge) zeigt nur Seiten, die es erwähnen.\n\n"
+            + "Der Papierkorb löscht die Aussagen-Analysen der Auswahl; die KI-Urteile aus „Aussagen prüfen“ bleiben "
+            + "stehen und greifen nach einer neuen Analyse wieder, solange Satz, Zusammenhang, Aussage, Modell und "
+            + "Anweisung gleich sind. „Alles löschen“ im Menü ▾ daneben löscht auch diese Urteile.\n\n"
             + "„Mögliche Widersprüche“ ist nur ein Hinweis: sichere Aussagen derselben Sachlage, die beide gelten, "
             + "mit gleicher Verbindlichkeit, eine bejaht, eine verneint. Setzt man eine davon von Hand auf "
             + "„überholt“, verschwindet der Hinweis. „Ablösungen“ stehen getrennt darunter und sind kein Konflikt: "
@@ -252,6 +255,16 @@ final class StandingTab extends JPanel {
                 @Override
                 public int deleteAnalyses(ExportPanel.Selection selection) {
                     return runtime.workspace().deleteStatementAnalyses(selection.toCore(runtime));
+                }
+
+                @Override
+                public boolean canDeleteEverything() {
+                    return true;
+                }
+
+                @Override
+                public int deleteEverything(ExportPanel.Selection selection) {
+                    return runtime.workspace().deleteStatementAnalyses(selection.toCore(runtime), true);
                 }
 
                 @Override
@@ -943,6 +956,9 @@ final class StandingTab extends JPanel {
                     ? (chosen.global() ? "Keine Aussagen-Analysen vorhanden"
                     : "Keine Aussagen-Analysen unter „" + chosen.title() + "“")
                     : Texts.count(deleted, "Aussagen-Analyse", "Aussagen-Analysen") + " gelöscht";
+            if (everything) {
+                deletedNotice += " · KI-Urteile aus „Aussagen prüfen“ gelöscht";
+            }
             // Der Beobachter meldet sich nur, wenn etwas gelöscht wurde; sonst die Statuszeile hier setzen.
             status();
         }, failure -> {
