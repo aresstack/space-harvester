@@ -78,8 +78,14 @@ von `PROPFIND` über HTTPS-CONNECT wird durch einen Integrationstest geprüft.
   Inventuren prüfen zwischen ihren Stapeln Pausieren/Abbrechen. Ein 403, Timeout oder anderer
   Fehler eines Unterordners markiert die Inventur als unvollständig: keine neue bestätigte
   Generation, keine fälschlichen Löschungen und kein als vollständig ausgegebener Export
-- Dokumente erst bei ihrem Abruf per `GET` als Originalbytes laden und in der bestehenden
-  Leseransicht als escaped HTML-Text anzeigen, sofern Text extrahiert werden kann
+- Jede BSCW-Datei ist **eine eigenständige Dateiseite**: Ihr nativer Seitensnapshot enthält
+  die Originalbytes (`nativeFormat=file`). Die Datei wird **nicht zusätzlich als Anhang
+  ihrer eigenen Seite** geführt. Dadurch lädt der Export dieselbe Datei nicht ein zweites
+  Mal in den Anhangsspeicher. Der Rohdatenexport enthält die Originalbytes weiterhin als
+  Seitenpayload; Titel, Dateityp und Revision stehen in den Seitenmetadaten.
+- Dokumente erst bei ihrem Abruf per `GET` als Originalbytes laden. Die Desktop-Leseransicht
+  zeigt die Datei über den vorhandenen Originaldatei-Viewer; extrahierter Text steht
+  separat für Volltextsuche und KI-Auswertung bereit
 - CSV und TSV anhand des Dateinamens als Text erkennen, auch wenn WebDAV einen generischen
   oder Excel-Medientyp meldet
 - Änderungszeit, ETag, Dateigröße und Content-Type aus WebDAV übernehmen, soweit bereitgestellt

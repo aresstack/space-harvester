@@ -1455,8 +1455,9 @@ public final class PageDetailPanel extends JPanel {
                 originalMediaType(payload), fileSize);
         final String source = sourceId;
         final String id = metadata.pageId();
+        final boolean originalAvailable = payload.length() > 0 || fileSize == 0;
         ReaderAttachmentLoader loader = (file, done, failed) -> {
-            if (payload.length() > 0) {
+            if (originalAvailable) {
                 Background.run(payload::bytes, done, error -> failed.accept(reason(error)));
                 return;
             }
@@ -1465,7 +1466,8 @@ public final class PageDetailPanel extends JPanel {
                 failed.accept("Die Quelle ist nicht mehr verbunden.");
                 return;
             }
-            Background.run(() -> runtime.workspace().assetContent(source, id, file.key()).content(), done,
+            // Refresh an older empty metadata shell directly from the owning BSCW page.
+            Background.run(() -> runtime.workspace().page(source, id, true).snapshot().payload().bytes(), done,
                     error -> failed.accept(reason(error)));
         };
         originalFileViewer = new AttachmentViewerPanel(attachment, loader, fileOpener, attachmentRenderer);

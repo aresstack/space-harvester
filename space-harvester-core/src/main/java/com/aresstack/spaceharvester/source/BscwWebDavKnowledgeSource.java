@@ -8,10 +8,6 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeRevision;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
-import com.aresstack.enterpriseai.source.api.AttachmentListSource;
-import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
-import com.aresstack.enterpriseai.source.api.SourceFile;
-import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
@@ -67,12 +63,11 @@ import org.xml.sax.SAXException;
  */
 final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
         ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource,
-        AttachmentListSource, ResourceNodeKindSource, SourceMediaRange, KnownTitleLookup,
+        ResourceNodeKindSource, SourceMediaRange, KnownTitleLookup,
         VirtualNavigationRootSource {
 
     static final String STORED_FORMAT = "file";
     private static final String FOLDER_FORMAT = "bscw-folder";
-    private static final String ATTACHMENTS_FORMAT = "webdav-propfind-depth-0";
     private static final String DAV = "DAV:";
     private static final int MAX_BATCH = 500;
     private static final int NAVIGATION_BATCH = 200;
@@ -278,7 +273,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
                         + escapeHtml(text) + "</pre>", pageAddress, List.of());
             }
             return new PageView("<p>Originaldatei: " + escapeHtml(resource.title())
-                    + "</p><p>Die Datei ist als Anhang dieser Seite verfügbar.</p>",
+                    + "</p><p>Die Originaldatei ist der Inhalt dieser Seite.</p>",
                     pageAddress, List.of());
         }
         List<DavEntry> children = directChildren(uri);
@@ -312,76 +307,11 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
                 .replace("\"", "&quot;").replace("'", "&#39;");
     }
 
-    /**
-     * Map each BSCW file page to its own sole attachment.
-     * Folders are container pages without attachments.
-     */
-    @Override
-    public StoredAttachmentList storedAttachments(String localId) throws KnowledgeSourceException {
-        URI uri = uriOf(localId);
-        KnowledgeResource owner = resourceMetadata(localId);
-        if (isFolder(owner)
-                || PageMetadata.LINK_KIND.equals(owner.metadata().asMap().get(PageMetadata.RESOURCE_KIND))
-                || "true".equals(owner.metadata().asMap().get(PageMetadata.REMOTE_MEDIA))) {
-            return new StoredAttachmentList(List.of(), List.of(), "application/xml",
-                    ATTACHMENTS_FORMAT, Instant.now(), List.of());
-        }
-        byte[] raw = transport.properties(uri, 0);
-        KnowledgeResource attachment = parseEntries(raw).stream()
-                .filter(candidate -> sameResource(candidate.uri, uri))
-                .findFirst()
-                .map(this::resource)
-                .orElse(owner);
-        return new StoredAttachmentList(List.of(attachment), List.of(raw), "application/xml",
-                ATTACHMENTS_FORMAT, Instant.now(), List.of());
-    }
-
+    /** Return no synthetic attachments: the BSCW file page already owns the original bytes. */
     @Override
     public List<KnowledgeResource> attachmentsOf(KnowledgeResourceId page) throws KnowledgeSourceException {
-        return storedAttachments(requireLocalId(page)).attachments();
-    }
-
-    @Override
-    public boolean isAttachment(KnowledgeResourceId resourceId) {
-        String local = localId(resourceId);
-        if (local == null) {
-            return false;
-        }
-        try {
-            return !isFolder(resourceMetadata(local));
-        } catch (KnowledgeSourceException inaccessible) {
-            return false;
-        }
-    }
-
-    @Override
-    public SourceFile loadAttachmentFile(KnowledgeResourceId attachment) throws KnowledgeSourceException {
-        return loadAttachmentFile(attachment, Integer.MAX_VALUE);
-    }
-
-    @Override
-    public SourceFile loadAttachmentFile(KnowledgeResourceId attachment, int maxBytes)
-            throws KnowledgeSourceException {
-        String local = requireLocalId(attachment);
-        KnowledgeResource resource = resourceMetadata(local);
-        if (isFolder(resource)) {
-            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "A BSCW directory is not an attachment");
-        }
-        String declaredSize = resource.metadata().asMap().get("dav.contentLength");
-        if (declaredSize != null) {
-            try {
-                if (Long.parseLong(declaredSize) > maxBytes) {
-                    throw new ResponseTooLargeException("BSCW attachment exceeds the requested limit", maxBytes);
-                }
-            } catch (NumberFormatException invalidSize) {
-                // Treat an invalid reported length as unknown, not as a truncated file.
-            }
-        }
-        byte[] original = transport.download(uriOf(local));
-        if (original.length > maxBytes) {
-            throw new ResponseTooLargeException("BSCW attachment exceeds the requested limit", maxBytes);
-        }
-        return new SourceFile(resource, original);
+        requireLocalId(page);
+        return List.of();
     }
 
     @Override
