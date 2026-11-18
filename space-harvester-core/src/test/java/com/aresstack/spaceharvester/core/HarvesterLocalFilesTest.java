@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.testsupport.TestSymbolicLinks;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -36,16 +37,16 @@ class HarvesterLocalFilesTest {
     @TempDir
     Path elsewhere;
 
-    @BeforeEach
-    void linkOutOfTheDirectory() throws IOException {
+    private void linkOutOfTheDirectory() throws IOException {
         for (String name : List.of("a.md", "b.md")) {
             Files.writeString(elsewhere.resolve(name), "Inhalt " + name, StandardCharsets.UTF_8);
-            Files.createSymbolicLink(directory.resolve(name), elsewhere.resolve(name));
+            TestSymbolicLinks.createOrSkipUnsupported(directory.resolve(name), elsewhere.resolve(name));
         }
     }
 
     @Test
     void changedRootsAllowAndBlockAccessFromTheNextReadOn() throws Exception {
+        linkOutOfTheDirectory();
         ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
         try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data).configuration(manager)
                 .build()) {
@@ -61,7 +62,8 @@ class HarvesterLocalFilesTest {
     }
 
     @Test
-    void withoutLiveConfigurationNothingOutsideTheDirectoryIsGranted() {
+    void withoutLiveConfigurationNothingOutsideTheDirectoryIsGranted() throws Exception {
+        linkOutOfTheDirectory();
         try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data).build()) {
             assertThatThrownBy(() -> read(harvester, "a.md")).isInstanceOf(SourceAccessException.class);
         }

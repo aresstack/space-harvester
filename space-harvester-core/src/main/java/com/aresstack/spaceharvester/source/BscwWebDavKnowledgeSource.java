@@ -76,7 +76,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     private static final int MAX_BATCH = 500;
     private static final int NAVIGATION_BATCH = 200;
     private static final int MAX_ACTIVE_INVENTORIES = 4;
-    private static final Pattern CURSOR = Pattern.compile("b1\\.([a-f0-9-]{36})\\.(\\d{1,9})");
+    private static final Pattern CURSOR = Pattern.compile("b2\\.([a-f0-9-]{36})\\.(\\d{1,9})");
 
     private final SourceAddress sourceId;
     private final URI root;
@@ -144,13 +144,13 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             throw new KnowledgeSourceException(Kind.NOT_FOUND, "Unknown BSCW partition");
         }
         Inventory inventory;
-        int start;
+        int sequence;
         if (cursor == null || cursor.isEmpty()) {
-            inventory = new Inventory(UUID.randomUUID().toString(), listResources(maxDepth));
+            inventory = new Inventory(UUID.randomUUID().toString());
             synchronized (inventories) {
                 inventories.put(inventory.id, inventory);
             }
-            start = 0;
+            sequence = 0;
         } else {
             Matcher match = CURSOR.matcher(cursor);
             if (!match.matches()) {
@@ -162,14 +162,9 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             if (inventory == null) {
                 throw new KnowledgeSourceException(Kind.UNAVAILABLE, "BSCW inventory has expired");
             }
-            start = Integer.parseInt(match.group(2));
-            if (start < 1 || start >= inventory.resources.size()) {
-                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid BSCW cursor offset");
-            }
+            sequence = Integer.parseInt(match.group(2));
         }
-        int end = Math.min(inventory.resources.size(), start + Math.max(1, Math.min(limit, MAX_BATCH)));
-        String next = end < inventory.resources.size() ? "b1." + inventory.id + "." + end : "";
-        return new PartitionResources(inventory.resources.subList(start, end), next);
+        return inventory.next(sequence, Math.max(1, Math.min(limit, MAX_BATCH)));
     }
 
     /** Search only metadata already learned from browsed folders; never start a full-tree crawl. */
@@ -749,13 +744,72 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         }
     }
 
-    private static final class Inventory {
+    /**
+     * One folder's PROPFIND per page. The queued state is private to this source instance.
+     * Evicted or expired cursors fail closed, so incomplete inventories can never confirm deletions.
+     */
+    private final class Inventory {
         private final String id;
-        private final List<KnowledgeResource> resources;
+        private final ArrayDeque<Folder> pendingFolders = new ArrayDeque<>();
+        private final ArrayDeque<KnowledgeResource> ready = new ArrayDeque<>();
+        private final Set<URI> visitedFolders = new HashSet<>();
+        private final Set<String> emittedResources = new HashSet<>();
+        private int nextSequence;
+        private int lastSequence = -1;
+        private int lastLimit;
+        private PartitionResources lastPage;
 
-        private Inventory(String id, List<KnowledgeResource> resources) {
+        private Inventory(String id) {
             this.id = id;
-            this.resources = List.copyOf(resources);
+            pendingFolders.add(new Folder(root, 0));
+        }
+
+        private synchronized PartitionResources next(int sequence, int limit) throws KnowledgeSourceException {
+            if (sequence == lastSequence && limit == lastLimit && lastPage != null) {
+                return lastPage;
+            }
+            if (sequence != nextSequence) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid BSCW inventory cursor sequence");
+            }
+            // Do not traverse the complete tree before publishing the first page.
+            // Skip empty folders, but never block one request on an unbounded number of PROPFINDs.
+            int scanned = 0;
+            while (ready.isEmpty() && !pendingFolders.isEmpty() && scanned < 4) {
+                Folder folder = pendingFolders.peekFirst();
+                if (visitedFolders.contains(folder.uri)) {
+                    pendingFolders.removeFirst();
+                    continue;
+                }
+                DavEntry current = entryOf(folder.uri);
+                List<DavEntry> children = directChildren(folder.uri);
+                pendingFolders.removeFirst();
+                visitedFolders.add(folder.uri);
+                offer(resource(current));
+                for (DavEntry child : children) {
+                    offer(resource(child));
+                    if (child.folder && folder.depth < maxDepth && !visitedFolders.contains(child.uri)) {
+                        pendingFolders.addLast(new Folder(child.uri, folder.depth + 1));
+                    }
+                }
+                scanned++;
+            }
+            List<KnowledgeResource> batch = new ArrayList<>(Math.min(limit, ready.size()));
+            while (batch.size() < limit && !ready.isEmpty()) {
+                batch.add(ready.removeFirst());
+            }
+            nextSequence++;
+            String cursor = ready.isEmpty() && pendingFolders.isEmpty()
+                    ? "" : "b2." + id + "." + nextSequence;
+            lastSequence = sequence;
+            lastLimit = limit;
+            lastPage = new PartitionResources(batch, cursor);
+            return lastPage;
+        }
+
+        private void offer(KnowledgeResource resource) {
+            if (emittedResources.add(resource.id().value())) {
+                ready.addLast(resource);
+            }
         }
     }
 

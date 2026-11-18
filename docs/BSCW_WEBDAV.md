@@ -61,8 +61,12 @@ von `PROPFIND` über HTTPS-CONNECT wird durch einen Integrationstest geprüft.
 - Das Feld **„Titel filtern“** durchsucht ausschließlich bereits durch die Navigation bekannte
   Dateinamen im Speicher. Jede weitere geöffnete Ordnerebene erweitert die sichtbaren Treffer.
   Es löst **keine rekursive Inventur** aus; die Suche ist vor einer Synchronisation nicht vollständig.
-- Für einen ausdrücklich gestarteten Synchronisationslauf weiterhin den vollständigen Dateibestand
-  rekursiv über Metadaten inventarisieren, ohne Dokumentinhalte während der Inventur zu laden
+- Für einen ausdrücklich gestarteten Synchronisations- oder Exportlauf den WebDAV-Baum
+  **ordnerweise mit Cursor** inventarisieren. Die erste Metadatenseite wird ausgegeben, bevor
+  weitere Unterordner gelesen werden; Dokumentinhalte bleiben während der Inventur unangetastet.
+  Inventuren prüfen zwischen ihren Stapeln Pausieren/Abbrechen. Ein 403, Timeout oder anderer
+  Fehler eines Unterordners markiert die Inventur als unvollständig: keine neue bestätigte
+  Generation, keine fälschlichen Löschungen und kein als vollständig ausgegebener Export
 - Dokumente erst bei ihrem Abruf per `GET` als Originalbytes laden und in der bestehenden
   Leseransicht als escaped HTML-Text anzeigen, sofern Text extrahiert werden kann
 - CSV und TSV anhand des Dateinamens als Text erkennen, auch wenn WebDAV einen generischen
