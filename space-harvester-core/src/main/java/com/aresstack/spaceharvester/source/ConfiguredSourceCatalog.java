@@ -46,7 +46,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint, betaview, outlook) und MediaWiki (#187).
      */
     public static final List<SourceAdapter> DEFAULT_ADAPTERS = List.of(new ConfluenceSourceAdapter(),
-            new LocalFilesSourceAdapter(), EacSourceAdapters.ftp(), EacSourceAdapters.jes(), EacSourceAdapters.ndv(),
+            new LocalFilesSourceAdapter(), new BscwSourceAdapter(), EacSourceAdapters.ftp(), EacSourceAdapters.jes(), EacSourceAdapters.ndv(),
             EacSourceAdapters.sharePoint(), EacSourceAdapters.betaView(),
             EacSourceAdapters.outlook(), MediaWikiSources.adapter());
 

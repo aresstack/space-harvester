@@ -125,6 +125,94 @@ class SourceFormTest {
      * Client (Pflichtangaben oben, der Rest unter „Erweitert“), nur ihre Anmeldearten und Zertifikate nur mit TLS.
      */
     @Test
+    void bscwClassicPrefillsItsWebDavFolderFromKeePassWithoutReplacingUserInput() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        SettingDialogsTest.FakeKeePass keePass = new SettingDialogsTest.FakeKeePass() {
+            @Override
+            public com.aresstack.enterpriseai.adyton.VaultEntryDraft read(String title)
+                    throws com.aresstack.enterpriseai.adyton.SecretUnavailableException {
+                try (com.aresstack.enterpriseai.adyton.VaultEntryDraft entry = super.read(title)) {
+                    return new com.aresstack.enterpriseai.adyton.VaultEntryDraft(title, "reader",
+                            entry.copyPassword(), entry.location(), entry.fields());
+                }
+            }
+        };
+        keePass.entries.put("BSCW Server", new String[] {
+                "https://bscw.example.org/sec/bscw.cgi/146377797", "secret"
+        });
+        keePass.entries.put("Andere Quelle", new String[] {
+                "https://bscw.example.org/sec/bscw.cgi/222222222", "secret"
+        });
+        start(config, null);
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> true));
+        SourceForm[] form = new SourceForm[1];
+        SwingUtilities.invokeAndWait(() -> {
+            form[0] = new SourceForm(context);
+            form[0].kind.setSelectedItem("BSCW Classic (WebDAV)");
+        });
+        awaitOnEdt(() -> form[0].keePassEntry.getItemCount() == 2);
+        SwingUtilities.invokeAndWait(() -> form[0].keePassEntry.setSelectedItem("BSCW Server"));
+        awaitOnEdt(() -> form[0].keePassSecretRead()
+                && "https://bscw.example.org/sec/bscw.cgi/146377797".equals(
+                        form[0].draft().baseUrl()));
+        SwingUtilities.invokeAndWait(() -> {
+            JTextField url = form[0].baseUrl;
+            assertThat(form[0].draft().baseUrl())
+                    .isEqualTo("https://bscw.example.org/sec/bscw.cgi/146377797");
+            assertThat(form[0].draft().extraOptions()).doesNotContainKey("rootUrl");
+            assertThat(form[0].draft().username()).isEqualTo("reader");
+            assertThat(form[0].draft().authType()).isEqualTo(SourceSettingsConfig.AuthType.BASIC);
+            assertThat(form[0].validateInput()).isTrue();
+            assertThat(form[0].auth.isVisible()).isFalse();
+            assertThat(form[0].username.isVisible()).isFalse();
+            assertThat(form[0].sessionValue.isVisible()).isFalse();
+            url.setText("https://bscw.example.org/sec/bscw.cgi/333333333");
+            form[0].keePassEntry.setSelectedItem("Andere Quelle");
+        });
+        awaitOnEdt(() -> form[0].keePassSecretRead()
+                && "Andere Quelle".equals(form[0].keePassEntry.getSelectedItem()));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].baseUrl.getText())
+                    .isEqualTo("https://bscw.example.org/sec/bscw.cgi/333333333");
+            assertThat(form[0].draft().baseUrl()).isEqualTo(form[0].baseUrl.getText());
+        });
+    }
+
+    @Test
+    void bscwClassicSelectsBasicAuthenticationAndExposesTheFolderUrl() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        start(config, null);
+
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm form = new SourceForm(context);
+            form.kind.setSelectedItem("BSCW Classic (WebDAV)");
+            assertThat(form.typeId()).isEqualTo("bscw");
+            assertThat(items(form.auth)).containsExactly("Benutzer und Passwort");
+            assertThat(form.auth.getSelectedItem()).isEqualTo("Benutzer und Passwort");
+            form.origin.setSelectedItem(AiSettingsPanel.MANUAL);
+            form.username.setText("reader");
+            assertThat(form.auth.isVisible()).isFalse();
+            assertThat(form.username.isVisible()).isTrue();
+            assertThat(form.sessionValue.isVisible()).isTrue();
+            JTextField folderUrl = form.baseUrl;
+            assertThat(folderUrl).isNotNull();
+            folderUrl.setText("https://bscw.example.org/sec/bscw.cgi/146377797");
+            assertThat(folderUrl.getText()).endsWith("/146377797");
+            assertThat(form.draft().baseUrl()).isEqualTo(folderUrl.getText());
+            assertThat(form.draft().yaml("  ")).contains("base-url:", "type: basic");
+            assertThat(form.draft().yaml("  ")).doesNotContain("rootUrl:");
+        });
+    }
+
+    @Test
     void theKindsComeFromTheCoreAndOtherTypesShowTheFieldsOfTheirType() throws Exception {
         Path handbuch = Files.createDirectories(home.resolve("handbuch"));
         Path config = home.resolve("app.yml");
