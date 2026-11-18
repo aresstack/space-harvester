@@ -86,9 +86,11 @@ final class BscwWebDavSourceTest {
         assertThat(rootChildren.nodes()).extracting(NavigationNode::title)
                 .containsExactly("Nested", "readme.txt");
         assertThat(rootChildren.nodes().get(0).children()).isEqualTo(NavigationNode.Children.YES);
-        assertThat(rootChildren.nodes().get(0).kind()).isEqualTo(NavigationNode.Kind.FOLDER);
+        assertThat(((ResourceNodeKindSource) port).kind(rootChildren.nodes().get(0).resource()))
+                .isEqualTo(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FOLDER);
         assertThat(rootChildren.nodes().get(1).children()).isEqualTo(NavigationNode.Children.NO);
-        assertThat(rootChildren.nodes().get(1).kind()).isEqualTo(NavigationNode.Kind.FILE);
+        assertThat(((ResourceNodeKindSource) port).kind(rootChildren.nodes().get(1).resource()))
+                .isEqualTo(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FILE);
         assertThat(propfinds).hasValue(1);
         assertThat(downloads).hasValue(0);
 
@@ -96,7 +98,8 @@ final class BscwWebDavSourceTest {
         assertThat(folderChildren.nodes()).extracting(NavigationNode::title).containsExactly("archive.zip");
         assertThat(propfinds).hasValue(2);
         assertThat(downloads).hasValue(0);
-        assertThat(folderChildren.nodes().get(0).kind()).isEqualTo(NavigationNode.Kind.FILE);
+        assertThat(((ResourceNodeKindSource) port).kind(folderChildren.nodes().get(0).resource()))
+                .isEqualTo(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FILE);
 
         assertThat(((ResourceMetadataSource) port).resourceMetadata(
                 ((ResourceMetadataSource) port).localId(rootChildren.nodes().get(0).resource()))

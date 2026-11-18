@@ -1284,11 +1284,14 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             case NO -> Boolean.FALSE;
             case UNKNOWN -> null;
         };
-        PageNode.Kind kind = switch (node.kind()) {
-            case FOLDER -> PageNode.Kind.FOLDER;
-            case FILE -> PageNode.Kind.FILE;
-            case PAGE -> PageNode.Kind.PAGE;
-        };
+        PageNode.Kind kind = PageNode.Kind.PAGE;
+        if (port instanceof ResourceNodeKindSource presentation) {
+            try {
+                kind = presentation.kind(node.resource());
+            } catch (KnowledgeSourceException failure) {
+                throw accessFailure(failure);
+            }
+        }
         return new PageNode(nativeId(node.resource()), node.title(), partitionKey, children, kind);
     }
 

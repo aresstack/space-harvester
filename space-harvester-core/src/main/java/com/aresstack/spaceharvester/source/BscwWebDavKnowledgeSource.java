@@ -7,6 +7,7 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeRevision;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.enterpriseai.source.api.AttachmentListSource;
 import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.SourceFile;
@@ -66,7 +67,7 @@ import org.xml.sax.SAXException;
  */
 final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
         ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource,
-        AttachmentListSource {
+        AttachmentListSource, ResourceNodeKindSource {
 
     static final String STORED_FORMAT = "file";
     private static final String FOLDER_FORMAT = "bscw-folder";
@@ -364,8 +365,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             List<NavigationNode> nodes = new ArrayList<>(entries.size());
             for (DavEntry entry : entries) {
                 nodes.add(NavigationNode.page(idOf(entry.uri), entry.name,
-                        entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO,
-                        entry.folder ? NavigationNode.Kind.FOLDER : NavigationNode.Kind.FILE));
+                        entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO));
             }
             inventory = new NavigationInventory(UUID.randomUUID().toString(), folder, List.copyOf(nodes));
             synchronized (navigationInventories) {
@@ -410,16 +410,21 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         URI parent = parentFolders.get(uri);
         while (parent != null && !sameResource(parent, root) && visited.add(parent)) {
             DavEntry ancestor = entryOf(parent);
-            ancestors.add(NavigationNode.page(idOf(ancestor.uri), ancestor.name, NavigationNode.Children.YES,
-                    NavigationNode.Kind.FOLDER));
+            ancestors.add(NavigationNode.page(idOf(ancestor.uri), ancestor.name, NavigationNode.Children.YES));
             parent = parentFolders.get(parent);
         }
         Collections.reverse(ancestors);
         NavigationNode node = NavigationNode.page(page, entry.name,
-                entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO,
-                entry.folder ? NavigationNode.Kind.FOLDER : NavigationNode.Kind.FILE);
+                entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO);
         return new PagePosition(NavigationNode.root("space:" + sourceId.value(), sourceId.value(),
                 sourceId.value(), NavigationNode.Children.YES), ancestors, node);
+    }
+
+    /** Determine the navigation symbol from the native WebDAV collection property. */
+    @Override
+    public HarvestSource.PageNode.Kind kind(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+        DavEntry resource = entryOf(uriOf(requireLocalId(resourceId)));
+        return resource.folder ? HarvestSource.PageNode.Kind.FOLDER : HarvestSource.PageNode.Kind.FILE;
     }
 
     @Override
