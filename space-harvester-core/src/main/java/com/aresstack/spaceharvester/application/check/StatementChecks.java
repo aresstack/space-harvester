@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.application.check;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.observe.Listeners;
 import com.aresstack.spaceharvester.application.observe.Subscription;
@@ -13,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,6 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiPredicate;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -94,6 +98,26 @@ public final class StatementChecks {
         store.removeAll(doomed);
         listeners.deliver(null, Runnable::run);
         return doomed.size();
+    }
+
+    /**
+     * Leseprüfung für {@link #delete} wie in {@code KnowledgeGraph#delete}: mit dem Space der Seite aus dem Cache. Liegt
+     * die Seite nicht mehr im Cache (verwaiste Urteile), ist ihr Space unbekannt; {@link AccessGuard#canRead} gibt dann
+     * nur frei, wer alle Spaces der Quelle lesen darf. Zusätzlich gibt hier frei, wer die ganze Quelle lesen darf
+     * ({@link AccessGuard#permitsSourceWide}), damit verwaiste Urteile bei „Alles löschen“ nicht liegen bleiben.
+     */
+    public static BiPredicate<AccessContext, PageKey> pageAccess(AccessGuard access,
+                                                                 Function<PageKey, Optional<String>> spaceKey) {
+        Objects.requireNonNull(access, "access");
+        Objects.requireNonNull(spaceKey, "spaceKey");
+        return (caller, page) -> {
+            Optional<String> space = spaceKey.apply(page);
+            if (space.isPresent()) {
+                return access.canRead(caller, page.sourceId(), space.get(), page.pageId());
+            }
+            return access.canRead(caller, page.sourceId(), null, page.pageId())
+                    || access.permitsSourceWide(caller, page.sourceId(), AccessKind.CONTENT);
+        };
     }
 
     /** Meldet sich, nachdem Urteile gelöscht wurden ({@link #delete}). Kein Polling (ADR 0027). */
