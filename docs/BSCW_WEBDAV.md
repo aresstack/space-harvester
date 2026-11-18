@@ -61,6 +61,11 @@ von `PROPFIND` über HTTPS-CONNECT wird durch einen Integrationstest geprüft.
 - Das Feld **„Titel filtern“** durchsucht ausschließlich bereits durch die Navigation bekannte
   Dateinamen im Speicher. Jede weitere geöffnete Ordnerebene erweitert die sichtbaren Treffer.
   Es löst **keine rekursive Inventur** aus; die Suche ist vor einer Synchronisation nicht vollständig.
+- Ein Suchtreffer aus dem Volltext-Cache kann nach einem Neustart seinen Ordnerpfad verlieren,
+  weil BSCW-URLs eigenständige Objekt-IDs statt hierarchischer Pfade enthalten. Die Navigation
+  stellt den Pfad dann aus den dauerhaft katalogisierten Elternbeziehungen wieder her und klappt
+  beim Öffnen des Treffers die vorhandenen Zwischenordner auf. Fehlt ein Teil dieser Metadaten,
+  bleibt die Quelle maßgeblich; es wird kein künstlicher Elternordner erfunden.
 - Für einen ausdrücklich gestarteten Synchronisations- oder Exportlauf den WebDAV-Baum
   **ordnerweise mit Cursor** inventarisieren. Die erste Metadatenseite wird ausgegeben, bevor
   weitere Unterordner gelesen werden; Dokumentinhalte bleiben während der Inventur unangetastet.

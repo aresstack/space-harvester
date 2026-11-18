@@ -67,7 +67,8 @@ import org.xml.sax.SAXException;
  */
 final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
         ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource,
-        AttachmentListSource, ResourceNodeKindSource, SourceMediaRange, KnownTitleLookup {
+        AttachmentListSource, ResourceNodeKindSource, SourceMediaRange, KnownTitleLookup,
+        VirtualNavigationRootSource {
 
     static final String STORED_FORMAT = "file";
     private static final String FOLDER_FORMAT = "bscw-folder";

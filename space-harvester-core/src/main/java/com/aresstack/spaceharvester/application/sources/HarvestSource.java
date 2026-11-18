@@ -26,6 +26,14 @@ public interface HarvestSource {
     String title();
 
     /**
+     * Indicate whether the source persists its technical navigation root as a page.
+     * Represent that page through the partition row, not another folder in the explorer.
+     */
+    default boolean navigationRootIsPage() {
+        return false;
+    }
+
+    /**
      * Was die Quelle kann (#18). Standard: Partitionen und beide Metadatenabfragen, Originale nur, wenn die Quelle
      * {@link #storedPage} überschreibt und das hier meldet.
      */

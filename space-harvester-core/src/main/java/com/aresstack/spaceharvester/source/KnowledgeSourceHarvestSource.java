@@ -317,6 +317,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return title;
     }
 
+    @Override
+    public boolean navigationRootIsPage() {
+        return port instanceof VirtualNavigationRootSource;
+    }
+
     /** Lokale Dateien: Eine fehlende Datei in einem lesbaren Verzeichnis ist gelöscht (ADR 0014). */
     @Override
     public boolean confirmsDeletion() {

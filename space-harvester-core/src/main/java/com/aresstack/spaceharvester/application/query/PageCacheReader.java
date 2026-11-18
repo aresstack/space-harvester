@@ -41,6 +41,14 @@ public interface PageCacheReader {
     Optional<CachedPage> page(PageKey key);
 
     /**
+     * Read the latest page header without requiring a downloaded body.
+     * This lets navigation restore parent paths from previously cataloged metadata.
+     */
+    default Optional<com.aresstack.spaceharvester.application.snapshot.PageHeader> header(PageKey key) {
+        return Optional.empty();
+    }
+
+    /**
      * Direkte Kinder nach den aktuellen Kopfdaten im Cache, ohne Payload: mit {@code parentPageId} die Kinder dieser
      * Seite, sonst die Wurzelseiten des Space. Für den Baum, der zuerst den gecachten Stand zeigt und die Quelle
      * danach im Hintergrund fragt.

@@ -214,11 +214,61 @@ public class PageNavigation {
      */
     public Position position(AccessContext caller, String sourceId, String pageId) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
-        HarvestSource.PagePosition position = source(sourceId).position(pageId);
+        HarvestSource source = source(sourceId);
+        HarvestSource.PagePosition position = source.position(pageId);
         access.requireConcealed(caller, ResourceScope.page(sourceId, position.partitionKey(), pageId),
                 AccessKind.METADATA);
+        List<PageNode> ancestors = position.ancestors();
+        List<PageNode> storedPath = cachedAncestors(source, sourceId, pageId);
+        if (storedPath.size() > ancestors.size()) {
+            ancestors = storedPath;
+        }
         return new Position(sourceId, position.partitionKey(), position.partitionName(),
-                visible(caller, sourceId, position.ancestors()), node(caller, position.page()));
+                visible(caller, sourceId, ancestors), node(caller, position.page()));
+    }
+
+    /**
+     * Restore BSCW folders from persisted metadata when WebDAV has no remembered parent chain.
+     * BSCW object URLs contain independent numeric IDs, not a hierarchical path. The final
+     * parent without its own parent is the technical root represented by the Space row.
+     */
+    private List<PageNode> cachedAncestors(HarvestSource source, String sourceId, String pageId) {
+        if (cache == null || !source.navigationRootIsPage()) {
+            return List.of();
+        }
+        List<PageNode> ancestors = new java.util.ArrayList<>();
+        Set<String> visited = new java.util.HashSet<>();
+        String current = pageId;
+        try {
+            while (visited.add(current) && visited.size() < 100) {
+                Optional<com.aresstack.spaceharvester.application.snapshot.PageHeader> currentHeader =
+                        cache.header(new PageKey(sourceId, current));
+                if (currentHeader.isEmpty()) {
+                    return List.of();
+                }
+                String parentId = currentHeader.get().metadata().parentPageId();
+                if (parentId == null || visited.contains(parentId)) {
+                    break;
+                }
+                Optional<com.aresstack.spaceharvester.application.snapshot.PageHeader> parentHeader =
+                        cache.header(new PageKey(sourceId, parentId));
+                if (parentHeader.isEmpty()) {
+                    return List.of();
+                }
+                com.aresstack.spaceharvester.application.sources.PageMetadata parent =
+                        parentHeader.get().metadata();
+                if (parent.parentPageId() == null) {
+                    break;
+                }
+                ancestors.add(new PageNode(parent.pageId(), parent.title(), parent.partitionKey(),
+                        Boolean.TRUE, PageNode.Kind.FOLDER));
+                current = parentId;
+            }
+        } catch (com.aresstack.spaceharvester.application.query.CacheUnavailableException unavailable) {
+            return List.of();
+        }
+        java.util.Collections.reverse(ancestors);
+        return List.copyOf(ancestors);
     }
 
     /**
