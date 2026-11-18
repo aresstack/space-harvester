@@ -1,6 +1,9 @@
 package com.aresstack.spaceharvester.application.check;
 
+import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
+import com.aresstack.spaceharvester.application.observe.Listeners;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import java.util.ArrayList;
@@ -20,6 +23,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiPredicate;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 
@@ -43,14 +47,58 @@ public final class StatementChecks {
     private final StepModel model;
     private final StatementCheckStore store;
     private final Predicate<PageKey> released;
+    private final BiPredicate<AccessContext, PageKey> readable;
+    private final Listeners<Runnable> listeners = new Listeners<>("Prüfurteile");
 
     /**
+     * Ohne Leserecht für {@link #delete}: dort wird nichts gelöscht.
+     *
      * @param released ob die Seite jetzt an den KI-Dienst darf, etwa {@code AiRelease::mayProcess}
      */
     public StatementChecks(StepModel model, StatementCheckStore store, Predicate<PageKey> released) {
+        this(model, store, released, (caller, page) -> false);
+    }
+
+    /**
+     * @param released ob die Seite jetzt an den KI-Dienst darf, etwa {@code AiRelease::mayProcess}
+     * @param readable ob der Aufrufer die Seite lesen darf, wie in {@code KnowledgeGraph#delete}
+     */
+    public StatementChecks(StepModel model, StatementCheckStore store, Predicate<PageKey> released,
+                           BiPredicate<AccessContext, PageKey> readable) {
         this.model = Objects.requireNonNull(model, "model");
         this.store = Objects.requireNonNull(store, "store");
         this.released = Objects.requireNonNull(released, "released");
+        this.readable = Objects.requireNonNull(readable, "readable");
+    }
+
+    /**
+     * „Alles löschen“ (Angelo 17.11.2026): entfernt die Urteile des Prüfschritts der Seiten, die {@code pages} trifft
+     * und die der Aufrufer lesen darf, auch wenn ihre Analyse schon gelöscht ist. Die Auswahl kommt vom Aufrufer, der
+     * Core rechnet keine eigene. Urteile liegen nur je Seite (Anhänge haben keine eigenen), daher keine Dokumente.
+     * Meldet sich einmal je Aufruf bei {@link #subscribe}, nur wenn etwas entfernt wurde.
+     *
+     * @return Zahl der Seiten, deren Urteile entfernt wurden
+     */
+    public int delete(AccessContext caller, Predicate<PageKey> pages) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(pages, "pages");
+        List<PageKey> doomed = new ArrayList<>();
+        for (PageKey page : store.pages()) {
+            if (pages.test(page) && readable.test(caller, page)) {
+                doomed.add(page);
+            }
+        }
+        if (doomed.isEmpty()) {
+            return 0;
+        }
+        store.removeAll(doomed);
+        listeners.deliver(null, Runnable::run);
+        return doomed.size();
+    }
+
+    /** Meldet sich, nachdem Urteile gelöscht wurden ({@link #delete}). Kein Polling (ADR 0027). */
+    public Subscription subscribe(Runnable listener) {
+        return listeners.add(Objects.requireNonNull(listener, "listener"));
     }
 
     /** Ob ein Modell eingestellt ist. */
