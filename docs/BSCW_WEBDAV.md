@@ -130,7 +130,20 @@ als Umgebungsvariable auf den Ordner mit `libvlc.dll` zeigen.
 Nur ein tatsächliches `playing`-Ereignis schaltet die Bedienelemente auf Wiedergabe.
 Fehlende Native-Bibliotheken oder Codec-/Netzwerkfehler werden sichtbar gemeldet;
 ein akzeptierter Startaufruf allein gilt nicht als erfolgreiche Wiedergabe.
-Die Bedienung zeigt Play-, Pause- und Stop-Symbole.
+Die Bedienelemente bilden eine deckende, kompakte Steuerleiste **direkt unter der
+nativen VLC-Zeichenfläche**. Ein transparentes Swing-Overlay über dem AWT-Canvas
+wäre wegen Heavyweight-/Lightweight-Mischung fehleranfällig. Play, Pause und Stopp
+sind als Icons ausgeführt, der Download ist separat bedienbar und sein Abbrechen
+erscheint nur bei laufendem Download.
+
+Die breite Zeitleiste folgt dem Bedienprinzip des Audio Studios: Klick oder
+Ziehen zeigt die Zielposition sofort, **erst beim Loslassen** startet genau ein
+neuer VLC-Sprung. Damit erzeugt das Ziehen keine Folge von WebDAV-Range-Abrufen.
+Die Zeitleiste zeigt verstrichene Zeit und Gesamtdauer an und erlaubt
+Links-/Rechtsnavigation per Tastatur. Wenn VLC die Dauer nicht kennt, wird
+ersatzweise seine relative Position (Prozent) verwendet. Der native Sprung wird
+auf einem Worker statt im Swing-Event-Thread ausgeführt, damit die Oberfläche
+beim Nachladen der Position weiter reagiert.
 
 Große Videoressourcen (`.mp4`, `.m4v`, `.webm`, `.mov`, `.mkv`) werden beim Auswählen im Explorer
 **nicht vollständig heruntergeladen**: Der Snapshot enthält lediglich Metadaten

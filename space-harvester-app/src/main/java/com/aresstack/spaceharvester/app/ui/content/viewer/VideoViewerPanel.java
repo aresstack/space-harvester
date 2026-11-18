@@ -1,105 +1,84 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
-import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
-import uk.co.caprica.vlcj.player.component.EmbeddedMediaPlayerComponent;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
+import uk.co.caprica.vlcj.player.component.EmbeddedMediaPlayerComponent;
 
 import javax.swing.BorderFactory;
-import javax.swing.JButton;
 import javax.swing.JFileChooser;
-import javax.swing.JOptionPane;
-import javax.swing.SwingWorker;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JSlider;
 import javax.swing.SwingConstants;
-import javax.swing.Timer;
 import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
+import javax.swing.Timer;
 import java.awt.BorderLayout;
-import java.awt.FlowLayout;
 import java.awt.GraphicsEnvironment;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Play remote video through an authenticated byte-range bridge without giving VLC source credentials.
- * Start playback only on an explicit user action and release every native resource on page change.
+ * Play BSCW videos through an authenticated range bridge without exposing source credentials to VLC.
+ * Keep native video and Swing controls in separate opaque regions to prevent AWT mixing artifacts.
  */
 public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
-    private final JLabel message = new JLabel(" ");
-    private final JSlider position = new JSlider(0, 1000);
-    private final JButton play = new JButton("Abspielen");
-    private final JButton pause = new JButton("Pause");
-    private final JButton stop = new JButton("Stopp");
-    private final JButton download = new JButton("Herunterladen");
-    private final JButton cancelDownload = new JButton("Download abbrechen");
-    private final Timer progress = new Timer(500, event -> updateProgress());
+    private static final long START_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(15);
+    private static final long SEEK_FEEDBACK_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(10);
 
-    private EmbeddedMediaPlayerComponent player;
-    private MediaStreamBridge bridge;
-    private boolean started;
-    private boolean actuallyPlaying;
-    private long startRequestedAtNanos;
-    private static final long START_TIMEOUT_NANOS = java.util.concurrent.TimeUnit.SECONDS.toNanos(15);
-    private boolean closed;
-    private boolean refreshingProgress;
+    private final JLabel message = new JLabel(" ");
+    private final VideoTransportBar transport = new VideoTransportBar(this::seek);
+    private final Timer progress = new Timer(350, event -> updateProgress());
+    private final ExecutorService seekWorker = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "space-harvester-video-seek");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final String fileName;
     private final long fileSize;
     private final MediaStreamBridge.ChunkSource reader;
+
+    private EmbeddedMediaPlayerComponent player;
+    private MediaStreamBridge bridge;
     private SwingWorker<Void, Long> downloadTask;
+    private volatile boolean closed;
+    private boolean started;
+    private boolean actuallyPlaying;
+    private long startRequestedAtNanos;
+    private long seekRequestedAtNanos;
+    private double requestedSeekShare;
 
     public VideoViewerPanel(String fileName, long size, String mediaType,
                             MediaStreamBridge.ChunkSource reader) {
-        super(new BorderLayout(0, 6));
+        super(new BorderLayout(0, 0));
         this.fileName = fileName;
         this.fileSize = size;
         this.reader = reader;
-        setOpaque(false);
+        setOpaque(true);
+        setBackground(new java.awt.Color(0x171E27));
         message.setHorizontalAlignment(SwingConstants.CENTER);
-        message.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        message.setOpaque(true);
+        message.setBackground(new java.awt.Color(0x171E27));
+        message.setForeground(new java.awt.Color(0xE6EDF4));
+        message.setBorder(BorderFactory.createEmptyBorder(9, 8, 9, 8));
         add(message, BorderLayout.NORTH);
-        JPanel controls = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
-        controls.setOpaque(false);
-        play.setIcon(ComposerIcons.play());
-        pause.setIcon(ComposerIcons.pause());
-        stop.setIcon(ComposerIcons.stop());
-        play.setToolTipText("Video abspielen oder fortsetzen");
-        pause.setToolTipText("Wiedergabe pausieren");
-        stop.setToolTipText("Wiedergabe stoppen");
-        pause.setEnabled(false);
-        stop.setEnabled(false);
-        controls.add(play);
-        controls.add(pause);
-        controls.add(stop);
-        controls.add(position);
-        controls.add(download);
-        controls.add(cancelDownload);
-        cancelDownload.setEnabled(false);
-        add(controls, BorderLayout.SOUTH);
-        position.setPreferredSize(new java.awt.Dimension(250, 28));
-        position.addChangeListener(event -> {
-            if (!refreshingProgress && !position.getValueIsAdjusting() && started && player != null) {
-                player.mediaPlayer().controls().setPosition(position.getValue() / 1000f);
-            }
-        });
-        play.addActionListener(event -> play());
-        pause.addActionListener(event -> pause());
-        stop.addActionListener(event -> stop());
-        download.addActionListener(event -> chooseDownload());
-        cancelDownload.addActionListener(event -> {
-            if (downloadTask != null) {
-                downloadTask.cancel(true);
-            }
-        });
-        progress.start();
+        add(transport, BorderLayout.SOUTH);
+        transport.play().addActionListener(event -> play());
+        transport.pause().addActionListener(event -> pause());
+        transport.stop().addActionListener(event -> stop());
+        transport.download().addActionListener(event -> chooseDownload());
+        transport.cancelDownload().addActionListener(event -> cancelDownload());
+        transport.seekBar().reset();
 
         if (size < 1) {
-            download.setEnabled(false);
+            transport.download().setEnabled(false);
             unavailable("Die Dateigröße ist unbekannt; Streaming und Download sind nicht möglich.");
             return;
         }
@@ -114,43 +93,242 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             }
             player = new EmbeddedMediaPlayerComponent();
             bridge = new MediaStreamBridge(reader, size, mediaType);
-            player.mediaPlayer().events().addMediaPlayerEventListener(new MediaPlayerEventAdapter() {
-                @Override
-                public void playing(MediaPlayer mediaPlayer) {
-                    SwingUtilities.invokeLater(() -> playbackStarted());
-                }
-
-                @Override
-                public void paused(MediaPlayer mediaPlayer) {
-                    SwingUtilities.invokeLater(() -> playbackPaused());
-                }
-
-                @Override
-                public void stopped(MediaPlayer mediaPlayer) {
-                    SwingUtilities.invokeLater(() -> playbackStopped());
-                }
-
-                @Override
-                public void error(MediaPlayer mediaPlayer) {
-                    SwingUtilities.invokeLater(() -> playbackFailed(
-                            bridge != null && bridge.lastFailure() != null
-                                    ? bridge.lastFailure()
-                                    : "VLC konnte die Videodaten nicht abspielen. Netzwerk/Codec prüfen."));
-                }
-            });
+            registerPlaybackEvents();
             add(player, BorderLayout.CENTER);
-            message.setText("Video „" + fileName + "“ – zum Starten „Abspielen“ wählen.");
+            message.setText("Video „" + fileName + "“ – zum Starten Abspielen wählen.");
+            progress.start();
         } catch (RuntimeException | LinkageError | IOException failure) {
             if (player != null) {
                 player.release();
                 player = null;
+            }
+            if (bridge != null) {
+                bridge.close();
+                bridge = null;
             }
             unavailable("VLC kann nicht initialisiert werden: " + failure.getClass().getSimpleName()
                     + (failure.getMessage() == null ? "" : " – " + failure.getMessage()));
         }
     }
 
-    /** Ask for a destination only after the user explicitly chooses to download the video. */
+    private void registerPlaybackEvents() {
+        player.mediaPlayer().events().addMediaPlayerEventListener(new MediaPlayerEventAdapter() {
+            @Override
+            public void playing(MediaPlayer mediaPlayer) {
+                SwingUtilities.invokeLater(() -> playbackStarted());
+            }
+
+            @Override
+            public void paused(MediaPlayer mediaPlayer) {
+                SwingUtilities.invokeLater(() -> playbackPaused());
+            }
+
+            @Override
+            public void stopped(MediaPlayer mediaPlayer) {
+                SwingUtilities.invokeLater(() -> playbackStopped());
+            }
+
+            @Override
+            public void finished(MediaPlayer mediaPlayer) {
+                SwingUtilities.invokeLater(() -> playbackStopped());
+            }
+
+            @Override
+            public void error(MediaPlayer mediaPlayer) {
+                SwingUtilities.invokeLater(() -> playbackFailed(
+                        bridge != null && bridge.lastFailure() != null
+                                ? bridge.lastFailure()
+                                : "VLC konnte die Videodaten nicht abspielen. Netzwerk/Codec prüfen."));
+            }
+        });
+    }
+
+    private void play() {
+        if (closed || player == null || bridge == null) {
+            return;
+        }
+        try {
+            transport.play().setEnabled(false);
+            startRequestedAtNanos = System.nanoTime();
+            message.setText("Video wird gestartet …");
+            boolean accepted = true;
+            if (started) {
+                player.mediaPlayer().controls().play();
+            } else {
+                accepted = player.mediaPlayer().media().play(bridge.address().toASCIIString());
+            }
+            if (!accepted) {
+                playbackFailed("VLC hat den Wiedergabestart abgelehnt.");
+            } else {
+                started = true;
+            }
+        } catch (RuntimeException failure) {
+            playbackFailed("Video nicht abspielbar: " + failure.getMessage());
+        }
+    }
+
+    private void pause() {
+        if (!closed && started && player != null) {
+            player.mediaPlayer().controls().pause();
+        }
+    }
+
+    private void stop() {
+        if (!closed && player != null) {
+            player.mediaPlayer().controls().stop();
+        }
+        playbackStopped();
+    }
+
+    /** Commit a seek only after the user releases the timeline; execute libVLC's potentially slow call off the EDT. */
+    private void seek(double share) {
+        if (closed || !started || player == null) {
+            return;
+        }
+        if (!transport.seekBar().canSeek()) {
+            return;
+        }
+        final double requestedShare = Math.max(0, Math.min(1, share));
+        final long duration = transport.seekBar().durationMillis();
+        final long target = Math.round(requestedShare * duration);
+        requestedSeekShare = requestedShare;
+        seekRequestedAtNanos = System.nanoTime();
+        if (duration > 0) {
+            transport.seekBar().update(target, duration);
+        } else {
+            transport.seekBar().updateFraction(requestedShare);
+        }
+        message.setText("Position wird geladen …");
+        try {
+            seekWorker.execute(() -> {
+                try {
+                    if (!closed && player != null) {
+                        if (duration > 0) {
+                            player.mediaPlayer().controls().setTime(target);
+                        } else {
+                            player.mediaPlayer().controls().setPosition((float) requestedShare);
+                        }
+                    }
+                } catch (RuntimeException failure) {
+                    SwingUtilities.invokeLater(() -> {
+                        if (!closed) {
+                            playbackFailed("Springen nicht möglich: " + failure.getMessage());
+                        }
+                    });
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // Ignore seeks submitted while the viewer is closing.
+        }
+    }
+
+    private void playbackStarted() {
+        if (closed) {
+            return;
+        }
+        started = true;
+        actuallyPlaying = true;
+        startRequestedAtNanos = 0;
+        transport.play().setEnabled(false);
+        transport.pause().setEnabled(true);
+        transport.stop().setEnabled(true);
+        message.setText("Wiedergabe über BSCW-Streaming");
+    }
+
+    private void playbackPaused() {
+        if (closed) {
+            return;
+        }
+        actuallyPlaying = false;
+        startRequestedAtNanos = 0;
+        transport.play().setEnabled(true);
+        transport.pause().setEnabled(false);
+        transport.stop().setEnabled(true);
+        message.setText("Pausiert");
+    }
+
+    private void playbackStopped() {
+        if (closed) {
+            return;
+        }
+        actuallyPlaying = false;
+        started = false;
+        startRequestedAtNanos = 0;
+        seekRequestedAtNanos = 0;
+        transport.play().setEnabled(true);
+        transport.pause().setEnabled(false);
+        transport.stop().setEnabled(false);
+        transport.seekBar().reset();
+        message.setText("Wiedergabe gestoppt");
+    }
+
+    private void playbackFailed(String reason) {
+        if (closed) {
+            return;
+        }
+        actuallyPlaying = false;
+        started = false;
+        startRequestedAtNanos = 0;
+        seekRequestedAtNanos = 0;
+        transport.play().setEnabled(true);
+        transport.pause().setEnabled(false);
+        transport.stop().setEnabled(false);
+        transport.seekBar().reset();
+        message.setText(reason);
+    }
+
+    /** Keep the timeline responsive while native playback fetches a newly requested range. */
+    private void updateProgress() {
+        if (closed || player == null || !started) {
+            return;
+        }
+        if (startRequestedAtNanos != 0 && !actuallyPlaying
+                && System.nanoTime() - startRequestedAtNanos > START_TIMEOUT_NANOS) {
+            playbackFailed("VLC startet nicht. Installation, Videoformat und BSCW-Verbindung prüfen.");
+            return;
+        }
+        try {
+            long duration = player.mediaPlayer().status().length();
+            long current = player.mediaPlayer().status().time();
+            float share = player.mediaPlayer().status().position();
+            boolean hasFraction = share >= 0 && share <= 1;
+            if (seekRequestedAtNanos != 0) {
+                boolean reached = duration > 0
+                        ? Math.abs(current - Math.round(requestedSeekShare * duration)) <= 2500
+                        : hasFraction && Math.abs(share - requestedSeekShare) < 0.02;
+                if (reached) {
+                    seekRequestedAtNanos = 0;
+                    message.setText(actuallyPlaying ? "Wiedergabe über BSCW-Streaming" : "Pausiert");
+                } else if (System.nanoTime() - seekRequestedAtNanos < SEEK_FEEDBACK_TIMEOUT_NANOS) {
+                    if (!transport.seekBar().isDragging()) {
+                        showSeekProgress(duration, current, hasFraction ? share : -1, true);
+                    }
+                    return;
+                } else {
+                    seekRequestedAtNanos = 0;
+                    message.setText("Position nicht erreicht. BSCW-Verbindung oder Seek-Fähigkeit prüfen.");
+                }
+            }
+            if (!transport.seekBar().isDragging()) {
+                showSeekProgress(duration, current, hasFraction ? share : -1, false);
+            }
+        } catch (RuntimeException failure) {
+            message.setText("Wiedergabestatus nicht verfügbar.");
+        }
+    }
+
+    private void showSeekProgress(long duration, long current, double share, boolean pending) {
+        if (duration > 0) {
+            long elapsed = pending ? Math.round(requestedSeekShare * duration) : current;
+            transport.seekBar().update(elapsed, duration);
+        } else if (pending) {
+            transport.seekBar().updateFraction(requestedSeekShare);
+        } else if (share >= 0) {
+            transport.seekBar().updateFraction(share);
+        }
+    }
+
+    /** Ask for a destination only after the user explicitly chooses to download. */
     private void chooseDownload() {
         if (closed || fileSize < 1 || downloadTask != null) {
             return;
@@ -171,10 +349,17 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         startDownload(target);
     }
 
-    /** Download on a worker thread; publish no partially downloaded video under its final filename. */
+    private void cancelDownload() {
+        if (downloadTask != null) {
+            downloadTask.cancel(true);
+        }
+    }
+
+    /** Download without publishing a partial file under the final filename. */
     private void startDownload(Path target) {
-        download.setEnabled(false);
-        cancelDownload.setEnabled(true);
+        transport.download().setEnabled(false);
+        transport.cancelDownload().setEnabled(true);
+        transport.showDownloadCancellation(true);
         message.setText("Video wird heruntergeladen …");
         SwingWorker<Void, Long> task = new SwingWorker<Void, Long>() {
             @Override
@@ -195,11 +380,12 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             @Override
             protected void done() {
                 downloadTask = null;
-                cancelDownload.setEnabled(false);
+                transport.cancelDownload().setEnabled(false);
+                transport.showDownloadCancellation(false);
                 if (closed) {
                     return;
                 }
-                download.setEnabled(true);
+                transport.download().setEnabled(true);
                 try {
                     get();
                     message.setText("Video gespeichert: " + target.getFileName());
@@ -219,128 +405,12 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         task.execute();
     }
 
-    private void play() {
-        if (closed || player == null || bridge == null) {
-            return;
-        }
-        try {
-            play.setEnabled(false);
-            startRequestedAtNanos = System.nanoTime();
-            message.setText("Video wird gestartet …");
-            boolean accepted = true;
-            if (started) {
-                player.mediaPlayer().controls().play();
-            } else {
-                accepted = player.mediaPlayer().media().play(bridge.address().toASCIIString());
-            }
-            if (!accepted) {
-                playbackFailed("VLC hat den Wiedergabestart abgelehnt.");
-            } else {
-                started = true;
-            }
-        } catch (RuntimeException error) {
-            playbackFailed("Video nicht abspielbar: " + error.getMessage());
-        }
-    }
-
-    private void playbackStarted() {
-        if (closed) {
-            return;
-        }
-        started = true;
-        actuallyPlaying = true;
-        startRequestedAtNanos = 0;
-        play.setEnabled(false);
-        pause.setEnabled(true);
-        stop.setEnabled(true);
-        message.setText("Wiedergabe über BSCW-Streaming");
-    }
-
-    private void playbackPaused() {
-        if (closed) {
-            return;
-        }
-        actuallyPlaying = false;
-        startRequestedAtNanos = 0;
-        play.setEnabled(true);
-        pause.setEnabled(false);
-        stop.setEnabled(true);
-        message.setText("Pausiert");
-    }
-
-    private void playbackStopped() {
-        if (closed) {
-            return;
-        }
-        actuallyPlaying = false;
-        started = false;
-        startRequestedAtNanos = 0;
-        play.setEnabled(true);
-        pause.setEnabled(false);
-        stop.setEnabled(false);
-        position.setValue(0);
-        message.setText("Wiedergabe gestoppt");
-    }
-
-    private void playbackFailed(String reason) {
-        if (closed) {
-            return;
-        }
-        actuallyPlaying = false;
-        started = false;
-        startRequestedAtNanos = 0;
-        play.setEnabled(true);
-        pause.setEnabled(false);
-        stop.setEnabled(false);
-        message.setText(reason);
-    }
-
-    private void pause() {
-        if (!closed && started && player != null) {
-            player.mediaPlayer().controls().pause();
-        }
-    }
-
-    private void stop() {
-        if (!closed && player != null) {
-            player.mediaPlayer().controls().stop();
-        }
-        playbackStopped();
-    }
-
-    private void updateProgress() {
-        if (closed) {
-            return;
-        }
-        if (startRequestedAtNanos != 0 && !actuallyPlaying
-                && System.nanoTime() - startRequestedAtNanos > START_TIMEOUT_NANOS) {
-            playbackFailed("VLC startet nicht. Installation, Videoformat und BSCW-Verbindung prüfen.");
-            return;
-        }
-        if (!actuallyPlaying || player == null || position.getValueIsAdjusting()) {
-            return;
-        }
-        try {
-            float value = player.mediaPlayer().status().position();
-            if (value >= 0 && value <= 1) {
-                refreshingProgress = true;
-                try {
-                    position.setValue((int) Math.round(value * 1000));
-                } finally {
-                    refreshingProgress = false;
-                }
-            }
-        } catch (RuntimeException error) {
-            message.setText("Wiedergabestatus nicht verfügbar.");
-        }
-    }
-
     private void unavailable(String reason) {
         message.setText(reason);
-        play.setEnabled(false);
-        pause.setEnabled(false);
-        stop.setEnabled(false);
-        position.setEnabled(false);
+        transport.play().setEnabled(false);
+        transport.pause().setEnabled(false);
+        transport.stop().setEnabled(false);
+        transport.seekBar().reset();
     }
 
     public String status() {
@@ -363,9 +433,10 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         }
         closed = true;
         progress.stop();
-        play.setEnabled(false);
-        pause.setEnabled(false);
-        stop.setEnabled(false);
+        seekWorker.shutdownNow();
+        transport.play().setEnabled(false);
+        transport.pause().setEnabled(false);
+        transport.stop().setEnabled(false);
         if (downloadTask != null) {
             downloadTask.cancel(true);
             downloadTask = null;

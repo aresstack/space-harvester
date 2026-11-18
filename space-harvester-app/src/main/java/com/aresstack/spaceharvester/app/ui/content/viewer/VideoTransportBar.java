@@ -1,0 +1,117 @@
+package com.aresstack.spaceharvester.app.ui.content.viewer;
+
+import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JPanel;
+import javax.swing.SwingConstants;
+import javax.swing.plaf.basic.BasicButtonUI;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.Insets;
+import java.util.function.DoubleConsumer;
+
+/**
+ * Keep playback controls in one opaque dock beneath VLC's heavyweight AWT video surface.
+ * Avoid translucent Swing overlays above native Canvas, which can flicker or obscure buttons.
+ */
+final class VideoTransportBar extends JPanel {
+
+    private static final Color BACKGROUND = new Color(0x171E27);
+    private static final Color BUTTON = new Color(0x253241);
+    private static final Color FOREGROUND = new Color(0xF1F5F9);
+
+    private final JButton play = iconButton("Abspielen", ComposerIcons.play());
+    private final JButton pause = iconButton("Pausieren", ComposerIcons.pause());
+    private final JButton stop = iconButton("Stoppen", ComposerIcons.stop());
+    private final JButton download = iconButton("Herunterladen", ComposerIcons.download());
+    private final JButton cancelDownload = iconButton("Download abbrechen", ComposerIcons.stop());
+    private final VideoSeekBar seekBar;
+
+    VideoTransportBar(DoubleConsumer seek) {
+        super(new BorderLayout(0, 2));
+        setOpaque(true);
+        setBackground(BACKGROUND);
+        setBorder(BorderFactory.createEmptyBorder(5, 12, 4, 12));
+        seekBar = new VideoSeekBar(seek);
+
+        JPanel buttons = new JPanel(new BorderLayout());
+        buttons.setOpaque(false);
+        JPanel playback = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        playback.setOpaque(false);
+        playback.add(play);
+        playback.add(pause);
+        playback.add(stop);
+        JPanel transfers = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        transfers.setOpaque(false);
+        download.setText("Herunterladen");
+        download.setHorizontalTextPosition(SwingConstants.RIGHT);
+        download.setIconTextGap(7);
+        cancelDownload.setText("Abbrechen");
+        cancelDownload.setHorizontalTextPosition(SwingConstants.RIGHT);
+        cancelDownload.setIconTextGap(7);
+        cancelDownload.setVisible(false);
+        transfers.add(download);
+        transfers.add(cancelDownload);
+        buttons.add(playback, BorderLayout.WEST);
+        buttons.add(transfers, BorderLayout.EAST);
+
+        add(buttons, BorderLayout.NORTH);
+        add(seekBar, BorderLayout.CENTER);
+        pause.setEnabled(false);
+        stop.setEnabled(false);
+    }
+
+    JButton play() {
+        return play;
+    }
+
+    JButton pause() {
+        return pause;
+    }
+
+    JButton stop() {
+        return stop;
+    }
+
+    JButton download() {
+        return download;
+    }
+
+    JButton cancelDownload() {
+        return cancelDownload;
+    }
+
+    VideoSeekBar seekBar() {
+        return seekBar;
+    }
+
+    void showDownloadCancellation(boolean active) {
+        cancelDownload.setVisible(active);
+        revalidate();
+        repaint();
+    }
+
+    private static JButton iconButton(String label, javax.swing.Icon icon) {
+        JButton button = new JButton(icon);
+        button.setUI(new BasicButtonUI());
+        button.setBackground(BUTTON);
+        button.setForeground(FOREGROUND);
+        button.setDisabledIcon(icon);
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setFocusPainted(false);
+        button.setBorderPainted(false);
+        button.setMargin(new Insets(0, 0, 0, 0));
+        button.setBorder(BorderFactory.createEmptyBorder(7, 11, 7, 11));
+        button.setFont(button.getFont().deriveFont(Font.PLAIN, 12f));
+        button.setToolTipText(label);
+        button.getAccessibleContext().setAccessibleName(label);
+        button.addPropertyChangeListener("enabled", event ->
+                button.setForeground(button.isEnabled() ? FOREGROUND : new Color(0x788796)));
+        return button;
+    }
+}
