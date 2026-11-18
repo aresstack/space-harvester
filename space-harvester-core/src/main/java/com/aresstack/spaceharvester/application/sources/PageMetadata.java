@@ -28,6 +28,7 @@ public record PageMetadata(String pageId, String resourceId, String title, Strin
     public static final String RESOURCE_KIND = "resource.kind";
     public static final String FILE_KIND = "file";
     public static final String FOLDER_KIND = "folder";
+    public static final String LINK_KIND = "link";
 
     public PageMetadata {
         Objects.requireNonNull(pageId, "pageId");

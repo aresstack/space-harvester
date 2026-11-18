@@ -17,6 +17,9 @@ public interface RoutedHttpPort extends AutoCloseable {
     @Override
     void close();
 
-    record Response(int status, byte[] body) {
+    record Response(int status, byte[] body, String location) {
+        public Response(int status, byte[] body) {
+            this(status, body, null);
+        }
     }
 }

@@ -45,7 +45,47 @@ final class BscwWebDavTransport {
     }
 
     byte[] download(URI resource) throws KnowledgeSourceException {
-        return request(resource, "GET", -1, maxFileBytes, 200);
+        return downloadResource(resource).bytes();
+    }
+
+    /**
+     * Treat a WebDAV redirect as a link resource, not as a failed file download.
+     * Never follow a redirect with source credentials.
+     */
+    Download downloadResource(URI resource) throws KnowledgeSourceException {
+        RoutedWebDavHttp.Result response = exchange(resource, "GET", -1, maxFileBytes);
+        if (response.status() == 200) {
+            return new Download(response.body(), null);
+        }
+        if (response.status() == 301 || response.status() == 302 || response.status() == 303
+                || response.status() == 307 || response.status() == 308) {
+            URI destination = redirectTarget(checked(resource), response.location());
+            return new Download(destination.toASCIIString().getBytes(StandardCharsets.UTF_8), destination);
+        }
+        throw status(response.status());
+    }
+
+    record Download(byte[] bytes, URI linkedTarget) {
+        boolean isLink() {
+            return linkedTarget != null;
+        }
+    }
+
+    private static URI redirectTarget(URI source, String location) throws KnowledgeSourceException {
+        try {
+            if (location == null || location.isBlank() || location.length() > 8192) {
+                throw new IllegalArgumentException("Missing or oversized Location header");
+            }
+            URI target = source.resolve(URI.create(location)).normalize();
+            String scheme = target.getScheme();
+            if (target.getHost() == null || target.getRawUserInfo() != null
+                    || (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme))) {
+                throw new IllegalArgumentException("Redirect target must be an HTTP(S) URL without credentials");
+            }
+            return target;
+        } catch (IllegalArgumentException invalid) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW WebDAV redirect has no safe target");
+        }
     }
 
     /** Reject off-origin links and unexpected DAV paths before using credentials. */
@@ -70,6 +110,15 @@ final class BscwWebDavTransport {
 
     private byte[] request(URI resource, String method, int depth, int limit, int expected)
             throws KnowledgeSourceException {
+        RoutedWebDavHttp.Result response = exchange(resource, method, depth, limit);
+        if (response.status() != expected) {
+            throw status(response.status());
+        }
+        return response.body();
+    }
+
+    private RoutedWebDavHttp.Result exchange(URI resource, String method, int depth, int limit)
+            throws KnowledgeSourceException {
         URI target = checked(resource);
         try (SecretMaterial secret = secrets.resolve(secretRef)) {
             if (!secret.hasPrincipal()) {
@@ -89,13 +138,10 @@ final class BscwWebDavTransport {
                 headers.put("Depth", Integer.toString(depth));
             }
             RoutedWebDavHttp.Result response = http.exchange(target, method, headers);
-            if (response.status() != expected) {
-                throw status(response.status());
-            }
             if (response.body().length > limit) {
                 throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW WebDAV response too large");
             }
-            return response.body();
+            return response;
         } catch (SecretUnavailableException e) {
             throw new KnowledgeSourceException(Kind.ACCESS_DENIED, "BSCW credentials unavailable");
         } catch (RoutedWebDavHttp.RouteUnavailableException e) {

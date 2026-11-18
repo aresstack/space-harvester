@@ -34,13 +34,16 @@ final class BscwViewerIntegrationTest {
     private static final String ROOT = "/sec/bscw.cgi/146377797";
     private static final String PNG = "/sec/bscw.cgi/900";
     private static final String CSV = "/sec/bscw.cgi/901";
+    private static final String LINK = "/sec/bscw.cgi/902";
     private static final byte[] CSV_BYTES = "name,value\nNord,12\nSued,15\n".getBytes(StandardCharsets.UTF_8);
 
     @TempDir
     Path home;
 
     private HttpServer server;
+    private HttpServer externalServer;
     private ExecutorService serverThreads;
+    private java.util.concurrent.atomic.AtomicInteger externalRequests = new java.util.concurrent.atomic.AtomicInteger();
     private AppContext context;
     private final CountDownLatch imageStarted = new CountDownLatch(1);
     private final CountDownLatch releaseImage = new CountDownLatch(1);
@@ -55,6 +58,9 @@ final class BscwViewerIntegrationTest {
         if (server != null) {
             server.stop(0);
         }
+        if (externalServer != null) {
+            externalServer.stop(0);
+        }
         if (serverThreads != null) {
             serverThreads.shutdownNow();
         }
@@ -66,11 +72,12 @@ final class BscwViewerIntegrationTest {
         List<HarvestSource.PageNode> children =
                 context.runtime().workspace().children("bscw-test", "bscw-test", null, null).pages();
         assertThat(children).extracting(HarvestSource.PageNode::title)
-                .containsExactly("Diagramm.png", "Tabelle.csv");
+                .containsExactly("Diagramm.png", "Informationen hierzu im Confluence", "Tabelle.csv");
         assertThat(children).extracting(HarvestSource.PageNode::kind)
                 .containsOnly(HarvestSource.PageNode.Kind.FILE);
         String imageId = children.get(0).pageId();
-        String csvId = children.get(1).pageId();
+        String csvId = children.stream().filter(node -> "Tabelle.csv".equals(node.title()))
+                .findFirst().orElseThrow().pageId();
 
         PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
         onEdt(() -> {
@@ -104,8 +111,60 @@ final class BscwViewerIntegrationTest {
         assertThat(onEdt(() -> panel.originalViewer().attachment().typeLabel())).isEqualTo("PNG");
     }
 
+    @Test
+    void redirectedLinkShowsARealLoadingIndicatorAndDoesNotLeaveThePreviousCsvVisible() throws Exception {
+        start();
+        List<HarvestSource.PageNode> nodes =
+                context.runtime().workspace().children("bscw-test", "bscw-test", null, null).pages();
+        String csvId = nodes.stream().filter(node -> "Tabelle.csv".equals(node.title()))
+                .findFirst().orElseThrow().pageId();
+        String linkId = nodes.stream().filter(node -> "Informationen hierzu im Confluence".equals(node.title()))
+                .findFirst().orElseThrow().pageId();
+        PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
+
+        onEdt(() -> {
+            panel.tabs().select("Leseansicht");
+            panel.load("bscw-test", csvId, false);
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null
+                && panel.originalViewer().isShowingText()));
+        onEdt(() -> {
+            panel.load("bscw-test", linkId, false);
+            assertThat(panel.originalViewer()).as("Old CSV reader is gone").isNull();
+            assertThat(panel.originalLinkShown()).isFalse();
+            assertThat(panel.originalLoadingShown()).as("Loading spinner is visible").isTrue();
+            return null;
+        });
+        await(() -> onEdt(panel::originalLinkShown));
+        assertThat(onEdt(panel::originalLoadingShown)).isFalse();
+        assertThat(onEdt(panel::originalViewer)).isNull();
+        assertThat(externalRequests).hasValue(0);
+
+        com.aresstack.spaceharvester.application.query.DeliveredPage stored =
+                context.runtime().workspace().cachedPage("bscw-test", linkId).orElseThrow();
+        assertThat(stored.snapshot().metadata().attributes().get(
+                com.aresstack.spaceharvester.application.sources.PageMetadata.RESOURCE_KIND))
+                .isEqualTo(com.aresstack.spaceharvester.application.sources.PageMetadata.LINK_KIND);
+        String parent = stored.snapshot().metadata().parentPageId();
+        assertThat(parent).isNotNull();
+        assertThat(context.runtime().workspace().cachedChildren("bscw-test", "bscw-test", parent).pages())
+                .filteredOn(node -> linkId.equals(node.pageId()))
+                .singleElement().satisfies(node -> {
+                    assertThat(node.kind()).isEqualTo(HarvestSource.PageNode.Kind.FILE);
+                    assertThat(node.hasChildren()).isFalse();
+                });
+    }
+
     private void start() throws Exception {
         pngBytes = png();
+        externalServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        externalServer.createContext("/external", exchange -> {
+            externalRequests.incrementAndGet();
+            answer(exchange, 200, "external".getBytes(StandardCharsets.UTF_8), "text/plain");
+            exchange.close();
+        });
+        externalServer.start();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         serverThreads = Executors.newCachedThreadPool();
         server.setExecutor(serverThreads);
@@ -162,6 +221,12 @@ final class BscwViewerIntegrationTest {
                 answer(exchange, 200, CSV_BYTES, "text/csv");
                 return;
             }
+            if ("GET".equals(exchange.getRequestMethod()) && LINK.equals(path)) {
+                String location = "http://127.0.0.1:" + externalServer.getAddress().getPort() + "/external";
+                exchange.getResponseHeaders().set("Location", location);
+                answer(exchange, 303, new byte[0], "text/html");
+                return;
+            }
             answer(exchange, 404, new byte[0], "text/plain");
         } finally {
             exchange.close();
@@ -175,11 +240,14 @@ final class BscwViewerIntegrationTest {
             if (children) {
                 xml.append(entry(PNG, "Diagramm.png", false));
                 xml.append(entry(CSV, "Tabelle.csv", false));
+                xml.append(entry(LINK, "Informationen hierzu im Confluence", false));
             }
         } else if (PNG.equals(path)) {
             xml.append(entry(PNG, "Diagramm.png", false));
         } else if (CSV.equals(path)) {
             xml.append(entry(CSV, "Tabelle.csv", false));
+        } else if (LINK.equals(path)) {
+            xml.append(entry(LINK, "Informationen hierzu im Confluence", false));
         }
         return xml.append("</d:multistatus>").toString();
     }

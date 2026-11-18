@@ -1345,11 +1345,16 @@ public final class Explorer {
                     current.setUserObject(fresh.item());
                     model.nodeChanged(current);
                 }
-                if (!current.loaded && current.getChildCount() == 0 && fresh.getChildCount() > 0) {
-                    // Hat jetzt Kinder: den Platzhalter fürs Aufklappen nachtragen.
+                if (fresh.getChildCount() == 0) {
+                    // Mark a confirmed leaf as loaded so stale cache placeholders cannot reappear.
+                    if (!current.loaded && current.getChildCount() > 0) {
+                        model.removeNodeFromParent((Node) current.getFirstChild());
+                    }
+                    current.loaded = true;
+                } else if (current.getChildCount() == 0) {
+                    // A previous leaf can become a directory in a newer source listing.
+                    current.loaded = false;
                     model.insertNodeInto((Node) fresh.getFirstChild(), current, 0);
-                } else if (!current.loaded && current.getChildCount() > 0 && fresh.getChildCount() == 0) {
-                    model.removeNodeFromParent((Node) current.getFirstChild());
                 }
                 if (parent.getIndex(current) != index) {
                     model.removeNodeFromParent(current);

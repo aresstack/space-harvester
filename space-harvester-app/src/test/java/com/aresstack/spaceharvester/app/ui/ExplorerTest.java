@@ -74,6 +74,40 @@ class ExplorerTest {
     }
 
     @Test
+    void confirmedFileReplacesAnUnknownCachedNodeWithoutAnExpandHandle() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: "
+                + home.resolve("data").toString().replace('\\', '/') + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            Explorer.Node root = (Explorer.Node) explorer.tree().getModel().getRoot();
+            Explorer.Node parent = new Explorer.Node(new Explorer.SpaceItem("source", "space", "Space"));
+            Explorer.Node cached = new Explorer.Node(new Explorer.PageItem("source", "space", "doc",
+                    "Dokument.pdf", null, HarvestSource.PageNode.Kind.PAGE));
+            cached.add(new Explorer.Node(new Explorer.Note("Noch nicht geladen")));
+            parent.add(cached);
+            root.add(parent);
+            ((javax.swing.tree.DefaultTreeModel) explorer.tree().getModel()).reload();
+
+            Explorer.Node confirmed = new Explorer.Node(new Explorer.PageItem("source", "space", "doc",
+                    "Dokument.pdf", false, HarvestSource.PageNode.Kind.FILE));
+            confirmed.loaded = true;
+            explorer.merge(parent, new Explorer.Batch(List.of(confirmed), null), true);
+
+            assertThat(cached.item()).isInstanceOf(Explorer.PageItem.class);
+            assertThat(((Explorer.PageItem) cached.item()).kind()).isEqualTo(HarvestSource.PageNode.Kind.FILE);
+            assertThat(cached.loaded).isTrue();
+            assertThat(cached.getChildCount()).isZero();
+            assertThat(explorer.tree().getModel().isLeaf(cached)).isTrue();
+        });
+    }
+
+    @Test
     void theTitleFilterAsksTheSourceForPagesNeverLoaded() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
         Files.writeString(files.resolve("wartungsfenster.md"), "# Wartungsfenster\n\nText.\n");

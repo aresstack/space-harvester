@@ -189,8 +189,20 @@ public class PageNavigation {
                         page) -> positions.getOrDefault(page.pageId(), Integer.MAX_VALUE))
                         .thenComparing(page -> page.title().toLowerCase(java.util.Locale.ROOT))
                         .thenComparing(com.aresstack.spaceharvester.application.sources.PageMetadata::pageId))
-                .map(page -> new PageNode(page.pageId(), page.title(), page.partitionKey(),
-                        cache.hasChildren(sourceId, page.pageId()) ? Boolean.TRUE : null))
+                .map(page -> {
+                    PageNode.Kind kind = switch (page.attributes().getOrDefault(
+                            com.aresstack.spaceharvester.application.sources.PageMetadata.RESOURCE_KIND, "")) {
+                        case com.aresstack.spaceharvester.application.sources.PageMetadata.FOLDER_KIND ->
+                                PageNode.Kind.FOLDER;
+                        case com.aresstack.spaceharvester.application.sources.PageMetadata.FILE_KIND,
+                             com.aresstack.spaceharvester.application.sources.PageMetadata.LINK_KIND ->
+                                PageNode.Kind.FILE;
+                        default -> PageNode.Kind.PAGE;
+                    };
+                    Boolean children = kind == PageNode.Kind.FILE ? Boolean.FALSE
+                            : cache.hasChildren(sourceId, page.pageId()) ? Boolean.TRUE : null;
+                    return new PageNode(page.pageId(), page.title(), page.partitionKey(), children, kind);
+                })
                 .toList();
         return new Children(sourceId, partition, parentPageId, visible(caller, sourceId, nodes), null);
     }
@@ -305,7 +317,7 @@ public class PageNavigation {
     private static PageNode liveSpace(HarvestSource source, PageNode node) {
         try {
             return new PageNode(node.pageId(), node.title(), source.pageMetadata(node.pageId()).partitionKey(),
-                    node.hasChildren());
+                    node.hasChildren(), node.kind());
         } catch (SourceAccessException e) {
             return null;
         }

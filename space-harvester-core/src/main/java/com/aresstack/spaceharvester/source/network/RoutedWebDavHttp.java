@@ -43,7 +43,7 @@ public final class RoutedWebDavHttp implements AutoCloseable {
             RoutedHttpPort.Response response = transport.requestOnceAsync(
                     method, uri, headers, maximumResponseBytes, REQUEST_TIMEOUT)
                     .toCompletableFuture().join();
-            return new Result(response.status(), response.body());
+            return new Result(response.status(), response.body(), response.location());
         } catch (CompletionException failure) {
             Throwable cause = failure.getCause() == null ? failure : failure.getCause();
             if (cause instanceof IOException && cause.getMessage() != null
@@ -73,7 +73,10 @@ public final class RoutedWebDavHttp implements AutoCloseable {
         }
     }
 
-    public record Result(int status, byte[] body) {
+    public record Result(int status, byte[] body, String location) {
+        public Result(int status, byte[] body) {
+            this(status, body, null);
+        }
     }
 
     public static final class RouteUnavailableException extends RuntimeException {

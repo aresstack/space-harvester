@@ -176,7 +176,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         return Mono.defer(() -> closed.get()
                         ? Mono.<ConfluenceHttpResponse>error(new IOException("Transport ist geschlossen"))
                         : once(uri, headers, maxBytes, Identity.CLIENT, verb))
-                .map(response -> new RoutedHttpPort.Response(response.status(), response.body()))
+                .map(response -> new RoutedHttpPort.Response(response.status(), response.body(), response.location()))
                 .timeout(timeout, Mono.defer(() -> Mono.error(new SocketTimeoutException(
                         "Request timeout after " + timeout.toMillis() + " ms"))))
                 .onErrorMap(error -> !(error instanceof IOException), WebClientConfluenceTransport::ioFailure)

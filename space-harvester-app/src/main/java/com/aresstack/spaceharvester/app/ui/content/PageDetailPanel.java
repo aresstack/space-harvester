@@ -306,6 +306,7 @@ public final class PageDetailPanel extends JPanel {
     private final JPanel originalContent = new JPanel(originalCards);
     private final JPanel fileContent = new JPanel(new BorderLayout());
     private AttachmentViewerPanel originalFileViewer;
+    private boolean originalLinkShown;
     /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
     static final String READING_HELP = "Die Leseansicht zeigt die Seite, wie die Quelle sie darstellt. Liegt sie im "
             + "Cache, erscheint sie sofort; die Prüfung bei der Quelle läuft im Hintergrund.\n\n"
@@ -1156,7 +1157,8 @@ public final class PageDetailPanel extends JPanel {
         this.referencesLoaded = false;
         this.imagesLoaded = false;
         this.page = null;
-        readingPane.clear(" ");
+        closeOriginalFile();
+        readingPane.loading();
         breadcrumbs.clear();
         positionShown.accept(null);
         references.message(" ");
@@ -1213,6 +1215,8 @@ public final class PageDetailPanel extends JPanel {
             if (current != request) {
                 return;
             }
+            closeOriginalFile();
+            readingPane.clear(" ");
             feedback.problem(error, Problems.Step.PAGE);
             statementsView.unavailable();
             page = null;
@@ -1224,7 +1228,7 @@ public final class PageDetailPanel extends JPanel {
     private Loaded loaded(AppRuntime runtime, String source, String id, DeliveredPage delivered, Font font,
                           boolean checked, PassageLookup passage, boolean unchecked) {
         // Avoid preparing an AI text document before showing a native image.
-        if (isOriginalImage(delivered.snapshot())) {
+        if (isNativePreview(delivered.snapshot())) {
             return new Loaded(delivered, List.of(), null, Payloads.display(delivered.snapshot().payload()),
                     null, checked, passage, unchecked);
         }
@@ -1423,9 +1427,15 @@ public final class PageDetailPanel extends JPanel {
      */
     void showOriginalContent(PageMetadata metadata, NativePayload payload) {
         closeOriginalFile();
+        if (PageMetadata.LINK_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
+            readingPane.clear(" ");
+            showOriginalLink(payload);
+            return;
+        }
         if (!PageMetadata.FILE_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
             return;
         }
+        readingPane.clear(" ");
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
                 originalMediaType(payload), payload.length());
         ReaderAttachmentLoader loader = (file, done, failed) ->
@@ -1437,9 +1447,58 @@ public final class PageDetailPanel extends JPanel {
         fileContent.repaint();
     }
 
+    /**
+     * Present a redirect target as a source-neutral link document.
+     * Open the target only after an explicit user action; never reuse source credentials.
+     */
+    private void showOriginalLink(NativePayload payload) {
+        String destination = new String(payload.bytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+        JPanel link = new JPanel(new BorderLayout(0, 12));
+        link.setOpaque(false);
+        JLabel explanation = new JLabel("Diese Ressource ist ein Verweis auf eine andere Adresse.");
+        link.add(explanation, BorderLayout.NORTH);
+        javax.swing.JTextArea address = new javax.swing.JTextArea(destination);
+        address.setEditable(false);
+        address.setLineWrap(true);
+        address.setWrapStyleWord(true);
+        link.add(address, BorderLayout.CENTER);
+        javax.swing.JButton open = new javax.swing.JButton("Verweis im Browser öffnen");
+        try {
+            java.net.URI target = java.net.URI.create(destination);
+            boolean supported = ("http".equalsIgnoreCase(target.getScheme())
+                    || "https".equalsIgnoreCase(target.getScheme()))
+                    && target.getHost() != null && target.getRawUserInfo() == null;
+            open.setEnabled(supported);
+            if (supported) {
+                open.addActionListener(event -> {
+                    try {
+                        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                            Desktop.getDesktop().browse(target);
+                        } else {
+                            feedback.warning("Browser nicht verfügbar", "Den Verweis aus der Anzeige kopieren.");
+                        }
+                    } catch (IOException | RuntimeException failed) {
+                        feedback.warning("Verweis konnte nicht geöffnet werden",
+                                "Den Verweis aus der Anzeige kopieren.");
+                    }
+                });
+            }
+        } catch (IllegalArgumentException invalid) {
+            open.setEnabled(false);
+        }
+        link.add(open, BorderLayout.SOUTH);
+        fileContent.add(link, BorderLayout.CENTER);
+        originalLinkShown = true;
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+    }
+
     /** Identify original images before running any optional text-analysis preparation. */
-    private static boolean isOriginalImage(PageSnapshot snapshot) {
-        return PageMetadata.FILE_KIND.equals(snapshot.metadata().attributes().get(PageMetadata.RESOURCE_KIND))
+    private static boolean isNativePreview(PageSnapshot snapshot) {
+        String kind = snapshot.metadata().attributes().get(PageMetadata.RESOURCE_KIND);
+        return PageMetadata.LINK_KIND.equals(kind)
+                || PageMetadata.FILE_KIND.equals(kind)
                 && originalMediaType(snapshot.payload()).startsWith("image/");
     }
 
@@ -1465,13 +1524,24 @@ public final class PageDetailPanel extends JPanel {
         return originalFileViewer;
     }
 
+    /** Return whether a source-neutral external-link document is shown. */
+    boolean originalLinkShown() {
+        return originalLinkShown;
+    }
+
+    /** Expose the pending page indicator for navigation regression tests. */
+    boolean originalLoadingShown() {
+        return readingPane.loadingShown();
+    }
+
     /** Release the previous document viewer before a page switch or source switch. */
     private void closeOriginalFile() {
         if (originalFileViewer != null) {
             originalFileViewer.close();
-            fileContent.remove(originalFileViewer);
             originalFileViewer = null;
         }
+        originalLinkShown = false;
+        fileContent.removeAll();
         originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
     }
 
@@ -1619,7 +1689,7 @@ public final class PageDetailPanel extends JPanel {
         if (ATTACHMENTS.equals(visible)) {
             loadAssets(false);
         }
-        if (READING.equals(visible) && originalFileViewer == null) {
+        if (READING.equals(visible) && originalFileViewer == null && !originalLinkShown) {
             loadReading();
         }
         if (REFERENCES.equals(visible)) {
@@ -1777,7 +1847,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private void loadReading() {
         AppRuntime runtime = context.runtime();
-        if (runtime == null || page == null || readingLoaded || originalFileViewer != null) {
+        if (runtime == null || page == null || readingLoaded || originalFileViewer != null || originalLinkShown) {
             return;
         }
         readingLoaded = true;

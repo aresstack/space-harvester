@@ -214,8 +214,14 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         if (isFolder(resource)) {
             return new StoredContent(resource, new byte[0], "text/plain", FOLDER_FORMAT, Instant.now());
         }
-        byte[] bytes = transport.download(uriOf(localId));
-        return new StoredContent(resource, bytes, resource.contentType(), STORED_FORMAT, Instant.now());
+        BscwWebDavTransport.Download downloaded = transport.downloadResource(uriOf(localId));
+        if (downloaded.isLink()) {
+            KnowledgeResource linked = resource.toBuilder().contentType("text/uri-list")
+                    .metadata(resource.metadata().with(PageMetadata.RESOURCE_KIND, PageMetadata.LINK_KIND)).build();
+            return new StoredContent(linked, downloaded.bytes(), "text/uri-list", "webdav-redirect",
+                    Instant.now());
+        }
+        return new StoredContent(resource, downloaded.bytes(), resource.contentType(), STORED_FORMAT, Instant.now());
     }
 
     @Override
@@ -227,6 +233,10 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         StoredContent content = storedContent(localId);
         if (isFolder(content.resource())) {
             return KnowledgeDocument.of(content.resource(), "");
+        }
+        if ("text/uri-list".equals(content.mediaType())) {
+            return KnowledgeDocument.of(content.resource(),
+                    new String(content.payload(), java.nio.charset.StandardCharsets.UTF_8));
         }
         try {
             DocumentText.Extracted extracted = extractor.extract(content.resource().title(), content.mediaType(),
