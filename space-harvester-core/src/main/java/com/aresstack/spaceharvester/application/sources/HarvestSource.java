@@ -437,11 +437,23 @@ public interface HarvestSource {
      * @param partitionKey Partition der Seite, wenn bekannt, sonst {@code null}
      * @param hasChildren  ob die Seite Kinder hat, soweit die Quelle das ohne Laden weiß; {@code null} unbekannt
      */
-    record PageNode(String pageId, String title, String partitionKey, Boolean hasChildren) {
+    record PageNode(String pageId, String title, String partitionKey, Boolean hasChildren, Kind kind) {
+
+        /** Source-neutral presentation role. A page can have children without becoming a folder. */
+        public enum Kind {
+            PAGE,
+            FOLDER,
+            FILE
+        }
+
+        public PageNode(String pageId, String title, String partitionKey, Boolean hasChildren) {
+            this(pageId, title, partitionKey, hasChildren, Kind.PAGE);
+        }
 
         public PageNode {
             Objects.requireNonNull(pageId, "pageId");
             title = title == null || title.isBlank() ? pageId : title;
+            kind = kind == null ? Kind.PAGE : kind;
         }
     }
 

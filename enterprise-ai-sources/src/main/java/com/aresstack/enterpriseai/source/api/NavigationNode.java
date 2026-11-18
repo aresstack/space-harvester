@@ -18,14 +18,22 @@ public final class NavigationNode {
         UNKNOWN
     }
 
+    /** Classify the resource for presentation without exposing a source type. */
+    public enum Kind {
+        PAGE,
+        FOLDER,
+        FILE
+    }
+
     private final String key;
     private final String title;
     private final KnowledgeResourceId resource;
     private final String startPoint;
     private final Children children;
+    private final Kind kind;
 
     private NavigationNode(String key, String title, KnowledgeResourceId resource, String startPoint,
-                           Children children) {
+                           Children children, Kind kind) {
         if (key == null || key.trim().isEmpty()) {
             throw new IllegalArgumentException("key must not be blank");
         }
@@ -34,19 +42,25 @@ public final class NavigationNode {
         this.resource = resource;
         this.startPoint = startPoint == null ? "" : startPoint.trim();
         this.children = children == null ? Children.UNKNOWN : children;
+        this.kind = kind == null ? Kind.PAGE : kind;
     }
 
     /** Create the root of a partition, e.g. {@code root("space:DEV", "Development", "space:DEV", YES)}. */
     public static NavigationNode root(String key, String title, String startPoint, Children children) {
-        return new NavigationNode(key, title, null, startPoint, children);
+        return new NavigationNode(key, title, null, startPoint, children, Kind.FOLDER);
     }
 
     /** Create a page node; its key is the resource id. */
     public static NavigationNode page(KnowledgeResourceId resource, String title, Children children) {
+        return page(resource, title, children, Kind.PAGE);
+    }
+
+    /** Classify each resource independently of whether it has child nodes. */
+    public static NavigationNode page(KnowledgeResourceId resource, String title, Children children, Kind kind) {
         if (resource == null) {
             throw new IllegalArgumentException("resource must not be null");
         }
-        return new NavigationNode(resource.value(), title, resource, "", children);
+        return new NavigationNode(resource.value(), title, resource, "", children, kind);
     }
 
     public String key() {
@@ -73,6 +87,10 @@ public final class NavigationNode {
 
     public Children children() {
         return children;
+    }
+
+    public Kind kind() {
+        return kind;
     }
 
     @Override

@@ -330,7 +330,7 @@ public class PageNavigation {
         try {
             return cache.page(new PageKey(sourceId, node.pageId()))
                     .map(page -> new PageNode(node.pageId(), node.title(), page.header().metadata().partitionKey(),
-                            node.hasChildren()))
+                            node.hasChildren(), node.kind()))
                     .orElse(node);
         } catch (RuntimeException e) {
             return node;
@@ -339,7 +339,7 @@ public class PageNavigation {
 
     private static PageNode node(AccessContext caller, PageNode node) {
         if (caller.kind() == AccessContext.PrincipalKind.END_USER && Boolean.TRUE.equals(node.hasChildren())) {
-            return new PageNode(node.pageId(), node.title(), node.partitionKey(), null);
+            return new PageNode(node.pageId(), node.title(), node.partitionKey(), null, node.kind());
         }
         return node;
     }

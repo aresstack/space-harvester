@@ -32,6 +32,48 @@ class ExplorerTest {
     }
 
     @Test
+    void nodeKindControlsIconsWithoutInspectingTheSourceType() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: "
+                + home.resolve("data").toString().replace('\\', '/') + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            javax.swing.JTree tree = explorer.tree();
+            javax.swing.tree.TreeCellRenderer renderer = tree.getCellRenderer();
+
+            Explorer.PageItem directory = new Explorer.PageItem("source", "space", "folder", "Ordner",
+                    true, HarvestSource.PageNode.Kind.FOLDER);
+            java.awt.Component folderComponent = renderer.getTreeCellRendererComponent(tree,
+                    new Explorer.Node(directory), false, false, false, 0, false);
+            Class<?> folderIcon = ((javax.swing.JLabel) folderComponent).getIcon().getClass();
+
+            Explorer.PageItem page = new Explorer.PageItem("source", "space", "page", "Seite",
+                    true, HarvestSource.PageNode.Kind.PAGE);
+            java.awt.Component pageComponent = renderer.getTreeCellRendererComponent(tree,
+                    new Explorer.Node(page), false, false, false, 0, false);
+            Class<?> pageIcon = ((javax.swing.JLabel) pageComponent).getIcon().getClass();
+
+            Explorer.PageItem file = new Explorer.PageItem("source", "space", "file", "Datei",
+                    false, HarvestSource.PageNode.Kind.FILE);
+            java.awt.Component fileComponent = renderer.getTreeCellRendererComponent(tree,
+                    new Explorer.Node(file), false, false, true, 0, false);
+            Class<?> fileIcon = ((javax.swing.JLabel) fileComponent).getIcon().getClass();
+
+            assertThat(folderIcon).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.folder().getClass());
+            assertThat(pageIcon).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.page().getClass());
+            assertThat(fileIcon).isEqualTo(pageIcon);
+            assertThat(folderIcon).isNotEqualTo(pageIcon);
+        });
+    }
+
+    @Test
     void theTitleFilterAsksTheSourceForPagesNeverLoaded() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
         Files.writeString(files.resolve("wartungsfenster.md"), "# Wartungsfenster\n\nText.\n");

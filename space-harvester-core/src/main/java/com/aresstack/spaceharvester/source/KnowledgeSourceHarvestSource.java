@@ -1284,7 +1284,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             case NO -> Boolean.FALSE;
             case UNKNOWN -> null;
         };
-        return new PageNode(nativeId(node.resource()), node.title(), partitionKey, children);
+        PageNode.Kind kind = switch (node.kind()) {
+            case FOLDER -> PageNode.Kind.FOLDER;
+            case FILE -> PageNode.Kind.FILE;
+            case PAGE -> PageNode.Kind.PAGE;
+        };
+        return new PageNode(nativeId(node.resource()), node.title(), partitionKey, children, kind);
     }
 
     private List<PageNode> links(List<SourceLink> links) {

@@ -1,0 +1,136 @@
+package com.aresstack.spaceharvester.app.ui.content;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
+import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.app.ui.AppContext;
+import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
+import com.aresstack.spaceharvester.application.snapshot.NativePayload;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import javax.swing.SwingUtilities;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+final class OriginalContentViewerTest {
+
+    @TempDir
+    Path home;
+
+    private AppContext context;
+
+    @AfterEach
+    void shutdown() {
+        if (context != null) {
+            context.shutdown();
+        }
+    }
+
+    @Test
+    void originalTabShowsSourceFileBytesAndKeepsTextAsSeparateTab() throws Exception {
+        PageDetailPanel panel = panel();
+        byte[] original = "Originalinhalt mit Formatierung".getBytes(StandardCharsets.UTF_8);
+
+        onEdt(() -> {
+            panel.showOriginalContent(metadata("bericht.txt", PageMetadata.FILE_KIND),
+                    new NativePayload(original, "text/plain", "file"));
+            return null;
+        });
+
+        await(() -> onEdt(() -> panel.originalViewer() != null
+                && panel.originalViewer().isShowingText()));
+        AttachmentViewerPanel viewer = onEdt(panel::originalViewer);
+        assertThat(onEdt(viewer::textContent)).isEqualTo("Originalinhalt mit Formatierung");
+        onEdt(() -> {
+            panel.tabs().select("Text");
+            assertThat(panel.selectedTab()).isEqualTo("Text");
+            panel.tabs().select("Leseansicht");
+            assertThat(panel.originalViewer()).isSameAs(viewer);
+            return null;
+        });
+    }
+
+    @Test
+    void unsupportedFilesRemainDownloadableAndFoldersUseTheNormalReader() throws Exception {
+        PageDetailPanel panel = panel();
+        onEdt(() -> {
+            panel.showOriginalContent(metadata("projekt.bin", PageMetadata.FILE_KIND),
+                    new NativePayload(new byte[] {1, 2, 3}, "application/octet-stream", "file"));
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null
+                && panel.originalViewer().statusText().contains(
+                        AttachmentViewerPanel.NO_PREVIEW_TEXT)));
+        AttachmentViewerPanel viewer = onEdt(panel::originalViewer);
+        assertThat(onEdt(viewer::fileInfoText)).contains("BIN", "3 B");
+        assertThat(onEdt(viewer::isShowingText)).isFalse();
+        onEdt(() -> {
+            panel.showOriginalContent(metadata("Projektordner", PageMetadata.FOLDER_KIND),
+                    new NativePayload(new byte[0], "text/plain", "bscw-folder"));
+            assertThat(panel.originalViewer()).isNull();
+            return null;
+        });
+    }
+
+    private PageDetailPanel panel() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: "
+                + home.resolve("data").toString().replace('\\', '/') + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        return onEdt(() -> new PageDetailPanel(context));
+    }
+
+    private static PageMetadata metadata(String title, String kind) {
+        return new PageMetadata("node-id", "source:node-id", title, "space", "parent-id",
+                "1", Instant.now(), null,
+                PageMetadata.sorted(Map.of(PageMetadata.RESOURCE_KIND, kind)));
+    }
+
+    private static void await(Check condition) throws Exception {
+        for (int attempt = 0; attempt < 150; attempt++) {
+            if (condition.holds()) {
+                return;
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("Reader did not reach the expected state");
+    }
+
+    private static <T> T onEdt(Work<T> action) throws Exception {
+        AtomicReference<T> result = new AtomicReference<>();
+        AtomicReference<Exception> failure = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                result.set(action.run());
+            } catch (Exception error) {
+                failure.set(error);
+            }
+        });
+        if (failure.get() != null) {
+            throw failure.get();
+        }
+        return result.get();
+    }
+
+    @FunctionalInterface
+    private interface Work<T> {
+        T run() throws Exception;
+    }
+
+    @FunctionalInterface
+    private interface Check {
+        boolean holds() throws Exception;
+    }
+}

@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeRevision;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.enterpriseai.source.api.AttachmentListSource;
 import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.SourceFile;
@@ -363,7 +364,8 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             List<NavigationNode> nodes = new ArrayList<>(entries.size());
             for (DavEntry entry : entries) {
                 nodes.add(NavigationNode.page(idOf(entry.uri), entry.name,
-                        entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO));
+                        entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO,
+                        entry.folder ? NavigationNode.Kind.FOLDER : NavigationNode.Kind.FILE));
             }
             inventory = new NavigationInventory(UUID.randomUUID().toString(), folder, List.copyOf(nodes));
             synchronized (navigationInventories) {
@@ -408,12 +410,14 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         URI parent = parentFolders.get(uri);
         while (parent != null && !sameResource(parent, root) && visited.add(parent)) {
             DavEntry ancestor = entryOf(parent);
-            ancestors.add(NavigationNode.page(idOf(ancestor.uri), ancestor.name, NavigationNode.Children.YES));
+            ancestors.add(NavigationNode.page(idOf(ancestor.uri), ancestor.name, NavigationNode.Children.YES,
+                    NavigationNode.Kind.FOLDER));
             parent = parentFolders.get(parent);
         }
         Collections.reverse(ancestors);
         NavigationNode node = NavigationNode.page(page, entry.name,
-                entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO);
+                entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO,
+                entry.folder ? NavigationNode.Kind.FOLDER : NavigationNode.Kind.FILE);
         return new PagePosition(NavigationNode.root("space:" + sourceId.value(), sourceId.value(),
                 sourceId.value(), NavigationNode.Children.YES), ancestors, node);
     }
@@ -443,7 +447,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     private List<DavEntry> childrenOf(URI folder, List<DavEntry> listed) {
         List<DavEntry> children = new ArrayList<>();
         for (DavEntry entry : listed) {
-            if (!sameResource(entry.uri, folder)) {
+            if (!sameResource(entry.uri, folder) && !isSystemSidecar(entry.name)) {
                 parentFolders.put(entry.uri, folder);
                 children.add(entry);
             }
@@ -451,6 +455,10 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         children.sort(Comparator.comparing((DavEntry entry) -> !entry.folder)
                 .thenComparing(entry -> entry.name, String.CASE_INSENSITIVE_ORDER));
         return children;
+    }
+
+    private static boolean isSystemSidecar(String name) {
+        return ".DS_Store".equalsIgnoreCase(name) || name.startsWith("._");
     }
 
     @Override
@@ -531,6 +539,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     private KnowledgeResource resource(DavEntry entry) {
         Map<String, String> attributes = new LinkedHashMap<>();
         attributes.put("bscw.path", entry.uri.getRawPath());
+        attributes.put(PageMetadata.RESOURCE_KIND, entry.folder ? PageMetadata.FOLDER_KIND : PageMetadata.FILE_KIND);
         if (entry.etag != null) {
             attributes.put("dav.etag", entry.etag);
         }

@@ -86,7 +86,9 @@ final class BscwWebDavSourceTest {
         assertThat(rootChildren.nodes()).extracting(NavigationNode::title)
                 .containsExactly("Nested", "readme.txt");
         assertThat(rootChildren.nodes().get(0).children()).isEqualTo(NavigationNode.Children.YES);
+        assertThat(rootChildren.nodes().get(0).kind()).isEqualTo(NavigationNode.Kind.FOLDER);
         assertThat(rootChildren.nodes().get(1).children()).isEqualTo(NavigationNode.Children.NO);
+        assertThat(rootChildren.nodes().get(1).kind()).isEqualTo(NavigationNode.Kind.FILE);
         assertThat(propfinds).hasValue(1);
         assertThat(downloads).hasValue(0);
 
@@ -94,6 +96,7 @@ final class BscwWebDavSourceTest {
         assertThat(folderChildren.nodes()).extracting(NavigationNode::title).containsExactly("archive.zip");
         assertThat(propfinds).hasValue(2);
         assertThat(downloads).hasValue(0);
+        assertThat(folderChildren.nodes().get(0).kind()).isEqualTo(NavigationNode.Kind.FILE);
 
         assertThat(((ResourceMetadataSource) port).resourceMetadata(
                 ((ResourceMetadataSource) port).localId(rootChildren.nodes().get(0).resource()))
@@ -115,6 +118,11 @@ final class BscwWebDavSourceTest {
             assertThat(children.pages())
                     .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title)
                     .containsExactly("Nested", "readme.txt");
+            assertThat(children.pages()).extracting(
+                    com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::kind)
+                    .containsExactly(
+                            com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FOLDER,
+                            com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FILE);
             assertThat(downloads).hasValue(0);
         }
     }
@@ -499,6 +507,8 @@ final class BscwWebDavSourceTest {
             xml.append(entry(path, "Nested", true, null));
             if (children) {
                 xml.append(entry("/sec/bscw.cgi/555", "archive.zip", false, "application/zip"));
+                xml.append(entry("/sec/bscw.cgi/556", ".DS_Store", false, "application/octet-stream"));
+                xml.append(entry("/sec/bscw.cgi/557", "._archive.zip", false, "application/octet-stream"));
             }
         } else if ("/sec/bscw.cgi/888".equals(path)) {
             xml.append(entry(path, "CSV root", true, null));

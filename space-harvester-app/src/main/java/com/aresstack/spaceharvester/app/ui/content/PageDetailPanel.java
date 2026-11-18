@@ -299,7 +299,13 @@ public final class PageDetailPanel extends JPanel {
     private com.aresstack.spaceharvester.application.observe.Subscription releaseSubscription =
             com.aresstack.spaceharvester.application.observe.Subscription.NONE;
     private AppRuntime releaseRuntime;
+    private static final String ORIGINAL_PAGE_CARD = "original-page";
+    private static final String ORIGINAL_FILE_CARD = "original-file";
     private final ReadingPane readingPane = new ReadingPane();
+    private final java.awt.CardLayout originalCards = new java.awt.CardLayout();
+    private final JPanel originalContent = new JPanel(originalCards);
+    private final JPanel fileContent = new JPanel(new BorderLayout());
+    private AttachmentViewerPanel originalFileViewer;
     /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
     static final String READING_HELP = "Die Leseansicht zeigt die Seite, wie die Quelle sie darstellt. Liegt sie im "
             + "Cache, erscheint sie sofort; die Prüfung bei der Quelle läuft im Hintergrund.\n\n"
@@ -479,7 +485,11 @@ public final class PageDetailPanel extends JPanel {
                 .tab(IMAGES, images)
                 .tab(STATEMENTS, statements)
                 .tab(GRAPH, graph);
-        tabs.tab(READING, readingPane)
+        originalContent.setOpaque(false);
+        fileContent.setOpaque(false);
+        originalContent.add(readingPane, ORIGINAL_PAGE_CARD);
+        originalContent.add(fileContent, ORIGINAL_FILE_CARD);
+        tabs.tab(READING, originalContent)
                 .tab(READ, readerPanel)
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
@@ -665,6 +675,7 @@ public final class PageDetailPanel extends JPanel {
         referencesLoaded = false;
         imagesLoaded = false;
         readingPane.clear(" ");
+        closeOriginalFile();
         breadcrumbs.clear();
         positionShown.accept(null);
         references.message(" ");
@@ -1357,6 +1368,7 @@ public final class PageDetailPanel extends JPanel {
         }
 
         showReader(loaded.reader(), page.live());
+        showOriginalContent(metadata, snapshot.payload());
         raw.setText(loaded.display());
         raw.setCaretPosition(0);
         storage.setText(loaded.storage() == null ? "Diese Payload hat kein body.storage." : loaded.storage());
@@ -1398,6 +1410,41 @@ public final class PageDetailPanel extends JPanel {
         analysisView.scope(pageScope(snapshot.key()));
         setActionsEnabled(true);
         browse.setEnabled(metadata.url() != null && Desktop.isDesktopSupported());
+    }
+
+    /**
+     * Show the unmodified source file in the original-view tab.
+     * Keep extracted text and its analyses in the separate text and analysis tabs.
+     */
+    void showOriginalContent(PageMetadata metadata, NativePayload payload) {
+        closeOriginalFile();
+        if (!PageMetadata.FILE_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
+            return;
+        }
+        ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
+                payload.mediaType(), payload.length());
+        ReaderAttachmentLoader loader = (file, done, failed) ->
+                Background.run(payload::bytes, done, error -> failed.accept(reason(error)));
+        originalFileViewer = new AttachmentViewerPanel(attachment, loader, fileOpener, attachmentRenderer);
+        fileContent.add(originalFileViewer, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+    }
+
+    /** Return the original-document viewer for UI regression tests. */
+    AttachmentViewerPanel originalViewer() {
+        return originalFileViewer;
+    }
+
+    /** Release the previous document viewer before a page switch or source switch. */
+    private void closeOriginalFile() {
+        if (originalFileViewer != null) {
+            originalFileViewer.close();
+            fileContent.remove(originalFileViewer);
+            originalFileViewer = null;
+        }
+        originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
     }
 
     /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */

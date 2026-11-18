@@ -24,6 +24,11 @@ import java.util.TreeMap;
 public record PageMetadata(String pageId, String resourceId, String title, String partitionKey, String parentPageId,
                            String version, Instant modifiedAt, URI url, SortedMap<String, String> attributes) {
 
+    /** Source-neutral metadata key for files that the original-content reader can display. */
+    public static final String RESOURCE_KIND = "resource.kind";
+    public static final String FILE_KIND = "file";
+    public static final String FOLDER_KIND = "folder";
+
     public PageMetadata {
         Objects.requireNonNull(pageId, "pageId");
         Objects.requireNonNull(resourceId, "resourceId");

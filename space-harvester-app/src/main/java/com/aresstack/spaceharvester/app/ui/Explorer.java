@@ -177,8 +177,13 @@ public final class Explorer {
         }
     }
 
-    record PageItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren)
-            implements Item {
+    record PageItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren,
+                    HarvestSource.PageNode.Kind kind) implements Item {
+
+        PageItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren) {
+            this(sourceId, spaceKey, pageId, title, hasChildren, HarvestSource.PageNode.Kind.PAGE);
+        }
+
         @Override
         public String toString() {
             return title;
@@ -1451,7 +1456,7 @@ public final class Explorer {
         List<Node> nodes = new ArrayList<>();
         for (HarvestSource.PageNode page : children.pages()) {
             PageItem item = new PageItem(sourceId, page.partitionKey() == null ? children.spaceKey()
-                    : page.partitionKey(), page.pageId(), page.title(), page.hasChildren());
+                    : page.partitionKey(), page.pageId(), page.title(), page.hasChildren(), page.kind());
             nodes.add(Boolean.FALSE.equals(page.hasChildren()) ? leaf(item) : expandable(item));
         }
         return new Batch(nodes, children.nextCursor());
@@ -1675,7 +1680,8 @@ public final class Explorer {
             switch (item) {
                 case SourceItem ignored -> setIcon(MainWindow.database());
                 case SpaceItem ignored -> setIcon(SidebarIcons.folder());
-                case PageItem ignored -> setIcon(SidebarIcons.page());
+                case PageItem page -> setIcon(page.kind() == HarvestSource.PageNode.Kind.FOLDER
+                        ? SidebarIcons.folder() : SidebarIcons.page());
                 case MoreItem ignored -> {
                     setIcon(null);
                     setForeground(Comic.BLUE);
