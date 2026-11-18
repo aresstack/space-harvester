@@ -146,7 +146,8 @@ final class SourceForm {
     private final Map<String, SourceType> types = new java.util.LinkedHashMap<>();
     private final JLabel trustSection = Form.section("Serverzertifikate");
 
-    final ComposerButton test = Comic.button("Verbindung testen", "Spaces live laden, bevor gespeichert wird");
+    final ComposerButton test = Comic.button("Verbindung testen",
+            "Verbindung und Berechtigungen der Quelle live prüfen, bevor gespeichert wird");
     final ComposerButton save = Comic.primary("Speichern", "Quelle in die Konfigurationsdatei schreiben und neu laden");
     final ComposerButton cancel = Comic.button("Abbrechen", null);
 

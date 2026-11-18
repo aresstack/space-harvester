@@ -107,7 +107,9 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
 
     @Override
     public List<SourcePartition> partitions() {
-        return List.of(new SourcePartition(sourceId.value(), sourceId.value()));
+        DavEntry folder = knownEntries.get(root);
+        return List.of(new SourcePartition(sourceId.value(),
+                folder == null ? "BSCW-Ordner" : folder.name));
     }
 
     @Override

@@ -270,6 +270,19 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
+    void reportsTheRealWebDavHttpStatusInsteadOfCallingItAProxyFailure() throws Exception {
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("rootUrl", root.replace("/146377797", "/999")));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            SourceDiagnosis diagnosis = harvester.sourceManagement().diagnose(config, false);
+            assertThat(diagnosis.successful()).isFalse();
+            assertThat(diagnosis.steps()).filteredOn(step -> step.stage() == ConnectionStep.Stage.API)
+                    .extracting(ConnectionStep::message).containsExactly("BSCW WebDAV HTTP 405");
+        }
+    }
+
+    @Test
     void refusesInvalidCredentialsAndNonBscwUrls() throws Exception {
         KnowledgeSourcePort wrong = open("reader", "wrong");
         assertThatThrownBy(() -> ((PartitionListingSource) wrong).resources("bscw-test", null, 2))
@@ -305,6 +318,10 @@ final class BscwWebDavSourceTest {
             String path = exchange.getRequestURI().getRawPath();
             if ("PROPFIND".equals(exchange.getRequestMethod())) {
                 propfinds.incrementAndGet();
+                if ("/sec/bscw.cgi/999".equals(path)) {
+                    respond(exchange, 405, new byte[0], "text/plain");
+                    return;
+                }
                 String depth = exchange.getRequestHeaders().getFirst("Depth");
                 String body = directoryResponse(path, "1".equals(depth));
                 respond(exchange, 207, body.getBytes(StandardCharsets.UTF_8), "application/xml");

@@ -125,7 +125,8 @@ public final class SourceDiagnostics implements SourceDiagnoses {
                 steps.add(ConnectionStep.skipped(Stage.API, NOT_CHECKED));
             } else {
                 steps.add(ConnectionStep.skipped(Stage.AUTHENTICATION, "nicht feststellbar"));
-                steps.add(new ConnectionStep(Stage.API, Status.FAILED, message(e.reason()), ConnectionDiagnosis.hint(e)));
+                steps.add(new ConnectionStep(Stage.API, Status.FAILED,
+                        apiFailureMessage(config, e), ConnectionDiagnosis.hint(e)));
             }
         } catch (InvalidSourceConfigurationException e) {
             throw e;
@@ -134,6 +135,15 @@ public final class SourceDiagnostics implements SourceDiagnoses {
             steps.add(new ConnectionStep(Stage.API, Status.FAILED, ConnectionDiagnosis.detail(e),
                     ConnectionDiagnosis.hint(e)));
         }
+    }
+
+    /** Show only the controlled WebDAV status, never URLs, response bodies or credentials. */
+    private static String apiFailureMessage(SourceSettingsConfig config, SourceAccessException failure) {
+        if (BscwSourceAdapter.TYPE.equals(config.type()) && failure.getMessage() != null
+                && failure.getMessage().matches("BSCW WebDAV HTTP [0-9]{3}")) {
+            return failure.getMessage();
+        }
+        return message(failure.reason());
     }
 
     private static SourceDiagnosis finish(String sourceId, List<ConnectionStep> steps) {

@@ -25,8 +25,11 @@ Enthält KeePass nur die Startseite statt der numerischen Ordner-URL, muss der S
 einmal im Quellenformular ergänzt werden.
 
 Die globale Netzwerkkonfiguration (Windows/PAC-Proxy oder manueller HTTP-Proxy) gilt
-unverändert. Die HTTP-Basic-Anmeldung am BSCW-Server ist von einer eventuellen separaten
-Proxy-Anmeldung zu unterscheiden. Die bestehenden TLS-Vertrauensregeln gelten auch für BSCW.
+unverändert. Der WebDAV-Transport verwendet **Reactor Netty mit derselben Proxy-Route,
+Proxy-BASIC-Anmeldung, TLS-Vertrauensregel und expliziter DIRECT-Behandlung wie der
+Confluence-WebClient-Transport**. Er unterstützt zusätzlich die für WebDAV notwendige
+HTTP-Methode `PROPFIND`. Die HTTP-Basic-Anmeldung am BSCW-Server ist von der separaten
+Proxy-Anmeldung zu unterscheiden.
 
 ### Proxy-Route ohne PAC/WPAD
 
@@ -41,10 +44,12 @@ Erweitert → Proxy-Ausnahmen** den Hostnamen eintragen, beispielsweise
 andere Quellen behalten ihre Proxy-Einstellungen. Ist direkter Zugang nicht möglich,
 stattdessen den korrekten manuellen Proxy oder die gültige PAC-Konfiguration einrichten.
 
-Die BSCW-Verbindungsprüfung führt jetzt einen echten `PROPFIND Depth: 0` am Startordner aus,
+Die BSCW-Verbindungsprüfung führt einen echten `PROPFIND Depth: 0` am Startordner aus,
 statt lediglich die intern definierte Partition zurückzugeben. HTTP 401/403 zeigt
 BSCW-Anmeldeprobleme, HTTP 407 eine gescheiterte Proxy-Anmeldung an.
-Die stufenweise Netzwerkdiagnose prüft ebenfalls die `rootUrl` der BSCW-Quelle.
+Die stufenweise Netzwerkdiagnose prüft ebenfalls die `rootUrl` der BSCW-Quelle und
+zeigt bei HTTP-Fehlern den tatsächlichen HTTP-Status. Die Proxy-BASIC-Authentifizierung
+von `PROPFIND` über HTTPS-CONNECT wird durch einen Integrationstest geprüft.
 
 ## Funktionsumfang
 
@@ -59,6 +64,11 @@ Die stufenweise Netzwerkdiagnose prüft ebenfalls die `rootUrl` der BSCW-Quelle.
 - Änderungszeit, ETag, Dateigröße und Content-Type aus WebDAV übernehmen, soweit bereitgestellt
 - Dokumente und mögliche Archive mit der bestehenden Extraktions- und Index-Pipeline verarbeiten
 - Die für die Quelle verfügbaren Rechte des angemeldeten BSCW-Benutzers beachten
+
+BSCW hat **keine Confluence-Spaces**. Der Startordner ist der navigierbare Einstiegspunkt
+und zugleich die einzige technische Partition des bestehenden Synchronisationsports.
+Das Feld `rootUrl` und die optionale Ordnertiefe sind BSCW-spezifisch;
+Confluence-Optionen für Spaces gehören nicht in die BSCW-Konfiguration.
 
 Die BSCW-spezifische JSON-/XML-RPC-Schnittstelle, Ereignishistorie und Rechteverwaltung
 werden derzeit nicht angebunden. Auch einen vorhandenen BSCW-Suchindex liest WebDAV nicht aus.
@@ -79,7 +89,8 @@ und die Textindizierung bleiben unabhängig von der Navigation.
 
 `BscwSourceAdapter` registriert den neuen Quellentyp `bscw`. Der transportseitige
 `BscwWebDavTransport` übernimmt nur authentifizierte HTTP-/WebDAV-Anfragen einschließlich
-Proxy-Route. `BscwWebDavKnowledgeSource` implementiert die bestehenden Ports für
+Proxy-Route. `RoutedWebDavHttp` verwendet den Reactor-Netty-Netzwerkweg mit expliziter
+DIRECT-/PROXY-Entscheidung wie Confluence; `BscwWebDavKnowledgeSource` implementiert die bestehenden Ports für
 Partitionen, Metadaten, Originaldateien, Leseransicht und `PageNavigationSource`. Die
 Live-Navigation ist getrennt von der rekursiven `PartitionListingSource`-Inventur; nur
 der ausdrücklich gestartete Synchronisationslauf benötigt eine vollständige Metadatenliste.
