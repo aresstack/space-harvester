@@ -61,11 +61,17 @@ von `PROPFIND` über HTTPS-CONNECT wird durch einen Integrationstest geprüft.
 - Das Feld **„Titel filtern“** durchsucht ausschließlich bereits durch die Navigation bekannte
   Dateinamen im Speicher. Jede weitere geöffnete Ordnerebene erweitert die sichtbaren Treffer.
   Es löst **keine rekursive Inventur** aus; die Suche ist vor einer Synchronisation nicht vollständig.
-- Ein Suchtreffer aus dem Volltext-Cache kann nach einem Neustart seinen Ordnerpfad verlieren,
-  weil BSCW-URLs eigenständige Objekt-IDs statt hierarchischer Pfade enthalten. Die Navigation
-  stellt den Pfad dann aus den dauerhaft katalogisierten Elternbeziehungen wieder her und klappt
-  beim Öffnen des Treffers die vorhandenen Zwischenordner auf. Fehlt ein Teil dieser Metadaten,
-  bleibt die Quelle maßgeblich; es wird kein künstlicher Elternordner erfunden.
+- BSCW-Objekt-URLs sind keine hierarchischen Dateipfade. Die Navigation merkt deshalb
+  Elternbeziehungen schon beim Öffnen von Ordnern, **auch bei leerem Dokument-Cache**.
+  Bei früher heruntergeladenen Dokumenten kann sie stattdessen die gespeicherten
+  Elternbeziehungen verwenden; der Explorer klappt die bekannten Ordner auf.
+  Es werden keine unbekannten Elternordner erfunden.
+- Nach **Daten bereinigen** ist die globale Volltextsuche zunächst leer, weil sie den
+  lokalen Dokumentindex verwendet; BSCW WebDAV besitzt hier keinen Live-Volltextsuchport.
+  Die Dokumente müssen gezielt erneut gelesen oder synchronisiert werden, bevor ihre
+  Textinhalte wieder durchsuchbar sind. Das Aufklappen von Ordnern allein lädt nur Metadaten.
+- Die Leseransicht verwendet als Basisadresse die URL **der geöffneten BSCW-Ressource**,
+  nicht die in der Quelle konfigurierte Startordner-URL.
 - Für einen ausdrücklich gestarteten Synchronisations- oder Exportlauf den WebDAV-Baum
   **ordnerweise mit Cursor** inventarisieren. Die erste Metadatenseite wird ausgegeben, bevor
   weitere Unterordner gelesen werden; Dokumentinhalte bleiben während der Inventur unangetastet.

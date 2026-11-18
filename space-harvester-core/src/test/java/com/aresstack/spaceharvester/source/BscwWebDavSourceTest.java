@@ -446,8 +446,10 @@ final class BscwWebDavSourceTest {
                 NavigationNode.root("space:bscw-test", "BSCW", "bscw-test",
                         NavigationNode.Children.YES), "").nodes().get(0);
 
-        assertThat(((PageViewSource) source).pageView(nested.resource()).html())
-                .contains("archive.zip").doesNotContain("Example BSCW document");
+        com.aresstack.enterpriseai.source.api.PageView preview =
+                ((PageViewSource) source).pageView(nested.resource());
+        assertThat(preview.html()).contains("archive.zip").doesNotContain("Example BSCW document");
+        assertThat(preview.baseUri()).isEqualTo(root.replace("/146377797", "/444"));
         assertThat(source.load(nested.resource()).text()).isEmpty();
         assertThat(downloads).hasValue(0);
     }

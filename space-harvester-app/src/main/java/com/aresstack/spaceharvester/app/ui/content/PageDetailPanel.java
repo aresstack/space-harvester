@@ -1257,7 +1257,7 @@ public final class PageDetailPanel extends JPanel {
         String shownVersion = shown.header().metadata().version();
         Background.run(() -> {
             DeliveredPage checked = runtime.workspace().page(source, id, false);
-            boolean newer = checked.live() || !java.util.Objects.equals(checked.snapshot().revision(), shownRevision);
+            boolean newer = SourceRevision.hasUpdate(shownRevision, checked.snapshot().revision());
             if (!newer) {
                 return new Checked(checked, null);
             }

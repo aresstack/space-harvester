@@ -21,6 +21,21 @@ class BscwCachedPositionTest {
     private static final AccessContext READER = AccessContext.technicalClient("reader");
 
     @Test
+    void reconstructsBrowsedFolderPathWithoutDownloadingPagesOrUsingTheCache() {
+        PageNavigation navigation = navigation(null, "bscw");
+        navigation.children(READER, SOURCE, SOURCE, null, null);
+        navigation.children(READER, SOURCE, SOURCE, "group", null);
+        navigation.children(READER, SOURCE, SOURCE, "project", null);
+
+        PageNavigation.Position position = navigation.position(READER, SOURCE, "slides.pptx");
+
+        assertThat(position.ancestors()).extracting(HarvestSource.PageNode::pageId)
+                .containsExactly("group", "project");
+        assertThat(position.ancestors()).extracting(HarvestSource.PageNode::kind)
+                .containsExactly(HarvestSource.PageNode.Kind.FOLDER, HarvestSource.PageNode.Kind.FOLDER);
+    }
+
+    @Test
     void opensIndexedDocumentThroughItsPersistedParentFoldersAfterSourceRestart() {
         InMemoryPageCache cache = new InMemoryPageCache();
         cache.publish(SOURCE, SOURCE, InMemoryPageCache.confirmed("g1"), List.of(
@@ -92,6 +107,21 @@ class BscwCachedPositionTest {
             @Override
             public PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit) {
                 return new PageMetadataBatch(List.of(), null);
+            }
+
+            @Override
+            public ChildPages children(String spaceKey, String parentPageId, String cursor) {
+                List<PageNode> pages;
+                if (parentPageId == null) {
+                    pages = List.of(new PageNode("group", "Group", SOURCE, true, PageNode.Kind.FOLDER));
+                } else if ("group".equals(parentPageId)) {
+                    pages = List.of(new PageNode("project", "Project", SOURCE, true, PageNode.Kind.FOLDER));
+                } else if ("project".equals(parentPageId)) {
+                    pages = List.of(new PageNode("slides.pptx", "Slides", SOURCE, false, PageNode.Kind.FILE));
+                } else {
+                    pages = List.of();
+                }
+                return new ChildPages(SOURCE, pages, null);
             }
 
             @Override

@@ -269,16 +269,17 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     public PageView pageView(KnowledgeResourceId page) throws KnowledgeSourceException {
         String local = requireLocalId(page);
         KnowledgeResource resource = resourceMetadata(local);
+        String pageAddress = uriOf(local).toASCIIString();
         if (!isFolder(resource)) {
             if (resource.contentType().startsWith("text/") || "application/json".equals(resource.contentType())
                     || "application/xml".equals(resource.contentType())) {
                 String text = load(page).text();
                 return new PageView("<pre style=\"white-space:pre-wrap;overflow-wrap:anywhere\">"
-                        + escapeHtml(text) + "</pre>", root.toString(), List.of());
+                        + escapeHtml(text) + "</pre>", pageAddress, List.of());
             }
             return new PageView("<p>Originaldatei: " + escapeHtml(resource.title())
                     + "</p><p>Die Datei ist als Anhang ihres übergeordneten Ordners verfügbar.</p>",
-                    root.toString(), List.of());
+                    pageAddress, List.of());
         }
         List<KnowledgeResource> files = attachmentsOf(page);
         StringBuilder html = new StringBuilder("<p>Dateien in diesem Ordner: ")
@@ -286,7 +287,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         for (KnowledgeResource file : files) {
             html.append("<li>").append(escapeHtml(file.title())).append("</li>");
         }
-        return new PageView(html.append("</ul>").toString(), root.toString(), List.of());
+        return new PageView(html.append("</ul>").toString(), pageAddress, List.of());
     }
 
     private static boolean isFolder(KnowledgeResource resource) {
