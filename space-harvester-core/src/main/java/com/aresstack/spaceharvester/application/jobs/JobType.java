@@ -87,17 +87,21 @@ public enum JobType {
     STATEMENT_CHECK;
 
     /**
+     * Lädt von der Quelle herunter: Bilder, Anhänge und die Exporte aus der Quelle (Confluence-Metadaten, Analytics;
+     * #944). Erst Vorbereitung (Seiten aus dem Bestand bestimmen, ohne Quelle), dann Download, mit je eigener Grenze
+     * ({@link JobStage}): Vorbereitung {@code jobs.parallel-preparations}, Download {@code jobs.parallel-downloads},
+     * in der App die Auswahl „Vorbereitung“ und „Downloads“ der Auftragsliste. Abgleiche und
+     * Seitenexporte zählen getrennt, aber nach derselben Einstellung „Vorbereitung“. Die Verbindungen je Download („Verbindungen“) teilen nur Bilder und
+     * Anhänge unter sich auf; ein Export aus der Quelle fragt mit einer Verbindung, Seite für Seite.
+     */
+    public boolean download() {
+        return this == ASSETS || this == ATTACHMENTS || this == METADATA_EXPORT || this == ANALYTICS_EXPORT;
+    }
+
+    /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
      * alle Plätze.
      */
-    /**
-     * Lädt Dateien herunter (Bilder, Anhänge): erst Vorbereitung, dann Download, mit je eigener Grenze
-     * ({@link JobStage}); belegt keinen der Plätze für Abgleiche und Exporte.
-     */
-    public boolean download() {
-        return this == ASSETS || this == ATTACHMENTS;
-    }
-
     public boolean followUp() {
         return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS || this == GLOSSARY || this == REREAD
                 || this == UPDATE_SUMMARY;
@@ -109,9 +113,16 @@ public enum JobType {
      * Asset-Speicher ab und schreiben beim Anhalten das bisherige Manifest; ein neuer Lauf übernimmt geprüfte Seiten.
      * Anhänge ({@link #ATTACHMENTS}) ebenso. „Neu lesen“ ({@link #REREAD}) überspringt beim neuen Lauf, was schon neu
      * gelesen ist. „Zusammenfassen“ ({@link #UPDATE_SUMMARY}) legt erst am Ende ab und fragt beim neuen Lauf von vorn.
+     * Metadaten ({@link #METADATA_EXPORT}) legen jede abgefragte Seite sofort in einer Teildatei ab und fragen beim
+     * neuen Lauf nur Seiten ohne Daten; Analytics ({@link #ANALYTICS_EXPORT}) fragt von vorn (Angelo 17.11.2026).
      */
     public boolean resumable() {
         return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD
-                || this == UPDATE_SUMMARY;
+                || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT;
+    }
+
+    /** Export aus der Quelle per REST-Abfrage (Metadaten, Analytics): Gescheitertes fragt ein neuer Lauf erneut. */
+    public boolean sourceQuery() {
+        return this == METADATA_EXPORT || this == ANALYTICS_EXPORT;
     }
 }

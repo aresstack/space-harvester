@@ -239,7 +239,7 @@ class ReaderAcronymsTest {
 
         SelectionTerms wiki = new SelectionTerms(context.runtime(), new ExportPanel.Selection("wiki", null, null,
                 "Wiki"));
-        // Wie oben: der Begriffsindex dieser Testquellen steht erst nach dem Öffnen der Seiten bereit.
+        // startSync gleicht mit SYNC_CACHE ab: neue Seiten sind nur katalogisiert; erst das Lesen lädt und analysiert.
         PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
         open(panel, "wiki", "200", false);
         open(panel, "zweites", "200", false);

@@ -57,6 +57,8 @@ class SourceDataConfiguration {
                                     ObjectProvider<FileResolutionCache> resolutions,
                                     @Qualifier("synonymResolutionCache")
                                     ObjectProvider<FileResolutionCache> synonymCache,
+                                    ObjectProvider<com.aresstack.spaceharvester.persistence.files
+                                            .FileSynonymVectorCache> synonymVectors,
                                     ObjectProvider<Glossary> glossary,
                                     ObjectProvider<FactEditStore> facts, ObjectProvider<InventoryLog> inventory,
                                     ObjectProvider<AcquisitionScheduler> acquisition) {
@@ -72,6 +74,7 @@ class SourceDataConfiguration {
         }
         relations.ifAvailable(found -> stores.termRelations(found, resolutions.getIfAvailable()));
         synonymCache.ifAvailable(stores::synonymCache);
+        synonymVectors.ifAvailable(stores::synonymVectors);
         glossary.ifAvailable(stores::glossary);
         facts.ifAvailable(found -> stores.factEdits(found, clock));
         if (inventory.getIfAvailable() instanceof FileInventoryLog log) {

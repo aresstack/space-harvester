@@ -90,6 +90,8 @@ final class StandingTab extends JPanel {
 
     /** Die Begriffe der Auswahl, vorn in derselben Reiterzeile wie auf der Seite (BG2a, AT 17.11.2026). */
     static final String TERMS = "Begriffe";
+    static final String GLOSSARY = "Fachglossar";
+    static final String GRAPH = "Graph";
     static final String STATEMENTS = "Aussagen";
     static final String READING = "Zuerst lesen";
     static final String CONFLICTS = "Mögliche Widersprüche";
@@ -336,8 +338,13 @@ final class StandingTab extends JPanel {
     private boolean byBearer;
     private boolean shown;
     private boolean dirty;
-    /** Meldet, ob die Begriffe der Auswahl zu sehen sind (Reiter sichtbar und „Begriffe“ gewählt). */
-    private Consumer<Boolean> termsShown = visible -> { };
+    /**
+     * Reiter anderer Ansichten in derselben Zeile (Begriffe vorn, Fachglossar und Graph hinten, BG2c): je Name, wer
+     * erfährt, ob er zu sehen ist (Reiter sichtbar und gewählt). Auf ihnen wird der Stand nicht gelesen.
+     */
+    private final Map<String, Consumer<Boolean>> foreign = new LinkedHashMap<>();
+    /** Die Werkzeuge der fremden Reiter oben rechts; zu sehen nur auf ihrem Reiter. */
+    private final Map<String, List<JComponent>> foreignTools = new LinkedHashMap<>();
     private int generation;
     private AtomicBoolean cancelled = new AtomicBoolean();
     private Subscription standingWatch = Subscription.NONE;
@@ -502,13 +509,14 @@ final class StandingTab extends JPanel {
                 tool.setVisible(statements);
             }
             topic.setVisible(READING.equals(name));
-            // Die Begriffe bringen ihre Kennzahlen und ihr Filterfeld selbst mit; rechts steht dort nichts.
-            deleteAnalyses.setVisible(!TERMS.equals(name));
-            moreDelete.setVisible(!TERMS.equals(name));
+            // Fremde Reiter bringen ihre Werkzeuge selbst mit; Papierkorb und ▾ gehören nur zum Stand.
+            deleteAnalyses.setVisible(!foreign.containsKey(name));
+            moreDelete.setVisible(!foreign.containsKey(name));
+            foreignTools.forEach((tab, tools) -> tools.forEach(tool -> tool.setVisible(tab.equals(name))));
             popup.setVisible(false);
             reading.shown(shown && READING.equals(name));
-            termsShown.accept(shown && TERMS.equals(name));
-            if (TERMS.equals(name)) {
+            tellForeign(name);
+            if (foreign.containsKey(name)) {
                 onStatus.accept(" ");
                 return;
             }
@@ -527,8 +535,32 @@ final class StandingTab extends JPanel {
      * zweite Ebene). {@code onShown} erfährt, ob sie gerade zu sehen sind, damit sie erst dann laden.
      */
     void terms(JComponent view, Consumer<Boolean> onShown) {
-        termsShown = Objects.requireNonNull(onShown, "onShown");
+        foreign.put(TERMS, Objects.requireNonNull(onShown, "onShown"));
         tabs.first(TERMS, view);
+    }
+
+    /**
+     * Hängt den Reiter einer anderen Ansicht hinten an dieselbe Reiterzeile (etwa Fachglossar und Graph, BG2c); ihre
+     * {@code tools} stehen oben rechts, nur solange er gewählt ist. {@code onShown} erfährt, ob er zu sehen ist.
+     */
+    void tab(String name, JComponent view, Consumer<Boolean> onShown, JComponent... tools) {
+        foreign.put(name, Objects.requireNonNull(onShown, "onShown"));
+        foreignTools.put(name, List.of(tools));
+        for (JComponent tool : tools) {
+            tool.setVisible(name.equals(tabs.selected()));
+        }
+        tabs.tab(name, view);
+        tabs.actions(tools);
+    }
+
+    /** Ob ein Reiter des Stands gewählt ist (Aussagen, Zuerst lesen, Mögliche Widersprüche), kein fremder. */
+    boolean ownTabSelected() {
+        return !foreign.containsKey(tabs.selected());
+    }
+
+    /** Sagt jedem fremden Reiter, ob er jetzt zu sehen ist. */
+    private void tellForeign(String selected) {
+        foreign.forEach((name, onShown) -> onShown.accept(shown && name.equals(selected)));
     }
 
     /** Die Statuszeile des Hauptfensters: Umfang der Sicht oder ein Problem. */
@@ -576,13 +608,13 @@ final class StandingTab extends JPanel {
             popup.setVisible(false);
         }
         reading.shown(shown && READING.equals(tabs.selected()));
-        termsShown.accept(shown && TERMS.equals(tabs.selected()));
+        tellForeign(tabs.selected());
         loadIfShown();
     }
 
     private void loadIfShown() {
-        // Auf „Begriffe“ wird der Stand nicht gelesen; erst wenn einer seiner Reiter gewählt wird.
-        if (shown && dirty && selection != null && !TERMS.equals(tabs.selected())) {
+        // Auf fremden Reitern wird der Stand nicht gelesen; erst wenn einer seiner Reiter gewählt wird.
+        if (shown && dirty && selection != null && !foreign.containsKey(tabs.selected())) {
             load();
         }
     }
@@ -797,7 +829,7 @@ final class StandingTab extends JPanel {
     }
 
     private void status() {
-        if (TERMS.equals(tabs.selected())) {
+        if (foreign.containsKey(tabs.selected())) {
             return;
         }
         if (READING.equals(tabs.selected())) {

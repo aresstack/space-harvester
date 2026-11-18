@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.jobs.JobNotResumableException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.metadata.SourceQueryExports;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import java.util.Objects;
 import java.util.function.UnaryOperator;
@@ -32,6 +33,7 @@ public class JobActions {
     private final SpaceSyncJobs syncs;
     private final ExportConversions conversions;
     private final DocumentRereads rereads;
+    private final SourceQueryExports sourceQueryExports;
 
     /**
      * @param syncs       Abgleiche oder {@code null}, wenn kein Abgleich angebunden ist
@@ -48,11 +50,23 @@ public class JobActions {
      */
     public JobActions(Jobs jobs, Exports exports, SpaceSyncJobs syncs, ExportConversions conversions,
                       DocumentRereads rereads) {
+        this(jobs, exports, syncs, conversions, rereads, null);
+    }
+
+    /**
+     * @param syncs              Abgleiche oder {@code null}, wenn kein Abgleich angebunden ist
+     * @param conversions        Bilder der Exporte oder {@code null}
+     * @param rereads            „Neu lesen“ oder {@code null}, wenn keine strukturierte Extraktion angebunden ist
+     * @param sourceQueryExports Metadaten- und Analytics-Exporte oder {@code null}
+     */
+    public JobActions(Jobs jobs, Exports exports, SpaceSyncJobs syncs, ExportConversions conversions,
+                      DocumentRereads rereads, SourceQueryExports sourceQueryExports) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.exports = Objects.requireNonNull(exports, "exports");
         this.syncs = syncs;
         this.conversions = conversions;
         this.rereads = rereads;
+        this.sourceQueryExports = sourceQueryExports;
     }
 
     /** Der wirksame Zustand des eigenen Auftrags mit den jetzt erlaubten Aktionen. */
@@ -108,8 +122,10 @@ public class JobActions {
                     }
                     yield conversions.retryImages(jobId, owner);
                 }
-                if (state instanceof JobLifecycleState.Paused || state instanceof JobLifecycleState.Stopped) {
+                if (state instanceof JobLifecycleState.Paused || state instanceof JobLifecycleState.Stopped
+                        || current.type().sourceQuery()) {
                     // Angehalten oder abgebrochen: Fortsetzen holt nur, was fehlt, das Gescheiterte eingeschlossen.
+                    // Metadaten und Analytics auch nach „fertig, unvollständig“: ein neuer Lauf im selben Eintrag.
                     yield resume(current, owner, access);
                 }
                 if (sync) {
@@ -167,6 +183,12 @@ public class JobActions {
                     throw new JobNotResumableException(current.id(), "kein „Neu lesen“ angebunden");
                 }
                 yield rereads.resume(current.id(), owner);
+            }
+            case METADATA_EXPORT, ANALYTICS_EXPORT -> {
+                if (sourceQueryExports == null) {
+                    throw new JobNotResumableException(current.id(), "kein Metadaten- oder Analytics-Export angebunden");
+                }
+                yield sourceQueryExports.resume(current.id(), owner);
             }
             default -> throw new JobNotResumableException(current.id(), "diese Auftragsart lässt sich nicht fortsetzen");
         };

@@ -22,15 +22,15 @@ class JobsConfigurationTest {
     @Test
     void defaults() {
         context.run(app -> assertThat(app.getBean(JobsProperties.class))
-                .isEqualTo(new JobsProperties(2, 20, Duration.ofHours(6), Duration.ofDays(7), 4, null, null, null, null)));
+                .isEqualTo(new JobsProperties(20, Duration.ofHours(6), Duration.ofDays(7), 4, null, null, null, null)));
     }
 
     @Test
     void bindsLimits() {
-        context.withPropertyValues("space-harvester.jobs.max-concurrent=1", "space-harvester.jobs.max-queued=0",
+        context.withPropertyValues("space-harvester.jobs.max-queued=0",
                         "space-harvester.jobs.max-run-time=30m", "space-harvester.jobs.retention=1d")
                 .run(app -> assertThat(app.getBean(JobsProperties.class))
-                        .isEqualTo(new JobsProperties(1, 0, Duration.ofMinutes(30), Duration.ofDays(1), 4, null, null, null, null)));
+                        .isEqualTo(new JobsProperties(0, Duration.ofMinutes(30), Duration.ofDays(1), 4, null, null, null, null)));
     }
 
     @Test
@@ -76,7 +76,7 @@ class JobsConfigurationTest {
     void closingTheContextStopsTheJobs() {
         Jobs[] jobs = new Jobs[1];
         JobStatus[] waiting = new JobStatus[1];
-        context.withPropertyValues("space-harvester.jobs.max-concurrent=1").run(app -> {
+        context.withPropertyValues("space-harvester.jobs.parallel-preparations=1").run(app -> {
             jobs[0] = app.getBean(Jobs.class);
             jobs[0].submit(JobType.EXPORT, "confluence", "A", "client-a", context -> new CompletableFuture<>());
             waiting[0] = jobs[0].submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));

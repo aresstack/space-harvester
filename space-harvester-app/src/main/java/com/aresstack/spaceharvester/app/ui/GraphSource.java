@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Woher der Graph unter Begriffe › Graph seine Knoten und Kanten nimmt: zu einem Startbegriff dessen Nachbarschaft bis
+ * Woher der Graph unter Analysen seine Knoten und Kanten nimmt: zu einem Startbegriff dessen Nachbarschaft bis
  * zur gewünschten Tiefe. Heute liefern sie die Beziehungen zwischen Begriffen ({@link #ofRelations}); ein späterer,
  * dauerhafter Wissensgraph im Core (#499) tritt hinter dieselbe Schnittstelle. Die Arbeit läuft außerhalb des EDT.
  */

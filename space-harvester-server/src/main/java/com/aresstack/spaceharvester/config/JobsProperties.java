@@ -8,7 +8,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * Konfiguration unter {@code space-harvester.jobs}: Grenzen für asynchrone Aufträge (Ernte, Sync, Export).
  *
- * @param maxConcurrent höchstens gleichzeitig laufende Aufträge (Standard 2)
  * @param maxQueued     höchstens wartende Aufträge, darüber wird ein neuer abgelehnt (Standard 20)
  * @param maxRunTime    Laufzeitgrenze je Auftrag (Standard 6 Stunden)
  * @param retention     wie lange beendete Aufträge abrufbar bleiben (Standard 7 Tage)
@@ -20,12 +19,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *                             0 lädt keine Bilder und Anhänge)
  */
 @ConfigurationProperties("space-harvester.jobs")
-public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration maxRunTime, Duration retention,
+public record JobsProperties(Integer maxQueued, Duration maxRunTime, Duration retention,
         Integer maxOpenPerOwner, Retry retry, Integer parallelPreparations, Integer parallelDownloads,
         Integer downloadConnections) {
 
     public JobsProperties {
-        maxConcurrent = maxConcurrent == null ? 2 : maxConcurrent;
         maxQueued = maxQueued == null ? 20 : maxQueued;
         maxRunTime = maxRunTime == null ? Duration.ofHours(6) : maxRunTime;
         retention = retention == null ? JobLimits.DEFAULT_RETENTION : retention;
@@ -41,7 +39,7 @@ public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration 
 
     /** Die Auftragsgrenzen für {@link com.aresstack.spaceharvester.application.jobs.Jobs}. */
     public JobLimits toLimits() {
-        return new JobLimits(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry.toSettings(),
+        return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry.toSettings(),
                 parallelPreparations, parallelDownloads, downloadConnections);
     }
 

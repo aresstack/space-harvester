@@ -92,6 +92,8 @@ public final class Texts {
             case "CANCEL_REQUESTED" -> "Abbruch angefordert";
             case "RESTARTING" -> "Startet neu";
             case "COMPLETED_WITH_ERRORS" -> "Fertig, unvollständig";
+            // Das Ende der App hat den Auftrag unterbrochen: kein Fehler der Arbeit, Fortsetzen macht weiter.
+            case "INTERRUPTED" -> "Unterbrochen";
             case "PAUSED_SIGN_IN_REQUIRED" -> "Angehalten – wartet auf Anmeldung";
             case "PAUSED_CONNECTION_LOST" -> "Angehalten – Verbindung unterbrochen";
             case "PREPARING" -> "Vorbereitung";
@@ -104,7 +106,8 @@ public final class Texts {
     /** Farbe zum Zustandsobjekt ({@link #state(JobStatus)}): unvollständig und selbst angehalten als Warnung. */
     public static Comic.Tone tone(JobStatus status) {
         return switch (status.lifecycle().key()) {
-            case "COMPLETED_WITH_ERRORS", "PAUSED_SIGN_IN_REQUIRED", "PAUSED_CONNECTION_LOST" -> Comic.Tone.WARNING;
+            case "COMPLETED_WITH_ERRORS", "PAUSED_SIGN_IN_REQUIRED", "PAUSED_CONNECTION_LOST", "INTERRUPTED" ->
+                    Comic.Tone.WARNING;
             case "PREPARING" -> Comic.Tone.RUNNING;
             // Vorbereitet und wartend tun gerade nichts: ruhig wie „Angehalten“, bis ein Platz frei ist.
             case "PREPARED", "AWAITING_EXPORT" -> Comic.Tone.NEUTRAL;

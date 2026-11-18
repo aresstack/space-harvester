@@ -6,22 +6,21 @@ import java.util.Objects;
 /**
  * Grenzen für Aufträge.
  *
- * @param maxConcurrent höchstens gleichzeitig laufende Aufträge (und damit gleichzeitige Quellzugriffe aus Aufträgen)
  * @param maxQueued     höchstens wartende Aufträge; darüber hinaus wird ein neuer Auftrag abgelehnt
  * @param maxRunTime    Laufzeitgrenze je Auftrag ab Start; wird an jedem {@link JobContext#checkpoint()} geprüft
  * @param retention     wie lange ein beendeter Auftrag ab seinem Ende abrufbar bleibt
  * @param maxOpenPerOwner höchstens offene (laufende und wartende) Aufträge je Auslöser, damit ein Client nicht alle
  *                      Plätze belegt; interne Aufträge ohne Auslöser zählen nicht
  * @param retry         Wiederholungen bei vorübergehenden Fehlern und Selbst-Anhalten ({@code jobs.retry.*})
- * @param parallelPreparations höchstens gleichzeitig vorbereitende Downloads ({@link JobType#download()},
- *                      {@code jobs.parallel-preparations}); 1 bis {@value #MAX_PARALLEL_PREPARATIONS}
+ * @param parallelPreparations „Vorbereitung“: höchstens gleichzeitig vorbereitende Downloads ({@link JobType#download()})
+ *                      und ebenso viele übrige Aufträge (Abgleiche, Seitenexporte, Folgeaufträge; #944) ( *                      {@code jobs.parallel-preparations}); 1 bis {@value #MAX_PARALLEL_PREPARATIONS}
  * @param parallelDownloads höchstens gleichzeitig ladende Downloads ({@code jobs.parallel-downloads}); 0 bereitet nur
  *                      vor und lädt nichts; bis {@value #MAX_PARALLEL_DOWNLOADS}
  * @param downloadConnections gleichzeitige Verbindungen aller ladenden Downloads zusammen
  *                      ({@code jobs.download-connections}, Angelo 11.11.2026), nur Bilder und Anhänge, nach Restzeit
  *                      auf sie verteilt; 0 lädt keine Bilder und Anhänge; bis {@value #MAX_DOWNLOAD_CONNECTIONS}
  */
-public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention,
+public record JobLimits(int maxQueued, Duration maxRunTime, Duration retention,
         int maxOpenPerOwner, RetrySettings retry, int parallelPreparations, int parallelDownloads,
         int downloadConnections) {
 
@@ -38,50 +37,49 @@ public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, D
     /** Standard für {@link #retention()}. */
     public static final Duration DEFAULT_RETENTION = Duration.ofDays(7);
 
-    public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime) {
-        this(maxConcurrent, maxQueued, maxRunTime, DEFAULT_RETENTION);
+    /*
+     * #944 (Angelo 17.11.2026): keine festen Auftragsplätze. Alle Aufträge laufen nach „Vorbereitung“
+     * (parallelPreparations) und „Downloads“; die kurzen Konstruktoren nehmen die Vorbereitung als ersten Wert.
+     */
+
+    public JobLimits(int parallelPreparations, int maxQueued, Duration maxRunTime) {
+        this(parallelPreparations, maxQueued, maxRunTime, DEFAULT_RETENTION);
     }
 
     /** Ohne Grenze je Auslöser (nur die Gesamtgrenze). */
-    public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention) {
-        this(maxConcurrent, maxQueued, maxRunTime, retention, maxConcurrent + maxQueued);
+    public JobLimits(int parallelPreparations, int maxQueued, Duration maxRunTime, Duration retention) {
+        this(parallelPreparations, maxQueued, maxRunTime, retention, parallelPreparations + maxQueued);
     }
 
     /** Mit den Standard-Wiederholungen ({@link RetrySettings#DEFAULT}). */
-    public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention, int maxOpenPerOwner) {
-        this(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, RetrySettings.DEFAULT);
+    public JobLimits(int parallelPreparations, int maxQueued, Duration maxRunTime, Duration retention,
+                     int maxOpenPerOwner) {
+        this(parallelPreparations, maxQueued, maxRunTime, retention, maxOpenPerOwner, RetrySettings.DEFAULT);
     }
 
-    /** Mit den Standardgrenzen für Downloads ({@link #DEFAULT_PARALLEL_DOWNLOADS}). */
-    public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention, int maxOpenPerOwner,
-                     RetrySettings retry) {
-        this(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, DEFAULT_PARALLEL_PREPARATIONS,
-                DEFAULT_PARALLEL_DOWNLOADS);
-    }
-
-    /** Mit den Standardverbindungen je Download ({@link #DEFAULT_DOWNLOAD_CONNECTIONS}). */
-    public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention, int maxOpenPerOwner,
-                     RetrySettings retry, int parallelPreparations, int parallelDownloads) {
-        this(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, parallelPreparations,
-                parallelDownloads, DEFAULT_DOWNLOAD_CONNECTIONS);
+    /** Mit den Standardgrenzen für Downloads und Verbindungen. */
+    public JobLimits(int parallelPreparations, int maxQueued, Duration maxRunTime, Duration retention,
+                     int maxOpenPerOwner, RetrySettings retry) {
+        this(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, parallelPreparations,
+                DEFAULT_PARALLEL_DOWNLOADS, DEFAULT_DOWNLOAD_CONNECTIONS);
     }
 
     /** Dieselben Grenzen mit anderen Wiederholungen. */
     public JobLimits withRetry(RetrySettings value) {
-        return new JobLimits(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, value,
-                parallelPreparations, parallelDownloads, downloadConnections);
+        return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, value, parallelPreparations,
+                parallelDownloads, downloadConnections);
     }
 
-    /** Dieselben Grenzen mit anderen Grenzen für Downloads. */
+    /** Dieselben Grenzen mit anderen Grenzen für Vorbereitung und Downloads. */
     public JobLimits withParallel(int preparations, int downloads) {
-        return new JobLimits(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, preparations,
-                downloads, downloadConnections);
+        return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, preparations, downloads,
+                downloadConnections);
     }
 
     /** Dieselben Grenzen mit einem anderen Gesamtbudget an Verbindungen. */
     public JobLimits withConnections(int connections) {
-        return new JobLimits(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry,
-                parallelPreparations, parallelDownloads, connections);
+        return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, parallelPreparations,
+                parallelDownloads, connections);
     }
 
     /** @throws IllegalArgumentException außerhalb von 0 bis {@value #MAX_DOWNLOAD_CONNECTIONS} */
@@ -113,9 +111,6 @@ public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, D
 
     public JobLimits {
         retry = retry == null ? RetrySettings.DEFAULT : retry;
-        if (maxConcurrent < 1) {
-            throw new IllegalArgumentException("maxConcurrent muss mindestens 1 sein");
-        }
         if (maxQueued < 0) {
             throw new IllegalArgumentException("maxQueued darf nicht negativ sein");
         }

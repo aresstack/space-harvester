@@ -144,8 +144,8 @@ final class AiSettingsPanel {
     final HelpButton judgedPairsHelp = new HelpButton(Dialogs.CLOSE_SIZE, JUDGED_PAIRS_LABEL, JUDGED_PAIRS_HELP);
     static final String JUDGED_PAIRS_LABEL = "Synonymprüfung";
     static final String JUDGED_PAIRS_UNIT = "Paare je Lauf";
-    static final String JUDGED_PAIRS_HELP = "Die Synonymerkennung (Begriffe › Synonyme, Knopf „Synonyme "
-            + "vorschlagen“) findet Kandidatenpaare über Regeln und das Embedding-Modell. Steht hier eine Zahl über "
+    static final String JUDGED_PAIRS_HELP = "Die Synonymerkennung (Knopf „Synonyme vorschlagen“ bei den "
+            + "Beziehungen) findet Kandidatenpaare über Regeln und das Embedding-Modell. Steht hier eine Zahl über "
             + "0, gehen je Lauf höchstens so viele Kandidatenpaare zusätzlich mit kurzen Fundstellen aus freigegebenen "
             + "Quellen an das Text-Modell, das die Bedeutung prüft (Synonym, Schreibvariante, verwandt). Bei 0 bleibt "
             + "die Prüfung aus; ähnliche Embedding-Paare werden dann direkt Vorschläge.\n\n"

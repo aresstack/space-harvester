@@ -31,6 +31,7 @@ import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.persistence.files.FileGlossaryStore;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
+import com.aresstack.spaceharvester.persistence.files.FileSynonymVectorCache;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
@@ -141,6 +142,13 @@ class TermConfiguration {
         return new FileResolutionCache(directory.resolve("synonyms"));
     }
 
+    /** Vektoren und Stand je Quelle der Synonymerkennung (SY2) neben ihrem Ergebnis-Cache. */
+    @Bean
+    FileSynonymVectorCache synonymVectorCache(
+            @Value("${space-harvester.term-relations.directory:data/term-relations}") Path directory) {
+        return new FileSynonymVectorCache(directory.resolve("synonyms"));
+    }
+
     /**
      * Synonymerkennung auf Knopfdruck (#336): {@code POST /api/v1/term-relations/refresh} mit {@code kind=synonyms}.
      * Embedding-Modell und Chat-Modell folgen der wirksamen Konfiguration; Text geht nur aus freigegebenen Quellen an
@@ -154,7 +162,7 @@ class TermConfiguration {
                                       ObjectProvider<EmbeddingProcessor> embeddings, LiveConfiguration live,
                                       ObjectProvider<SnapshotRepository> repository,
                                       ObjectProvider<PageCacheReader> reader, SentenceSegmenter sentences,
-                                      ObjectProvider<AiRelease> release) {
+                                      ObjectProvider<AiRelease> release, FileSynonymVectorCache vectors) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -166,6 +174,7 @@ class TermConfiguration {
                 key -> payloads.apply(key).flatMap(projector::project), relations,
                 () -> processor == null ? Optional.empty() : processor.currentProvider(), judge::mayProcess,
                 termsVersion(sentences));
+        candidates.vectors(vectors);
         SynonymDiscovery discovery = new SynonymDiscovery(catalog, candidates, access, relations, judge, resolutions,
                 jobs, () -> live.current().terms().synonyms(), Clock.systemUTC());
         // ADR 0028: Textstellen von Seiten auf der Liste freigegebener Seiten gehen auch aus gesperrten Quellen hinaus.

@@ -42,8 +42,8 @@ import java.util.Map;
 
 /**
  * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste (Tooltip mit Namen,
- * Strg+1 … Strg+6): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
- * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Begriffe und Aufträge, dann abgetrennt
+ * Strg+1 … Strg+5): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
+ * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Aufträge, dann abgetrennt
  * Wissensquellen verwalten und Einstellungen, dann ✕ (Angelo, 13.11.2026: der Baum links wählt, die Reiter oben
  * entscheiden, wie die Mitte das Gewählte zeigt). Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
@@ -113,7 +113,6 @@ public final class MainWindow implements AppContext.Navigator {
     private final ActivitiesView activities;
     private final SearchView searchView;
     private final SettingsView settings;
-    private final TermsView terms;
 
     public MainWindow(AppContext context) {
         this.context = context;
@@ -124,16 +123,12 @@ public final class MainWindow implements AppContext.Navigator {
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
-        terms = new TermsView(context);
         settings.onLeave(() -> show(beforeSettings));
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
         // Links gewählt bestimmt rechts (Angelo, 13.11.2026): der Reiter „Export“ folgt der Auswahl im Explorer.
-        // Die Auswahl links bestimmt Inhalte und das Fachglossar unter Begriffe (ADR 0029).
-        explorer.onSelection(selection -> {
-            content.selection(selection);
-            terms.selection(selection);
-        });
+        // Die Auswahl links bestimmt die Inhalte, darunter Begriffe, Fachglossar und Graph unter Analysen (ADR 0029).
+        explorer.onSelection(content::selection);
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
@@ -153,7 +148,6 @@ public final class MainWindow implements AppContext.Navigator {
         views.put(AppContext.Section.CONTENT, content);
         views.put(AppContext.Section.ACTIVITIES, activities);
         views.put(AppContext.Section.SEARCH, searchView);
-        views.put(AppContext.Section.TERMS, terms);
         views.put(AppContext.Section.SETTINGS, settings);
         deck.setBackground(Comic.SURFACE);
         views.forEach((section, view) -> deck.add(view.component(), section.name()));
@@ -704,7 +698,6 @@ public final class MainWindow implements AppContext.Navigator {
             case SOURCES -> database();
             // Inhalte hat keinen eigenen Knopf mehr; das Buch bleibt für Verweise (etwa „Inhalte öffnen“).
             case CONTENT -> ComposerIcons.openBook();
-            case TERMS -> ComposerIcons.marker();
             case ACTIVITIES -> stack();
             case SEARCH -> ComposerIcons.magnifier();
             case SETTINGS -> ComposerIcons.gear();

@@ -54,9 +54,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 /**
- * Der Reiter „Fachglossar“ unter Begriffe (ADR 0032, FL5b): die Glossareinträge zur Auswahl links im Explorer,
+ * Der Reiter „Fachglossar“ unter Analysen ohne Seite (ADR 0032, FL5b): die Glossareinträge zur Auswahl links im Explorer,
  * fertig sortiert, gefiltert und gezählt vom Core ({@code GlossaryOverview}). Oben rechts in der Reiterzeile stehen
- * die Suche mit ✕ und die Icon-Knöpfe „Fachbegriff hinzufügen“ und „Fachbegriffe ermitteln“ ({@link TermsView}); die
+ * die Suche mit ✕ und die Icon-Knöpfe „Fachbegriff hinzufügen“ und „Fachbegriffe ermitteln“ (in der Reiterzeile); die
  * sechs Reiter von Begriffe lassen dort keinen Platz für Chips. Darum steht über der Tabelle eine Zeile mit Zählchips
  * je Einordnung (fachlich, Rolle, unklar, Technik; Technik standardmäßig aus) und je Status (vorgeschlagen,
  * bestätigt, abgelehnt = Sperrliste); reicht die Breite nicht, steht der Status in einem Filtermenü. Die Tabelle zeigt Begriff, Einordnung, Wichtigkeit, Status, Herkunft und
@@ -69,9 +69,17 @@ import java.util.function.Supplier;
  * verknüpft, sortiert und zählt nichts selbst. Rückmeldungen gehen in die Statuszeile des Hauptfensters. Nur auf dem
  * EDT.
  */
-final class GlossaryTab {
+public final class GlossaryTab {
 
     static final String DETECT = "Fachbegriffe ermitteln";
+    /** Hilfe am ?-Knopf (keine Hinweistexte in der Ansicht); nennt keinen Reiterpfad. */
+    public static final String HELP = "Das Fachglossar sammelt die Fachbegriffe der Auswahl links mit Einordnung, "
+            + "Wichtigkeit, Status, Herkunft und Erläuterung.\n\n"
+            + "„Fachbegriffe ermitteln“ (▶ oben rechts) schlägt Begriffe aus den Seiten vor und ordnet sie nach Regeln "
+            + "ein; „Fachbegriff hinzufügen“ (＋) legt einen Begriff von Hand an. Vorschläge bestätigst oder lehnst du "
+            + "in ihrer Zeile ab; abgelehnte stehen auf der Sperrliste und kommen nicht wieder.\n\n"
+            + "Die Chips filtern nach Einordnung und Status; gefüllt heißt: wird gezeigt. Die Wichtigkeit zählt, auf "
+            + "wie vielen Seiten der Auswahl ein Begriff vorkommt; der Tooltip der Spalte nennt die Einzelheiten.";
     static final String ADD = "Fachbegriff hinzufügen …";
     static final String DETECT_TIP = DETECT + ": Begriffe aus den analysierten Seiten der Auswahl links ableiten, "
             + "auch ohne Modell; mit Modell und KI-Freigabe ordnet danach das Modell ein. Läuft als Auftrag";
@@ -121,7 +129,7 @@ final class GlossaryTab {
 
     private final AppContext context;
     private final Supplier<Optional<GlossaryAccess>> access;
-    private final TermsView.Directory directory = new TermsView.Directory("Fachglossar", COLUMNS);
+    private final TermDirectory directory = new TermDirectory("Fachglossar", COLUMNS);
     private final BusyOverlay busy = new BusyOverlay(directory);
     private final IconButton detect = new IconButton(ComposerIcons.play(), DETECT_TIP);
     private final IconButton add = new IconButton(ComposerIcons.plus(16), ADD_TIP);
@@ -180,7 +188,7 @@ final class GlossaryTab {
         return context == null || context.settings() == null ? null : context.settings().terms().glossaryRules();
     }
 
-    GlossaryTab(AppContext context, Supplier<Optional<GlossaryAccess>> access) {
+    public GlossaryTab(AppContext context, Supplier<Optional<GlossaryAccess>> access) {
         this.context = context;
         this.access = access;
         directory.show(List.of(), NO_GLOSSARY);
@@ -284,7 +292,7 @@ final class GlossaryTab {
     }
 
     /** Die Suche für die Reiterzeile; die Knöpfe kommen einzeln ({@link #addButton()}), die Chips stehen im Reiter. */
-    JComponent tools() {
+    public JComponent tools() {
         return searchField;
     }
 
@@ -354,14 +362,14 @@ final class GlossaryTab {
     }
 
     /** Die Auswahl links hat sich geändert: volle Sicht, sofort wenn zu sehen, sonst beim nächsten Zeigen. */
-    void selection(ExportPanel.Selection chosen) {
+    public void selection(ExportPanel.Selection chosen) {
         selection = chosen == null ? ExportPanel.Selection.ALL : chosen;
         overview = null;
         reread(Pending.FULL);
     }
 
     /** Der Bereich wird sichtbar oder der Reiter gewählt: liest, was seit dem letzten Zeigen angefallen ist. */
-    void shown() {
+    public void shown() {
         Optional<GlossaryAccess> glossary = access.get();
         if (glossary.isEmpty()) {
             unavailable();
@@ -375,7 +383,7 @@ final class GlossaryTab {
         }
     }
 
-    /** Wie {@link #shown()}; so ruft {@link TermsView} beim Wechsel auf den Reiter. */
+    /** Wie {@link #shown()}. */
     void load() {
         shown();
     }
@@ -1408,7 +1416,7 @@ final class GlossaryTab {
             // Ohne Wichtigkeit in der Auswahl blass hinten (der Core sortiert sie dorthin).
             boolean pale = rejected || line != null && line.importance() == null;
             if (!selected) {
-                setBackground(rejected ? TermsView.REJECTED_BACKGROUND : table.getBackground());
+                setBackground(rejected ? TermDirectory.REJECTED_BACKGROUND : table.getBackground());
                 setForeground(pale ? Comic.MUTED : table.getForeground());
             }
             setToolTipText(modelColumn == IMPORTANCE_COLUMN && line != null ? importanceTip(line.importance()) : null);
@@ -1416,26 +1424,26 @@ final class GlossaryTab {
         }
     }
 
-    JComponent component() {
+    public JComponent component() {
         return page;
     }
 
-    IconButton detectButton() {
+    public IconButton detectButton() {
         return detect;
     }
 
-    IconButton addButton() {
+    public IconButton addButton() {
         return add;
     }
 
     /** Der Stand für die Statuszeile des Hauptfensters (Anzahl, ausgewertete Seiten). */
-    void onStatus(java.util.function.Consumer<String> listener) {
+    public void onStatus(java.util.function.Consumer<String> listener) {
         onStatus = listener;
     }
 
     // ---- für Tests
 
-    TermsView.Directory directory() {
+    TermDirectory directory() {
         return directory;
     }
 

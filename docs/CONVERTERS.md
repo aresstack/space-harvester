@@ -187,14 +187,24 @@ Zwei Exporte, die anders als alle Formate oben nicht aus dem Datenbestand kommen
 Analyse-Export enthält die selbst erzeugten Analysedaten, diese beiden die Daten, die Confluence über eine Seite
 führt. Beide sind eigene Aufträge (`SourceQueryExports`, `JobType.METADATA_EXPORT` und `ANALYTICS_EXPORT`, App:
 Export-Reiter, Knöpfe rechts neben den Formaten; je gewähltem Space bzw. Teilbaum ein Auftrag) und schreiben je
-eine JSON-Datei in den Ausgabeordner, unsichtbar erzeugt, fertig umbenannt, nie überschrieben. Die Seiten kommen
+eine JSON-Datei in den Ausgabeordner, unsichtbar erzeugt, fertig umbenannt. Die Seiten kommen
 aus dem Bestand (alle dort bekannten Seiten der Auswahl), die Daten über `HarvestSource.restGet` mit der Anmeldung,
 Route und TLS-Einstellung der Quelle (`RestQuerySource` im Confluence-Adapter, nur Pfade unter `/rest/`). Nichts
 davon landet im Snapshot, in `header`, `attributes` oder im Cache: `metadataHash`, `attributesHash`, `rawSha256`
 und alle übrigen Exporte bleiben unverändert, der Seitenabruf wird nicht langsamer. Nur Confluence-Quellen bieten
-die Exporte an (`HarvestSource.restQueries()`); eine unerreichbare oder drosselnde Quelle beendet den Auftrag,
-ein Fehler je Seite oder Abschnitt steht in der Datei (`status` `error`, `kind`, `message`), die Seite zählt als
-„ohne Antwort“ und der Auftrag endet als unvollständig.
+die Exporte an (`HarvestSource.restQueries()`).
+
+**Fehler und Fortsetzen (Angelo 17.11.2026, ADR 0025):** Ein Fehler je Seite oder Abschnitt steht in der Datei
+(`status` `error`, `kind`, `message`), die Seite zählt als „ohne Antwort“ und der Auftrag endet als „fertig,
+unvollständig“, nie als „fehlgeschlagen“. Antwortet die Quelle einer Seite nicht (HTTP 5xx, Drosselung), wird die
+Seite zurückgestellt und nach allen anderen noch einmal versucht; erst dann steht sie als Fehler in der Datei.
+Antworten drei Seiten nacheinander nicht, ist die Verbindung weg: der Auftrag hält sich an („Angehalten –
+Verbindung unterbrochen“) und läuft wieder an, sobald Fortsetzen oder der Wiederanlauf ihn weckt. Beide Arten
+lassen sich anhalten, fortsetzen und mit ↻ „Nur Fehler neu versuchen“ im selben Eintrag erneut laufen lassen, auch
+nach „fertig, unvollständig“, nach Abbruch und nach einem Neustart (Zustand „Unterbrochen“, aus den abgelegten
+Angaben). Metadaten legen jede abgefragte Seite sofort in einer unsichtbaren Teildatei `.<Datei>.part` ab (eine
+Zeile je Seite); ein neuer Lauf fragt nur Seiten ohne Daten erneut, übernimmt den Rest aus der Teildatei bzw. aus
+der fertigen Datei und ersetzt die Datei. Analytics braucht nur wenige Anfragen und fragt beim neuen Lauf von vorn.
 
 ### Confluence-Metadaten
 

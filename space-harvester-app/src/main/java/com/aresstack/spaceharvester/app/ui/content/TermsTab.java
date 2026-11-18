@@ -82,8 +82,32 @@ final class TermsTab extends JPanel {
         }
     }
 
-    /** Die Gesamtzahlen einer Auswahl: Akronyme, Bezeichner (Nomen und Kennungen), Beziehungen. */
-    record Totals(int acronyms, int identifiers, int relations) {
+    /**
+     * Die Gesamtzahlen einer Auswahl: Akronyme, Bezeichner (Nomen und Kennungen), Beziehungen; dazu aus dem Bestand,
+     * wie viele ihrer Seiten lokal gespeichert sind ({@code stored}) von allen ({@code pages}), {@code -1} unbekannt.
+     */
+    record Totals(int acronyms, int identifiers, int relations, int stored, int pages) {
+
+        Totals(int acronyms, int identifiers, int relations) {
+            this(acronyms, identifiers, relations, -1, -1);
+        }
+    }
+
+    /**
+     * Für die Statuszeile: aus wie vielen Seiten die Begriffe stammen (AT 17.11.2026). Nur lokal gespeicherte Seiten
+     * haben Text und damit Begriffe; {@code null}, wenn der Bestand es nicht sagt.
+     */
+    static String coverage(Totals totals) {
+        if (totals == null || totals.pages() < 0 || totals.stored() < 0) {
+            return null;
+        }
+        java.text.NumberFormat number = java.text.NumberFormat.getIntegerInstance(java.util.Locale.GERMANY);
+        String pages = totals.pages() == 1 ? " Seite" : " Seiten";
+        if (totals.stored() >= totals.pages()) {
+            return "Begriffe aus " + number.format(totals.pages()) + pages;
+        }
+        return "Begriffe aus " + number.format(totals.stored()) + " von " + number.format(totals.pages()) + pages
+                + " · übrige nicht lokal gespeichert";
     }
 
     /** Führt Arbeit im Hintergrund aus und meldet das Ergebnis auf dem EDT; in Tests sofort. */
@@ -112,6 +136,9 @@ final class TermsTab extends JPanel {
     private PageTerms shownTerms;
     private final JPanel analysisRow = new JPanel(new BorderLayout());
     private final javax.swing.JScrollPane scroll;
+    private java.util.function.Consumer<String> onStatus = text -> { };
+    private boolean counting;
+    private boolean countAgain;
     private final InfoPopup popup = new InfoPopup();
     private Runner runner = Background::run;
     /** Die gezeigte Auswahl; {@code null} zeigt eine einzelne Seite. */
@@ -291,13 +318,40 @@ final class TermsTab extends JPanel {
         head.status(null, null);
         analysisRow.setVisible(false);
         totals(null, null, null);
+        onStatus.accept(" ");
         query();
+        count();
+    }
+
+    /**
+     * Zählt die Auswahl neu (Gesamtzahlen und Herkunft der Begriffe), etwa nachdem der Bestand sich geändert hat; die
+     * Listen bleiben stehen. Läuft schon eine Zählung, folgt genau eine weitere danach.
+     */
+    void recount() {
+        if (selection == null) {
+            return;
+        }
+        if (counting) {
+            countAgain = true;
+            return;
+        }
+        count();
+    }
+
+    private void count() {
+        Selection chosen = selection;
+        counting = true;
+        countAgain = false;
         // Die Kennzahlen kommen getrennt von den Listen; die Listen warten nie auf sie.
         runner.run(chosen::totals, counted -> {
+            counted(chosen);
             if (selection == chosen && counted != null) {
                 totals(counted.acronyms(), counted.identifiers(), counted.relations());
+                String origin = coverage(counted);
+                onStatus.accept(origin == null ? " " : origin);
             }
         }, failure -> {
+            counted(chosen);
             if (selection == chosen) {
                 String unreadable = "Gesamtzahl nicht lesbar: " + failure.getClass().getSimpleName();
                 for (JLabel count : List.of(acronymCount, identifierCount, relationCount)) {
@@ -324,6 +378,18 @@ final class TermsTab extends JPanel {
         acronymCount.setToolTipText(acronyms == null ? pending : null);
         identifierCount.setToolTipText(identifiers == null ? pending : "Nomen, Nominalgruppen und Kennungen");
         relationCount.setToolTipText(relations == null ? pending : null);
+    }
+
+    private void counted(Selection chosen) {
+        counting = false;
+        if (countAgain && selection == chosen) {
+            count();
+        }
+    }
+
+    /** Die Statuszeile des Hauptfensters: woraus die Begriffe der Auswahl stammen. */
+    void onStatus(java.util.function.Consumer<String> listener) {
+        this.onStatus = Objects.requireNonNull(listener, "listener");
     }
 
     private void leaveSelection() {

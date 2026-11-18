@@ -25,6 +25,11 @@ public sealed interface JobLifecycleState {
     /** Betriebsart „nur katalogisieren“ eines Abgleichs. */
     String CATALOG_ONLY = "CATALOG_ONLY";
     /**
+     * Fehlercode eines Auftrags, den das Ende des Dienstes unterbrochen hat ({@link Jobs}): kein Fehler der Arbeit,
+     * sondern ein abgebrochener Zustand; fortsetzbare Arten machen dort weiter (Angelo 17.11.2026).
+     */
+    String INTERRUPTED = "INTERRUPTED";
+    /**
      * Angabe in {@link JobStatus#parameters()} ({@code "true"}): Der Auftrag liest nur den Bestand, nie die Quelle
      * (ADR 0029). Er hat keinen neuen Stand zu erzwingen; „Nur Fehler neu versuchen“ bleibt.
      */
@@ -52,8 +57,11 @@ public sealed interface JobLifecycleState {
         // Bilder und Anhänge holen beim erneuten Lauf nur, was fehlt; abgelegte Dateien kommen aus dem Speicher.
         boolean files = status.type() == JobType.ASSETS || status.type() == JobType.ATTACHMENTS;
         boolean forceable = download || files || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
+        // Metadaten und Analytics fragen Gescheitertes beim neuen Lauf erneut, erzwingen aber nichts: sie fragen
+        // ohnehin immer die Quelle (Angelo 17.11.2026).
+        boolean query = status.type().sourceQuery();
         // Gescheitertes gezielt nachladen geht, sobald etwas gescheitert ist, in jedem Zustand (Angelo 11.11.2026).
-        boolean failures = forceable && status.progress().failed() > 0;
+        boolean failures = (forceable || query) && status.progress().failed() > 0;
         // Eine Ausgabe aus dem Bestand und ihre Bilder und Anhänge fragen die Quelle nie (ADR 0029).
         boolean refreshable = forceable && !Boolean.parseBoolean(status.parameter(HOLDINGS));
         return switch (status.state()) {
@@ -65,12 +73,13 @@ public sealed interface JobLifecycleState {
                     : new Running(resumable, failures);
             case PAUSED -> new Paused(status.pauseReason(), failures);
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0
-                    ? new CompletedWithErrors(download || files, (download || files) && refreshable)
+                    ? new CompletedWithErrors(download || files || query, (download || files) && refreshable)
                     : new Completed(refreshable);
             // Ein Abgleich, der seine Generation bestätigt hat, aber Seiten nicht laden konnte, ist fertig mit Fehlern.
             case FAILED -> sync && status.error() != null && SYNC_PARTIAL.equals(status.error().code())
                     ? new CompletedWithErrors(true, true)
-                    : new Stopped(status.state(), resumable, refreshable, failures && resumable);
+                    : new Stopped(status.state(), resumable, refreshable, failures && resumable,
+                            status.error() != null && INTERRUPTED.equals(status.error().code()));
             case CANCELLED -> new Stopped(status.state(), resumable, refreshable, failures && resumable);
         };
     }
@@ -295,20 +304,27 @@ public sealed interface JobLifecycleState {
     }
 
     /**
-     * Gescheitert oder abgebrochen. Downloads und Abgleiche bieten neben Fortsetzen auch „Neu erzwingen“ an.
+     * Gescheitert, abgebrochen oder unterbrochen. Downloads und Abgleiche bieten neben Fortsetzen auch „Neu erzwingen“
+     * an.
      *
-     * @param forceable ob die Art einen neuen Stand erzwingen kann
-     * @param retryable ob etwas gescheitert ist; „Nur Fehler neu versuchen“ setzt dann fort und holt es mit
+     * @param forceable   ob die Art einen neuen Stand erzwingen kann
+     * @param retryable   ob etwas gescheitert ist; „Nur Fehler neu versuchen“ setzt dann fort und holt es mit
+     * @param interrupted ob das Ende des Dienstes den Auftrag unterbrochen hat ({@link #INTERRUPTED}): Schlüssel
+     *                    {@code INTERRUPTED} statt {@code FAILED}, denn die Arbeit ist nicht gescheitert
      */
-    record Stopped(JobState state, boolean resumable, boolean forceable, boolean retryable)
+    record Stopped(JobState state, boolean resumable, boolean forceable, boolean retryable, boolean interrupted)
             implements JobLifecycleState {
 
         public Stopped(JobState state, boolean resumable) {
-            this(state, resumable, false, false);
+            this(state, resumable, false, false, false);
         }
 
         public Stopped(JobState state, boolean resumable, boolean forceable) {
-            this(state, resumable, forceable, false);
+            this(state, resumable, forceable, false, false);
+        }
+
+        public Stopped(JobState state, boolean resumable, boolean forceable, boolean retryable) {
+            this(state, resumable, forceable, retryable, false);
         }
 
         public Stopped {
@@ -319,7 +335,7 @@ public sealed interface JobLifecycleState {
 
         @Override
         public String key() {
-            return state.name();
+            return interrupted && state == JobState.FAILED ? INTERRUPTED : state.name();
         }
 
         @Override

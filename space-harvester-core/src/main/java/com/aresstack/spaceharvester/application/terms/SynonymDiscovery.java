@@ -117,8 +117,6 @@ public class SynonymDiscovery {
      * Auftrag noch nicht gestartet ist: ein vor dem Start abgebrochener Auftrag sperrt die Quelle nicht.
      */
     private final Map<String, String> waiting = new ConcurrentHashMap<>();
-    /** Stand je Quelle nach dem letzten vollständigen automatischen Lauf ({@link SynonymCandidates#state}). */
-    private final Map<String, String> finished = new ConcurrentHashMap<>();
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
     /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
     private volatile Predicate<PageKey> pageReleases = key -> false;
@@ -249,7 +247,7 @@ public class SynonymDiscovery {
             return Optional.empty();
         }
         String state = candidates.state(sourceId);
-        if (state.equals(finished.get(sourceId))) {
+        if (state.equals(candidates.vectors().state(sourceId).orElse(null))) {
             return Optional.empty();
         }
         synchronized (waiting) {
@@ -265,8 +263,11 @@ public class SynonymDiscovery {
                 synchronized (lock(scope)) {
                     // Der Stand vor dem Lauf: Was sich währenddessen ändert, löst den nächsten Lauf aus.
                     String before = candidates.state(sourceId);
-                    run(scope, chosen, context);
-                    finished.put(sourceId, before);
+                    // SY2: Der Stand gilt nur, wenn jeder Begriff einen Vektor hat; sonst holt der nächste Anlass
+                    // die übrigen nach.
+                    if (run(scope, chosen, context).complete()) {
+                        candidates.vectors().state(sourceId, before);
+                    }
                 }
             }));
             started.add(status.id());
@@ -296,16 +297,21 @@ public class SynonymDiscovery {
      */
     public Optional<JobStatus> released(String sourceId) {
         Objects.requireNonNull(sourceId, "sourceId");
-        finished.remove(sourceId);
+        candidates.vectors().state(sourceId, null);
         return automatic(sourceId);
     }
 
     /**
-     * Beobachter der Liste freigegebener Seiten: Für jede Quelle mit neu eingetragenen Seiten {@link #released}.
-     * Entfernte Seiten lösen keinen Lauf aus; ihre KI-Ergebnisse räumt die Neuberechnung ab (ADR 0028).
+     * Beobachter der Liste freigegebener Seiten: Für jede Quelle mit neu eingetragenen oder entfernten Seiten
+     * {@link #released}. Mit einer entfernten Seite fallen zuerst alle Vektoren weg, deren Eingabe aus ihr stammt
+     * (SY2, ADR 0028); der Lauf zieht danach nicht mehr gestützte KI-Vorschläge zurück.
      */
     public void releasesChanged(com.aresstack.spaceharvester.application.release.PageReleases.Change change) {
-        change.added().stream().map(entry -> entry.key().sourceId()).distinct().forEach(sourceId -> {
+        if (!change.removed().isEmpty()) {
+            candidates.vectors().withdraw(change.removed().stream().map(entry -> entry.key()).toList());
+        }
+        java.util.stream.Stream.concat(change.added().stream(), change.removed().stream())
+                .map(entry -> entry.key().sourceId()).distinct().forEach(sourceId -> {
             try {
                 released(sourceId);
             } catch (RuntimeException e) {
@@ -313,6 +319,21 @@ public class SynonymDiscovery {
                         e.getClass().getSimpleName());
             }
         });
+    }
+
+    /**
+     * Rücknahme bei entzogener Freigabe einer Quelle ({@code ReleaseRecomputation.Withdrawal}, ADR 0028): Vektoren
+     * der Seiten, die nicht mehr an den KI-Dienst dürfen, fallen weg, ebenso der Stand ihrer Quellen. Seiten, die über
+     * die Liste freigegebener Seiten weiter dürfen, behalten ihre Vektoren.
+     */
+    public void withdrawn(List<PageKey> pages, Predicate<PageKey> mayProcess) {
+        List<PageKey> gone = pages.stream().filter(page -> !mayProcess.test(page)).toList();
+        if (gone.isEmpty()) {
+            return;
+        }
+        candidates.vectors().withdraw(gone);
+        gone.stream().map(PageKey::sourceId).distinct().forEach(sourceId -> candidates.vectors().state(sourceId,
+                null));
     }
 
     /** Ob der Auftrag von {@link #start} stammt; andere Anreicherungsaufträge gehören nicht hierher. */
@@ -344,7 +365,12 @@ public class SynonymDiscovery {
      * @param embeddingUsed ob die semantische Vorauswahl lief
      */
     public record Outcome(int candidates, TermRelations.ProposalRun rules, TermRelations.ProposalRun ai, int asked,
-                          int reused, int skipped, int rejected, boolean embeddingUsed) {
+                          int reused, int skipped, int rejected, boolean embeddingUsed, boolean complete) {
+
+        public Outcome(int candidates, TermRelations.ProposalRun rules, TermRelations.ProposalRun ai, int asked,
+                       int reused, int skipped, int rejected, boolean embeddingUsed) {
+            this(candidates, rules, ai, asked, reused, skipped, rejected, embeddingUsed, true);
+        }
 
         /** Ob Vorschläge aus einem Modell abgeglichen wurden: Embedding (Stufe B) oder Chat-Prüfung (Stufe C). */
         public boolean aiUsed() {
@@ -429,7 +455,7 @@ public class SynonymDiscovery {
                     embedding == null ? "nicht gelaufen" : embedding.added() + " neu, " + embedding.updated()
                             + " geändert, " + embedding.withdrawn() + " entfallen");
             return new Outcome(collected.candidates().size(), rules, embedding, 0, reused, skipped, 0,
-                    collected.embeddingUsed());
+                    collected.embeddingUsed(), collected.complete());
         }
         // Stufe C: nur Paare mit Fundstellen aus freigegebenen Quellen, nur unbekannte Schlüssel; das Budget zählt
         // erst nach dem Cache, damit beantwortete Paare keine späteren verdrängen.
@@ -551,7 +577,7 @@ public class SynonymDiscovery {
                         + "entfallen, {10} unterdrückt", describe(scope), collected.candidates().size(), asked.size(),
                 reused, skipped, rejected, rules.added(), ai.added(), ai.updated(), ai.withdrawn(), ai.suppressed());
         return new Outcome(collected.candidates().size(), rules, ai, asked.size(), reused, skipped, rejected,
-                collected.embeddingUsed());
+                collected.embeddingUsed(), collected.complete());
     }
 
     /** Das Urteil des eingestellten Chat-Modells zu diesem Paar mit diesen Fundstellen, falls es schon gefragt war. */
