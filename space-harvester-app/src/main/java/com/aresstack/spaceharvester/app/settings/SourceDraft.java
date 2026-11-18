@@ -37,7 +37,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                           SourceSettingsConfig.AuthType authType, String username, String secretVariable,
                           SourceSettingsConfig.CertificateStoreType certificateType, String certificatePath,
                           String certificatePasswordVariable, String certificateAlias, String thumbprint,
-                          String trustBundle, Map<String, String> extraOptions) {
+                          String trustBundle, Map<String, String> extraOptions, boolean baseUrlType) {
 
     public static final String CONFLUENCE = "confluence";
     public static final String BSCW = "bscw";
@@ -65,6 +65,17 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         public Editable {
             plaintextSecrets = List.copyOf(plaintextSecrets);
         }
+    }
+
+    /** Retain the source editor's original construction contract. */
+    public SourceDraft(String id, String type, String title, String baseUrl, String directory, String include,
+                       SourceSettingsConfig.AuthType authType, String username, String secretVariable,
+                       SourceSettingsConfig.CertificateStoreType certificateType, String certificatePath,
+                       String certificatePasswordVariable, String certificateAlias, String thumbprint,
+                       String trustBundle, Map<String, String> extraOptions) {
+        this(id, type, title, baseUrl, directory, include, authType, username, secretVariable, certificateType,
+                certificatePath, certificatePasswordVariable, certificateAlias, thumbprint, trustBundle, extraOptions,
+                CONFLUENCE.equals(type) || baseUrl != null);
     }
 
     public SourceDraft(String id, String type, String title, String baseUrl, String directory, String include,
@@ -174,7 +185,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         SourceDraft draft = new SourceDraft(id, type, text(raw, "title"), address, directory, include,
                 authType, text(auth, "username"), secretVariable, certificateType, text(certificate, "path"),
                 certificatePasswordVariable, text(certificate, "alias"), text(certificate, "thumbprint"),
-                text(raw, "trust-bundle"), options);
+                text(raw, "trust-bundle"), options, confluence || bscw || text(raw, "base-url") != null);
         return new Editable(draft, plaintext);
     }
 
@@ -218,12 +229,8 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         return CONFLUENCE.equals(type);
     }
 
-    public boolean bscw() {
-        return BSCW.equals(type);
-    }
-
     public boolean serverAddress() {
-        return confluence() || bscw();
+        return baseUrlType;
     }
 
     /**
@@ -238,7 +245,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
     public SourceDraft withSecretVariable(String variable) {
         return new SourceDraft(id, type, title, baseUrl, directory, include, authType, username, variable,
                 certificateType, certificatePath, certificatePasswordVariable, certificateAlias, thumbprint,
-                trustBundle, extraOptions);
+                trustBundle, extraOptions, baseUrlType);
     }
 
     /** Vorschlag für die Umgebungsvariable des Geheimnisses, z. B. {@code WIKI_TOKEN} für die Quelle {@code wiki}. */

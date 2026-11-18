@@ -724,7 +724,7 @@ public final class SourcesView implements View {
     private static SourceDraft with(SourceDraft d, String title, String baseUrl, String directory) {
         return new SourceDraft(d.id(), d.type(), title, baseUrl, directory, d.include(), d.authType(), d.username(),
                 d.secretVariable(), d.certificateType(), d.certificatePath(), d.certificatePasswordVariable(),
-                d.certificateAlias(), d.thumbprint(), d.trustBundle(), d.extraOptions());
+                d.certificateAlias(), d.thumbprint(), d.trustBundle(), d.extraOptions(), d.baseUrlType());
     }
 
     /**

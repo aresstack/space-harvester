@@ -197,10 +197,10 @@ public final class Problems {
     }
 
     private static Problem unavailableSource(SourceAccessException source, String technical) {
-        if (source.getMessage() != null && source.getMessage().startsWith("BSCW WebDAV route-unavailable")) {
+        if (source.getMessage() != null && source.getMessage().contains("route-unavailable")) {
             return new Problem("Proxy-Route nicht ermittelt",
-                    "Die automatische Proxy-Ermittlung hat für diese BSCW-Quelle keinen Netzweg geliefert.",
-                    "Unter Einstellungen > Netzwerk > Erweitert eine Proxy-Ausnahme für den BSCW-Host setzen, "
+                    "Die automatische Proxy-Ermittlung hat für diese Quelle keinen Netzweg geliefert.",
+                    "Unter Einstellungen > Netzwerk > Erweitert eine Proxy-Ausnahme für den Zielhost setzen, "
                             + "wenn er direkt erreichbar ist, oder eine funktionierende Proxy-Konfiguration wählen.",
                     technical);
         }

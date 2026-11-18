@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
 import com.aresstack.spaceharvester.source.network.ProxyCredentials;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
+import java.net.URI;
 import java.util.List;
 
 /**
@@ -44,6 +45,19 @@ public interface SourceAdapter {
     }
 
     /** Eingabefelder unter {@code options} für Formulare, ohne Werte; leer, wenn der Typ keine beschreibt. */
+    /**
+     * Supply the network target for connection diagnosis.
+     * Resolve legacy address settings within the responsible adapter.
+     */
+    default URI connectionTarget(SourceSettingsConfig config) {
+        return config.baseUrl();
+    }
+
+    /** Describe a successful API-level connection check in the adapter's own terminology. */
+    default String connectionDescription(int partitions) {
+        return partitions == 1 ? "1 Space sichtbar" : partitions + " Spaces sichtbar";
+    }
+
     default List<SourceField> fields() {
         return List.of();
     }
@@ -55,6 +69,11 @@ public interface SourceAdapter {
 
     /** Ob der Typ {@code trust-bundle} und {@code client-certificate} annimmt ({@link SourceType#tls()}). */
     default boolean tls() {
+        return false;
+    }
+
+    /** Expose the shared top-level base-url field in source editors. */
+    default boolean usesBaseUrl() {
         return false;
     }
 

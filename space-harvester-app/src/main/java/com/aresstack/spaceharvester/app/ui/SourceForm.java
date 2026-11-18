@@ -721,7 +721,7 @@ final class SourceForm {
     SourceDraft draft() {
         boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
         String type = typeId();
-        boolean serverAddress = confluence || SourceDraft.BSCW.equals(type);
+        boolean serverAddress = usesBaseUrl();
         boolean files = SourceDraft.FILES.equals(type);
         boolean generic = !serverAddress && !files;
         boolean tls = confluence || generic && SourceFields.tls(selectedType());
@@ -747,7 +747,7 @@ final class SourceForm {
                     pkcs12 ? certificatePath.getText() : null, pkcs12 ? certificatePasswordVariable.getText() : null,
                     certificateType == null ? null : alias.getText(),
                     certificateType == null ? null : thumbprint.getText(),
-                    !tls || NETWORK_TRUST.equals(bundle) ? null : bundle, options(confluence || files));
+                    !tls || NETWORK_TRUST.equals(bundle) ? null : bundle, options(confluence || files), serverAddress);
         } else {
             draft = new SourceDraft(id.getText(), type, titleValue(), null, null, null, authType,
                     authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
@@ -858,6 +858,12 @@ final class SourceForm {
         return type == null ? SourceDraft.CONFLUENCE : type.id();
     }
 
+    /** Select the shared base-url field from source metadata, never from a source-type name. */
+    private boolean usesBaseUrl() {
+        SourceType type = selectedType();
+        return type != null && type.baseUrl();
+    }
+
     /**
      * Die Typen des Core ({@code Harvester.sourceTypes()}, #375) in seiner Reihenfolge; ohne Laufzeit nur Confluence
      * und Ordner.
@@ -875,7 +881,8 @@ final class SourceForm {
             }
         }
         return List.of(new SourceType(SourceDraft.CONFLUENCE, "Confluence", false, null, List.of(),
-                        List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT)),
+                        List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT),
+                        false, true),
                 new SourceType(SourceDraft.FILES, "Ordner", false, "directory", List.of(), List.of()));
     }
 
@@ -901,7 +908,7 @@ final class SourceForm {
         if (fromKeePass != null) {
             return fromKeePass;
         }
-        if (SourceDraft.BSCW.equals(typeId())) {
+        if (usesBaseUrl() && !CONFLUENCE.equals(kind.getSelectedItem())) {
             return "";
         }
         return keePassEntryWithoutAddress() || keePassAddressPending() ? "" : DEFAULT_URL;
@@ -1318,8 +1325,7 @@ final class SourceForm {
         deriving = true;
         try {
             boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
-            boolean bscw = SourceDraft.BSCW.equals(typeId());
-            boolean serverAddress = confluence || bscw;
+            boolean serverAddress = usesBaseUrl();
             boolean generic = !serverAddress && !SourceDraft.FILES.equals(typeId());
             // Bei Arten mit Feldern ist die Adresse das Feld des Typs; ist es ein Verzeichnis, gilt sein Name.
             JTextField addressField = fields.address();
@@ -1333,10 +1339,11 @@ final class SourceForm {
                     && !keePassTitle().isEmpty();
             String proposedTitle = fromKeePass ? keePassTitle()
                     : confluence ? (baseUrl.getText().isBlank() ? titleFor(address()) : baseUrl.getText().strip())
-                    : bscw ? (baseUrl.getText().isBlank() ? "BSCW Classic" : baseUrl.getText().strip())
+                    : serverAddress ? (baseUrl.getText().isBlank() ? selectedType().displayName()
+                            : baseUrl.getText().strip())
                     : folder ? folderName(folderPath) : genericTitle(genericAddress);
             String proposedId = unique(serverAddress
-                    ? (address().isBlank() ? "bscw" : idForUrl(address()))
+                    ? (address().isBlank() ? slug(selectedType().displayName()) : idForUrl(address()))
                     : folder ? slug(folderName(folderPath)) : genericId(genericAddress));
             // Der Vorschlag steht grau im leeren Feld, nicht als Text: wer tippt, überschreibt nichts.
             if (title.getText().equals(suggestedTitle)) {
@@ -1508,8 +1515,8 @@ final class SourceForm {
 
     private void updateVisibility() {
         boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
-        boolean bscw = SourceDraft.BSCW.equals(typeId());
-        boolean serverAddress = confluence || bscw;
+        boolean serverAddress = usesBaseUrl();
+        boolean oneAuthMode = selectedType() != null && selectedType().authModes().size() == 1;
         boolean files = SourceDraft.FILES.equals(typeId());
         boolean generic = !serverAddress && !files;
         // Show one shared address input for both server-based source types.
@@ -1517,13 +1524,13 @@ final class SourceForm {
         // Platzhalter: die Adresse des KeePass-Eintrags, sonst die Confluence-Hilfe; ein Eintrag ohne Adresse keiner.
         String fromKeePass = keePassAddress();
         baseUrl.setPlaceholder(!serverAddress ? "" : fromKeePass != null ? fromKeePass
-                : bscw || keePassEntryWithoutAddress() || keePassAddressPending() ? "" : DEFAULT_URL);
+                : !confluence || keePassEntryWithoutAddress() || keePassAddressPending() ? "" : DEFAULT_URL);
         form.hint(baseUrl, !serverAddress ? "Adresse der Quelle (in der Datei options." + addressOption() + ")"
                 : fromKeePass != null ? "Leer gilt die Adresse des KeePass-Eintrags; eine Eingabe hier gewinnt"
                 : keePassEntryWithoutAddress() ? "Der KeePass-Eintrag hat keine Adresse; bitte hier eintragen"
                 : keePassAddressPending() ? "Leer gilt die Adresse des KeePass-Eintrags, sobald er gelesen ist; "
                         + "oder hier eintragen"
-                : bscw ? "URL eines BSCW-Ordners, z. B. /sec/bscw.cgi/123456789"
+                : !confluence ? "Startadresse der Quelle (base-url)"
                 : "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.visible(directory, files);
         form.visible(include, files);
@@ -1541,8 +1548,8 @@ final class SourceForm {
         trustSection.setVisible(trusted);
         boolean basic = BASIC.equals(auth.getSelectedItem());
         boolean keePass = login && keePassChosen();
-        // Reuse KeePass credentials without exposing duplicate BSCW login controls.
-        form.visible(auth, login && !bscw);
+        // Hide a fixed authentication method; keep the selector for sources with a choice.
+        form.visible(auth, login && !oneAuthMode);
         boolean anonymous = NONE.equals(auth.getSelectedItem());
         form.visible(origin, login);
         form.visible(keePassRow, keePass);
@@ -1556,12 +1563,12 @@ final class SourceForm {
                         + "KeePassRPC");
             }
         }
-        form.visible(username, login && basic && !(bscw && keePass));
+        form.visible(username, login && basic && !(oneAuthMode && keePass));
         form.visible(variable, login && !anonymous && !keePass && sourceAdvancedOpen);
         // Bei KeePass zeigt das Feld den gelesenen Wert maskiert und schreibgeschützt, damit man sieht, dass er da ist.
         boolean shown = keePass && !anonymous && keePassSecretRead();
         showKeePassSecret(shown);
-        form.visible(sessionValue, login && !anonymous && (!keePass || shown && !bscw));
+        form.visible(sessionValue, login && !anonymous && (!keePass || shown && !oneAuthMode));
         form.label(sessionValue, basic ? "Passwort" : "Token");
         form.hint(sessionValue, shown ? "Aus KeePass gelesen; bleibt nur im Speicher" : secretHint());
         form.visible(certificate, tls);

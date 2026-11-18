@@ -1319,7 +1319,7 @@ final class SettingDialogs {
                                     String trustBundle) {
         return new SourceDraft(d.id(), d.type(), d.title(), d.baseUrl(), d.directory(), d.include(), authType,
                 username, variable, certificateType, certificatePath, certificatePasswordVariable, alias, thumbprint,
-                trustBundle, d.extraOptions());
+                trustBundle, d.extraOptions(), d.baseUrlType());
     }
 
     private static JPanel row(JTextField field, ComposerButton button) {

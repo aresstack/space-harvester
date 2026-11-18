@@ -27,6 +27,17 @@ final class SourceDraftBscwTest {
     }
 
     @Test
+    void reportsMissingBaseUrlForSourcesThatRequireTheSharedAddressField() {
+        SourceDraft source = SourceDraft.from(Map.of(
+                "id", "bscw", "type", "bscw",
+                "auth", Map.of("type", "basic", "username", "reader",
+                        "password", "${BSCW_PASSWORD}"))).draft();
+
+        assertThat(source.serverAddress()).isTrue();
+        assertThat(source.problems()).contains("Die Adresse fehlt.");
+    }
+
+    @Test
     void migratesExistingBscwRootUrlWithoutLosingItsOtherOptions() {
         SourceDraft source = SourceDraft.from(Map.of(
                 "id", "bscw", "type", "bscw",

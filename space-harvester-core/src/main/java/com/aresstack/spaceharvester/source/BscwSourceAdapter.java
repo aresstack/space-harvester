@@ -28,6 +28,21 @@ public final class BscwSourceAdapter implements SourceAdapter {
     }
 
     @Override
+    public URI connectionTarget(SourceSettingsConfig config) {
+        return rootUri(config);
+    }
+
+    @Override
+    public String connectionDescription(int partitions) {
+        return "BSCW-Startordner über WebDAV erreichbar";
+    }
+
+    @Override
+    public boolean usesBaseUrl() {
+        return true;
+    }
+
+    @Override
     public String addressOption() {
         return null;
     }
