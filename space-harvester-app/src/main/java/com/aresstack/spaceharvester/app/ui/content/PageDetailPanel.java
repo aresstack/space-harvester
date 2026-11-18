@@ -1223,6 +1223,11 @@ public final class PageDetailPanel extends JPanel {
     /** Alles, was {@link #show} zu einer ausgelieferten Seite braucht; außerhalb des EDT. */
     private Loaded loaded(AppRuntime runtime, String source, String id, DeliveredPage delivered, Font font,
                           boolean checked, PassageLookup passage, boolean unchecked) {
+        // Avoid preparing an AI text document before showing a native image.
+        if (isOriginalImage(delivered.snapshot())) {
+            return new Loaded(delivered, List.of(), null, Payloads.display(delivered.snapshot().payload()),
+                    null, checked, passage, unchecked);
+        }
         List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
         PageText text = runtime.workspace().pageText(delivered.snapshot());
         ReaderDocument document = document(source, id, enrichments, text, font);
@@ -1422,7 +1427,7 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
-                payload.mediaType(), payload.length());
+                originalMediaType(payload), payload.length());
         ReaderAttachmentLoader loader = (file, done, failed) ->
                 Background.run(payload::bytes, done, error -> failed.accept(reason(error)));
         originalFileViewer = new AttachmentViewerPanel(attachment, loader, fileOpener, attachmentRenderer);
@@ -1430,6 +1435,29 @@ public final class PageDetailPanel extends JPanel {
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
         fileContent.revalidate();
         fileContent.repaint();
+    }
+
+    /** Identify original images before running any optional text-analysis preparation. */
+    private static boolean isOriginalImage(PageSnapshot snapshot) {
+        return PageMetadata.FILE_KIND.equals(snapshot.metadata().attributes().get(PageMetadata.RESOURCE_KIND))
+                && originalMediaType(snapshot.payload()).startsWith("image/");
+    }
+
+    /** Trust the actual file signature when WebDAV metadata or the name is misleading. */
+    private static String originalMediaType(NativePayload payload) {
+        if (payload.startsWith(new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a})) {
+            return "image/png";
+        }
+        if (payload.startsWith(new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff})) {
+            return "image/jpeg";
+        }
+        if (payload.startsWith(new byte[] {'G', 'I', 'F', '8'})) {
+            return "image/gif";
+        }
+        if (payload.startsWith(new byte[] {'%', 'P', 'D', 'F', '-'})) {
+            return "application/pdf";
+        }
+        return payload.mediaType();
     }
 
     /** Return the original-document viewer for UI regression tests. */
@@ -1591,7 +1619,7 @@ public final class PageDetailPanel extends JPanel {
         if (ATTACHMENTS.equals(visible)) {
             loadAssets(false);
         }
-        if (READING.equals(visible)) {
+        if (READING.equals(visible) && originalFileViewer == null) {
             loadReading();
         }
         if (REFERENCES.equals(visible)) {
@@ -1749,7 +1777,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private void loadReading() {
         AppRuntime runtime = context.runtime();
-        if (runtime == null || page == null || readingLoaded) {
+        if (runtime == null || page == null || readingLoaded || originalFileViewer != null) {
             return;
         }
         readingLoaded = true;

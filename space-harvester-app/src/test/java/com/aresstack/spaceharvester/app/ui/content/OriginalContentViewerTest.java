@@ -8,6 +8,9 @@ import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import java.io.ByteArrayOutputStream;
+import java.awt.image.BufferedImage;
+import javax.imageio.ImageIO;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -79,6 +82,66 @@ final class OriginalContentViewerTest {
             assertThat(panel.originalViewer()).isNull();
             return null;
         });
+    }
+
+    @Test
+    void rendersPngEvenWhenWebDavReportsAnIncorrectMediaType() throws Exception {
+        PageDetailPanel panel = panel();
+        byte[] original = png();
+        onEdt(() -> {
+            panel.showOriginalContent(metadata("Diagramm", PageMetadata.FILE_KIND),
+                    new NativePayload(original, "application/octet-stream", "file"));
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null
+                && panel.originalViewer().showsPicture()));
+        AttachmentViewerPanel viewer = onEdt(panel::originalViewer);
+        assertThat(onEdt(() -> viewer.attachment().kind().name())).isEqualTo("IMAGE");
+        assertThat(onEdt(viewer::fileInfoText)).contains("PNG");
+    }
+
+    @Test
+    void rendersCsvAsTextAndKeepsBinaryPayloadOutOfTechnicalText() throws Exception {
+        PageDetailPanel panel = panel();
+        String csv = "name,value\nNorth,12\nSouth,15\n";
+        onEdt(() -> {
+            panel.showOriginalContent(metadata("werte.csv", PageMetadata.FILE_KIND),
+                    new NativePayload(csv.getBytes(StandardCharsets.UTF_8), "text/csv", "file"));
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null
+                && panel.originalViewer().isShowingText()));
+        assertThat(onEdt(() -> panel.originalViewer().textContent())).isEqualTo(csv);
+
+        byte[] binary = png();
+        NativePayload payload = new NativePayload(binary, "image/png", "file");
+        assertThat(Payloads.display(payload)).contains("Binärinhalt", "image/png")
+                .doesNotContain("\uFFFD");
+        assertThat(Payloads.isText(payload)).isFalse();
+    }
+
+    @Test
+    void imageViewerExplainsWhenTheSourceReturnedHtmlInsteadOfImageBytes() throws Exception {
+        PageDetailPanel panel = panel();
+        byte[] loginPage = "<html><body>Sign in</body></html>".getBytes(StandardCharsets.UTF_8);
+        onEdt(() -> {
+            panel.showOriginalContent(metadata("zeichnung.png", PageMetadata.FILE_KIND),
+                    new NativePayload(loginPage, "image/png", "file"));
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null
+                && panel.originalViewer().statusText().contains("HTML statt Bilddaten")));
+        assertThat(onEdt(() -> panel.originalViewer().statusText()))
+                .contains("Anmeldung oder Proxy-Antwort")
+                .doesNotContain("Sign in");
+    }
+
+    private static byte[] png() throws Exception {
+        BufferedImage image = new BufferedImage(4, 4, BufferedImage.TYPE_INT_RGB);
+        image.setRGB(1, 2, 0x13579B);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        assertThat(ImageIO.write(image, "png", output)).isTrue();
+        return output.toByteArray();
     }
 
     private PageDetailPanel panel() throws Exception {

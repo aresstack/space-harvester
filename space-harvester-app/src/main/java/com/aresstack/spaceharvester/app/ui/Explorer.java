@@ -1093,11 +1093,7 @@ public final class Explorer {
     /** Fragt die Kinder bei der Quelle ab; über einem Stand aus dem Cache per Abgleich, sonst wie bisher. */
     private void loadLive(AppRuntime runtime, Node node) {
         Item item = node.item();
-        Background.run(() -> {
-            Batch batch = children(runtime, item, null);
-            prefetch(runtime, item, batch);
-            return batch;
-        }, batch -> {
+        Background.run(() -> children(runtime, item, null), batch -> {
             node.loading = false;
             node.loaded = true;
             if (node.fromCache) {
@@ -1108,6 +1104,11 @@ public final class Explorer {
                 append(node, batch);
                 model.nodeStructureChanged(node);
             }
+            // Prefetch is optional and must never postpone the visible navigation results.
+            Background.run(() -> {
+                prefetch(runtime, item, batch);
+                return null;
+            }, ignored -> { }, ignored -> { });
             // Neue Spaces im Baum zählen für den Gesamtstand der Kopfzeile.
             if (item instanceof SourceItem) {
                 statesChanged();
@@ -1145,8 +1146,9 @@ public final class Explorer {
             return;
         }
         List<String> pageIds = batch.nodes().stream().map(Node::item)
-                .filter(PageItem.class::isInstance).map(child -> ((PageItem) child).pageId())
-                .limit(PREFETCH_LIMIT).toList();
+                .filter(PageItem.class::isInstance).map(child -> (PageItem) child)
+                .filter(page -> page.kind() == HarvestSource.PageNode.Kind.PAGE)
+                .map(PageItem::pageId).limit(PREFETCH_LIMIT).toList();
         if (pageIds.isEmpty()) {
             return;
         }

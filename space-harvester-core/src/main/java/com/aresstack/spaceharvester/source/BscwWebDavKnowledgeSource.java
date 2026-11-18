@@ -655,6 +655,12 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         if (name.endsWith(".csv")) return "text/csv";
         if (name.endsWith(".tsv")) return "text/tab-separated-values";
         if (name.endsWith(".log")) return "text/plain";
+        if (name.endsWith(".png")) return "image/png";
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+        if (name.endsWith(".gif")) return "image/gif";
+        if (name.endsWith(".bmp")) return "image/bmp";
+        if (name.endsWith(".webp")) return "image/webp";
+        if (name.endsWith(".svg")) return "image/svg+xml";
         if (name.endsWith(".pdf")) return "application/pdf";
         if (name.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
