@@ -6,6 +6,10 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeRevision;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
+import com.aresstack.enterpriseai.source.api.AttachmentListSource;
+import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
+import com.aresstack.enterpriseai.source.api.SourceFile;
+import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
@@ -60,9 +64,12 @@ import org.xml.sax.SAXException;
  * Keep directory discovery separate from document downloads.
  */
 final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
-        ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource {
+        ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource,
+        AttachmentListSource {
 
     static final String STORED_FORMAT = "file";
+    private static final String FOLDER_FORMAT = "bscw-folder";
+    private static final String ATTACHMENTS_FORMAT = "webdav-propfind-depth-1";
     private static final String DAV = "DAV:";
     private static final int MAX_BATCH = 500;
     private static final int NAVIGATION_BATCH = 200;
@@ -202,8 +209,8 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     @Override
     public StoredContent storedContent(String localId) throws KnowledgeSourceException {
         KnowledgeResource resource = resourceMetadata(localId);
-        if ("inode/directory".equals(resource.contentType())) {
-            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Cannot download a BSCW folder");
+        if (isFolder(resource)) {
+            return new StoredContent(resource, new byte[0], "text/plain", FOLDER_FORMAT, Instant.now());
         }
         byte[] bytes = transport.download(uriOf(localId));
         return new StoredContent(resource, bytes, resource.contentType(), STORED_FORMAT, Instant.now());
@@ -216,24 +223,53 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Resource is not from this BSCW source");
         }
         StoredContent content = storedContent(localId);
-        String text;
+        if (isFolder(content.resource())) {
+            return KnowledgeDocument.of(content.resource(), "");
+        }
         try {
             DocumentText.Extracted extracted = extractor.extract(content.resource().title(), content.mediaType(),
                     content.payload());
-            text = extracted.text();
-        } catch (DocumentTextException e) {
-            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW document extraction failed");
+            return KnowledgeDocument.of(content.resource(), extracted.text());
+        } catch (DocumentTextException unsupportedFormat) {
+            // Preserve arbitrary binary files without inventing a readable document.
+            return KnowledgeDocument.of(content.resource(), "");
         }
-        return KnowledgeDocument.of(content.resource(), text);
     }
 
     @Override
     public PageView pageView(KnowledgeResourceId page) throws KnowledgeSourceException {
-        KnowledgeDocument document = load(page);
-        String text = document.text();
-        String html = "<pre style=\"white-space:pre-wrap;overflow-wrap:anywhere\">"
-                + escapeHtml(text) + "</pre>";
-        return new PageView(html, root.toString(), List.of());
+        String local = requireLocalId(page);
+        KnowledgeResource resource = resourceMetadata(local);
+        if (!isFolder(resource)) {
+            if (resource.contentType().startsWith("text/") || "application/json".equals(resource.contentType())
+                    || "application/xml".equals(resource.contentType())) {
+                String text = load(page).text();
+                return new PageView("<pre style=\"white-space:pre-wrap;overflow-wrap:anywhere\">"
+                        + escapeHtml(text) + "</pre>", root.toString(), List.of());
+            }
+            return new PageView("<p>Originaldatei: " + escapeHtml(resource.title())
+                    + "</p><p>Die Datei ist als Anhang ihres übergeordneten Ordners verfügbar.</p>",
+                    root.toString(), List.of());
+        }
+        List<KnowledgeResource> files = attachmentsOf(page);
+        StringBuilder html = new StringBuilder("<p>Dateien in diesem Ordner: ")
+                .append(files.size()).append("</p><ul>");
+        for (KnowledgeResource file : files) {
+            html.append("<li>").append(escapeHtml(file.title())).append("</li>");
+        }
+        return new PageView(html.append("</ul>").toString(), root.toString(), List.of());
+    }
+
+    private static boolean isFolder(KnowledgeResource resource) {
+        return "inode/directory".equals(resource.contentType());
+    }
+
+    private String requireLocalId(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+        String local = localId(resourceId);
+        if (local == null) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Resource is not from this BSCW source");
+        }
+        return local;
     }
 
     @Override
@@ -244,6 +280,77 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     private static String escapeHtml(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 .replace("\"", "&quot;").replace("'", "&#39;");
+    }
+
+    /**
+     * Map the files of a WebDAV directory to the existing page-attachment contract.
+     * Return the unchanged PROPFIND response for the raw-first export pipeline.
+     */
+    @Override
+    public StoredAttachmentList storedAttachments(String localId) throws KnowledgeSourceException {
+        URI uri = uriOf(localId);
+        KnowledgeResource owner = resourceMetadata(localId);
+        if (!isFolder(owner)) {
+            return new StoredAttachmentList(List.of(), List.of(), "application/xml",
+                    ATTACHMENTS_FORMAT, Instant.now(), List.of());
+        }
+        byte[] raw = transport.properties(uri, 1);
+        List<KnowledgeResource> files = childrenOf(uri, parseEntries(raw)).stream()
+                .filter(entry -> !entry.folder)
+                .map(this::resource).toList();
+        if (files.size() > AttachmentListSource.MAX_ATTACHMENTS) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW attachment list exceeds the limit");
+        }
+        return new StoredAttachmentList(files, List.of(raw), "application/xml",
+                ATTACHMENTS_FORMAT, Instant.now(), List.of());
+    }
+
+    @Override
+    public List<KnowledgeResource> attachmentsOf(KnowledgeResourceId page) throws KnowledgeSourceException {
+        return storedAttachments(requireLocalId(page)).attachments();
+    }
+
+    @Override
+    public boolean isAttachment(KnowledgeResourceId resourceId) {
+        String local = localId(resourceId);
+        if (local == null) {
+            return false;
+        }
+        try {
+            return !isFolder(resourceMetadata(local));
+        } catch (KnowledgeSourceException inaccessible) {
+            return false;
+        }
+    }
+
+    @Override
+    public SourceFile loadAttachmentFile(KnowledgeResourceId attachment) throws KnowledgeSourceException {
+        return loadAttachmentFile(attachment, Integer.MAX_VALUE);
+    }
+
+    @Override
+    public SourceFile loadAttachmentFile(KnowledgeResourceId attachment, int maxBytes)
+            throws KnowledgeSourceException {
+        String local = requireLocalId(attachment);
+        KnowledgeResource resource = resourceMetadata(local);
+        if (isFolder(resource)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "A BSCW directory is not an attachment");
+        }
+        String declaredSize = resource.metadata().asMap().get("dav.contentLength");
+        if (declaredSize != null) {
+            try {
+                if (Long.parseLong(declaredSize) > maxBytes) {
+                    throw new ResponseTooLargeException("BSCW attachment exceeds the requested limit", maxBytes);
+                }
+            } catch (NumberFormatException invalidSize) {
+                // Treat an invalid reported length as unknown, not as a truncated file.
+            }
+        }
+        byte[] original = transport.download(uriOf(local));
+        if (original.length > maxBytes) {
+            throw new ResponseTooLargeException("BSCW attachment exceeds the requested limit", maxBytes);
+        }
+        return new SourceFile(resource, original);
     }
 
     @Override
@@ -330,8 +437,12 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     }
 
     private List<DavEntry> directChildren(URI folder) throws KnowledgeSourceException {
+        return childrenOf(folder, entries(folder, 1));
+    }
+
+    private List<DavEntry> childrenOf(URI folder, List<DavEntry> listed) {
         List<DavEntry> children = new ArrayList<>();
-        for (DavEntry entry : entries(folder, 1)) {
+        for (DavEntry entry : listed) {
             if (!sameResource(entry.uri, folder)) {
                 parentFolders.put(entry.uri, folder);
                 children.add(entry);
@@ -364,14 +475,13 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             if (!visited.add(folder.uri)) {
                 continue;
             }
+            DavEntry current = entryOf(folder.uri);
+            documents.putIfAbsent(idOf(current.uri).value(), resource(current));
             for (DavEntry entry : directChildren(folder.uri)) {
-                if (entry.folder) {
-                    if (folder.depth < depthLimit) {
-                        pending.addLast(new Folder(entry.uri, folder.depth + 1));
-                    }
-                } else {
-                    KnowledgeResource resource = resource(entry);
-                    documents.putIfAbsent(resource.id().value(), resource);
+                KnowledgeResource child = resource(entry);
+                documents.putIfAbsent(child.id().value(), child);
+                if (entry.folder && folder.depth < depthLimit) {
+                    pending.addLast(new Folder(entry.uri, folder.depth + 1));
                 }
             }
         }
@@ -381,7 +491,10 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     }
 
     private List<DavEntry> entries(URI folder, int depth) throws KnowledgeSourceException {
-        byte[] body = transport.properties(folder, depth);
+        return parseEntries(transport.properties(folder, depth));
+    }
+
+    private List<DavEntry> parseEntries(byte[] body) throws KnowledgeSourceException {
         Document document = parse(body);
         NodeList responses = document.getElementsByTagNameNS(DAV, "response");
         List<DavEntry> entries = new ArrayList<>();
@@ -423,13 +536,16 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         }
         if (entry.length != null) {
             attributes.put("dav.contentLength", entry.length);
+            if (!entry.folder) {
+                attributes.put(KnowledgeMetadata.FILE_SIZE, entry.length);
+            }
         }
         KnowledgeResource.Builder builder = KnowledgeResource.builder(idOf(entry.uri), sourceId)
                 .title(entry.name).contentType(entry.mediaType)
                 .revision(KnowledgeRevision.of(entry.modified, entry.etag))
                 .scope(sourceId.value()).location(entry.uri).metadata(KnowledgeMetadata.of(attributes));
         URI parent = parentFolders.get(entry.uri);
-        if (parent != null && !sameResource(parent, root)) {
+        if (parent != null) {
             builder.parentId(idOf(parent));
         }
         return builder.build();

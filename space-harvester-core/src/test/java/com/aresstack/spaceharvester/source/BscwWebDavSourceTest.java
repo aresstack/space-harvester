@@ -3,6 +3,10 @@ package com.aresstack.spaceharvester.source;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
+import com.aresstack.enterpriseai.source.api.AttachmentListSource;
+import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
+import com.aresstack.enterpriseai.source.api.PageViewSource;
+import com.aresstack.enterpriseai.source.api.SourceFile;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.NavigationChildren;
@@ -173,12 +177,14 @@ final class BscwWebDavSourceTest {
         PartitionResources first = listing.resources("bscw-test", null, 1);
         assertThat(first.resources()).hasSize(1);
         assertThat(first.complete()).isFalse();
-        PartitionResources second = listing.resources("bscw-test", first.nextCursor(), 1);
-        assertThat(second.resources()).hasSize(1);
-        assertThat(second.complete()).isTrue();
+        PartitionResources inventory = listing.resources("bscw-test", null, 20);
+        assertThat(inventory.complete()).isTrue();
+        assertThat(inventory.resources()).extracting(KnowledgeResource::title)
+                .containsExactlyInAnyOrder("Root", "Nested", "archive.zip", "readme.txt");
         assertThat(downloads).hasValue(0);
 
-        KnowledgeResource document = first.resources().get(0);
+        KnowledgeResource document = inventory.resources().stream()
+                .filter(resource -> "archive.zip".equals(resource.title())).findFirst().orElseThrow();
         String id = ((StoredContentSource) port).localId(document.id());
         KnowledgeResource metadata = ((ResourceMetadataSource) port).resourceMetadata(id);
         assertThat(metadata.id()).isEqualTo(document.id());
@@ -187,9 +193,112 @@ final class BscwWebDavSourceTest {
         assertThat(original.payload()).isEqualTo(ZIP_CONTENT);
         assertThat(downloads).hasValue(1);
 
-        KnowledgeDocument text = port.load(second.resources().get(0).id());
+        KnowledgeResource readme = inventory.resources().stream()
+                .filter(resource -> "readme.txt".equals(resource.title())).findFirst().orElseThrow();
+        KnowledgeDocument text = port.load(readme.id());
         assertThat(text.text()).contains("Example BSCW document");
-        assertThat(second.resources().get(0).contentType()).isEqualTo("text/plain");
+        assertThat(readme.contentType()).isEqualTo("text/plain");
+    }
+
+    @Test
+    void folderAttachmentsRetainTheirParentIdAndOriginalWebDavResponse() throws Exception {
+        KnowledgeSourcePort source = open("reader", "secret");
+        PageNavigationSource navigation = (PageNavigationSource) source;
+        ResourceMetadataSource metadata = (ResourceMetadataSource) source;
+        NavigationNode nested = navigation.children(NavigationNode.root("space:bscw-test", "BSCW",
+                "bscw-test", NavigationNode.Children.YES), "").nodes().get(0);
+
+        String local = metadata.localId(nested.resource());
+        StoredAttachmentList list = ((AttachmentListSource) source).storedAttachments(local);
+        assertThat(list.attachments()).extracting(KnowledgeResource::title).containsExactly("archive.zip");
+        assertThat(list.attachments().get(0).parentId()).contains(nested.resource());
+        assertThat(list.payloads()).hasSize(1);
+        assertThat(new String(list.payloads().get(0), StandardCharsets.UTF_8)).contains("archive.zip");
+        assertThat(list.nativeFormat()).isEqualTo("webdav-propfind-depth-1");
+        assertThat(downloads).hasValue(0);
+
+        KnowledgeResource file = list.attachments().get(0);
+        assertThat(((PageViewSource) source).isAttachment(file.id())).isTrue();
+        SourceFile original = ((PageViewSource) source).loadAttachmentFile(file.id());
+        assertThat(original.resource().id()).isEqualTo(file.id());
+        assertThat(original.content()).isEqualTo(ZIP_CONTENT);
+        assertThat(downloads).hasValue(1);
+    }
+
+    @Test
+    void coreAttachmentPipelineUsesFolderIdsAndExportsOriginalBytes() throws Exception {
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW",
+                URI.create(root),
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("maxDepth", "2"));
+
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
+            com.aresstack.spaceharvester.application.sources.PageMetadataListing pages =
+                    harvester.sources().pageMetadata("bscw-test", "bscw-test", null, 20);
+            String nestedPageId = pages.entries().stream()
+                    .filter(entry -> "Nested".equals(entry.page().title()))
+                    .findFirst().orElseThrow().page().pageId();
+
+            com.aresstack.spaceharvester.application.sources.PageAttachmentList attachments =
+                    harvester.sources().attachments("bscw-test", nestedPageId);
+            assertThat(attachments.attachments().attachments()).hasSize(1);
+            assertThat(attachments.attachments().responses()).hasSize(1);
+            com.aresstack.spaceharvester.application.sources.PageAttachment archive =
+                    attachments.attachments().attachments().get(0);
+            assertThat(archive.title()).isEqualTo("archive.zip");
+            assertThat(archive.mediaType()).isEqualTo("application/zip");
+            assertThat(archive.fileSize()).isEqualTo(24L);
+            assertThat(downloads).hasValue(0);
+
+            com.aresstack.spaceharvester.application.sources.HarvestSource source =
+                    harvester.sources().sources().stream()
+                            .filter(candidate -> "bscw-test".equals(candidate.id()))
+                            .findFirst().orElseThrow();
+            assertThat(source.capabilities()).contains(
+                    com.aresstack.spaceharvester.application.sources.SourceCapability.PAGE_ATTACHMENTS);
+            assertThat(source.attachmentFile(archive, 1024).content()).isEqualTo(ZIP_CONTENT);
+            assertThat(downloads).hasValue(1);
+        }
+    }
+
+    @Test
+    void existingJsonExportAcceptsFolderPagesAndBinaryAttachments() throws Exception {
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW",
+                URI.create(root),
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("maxDepth", "2"));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
+            com.aresstack.spaceharvester.application.jobs.JobStatus exported = harvester.await(
+                    harvester.export("bscw-test", "bscw-test", List.of("json")).id(),
+                    Duration.ofSeconds(30));
+            assertThat(exported.state()).isEqualTo(
+                    com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+            assertThat(harvester.exportArtifact(exported.id())).isPresent();
+        }
+    }
+
+    @Test
+    void folderOpensAsVirtualPageWithoutDownloadingItsFiles() throws Exception {
+        KnowledgeSourcePort source = open("reader", "secret");
+        NavigationNode nested = ((PageNavigationSource) source).children(
+                NavigationNode.root("space:bscw-test", "BSCW", "bscw-test",
+                        NavigationNode.Children.YES), "").nodes().get(0);
+
+        assertThat(((PageViewSource) source).pageView(nested.resource()).html())
+                .contains("archive.zip").doesNotContain("Example BSCW document");
+        assertThat(source.load(nested.resource()).text()).isEmpty();
+        assertThat(downloads).hasValue(0);
+    }
+
+    @Test
+    void binaryFilesAreNotReplacedByExtractedTextSnippets() throws Exception {
+        KnowledgeSourcePort source = open("reader", "secret");
+        KnowledgeResource archive = ((PartitionListingSource) source).resources("bscw-test", null, 20)
+                .resources().stream().filter(resource -> "archive.zip".equals(resource.title()))
+                .findFirst().orElseThrow();
+
+        String html = ((PageViewSource) source).pageView(archive.id()).html();
+        assertThat(html).contains("Originaldatei", "archive.zip").doesNotContain("<pre");
     }
 
     @Test
