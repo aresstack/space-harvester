@@ -292,7 +292,7 @@ final class StandingTab extends JPanel {
     private final IconButton deleteAnalyses = new IconButton(Glyph.TRASH, DELETE_ANALYSES_TIP);
     private Predicate<String> confirmDelete = question -> Dialogs.confirm(this, DELETE_ANALYSES_TITLE,
             question);
-    private boolean deleting;
+    private volatile boolean deleting;
     /** Ergebnis des letzten Löschens; steht vor der Zählung in der Statuszeile, bis eine andere Auswahl kommt. */
     private String deletedNotice;
     private Subscription analysesWatch = Subscription.NONE;
@@ -731,7 +731,12 @@ final class StandingTab extends JPanel {
         watched = current;
         watchFailed = false;
         try {
-            analysesWatch = current.subscribeAnalyses(() -> SwingUtilities.invokeLater(this::changed));
+            // A local deletion refreshes the view after it completes; avoid racing its own observer.
+            analysesWatch = current.subscribeAnalyses(() -> {
+                if (!deleting) {
+                    SwingUtilities.invokeLater(this::changed);
+                }
+            });
         } catch (RuntimeException e) {
             analysesWatch = Subscription.NONE;
             watchFailed = true;
@@ -882,8 +887,13 @@ final class StandingTab extends JPanel {
                     ? (chosen.global() ? "Keine Aussagen-Analysen vorhanden"
                     : "Keine Aussagen-Analysen unter „" + chosen.title() + "“")
                     : Texts.count(deleted, "Aussagen-Analyse", "Aussagen-Analysen") + " gelöscht";
-            // Der Beobachter meldet sich nur, wenn etwas gelöscht wurde; sonst die Statuszeile hier setzen.
-            status();
+            // Always refresh after a successful local deletion, even if the observer notification
+            // arrived before the deletion result. Otherwise the old status can overwrite fresh counts.
+            if (deleted > 0) {
+                changed();
+            } else {
+                status();
+            }
         }, failure -> {
             deleting = false;
             deleteAnalyses.setEnabled(true);
