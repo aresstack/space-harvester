@@ -941,7 +941,8 @@ public final class Harvester implements AutoCloseable {
             this.statementChecks = new StatementChecks(new ChatStepModel(ChatStepModel.CHECK,
                     () -> liveAi ? this.settings.ai() : startAi,
                     () -> this.settings.check().model(), catalog, trustBundles, builder.userAgent),
-                    new StatementCheckStore(enrichmentStore, clock), withdrawn::mayProcess);
+                    new StatementCheckStore(enrichmentStore, clock), withdrawn::mayProcess,
+                    StatementChecks.pageAccess(access, page -> cache.find(page).map(PageSnapshot::spaceKey)));
             StatementChecks checked = this.statementChecks;
             java.util.concurrent.atomic.AtomicReference<StatementAnalysis> graphAnalysis =
                     new java.util.concurrent.atomic.AtomicReference<>();
