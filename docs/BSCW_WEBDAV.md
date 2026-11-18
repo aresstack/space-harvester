@@ -58,6 +58,9 @@ von `PROPFIND` über HTTPS-CONNECT wird durch einen Integrationstest geprüft.
 
 - Im Explorer echte Ordnerhierarchie anzeigen: `PROPFIND Depth: 1` lädt **nur die direkten Kinder**
   beim Aufklappen eines Ordners; Unterordner und Dateien werden nicht vorab heruntergeladen
+- Das Feld **„Titel filtern“** durchsucht ausschließlich bereits durch die Navigation bekannte
+  Dateinamen im Speicher. Jede weitere geöffnete Ordnerebene erweitert die sichtbaren Treffer.
+  Es löst **keine rekursive Inventur** aus; die Suche ist vor einer Synchronisation nicht vollständig.
 - Für einen ausdrücklich gestarteten Synchronisationslauf weiterhin den vollständigen Dateibestand
   rekursiv über Metadaten inventarisieren, ohne Dokumentinhalte während der Inventur zu laden
 - Dokumente erst bei ihrem Abruf per `GET` als Originalbytes laden und in der bestehenden

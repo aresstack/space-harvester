@@ -778,7 +778,8 @@ public final class ActivitiesView implements View {
 
     /** Quelle / Space eines Auftrags, bei einem Seiten-Download dazu „ab“ seiner Startseite. */
     static String where(JobStatus status) {
-        String where = status.sourceId() + " / " + status.partitionKey();
+        String where = status.partitionKey() == null || status.partitionKey().isBlank()
+                ? status.sourceId() : status.sourceId() + " / " + status.partitionKey();
         return status.rootPageId() == null ? where : where + " ab „" + startPage(status) + "“";
     }
 

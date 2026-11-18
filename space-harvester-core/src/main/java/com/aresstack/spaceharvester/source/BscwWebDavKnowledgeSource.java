@@ -67,7 +67,7 @@ import org.xml.sax.SAXException;
  */
 final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
         ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource,
-        AttachmentListSource, ResourceNodeKindSource {
+        AttachmentListSource, ResourceNodeKindSource, KnownTitleLookup {
 
     static final String STORED_FORMAT = "file";
     private static final String FOLDER_FORMAT = "bscw-folder";
@@ -170,6 +170,22 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         int end = Math.min(inventory.resources.size(), start + Math.max(1, Math.min(limit, MAX_BATCH)));
         String next = end < inventory.resources.size() ? "b1." + inventory.id + "." + end : "";
         return new PartitionResources(inventory.resources.subList(start, end), next);
+    }
+
+    /** Search only metadata already learned from browsed folders; never start a full-tree crawl. */
+    @Override
+    public List<KnowledgeResource> knownTitles(String fragment, int limit) {
+        if (fragment == null || fragment.isBlank() || limit < 1) {
+            return List.of();
+        }
+        String needle = fragment.toLowerCase(java.util.Locale.ROOT);
+        return knownEntries.values().stream()
+                .filter(entry -> entry.name.toLowerCase(java.util.Locale.ROOT).contains(needle))
+                .sorted(Comparator.comparing((DavEntry entry) -> entry.name.toLowerCase(java.util.Locale.ROOT))
+                        .thenComparing(entry -> entry.uri.toASCIIString()))
+                .limit(limit)
+                .map(this::resource)
+                .toList();
     }
 
     @Override
