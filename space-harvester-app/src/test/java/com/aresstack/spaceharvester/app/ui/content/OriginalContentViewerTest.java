@@ -101,7 +101,7 @@ final class OriginalContentViewerTest {
     }
 
     @Test
-    void rendersCsvAsTextAndKeepsBinaryPayloadOutOfTechnicalText() throws Exception {
+    void rendersCsvAsSpreadsheetAndKeepsBinaryPayloadOutOfTechnicalText() throws Exception {
         PageDetailPanel panel = panel();
         String csv = "name,value\nNorth,12\nSouth,15\n";
         onEdt(() -> {
@@ -110,8 +110,10 @@ final class OriginalContentViewerTest {
             return null;
         });
         await(() -> onEdt(() -> panel.originalViewer() != null
-                && panel.originalViewer().isShowingText()));
-        assertThat(onEdt(() -> panel.originalViewer().textContent())).isEqualTo(csv);
+                && panel.originalViewer().isShowingSpreadsheet()));
+        assertThat(onEdt(() -> panel.originalViewer().attachment().kind().name()))
+                .isEqualTo("SPREADSHEET");
+        assertThat(onEdt(() -> panel.originalViewer().isShowingText())).isFalse();
 
         byte[] binary = png();
         NativePayload payload = new NativePayload(binary, "image/png", "file");

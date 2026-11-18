@@ -289,7 +289,7 @@ public final class AttachmentViewerPanel extends JPanel {
     }
 
     /** Whether the locally rendered read-only spreadsheet is visible. */
-    boolean isShowingSpreadsheet() {
+    public boolean isShowingSpreadsheet() {
         return spreadsheetPane.isVisible();
     }
 

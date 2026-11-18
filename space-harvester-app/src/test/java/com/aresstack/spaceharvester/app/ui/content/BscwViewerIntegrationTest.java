@@ -98,8 +98,7 @@ final class BscwViewerIntegrationTest {
                 .as("EDT remains responsive during a blocked PNG download").isLessThan(4000);
 
         await(() -> onEdt(() -> panel.originalViewer() != null
-                && panel.originalViewer().isShowingText()
-                && panel.originalViewer().textContent().contains("Nord,12")));
+                && panel.originalViewer().isShowingSpreadsheet()));
 
         releaseImage.countDown();
         onEdt(() -> {
@@ -128,7 +127,7 @@ final class BscwViewerIntegrationTest {
             return null;
         });
         await(() -> onEdt(() -> panel.originalViewer() != null
-                && panel.originalViewer().isShowingText()));
+                && panel.originalViewer().isShowingSpreadsheet()));
         onEdt(() -> {
             panel.load("bscw-test", linkId, false);
             assertThat(panel.originalViewer()).as("Old CSV reader is gone").isNull();
