@@ -429,6 +429,21 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 }
                 return List.copyOf(found.values());
             }
+            if (port instanceof KnownTitleLookup known) {
+                List<PageNode> found = new ArrayList<>();
+                for (SourcePartition partition : port.partitions()) {
+                    if (!spaces.permits(partition.key())) {
+                        continue;
+                    }
+                    for (KnowledgeResource resource : known.knownTitles(term, limit)) {
+                        PageMetadata metadata = pageMetadata(resource, partition.key());
+                        if (found.size() < limit) {
+                            found.add(new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(), null));
+                        }
+                    }
+                }
+                return List.copyOf(found);
+            }
             if (discovering()) {
                 return titlesOfDiscovery(needle, spaces, limit);
             }

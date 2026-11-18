@@ -109,6 +109,34 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
+    void titleLookupSearchesOnlyAlreadyKnownWebDavEntries() throws Exception {
+        KnowledgeSourcePort port = open("reader", "secret");
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource(
+                "bscw-test", "bscw", "BSCW", port);
+        PageNavigationSource navigation = (PageNavigationSource) port;
+
+        assertThat(source.findByTitle("readme", com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
+                .isEmpty();
+        assertThat(propfinds).hasValue(0);
+
+        navigation.children(NavigationNode.root("space:bscw-test", "BSCW", "bscw-test",
+                NavigationNode.Children.YES), "");
+
+        assertThat(source.findByTitle("README", com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
+                .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title)
+                .containsExactly("readme.txt");
+        assertThat(source.findByTitle("Nested",
+                com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
+                .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title)
+                .containsExactly("Nested");
+        assertThat(source.findByTitle("not-found",
+                com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
+                .isEmpty();
+        assertThat(propfinds).hasValue(1);
+        assertThat(downloads).hasValue(0);
+    }
+
+    @Test
     void usesTheSharedBaseUrlToOpenBscwWithoutLegacyRootUrl() {
         SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW",
                 URI.create(root),
