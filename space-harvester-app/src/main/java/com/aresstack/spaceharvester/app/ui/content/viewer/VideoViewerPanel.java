@@ -44,7 +44,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private final JPanel audioDisplay = new JPanel(new BorderLayout());
     private final VideoTransportBar transport = new VideoTransportBar(this::seek);
     private final VideoFullScreenController fullScreen =
-            new VideoFullScreenController(this, this::reattachVideoSurface, transport::setFullScreen);
+            new VideoFullScreenController(this, this::prepareForFullScreenTransfer,
+                    this::completeFullScreenTransfer, transport::setFullScreen);
     private final Timer progress = new Timer(350, event -> updateProgress());
     private final ExecutorService seekWorker = Executors.newSingleThreadExecutor(task -> {
         Thread thread = new Thread(task, "space-harvester-video-seek");
@@ -62,6 +63,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private volatile boolean switchingMedia;
     private long resumePositionMillis;
     private boolean pauseAfterSwitch;
+    private boolean resumeVideoAfterFullScreen;
     private boolean preparationHadPlayback;
     private boolean preparationWasPlaying;
     private long preparationPositionMillis;
@@ -242,9 +244,6 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (closed || player == null || (audio && audioBridge == null)) {
             return;
         }
-        if (audio && fullScreen.isFullScreen()) {
-            fullScreen.toggle();
-        }
         long position = preparationPositionMillis;
         boolean wasStarted = preparationHadPlayback || started;
         boolean wasPaused = preparationHadPlayback ? !preparationWasPlaying : started && !actuallyPlaying;
@@ -254,6 +253,12 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             } catch (RuntimeException ignored) {
                 // Resume from the beginning when the native player has no valid timestamp.
             }
+        }
+        if (audio && fullScreen.isFullScreen()) {
+            // Stop before moving the native surface; audio mode will start a new source below.
+            switchingMedia = true;
+            player.mediaPlayer().controls().stop();
+            fullScreen.leaveForMediaSwitch();
         }
         preparationHadPlayback = false;
         preparationPositionMillis = 0;
@@ -339,7 +344,48 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         return audioOnly ? "Nur Audio über BSCW-Streaming" : "Wiedergabe über BSCW-Streaming";
     }
 
-    /** Rebind the existing video player to its new native window after entering or leaving full-screen. */
+    /** Stop native rendering before AWT replaces the video Canvas window handle. */
+    private void prepareForFullScreenTransfer() {
+        if (closed || audioOnly || player == null || !started || switchingMedia) {
+            return;
+        }
+        try {
+            resumePositionMillis = Math.max(0, player.mediaPlayer().status().time());
+        } catch (RuntimeException unavailable) {
+            resumePositionMillis = 0;
+        }
+        pauseAfterSwitch = !actuallyPlaying;
+        switchingMedia = true;
+        resumeVideoAfterFullScreen = true;
+        actuallyPlaying = false;
+        seekRequestedAtNanos = 0;
+        player.mediaPlayer().controls().stop();
+    }
+
+    /** Start the saved stream after the new Canvas handle is available. */
+    private void completeFullScreenTransfer() {
+        if (closed || player == null || audioOnly) {
+            return;
+        }
+        reattachVideoSurface();
+        if (!resumeVideoAfterFullScreen) {
+            return;
+        }
+        resumeVideoAfterFullScreen = false;
+        try {
+            startRequestedAtNanos = System.nanoTime();
+            if (!player.mediaPlayer().media().play(bridge.address().toASCIIString())) {
+                switchingMedia = false;
+                playbackFailed("VLC konnte die Bildausgabe nach dem Vollbildwechsel nicht starten.");
+            }
+        } catch (RuntimeException unavailable) {
+            switchingMedia = false;
+            playbackFailed("VLC konnte die Bildausgabe nach dem Vollbildwechsel nicht starten: "
+                    + unavailable.getClass().getSimpleName());
+        }
+    }
+
+    /** Rebind the native video output to the current AWT window. */
     private void reattachVideoSurface() {
         if (closed || player == null || !player.isDisplayable()) {
             return;

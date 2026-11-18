@@ -162,9 +162,16 @@ beim Nachladen der Position weiter reagiert.
 neben „Herunterladen“ öffnet ein randloses Vollbild auf demselben Monitor.
 Esc, erneuter Doppelklick oder der Wiederherstellen-Button führen zurück
 in die Leseansicht. Das vorhandene Video samt Transportleiste wird in das
-Vollbildfenster und zurück umgesetzt; dabei bleibt dieselbe VLCJ-Playerinstanz
-mit derselben Wiedergabeposition erhalten. Die native Videooberfläche wird
-nach dem Fensterwechsel neu angebunden, nicht die Medienquelle neu geladen.
+Vollbildfenster und zurück umgesetzt; dieselbe VLCJ-Playerinstanz bleibt
+erhalten. Da AWT bei einem Wechsel des Top-Level-Fensters das native
+Canvas-Handle neu erzeugen kann, wird eine laufende Wiedergabe **vor dem
+Umhängen kontrolliert gestoppt** und danach über die neu angebundene
+Videooberfläche mit der vorherigen Position und dem Pausenzustand fortgesetzt.
+Das kann eine kurze Unterbrechung und neue WebDAV-Range-Abrufe verursachen,
+verhindert aber den dauerhaft schwarzen Bildschirm. Beim Wechsel von Vollbild
+in den Audio-Only-Modus übernimmt dessen Medienwechsel den Neustart, damit
+keine zweite Videowiedergabe ausgelöst wird. Ein bloßes Schließen des
+Vollbildfensters während des Seitenwechsels startet die Wiedergabe nicht neu.
 Das funktioniert mit der vorhandenen libVLC-Ausgabe (unter Windows auch
 Direct3D); ein zusätzliches Direct3D-Modul oder Java-21-Upgrade ist nicht
 notwendig.

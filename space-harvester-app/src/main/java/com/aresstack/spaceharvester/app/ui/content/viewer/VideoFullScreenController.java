@@ -26,6 +26,7 @@ import java.util.function.Consumer;
 final class VideoFullScreenController implements AutoCloseable {
 
     private final JPanel videoView;
+    private final Runnable beforeTransfer;
     private final Runnable attachVideoSurface;
     private final Consumer<Boolean> fullScreenChanged;
 
@@ -38,9 +39,10 @@ final class VideoFullScreenController implements AutoCloseable {
     private KeyEventDispatcher escapeHandler;
     private boolean transferring;
 
-    VideoFullScreenController(JPanel videoView, Runnable attachVideoSurface,
+    VideoFullScreenController(JPanel videoView, Runnable beforeTransfer, Runnable attachVideoSurface,
                               Consumer<Boolean> fullScreenChanged) {
         this.videoView = videoView;
+        this.beforeTransfer = beforeTransfer;
         this.attachVideoSurface = attachVideoSurface;
         this.fullScreenChanged = fullScreenChanged;
     }
@@ -67,7 +69,7 @@ final class VideoFullScreenController implements AutoCloseable {
     void toggle() {
         assertEventThread();
         if (isFullScreen()) {
-            exit();
+            exit(true);
         } else {
             enter();
         }
@@ -93,7 +95,7 @@ final class VideoFullScreenController implements AutoCloseable {
         window.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent event) {
-                exit();
+                exit(true);
             }
         });
 
@@ -102,6 +104,7 @@ final class VideoFullScreenController implements AutoCloseable {
         fullScreenWindow = window;
         transferring = true;
         try {
+            beforeTransfer.run();
             originalParent.remove(videoView);
             putBack(originalParent, placeholder);
             window.getContentPane().setLayout(new BorderLayout());
@@ -118,7 +121,8 @@ final class VideoFullScreenController implements AutoCloseable {
             installEscapeKey();
             fullScreenChanged.accept(true);
         } catch (RuntimeException failure) {
-            exit();
+            exit(false);
+            reattachLater();
             throw failure;
         } finally {
             transferring = false;
@@ -126,7 +130,13 @@ final class VideoFullScreenController implements AutoCloseable {
         reattachLater();
     }
 
-    private void exit() {
+    /** Restore the embedded view without restarting video when another media mode takes over. */
+    void leaveForMediaSwitch() {
+        assertEventThread();
+        exit(false);
+    }
+
+    private void exit(boolean restorePlayback) {
         if (fullScreenWindow == null) {
             return;
         }
@@ -134,6 +144,9 @@ final class VideoFullScreenController implements AutoCloseable {
         fullScreenWindow = null;
         transferring = true;
         try {
+            if (restorePlayback) {
+                beforeTransfer.run();
+            }
             uninstallEscapeKey();
             window.getContentPane().remove(videoView);
             if (display != null && display.getFullScreenWindow() == window) {
@@ -156,7 +169,9 @@ final class VideoFullScreenController implements AutoCloseable {
             placeholder = null;
             display = null;
         }
-        reattachLater();
+        if (restorePlayback) {
+            reattachLater();
+        }
     }
 
     private void putBack(Container parent, Component component) {
@@ -174,7 +189,7 @@ final class VideoFullScreenController implements AutoCloseable {
                     || event.getKeyCode() != KeyEvent.VK_ESCAPE) {
                 return false;
             }
-            SwingUtilities.invokeLater(this::exit);
+            SwingUtilities.invokeLater(() -> exit(true));
             return true;
         };
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(escapeHandler);
@@ -204,6 +219,6 @@ final class VideoFullScreenController implements AutoCloseable {
     @Override
     public void close() {
         assertEventThread();
-        exit();
+        exit(false);
     }
 }
