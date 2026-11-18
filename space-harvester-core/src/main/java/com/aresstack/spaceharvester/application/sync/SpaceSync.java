@@ -108,8 +108,13 @@ public class SpaceSync {
 
     /** Wie {@link #plan(String, String, boolean)}, in der Betriebsart {@code mode}. */
     public SyncPlan plan(String sourceId, String spaceKey, SyncMode mode) {
+        return plan(sourceId, spaceKey, mode, () -> { });
+    }
+
+    /** Check cancellation between the page batches of an inventory. */
+    private SyncPlan plan(String sourceId, String spaceKey, SyncMode mode, Runnable checkpoint) {
         SyncBaseline baseline = store.confirmed(sourceId, spaceKey).orElse(null);
-        Inventory inventory = collector.collect(sourceId, spaceKey);
+        Inventory inventory = collector.collect(sourceId, spaceKey, checkpoint);
         SyncPlan plan = SyncPlanner.plan(baseline, inventory,
                 inventory.confirmed() ? store.knownPages(sourceId, spaceKey) : Map.of(), mode);
         if (!plan.inventory().confirmed()) {
@@ -190,7 +195,7 @@ public class SpaceSync {
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode,
                        java.util.function.Function<Inventory, java.util.function.Predicate<String>> loading,
                        boolean reloadAll) {
-        SyncPlan planned = plan(sourceId, spaceKey, mode);
+        SyncPlan planned = plan(sourceId, spaceKey, mode, listener::checkpoint);
         java.util.function.Predicate<String> inScope = loading == null || !planned.inventory().confirmed()
                 ? pageId -> true : loading.apply(planned.inventory());
         SyncPlan limited = loading == null || !planned.inventory().confirmed() ? planned

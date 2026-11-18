@@ -54,6 +54,7 @@ final class BscwWebDavSourceTest {
     private HttpServer server;
     private AtomicInteger downloads;
     private AtomicInteger propfinds;
+    private java.util.concurrent.atomic.AtomicBoolean denyNested;
     private String root;
 
     @TempDir
@@ -64,6 +65,7 @@ final class BscwWebDavSourceTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         downloads = new AtomicInteger();
         propfinds = new AtomicInteger();
+        denyNested = new java.util.concurrent.atomic.AtomicBoolean();
         server.createContext("/sec/bscw.cgi/", this::handle);
         server.start();
         root = "http://127.0.0.1:" + server.getAddress().getPort() + "/sec/bscw.cgi/146377797";
@@ -157,6 +159,73 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
+    void inventoryPagesDoNotScanUnopenedSubfolders() throws Exception {
+        PartitionListingSource listing = (PartitionListingSource) open("reader", "secret");
+        PartitionResources first = listing.resources("bscw-test", null, 20);
+        assertThat(first.resources()).extracting(KnowledgeResource::title)
+                .containsExactly("Root", "Nested", "readme.txt");
+        assertThat(first.complete()).isFalse();
+        int firstRequests = propfinds.get();
+
+        PartitionResources repeated = listing.resources("bscw-test", first.nextCursor().replace(".1", ".0"), 20);
+        assertThat(repeated.resources()).extracting(KnowledgeResource::title)
+                .containsExactly("Root", "Nested", "readme.txt");
+        assertThat(propfinds.get()).isEqualTo(firstRequests);
+
+        PartitionResources nested = listing.resources("bscw-test", first.nextCursor(), 20);
+        assertThat(nested.resources()).extracting(KnowledgeResource::title)
+                .containsExactly("archive.zip");
+        assertThat(nested.complete()).isTrue();
+        assertThat(propfinds.get()).isGreaterThan(firstRequests);
+        assertThat(downloads).hasValue(0);
+    }
+
+    @Test
+    void inaccessibleNestedFolderNeverConfirmsAnIncompleteInventory() {
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW",
+                URI.create(root),
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("maxDepth", "2"));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
+            com.aresstack.spaceharvester.application.sync.InventoryCollector collector =
+                    new com.aresstack.spaceharvester.application.sync.InventoryCollector(
+                            harvester.sources(), java.time.Clock.systemUTC());
+            com.aresstack.spaceharvester.application.sync.Inventory complete =
+                    collector.collect("bscw-test", "bscw-test");
+            assertThat(complete.confirmed()).isTrue();
+
+            denyNested.set(true);
+            com.aresstack.spaceharvester.application.sync.Inventory partial =
+                    collector.collect("bscw-test", "bscw-test");
+            assertThat(partial.status())
+                    .isEqualTo(com.aresstack.spaceharvester.application.sync.Inventory.Status.INCOMPLETE);
+            assertThat(partial.pages()).extracting(entry -> entry.page().title())
+                    .contains("Root", "Nested", "readme.txt")
+                    .doesNotContain("archive.zip");
+            assertThat(partial.spaceFingerprint()).isEmpty();
+        }
+    }
+
+    @Test
+    void inventoriedFoldersCanBeCancelledBeforeNextRequest() {
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW",
+                URI.create(root),
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("maxDepth", "2"));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
+            AtomicInteger checkpoints = new AtomicInteger();
+            assertThatThrownBy(() -> new com.aresstack.spaceharvester.application.sync.InventoryCollector(
+                    harvester.sources(), java.time.Clock.systemUTC()).collect("bscw-test", "bscw-test", () -> {
+                if (checkpoints.incrementAndGet() == 2) {
+                    throw new IllegalStateException("cancelled");
+                }
+            })).isInstanceOf(IllegalStateException.class).hasMessage("cancelled");
+            assertThat(checkpoints).hasValue(2);
+            assertThat(downloads).hasValue(0);
+        }
+    }
+
+    @Test
     void readsCsvWithGenericWebDavContentTypeAsText() throws Exception {
         String csvRoot = root.replace("/146377797", "/888");
         SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW test", null,
@@ -188,13 +257,12 @@ final class BscwWebDavSourceTest {
         PartitionResources first = listing.resources("bscw-test", null, 1);
         assertThat(first.resources()).hasSize(1);
         assertThat(first.complete()).isFalse();
-        PartitionResources inventory = listing.resources("bscw-test", null, 20);
-        assertThat(inventory.complete()).isTrue();
-        assertThat(inventory.resources()).extracting(KnowledgeResource::title)
+        List<KnowledgeResource> inventory = allResources(listing);
+        assertThat(inventory).extracting(KnowledgeResource::title)
                 .containsExactlyInAnyOrder("Root", "Nested", "archive.zip", "readme.txt");
         assertThat(downloads).hasValue(0);
 
-        KnowledgeResource document = inventory.resources().stream()
+        KnowledgeResource document = inventory.stream()
                 .filter(resource -> "archive.zip".equals(resource.title())).findFirst().orElseThrow();
         String id = ((StoredContentSource) port).localId(document.id());
         KnowledgeResource metadata = ((ResourceMetadataSource) port).resourceMetadata(id);
@@ -204,7 +272,7 @@ final class BscwWebDavSourceTest {
         assertThat(original.payload()).isEqualTo(ZIP_CONTENT);
         assertThat(downloads).hasValue(1);
 
-        KnowledgeResource readme = inventory.resources().stream()
+        KnowledgeResource readme = inventory.stream()
                 .filter(resource -> "readme.txt".equals(resource.title())).findFirst().orElseThrow();
         KnowledgeDocument text = port.load(readme.id());
         assertThat(text.text()).contains("Example BSCW document");
@@ -296,6 +364,28 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
+    void failedExportCannotPublishPartialTreeOrDeletePreviousCompletedExport() throws Exception {
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW",
+                URI.create(root),
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("maxDepth", "2"));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
+            com.aresstack.spaceharvester.application.jobs.JobStatus first = harvester.await(
+                    harvester.export("bscw-test", "bscw-test", List.of("json")).id(),
+                    Duration.ofSeconds(30));
+            assertThat(first.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+
+            denyNested.set(true);
+            com.aresstack.spaceharvester.application.jobs.JobStatus refreshed = harvester.await(
+                    harvester.export("bscw-test", "bscw-test", List.of("json"), true).id(),
+                    Duration.ofSeconds(30));
+            assertThat(refreshed.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.FAILED);
+            assertThat(harvester.exportArtifact(refreshed.id())).isEmpty();
+            assertThat(harvester.exportArtifact(first.id())).isPresent();
+        }
+    }
+
+    @Test
     void folderOpensAsVirtualPageWithoutDownloadingItsFiles() throws Exception {
         KnowledgeSourcePort source = open("reader", "secret");
         NavigationNode nested = ((PageNavigationSource) source).children(
@@ -311,8 +401,8 @@ final class BscwWebDavSourceTest {
     @Test
     void binaryFilesAreNotReplacedByExtractedTextSnippets() throws Exception {
         KnowledgeSourcePort source = open("reader", "secret");
-        KnowledgeResource archive = ((PartitionListingSource) source).resources("bscw-test", null, 20)
-                .resources().stream().filter(resource -> "archive.zip".equals(resource.title()))
+        KnowledgeResource archive = allResources((PartitionListingSource) source).stream()
+                .filter(resource -> "archive.zip".equals(resource.title()))
                 .findFirst().orElseThrow();
 
         String html = ((PageViewSource) source).pageView(archive.id()).html();
@@ -440,6 +530,18 @@ final class BscwWebDavSourceTest {
         assertThat(adapter.check(config)).anyMatch(problem -> problem.contains("base-url"));
     }
 
+    private static List<KnowledgeResource> allResources(PartitionListingSource listing)
+            throws KnowledgeSourceException {
+        List<KnowledgeResource> all = new java.util.ArrayList<>();
+        String cursor = null;
+        do {
+            PartitionResources batch = listing.resources("bscw-test", cursor, 20);
+            all.addAll(batch.resources());
+            cursor = batch.complete() ? null : batch.nextCursor();
+        } while (cursor != null);
+        return all;
+    }
+
     private KnowledgeSourcePort open(String username, String password) {
         ConfiguredSecrets secrets = new ConfiguredSecrets();
         secrets.put("bscw-test", username, password);
@@ -462,6 +564,10 @@ final class BscwWebDavSourceTest {
             String path = exchange.getRequestURI().getRawPath();
             if ("PROPFIND".equals(exchange.getRequestMethod())) {
                 propfinds.incrementAndGet();
+                if (denyNested.get() && "/sec/bscw.cgi/444".equals(path)) {
+                    respond(exchange, 403, new byte[0], "text/plain");
+                    return;
+                }
                 if ("/sec/bscw.cgi/999".equals(path)) {
                     respond(exchange, 405, new byte[0], "text/plain");
                     return;
