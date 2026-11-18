@@ -72,7 +72,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
 
     static final String STORED_FORMAT = "file";
     private static final String FOLDER_FORMAT = "bscw-folder";
-    private static final String ATTACHMENTS_FORMAT = "webdav-propfind-depth-1";
+    private static final String ATTACHMENTS_FORMAT = "webdav-propfind-depth-0";
     private static final String DAV = "DAV:";
     private static final int MAX_BATCH = 500;
     private static final int NAVIGATION_BATCH = 200;
@@ -638,21 +638,23 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         }
     }
 
-    private static URI normalize(URI uri) {
-        String path = uri.getRawPath();
+    static URI normalize(URI uri) {
+        java.util.Objects.requireNonNull(uri, "uri");
+        URI ascii = URI.create(uri.toASCIIString());
+        String path = ascii.getRawPath();
         if (path == null || path.length() <= 1 || !path.endsWith("/")) {
-            return uri;
+            return ascii;
         }
-        String trimmed = path.replaceAll("/+$", "");
-        if (trimmed.isEmpty()) {
-            trimmed = "/";
+        int trailingSlashes = 0;
+        while (trailingSlashes < path.length() - 1
+                && path.charAt(path.length() - trailingSlashes - 1) == '/') {
+            trailingSlashes++;
         }
-        try {
-            return new URI(uri.getScheme(), uri.getRawUserInfo(), uri.getHost(), uri.getPort(),
-                    trimmed, uri.getRawQuery(), uri.getRawFragment());
-        } catch (java.net.URISyntaxException ignored) {
-            return uri;
-        }
+        String address = ascii.toASCIIString();
+        int suffixLength = (ascii.getRawQuery() == null ? 0 : ascii.getRawQuery().length() + 1)
+                + (ascii.getRawFragment() == null ? 0 : ascii.getRawFragment().length() + 1);
+        int pathEnd = address.length() - suffixLength;
+        return URI.create(address.substring(0, pathEnd - trailingSlashes) + address.substring(pathEnd));
     }
 
     private static String encode(String value) {

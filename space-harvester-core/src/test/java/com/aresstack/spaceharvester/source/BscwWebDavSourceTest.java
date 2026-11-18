@@ -111,6 +111,19 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
+    void canonicalizesTrailingSlashesWithoutDoubleEncodingEscapedPaths() {
+        URI escaped = URI.create("https://example.org/sec/bscw.cgi/a%20b%2Fc/");
+        URI canonical = BscwWebDavKnowledgeSource.normalize(escaped);
+
+        assertThat(canonical.toASCIIString())
+                .isEqualTo("https://example.org/sec/bscw.cgi/a%20b%2Fc");
+        assertThat(BscwWebDavKnowledgeSource.normalize(canonical)).isEqualTo(canonical);
+        assertThat(BscwWebDavKnowledgeSource.normalize(
+                URI.create("https://example.org/sec/bscw.cgi/a%20b%2Fc")))
+                .isEqualTo(canonical);
+    }
+
+    @Test
     void titleLookupSearchesOnlyAlreadyKnownWebDavEntries() throws Exception {
         KnowledgeSourcePort port = open("reader", "secret");
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource(
@@ -360,7 +373,7 @@ final class BscwWebDavSourceTest {
         assertThat(list.attachments().get(0).id()).isEqualTo(archiveNode.resource());
         assertThat(list.payloads()).hasSize(1);
         assertThat(new String(list.payloads().get(0), StandardCharsets.UTF_8)).contains("archive.zip");
-        assertThat(list.nativeFormat()).isEqualTo("webdav-propfind-depth-1");
+        assertThat(list.nativeFormat()).isEqualTo("webdav-propfind-depth-0");
         assertThat(downloads).hasValue(0);
 
         KnowledgeResource file = list.attachments().get(0);
