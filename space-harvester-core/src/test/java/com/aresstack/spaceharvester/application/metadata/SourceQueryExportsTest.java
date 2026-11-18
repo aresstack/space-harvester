@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -76,6 +77,12 @@ class SourceQueryExportsTest {
         @Override
         public List<String> pages(AccessContext caller, Selection.Root root) {
             return pagesOfSpace.getOrDefault(root.spaceKey(), List.of());
+        }
+
+        @Override
+        public SourceQueryExports.PageName name(String sourceId, String pageId) {
+            return "2".equals(pageId) ? new SourceQueryExports.PageName("Kaputte Seite",
+                    "https://wiki.example/pages/2") : null;
         }
     }, new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), CLOCK, "desktop");
 
@@ -328,6 +335,16 @@ class SourceQueryExportsTest {
         assertThat(doc.get("pages").get(1).get("history").get("kind").asString()).isEqualTo("UNAVAILABLE");
         assertThat(doc.get("summary").get("failed").asInt()).isEqualTo(1);
         assertThat(list(out)).as("die Teildatei ist nach dem Ende weg").hasSize(1);
+        // Die Meldungen nennen die Seite mit Titel, Adresse und Fehler je Abfrage; niemand muss die Datei öffnen.
+        List<JobEvent> events = jobs.events(done.id(), "desktop");
+        JobEvent page = events.stream().filter(event -> "PAGE_FAILED".equals(event.code())).findFirst().orElseThrow();
+        assertThat(page.message()).startsWith("Seite 2 „Kaputte Seite“ ohne Antwort:")
+                .contains("\nhistory: UNAVAILABLE").contains("\nversions: NOT_FOUND");
+        JobEvent all = events.stream().filter(event -> "PAGES_FAILED".equals(event.code())).findFirst().orElseThrow();
+        assertThat(all.message()).contains("1 von 3 Seiten ohne Antwort: Seite 2 „Kaputte Seite“");
+        assertThat(SourceQueryExports.httpStatus("Confluence antwortet mit HTTP 500 (nach 2 Wiederholungen)"))
+                .isEqualTo(500);
+        assertThat(SourceQueryExports.httpStatus("keine Antwort")).isNull();
     }
 
     @Test
