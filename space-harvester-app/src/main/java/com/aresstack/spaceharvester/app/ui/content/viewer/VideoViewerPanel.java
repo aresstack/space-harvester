@@ -238,6 +238,15 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     }
 
     @Override
+    public void removeNotify() {
+        try {
+            close();
+        } finally {
+            super.removeNotify();
+        }
+    }
+
+    @Override
     public void close() {
         closed = true;
         progress.stop();

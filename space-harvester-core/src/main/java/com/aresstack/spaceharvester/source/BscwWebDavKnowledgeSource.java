@@ -76,7 +76,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     private static final String DAV = "DAV:";
     private static final int MAX_BATCH = 500;
     private static final int NAVIGATION_BATCH = 200;
-    private static final int MAX_ACTIVE_INVENTORIES = 4;
+    private static final int MAX_ACTIVE_INVENTORIES = 32;
     private static final Pattern CURSOR = Pattern.compile("b2\\.([a-f0-9-]{36})\\.(\\d{1,9})");
 
     private final SourceAddress sourceId;
@@ -104,7 +104,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     BscwWebDavKnowledgeSource(SourceAddress sourceId, URI root, BscwWebDavTransport transport, int maxDepth,
                               DocumentText extractor) {
         this.sourceId = sourceId;
-        this.root = root;
+        this.root = normalize(root);
         this.transport = transport;
         this.maxDepth = maxDepth;
         this.extractor = extractor;
@@ -211,9 +211,8 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             return null;
         }
         try {
-            URI uri = URI.create(root.getScheme() + "://" + root.getRawAuthority()
-                    + "/" + value.substring(prefix.length()));
-            transport.checked(uri);
+            URI uri = normalize(transport.checked(URI.create(root.getScheme() + "://" + root.getRawAuthority()
+                    + "/" + value.substring(prefix.length()))));
             return encode(uri.toASCIIString());
         } catch (Exception e) {
             return null;
@@ -269,7 +268,8 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     public PageView pageView(KnowledgeResourceId page) throws KnowledgeSourceException {
         String local = requireLocalId(page);
         KnowledgeResource resource = resourceMetadata(local);
-        String pageAddress = uriOf(local).toASCIIString();
+        URI uri = uriOf(local);
+        String pageAddress = uri.toASCIIString();
         if (!isFolder(resource)) {
             if (resource.contentType().startsWith("text/") || "application/json".equals(resource.contentType())
                     || "application/xml".equals(resource.contentType())) {
@@ -278,14 +278,14 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
                         + escapeHtml(text) + "</pre>", pageAddress, List.of());
             }
             return new PageView("<p>Originaldatei: " + escapeHtml(resource.title())
-                    + "</p><p>Die Datei ist als Anhang ihres übergeordneten Ordners verfügbar.</p>",
+                    + "</p><p>Die Datei ist als Anhang dieser Seite verfügbar.</p>",
                     pageAddress, List.of());
         }
-        List<KnowledgeResource> files = attachmentsOf(page);
-        StringBuilder html = new StringBuilder("<p>Dateien in diesem Ordner: ")
-                .append(files.size()).append("</p><ul>");
-        for (KnowledgeResource file : files) {
-            html.append("<li>").append(escapeHtml(file.title())).append("</li>");
+        List<DavEntry> children = directChildren(uri);
+        StringBuilder html = new StringBuilder("<p>Einträge in diesem Ordner: ")
+                .append(children.size()).append("</p><ul>");
+        for (DavEntry child : children) {
+            html.append("<li>").append(escapeHtml(child.name)).append("</li>");
         }
         return new PageView(html.append("</ul>").toString(), pageAddress, List.of());
     }
@@ -313,25 +313,26 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     }
 
     /**
-     * Map the files of a WebDAV directory to the existing page-attachment contract.
-     * Return the unchanged PROPFIND response for the raw-first export pipeline.
+     * Map each BSCW file page to its own sole attachment.
+     * Folders are container pages without attachments.
      */
     @Override
     public StoredAttachmentList storedAttachments(String localId) throws KnowledgeSourceException {
         URI uri = uriOf(localId);
         KnowledgeResource owner = resourceMetadata(localId);
-        if (!isFolder(owner)) {
+        if (isFolder(owner)
+                || PageMetadata.LINK_KIND.equals(owner.metadata().asMap().get(PageMetadata.RESOURCE_KIND))
+                || "true".equals(owner.metadata().asMap().get(PageMetadata.REMOTE_MEDIA))) {
             return new StoredAttachmentList(List.of(), List.of(), "application/xml",
                     ATTACHMENTS_FORMAT, Instant.now(), List.of());
         }
-        byte[] raw = transport.properties(uri, 1);
-        List<KnowledgeResource> files = childrenOf(uri, parseEntries(raw)).stream()
-                .filter(entry -> !entry.folder)
-                .map(this::resource).toList();
-        if (files.size() > AttachmentListSource.MAX_ATTACHMENTS) {
-            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW attachment list exceeds the limit");
-        }
-        return new StoredAttachmentList(files, List.of(raw), "application/xml",
+        byte[] raw = transport.properties(uri, 0);
+        KnowledgeResource attachment = parseEntries(raw).stream()
+                .filter(candidate -> sameResource(candidate.uri, uri))
+                .findFirst()
+                .map(this::resource)
+                .orElse(owner);
+        return new StoredAttachmentList(List.of(attachment), List.of(raw), "application/xml",
                 ATTACHMENTS_FORMAT, Instant.now(), List.of());
     }
 
@@ -546,7 +547,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             if (href == null || prop == null) {
                 continue;
             }
-            URI uri = transport.resolve(href);
+            URI uri = normalize(transport.resolve(href));
             String name = firstText(prop, "displayname");
             String displayName = name == null || name.isBlank() ? filename(uri) : name;
             Element type = firstElement(prop, "resourcetype");
@@ -622,7 +623,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     }
 
     private KnowledgeResourceId idOf(URI uri) {
-        return KnowledgeResourceId.of("bscw", root.getHost().toLowerCase() + uri.getRawPath());
+        return KnowledgeResourceId.of("bscw", root.getHost().toLowerCase() + normalize(uri).getRawPath());
     }
 
     private URI uriOf(String localId) throws KnowledgeSourceException {
@@ -631,9 +632,26 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid BSCW resource identifier");
         }
         try {
-            return transport.checked(URI.create(value));
+            return normalize(transport.checked(URI.create(value)));
         } catch (IllegalArgumentException e) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid BSCW resource identifier");
+        }
+    }
+
+    private static URI normalize(URI uri) {
+        String path = uri.getRawPath();
+        if (path == null || path.length() <= 1 || !path.endsWith("/")) {
+            return uri;
+        }
+        String trimmed = path.replaceAll("/+$", "");
+        if (trimmed.isEmpty()) {
+            trimmed = "/";
+        }
+        try {
+            return new URI(uri.getScheme(), uri.getRawUserInfo(), uri.getHost(), uri.getPort(),
+                    trimmed, uri.getRawQuery(), uri.getRawFragment());
+        } catch (java.net.URISyntaxException ignored) {
+            return uri;
         }
     }
 

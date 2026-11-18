@@ -1442,10 +1442,32 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         readingPane.clear(" ");
+        long fileSize = payload.length();
+        if (fileSize <= 0) {
+            try {
+                fileSize = Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength",
+                        metadata.attributes().getOrDefault("fileSize", "-1")));
+            } catch (NumberFormatException ignored) {
+                fileSize = -1L;
+            }
+        }
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
-                originalMediaType(payload), payload.length());
-        ReaderAttachmentLoader loader = (file, done, failed) ->
+                originalMediaType(payload), fileSize);
+        final String source = sourceId;
+        final String id = metadata.pageId();
+        ReaderAttachmentLoader loader = (file, done, failed) -> {
+            if (payload.length() > 0) {
                 Background.run(payload::bytes, done, error -> failed.accept(reason(error)));
+                return;
+            }
+            AppRuntime runtime = context.runtime();
+            if (runtime == null) {
+                failed.accept("Die Quelle ist nicht mehr verbunden.");
+                return;
+            }
+            Background.run(() -> runtime.workspace().assetContent(source, id, file.key()).content(), done,
+                    error -> failed.accept(reason(error)));
+        };
         originalFileViewer = new AttachmentViewerPanel(attachment, loader, fileOpener, attachmentRenderer);
         fileContent.add(originalFileViewer, BorderLayout.CENTER);
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);

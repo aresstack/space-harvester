@@ -443,7 +443,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     for (KnowledgeResource resource : known.knownTitles(term, limit)) {
                         PageMetadata metadata = pageMetadata(resource, partition.key());
                         if (found.size() < limit) {
-                            found.add(new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(), null));
+                            found.add(pageNode(metadata));
                         }
                     }
                 }
@@ -461,8 +461,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                         for (KnowledgeResource resource : batch.resources()) {
                             PageMetadata metadata = pageMetadata(resource, partition.key());
                             if (found.size() < limit && contains(metadata.title(), needle)) {
-                                found.add(new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(),
-                                        null));
+                                found.add(pageNode(metadata));
                             }
                         }
                         if (batch.complete()) {
@@ -487,7 +486,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             PageMetadataBatch batch = pageMetadata(id, cursor, TITLE_SCAN_BATCH);
             for (PageMetadata metadata : batch.pages()) {
                 if (found.size() < limit && contains(metadata.title(), needle)) {
-                    found.add(new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(), null));
+                    found.add(pageNode(metadata));
                 }
             }
             cursor = batch.nextCursor();
@@ -496,6 +495,19 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             }
         }
         return List.copyOf(found);
+    }
+
+    private static PageNode pageNode(PageMetadata metadata) {
+        String resourceKind = metadata.attributes().get(PageMetadata.RESOURCE_KIND);
+        if (PageMetadata.FOLDER_KIND.equals(resourceKind)) {
+            return new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(),
+                    Boolean.TRUE, PageNode.Kind.FOLDER);
+        }
+        if (PageMetadata.FILE_KIND.equals(resourceKind) || PageMetadata.LINK_KIND.equals(resourceKind)) {
+            return new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(),
+                    Boolean.FALSE, PageNode.Kind.FILE);
+        }
+        return new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(), null);
     }
 
     private static boolean contains(String title, String needle) {

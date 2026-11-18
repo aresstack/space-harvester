@@ -127,10 +127,17 @@ final class BscwWebDavSourceTest {
         assertThat(source.findByTitle("README", com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
                 .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title)
                 .containsExactly("readme.txt");
+        assertThat(source.findByTitle("README", com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
+                .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::kind)
+                .containsExactly(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FILE);
         assertThat(source.findByTitle("Nested",
                 com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
                 .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title)
                 .containsExactly("Nested");
+        assertThat(source.findByTitle("Nested",
+                com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
+                .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::kind)
+                .containsExactly(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FOLDER);
         assertThat(source.findByTitle("not-found",
                 com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
                 .isEmpty();
@@ -221,7 +228,8 @@ final class BscwWebDavSourceTest {
         assertThat(first.complete()).isFalse();
         int firstRequests = propfinds.get();
 
-        PartitionResources repeated = listing.resources("bscw-test", first.nextCursor().replace(".1", ".0"), 20);
+        PartitionResources repeated = listing.resources("bscw-test",
+                first.nextCursor().replaceFirst("\\.1$", ".0"), 20);
         assertThat(repeated.resources()).extracting(KnowledgeResource::title)
                 .containsExactly("Root", "Nested", "readme.txt");
         assertThat(propfinds.get()).isEqualTo(firstRequests);
@@ -334,17 +342,22 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
-    void folderAttachmentsRetainTheirParentIdAndOriginalWebDavResponse() throws Exception {
+    void filePagesRetainTheirOwnAttachmentAndFoldersHaveNone() throws Exception {
         KnowledgeSourcePort source = open("reader", "secret");
         PageNavigationSource navigation = (PageNavigationSource) source;
         ResourceMetadataSource metadata = (ResourceMetadataSource) source;
         NavigationNode nested = navigation.children(NavigationNode.root("space:bscw-test", "BSCW",
                 "bscw-test", NavigationNode.Children.YES), "").nodes().get(0);
 
-        String local = metadata.localId(nested.resource());
-        StoredAttachmentList list = ((AttachmentListSource) source).storedAttachments(local);
+        String nestedLocal = metadata.localId(nested.resource());
+        StoredAttachmentList folderList = ((AttachmentListSource) source).storedAttachments(nestedLocal);
+        assertThat(folderList.attachments()).isEmpty();
+
+        NavigationNode archiveNode = navigation.children(nested, "").nodes().get(0);
+        String archiveLocal = metadata.localId(archiveNode.resource());
+        StoredAttachmentList list = ((AttachmentListSource) source).storedAttachments(archiveLocal);
         assertThat(list.attachments()).extracting(KnowledgeResource::title).containsExactly("archive.zip");
-        assertThat(list.attachments().get(0).parentId()).contains(nested.resource());
+        assertThat(list.attachments().get(0).id()).isEqualTo(archiveNode.resource());
         assertThat(list.payloads()).hasSize(1);
         assertThat(new String(list.payloads().get(0), StandardCharsets.UTF_8)).contains("archive.zip");
         assertThat(list.nativeFormat()).isEqualTo("webdav-propfind-depth-1");
@@ -359,21 +372,35 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
-    void coreAttachmentPipelineUsesFolderIdsAndExportsOriginalBytes() throws Exception {
+    void coreAttachmentPipelineUsesFilePageIdsAndExportsOriginalBytes() throws Exception {
         SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW",
                 URI.create(root),
                 new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
                 Map.of("maxDepth", "2"));
 
         try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
-            com.aresstack.spaceharvester.application.sources.PageMetadataListing pages =
-                    harvester.sources().pageMetadata("bscw-test", "bscw-test", null, 20);
-            String nestedPageId = pages.entries().stream()
+            List<com.aresstack.spaceharvester.application.sources.PageMetadataListing.Entry> allEntries =
+                    new java.util.ArrayList<>();
+            String cursor = null;
+            do {
+                com.aresstack.spaceharvester.application.sources.PageMetadataListing batch =
+                        harvester.sources().pageMetadata("bscw-test", "bscw-test", cursor, 20);
+                allEntries.addAll(batch.entries());
+                cursor = batch.nextCursor();
+            } while (cursor != null);
+
+            String nestedPageId = allEntries.stream()
                     .filter(entry -> "Nested".equals(entry.page().title()))
+                    .findFirst().orElseThrow().page().pageId();
+            assertThat(harvester.sources().attachments("bscw-test", nestedPageId).attachments().attachments())
+                    .isEmpty();
+
+            String archivePageId = allEntries.stream()
+                    .filter(entry -> "archive.zip".equals(entry.page().title()))
                     .findFirst().orElseThrow().page().pageId();
 
             com.aresstack.spaceharvester.application.sources.PageAttachmentList attachments =
-                    harvester.sources().attachments("bscw-test", nestedPageId);
+                    harvester.sources().attachments("bscw-test", archivePageId);
             assertThat(attachments.attachments().attachments()).hasSize(1);
             assertThat(attachments.attachments().responses()).hasSize(1);
             com.aresstack.spaceharvester.application.sources.PageAttachment archive =
