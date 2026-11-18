@@ -9,6 +9,7 @@ import io.netty.handler.ssl.IdentityCipherSuiteFilter;
 import io.netty.handler.ssl.JdkSslContext;
 import io.netty.resolver.DefaultAddressResolverGroup;
 import io.netty.resolver.NoopAddressResolverGroup;
+import java.io.ByteArrayOutputStream;
 import java.net.InetSocketAddress;
 import java.net.PasswordAuthentication;
 import java.net.URI;
@@ -19,16 +20,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import org.springframework.web.reactive.function.client.ExchangeStrategies;
-import org.springframework.web.reactive.function.client.WebClient;
+import io.netty.handler.codec.http.HttpMethod;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.transport.ProxyProvider;
 
 /**
  * Execute WebDAV HTTP requests through the same route, proxy authentication and TLS strategy
- * as the Confluence WebClient transport. Do not use the JVM's implicit proxy selection.
+ * as the Confluence transport, without introducing a Spring dependency outside its designated client.
+ * Do not use the JVM's implicit proxy selection.
  */
 public final class RoutedWebDavHttp {
 
@@ -38,17 +37,18 @@ public final class RoutedWebDavHttp {
     private final HttpRoutePort routes;
     private final ProxyCredentials proxyCredentials;
     private final JdkSslContext sslContext;
-    private final ExchangeStrategies exchangeStrategies;
-    private final Map<String, WebClient> clients = new ConcurrentHashMap<>();
+    private final int maximumResponseBytes;
+    private final Map<String, HttpClient> clients = new ConcurrentHashMap<>();
 
     public RoutedWebDavHttp(HttpRoutePort routes, ProxyCredentials proxyCredentials,
                             X509TrustManager trustManager, int maximumResponseBytes) {
         this.routes = routes;
         this.proxyCredentials = proxyCredentials == null ? ProxyCredentials.none() : proxyCredentials;
         this.sslContext = tls(trustManager);
-        this.exchangeStrategies = ExchangeStrategies.builder()
-                .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(maximumResponseBytes))
-                .build();
+        if (maximumResponseBytes < 1) {
+            throw new IllegalArgumentException("maximumResponseBytes must be positive");
+        }
+        this.maximumResponseBytes = maximumResponseBytes;
     }
 
     public Result exchange(URI uri, String method, Map<String, String> headers) {
@@ -56,22 +56,28 @@ public final class RoutedWebDavHttp {
         if (route == null || route.isUnavailable()) {
             throw new RouteUnavailableException(route == null ? "no-route" : route.describe());
         }
-        WebClient client = clients.computeIfAbsent(routeKey(route, uri),
+        HttpClient client = clients.computeIfAbsent(routeKey(route, uri),
                 ignored -> clientFor(route, uri));
-        Result response = client.method(HttpMethod.valueOf(method))
+        Result response = client.headers(httpHeaders -> headers.forEach(httpHeaders::set))
+                .request(HttpMethod.valueOf(method))
                 .uri(uri)
-                .headers(httpHeaders -> headers.forEach(httpHeaders::set))
-                .exchangeToMono(result -> result.bodyToMono(byte[].class)
-                        .defaultIfEmpty(new byte[0])
-                        .map(body -> new Result(result.statusCode().value(), body)))
-                .block(READ_TIMEOUT.plusSeconds(5));
+                .response((received, content) -> content.asByteArray()
+                        .reduce(new ByteArrayOutputStream(), (buffer, bytes) -> {
+                            if (bytes.length > maximumResponseBytes - buffer.size()) {
+                                throw new IllegalStateException("WebDAV response exceeds maximum size");
+                            }
+                            buffer.write(bytes, 0, bytes.length);
+                            return buffer;
+                        })
+                        .map(buffer -> new Result(received.status().code(), buffer.toByteArray())))
+                .next().block(READ_TIMEOUT.plusSeconds(5));
         if (response == null) {
             throw new IllegalStateException("WebDAV returned no response");
         }
         return response;
     }
 
-    private WebClient clientFor(HttpRoute route, URI target) {
+    private HttpClient clientFor(HttpRoute route, URI target) {
         HttpClient http = HttpClient.create()
                 .resolver(route.isProxy() ? NoopAddressResolverGroup.INSTANCE
                         : DefaultAddressResolverGroup.INSTANCE)
@@ -100,10 +106,7 @@ public final class RoutedWebDavHttp {
         if ("https".equalsIgnoreCase(target.getScheme())) {
             http = http.secure(tls -> tls.sslContext(sslContext));
         }
-        return WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(http))
-                .exchangeStrategies(exchangeStrategies)
-                .build();
+        return http;
     }
 
     private static String routeKey(HttpRoute route, URI uri) {
