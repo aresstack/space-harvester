@@ -48,6 +48,12 @@ public interface EnrichmentStore {
     /** Entfernt die Ergebnisse eines Abschnitts eines Anhangs oder einer enthaltenen Datei, aller Prozessoren. */
     void removeSection(DocumentKey document, int section);
 
+    /**
+     * Die Seiten mit einem Ergebnis dieses Prozessors (nur Ergebnisse der Seiten selbst, keine Dokumente), etwa um
+     * Urteile des Prüfschritts auch ohne Analyse wiederzufinden.
+     */
+    List<PageKey> pagesWith(String processorId);
+
     /** Macht die bisherigen Änderungen dauerhaft, wenn die Ablage sie bündelt. */
     default void flush() {
     }

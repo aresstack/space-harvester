@@ -330,6 +330,38 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     }
 
     @Override
+    public List<PageKey> pagesWith(String processorId) {
+        Objects.requireNonNull(processorId, "processorId");
+        requireOpen();
+        try {
+            IndexSearcher searcher = searchers.acquire();
+            try {
+                // Alle Ergebnisse von Seiten (nur sie tragen PAGE), dann nach Prozessor gefiltert.
+                org.apache.lucene.search.Query pages = TermRangeQuery.newStringRange(PAGE, null, null, true, true);
+                int count = searcher.count(pages);
+                if (count == 0) {
+                    return List.of();
+                }
+                TopDocs top = searcher.search(pages, count);
+                StoredFields stored = searcher.storedFields();
+                Set<String> fields = Set.of(SOURCE_ID, PAGE_ID, PROCESSOR_ID);
+                java.util.LinkedHashSet<PageKey> found = new java.util.LinkedHashSet<>();
+                for (ScoreDoc hit : top.scoreDocs) {
+                    Document doc = stored.document(hit.doc, fields);
+                    if (processorId.equals(doc.get(PROCESSOR_ID))) {
+                        found.add(new PageKey(doc.get(SOURCE_ID), doc.get(PAGE_ID)));
+                    }
+                }
+                return List.copyOf(found);
+            } finally {
+                searchers.release(searcher);
+            }
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht gelesen werden", e);
+        }
+    }
+
+    @Override
     public List<Enrichment> find(DocumentKey document) {
         Objects.requireNonNull(document, "document");
         if (document.isPage()) {

@@ -122,6 +122,17 @@ public final class StatementCheckStore {
         store.flush();
     }
 
+    /** Die Seiten mit gespeicherten Urteilen, auch wenn ihre Analyse schon gelöscht ist. */
+    public synchronized List<PageKey> pages() {
+        return store.pagesWith(Enrichments.STATEMENT_CHECKS);
+    }
+
+    /** Entfernt die Urteile mehrerer Seiten und schreibt einmal. */
+    public synchronized void removeAll(java.util.Collection<PageKey> pages) {
+        pages.forEach(page -> store.remove(page, Enrichments.STATEMENT_CHECKS));
+        store.flush();
+    }
+
     /** Ob für die Seite etwas gespeichert ist. */
     public synchronized boolean contains(PageKey page) {
         return store.find(page).stream().anyMatch(found -> Enrichments.STATEMENT_CHECKS.equals(found.processorId()));
