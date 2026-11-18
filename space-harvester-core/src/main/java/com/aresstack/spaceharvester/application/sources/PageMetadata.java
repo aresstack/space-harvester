@@ -29,6 +29,8 @@ public record PageMetadata(String pageId, String resourceId, String title, Strin
     public static final String FILE_KIND = "file";
     public static final String FOLDER_KIND = "folder";
     public static final String LINK_KIND = "link";
+    /** The original media is remote; the stored payload intentionally contains no file bytes. */
+    public static final String REMOTE_MEDIA = "media.remote";
 
     public PageMetadata {
         Objects.requireNonNull(pageId, "pageId");

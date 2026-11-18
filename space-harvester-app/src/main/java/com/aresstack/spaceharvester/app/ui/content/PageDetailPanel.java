@@ -19,6 +19,7 @@ import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderFileOpener;
+import com.aresstack.spaceharvester.app.ui.content.viewer.VideoViewerPanel;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
@@ -306,6 +307,7 @@ public final class PageDetailPanel extends JPanel {
     private final JPanel originalContent = new JPanel(originalCards);
     private final JPanel fileContent = new JPanel(new BorderLayout());
     private AttachmentViewerPanel originalFileViewer;
+    private VideoViewerPanel originalVideoViewer;
     private boolean originalLinkShown;
     /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
     static final String READING_HELP = "Die Leseansicht zeigt die Seite, wie die Quelle sie darstellt. Liegt sie im "
@@ -1435,6 +1437,10 @@ public final class PageDetailPanel extends JPanel {
         if (!PageMetadata.FILE_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
             return;
         }
+        if ("true".equals(metadata.attributes().get(PageMetadata.REMOTE_MEDIA))) {
+            showOriginalVideo(metadata);
+            return;
+        }
         readingPane.clear(" ");
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
                 originalMediaType(payload), payload.length());
@@ -1442,6 +1448,47 @@ public final class PageDetailPanel extends JPanel {
                 Background.run(payload::bytes, done, error -> failed.accept(reason(error)));
         originalFileViewer = new AttachmentViewerPanel(attachment, loader, fileOpener, attachmentRenderer);
         fileContent.add(originalFileViewer, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+    }
+
+    /** Keep remote video content out of the native snapshot; stream it after a deliberate play action. */
+    private void showOriginalVideo(PageMetadata metadata) {
+        readingPane.clear(" ");
+        long size = -1;
+        try {
+            size = Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength", "-1"));
+        } catch (NumberFormatException unavailable) {
+            // Keep the player disabled if the source has not reported a usable size.
+        }
+        final String source = sourceId;
+        final String id = metadata.pageId();
+        String file = metadata.title().toLowerCase(java.util.Locale.ROOT);
+        String mediaType = file.endsWith(".webm") ? "video/webm"
+                : file.endsWith(".mov") ? "video/quicktime"
+                : file.endsWith(".mkv") ? "video/x-matroska" : "video/mp4";
+        final java.util.concurrent.atomic.AtomicReference<
+                com.aresstack.spaceharvester.application.sources.MediaByteRange> media =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, (offset, count) -> {
+            AppRuntime runtime = context.runtime();
+            if (runtime == null) {
+                throw new IOException("Die Quelle ist nicht mehr verbunden.");
+            }
+            com.aresstack.spaceharvester.application.sources.MediaByteRange reader = media.get();
+            if (reader == null) {
+                synchronized (media) {
+                    reader = media.get();
+                    if (reader == null) {
+                        reader = runtime.workspace().openMediaRange(source, id);
+                        media.set(reader);
+                    }
+                }
+            }
+            return reader.read(offset, count);
+        });
+        fileContent.add(originalVideoViewer, BorderLayout.CENTER);
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
         fileContent.revalidate();
         fileContent.repaint();
@@ -1498,6 +1545,7 @@ public final class PageDetailPanel extends JPanel {
     private static boolean isNativePreview(PageSnapshot snapshot) {
         String kind = snapshot.metadata().attributes().get(PageMetadata.RESOURCE_KIND);
         return PageMetadata.LINK_KIND.equals(kind)
+                || "true".equals(snapshot.metadata().attributes().get(PageMetadata.REMOTE_MEDIA))
                 || PageMetadata.FILE_KIND.equals(kind)
                 && originalMediaType(snapshot.payload()).startsWith("image/");
     }
@@ -1539,6 +1587,10 @@ public final class PageDetailPanel extends JPanel {
         if (originalFileViewer != null) {
             originalFileViewer.close();
             originalFileViewer = null;
+        }
+        if (originalVideoViewer != null) {
+            originalVideoViewer.close();
+            originalVideoViewer = null;
         }
         originalLinkShown = false;
         fileContent.removeAll();
@@ -1689,7 +1741,7 @@ public final class PageDetailPanel extends JPanel {
         if (ATTACHMENTS.equals(visible)) {
             loadAssets(false);
         }
-        if (READING.equals(visible) && originalFileViewer == null && !originalLinkShown) {
+        if (READING.equals(visible) && originalFileViewer == null && originalVideoViewer == null && !originalLinkShown) {
             loadReading();
         }
         if (REFERENCES.equals(visible)) {

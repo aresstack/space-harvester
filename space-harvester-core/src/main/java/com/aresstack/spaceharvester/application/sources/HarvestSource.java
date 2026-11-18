@@ -108,6 +108,15 @@ public interface HarvestSource {
     }
 
     /**
+     * Read only the requested byte range of a remotely stored media file.
+     * The caller must authorize access to this resource before reading.
+     */
+    default byte[] mediaRange(String pageId, long offset, int maximumBytes) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle unterstützt kein Streaming von Mediendateien", null);
+    }
+
+    /**
      * {@code true}, wenn die Quelle beliebige GET-Abfragen unter ihrer REST-Wurzel beantwortet
      * ({@link #restGet}): Confluence für Versionshistorie, Kommentare, Properties, Restriktionen und Analytics.
      */

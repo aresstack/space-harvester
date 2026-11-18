@@ -88,6 +88,28 @@ Behördeninstallation steht noch aus.
 als `<pre>`-Darstellung und keine originalgetreue Office-/PDF-Vorschau. Der WebDAV-Dateiabruf
 und die Textindizierung bleiben unabhängig von der Navigation.
 
+## PowerPoint-Vorschau und Videostreaming
+
+Die Desktop-Leseansicht rendert PowerPoint-Präsentationen (`.ppt` und `.pptx`) lokal mit Apache POI.
+Die vorhandenen Seiten-, Zoom- und Speicherfunktionen des PDF-/Originaldatei-Viewers werden wiederverwendet.
+Animationen, eingebettete Videos und komplexe Layouts müssen nicht pixelgenau wiedergegeben werden.
+
+Große Videoressourcen (`.mp4`, `.m4v`, `.webm`, `.mov`, `.mkv`) werden beim Auswählen im Explorer
+**nicht vollständig heruntergeladen**: Der Snapshot enthält lediglich Metadaten
+(`nativeFormat=remote-media-metadata`, `media.remote=true`).
+Die ursprünglichen Videobytes sind nicht als Originaldatei im Seiten-Cache vorhanden.
+Für Suche und KI liegt ohne Transkript auch kein gesprochener Videoinhalt vor.
+
+Der Swing-Player ist über VLCJ eingebettet. Zur Wiedergabe muss auf dem Desktop-Rechner eine kompatible
+VLC/libVLC-Installation vorhanden sein; ohne VLC erscheint ein Hinweis statt eines Fehlers.
+Erst der Klick auf „Abspielen“ löst Abrufe aus: Ein zufällig geschützter Loopback-Endpunkt auf
+`127.0.0.1` übersetzt lokale Streaming-Anfragen in authentifizierte WebDAV-`GET`-Anfragen mit
+`Range` über die konfigurierten Proxy- und TLS-Routen. Pro Quellanforderung sind höchstens 256 KiB
+zulässig. Nur `HTTP 206 Partial Content` wird akzeptiert. BSCW-Zugangsdaten werden niemals
+an den Player oder einen anderen Host weitergegeben; der Endpunkt wird beim Seitenwechsel geschlossen.
+Fehlen die Dateigröße oder serverseitige Range-Unterstützung, kann der Player nicht streamen und meldet
+den Grund. Ein vollständiger Download erfolgt **nicht** automatisch als Ersatz.
+
 ## Technischer Aufbau
 
 `BscwSourceAdapter` registriert den neuen Quellentyp `bscw`. Der transportseitige

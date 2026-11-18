@@ -119,7 +119,7 @@ public final class AttachmentViewerPanel extends JPanel {
     private byte[] original;
     private List<Consumer<byte[]>> originalWaiting;
     private List<Consumer<String>> originalFailed;
-    private PdfPages pdf;
+    private RenderedPages pages;
     private int pageCount;
     private int page;
     private double renderScale = PDF_BASE_SCALE;
@@ -237,11 +237,11 @@ public final class AttachmentViewerPanel extends JPanel {
     // ------------------------------------------------------------------ Bedienung (auch für Tests)
 
     public boolean hasPrevious() {
-        return pdf != null && page > 0;
+        return pages != null && page > 0;
     }
 
     public boolean hasNext() {
-        return pdf != null && page < pageCount - 1;
+        return pages != null && page < pageCount - 1;
     }
 
     /** Vorige PDF-Seite. */
@@ -349,8 +349,9 @@ public final class AttachmentViewerPanel extends JPanel {
             return;
         }
         String zoom = canvas.staticImage == null ? "" : "Zoom: " + canvas.getZoomPercent() + " %";
-        info.setText(pdf == null ? (zoom.isEmpty() ? " " : zoom)
-                : "Seite " + (page + 1) + " / " + pageCount + (zoom.isEmpty() ? "" : "  |  " + zoom));
+        String pageLabel = attachment.kind() == ReaderAttachmentKind.PRESENTATION ? "Folie " : "Seite ";
+        info.setText(pages == null ? (zoom.isEmpty() ? " " : zoom)
+                : pageLabel + (page + 1) + " / " + pageCount + (zoom.isEmpty() ? "" : "  |  " + zoom));
     }
 
     private void zoomBy(double factor) {
@@ -361,7 +362,7 @@ public final class AttachmentViewerPanel extends JPanel {
 
     /** Nach jedem Zoom: eine PDF-Seite wird nach kurzer Pause in der neuen Größe scharf nachgezeichnet. */
     private void zoomed() {
-        if (pdf != null) {
+        if (pages != null) {
             sharpen.restart();
         }
     }
@@ -526,8 +527,8 @@ public final class AttachmentViewerPanel extends JPanel {
     public void close() {
         closed = true;
         sharpen.stop();
-        final PdfPages open = pdf;
-        pdf = null;
+        final RenderedPages open = pages;
+        pages = null;
         if (open != null) {
             renderer.execute(() -> closeQuietly(open));
         }
@@ -545,6 +546,11 @@ public final class AttachmentViewerPanel extends JPanel {
         switch (attachment.kind()) {
             case OTHER:
                 showUnavailable(NO_PREVIEW_TEXT);
+                return;
+            case PRESENTATION:
+                busy.setText("PowerPoint wird geladen …");
+                requestOriginal(this::openPresentation, reason -> showUnavailable(
+                        "PowerPoint nicht geladen: " + reasonText(reason)));
                 return;
             case OFFICE:
                 // Office zeichnet der Client nicht selbst: Vorschau der Quelle (PDF oder Bild).
@@ -671,7 +677,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 failure = "PDF nicht lesbar: " + (e.getMessage() == null ? e.getClass().getSimpleName()
                         : e.getMessage());
             }
-            final PdfPages document = opened;
+            final RenderedPages document = opened;
             final String reason = failure;
             onEdt(() -> {
                 if (closed) {
@@ -684,7 +690,7 @@ public final class AttachmentViewerPanel extends JPanel {
                     showUnavailable(reason);
                     return;
                 }
-                pdf = document;
+                pages = document;
                 pageCount = document.pageCount();
                 if (pageCount == 0) {
                     showUnavailable("Das PDF hat keine Seiten.");
@@ -695,9 +701,46 @@ public final class AttachmentViewerPanel extends JPanel {
         });
     }
 
+    /** Open and render presentations through the same paginated view as PDFs. */
+    private void openPresentation(final byte[] bytes) {
+        busy.setText("Präsentation wird geöffnet …");
+        busy.setVisible(true);
+        renderer.execute(() -> {
+            RenderedPages opened = null;
+            String failure = null;
+            try {
+                opened = PresentationPages.open(bytes);
+            } catch (IOException | RuntimeException e) {
+                failure = "PowerPoint nicht lesbar: " + (e.getMessage() == null
+                        ? e.getClass().getSimpleName() : e.getMessage());
+            }
+            final RenderedPages document = opened;
+            final String reason = failure;
+            onEdt(() -> {
+                if (closed) {
+                    if (document != null) {
+                        renderer.execute(() -> closeQuietly(document));
+                    }
+                    return;
+                }
+                if (document == null) {
+                    showUnavailable(reason);
+                    return;
+                }
+                pages = document;
+                pageCount = document.pageCount();
+                if (pageCount == 0) {
+                    showUnavailable("Die Präsentation hat keine Folien.");
+                    return;
+                }
+                showPage(0);
+            });
+        });
+    }
+
     /** Zeichnet Seite {@code target} in der Grundschärfe und passt sie ein. */
     private void showPage(final int target) {
-        if (pdf == null) {
+        if (pages == null) {
             return;
         }
         page = Math.max(0, Math.min(target, pageCount - 1));
@@ -714,7 +757,7 @@ public final class AttachmentViewerPanel extends JPanel {
      * schärfere Fassung die alte, ohne dass sich Größe oder Ausschnitt auf dem Schirm ändern.
      */
     private void render(final int target, final double scale, final boolean fresh) {
-        final PdfPages document = pdf;
+        final RenderedPages document = pages;
         final int generation = ++renderGeneration;
         renderer.execute(() -> {
             BufferedImage image = null;
@@ -728,7 +771,7 @@ public final class AttachmentViewerPanel extends JPanel {
             final BufferedImage drawn = image;
             final String reason = failure;
             onEdt(() -> {
-                if (closed || document != pdf || generation != renderGeneration) {
+                if (closed || document != pages || generation != renderGeneration) {
                     return; // inzwischen geblättert, gezoomt oder geschlossen
                 }
                 if (drawn == null) {
@@ -750,10 +793,10 @@ public final class AttachmentViewerPanel extends JPanel {
 
     /** Nach dem Zoomen: ist die Seite größer gezeigt als gezeichnet, in der gezeigten Größe nachzeichnen. */
     private void sharpenPage() {
-        if (pdf == null || canvas.staticImage == null) {
+        if (pages == null || canvas.staticImage == null) {
             return;
         }
-        double wanted = Math.min(renderScale * canvas.zoom, pdf.maxScale(page));
+        double wanted = Math.min(renderScale * canvas.zoom, pages.maxScale(page));
         if (wanted > renderScale * 1.1) {
             render(page, wanted, false);
         }
@@ -936,7 +979,7 @@ public final class AttachmentViewerPanel extends JPanel {
         return null;
     }
 
-    private static void closeQuietly(PdfPages document) {
+    private static void closeQuietly(RenderedPages document) {
         try {
             document.close();
         } catch (IOException ignored) {

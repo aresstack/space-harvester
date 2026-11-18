@@ -44,6 +44,21 @@ final class BscwWebDavTransport {
         return request(resource, "PROPFIND", depth, MAX_METADATA_BYTES, 207);
     }
 
+    /** Read a bounded part of an original file; never follow authentication redirects. */
+    byte[] downloadRange(URI resource, long offset, int count) throws KnowledgeSourceException {
+        if (offset < 0 || count < 1 || count > 262144 || offset > Long.MAX_VALUE - count) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Invalid BSCW byte range");
+        }
+        String range = "bytes=" + offset + "-" + (offset + count - 1);
+        RoutedWebDavHttp.Result response = exchange(resource, "GET", -1, count, range);
+        if (response.status() != 206) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED,
+                    "BSCW unterstützt für dieses Video keine HTTP-Range-Abfragen (HTTP "
+                            + response.status() + ")");
+        }
+        return response.body();
+    }
+
     byte[] download(URI resource) throws KnowledgeSourceException {
         return downloadResource(resource).bytes();
     }
@@ -119,6 +134,11 @@ final class BscwWebDavTransport {
 
     private RoutedWebDavHttp.Result exchange(URI resource, String method, int depth, int limit)
             throws KnowledgeSourceException {
+        return exchange(resource, method, depth, limit, null);
+    }
+
+    private RoutedWebDavHttp.Result exchange(URI resource, String method, int depth, int limit, String range)
+            throws KnowledgeSourceException {
         URI target = checked(resource);
         try (SecretMaterial secret = secrets.resolve(secretRef)) {
             if (!secret.hasPrincipal()) {
@@ -137,7 +157,12 @@ final class BscwWebDavTransport {
             if (depth >= 0) {
                 headers.put("Depth", Integer.toString(depth));
             }
-            RoutedWebDavHttp.Result response = http.exchange(target, method, headers);
+            if (range != null) {
+                headers.put("Range", range);
+            }
+            RoutedWebDavHttp.Result response = range == null
+                    ? http.exchange(target, method, headers)
+                    : http.exchange(target, method, headers, limit);
             if (response.body().length > limit) {
                 throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW WebDAV response too large");
             }

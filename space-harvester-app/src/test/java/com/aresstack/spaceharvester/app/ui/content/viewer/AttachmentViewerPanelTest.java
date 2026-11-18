@@ -212,7 +212,7 @@ class AttachmentViewerPanelTest {
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "a.docx"))
                 .isEqualTo(ReaderAttachmentKind.OFFICE);
         assertThat(ReaderAttachmentKind.of("application/octet-stream", "Folien.pptx"))
-                .isEqualTo(ReaderAttachmentKind.OFFICE);
+                .isEqualTo(ReaderAttachmentKind.PRESENTATION);
         assertThat(ReaderAttachmentKind.of("application/vnd.jgraph.mxfile", "a")).isEqualTo(ReaderAttachmentKind.OTHER);
         assertThat(new ReaderAttachment("k", "Brief.docx", "", -1).summary()).isEqualTo("Word");
         assertThat(AttachmentViewerPanel.safeFileName("a/b.txt")).isEqualTo("a_b.txt");

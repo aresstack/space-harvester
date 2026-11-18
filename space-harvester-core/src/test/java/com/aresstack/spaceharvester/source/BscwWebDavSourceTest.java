@@ -157,6 +157,32 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
+    void videoSelectionStoresOnlyMetadataAndReadsOnlyRequestedRange() throws Exception {
+        String videoRoot = root.replace("/146377797", "/888");
+        String videoUrl = videoRoot.replace("/888", "/779");
+        String videoId = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(videoUrl.getBytes(StandardCharsets.UTF_8));
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW test", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("rootUrl", videoRoot));
+
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
+            PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "bscw-test", videoId,
+                    false).snapshot();
+
+            assertThat(snapshot.metadata().attributes())
+                    .containsEntry(com.aresstack.spaceharvester.application.sources.PageMetadata.REMOTE_MEDIA, "true");
+            assertThat(snapshot.payload().nativeFormat()).isEqualTo("remote-media-metadata");
+            assertThat(snapshot.payload().length()).isZero();
+            assertThat(downloads).hasValue(0);
+
+            assertThat(harvester.mediaRange("bscw-test", videoId, 2, 4))
+                    .isEqualTo("2345".getBytes(StandardCharsets.US_ASCII));
+            assertThat(downloads).hasValue(1);
+        }
+    }
+
+    @Test
     void readsCsvWithGenericWebDavContentTypeAsText() throws Exception {
         String csvRoot = root.replace("/146377797", "/888");
         SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW test", null,
@@ -485,6 +511,16 @@ final class BscwWebDavSourceTest {
                     respond(exchange, 200, "first,second\\nabc,def".getBytes(StandardCharsets.UTF_8), "text/csv");
                     return;
                 }
+                if ("/sec/bscw.cgi/779".equals(path)) {
+                    String range = exchange.getRequestHeaders().getFirst("Range");
+                    if ("bytes=2-5".equals(range)) {
+                        respond(exchange, 206, "2345".getBytes(StandardCharsets.US_ASCII), "video/mp4");
+                    } else {
+                        respond(exchange, 200, "012345678901234567890123".getBytes(StandardCharsets.US_ASCII),
+                                "video/mp4");
+                    }
+                    return;
+                }
             }
             respond(exchange, 404, new byte[0], "text/plain");
         } finally {
@@ -520,6 +556,8 @@ final class BscwWebDavSourceTest {
             }
         } else if ("/sec/bscw.cgi/777".equals(path)) {
             xml.append(entry(path, "metrics.csv", false, "application/octet-stream"));
+        } else if ("/sec/bscw.cgi/779".equals(path)) {
+            xml.append(entry(path, "recording.mp4", false, "application/octet-stream"));
         } else if ("/sec/bscw.cgi/555".equals(path)) {
             xml.append(entry(path, "archive.zip", false, "application/zip"));
         } else if ("/sec/bscw.cgi/666".equals(path)) {
