@@ -35,6 +35,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     private final JLabel message = new JLabel(" ");
     private final VideoTransportBar transport = new VideoTransportBar(this::seek);
+    private final VideoFullScreenController fullScreen =
+            new VideoFullScreenController(this, this::reattachVideoSurface, transport::setFullScreen);
     private final Timer progress = new Timer(350, event -> updateProgress());
     private final ExecutorService seekWorker = Executors.newSingleThreadExecutor(task -> {
         Thread thread = new Thread(task, "space-harvester-video-seek");
@@ -75,6 +77,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.stop().addActionListener(event -> stop());
         transport.download().addActionListener(event -> chooseDownload());
         transport.cancelDownload().addActionListener(event -> cancelDownload());
+        transport.fullScreen().addActionListener(event -> fullScreen.toggle());
+        transport.fullScreen().setEnabled(false);
         transport.seekBar().reset();
 
         if (size < 1) {
@@ -94,7 +98,11 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             player = new EmbeddedMediaPlayerComponent();
             bridge = new MediaStreamBridge(reader, size, mediaType);
             registerPlaybackEvents();
+            player.mediaPlayer().input().enableMouseInputHandling(false);
+            VideoFullScreenController.installDoubleClick(
+                    player.videoSurfaceComponent(), fullScreen::toggle);
             add(player, BorderLayout.CENTER);
+            transport.fullScreen().setEnabled(true);
             message.setText("Video „" + fileName + "“ – zum Starten Abspielen wählen.");
             progress.start();
         } catch (RuntimeException | LinkageError | IOException failure) {
@@ -108,6 +116,19 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             }
             unavailable("VLC kann nicht initialisiert werden: " + failure.getClass().getSimpleName()
                     + (failure.getMessage() == null ? "" : " – " + failure.getMessage()));
+        }
+    }
+
+    /** Rebind the existing video player to its new native window after entering or leaving full-screen. */
+    private void reattachVideoSurface() {
+        if (closed || player == null || !player.isDisplayable()) {
+            return;
+        }
+        try {
+            player.mediaPlayer().videoSurface().attachVideoSurface();
+        } catch (RuntimeException failure) {
+            message.setText("Videooberfläche konnte nicht aktualisiert werden: "
+                    + failure.getClass().getSimpleName());
         }
     }
 
@@ -410,6 +431,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.play().setEnabled(false);
         transport.pause().setEnabled(false);
         transport.stop().setEnabled(false);
+        transport.fullScreen().setEnabled(false);
         transport.seekBar().reset();
     }
 
@@ -420,7 +442,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     @Override
     public void removeNotify() {
         try {
-            close();
+            if (!fullScreen.isTransferring()) {
+                close();
+            }
         } finally {
             super.removeNotify();
         }
@@ -431,12 +455,14 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (closed) {
             return;
         }
+        fullScreen.close();
         closed = true;
         progress.stop();
         seekWorker.shutdownNow();
         transport.play().setEnabled(false);
         transport.pause().setEnabled(false);
         transport.stop().setEnabled(false);
+        transport.fullScreen().setEnabled(false);
         if (downloadTask != null) {
             downloadTask.cancel(true);
             downloadTask = null;

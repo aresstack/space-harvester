@@ -29,6 +29,7 @@ final class VideoTransportBar extends JPanel {
     private final JButton stop = iconButton("Stoppen", ComposerIcons.stop());
     private final JButton download = iconButton("Herunterladen", ComposerIcons.download());
     private final JButton cancelDownload = iconButton("Download abbrechen", ComposerIcons.stop());
+    private final JButton fullScreen = iconButton("Vollbild", new VideoFullScreenIcon(false));
     private final VideoSeekBar seekBar;
 
     VideoTransportBar(DoubleConsumer seek) {
@@ -56,6 +57,7 @@ final class VideoTransportBar extends JPanel {
         cancelDownload.setVisible(false);
         transfers.add(download);
         transfers.add(cancelDownload);
+        transfers.add(fullScreen);
         buttons.add(playback, BorderLayout.WEST);
         buttons.add(transfers, BorderLayout.EAST);
 
@@ -83,6 +85,19 @@ final class VideoTransportBar extends JPanel {
 
     JButton cancelDownload() {
         return cancelDownload;
+    }
+
+    JButton fullScreen() {
+        return fullScreen;
+    }
+
+    void setFullScreen(boolean active) {
+        String label = active ? "Vollbild beenden (Esc)" : "Vollbild (Doppelklick)";
+        VideoFullScreenIcon icon = new VideoFullScreenIcon(active);
+        fullScreen.setIcon(icon);
+        fullScreen.setDisabledIcon(icon);
+        fullScreen.setToolTipText(label);
+        fullScreen.getAccessibleContext().setAccessibleName(label);
     }
 
     VideoSeekBar seekBar() {

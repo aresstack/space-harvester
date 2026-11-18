@@ -158,6 +158,17 @@ ersatzweise seine relative Position (Prozent) verwendet. Der native Sprung wird
 auf einem Worker statt im Swing-Event-Thread ausgeführt, damit die Oberfläche
 beim Nachladen der Position weiter reagiert.
 
+**Vollbild:** Doppelklick auf das Videobild oder das Vier-Ecken-Symbol rechts
+neben „Herunterladen“ öffnet ein randloses Vollbild auf demselben Monitor.
+Esc, erneuter Doppelklick oder der Wiederherstellen-Button führen zurück
+in die Leseansicht. Das vorhandene Video samt Transportleiste wird in das
+Vollbildfenster und zurück umgesetzt; dabei bleibt dieselbe VLCJ-Playerinstanz
+mit derselben Wiedergabeposition erhalten. Die native Videooberfläche wird
+nach dem Fensterwechsel neu angebunden, nicht die Medienquelle neu geladen.
+Das funktioniert mit der vorhandenen libVLC-Ausgabe (unter Windows auch
+Direct3D); ein zusätzliches Direct3D-Modul oder Java-21-Upgrade ist nicht
+notwendig.
+
 Große Videoressourcen (`.mp4`, `.m4v`, `.webm`, `.mov`, `.mkv`) werden beim Auswählen im Explorer
 **nicht vollständig heruntergeladen**: Der Snapshot enthält lediglich Metadaten
 (`nativeFormat=remote-media-metadata`, `media.remote=true`).
