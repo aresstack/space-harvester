@@ -39,9 +39,17 @@ public final class RoutedWebDavHttp implements AutoCloseable {
     }
 
     public Result exchange(URI uri, String method, Map<String, String> headers) {
+        return exchange(uri, method, headers, maximumResponseBytes);
+    }
+
+    /** Bound each media-range response independently of the normal document-size allowance. */
+    public Result exchange(URI uri, String method, Map<String, String> headers, int responseLimit) {
+        if (responseLimit < 1 || responseLimit > maximumResponseBytes) {
+            throw new IllegalArgumentException("Invalid WebDAV response limit");
+        }
         try {
             RoutedHttpPort.Response response = transport.requestOnceAsync(
-                    method, uri, headers, maximumResponseBytes, REQUEST_TIMEOUT)
+                    method, uri, headers, responseLimit, REQUEST_TIMEOUT)
                     .toCompletableFuture().join();
             return new Result(response.status(), response.body(), response.location());
         } catch (CompletionException failure) {

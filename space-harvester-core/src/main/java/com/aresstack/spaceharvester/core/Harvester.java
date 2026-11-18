@@ -1457,6 +1457,30 @@ public final class Harvester implements AutoCloseable {
         return pageTexts.project(Objects.requireNonNull(snapshot, "snapshot"));
     }
 
+    /**
+     * Read a bounded remote media range after verifying page content permission.
+     * Never expose provider credentials or transport details to desktop clients.
+     */
+    public byte[] mediaRange(String sourceId, String pageId, long offset, int maximumBytes) {
+        return openMediaRange(sourceId, pageId).read(offset, maximumBytes);
+    }
+
+    /** Authorize the page once for a viewer session rather than for every media chunk. */
+    public com.aresstack.spaceharvester.application.sources.MediaByteRange openMediaRange(
+            String sourceId, String pageId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
+        HarvestSource source = catalog.find(sourceId)
+                .orElseThrow(() -> new com.aresstack.spaceharvester.application.sources.UnknownSourceException(sourceId));
+        com.aresstack.spaceharvester.application.sources.PageMetadata metadata = source.pageMetadata(pageId);
+        access.require(caller, ResourceScope.page(sourceId, metadata.partitionKey(), pageId), AccessKind.CONTENT);
+        return (offset, maximumBytes) -> {
+            if (offset < 0 || maximumBytes < 1 || maximumBytes > 262144) {
+                throw new IllegalArgumentException("Invalid media byte range");
+            }
+            return source.mediaRange(pageId, offset, maximumBytes);
+        };
+    }
+
     /** Native Seiten-Snapshots direkt von der Quelle, ohne Cache. */
     public SourceSnapshots snapshots() {
         return snapshots;

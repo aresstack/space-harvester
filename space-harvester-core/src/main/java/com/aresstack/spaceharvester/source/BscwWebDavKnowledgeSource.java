@@ -67,7 +67,7 @@ import org.xml.sax.SAXException;
  */
 final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
         ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource,
-        AttachmentListSource, ResourceNodeKindSource {
+        AttachmentListSource, ResourceNodeKindSource, SourceMediaRange {
 
     static final String STORED_FORMAT = "file";
     private static final String FOLDER_FORMAT = "bscw-folder";
@@ -213,6 +213,11 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         KnowledgeResource resource = resourceMetadata(localId);
         if (isFolder(resource)) {
             return new StoredContent(resource, new byte[0], "text/plain", FOLDER_FORMAT, Instant.now());
+        }
+        if (streamableMedia(resource.title())) {
+            // A remote-media snapshot is metadata, never counterfeit original video bytes.
+            return new StoredContent(resource, new byte[0], "application/x-space-harvester-remote-media",
+                    "remote-media-metadata", Instant.now());
         }
         BscwWebDavTransport.Download downloaded = transport.downloadResource(uriOf(localId));
         if (downloaded.isLink()) {
@@ -551,10 +556,38 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         return entries;
     }
 
+    @Override
+    public byte[] readRange(String localId, long offset, int maximumBytes) throws KnowledgeSourceException {
+        if (offset < 0 || maximumBytes < 1 || maximumBytes > 262144) {
+            throw new KnowledgeSourceException(KnowledgeSourceException.Kind.INVALID_RESPONSE,
+                    "Invalid BSCW media range");
+        }
+        URI uri = uriOf(localId);
+        DavEntry known = knownEntries.get(uri);
+        KnowledgeResource resource = known == null ? resourceMetadata(localId) : resource(known);
+        if (!streamableMedia(resource.title())) {
+            throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED,
+                    "Not a streamable BSCW media resource");
+        }
+        return transport.downloadRange(uri, offset, maximumBytes);
+    }
+
+    private static boolean streamableMedia(String fileName) {
+        if (fileName == null) {
+            return false;
+        }
+        String name = fileName.toLowerCase(java.util.Locale.ROOT);
+        return name.endsWith(".mp4") || name.endsWith(".m4v") || name.endsWith(".webm")
+                || name.endsWith(".mov") || name.endsWith(".mkv");
+    }
+
     private KnowledgeResource resource(DavEntry entry) {
         Map<String, String> attributes = new LinkedHashMap<>();
         attributes.put("bscw.path", entry.uri.getRawPath());
         attributes.put(PageMetadata.RESOURCE_KIND, entry.folder ? PageMetadata.FOLDER_KIND : PageMetadata.FILE_KIND);
+        if (!entry.folder && streamableMedia(entry.name)) {
+            attributes.put(PageMetadata.REMOTE_MEDIA, "true");
+        }
         if (entry.etag != null) {
             attributes.put("dav.etag", entry.etag);
         }
@@ -671,6 +704,10 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         if (name.endsWith(".bmp")) return "image/bmp";
         if (name.endsWith(".webp")) return "image/webp";
         if (name.endsWith(".svg")) return "image/svg+xml";
+        if (name.endsWith(".mp4") || name.endsWith(".m4v")) return "video/mp4";
+        if (name.endsWith(".webm")) return "video/webm";
+        if (name.endsWith(".mov")) return "video/quicktime";
+        if (name.endsWith(".mkv")) return "video/x-matroska";
         if (name.endsWith(".pdf")) return "application/pdf";
         if (name.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";

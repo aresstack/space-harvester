@@ -58,6 +58,11 @@ dependencies {
     implementation libs.slf4j.api
     // Anhang-Viewer (#183): PDF-Seiten zeichnen wie im Enterprise AI Client; dieselbe Fassung wie im Core
     implementation libs.pdfbox
+    // Render PPTX and legacy PPT presentations locally in the reader.
+    implementation libs.poi.ooxml
+    // Embed VLC in Swing; keep libVLC native installation optional at runtime.
+    implementation 'uk.co.caprica:vlcj:4.8.2'
+    implementation "org.apache.poi:poi-scratchpad:${libs.versions.poi.get()}"
     // Protokoll auf Konsole und in <Benutzerordner>/.space-harvester/logs; Version aus der Boot-BOM wie beim Dienst.
     // Schon zum Übersetzen nötig: Der Filter der Terminal-Ausgabe (ConsoleThreshold) ist ein Logback-Filter.
     implementation platform(libs.spring.boot.dependencies)

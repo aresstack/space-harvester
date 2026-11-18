@@ -839,6 +839,18 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     @Override
+    public byte[] mediaRange(String pageId, long offset, int maximumBytes) {
+        if (!(port instanceof SourceMediaRange ranged)) {
+            return HarvestSource.super.mediaRange(pageId, offset, maximumBytes);
+        }
+        try {
+            return ranged.readRange(pageId, offset, maximumBytes);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+    }
+
+    @Override
     public StoredPage storedPage(String pageId) {
         if (discovering() && !(port instanceof StoredContentSource)) {
             // Kein natives Format: abgelegt wird der Lesetext des Adapters, mit den Kopfdaten aus demselben Laden.

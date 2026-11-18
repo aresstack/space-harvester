@@ -402,6 +402,17 @@ public final class Workspace {
     }
 
     /** Seite mit nativer Payload ({@code …/pages/{pageId}}, {@code refresh=true} prüft gegen die Quelle). */
+    /** Read one bounded media range after the Core has verified resource access. */
+    public byte[] mediaRange(String sourceId, String pageId, long offset, int maximumBytes) {
+        return harvester.mediaRange(sourceId, pageId, offset, maximumBytes);
+    }
+
+    /** Authorize a single media-viewer session without exposing source credentials. */
+    public com.aresstack.spaceharvester.application.sources.MediaByteRange openMediaRange(
+            String sourceId, String pageId) {
+        return harvester.openMediaRange(sourceId, pageId);
+    }
+
     public DeliveredPage page(String sourceId, String pageId, boolean refresh) {
         return harvester.pages().page(caller, sourceId, pageId, refresh);
     }
