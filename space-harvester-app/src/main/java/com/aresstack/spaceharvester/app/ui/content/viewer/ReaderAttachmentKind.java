@@ -16,7 +16,7 @@ import java.util.Set;
  * Keep source-based previews for the remaining Office formats.</p>
  */
 public enum ReaderAttachmentKind {
-    IMAGE, PDF, TEXT, PRESENTATION, OFFICE, OTHER;
+    IMAGE, PDF, TEXT, PRESENTATION, SPREADSHEET, OFFICE, OTHER;
 
     private static final Set<String> IMAGE_EXTENSIONS = set("png", "jpg", "jpeg", "gif", "bmp", "svg", "webp");
     private static final Set<String> TEXT_EXTENSIONS = set("txt", "log", "md", "csv", "tsv", "json", "xml", "yml",
@@ -35,6 +35,11 @@ public enum ReaderAttachmentKind {
         }
         if ("application/pdf".equals(type) || "pdf".equals(extension)) {
             return PDF;
+        }
+        if (SpreadsheetPreviewData.supports(fileName) || "text/csv".equals(type)
+                || "text/tab-separated-values".equals(type)
+                || (extension.isEmpty() && (type.contains("spreadsheet") || type.contains("ms-excel")))) {
+            return SPREADSHEET;
         }
         if (PRESENTATION_EXTENSIONS.contains(extension) || type.contains("presentation")
                 || type.contains("powerpoint")) {
@@ -66,6 +71,12 @@ public enum ReaderAttachmentKind {
     static String label(String mediaType, String fileName) {
         String type = baseType(mediaType);
         String extension = extension(fileName);
+        if ("csv".equals(extension) || "text/csv".equals(type)) {
+            return "CSV";
+        }
+        if ("tsv".equals(extension) || "text/tab-separated-values".equals(type)) {
+            return "TSV";
+        }
         if ("application/pdf".equals(type) || "pdf".equals(extension)) {
             return "PDF";
         }
@@ -74,6 +85,7 @@ public enum ReaderAttachmentKind {
             return "Word";
         }
         if (type.contains("spreadsheet") || type.contains("ms-excel") || extension.startsWith("xls")
+                || "csv".equals(extension) || "tsv".equals(extension)
                 || "ods".equals(extension)) {
             return "Excel";
         }

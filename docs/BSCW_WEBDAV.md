@@ -122,6 +122,19 @@ Word-Dokumente (`.doc`, `.docx`, `.docm`, `.dot`, `.dotx`) erhalten ebenfalls
 eine lokale **Textvorschau** über Apache POI, ohne quellenabhängige Konvertierung.
 Die Vorschau ist lesbar, aber nicht seitengenau formatiert; Tabellen und Schriftgestaltung
 werden nicht wie in Word reproduziert. Originaldateien bleiben über Speichern/Öffnen verfügbar.
+Word-Dateien ohne Erweiterung können anhand eines Word-Medientyps gelesen werden.
+Ein 0-Byte-Snapshot einer BSCW-Datei wird beim Öffnen einmal live überprüft, bevor
+die Anzeige eine tatsächlich leere Originaldatei meldet.
+
+Excel-Dateien (`.xls`, `.xlsx`, `.xlsm`) und CSV-/TSV-Dateien erhalten eine
+**lokale, read-only Tabellenansicht**. Für Excel verwendet der Viewer Apache POI und
+zeigt mehrere Arbeitsblätter als Reiter; für CSV/TSV werden Trennzeichen,
+Anführungszeichen und mehrzeilige Felder berücksichtigt. Ein von BSCW für CSV
+gemeldeter Excel-Medientyp verhindert die CSV-Erkennung nicht mehr.
+Die Anzeige ist auf 5.000 Zeilen und 96 Spalten je Blatt begrenzt, um große Dateien
+ohne UI-Blockierung zu betrachten. Die Originaldatei wird nicht gekürzt und kann
+unverändert gespeichert oder im zugeordneten Office-Programm geöffnet werden.
+Für `.xlsb` und `.ods` besteht weiterhin keine lokale Tabellenvorschau.
 
 Der Video-Player sucht zunächst eine vorhandene libVLC-Installation (u. a. die üblichen
 Windows-VLC-Verzeichnisse), danach über die VLCJ-4-NativeDiscovery. Für portable

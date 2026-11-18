@@ -1455,7 +1455,10 @@ public final class PageDetailPanel extends JPanel {
                 originalMediaType(payload), fileSize);
         final String source = sourceId;
         final String id = metadata.pageId();
-        final boolean originalAvailable = payload.length() > 0 || fileSize == 0;
+        // A zero-byte BSCW snapshot may come from an older cached metadata-only revision.
+        // Recheck it once against the source instead of trusting an empty cache as the original.
+        final boolean originalAvailable = payload.length() > 0
+                || (fileSize == 0 && !metadata.attributes().containsKey("bscw.path"));
         ReaderAttachmentLoader loader = (file, done, failed) -> {
             if (originalAvailable) {
                 Background.run(payload::bytes, done, error -> failed.accept(reason(error)));

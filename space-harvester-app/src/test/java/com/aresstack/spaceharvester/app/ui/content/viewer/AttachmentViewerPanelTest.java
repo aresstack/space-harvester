@@ -188,22 +188,69 @@ class AttachmentViewerPanelTest {
     }
 
     @Test
-    void anOfficeFileUsesThePreviewOfTheSourceOrSaysWhyThereIsNone() throws Exception {
-        FakeLoader withPreview = new FakeLoader().preview("att-xlsx", png());
+    void excelShowsLocalSpreadsheetInsteadOfRequiringAnOnlinePreview() throws Exception {
+        byte[] bytes;
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook =
+                     new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            workbook.createSheet("Plan").createRow(0).createCell(0).setCellValue("HaVdB");
+            workbook.write(output);
+            bytes = output.toByteArray();
+        }
+        FakeLoader loader = new FakeLoader().file("att-xlsx", bytes).withoutPreviews();
         run(() -> {
             AttachmentViewerPanel office = new AttachmentViewerPanel(new ReaderAttachment("att-xlsx", "Planung.xlsx",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 84000), withPreview, null,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes.length), loader, null,
                     Runnable::run);
-            assertThat(office.fileInfoText()).isEqualTo("Excel · 82 KB");
-            assertThat(office.showsPicture()).isTrue();
-            assertThat(withPreview.loads).as("Vorschau ohne Original").isEmpty();
-            assertThat(withPreview.previews).containsExactly("att-xlsx");
+            assertThat(office.fileInfoText()).startsWith("Excel");
+            assertThat(office.isShowingSpreadsheet()).isTrue();
+            assertThat(loader.loads).containsEntry("att-xlsx", 1);
+            assertThat(loader.previews).isEmpty();
+            office.close();
+        });
+    }
 
-            // Without source previews, Word files use the local reader and report missing originals.
+    @Test
+    void csvWithExcelMimeDisplaysARealTable() throws Exception {
+        byte[] bytes = "Name;Status\nHaVdB;Offen".getBytes(StandardCharsets.UTF_8);
+        FakeLoader loader = new FakeLoader().file("csv", bytes).withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel csv = new AttachmentViewerPanel(new ReaderAttachment("csv", "Plan.csv",
+                    "application/vnd.ms-excel", bytes.length), loader, null, Runnable::run);
+            assertThat(csv.isShowingSpreadsheet()).isTrue();
+            assertThat(loader.loads).containsEntry("csv", 1);
+            assertThat(loader.previews).isEmpty();
+            csv.close();
+        });
+    }
+
+    @Test
+    void wordWithoutFilenameExtensionUsesWordMimeForLocalPreview() throws Exception {
+        byte[] original;
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument word = new org.apache.poi.xwpf.usermodel.XWPFDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            word.createParagraph().createRun().setText("Architektur Steckbrief");
+            word.write(output);
+            original = output.toByteArray();
+        }
+        FakeLoader loader = new FakeLoader().file("word", original).withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(new ReaderAttachment(
+                    "word", "Entwurf Steckbrief AG Architektur",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", original.length),
+                    loader, null, Runnable::run);
+            assertThat(viewer.isShowingText()).isTrue();
+            assertThat(viewer.textContent()).contains("Architektur Steckbrief");
+            viewer.close();
+        });
+    }
+
+    @Test
+    void unavailableWordStillExplainsWhyItCannotBeShown() throws Exception {
+        run(() -> {
             AttachmentViewerPanel none = new AttachmentViewerPanel(new ReaderAttachment("att-doc", "Brief.docx",
                     "", -1), new FakeLoader().withoutPreviews(), null, Runnable::run);
-            assertThat(none.statusText()).contains("Word-Dokument nicht lesbar")
-                    .contains("nicht gefunden");
+            assertThat(none.statusText()).contains("Word-Dokument nicht lesbar").contains("nicht gefunden");
         });
     }
 

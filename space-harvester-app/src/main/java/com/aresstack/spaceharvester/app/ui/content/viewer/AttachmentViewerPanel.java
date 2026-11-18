@@ -97,6 +97,7 @@ public final class AttachmentViewerPanel extends JPanel {
     private final JLabel info = new JLabel(" ", SwingConstants.CENTER);
     private final JTextArea textArea = new JTextArea();
     private final JScrollPane textPane;
+    private final JPanel spreadsheetPane = new JPanel(new BorderLayout());
     private final ViewerButton previous;
     private final ViewerButton next;
     private final ViewerButton download;
@@ -163,6 +164,8 @@ public final class AttachmentViewerPanel extends JPanel {
         textPane = com.aresstack.spaceharvester.app.ui.Comic.scroll(textArea);
         textPane.setBorder(BorderFactory.createEmptyBorder());
         textPane.setVisible(false);
+        spreadsheetPane.setVisible(false);
+        spreadsheetPane.setOpaque(true);
 
         previous = new ViewerButton(new ScaledIcon(ComposerIcons.chevronLeft(), 2),
                 "Vorherige Seite (Pfeiltaste links oder Bild auf)");
@@ -186,6 +189,7 @@ public final class AttachmentViewerPanel extends JPanel {
             layers.add(button, JLayeredPane.PALETTE_LAYER);
         }
         layers.add(textPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 10));
+        layers.add(spreadsheetPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 11));
         layers.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
@@ -195,6 +199,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 busy.setBounds(0, 0, w, h);
                 int inset = 8; // die Textansicht eines Anhangs blättert nicht
                 textPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
+                spreadsheetPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
                 previous.setBounds(0, h / 3, ARROW_W, h / 3);
                 next.setBounds(w - ARROW_W, h / 3, ARROW_W, h / 3);
                 download.setBounds(w - BUTTON - 8, 8, BUTTON, BUTTON);
@@ -281,6 +286,11 @@ public final class AttachmentViewerPanel extends JPanel {
     /** Ob die Textansicht zu sehen ist. */
     public boolean isShowingText() {
         return showingText;
+    }
+
+    /** Whether the locally rendered read-only spreadsheet is visible. */
+    boolean isShowingSpreadsheet() {
+        return spreadsheetPane.isVisible();
     }
 
     /** Der Zoom in Prozent (bezogen auf die gezeichnete Seite bzw. das Bild). */
@@ -540,6 +550,7 @@ public final class AttachmentViewerPanel extends JPanel {
     private void loadAttachment() {
         loadGeneration++;
         showingText = false;
+        spreadsheetPane.setVisible(false);
         canvas.setStaticImage(null);
         busy.setVisible(true);
         updateInfo();
@@ -547,13 +558,24 @@ public final class AttachmentViewerPanel extends JPanel {
             case OTHER:
                 showUnavailable(NO_PREVIEW_TEXT);
                 return;
+            case SPREADSHEET:
+                busy.setText("Tabelle wird geladen …");
+                requestOriginal(bytes -> decodeAside(() -> {
+                    try {
+                        return SpreadsheetPreviewData.read(attachment.fileName(), attachment.mediaType(), bytes);
+                    } catch (IOException failure) {
+                        throw new IllegalStateException(failure.getMessage(), failure);
+                    }
+                }, this::showSpreadsheet), reason -> showUnavailable(
+                        "Tabelle nicht lesbar: " + reasonText(reason)));
+                return;
             case PRESENTATION:
                 busy.setText("PowerPoint wird geladen …");
                 requestOriginal(this::openPresentation, reason -> showUnavailable(
                         "PowerPoint nicht geladen: " + reasonText(reason)));
                 return;
             case OFFICE:
-                if (WordDocumentPreview.supports(attachment.fileName())) {
+                if (WordDocumentPreview.supports(attachment.fileName(), attachment.mediaType())) {
                     busy.setText("Word-Vorschau wird geladen …");
                     requestOriginal(bytes -> decodeAside(
                             () -> {
@@ -641,7 +663,20 @@ public final class AttachmentViewerPanel extends JPanel {
         updateInfo();
     }
 
+    private void showSpreadsheet(SpreadsheetPreviewData data) {
+        spreadsheetPane.removeAll();
+        spreadsheetPane.add(new SpreadsheetPreviewPanel(data), BorderLayout.CENTER);
+        spreadsheetPane.setVisible(true);
+        busy.setVisible(false);
+        showingText = false;
+        textPane.setVisible(false);
+        spreadsheetPane.revalidate();
+        spreadsheetPane.repaint();
+        updateInfo();
+    }
+
     private void showText(String text) {
+        spreadsheetPane.setVisible(false);
         showingText = true;
         busy.setVisible(false);
         textArea.setText(text);
@@ -662,6 +697,7 @@ public final class AttachmentViewerPanel extends JPanel {
             return;
         }
         showingText = false;
+        spreadsheetPane.setVisible(false);
         canvas.setStaticImage(null);
         busy.setVisible(true);
         StringBuilder html = new StringBuilder("<html><div style='text-align:center;width:560px'><b>")
@@ -842,6 +878,9 @@ public final class AttachmentViewerPanel extends JPanel {
                 return;
             }
             original = bytes;
+            if (attachment.size() == 0 && bytes.length > 0) {
+                fileInfo.setText(attachment.typeLabel() + " · " + ReaderAttachment.size(bytes.length));
+            }
             for (Consumer<byte[]> listener : listeners) {
                 listener.accept(bytes);
             }
