@@ -274,6 +274,13 @@ final class BscwWebDavSourceTest {
             assertThat(exported.state()).isEqualTo(
                     com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
             assertThat(harvester.exportArtifact(exported.id())).isPresent();
+            List<com.aresstack.spaceharvester.application.jobs.JobStatus> attachments =
+                    harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS);
+            assertThat(attachments).hasSize(1);
+            com.aresstack.spaceharvester.application.jobs.JobStatus collected = harvester.await(
+                    attachments.get(0).id(), Duration.ofSeconds(30));
+            assertThat(collected.state()).isEqualTo(
+                    com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
         }
     }
 
