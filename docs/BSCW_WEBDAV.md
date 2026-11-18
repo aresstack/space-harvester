@@ -110,6 +110,15 @@ an den Player oder einen anderen Host weitergegeben; der Endpunkt wird beim Seit
 Fehlen die Dateigröße oder serverseitige Range-Unterstützung, kann der Player nicht streamen und meldet
 den Grund. Ein vollständiger Download erfolgt **nicht** automatisch als Ersatz.
 
+**Video-Download auf Wunsch:** „Herunterladen“ fragt nach einer lokalen Zieldatei und lädt
+erst danach die Originalbytes in begrenzten WebDAV-Range-Blöcken. Dies funktioniert auch ohne
+installiertes VLC/libVLC. Die Datei entsteht zunächst als temporäre Datei im Zielordner und
+wird erst bei vollständigem Erfolg sichtbar; Abbrechen und Seitenwechsel beenden den Vorgang.
+Der Download erzeugt keinen automatischen Cache-Eintrag. Das BSCW-Exportartefakt enthält
+standardmäßig nur die Metadaten und **nicht** das Videooriginal. Eine vollständige
+Wiederherstellung aus einem solchen Export ist daher **nicht** möglich; dafür ist eine
+separat aktivierte Sicherung mit Originaldateien erforderlich (noch nicht implementiert).
+
 ## Technischer Aufbau
 
 `BscwSourceAdapter` registriert den neuen Quellentyp `bscw`. Der transportseitige
