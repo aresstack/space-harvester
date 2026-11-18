@@ -118,6 +118,20 @@ Die Desktop-Leseansicht rendert PowerPoint-Präsentationen (`.ppt` und `.pptx`) 
 Die vorhandenen Seiten-, Zoom- und Speicherfunktionen des PDF-/Originaldatei-Viewers werden wiederverwendet.
 Animationen, eingebettete Videos und komplexe Layouts müssen nicht pixelgenau wiedergegeben werden.
 
+Word-Dokumente (`.doc`, `.docx`, `.docm`, `.dot`, `.dotx`) erhalten ebenfalls
+eine lokale **Textvorschau** über Apache POI, ohne quellenabhängige Konvertierung.
+Die Vorschau ist lesbar, aber nicht seitengenau formatiert; Tabellen und Schriftgestaltung
+werden nicht wie in Word reproduziert. Originaldateien bleiben über Speichern/Öffnen verfügbar.
+
+Der Video-Player sucht zunächst eine vorhandene libVLC-Installation (u. a. die üblichen
+Windows-VLC-Verzeichnisse), danach über die VLCJ-4-NativeDiscovery. Für portable
+Installationen kann `spaceharvester.vlc.path` als JVM-Systemeigenschaft oder `VLC_HOME`
+als Umgebungsvariable auf den Ordner mit `libvlc.dll` zeigen.
+Nur ein tatsächliches `playing`-Ereignis schaltet die Bedienelemente auf Wiedergabe.
+Fehlende Native-Bibliotheken oder Codec-/Netzwerkfehler werden sichtbar gemeldet;
+ein akzeptierter Startaufruf allein gilt nicht als erfolgreiche Wiedergabe.
+Die Bedienung zeigt Play-, Pause- und Stop-Symbole.
+
 Große Videoressourcen (`.mp4`, `.m4v`, `.webm`, `.mov`, `.mkv`) werden beim Auswählen im Explorer
 **nicht vollständig heruntergeladen**: Der Snapshot enthält lediglich Metadaten
 (`nativeFormat=remote-media-metadata`, `media.remote=true`).

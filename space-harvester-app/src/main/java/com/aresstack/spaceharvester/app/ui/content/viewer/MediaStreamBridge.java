@@ -35,6 +35,7 @@ public final class MediaStreamBridge implements AutoCloseable {
     private final HttpServer server;
     private final ExecutorService workers;
     private final URI address;
+    private volatile String lastFailure;
 
     MediaStreamBridge(ChunkSource source, long length, String mediaType) throws IOException {
         if (source == null || length <= 0) {
@@ -60,6 +61,11 @@ public final class MediaStreamBridge implements AutoCloseable {
 
     URI address() {
         return address;
+    }
+
+    /** Return a credential-free reason for the most recent failed source read. */
+    String lastFailure() {
+        return lastFailure;
     }
 
     private void handle(HttpExchange request) throws IOException {
@@ -94,10 +100,13 @@ public final class MediaStreamBridge implements AutoCloseable {
             try {
                 first = source.read(requested.begin, firstBytes);
             } catch (Exception unavailable) {
+                lastFailure = "BSCW hat den Video-Bereich nicht geliefert ("
+                        + unavailable.getClass().getSimpleName() + ").";
                 sendError(request, 502);
                 return;
             }
             if (first == null || first.length != firstBytes) {
+                lastFailure = "BSCW hat einen unvollständigen Video-Bereich geliefert.";
                 sendError(request, 502);
                 return;
             }
@@ -114,6 +123,7 @@ public final class MediaStreamBridge implements AutoCloseable {
                     int count = (int) Math.min(CHUNK_BYTES, requested.end - position + 1);
                     byte[] next = source.read(position, count);
                     if (next == null || next.length != count) {
+                        lastFailure = "BSCW hat einen unvollständigen Video-Bereich geliefert.";
                         break;
                     }
                     output.write(next);

@@ -553,7 +553,20 @@ public final class AttachmentViewerPanel extends JPanel {
                         "PowerPoint nicht geladen: " + reasonText(reason)));
                 return;
             case OFFICE:
-                // Office zeichnet der Client nicht selbst: Vorschau der Quelle (PDF oder Bild).
+                if (WordDocumentPreview.supports(attachment.fileName())) {
+                    busy.setText("Word-Vorschau wird geladen …");
+                    requestOriginal(bytes -> decodeAside(
+                            () -> {
+                                try {
+                                    return WordDocumentPreview.read(attachment.fileName(), bytes);
+                                } catch (IOException failure) {
+                                    throw new IllegalStateException(failure.getMessage(), failure);
+                                }
+                            }, this::showText), reason -> showUnavailable(
+                            "Word-Dokument nicht lesbar: " + reasonText(reason)));
+                    return;
+                }
+                // Use the source-generated preview for remaining Office formats.
                 busy.setText(LOADING_PREVIEW_TEXT);
                 attachmentLoader.preview(attachment, bytes -> show(bytes, true),
                         reason -> showUnavailable(NO_PREVIEW_TEXT + "\n" + (reason == null ? "" : reason)));

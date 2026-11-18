@@ -166,6 +166,28 @@ class AttachmentViewerPanelTest {
     }
 
     @Test
+    void wordDocumentDisplaysItsTextWithoutRequiringAWebDavPreview() throws Exception {
+        byte[] original;
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument word = new org.apache.poi.xwpf.usermodel.XWPFDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            word.createParagraph().createRun().setText("HaVdB Architekturbericht");
+            word.write(output);
+            original = output.toByteArray();
+        }
+        FakeLoader loader = new FakeLoader().file("docx", original).withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("docx", "Bericht.docx", "application/octet-stream", original.length),
+                    loader, null, Runnable::run);
+            assertThat(viewer.isShowingText()).isTrue();
+            assertThat(viewer.textContent()).contains("HaVdB Architekturbericht");
+            assertThat(loader.loads).containsEntry("docx", 1);
+            assertThat(loader.previews).isEmpty();
+            viewer.close();
+        });
+    }
+
+    @Test
     void anOfficeFileUsesThePreviewOfTheSourceOrSaysWhyThereIsNone() throws Exception {
         FakeLoader withPreview = new FakeLoader().preview("att-xlsx", png());
         run(() -> {
@@ -177,11 +199,11 @@ class AttachmentViewerPanelTest {
             assertThat(withPreview.loads).as("Vorschau ohne Original").isEmpty();
             assertThat(withPreview.previews).containsExactly("att-xlsx");
 
-            // ohne Vorschauweg der Quelle (Standard des Laders): Hinweis, Speichern und Öffnen bleiben
+            // Without source previews, Word files use the local reader and report missing originals.
             AttachmentViewerPanel none = new AttachmentViewerPanel(new ReaderAttachment("att-doc", "Brief.docx",
                     "", -1), new FakeLoader().withoutPreviews(), null, Runnable::run);
-            assertThat(none.statusText()).contains(AttachmentViewerPanel.NO_PREVIEW_TEXT)
-                    .contains("Die Quelle bietet keine Vorschau an.");
+            assertThat(none.statusText()).contains("Word-Dokument nicht lesbar")
+                    .contains("nicht gefunden");
         });
     }
 

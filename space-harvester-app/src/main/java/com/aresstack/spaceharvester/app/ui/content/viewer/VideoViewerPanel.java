@@ -1,6 +1,9 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import uk.co.caprica.vlcj.player.component.EmbeddedMediaPlayerComponent;
+import uk.co.caprica.vlcj.player.base.MediaPlayer;
+import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -12,6 +15,7 @@ import javax.swing.JPanel;
 import javax.swing.JSlider;
 import javax.swing.SwingConstants;
 import javax.swing.Timer;
+import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.awt.GraphicsEnvironment;
@@ -39,6 +43,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private EmbeddedMediaPlayerComponent player;
     private MediaStreamBridge bridge;
     private boolean started;
+    private boolean actuallyPlaying;
+    private long startRequestedAtNanos;
+    private static final long START_TIMEOUT_NANOS = java.util.concurrent.TimeUnit.SECONDS.toNanos(15);
     private boolean closed;
     private boolean refreshingProgress;
     private final String fileName;
@@ -58,6 +65,14 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         add(message, BorderLayout.NORTH);
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
         controls.setOpaque(false);
+        play.setIcon(ComposerIcons.play());
+        pause.setIcon(ComposerIcons.pause());
+        stop.setIcon(ComposerIcons.stop());
+        play.setToolTipText("Video abspielen oder fortsetzen");
+        pause.setToolTipText("Wiedergabe pausieren");
+        stop.setToolTipText("Wiedergabe stoppen");
+        pause.setEnabled(false);
+        stop.setEnabled(false);
         controls.add(play);
         controls.add(pause);
         controls.add(stop);
@@ -93,8 +108,36 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             return;
         }
         try {
+            if (!VlcRuntimeLocator.configure()) {
+                unavailable("Keine VLC-Installation gefunden. VLC installieren oder -Dspaceharvester.vlc.path setzen.");
+                return;
+            }
             player = new EmbeddedMediaPlayerComponent();
             bridge = new MediaStreamBridge(reader, size, mediaType);
+            player.mediaPlayer().events().addMediaPlayerEventListener(new MediaPlayerEventAdapter() {
+                @Override
+                public void playing(MediaPlayer mediaPlayer) {
+                    SwingUtilities.invokeLater(() -> playbackStarted());
+                }
+
+                @Override
+                public void paused(MediaPlayer mediaPlayer) {
+                    SwingUtilities.invokeLater(() -> playbackPaused());
+                }
+
+                @Override
+                public void stopped(MediaPlayer mediaPlayer) {
+                    SwingUtilities.invokeLater(() -> playbackStopped());
+                }
+
+                @Override
+                public void error(MediaPlayer mediaPlayer) {
+                    SwingUtilities.invokeLater(() -> playbackFailed(
+                            bridge != null && bridge.lastFailure() != null
+                                    ? bridge.lastFailure()
+                                    : "VLC konnte die Videodaten nicht abspielen. Netzwerk/Codec prüfen."));
+                }
+            });
             add(player, BorderLayout.CENTER);
             message.setText("Video „" + fileName + "“ – zum Starten „Abspielen“ wählen.");
         } catch (RuntimeException | LinkageError | IOException failure) {
@@ -102,7 +145,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                 player.release();
                 player = null;
             }
-            unavailable("Für die Videowiedergabe wird eine lokale VLC-Installation benötigt.");
+            unavailable("VLC kann nicht initialisiert werden: " + failure.getClass().getSimpleName()
+                    + (failure.getMessage() == null ? "" : " – " + failure.getMessage()));
         }
     }
 
@@ -180,16 +224,75 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             return;
         }
         try {
-            if (!started) {
-                player.mediaPlayer().media().play(bridge.address().toASCIIString());
-                started = true;
-            } else {
+            play.setEnabled(false);
+            startRequestedAtNanos = System.nanoTime();
+            message.setText("Video wird gestartet …");
+            boolean accepted = true;
+            if (started) {
                 player.mediaPlayer().controls().play();
+            } else {
+                accepted = player.mediaPlayer().media().play(bridge.address().toASCIIString());
             }
-            message.setText("Wiedergabe über BSCW-Streaming");
+            if (!accepted) {
+                playbackFailed("VLC hat den Wiedergabestart abgelehnt.");
+            } else {
+                started = true;
+            }
         } catch (RuntimeException error) {
-            message.setText("Video nicht abspielbar: " + error.getMessage());
+            playbackFailed("Video nicht abspielbar: " + error.getMessage());
         }
+    }
+
+    private void playbackStarted() {
+        if (closed) {
+            return;
+        }
+        started = true;
+        actuallyPlaying = true;
+        startRequestedAtNanos = 0;
+        play.setEnabled(false);
+        pause.setEnabled(true);
+        stop.setEnabled(true);
+        message.setText("Wiedergabe über BSCW-Streaming");
+    }
+
+    private void playbackPaused() {
+        if (closed) {
+            return;
+        }
+        actuallyPlaying = false;
+        startRequestedAtNanos = 0;
+        play.setEnabled(true);
+        pause.setEnabled(false);
+        stop.setEnabled(true);
+        message.setText("Pausiert");
+    }
+
+    private void playbackStopped() {
+        if (closed) {
+            return;
+        }
+        actuallyPlaying = false;
+        started = false;
+        startRequestedAtNanos = 0;
+        play.setEnabled(true);
+        pause.setEnabled(false);
+        stop.setEnabled(false);
+        position.setValue(0);
+        message.setText("Wiedergabe gestoppt");
+    }
+
+    private void playbackFailed(String reason) {
+        if (closed) {
+            return;
+        }
+        actuallyPlaying = false;
+        started = false;
+        startRequestedAtNanos = 0;
+        play.setEnabled(true);
+        pause.setEnabled(false);
+        stop.setEnabled(false);
+        message.setText(reason);
     }
 
     private void pause() {
@@ -202,12 +305,19 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (!closed && player != null) {
             player.mediaPlayer().controls().stop();
         }
-        started = false;
-        position.setValue(0);
+        playbackStopped();
     }
 
     private void updateProgress() {
-        if (closed || !started || player == null || position.getValueIsAdjusting()) {
+        if (closed) {
+            return;
+        }
+        if (startRequestedAtNanos != 0 && !actuallyPlaying
+                && System.nanoTime() - startRequestedAtNanos > START_TIMEOUT_NANOS) {
+            playbackFailed("VLC startet nicht. Installation, Videoformat und BSCW-Verbindung prüfen.");
+            return;
+        }
+        if (!actuallyPlaying || player == null || position.getValueIsAdjusting()) {
             return;
         }
         try {
@@ -248,8 +358,14 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
         closed = true;
         progress.stop();
+        play.setEnabled(false);
+        pause.setEnabled(false);
+        stop.setEnabled(false);
         if (downloadTask != null) {
             downloadTask.cancel(true);
             downloadTask = null;

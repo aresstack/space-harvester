@@ -44,6 +44,18 @@ class MediaStreamBridgeTest {
         }
     }
 
+    @Test
+    void reportsBscwRangeFailuresWithoutExposingSourceCredentials() throws Exception {
+        try (MediaStreamBridge bridge = new MediaStreamBridge((offset, length) -> {
+            throw new java.io.IOException("secret-password-123");
+        }, 1024, "video/mp4")) {
+            HttpURLConnection request = connection(bridge.address().toURL(), "GET", "bytes=0-31");
+            assertThat(request.getResponseCode()).isEqualTo(502);
+            assertThat(bridge.lastFailure()).contains("BSCW").doesNotContain("secret-password-123");
+            request.disconnect();
+        }
+    }
+
     private static HttpURLConnection connection(URL url, String method, String range) throws Exception {
         HttpURLConnection request = (HttpURLConnection) url.openConnection();
         request.setRequestMethod(method);
