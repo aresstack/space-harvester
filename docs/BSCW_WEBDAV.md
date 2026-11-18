@@ -194,6 +194,38 @@ standardmäßig nur die Metadaten und **nicht** das Videooriginal. Eine vollstä
 Wiederherstellung aus einem solchen Export ist daher **nicht** möglich; dafür ist eine
 separat aktivierte Sicherung mit Originaldateien erforderlich (noch nicht implementiert).
 
+### Audio-only-Wiedergabe bei MP4
+
+Der Umschalter **Nur Audio** verwendet für MP4 einen eigenen virtuellen MP4-Stream
+anstatt lediglich das Bild in VLC zu verbergen. `Mp4AudioOnlySource` liest über
+den vorhandenen authentifizierten Byte-Range-Port die MP4-Metadaten
+(`moov`, `stco`/`co64`, `stsc` und `stsz`) und bietet nur die indexierten
+Audio-Chunks an. Für fragmentierte MP4s verwendet
+`FragmentedMp4AudioOnlySource` die Audio-`traf`-/`trun`-Indizes der
+`moof`-Fragmente und baut daraus einen virtuellen audiobeschränkten MP4-Stream.
+Die Videonutzdaten werden vom BSCW-Server dabei nicht angefordert.
+Audio-only braucht weder eine vollständige Videodatei noch ein lokales Videooriginal.
+
+Für den ersten Wechsel wird der Index im Hintergrund aufgebaut. Eine laufende
+Videowiedergabe wird währenddessen angehalten; der Player verwendet danach
+einen separaten Loopback-Stream für Audio. Ein erneuter Wechsel zum Bild
+verwendet wieder den ursprünglichen Videostream. Die Wiedergabeposition und
+der Pause-Zustand werden über den Medienwechsel wiederhergestellt.
+Das vorbereitete Audio-Indexmodell bleibt während der aktuellen Ansicht erhalten.
+
+Nicht unterstützte oder ungültige MP4-Strukturen werden ausdrücklich abgelehnt.
+Ein Rückfall auf den vollständigen Videostream findet **nicht** statt.
+Die Indexierung kann bei vielen Fragmenten zusätzliche kleine WebDAV-Anfragen
+erfordern; sie ist kein Download der Videopakete. Andere Videoformate bleiben
+vorerst im bisherigen Videomodus. Der Download-Button lädt weiterhin nur
+auf ausdrücklichen Wunsch die vollständige Originaldatei herunter.
+
+Der BSCW-Live-Test mit einer 161.804.927 Byte großen fragmentierten MP4
+bestätigte für das erste Medienfragment: 276.244 Byte virtueller
+Audiostream; 34.540 Byte über 28 Range-Anfragen von BSCW gelesen.
+Für die gesamte Datei und die hörbare VLC-Wiedergabe steht eine
+abschließende manuelle Abnahme noch aus.
+
 ## Technischer Aufbau
 
 `BscwSourceAdapter` registriert den neuen Quellentyp `bscw`. Der transportseitige

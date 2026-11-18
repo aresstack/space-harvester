@@ -51,18 +51,20 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         thread.setDaemon(true);
         return thread;
     });
-    private final ExecutorService trackWorker = Executors.newSingleThreadExecutor(task -> {
-        Thread thread = new Thread(task, "space-harvester-video-track");
-        thread.setDaemon(true);
-        return thread;
-    });
     private final String fileName;
     private final long fileSize;
     private final MediaStreamBridge.ChunkSource reader;
 
     private EmbeddedMediaPlayerComponent player;
     private MediaStreamBridge bridge;
-    private VideoTrackMode videoTrackMode;
+    private MediaStreamBridge audioBridge;
+    private SwingWorker<Mp4AudioStream, Void> audioPreparation;
+    private volatile boolean switchingMedia;
+    private long resumePositionMillis;
+    private boolean pauseAfterSwitch;
+    private boolean preparationHadPlayback;
+    private boolean preparationWasPlaying;
+    private long preparationPositionMillis;
     private SwingWorker<Void, Long> downloadTask;
     private volatile boolean closed;
     private volatile boolean audioOnly;
@@ -130,8 +132,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                     player.videoSurfaceComponent(), fullScreen::toggle);
             display.add(player, VIDEO_CARD);
             displayLayout.show(display, VIDEO_CARD);
-            videoTrackMode = new VideoTrackMode(new VlcVideoTracks(player.mediaPlayer()));
-            transport.audioOnly().setEnabled(true);
+            transport.audioOnly().setEnabled(mediaType != null && "video/mp4".equalsIgnoreCase(mediaType)
+                    || fileName != null && fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4"));
             transport.fullScreen().setEnabled(true);
             message.setText("Video „" + fileName + "“ – zum Starten Abspielen wählen.");
             progress.start();
@@ -149,58 +151,187 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         }
     }
 
-    /** Change only the selected video track; leave the audio decoder, player, and timeline running. */
+    /** Prepare a virtual MP4 containing only the indexed audio track. */
     private void toggleAudioOnly() {
-        if (closed || player == null) {
+        if (closed || player == null || audioPreparation != null) {
             return;
         }
-        if (!audioOnly && fullScreen.isFullScreen()) {
-            fullScreen.toggle();
+        if (audioOnly) {
+            switchPlaybackMode(false);
+        } else if (audioBridge != null) {
+            switchPlaybackMode(true);
+        } else {
+            prepareAudioOnlyStream();
         }
-        audioOnly = !audioOnly;
-        transport.setAudioOnly(audioOnly);
-        transport.fullScreen().setEnabled(!audioOnly);
-        displayLayout.show(display, audioOnly ? AUDIO_CARD : VIDEO_CARD);
-        display.revalidate();
-        display.repaint();
-        if (!audioOnly) {
-            SwingUtilities.invokeLater(this::reattachVideoSurface);
-        }
-        if (started) {
-            applyVideoTrackMode();
-        }
-        message.setText(started ? (audioOnly ? "Videospur wird deaktiviert …" : "Videobild wird aktiviert …")
-                : (audioOnly ? "Nur Audio ausgewählt – zum Starten Abspielen wählen."
-                : "Video ausgewählt – zum Starten Abspielen wählen."));
     }
 
-    private void applyVideoTrackMode() {
-        final boolean requestedAudioOnly = audioOnly;
-        try {
-            trackWorker.execute(() -> {
+    private void prepareAudioOnlyStream() {
+        suspendVideoForAudioPreparation();
+        transport.audioOnly().setEnabled(false);
+        transport.play().setEnabled(false);
+        transport.pause().setEnabled(false);
+        message.setText("MP4-Audiospur wird ohne Videodaten vorbereitet …");
+        audioPreparation = new SwingWorker<Mp4AudioStream, Void>() {
+            @Override
+            protected Mp4AudioStream doInBackground() throws IOException {
+                return Mp4AudioOnlySource.open(reader, fileSize);
+            }
+
+            @Override
+            protected void done() {
+                if (closed || audioPreparation != this) {
+                    return;
+                }
+                audioPreparation = null;
+                transport.audioOnly().setEnabled(true);
                 try {
-                    if (closed || videoTrackMode == null) {
-                        return;
-                    }
-                    boolean changed = videoTrackMode.apply(requestedAudioOnly);
-                    SwingUtilities.invokeLater(() -> {
-                        if (!closed && audioOnly == requestedAudioOnly) {
-                            message.setText(changed
-                                    ? (actuallyPlaying ? playbackMessage() : "Pausiert")
-                                    : "VLC konnte die Videospur nicht umschalten.");
+                    Mp4AudioStream audioSource = get();
+                    audioBridge = new MediaStreamBridge(audioSource, audioSource.length(), "video/mp4");
+                    switchPlaybackMode(true);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    releaseAudioPreparation();
+                    message.setText("Vorbereitung der Audiospur unterbrochen.");
+                } catch (CancellationException cancelled) {
+                    releaseAudioPreparation();
+                    message.setText("Vorbereitung der Audiospur abgebrochen.");
+                } catch (ExecutionException | IOException failure) {
+                    releaseAudioPreparation();
+                    message.setText("Nur Audio ist für dieses MP4 nicht verfügbar: "
+                            + failure.getClass().getSimpleName()
+                            + (failure.getCause() instanceof IOException
+                            ? " – " + failure.getCause().getMessage() : ""));
+                }
+            }
+        };
+        audioPreparation.execute();
+    }
+
+    /** Suspend video traffic before indexing the requested audio stream. */
+    private void suspendVideoForAudioPreparation() {
+        preparationHadPlayback = started;
+        preparationWasPlaying = actuallyPlaying;
+        preparationPositionMillis = 0;
+        if (!started) {
+            return;
+        }
+        try {
+            preparationPositionMillis = Math.max(0, player.mediaPlayer().status().time());
+        } catch (RuntimeException ignored) {
+            // Resume at the beginning when the player cannot report its position.
+        }
+        switchingMedia = true;
+        actuallyPlaying = false;
+        player.mediaPlayer().controls().stop();
+    }
+
+    private void releaseAudioPreparation() {
+        switchingMedia = false;
+        started = false;
+        actuallyPlaying = false;
+        startRequestedAtNanos = 0;
+        transport.play().setEnabled(true);
+        transport.pause().setEnabled(false);
+        transport.stop().setEnabled(false);
+        preparationHadPlayback = false;
+        preparationPositionMillis = 0;
+    }
+
+    /** Switch between two independent byte-range sources without loading video for audio playback. */
+    private void switchPlaybackMode(boolean audio) {
+        if (closed || player == null || (audio && audioBridge == null)) {
+            return;
+        }
+        if (audio && fullScreen.isFullScreen()) {
+            fullScreen.toggle();
+        }
+        long position = preparationPositionMillis;
+        boolean wasStarted = preparationHadPlayback || started;
+        boolean wasPaused = preparationHadPlayback ? !preparationWasPlaying : started && !actuallyPlaying;
+        if (wasStarted && !preparationHadPlayback) {
+            try {
+                position = Math.max(0, player.mediaPlayer().status().time());
+            } catch (RuntimeException ignored) {
+                // Resume from the beginning when the native player has no valid timestamp.
+            }
+        }
+        preparationHadPlayback = false;
+        preparationPositionMillis = 0;
+        audioOnly = audio;
+        transport.setAudioOnly(audio);
+        transport.fullScreen().setEnabled(!audio);
+        displayLayout.show(display, audio ? AUDIO_CARD : VIDEO_CARD);
+        display.revalidate();
+        display.repaint();
+        if (!audio) {
+            SwingUtilities.invokeLater(this::reattachVideoSurface);
+        }
+        if (!wasStarted) {
+            transport.play().setEnabled(true);
+            transport.pause().setEnabled(false);
+            transport.stop().setEnabled(false);
+            message.setText(audio ? "Nur Audio – zum Starten Abspielen wählen."
+                    : "Video – zum Starten Abspielen wählen.");
+            return;
+        }
+
+        switchingMedia = true;
+        resumePositionMillis = position;
+        pauseAfterSwitch = wasPaused;
+        actuallyPlaying = false;
+        startRequestedAtNanos = System.nanoTime();
+        seekRequestedAtNanos = 0;
+        transport.play().setEnabled(false);
+        message.setText(audio ? "Audio wird geladen …" : "Video wird geladen …");
+        try {
+            player.mediaPlayer().controls().stop();
+            boolean accepted = player.mediaPlayer().media().play(activeBridge().address().toASCIIString());
+            if (!accepted) {
+                switchingMedia = false;
+                playbackFailed("VLC hat den Wechsel des Medienmodus abgelehnt.");
+            } else {
+                started = true;
+            }
+        } catch (RuntimeException failure) {
+            switchingMedia = false;
+            playbackFailed("Medienmodus konnte nicht gewechselt werden.");
+        }
+    }
+
+    private MediaStreamBridge activeBridge() {
+        return audioOnly ? audioBridge : bridge;
+    }
+
+    private void resumePlaybackAfterSwitch() {
+        long position = resumePositionMillis;
+        boolean pause = pauseAfterSwitch;
+        resumePositionMillis = 0;
+        pauseAfterSwitch = false;
+        switchingMedia = false;
+        if (position == 0 && !pause) {
+            return;
+        }
+        try {
+            seekWorker.execute(() -> {
+                try {
+                    if (!closed && player != null) {
+                        if (position > 0) {
+                            player.mediaPlayer().controls().setTime(position);
                         }
-                    });
-                } catch (RuntimeException failure) {
+                        if (pause) {
+                            player.mediaPlayer().controls().setPause(true);
+                        }
+                    }
+                } catch (RuntimeException ignored) {
                     SwingUtilities.invokeLater(() -> {
                         if (!closed) {
-                            message.setText("Videospur nicht umschaltbar: "
-                                    + failure.getClass().getSimpleName());
+                            message.setText("Wiedergabeposition konnte nicht wiederhergestellt werden.");
                         }
                     });
                 }
             });
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
-            // Ignore pending mode changes while the viewer closes.
+            // Skip a pending resume when playback is closing.
         }
     }
 
@@ -246,15 +377,15 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             @Override
             public void error(MediaPlayer mediaPlayer) {
                 SwingUtilities.invokeLater(() -> playbackFailed(
-                        bridge != null && bridge.lastFailure() != null
-                                ? bridge.lastFailure()
-                                : "VLC konnte die Videodaten nicht abspielen. Netzwerk/Codec prüfen."));
+                        activeBridge() != null && activeBridge().lastFailure() != null
+                                ? activeBridge().lastFailure()
+                                : "VLC konnte die Mediendaten nicht abspielen. Netzwerk/Codec prüfen."));
             }
         });
     }
 
     private void play() {
-        if (closed || player == null || bridge == null) {
+        if (closed || player == null || bridge == null || audioPreparation != null) {
             return;
         }
         try {
@@ -265,7 +396,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             if (started) {
                 player.mediaPlayer().controls().play();
             } else {
-                accepted = player.mediaPlayer().media().play(bridge.address().toASCIIString());
+                accepted = player.mediaPlayer().media().play(activeBridge().address().toASCIIString());
             }
             if (!accepted) {
                 playbackFailed("VLC hat den Wiedergabestart abgelehnt.");
@@ -278,13 +409,20 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     }
 
     private void pause() {
-        if (!closed && started && player != null) {
+        if (!closed && started && player != null && audioPreparation == null) {
             player.mediaPlayer().controls().pause();
         }
     }
 
     private void stop() {
+        if (audioPreparation != null) {
+            audioPreparation.cancel(true);
+            audioPreparation = null;
+            transport.audioOnly().setEnabled(true);
+        }
+        preparationHadPlayback = false;
         if (!closed && player != null) {
+            switchingMedia = false;
             player.mediaPlayer().controls().stop();
         }
         playbackStopped();
@@ -292,7 +430,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     /** Commit a seek only after the user releases the timeline; execute libVLC's potentially slow call off the EDT. */
     private void seek(double share) {
-        if (closed || !started || player == null) {
+        if (closed || !started || player == null || audioPreparation != null) {
             return;
         }
         if (!transport.seekBar().canSeek()) {
@@ -312,7 +450,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         try {
             seekWorker.execute(() -> {
                 try {
-                    if (!closed && player != null) {
+                    if (!closed && player != null && audioPreparation == null) {
                         if (duration > 0) {
                             player.mediaPlayer().controls().setTime(target);
                         } else {
@@ -336,6 +474,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (closed) {
             return;
         }
+        if (switchingMedia) {
+            resumePlaybackAfterSwitch();
+        }
         started = true;
         actuallyPlaying = true;
         startRequestedAtNanos = 0;
@@ -343,13 +484,10 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.pause().setEnabled(true);
         transport.stop().setEnabled(true);
         message.setText(playbackMessage());
-        if (audioOnly) {
-            applyVideoTrackMode();
-        }
     }
 
     private void playbackPaused() {
-        if (closed) {
+        if (closed || audioPreparation != null) {
             return;
         }
         actuallyPlaying = false;
@@ -361,7 +499,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     }
 
     private void playbackStopped() {
-        if (closed) {
+        if (closed || switchingMedia) {
             return;
         }
         actuallyPlaying = false;
@@ -376,7 +514,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     }
 
     private void playbackFailed(String reason) {
-        if (closed) {
+        if (closed || audioPreparation != null) {
             return;
         }
         actuallyPlaying = false;
@@ -392,7 +530,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     /** Keep the timeline responsive while native playback fetches a newly requested range. */
     private void updateProgress() {
-        if (closed || player == null || !started) {
+        if (closed || player == null || !started || audioPreparation != null) {
             return;
         }
         if (startRequestedAtNanos != 0 && !actuallyPlaying
@@ -552,7 +690,10 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         closed = true;
         progress.stop();
         seekWorker.shutdownNow();
-        trackWorker.shutdownNow();
+        if (audioPreparation != null) {
+            audioPreparation.cancel(true);
+            audioPreparation = null;
+        }
         transport.play().setEnabled(false);
         transport.pause().setEnabled(false);
         transport.stop().setEnabled(false);
@@ -570,6 +711,10 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (bridge != null) {
             bridge.close();
             bridge = null;
+        }
+        if (audioBridge != null) {
+            audioBridge.close();
+            audioBridge = null;
         }
     }
 }
