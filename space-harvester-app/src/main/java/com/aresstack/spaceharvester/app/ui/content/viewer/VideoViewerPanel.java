@@ -185,7 +185,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                     boolean changed = videoTrackMode.apply(requestedAudioOnly);
                     SwingUtilities.invokeLater(() -> {
                         if (!closed && audioOnly == requestedAudioOnly) {
-                            message.setText(changed ? playbackMessage()
+                            message.setText(changed
+                                    ? (actuallyPlaying ? playbackMessage() : "Pausiert")
                                     : "VLC konnte die Videospur nicht umschalten.");
                         }
                     });
