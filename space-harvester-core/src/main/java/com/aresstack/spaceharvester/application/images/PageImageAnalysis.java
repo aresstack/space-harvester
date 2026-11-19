@@ -30,6 +30,9 @@ import java.util.Optional;
  * je Bildbytes und Modell nur einmal. Rechte prüft der Aufrufer wie für die Lese-Ansicht und das Bild; Bilder aus
  * Quellen ohne Freigabe für den KI-Dienst gehen nie an das Modell.
  *
+ * <p>Ein Video hat keine Lese-Ansicht; als seine Bilder gelten die Standbilder an den Folienwechseln, die die App als
+ * Pseudo-Anhänge der Seite ablegt ({@link Assets#putVideoFrames}).</p>
+ *
  * <p>Übersprungen werden Vorschaubilder von draw.io-Diagrammen (die textuelle Quelle gilt, Angelo 16.10.), SVG und
  * andere Nicht-Rasterbilder sowie Bilder über der Grenze der Asset-Ablage.</p>
  */
@@ -37,7 +40,9 @@ public class PageImageAnalysis {
 
     /** Höchstens so viele Bilder je Seite; weitere stehen als Warnung {@value #TRUNCATED} im Ergebnis. */
     public static final int MAX_IMAGES = 50;
-    /** Warnung: Die Seite hat mehr Bilder als {@link #MAX_IMAGES}. */
+    /** Höchstens so viele Standbilder eines Videos; eine Aufzeichnung von einer Stunde hat oft mehr als 50 Folien. */
+    public static final int MAX_VIDEO_FRAMES = 200;
+    /** Warnung: Die Seite hat mehr Bilder als {@link #MAX_IMAGES} (bei einem Video {@link #MAX_VIDEO_FRAMES}). */
     public static final String TRUNCATED = "images-truncated";
     /** Warnung: Die Quelle hat keine Lese-Ansicht, also keine Bilder. */
     public static final String NO_READING_VIEW = "no-reading-view";
@@ -93,8 +98,8 @@ public class PageImageAnalysis {
      * {@link PageImages.State#STALE} mit {@value PageImages#ATTACHMENT_CHANGED}.
      */
     public PageImages read(PageSnapshot snapshot) {
-        PageText text = enrichments.text(snapshot).orElse(null);
-        PageImages images = PageImages.read(snapshot.key(), enrichments.view(snapshot), text);
+        Input input = input(snapshot);
+        PageImages images = PageImages.read(snapshot.key(), input.views(), input.sha256());
         if (images.state() == PageImages.State.CURRENT && attachmentChanged(snapshot.key(), images.result())) {
             return new PageImages(PageImages.State.STALE, PageImages.ATTACHMENT_CHANGED, images.result(),
                     images.images(), images.warnings());
@@ -142,16 +147,19 @@ public class PageImageAnalysis {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
                     "Quelle nicht für den KI-Dienst freigegeben", null);
         }
-        Optional<PageText> text = enrichments.text(snapshot);
-        if (text.isEmpty()) {
+        Input input = input(snapshot);
+        if (input.sha256() == null) {
             return PageImages.missing(PageImages.NO_TEXT);
         }
         // Die Version steht vor dem ersten Bild fest: wechselt das Modell währenddessen, ist das Ergebnis veraltet.
         String version = ImageProcessor.version(model);
         List<String> warnings = new ArrayList<>();
         List<HarvestSource.ViewImage> images = images(snapshot, warnings);
-        if (images.size() > MAX_IMAGES) {
-            images = images.subList(0, MAX_IMAGES);
+        boolean video = !images.isEmpty() && images.get(0).attachmentId() != null
+                && images.get(0).attachmentId().startsWith(Assets.VIDEO_FRAME);
+        int limit = video ? MAX_VIDEO_FRAMES : MAX_IMAGES;
+        if (images.size() > limit) {
+            images = images.subList(0, limit);
             warnings.add(TRUNCATED);
         }
         List<PageAttachment> attachments = null;
@@ -164,13 +172,14 @@ public class PageImageAnalysis {
         }
         for (int index = 0; index < images.size(); index++) {
             HarvestSource.ViewImage image = images.get(index);
-            if (attachments == null && Assets.viewFileName(image).toLowerCase(Locale.ROOT).endsWith(".png")) {
+            boolean frame = image.attachmentId() != null && image.attachmentId().startsWith(Assets.VIDEO_FRAME);
+            if (attachments == null && !frame && Assets.viewFileName(image).toLowerCase(Locale.ROOT).endsWith(".png")) {
                 attachments = attachments(key);
             }
             entries.add(describe(index, key, snapshot.revision(), image, attachments == null ? List.of()
                     : attachments, releasedOnce));
         }
-        Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, version, text.get().inputSha256(),
+        Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, version, input.sha256(),
                 snapshot.revision(), Enrichment.Status.OK, ImagePayload.write(entries, versions), warnings, null,
                 clock.instant());
         enrichments.store().save(result);
@@ -182,7 +191,36 @@ public class PageImageAnalysis {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
                     "Freigabe während der Beschreibung entzogen", null);
         }
-        return PageImages.read(key, enrichments.view(snapshot), text.get());
+        Input after = input(snapshot);
+        return PageImages.read(key, after.views(), after.sha256());
+    }
+
+    /** Worauf sich das Ergebnis bezieht und die gespeicherten Ergebnisse mit ihrer Frische dazu. */
+    private record Input(String sha256, List<Enrichments.View> views) {
+    }
+
+    /**
+     * Der Seitentext, oder bei einem Video ohne Text die Liste seiner Standbilder (Pseudo-Anhänge): Neue Standbilder
+     * machen das Ergebnis dann veraltet wie ein geänderter Text. Ohne beides {@code null}.
+     */
+    private Input input(PageSnapshot snapshot) {
+        Optional<PageText> text = enrichments.text(snapshot);
+        if (text.isPresent()) {
+            return new Input(text.get().inputSha256(), enrichments.view(snapshot));
+        }
+        PageKey key = snapshot.key();
+        Optional<String> frames = assets.videoFramesInput(key.sourceId(), key.pageId(), snapshot.revision());
+        if (frames.isEmpty()) {
+            return new Input(null, enrichments.view(snapshot));
+        }
+        String processor = enrichments.processorVersion(ImagePayload.PROCESSOR).orElse(null);
+        List<Enrichments.View> views = new ArrayList<>();
+        for (Enrichment enrichment : enrichments.store().find(key)) {
+            if (ImagePayload.PROCESSOR.equals(enrichment.processorId())) {
+                views.add(new Enrichments.View(enrichment, enrichment.freshness(frames.get(), processor)));
+            }
+        }
+        return new Input(frames.get(), views);
     }
 
     /**
@@ -284,6 +322,11 @@ public class PageImageAnalysis {
      */
     private List<HarvestSource.ViewImage> images(PageSnapshot snapshot, List<String> warnings) {
         PageKey key = snapshot.key();
+        // Ein Video hat keine Bilder in einer Lese-Ansicht; seine Standbilder liegen als Pseudo-Anhänge ab.
+        List<HarvestSource.ViewImage> frames = assets.videoFrames(key.sourceId(), key.pageId(), snapshot.revision());
+        if (!frames.isEmpty()) {
+            return frames;
+        }
         HarvestSource.ReadingPage live;
         try {
             live = assets.readingPage(key.sourceId(), key.pageId());

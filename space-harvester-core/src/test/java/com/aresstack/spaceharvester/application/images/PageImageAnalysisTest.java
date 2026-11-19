@@ -39,7 +39,9 @@ import org.junit.jupiter.api.io.TempDir;
 class PageImageAnalysisTest {
 
     private static final Instant NOW = Instant.parse("2026-10-19T02:00:00Z");
-    private static final PageTextProjector PROJECTOR = snapshot -> Optional.of(new PageText("test/v1",
+    /** Ein leerer Inhalt hat keinen Text, wie ein Video. */
+    private static final PageTextProjector PROJECTOR = snapshot -> snapshot.payload().bytes().length == 0
+            ? Optional.empty() : Optional.of(new PageText("test/v1",
             new String(snapshot.payload().bytes(), StandardCharsets.UTF_8), List.of()));
     private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3};
 
@@ -356,6 +358,40 @@ class PageImageAnalysisTest {
         });
         describer.fail = false;
         assertThat(analysis.describe(page("1", "Text")).describedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void theStillFramesOfAVideoAreItsImagesAsPseudoAttachments() {
+        byte[] second = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 4, 5};
+        Assets assets = assets();
+        // Ein zweites Video derselben Quelle mit eigenen Standbildern: Anhangs-IDs gelten je Quelle.
+        assets.putVideoFrames("wiki", "2", "3", List.of(new Assets.VideoFrame(2_000, second)));
+        assets.putVideoFrames("wiki", "1", "3", List.of(new Assets.VideoFrame(2_000, PNG),
+                new Assets.VideoFrame(301_300, second)));
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments(), Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(analysis.read(page("1", "")).reason()).isEqualTo(PageImages.NOT_ANALYSED);
+        PageImages images = analysis.describe(page("1", ""));
+
+        assertThat(images.state()).isEqualTo(PageImages.State.CURRENT);
+        assertThat(analysis.read(page("1", "")).state()).as("ohne Text, mit Standbildern").isEqualTo(
+                PageImages.State.CURRENT);
+        assertThat(images.warnings()).doesNotContain(PageImageAnalysis.NO_READING_VIEW);
+        assertThat(images.images()).extracting(ImagePayload.Entry::title, ImagePayload.Entry::status,
+                ImagePayload.Entry::description).containsExactly(
+                org.assertj.core.groups.Tuple.tuple("Standbild 0:02", ImageStatus.DESCRIBED, "Ein Bild mit 11 Bytes"),
+                org.assertj.core.groups.Tuple.tuple("Standbild 5:01", ImageStatus.DESCRIBED, "Ein Bild mit 10 Bytes"));
+        assertThat(images.images()).allMatch(image -> image.assetId().startsWith(Assets.VIDEO_FRAME));
+        assertThat(source.loads).as("die Bytes liegen in der Ablage").isZero();
+        assertThat(assets.videoFrames("wiki", "1", "3")).extracting(HarvestSource.ViewImage::title)
+                .containsExactly("Standbild 0:02", "Standbild 5:01");
+        assertThat(assets.videoFrames("wiki", "1", "4")).as("eine neue Fassung braucht neue Standbilder").isEmpty();
+        assertThat(assets.videoFrames("wiki", "2", "3")).hasSize(1);
+        // Neue Standbilder derselben Fassung: das Ergebnis gilt nicht mehr.
+        assets.putVideoFrames("wiki", "1", "3", List.of(new Assets.VideoFrame(2_000, PNG)));
+        assertThat(analysis.read(page("1", "")).state()).isEqualTo(PageImages.State.STALE);
+        assertThat(analysis.describe(page("3", "")).reason()).as("weder Text noch Standbilder")
+                .isEqualTo(PageImages.NO_TEXT);
     }
 
     @Test

@@ -19,6 +19,7 @@ import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderFileOpener;
+import com.aresstack.spaceharvester.app.ui.content.viewer.VideoFrameGrabber;
 import com.aresstack.spaceharvester.app.ui.content.viewer.VideoViewerPanel;
 import com.aresstack.spaceharvester.app.ui.content.viewer.VideoTranscriptSource;
 import com.aresstack.spaceharvester.app.ui.content.viewer.VideoTranscriptionPanel;
@@ -327,6 +328,14 @@ public final class PageDetailPanel extends JPanel {
      */
     private final JPanel footTools = new JPanel(new BorderLayout());
     private VideoViewerPanel originalVideoViewer;
+    /** Das gezeigte MP4-Video für seine Standbilder in „Analysen › Bilder“; {@code null} ohne Video. */
+    private VideoFrameSource videoFrames;
+
+    /** Woher die Standbilder eines Videos kommen: dieselben Bereichsabrufe wie der Player. */
+    private record VideoFrameSource(
+            com.aresstack.spaceharvester.app.ui.content.viewer.MediaStreamBridge.ChunkSource reader, long size,
+            String mediaType) {
+    }
     private boolean originalLinkShown;
     /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
     static final String READING_HELP = "Die Leseansicht zeigt die Seite, wie die Quelle sie darstellt. Liegt sie im "
@@ -1543,6 +1552,7 @@ public final class PageDetailPanel extends JPanel {
         };
         originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, ranges::read);
         if (size > 0 && file.endsWith(".mp4")) {
+            videoFrames = new VideoFrameSource(ranges::read, size, mediaType);
             videoTranscript.setVideoSource(new VideoTranscriptSource(size, ranges));
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
             videoTranscriptShown = true;
@@ -1656,6 +1666,7 @@ public final class PageDetailPanel extends JPanel {
         }
         originalLinkShown = false;
         videoTranscriptShown = false;
+        videoFrames = null;
         fileContent.removeAll();
         originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
         updateFootTools(tabs.selected());
@@ -2372,10 +2383,16 @@ public final class PageDetailPanel extends JPanel {
         String source = sourceId;
         String id = pageId;
         DeliveredPage shown = page;
+        VideoFrameSource video = videoFrames;
         images.describing(true);
-        feedback.working("Bilder werden beschrieben …");
-        Background.run(() -> imageRows(runtime, source, id, once ? runtime.workspace().describeImagesOnce(source, id)
-                : runtime.workspace().describeImages(source, id)), found -> {
+        feedback.working(video == null ? "Bilder werden beschrieben …" : "Standbilder werden vorbereitet …");
+        Background.run(() -> {
+            if (video != null) {
+                storeVideoFrames(runtime, source, id, video, once, shown);
+            }
+            return imageRows(runtime, source, id, once ? runtime.workspace().describeImagesOnce(source, id)
+                    : runtime.workspace().describeImages(source, id));
+        }, found -> {
             // Der Reiter gehört allen Seiten: auch nach einem Seitenwechsel wieder freigeben.
             images.describing(false);
             if (shown != page) {
@@ -2391,6 +2408,36 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             feedback.problem(error, Problems.Step.PAGE);
+        });
+    }
+
+    /**
+     * Ein Video hat keine Bilder in einer Lese-Ansicht: Für die gespeicherte Fassung zieht das an jedem Folienwechsel
+     * ein Standbild und legt es als Pseudo-Anhang der Seite ab, einmal je Fassung. Nur, wenn das Vision-Modell die
+     * Bilder danach auch beschreiben darf; sonst meldet das Beschreiben selbst, was fehlt. Läuft im Hintergrund.
+     */
+    private void storeVideoFrames(AppRuntime runtime, String source, String id, VideoFrameSource video, boolean once,
+                                  DeliveredPage shown) throws java.io.IOException {
+        boolean allowed = runtime.workspace().imagesAvailable()
+                && (once || runtime.workspace().imagesReleased(source, id));
+        if (!allowed || runtime.workspace().videoFramesStored(source, id)) {
+            return;
+        }
+        List<com.aresstack.spaceharvester.application.assets.Assets.VideoFrame> frames = VideoFrameGrabber.grab(
+                video.reader(), video.size(), video.mediaType(),
+                com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES,
+                (done, total) -> javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (shown == page) {
+                        feedback.working("Standbilder werden gezogen … " + done + " von " + total);
+                    }
+                }), () -> false);
+        if (!frames.isEmpty()) {
+            runtime.workspace().storeVideoFrames(source, id, frames);
+        }
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            if (shown == page) {
+                feedback.working("Bilder werden beschrieben …");
+            }
         });
     }
 

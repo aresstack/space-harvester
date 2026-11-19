@@ -931,6 +931,101 @@ public class Assets implements DocumentInventory {
         return source(sourceId).viewImages(pageId);
     }
 
+    /** Präfix der Pseudo-Anhänge, die Standbilder eines Videos tragen ({@link #putVideoFrames}). */
+    public static final String VIDEO_FRAME = "video-frame-";
+    /** Präfix der Liste der Standbilder eines Videos in der Ablage. */
+    static final String VIDEO_FRAMES = "video-frames-";
+
+    /** Ein Standbild eines Videos an {@code millis} als PNG. */
+    public record VideoFrame(long millis, byte[] png) {
+
+        public VideoFrame {
+            if (millis < 0 || png == null || png.length == 0) {
+                throw new IllegalArgumentException("Standbild ohne Zeit oder Bild");
+            }
+        }
+    }
+
+    /**
+     * Legt Standbilder eines Videos als Pseudo-Anhänge seiner Seite ab: je Bild ein Asset {@value #VIDEO_FRAME}… mit
+     * der Fassung des Videos und dazu ihre Liste. Die Bildanalyse (ADR 0021) nimmt sie für Seiten ohne Lese-Ansicht
+     * wie Bilder der Seite ({@link #videoFrames}); beschrieben werden sie über denselben Weg, je Bildbytes und Modell
+     * einmal. Eine neue Fassung des Videos braucht neue Standbilder. Das Recht auf die Seite prüft der Aufrufer.
+     */
+    public void putVideoFrames(String sourceId, String pageId, String version, List<VideoFrame> frames) {
+        version = frameVersion(version);
+        String page = framePage(pageId);
+        StringBuilder list = new StringBuilder();
+        for (VideoFrame frame : frames) {
+            Asset asset = new Asset(sourceId, pageId, VIDEO_FRAME + page + "-" + frame.millis(), version,
+                    frameTitle(frame.millis()), "image/png", AssetKind.IMAGE, frame.png().length, sha256(frame.png()),
+                    clock.instant());
+            store.put(asset, frame.png());
+            list.append(frame.millis()).append('\n');
+        }
+        byte[] content = list.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        store.put(new Asset(sourceId, pageId, VIDEO_FRAMES + page, version, "Standbilder", "text/plain",
+                AssetKind.of("text/plain", "Standbilder.txt"), content.length, sha256(content), clock.instant()),
+                content);
+    }
+
+    /**
+     * Die abgelegten Standbilder eines Videos in dieser Fassung als Bilder der Seite, in zeitlicher Reihenfolge; leer,
+     * wenn es (noch) keine gibt. Liest nie von der Quelle: ihre Bytes liegen in der Ablage.
+     */
+    public List<HarvestSource.ViewImage> videoFrames(String sourceId, String pageId, String version) {
+        version = frameVersion(version);
+        String page = framePage(pageId);
+        Optional<Asset> list = store.find(sourceId, VIDEO_FRAMES + page, version);
+        if (list.isEmpty()) {
+            return List.of();
+        }
+        String text;
+        try {
+            text = new String(store.read(list.get()), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (AssetStoreException e) {
+            return List.of();
+        }
+        List<HarvestSource.ViewImage> frames = new java.util.ArrayList<>();
+        for (String line : text.split("\n")) {
+            if (line.isBlank()) {
+                continue;
+            }
+            long millis = Long.parseLong(line.strip());
+            String id = VIDEO_FRAME + page + "-" + millis;
+            frames.add(new HarvestSource.ViewImage(id + ".png", frameTitle(millis), id, "image/png", version));
+        }
+        return List.copyOf(frames);
+    }
+
+    /**
+     * Der Hash der Liste der Standbilder eines Videos in dieser Fassung, als Bezug der Bildanalyse für eine Seite ohne
+     * Text; leer ohne Standbilder.
+     */
+    public Optional<String> videoFramesInput(String sourceId, String pageId, String version) {
+        return store.find(sourceId, VIDEO_FRAMES + framePage(pageId), frameVersion(version)).map(Asset::sha256);
+    }
+
+    /** Die Fassung des Videos; eine Quelle ohne Fassung legt seine Standbilder unter einer festen ab. */
+    private static String frameVersion(String version) {
+        return version == null || version.isBlank() ? "unversioned" : version;
+    }
+
+    /** Eine kurze, stabile Kennung der Seite für die Pseudo-Anhänge; Anhangs-IDs gelten je Quelle. */
+    private static String framePage(String pageId) {
+        return sha256(pageId.getBytes(java.nio.charset.StandardCharsets.UTF_8)).substring("sha256:".length(),
+                "sha256:".length() + 16);
+    }
+
+    /** „Standbild 5:01“, mit Stunden ab einer Stunde. */
+    static String frameTitle(long millis) {
+        long seconds = millis / 1000;
+        String time = seconds >= 3600
+                ? String.format(Locale.ROOT, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+                : String.format(Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60);
+        return "Standbild " + time;
+    }
+
     /**
      * Die abgelegten Bytes zu {@code sha256}, dagegen geprüft; liest nie von der Quelle. Der Inhalt liegt nach seinem
      * Hash ab, daher auch ohne Version der Quelle und auch dann, wenn inzwischen eine neuere Version abgelegt ist.

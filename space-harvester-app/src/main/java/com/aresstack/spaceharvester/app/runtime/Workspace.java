@@ -665,6 +665,11 @@ public final class Workspace {
         return harvester.imageAnalysis().read(page.snapshot());
     }
 
+    /** Ob ein Vision-Modell eingestellt ist, das Bilder beschreiben kann. */
+    public boolean imagesAvailable() {
+        return harvester.imageAnalysis().available();
+    }
+
     /** Ob die Quelle für das Vision-Modell freigegeben ist; siehe {@code PageImageAnalysis#released}. */
     public boolean imagesReleased(String sourceId) {
         return harvester.imageAnalysis().released(sourceId);
@@ -688,6 +693,22 @@ public final class Workspace {
         PageImages images = harvester.imageAnalysis().describe(page.snapshot());
         harvester.enrichments().flush();
         return images;
+    }
+
+    /** Ob für die gespeicherte Fassung eines Videos schon Standbilder als Pseudo-Anhänge abgelegt sind. */
+    public boolean videoFramesStored(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        return !harvester.assets().videoFrames(sourceId, pageId, page.snapshot().revision()).isEmpty();
+    }
+
+    /**
+     * Legt Standbilder eines Videos (an seinen Folienwechseln) als Pseudo-Anhänge der Seite ab; „Bilder beschreiben“
+     * beschreibt sie danach wie die Bilder einer Seite. Braucht wie das Beschreiben die sync-Freigabe.
+     */
+    public void storeVideoFrames(String sourceId, String pageId, List<Assets.VideoFrame> frames) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        harvester.assets().putVideoFrames(sourceId, pageId, page.snapshot().revision(), frames);
     }
 
     /**

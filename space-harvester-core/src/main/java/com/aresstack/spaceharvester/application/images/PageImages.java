@@ -69,16 +69,24 @@ public record PageImages(State state, String reason, Enrichment result, List<Ima
      * @param text  der angezeigte Text aus derselben Payload oder {@code null}
      */
     public static PageImages read(PageKey key, List<Enrichments.View> views, PageText text) {
+        return read(key, views, text == null ? null : text.inputSha256());
+    }
+
+    /**
+     * Wie {@link #read(PageKey, List, PageText)} mit dem Eingabe-Hash, auf den sich das Ergebnis bezieht: der des
+     * Seitentextes oder bei einem Video der seiner Standbilder; {@code null} ohne beides.
+     */
+    public static PageImages read(PageKey key, List<Enrichments.View> views, String input) {
         Objects.requireNonNull(key, "key");
         Enrichments.View view = views.stream()
                 .filter(candidate -> ImagePayload.PROCESSOR.equals(candidate.enrichment().processorId())
                         && key.equals(candidate.enrichment().key()))
                 .findFirst().orElse(null);
         if (view == null) {
-            return missing(text == null ? NO_TEXT : NOT_ANALYSED);
+            return missing(input == null ? NO_TEXT : NOT_ANALYSED);
         }
         Enrichment result = view.enrichment();
-        if (text == null) {
+        if (input == null) {
             return new PageImages(State.MISSING, NO_TEXT, result, List.of(), result.warnings());
         }
         if (result.status() == Enrichment.Status.FAILED) {
@@ -91,7 +99,7 @@ public record PageImages(State state, String reason, Enrichment result, List<Ima
             return new PageImages(State.FAILED, null, result, List.of(), result.warnings());
         }
         boolean current = view.freshness() == Enrichment.Freshness.CURRENT
-                && result.inputSha256().equals(text.inputSha256())
+                && result.inputSha256().equals(input)
                 && !result.warnings().contains(PageImageAnalysis.PAGE_CHANGED);
         return new PageImages(current ? State.CURRENT : State.STALE, null, result, entries, result.warnings());
     }
