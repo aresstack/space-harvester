@@ -1965,8 +1965,10 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             assetsModel.set(overview);
-            if (videoFrames != null && ATTACHMENTS.equals(selectedTab())) {
-                fillVideoFrames();
+            if (videoFrames != null && ATTACHMENTS.equals(selectedTab()) && context.runtime() != null) {
+                // Unter „Anhänge“ bekommen die Marken ihre Standbilder, im Hintergrund und der Reihe nach.
+                prefetch(context.runtime()).focus(attachmentsOfKind(
+                        com.aresstack.spaceharvester.application.assets.AssetKind.MARK), null);
             }
             assetsHint.setText(Texts.count(overview.entries().size(), "Anhang", "Anhänge")
                     + (overview.listComplete() ? "" : " (Liste unvollständig)") + " · live, "
@@ -2460,42 +2462,62 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
-    /** Ob gerade Standbilder für die Platzhalter gezogen werden. */
-    private boolean fillingFrames;
+    /** Lädt die Anhänge der gezeigten Seite im Hintergrund vor; für welche Seite. */
+    private AttachmentPrefetch prefetch;
+    private String prefetchPage;
 
     /**
-     * Unter „Anhänge“: die Marken des gezeigten Videos mit Standbildern füllen, Bild für Bild im Hintergrund; die
-     * Liste zeigt sie nach und nach. Erst hier entstehen die Bilder.
+     * Der Vorlader der gezeigten Seite: lädt Anhänge und legt sie ab, Marken eines Videos bekommen dabei ihr
+     * Standbild aus einem offenen Player. Ein neuer für jede Seite.
      */
-    private void fillVideoFrames() {
-        AppRuntime runtime = context.runtime();
-        VideoFrameSource video = videoFrames;
-        if (runtime == null || video == null || fillingFrames) {
-            return;
+    private AttachmentPrefetch prefetch(AppRuntime runtime) {
+        String key = sourceId + "\n" + pageId;
+        if (prefetch != null && key.equals(prefetchPage)) {
+            return prefetch;
         }
-        fillingFrames = true;
-        Background.run(() -> {
-            List<Long> missing = runtime.workspace().missingVideoFrames(video.sourceId(), video.pageId());
-            int[] stored = {0};
-            VideoFrameGrabber.grab(video.reader(), video.size(), video.mediaType(), missing, frame -> {
-                runtime.workspace().storeVideoFrame(video.sourceId(), video.pageId(), frame);
-                // Die Liste lädt live: nur jedes zehnte Bild neu zeigen, den Rest am Ende.
-                if (++stored[0] % 10 == 0) {
-                    javax.swing.SwingUtilities.invokeLater(() -> attachmentsChanged(video));
+        if (prefetch != null) {
+            prefetch.close();
+        }
+        String source = sourceId;
+        String id = pageId;
+        VideoFrameSource video = videoFrames;
+        prefetchPage = key;
+        prefetch = new AttachmentPrefetch(new AttachmentPrefetch.Source() {
+            private VideoFrameGrabber.Session session;
+
+            @Override
+            public byte[] load(String attachment) throws Exception {
+                if (video != null && com.aresstack.spaceharvester.application.assets.Assets.videoMark(attachment)) {
+                    long millis = com.aresstack.spaceharvester.application.assets.Assets.markMillis(attachment);
+                    if (runtime.workspace().missingVideoFrames(source, id).contains(millis)) {
+                        if (session == null) {
+                            session = VideoFrameGrabber.Session.open(video.reader(), video.size(), video.mediaType(),
+                                    () -> video != videoFrames);
+                        }
+                        com.aresstack.spaceharvester.application.assets.Assets.VideoFrame frame = session.frame(millis);
+                        if (frame != null) {
+                            runtime.workspace().storeVideoFrame(source, id, frame);
+                        }
+                    }
                 }
-            }, (done, total) -> { }, () -> video != videoFrames);
-            return stored[0];
-        }, stored -> {
-            fillingFrames = false;
-            if (stored > 0 && video == videoFrames) {
-                attachmentsChanged(video);
+                return runtime.workspace().assetContent(source, id, attachment).content();
             }
-        }, error -> {
-            fillingFrames = false;
-            if (!(error instanceof java.util.concurrent.CancellationException) && video == videoFrames) {
-                feedback.problem(error, Problems.Step.PAGE);
+
+            @Override
+            public void idle() {
+                if (session != null) {
+                    session.close();
+                    session = null;
+                }
             }
-        });
+        }, PageDetailPanel::reason, () -> attachmentsChanged(video));
+        return prefetch;
+    }
+
+    /** Die Anhänge derselben Art in der Reihenfolge der Liste. */
+    private List<String> attachmentsOfKind(com.aresstack.spaceharvester.application.assets.AssetKind kind) {
+        return assetsModel.rows.stream().filter(entry -> entry.kind() == kind)
+                .map(entry -> entry.attachment().attachmentId()).toList();
     }
 
     /** Die Folien des gezeigten Videos haben sich unter „Anhänge“ geändert: Liste und Bilder gelten neu. */
@@ -2721,8 +2743,11 @@ public final class PageDetailPanel extends JPanel {
                 mark ? "image/png" : mediaType, file.fileSize() == null ? -1 : file.fileSize());
         String source = sourceId;
         boolean previews = runtime.workspace().attachmentPreviews(source);
+        // Der gezeigte zuerst, dann die übrigen derselben Art nach Abstand: Blättern soll nicht warten.
+        AttachmentPrefetch loader = prefetch(runtime);
+        loader.focus(attachmentsOfKind(entry.kind()), file.attachmentId());
         AttachmentViewerPanel viewer = new AttachmentViewerPanel(attachment,
-                attachmentLoader(runtime, source, pageId, previews, videoFrames), fileOpener, attachmentRenderer);
+                attachmentLoader(runtime, source, pageId, previews, loader), fileOpener, attachmentRenderer);
         viewer.neighbours(neighbours(file.attachmentId(), entry.kind()));
         showAttachmentOverlay(viewer, attachment.fileName());
         assets.getSelectionModel().setSelectionInterval(row, row);
@@ -2776,26 +2801,15 @@ public final class PageDetailPanel extends JPanel {
             + "erforderlich.";
 
     /**
-     * Holt Originaldatei und Vorschau über den Workspace, abseits des EDT; Fehler als lesbarer Grund. Eine Marke ohne
-     * Standbild bekommt es beim Öffnen: genau dieses wird aus dem Video gezogen und abgelegt.
+     * Holt die Originaldatei über den Vorlader (aus dem Speicher oder mit Vorrang geladen und abgelegt), die Vorschau
+     * über den Workspace, abseits des EDT; Fehler als lesbarer Grund.
      */
     private static ReaderAttachmentLoader attachmentLoader(AppRuntime runtime, String source, String id,
-                                                           boolean previews, VideoFrameSource video) {
+                                                           boolean previews, AttachmentPrefetch prefetch) {
         return new ReaderAttachmentLoader() {
             @Override
             public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
-                Background.run(() -> {
-                    String key = attachment.key();
-                    if (video != null && com.aresstack.spaceharvester.application.assets.Assets.videoMark(key)
-                            && runtime.workspace().missingVideoFrames(source, id).contains(
-                            com.aresstack.spaceharvester.application.assets.Assets.markMillis(key))) {
-                        VideoFrameGrabber.grab(video.reader(), video.size(), video.mediaType(),
-                                List.of(com.aresstack.spaceharvester.application.assets.Assets.markMillis(key)),
-                                frame -> runtime.workspace().storeVideoFrame(source, id, frame), (d, t) -> { },
-                                () -> false);
-                    }
-                    return runtime.workspace().assetContent(source, id, key).content();
-                }, done, error -> failed.accept(reason(error)));
+                prefetch.load(attachment.key(), done, failed);
             }
 
             @Override

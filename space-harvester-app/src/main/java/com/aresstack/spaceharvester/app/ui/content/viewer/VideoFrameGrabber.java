@@ -98,72 +98,140 @@ public final class VideoFrameGrabber {
         if (slides.isEmpty()) {
             return;
         }
-        if (!VlcRuntimeLocator.configure()) {
-            throw new IOException("VLC ist nicht verfügbar");
+        try (Session session = Session.open(reader, size, mediaType, cancelled)) {
+            for (int index = 0; index < slides.size(); index++) {
+                Assets.VideoFrame frame = session.frame(slides.get(index));
+                if (frame != null) {
+                    sink.frame(frame);
+                }
+                progress.frames(index + 1, slides.size());
+            }
         }
-        Surface surface = new Surface();
-        MediaPlayerFactory factory = new MediaPlayerFactory("--intf=dummy", "--no-audio", "--quiet",
-                "--no-video-title-show");
-        try (MediaStreamBridge bridge = new MediaStreamBridge(reader, size, mediaType)) {
-            EmbeddedMediaPlayer player = factory.mediaPlayers().newEmbeddedMediaPlayer();
+    }
+
+    /**
+     * Ein offener VLC-Player ohne Fenster für Standbilder eines Videos: springt nacheinander beliebige Folien an, ohne
+     * für jedes Bild neu zu starten. Nicht threadsicher; nie auf dem EDT.
+     */
+    public static final class Session implements AutoCloseable {
+
+        private final MediaPlayerFactory factory;
+        private final MediaStreamBridge bridge;
+        private final EmbeddedMediaPlayer player;
+        private final Surface surface = new Surface();
+        private final BooleanSupplier cancelled;
+
+        private Session(MediaPlayerFactory factory, MediaStreamBridge bridge, EmbeddedMediaPlayer player,
+                        BooleanSupplier cancelled) {
+            this.factory = factory;
+            this.bridge = bridge;
+            this.player = player;
+            this.cancelled = cancelled;
+        }
+
+        /**
+         * Startet das Video angehalten.
+         *
+         * @throws IOException           wenn VLC fehlt oder das Video nicht spielt
+         * @throws CancellationException wenn {@code cancelled} zutrifft
+         */
+        public static Session open(MediaStreamBridge.ChunkSource reader, long size, String mediaType,
+                                   BooleanSupplier cancelled) throws IOException {
+            if (!VlcRuntimeLocator.configure()) {
+                throw new IOException("VLC ist nicht verfügbar");
+            }
+            MediaPlayerFactory factory = new MediaPlayerFactory("--intf=dummy", "--no-audio", "--quiet",
+                    "--no-video-title-show");
+            MediaStreamBridge bridge = null;
+            Session session = null;
             try {
-                player.videoSurface().set(factory.videoSurfaces().newVideoSurface(surface, surface, true));
-                player.media().play(bridge.address().toASCIIString());
-                long until = System.currentTimeMillis() + FRAME_TIMEOUT_MILLIS;
-                while (surface.count() == 0 && System.currentTimeMillis() < until) {
-                    check(cancelled);
-                    sleep(50);
-                }
-                if (surface.count() == 0) {
-                    throw new IOException("Das Video spielt nicht");
-                }
-                // Erst angehalten zeigt VLC nach einem Sprung genau ein Bild; spielend kämen laufend neue.
-                for (int attempt = 0; attempt < 50 && player.status().isPlaying(); attempt++) {
-                    if (attempt % 10 == 0) {
-                        player.controls().setPause(true);
+                bridge = new MediaStreamBridge(reader, size, mediaType);
+                session = new Session(factory, bridge, factory.mediaPlayers().newEmbeddedMediaPlayer(), cancelled);
+                session.start();
+                return session;
+            } catch (IOException | RuntimeException failure) {
+                if (session != null) {
+                    session.close();
+                } else {
+                    if (bridge != null) {
+                        bridge.close();
                     }
-                    sleep(100);
+                    factory.release();
                 }
-                sleep(QUIET_MILLIS);
-                for (int index = 0; index < slides.size(); index++) {
-                    check(cancelled);
-                    long slide = slides.get(index);
-                    long position = slide + SETTLE_MILLIS;
-                    long seen = surface.count();
-                    // Angehalten springt VLC nicht zuverlässig weiter: springen, abspielen, das erste Bild an der
-                    // Stelle nehmen, wieder anhalten. Die Folie steht dort noch eine Weile, ein Bild später ist gleich.
-                    player.controls().setTime(position);
-                    player.controls().setPause(false);
-                    // VLC meldet die neue Position schon vor dem ersten Bild von dort; Bilder aus der Zeit vor dem
-                    // Sprung sind noch unterwegs. Erst nach einigen Bildern Wiedergabe gilt eines.
-                    BufferedImage image = null;
-                    long frameUntil = System.currentTimeMillis() + FRAME_TIMEOUT_MILLIS;
-                    int played = 0;
-                    while (true) {
-                        BufferedImage candidate = surface.awaitNew(seen, frameUntil, cancelled);
-                        if (candidate == null) {
-                            break;
-                        }
-                        image = candidate;
-                        seen = surface.count();
-                        long time = player.status().time();
-                        if (++played >= FRAMES_AFTER_SEEK && time >= position - EARLY_TOLERANCE_MILLIS
-                                && time <= position + POSITION_TOLERANCE_MILLIS) {
-                            break;
-                        }
-                    }
+                throw failure;
+            }
+        }
+
+        private void start() throws IOException {
+            player.videoSurface().set(factory.videoSurfaces().newVideoSurface(surface, surface, true));
+            player.media().play(bridge.address().toASCIIString());
+            long until = System.currentTimeMillis() + FRAME_TIMEOUT_MILLIS;
+            while (surface.count() == 0 && System.currentTimeMillis() < until) {
+                check(cancelled);
+                sleep(50);
+            }
+            if (surface.count() == 0) {
+                throw new IOException("Das Video spielt nicht");
+            }
+            // Erst angehalten zeigt VLC nach einem Sprung genau ein Bild; spielend kämen laufend neue.
+            for (int attempt = 0; attempt < 50 && player.status().isPlaying(); attempt++) {
+                if (attempt % 10 == 0) {
                     player.controls().setPause(true);
-                    if (image != null) {
-                        sink.frame(new Assets.VideoFrame(slide, png(image)));
+                }
+                sleep(100);
+            }
+            sleep(QUIET_MILLIS);
+        }
+
+        /**
+         * Das Standbild der Folie, die an {@code slide} beginnt, {@link #SETTLE_MILLIS} danach; {@code null}, wenn VLC
+         * dort kein Bild liefert.
+         */
+        public Assets.VideoFrame frame(long slide) throws IOException {
+            check(cancelled);
+            long position = slide + SETTLE_MILLIS;
+            long seen = surface.count();
+            // Angehalten springt VLC nicht zuverlässig weiter: springen, abspielen, das erste Bild an der Stelle
+            // nehmen, wieder anhalten. Die Folie steht dort noch eine Weile, ein Bild später ist gleich.
+            player.controls().setTime(position);
+            player.controls().setPause(false);
+            // VLC meldet die neue Position schon vor dem ersten Bild von dort; Bilder aus der Zeit vor dem Sprung sind
+            // noch unterwegs. Erst nach einigen Bildern Wiedergabe gilt eines.
+            BufferedImage image = null;
+            long frameUntil = System.currentTimeMillis() + FRAME_TIMEOUT_MILLIS;
+            int played = 0;
+            try {
+                while (true) {
+                    BufferedImage candidate = surface.awaitNew(seen, frameUntil, cancelled);
+                    if (candidate == null) {
+                        break;
                     }
-                    progress.frames(index + 1, slides.size());
+                    image = candidate;
+                    seen = surface.count();
+                    long time = player.status().time();
+                    if (++played >= FRAMES_AFTER_SEEK && time >= position - EARLY_TOLERANCE_MILLIS
+                            && time <= position + POSITION_TOLERANCE_MILLIS) {
+                        break;
+                    }
                 }
             } finally {
+                player.controls().setPause(true);
+            }
+            return image == null ? null : new Assets.VideoFrame(slide, png(image));
+        }
+
+        @Override
+        public void close() {
+            try {
                 player.controls().stop();
                 player.release();
+            } finally {
+                try {
+                    bridge.close();
+                } finally {
+                    factory.release();
+                }
             }
-        } finally {
-            factory.release();
         }
     }
 
