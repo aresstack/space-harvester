@@ -697,6 +697,20 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #describeImages(String, String)}, {@code once} wie {@link #describeImagesOnce}; {@code progress}
+     * erfährt jedes Bild, sobald es beschrieben ist (im aufrufenden Thread).
+     */
+    public PageImages describeImages(String sourceId, String pageId, boolean once,
+                                     java.util.function.Consumer<ImagePayload.Entry> progress) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        PageImages images = once ? harvester.imageAnalysis().describeOnce(page.snapshot(), progress)
+                : harvester.imageAnalysis().describe(page.snapshot(), progress);
+        harvester.enrichments().flush();
+        return images;
+    }
+
+    /**
      * Die gespeicherten Marken der gespeicherten Fassung eines Videos, wie der Player sie gefunden hat; leer, solange
      * er keine gefunden hat. Fragt die Quelle nicht.
      */

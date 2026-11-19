@@ -132,7 +132,15 @@ public class PageImageAnalysis {
      * @throws SourceAccessException     wenn die Lese-Ansicht nicht ladbar ist
      */
     public PageImages describe(PageSnapshot snapshot) {
-        return describe(snapshot, false);
+        return describe(snapshot, false, entry -> { });
+    }
+
+    /**
+     * Wie {@link #describe(PageSnapshot)}; {@code progress} erfährt jeden Eintrag, sobald er fertig ist, im
+     * aufrufenden Thread, damit die Oberfläche Beschreibungen schon während des Laufs zeigt.
+     */
+    public PageImages describe(PageSnapshot snapshot, java.util.function.Consumer<ImagePayload.Entry> progress) {
+        return describe(snapshot, false, progress);
     }
 
     /**
@@ -141,10 +149,16 @@ public class PageImageAnalysis {
      * Modell, eine Freigabe wird nicht gespeichert; die nächste Seite derselben Quelle bleibt gesperrt.
      */
     public PageImages describeOnce(PageSnapshot snapshot) {
-        return describe(snapshot, true);
+        return describe(snapshot, true, entry -> { });
     }
 
-    private PageImages describe(PageSnapshot snapshot, boolean releasedOnce) {
+    /** Wie {@link #describeOnce(PageSnapshot)} mit {@code progress} wie bei {@link #describe(PageSnapshot, java.util.function.Consumer)}. */
+    public PageImages describeOnce(PageSnapshot snapshot, java.util.function.Consumer<ImagePayload.Entry> progress) {
+        return describe(snapshot, true, progress);
+    }
+
+    private PageImages describe(PageSnapshot snapshot, boolean releasedOnce,
+                                java.util.function.Consumer<ImagePayload.Entry> progress) {
         PageKey key = snapshot.key();
         ImageDescriber model = assets.describerInUse().orElseThrow(() -> new ImageDescriptionException(
                 ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
@@ -168,7 +182,9 @@ public class PageImageAnalysis {
             }
         }
         for (int index = 0; index < items.size(); index++) {
-            entries.add(describe(index, key, items.get(index), releasedOnce));
+            ImagePayload.Entry entry = describe(index, key, items.get(index), releasedOnce);
+            entries.add(entry);
+            progress.accept(entry);
         }
         Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, version, input.sha256(),
                 snapshot.revision(), Enrichment.Status.OK, ImagePayload.write(entries, versions), warnings, null,

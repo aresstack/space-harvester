@@ -2395,8 +2395,29 @@ public final class PageDetailPanel extends JPanel {
         DeliveredPage shown = page;
         images.describing(true);
         feedback.working("Bilder werden beschrieben …");
-        Background.run(() -> imageRows(runtime, source, id, once ? runtime.workspace().describeImagesOnce(source, id)
-                : runtime.workspace().describeImages(source, id)), found -> {
+        int[] done = {0};
+        Background.run(() -> imageRows(runtime, source, id, runtime.workspace().describeImages(source, id, once,
+                entry -> {
+                    // Gestreamt: jede fertige Beschreibung erscheint sofort in ihrer Zeile und im offenen Viewer.
+                    ImagesTab.Image image = imageOf(entry);
+                    Icon icon = entry.sha256() == null ? null
+                            : preview(() -> runtime.workspace().storedImage(source, entry));
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        if (shown != page) {
+                            return;
+                        }
+                        done[0]++;
+                        images.update(entry.index(), image, icon);
+                        if (shownImages != null && entry.index() < shownImages.images().size()) {
+                            liveImages.put(entry.index(), image);
+                            if (entry.sha256() != null) {
+                                liveBytes.put(entry.index(), () -> runtime.workspace().storedImage(source, entry));
+                            }
+                            imageUpdated.accept(entry.index());
+                        }
+                        feedback.working("Bilder werden beschrieben … " + done[0]);
+                    });
+                })), found -> {
             // Der Reiter gehört allen Seiten: auch nach einem Seitenwechsel wieder freigeben.
             images.describing(false);
             if (shown != page) {
@@ -2597,10 +2618,7 @@ public final class PageDetailPanel extends JPanel {
             String version = entry.assetId() == null ? null : versions.get(entry.assetId());
             bytes.add(() -> entry.sha256() == null ? java.util.Optional.empty()
                     : runtime.workspace().storedImage(sourceId, entry, version));
-            String name = entry.title().isBlank() ? entry.filename().isBlank() ? "Bild " + (entry.index() + 1)
-                    : entry.filename() : entry.title();
-            rows.add(new ImagesTab.Image(name, ImagesTab.Status.valueOf(entry.status().name()), entry.description(),
-                    entry.reason(), null));
+            rows.add(imageOf(entry));
         }
         return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), found.warnings(),
                 // Freigegeben ist die Quelle oder die Seite selbst (Liste freigegebener Seiten, ADR 0028).
@@ -2648,8 +2666,23 @@ public final class PageDetailPanel extends JPanel {
                              List<java.util.function.Supplier<java.util.Optional<byte[]>>> bytes) {
     }
 
+    /** Eine Zeile des Reiters aus einem Eintrag des Core, noch ohne Vorschau. */
+    private static ImagesTab.Image imageOf(ImagePayload.Entry entry) {
+        String name = entry.title().isBlank() ? entry.filename().isBlank() ? "Bild " + (entry.index() + 1)
+                : entry.filename() : entry.title();
+        return new ImagesTab.Image(name, ImagesTab.Status.valueOf(entry.status().name()), entry.description(),
+                entry.reason(), null);
+    }
+
     /** Die gezeigten Bilder, für den großen Viewer. */
     private ImageRows shownImages;
+    /** Während eines Laufs fertig beschriebene Bilder je Zeile, bis die Liste neu gezeigt wird. */
+    private final java.util.Map<Integer, ImagesTab.Image> liveImages = new java.util.HashMap<>();
+    /** Die abgelegten Bytes dieser fertig beschriebenen Bilder. */
+    private final java.util.Map<Integer, java.util.function.Supplier<java.util.Optional<byte[]>>> liveBytes =
+            new java.util.HashMap<>();
+    /** Meldet dem offenen Viewer, dass ein Bild eben beschrieben wurde. */
+    private java.util.function.IntConsumer imageUpdated = index -> { };
     /** Zählt jedes Zeigen, damit ein später fertiger Lauf keine fremden Rahmen füllt. */
     private int imageFill;
 
@@ -2661,6 +2694,8 @@ public final class PageDetailPanel extends JPanel {
         images.released(found.released());
         images.show(found.state(), found.reason(), found.warnings(), found.images());
         shownImages = found;
+        liveImages.clear();
+        liveBytes.clear();
         int fill = ++imageFill;
         Background.run(() -> {
             for (int index = 0; index < found.bytes().size() && fill == imageFill; index++) {
@@ -2701,8 +2736,10 @@ public final class PageDetailPanel extends JPanel {
         body.add(south, BorderLayout.SOUTH);
         java.util.function.IntConsumer[] show = new java.util.function.IntConsumer[1];
         AttachmentViewerPanel[] viewer = new AttachmentViewerPanel[1];
+        int[] showing = {index};
         show[0] = at -> {
-            ImagesTab.Image image = found.images().get(at);
+            showing[0] = at;
+            ImagesTab.Image image = liveImages.getOrDefault(at, found.images().get(at));
             if (viewer[0] != null) {
                 body.remove(viewer[0]);
                 viewer[0].close();
@@ -2711,7 +2748,10 @@ public final class PageDetailPanel extends JPanel {
             viewer[0] = new AttachmentViewerPanel(picture, new ReaderAttachmentLoader() {
                 @Override
                 public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
-                    Background.run(() -> found.bytes().get(at).get().orElseThrow(() -> new IllegalStateException(
+                    // Auf dem EDT gewählt: ein eben beschriebenes Bild liegt inzwischen ab.
+                    java.util.function.Supplier<java.util.Optional<byte[]>> bytes =
+                            liveBytes.getOrDefault(at, found.bytes().get(at));
+                    Background.run(() -> bytes.get().orElseThrow(() -> new IllegalStateException(
                             "Das Bild ist noch nicht abgelegt.")), done, error -> failed.accept(reason(error)));
                 }
             }, fileOpener, attachmentRenderer);
@@ -2745,9 +2785,23 @@ public final class PageDetailPanel extends JPanel {
             viewer[0].requestFocusInWindow();
         };
         show[0].accept(index);
-        com.aresstack.spaceharvester.app.ui.Dialogs.viewSized(this, "Bilder der Seite", body, "analysis.images", 0.8);
-        if (viewer[0] != null) {
-            viewer[0].close();
+        // Wird das gezeigte Bild gerade beschrieben, erscheint seine Beschreibung sofort im Viewer.
+        imageUpdated = at -> {
+            if (at == showing[0]) {
+                ImagesTab.Image image = liveImages.get(at);
+                heading.setText(image.name() + " · " + ImagesTab.statusText(image));
+                text.setText(image.description() == null ? "" : image.description());
+                text.setCaretPosition(0);
+            }
+        };
+        try {
+            com.aresstack.spaceharvester.app.ui.Dialogs.viewSized(this, "Bilder der Seite", body, "analysis.images",
+                    0.8);
+        } finally {
+            imageUpdated = at -> { };
+            if (viewer[0] != null) {
+                viewer[0].close();
+            }
         }
     }
 

@@ -70,6 +70,9 @@ final class ImagesTab extends JPanel {
     private boolean released = true;
     /** Die Rahmen der Vorschauen in der Reihenfolge der Bilder; gefüllt werden sie nach dem Zeigen. */
     private final List<JLabel> previews = new ArrayList<>();
+    /** Stand und Beschreibung je Zeile, damit eine fertige Beschreibung sofort erscheint. */
+    private final List<JLabel> statuses = new ArrayList<>();
+    private final List<JTextArea> descriptions = new ArrayList<>();
     private java.util.function.IntConsumer onOpen = index -> { };
     static final String PREVIEW_LOADING = "Lädt …";
     static final String NO_PREVIEW = "Keine Vorschau";
@@ -106,6 +109,24 @@ final class ImagesTab extends JPanel {
     /** {@code listener} öffnet das Bild dieser Zeile groß, etwa um seine Beschreibung zu prüfen. */
     void onOpen(java.util.function.IntConsumer listener) {
         onOpen = Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * Zeigt ein eben beschriebenes Bild in seiner Zeile, noch während die übrigen beschrieben werden: Stand,
+     * Beschreibung und, wenn vorhanden, die Vorschau.
+     */
+    void update(int index, Image image, Icon icon) {
+        if (index < 0 || index >= statuses.size()) {
+            return;
+        }
+        statuses.get(index).setText(statusText(image));
+        descriptions.get(index).setText(image.description() == null ? "" : image.description());
+        descriptions.get(index).setForeground(Comic.INK);
+        if (icon != null) {
+            preview(index, icon);
+        }
+        list.revalidate();
+        list.repaint();
     }
 
     /** Füllt den Rahmen der Vorschau eines Bildes; {@code null}: es gibt keine. */
@@ -189,6 +210,8 @@ final class ImagesTab extends JPanel {
         head.status(stateText(current), tone);
         list.removeAll();
         previews.clear();
+        statuses.clear();
+        descriptions.clear();
         lines.clear();
         copyLines.clear();
         boolean stale = current == PassagesTab.State.STALE;
@@ -232,6 +255,7 @@ final class ImagesTab extends JPanel {
         JLabel name = Comic.text(image.name());
         name.setFont(Comic.semiBold(13f));
         JLabel status = Comic.muted(statusText(image) + (stale ? " · Veraltet" : ""));
+        statuses.add(status);
         JPanel head = new JPanel(new BorderLayout(8, 0));
         head.setOpaque(false);
         head.add(name, BorderLayout.WEST);
@@ -244,6 +268,7 @@ final class ImagesTab extends JPanel {
         description.setFont(Comic.regular(13f));
         // Veraltete Beschreibungen bleiben lesbar, aber ausgegraut.
         description.setForeground(stale ? Comic.MUTED : Comic.INK);
+        descriptions.add(description);
         JPanel lines = new JPanel(new BorderLayout(0, 4));
         lines.setOpaque(false);
         lines.add(head, BorderLayout.NORTH);
