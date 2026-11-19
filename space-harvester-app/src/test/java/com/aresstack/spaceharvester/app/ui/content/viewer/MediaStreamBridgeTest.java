@@ -56,6 +56,61 @@ class MediaStreamBridgeTest {
         }
     }
 
+    /**
+     * A non-interleaved MP4 makes VLC jump between two file regions; jumping back must be served from the
+     * chunks read ahead instead of waiting for another source round trip.
+     */
+    @Test
+    void readsAheadSoThatAJumpBackIsServedWithoutAnotherSourceRead() throws Exception {
+        int chunk = MediaStreamBridge.CHUNK_BYTES;
+        byte[] content = new byte[chunk * 12];
+        new java.util.Random(1).nextBytes(content);
+        java.util.Set<Long> requested = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        try (MediaStreamBridge bridge = new MediaStreamBridge((offset, length) -> {
+            requested.add(offset);
+            return java.util.Arrays.copyOfRange(content, (int) offset, (int) offset + length);
+        }, content.length, "video/mp4")) {
+            HttpURLConnection first = connection(bridge.address().toURL(), "GET", "bytes=100-199");
+            assertThat(first.getInputStream().readAllBytes())
+                    .isEqualTo(java.util.Arrays.copyOfRange(content, 100, 200));
+            first.disconnect();
+            long deadline = System.currentTimeMillis() + 5000;
+            while (requested.size() < 1 + MediaStreamBridge.READ_AHEAD_CHUNKS && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20);
+            }
+            assertThat(requested).hasSize(1 + MediaStreamBridge.READ_AHEAD_CHUNKS);
+
+            int before = requested.size();
+            int from = chunk * 3 + 17;
+            HttpURLConnection jump = connection(bridge.address().toURL(), "GET",
+                    "bytes=" + from + "-" + (from + chunk));
+            assertThat(jump.getInputStream().readAllBytes())
+                    .isEqualTo(java.util.Arrays.copyOfRange(content, from, from + chunk + 1));
+            jump.disconnect();
+            assertThat(requested).contains(0L, (long) chunk * 3, (long) chunk * 4);
+            assertThat(requested.size()).isLessThanOrEqualTo(before + 4);
+        }
+    }
+
+    @Test
+    void retriesAChunkWhoseSourceReadFailed() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        byte[] content = "abcdefghijklmnopqrstuvwxyz".getBytes(StandardCharsets.US_ASCII);
+        try (MediaStreamBridge bridge = new MediaStreamBridge((offset, length) -> {
+            if (calls.incrementAndGet() == 1) {
+                throw new java.io.IOException("temporarily unavailable");
+            }
+            return java.util.Arrays.copyOfRange(content, (int) offset, (int) offset + length);
+        }, content.length, "video/mp4")) {
+            HttpURLConnection failed = connection(bridge.address().toURL(), "GET", "bytes=0-3");
+            assertThat(failed.getResponseCode()).isEqualTo(502);
+            failed.disconnect();
+            HttpURLConnection retried = connection(bridge.address().toURL(), "GET", "bytes=0-3");
+            assertThat(retried.getInputStream().readAllBytes()).isEqualTo("abcd".getBytes(StandardCharsets.US_ASCII));
+            retried.disconnect();
+        }
+    }
+
     private static HttpURLConnection connection(URL url, String method, String range) throws Exception {
         HttpURLConnection request = (HttpURLConnection) url.openConnection();
         request.setRequestMethod(method);
