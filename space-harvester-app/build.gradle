@@ -120,6 +120,9 @@ tasks.named('bootJar') {
     }
 }
 
+// Include the pinned Whisper model in the executable Boot JAR, not as an extra ZIP.
+apply from: rootProject.file('gradle/whisper-model.gradle')
+
 tasks.named('jar') {
     enabled = false
 }

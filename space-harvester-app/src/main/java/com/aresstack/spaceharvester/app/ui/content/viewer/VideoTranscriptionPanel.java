@@ -1,140 +1,111 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
 import com.aresstack.spaceharvester.app.transcription.TranscribeAudioUseCase;
-import com.aresstack.spaceharvester.app.transcription.TranscriptionStatusListener;
 import com.aresstack.spaceharvester.app.transcription.TranscriptSegment;
-import com.aresstack.spaceharvester.app.transcription.WhisperSpeechTranscriber;
+import com.aresstack.spaceharvester.app.transcription.TranscriptionStatusListener;
+import com.aresstack.spaceharvester.app.transcription.WhisperModelLocation;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
-import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
-import javax.swing.SwingWorker;
 import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
 import java.awt.BorderLayout;
-import java.awt.Color;
 import java.awt.FlowLayout;
-import java.net.URI;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 
 /**
- * Display provisional Whisper recognition results separately from media playback.
- * Keep remote credentials outside the transcript view and never index draft text automatically.
+ * Offer explicit local transcription from the text tab for one selected MP4.
+ * Never fetch the original video or automatically index the resulting text.
  */
-final class VideoTranscriptionPanel extends JPanel implements AutoCloseable {
-
-    private static final Color BACKGROUND = new Color(0x171E27);
-    private static final Color FOREGROUND = new Color(0xE5EDF6);
+public final class VideoTranscriptionPanel extends JPanel {
 
     private final TranscribeAudioUseCase transcription;
-    private final JTextArea text = new JTextArea();
-    private final JButton chooseModel = new JButton("Whisper-Modell wählen");
-    private final JButton transcribe = new JButton("Transkribieren");
+    private final JButton start = new JButton("Transkript erzeugen");
     private final JButton cancel = new JButton("Abbrechen");
-    private final JLabel status = new JLabel("Whisper-Transkription ist noch nicht gestartet.");
-    private Path modelDirectory = defaultModelDirectory();
-    private URI audioSource;
+    private final JTextArea transcript = new JTextArea();
+    private final JLabel status = new JLabel("Transkription noch nicht gestartet.");
+    private VideoTranscriptSource videoSource;
     private SwingWorker<Void, TranscriptSegment> worker;
-    private boolean closed;
 
-    VideoTranscriptionPanel(TranscribeAudioUseCase transcription) {
-        super(new BorderLayout(0, 8));
+    public VideoTranscriptionPanel(TranscribeAudioUseCase transcription) {
+        super(new BorderLayout(0, 12));
         this.transcription = transcription;
-        setOpaque(true);
-        setBackground(BACKGROUND);
-        setBorder(BorderFactory.createEmptyBorder(12, 15, 10, 15));
+        setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 7, 0));
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         actions.setOpaque(false);
-        actions.add(chooseModel);
-        actions.add(transcribe);
+        actions.add(start);
         actions.add(cancel);
         add(actions, BorderLayout.NORTH);
 
-        text.setEditable(false);
-        text.setLineWrap(true);
-        text.setWrapStyleWord(true);
-        text.setBackground(new Color(0x253241));
-        text.setForeground(FOREGROUND);
-        text.setCaretColor(FOREGROUND);
-        text.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-        text.setText("Die Sprache wird lokal mit Whisper erkannt. "
-                + "Die Zeitmarken kennzeichnen 30-Sekunden-Abschnitte, nicht einzelne Wörter.");
-        JScrollPane scroll = new JScrollPane(text);
-        scroll.setBorder(BorderFactory.createEmptyBorder());
-        add(scroll, BorderLayout.CENTER);
-
-        status.setForeground(FOREGROUND);
+        transcript.setEditable(false);
+        transcript.setLineWrap(true);
+        transcript.setWrapStyleWord(true);
+        transcript.setFont(transcript.getFont().deriveFont(15f));
+        transcript.setText("Klicke auf „Transkript erzeugen“, um die MP4-Audiospur lokal "
+                + "mit Whisper zu transkribieren.");
+        add(new JScrollPane(transcript), BorderLayout.CENTER);
         add(status, BorderLayout.SOUTH);
 
-        chooseModel.addActionListener(event -> selectModelDirectory());
-        transcribe.addActionListener(event -> startTranscription());
+        start.addActionListener(event -> startTranscription());
         cancel.addActionListener(event -> cancelTranscription());
-        cancel.setEnabled(false);
-        updateAvailableActions();
+        updateActions();
     }
 
-    void setAudioSource(URI audioSource) {
-        if (worker != null) {
-            cancelTranscription();
+    public void setVideoSource(VideoTranscriptSource source) {
+        cancelTranscription();
+        if (videoSource != null) {
+            videoSource.close();
         }
-        this.audioSource = audioSource;
-        updateAvailableActions();
-    }
-
-    private void selectModelDirectory() {
-        JFileChooser chooser = new JFileChooser();
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        if (modelDirectory != null) {
-            chooser.setCurrentDirectory(modelDirectory.toFile());
-        }
-        chooser.setDialogTitle("Ordner mit dem Whisper-Tiny-Modell auswählen");
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
-            return;
-        }
-        modelDirectory = chooser.getSelectedFile().toPath();
-        if (WhisperSpeechTranscriber.isModelAvailable(modelDirectory)) {
-            status.setText("Whisper-Modell bereit: " + modelDirectory.getFileName());
-        } else {
-            status.setText("Modell fehlt: config.json, model.safetensors, tokenizer.json oder vocab.json");
-        }
-        updateAvailableActions();
+        videoSource = source;
+        transcript.setText("Klicke auf „Transkript erzeugen“, um die MP4-Audiospur lokal "
+                + "mit Whisper zu transkribieren.");
+        status.setText("Transkription noch nicht gestartet.");
+        updateActions();
     }
 
     private void startTranscription() {
-        if (closed || worker != null || audioSource == null) {
+        if (worker != null || videoSource == null) {
             return;
         }
-        if (!WhisperSpeechTranscriber.isModelAvailable(modelDirectory)) {
-            selectModelDirectory();
-            if (!WhisperSpeechTranscriber.isModelAvailable(modelDirectory)) {
-                return;
-            }
-        }
-        URI requestedSource = audioSource;
-        Path requestedModel = modelDirectory;
-        text.setText("");
-        status.setText("Audio-only-MP4 wird lokal zu 16-kHz-PCM dekodiert …");
-        updateAvailableActions();
+        VideoTranscriptSource requestedSource = videoSource;
+        transcript.setText("");
+        status.setText("Whisper-Modell wird aus dem Anwendungs-JAR bereitgestellt …");
         worker = new SwingWorker<Void, TranscriptSegment>() {
             @Override
             protected Void doInBackground() throws Exception {
+                if (isCancelled()) {
+                    return null;
+                }
+                Path model = WhisperModelLocation.resolve();
+                if (isCancelled()) {
+                    return null;
+                }
+                SwingUtilities.invokeLater(() -> {
+                    if (worker == this) {
+                        status.setText("MP4-Audiospur wird ohne Videodaten vorbereitet …");
+                    }
+                });
+                java.net.URI audioOnly = requestedSource.openAudioOnly();
+                if (isCancelled()) {
+                    return null;
+                }
                 SwingWorker<Void, TranscriptSegment> active = this;
-                transcription.execute(requestedSource, requestedModel, this::isCancelled,
-                        segment -> publish(segment), new TranscriptionStatusListener() {
+                transcription.execute(audioOnly, model, this::isCancelled, this::publish,
+                        new TranscriptionStatusListener() {
                             @Override
                             public void onDecodedSeconds(long seconds) {
                                 SwingUtilities.invokeLater(() -> {
-                                    if (!closed && worker == active) {
+                                    if (worker == active) {
                                         status.setText(String.format(java.util.Locale.ROOT,
-                                                "Audio dekodiert: %d:%02d Minuten", seconds / 60, seconds % 60));
+                                                "Audiodekodierung: %d:%02d Minuten", seconds / 60, seconds % 60));
                                     }
                                 });
                             }
@@ -142,7 +113,7 @@ final class VideoTranscriptionPanel extends JPanel implements AutoCloseable {
                             @Override
                             public void onRecognitionStarted() {
                                 SwingUtilities.invokeLater(() -> {
-                                    if (!closed && worker == active) {
+                                    if (worker == active) {
                                         status.setText("Whisper transkribiert die Audiospur …");
                                     }
                                 });
@@ -153,27 +124,26 @@ final class VideoTranscriptionPanel extends JPanel implements AutoCloseable {
 
             @Override
             protected void process(List<TranscriptSegment> segments) {
-                if (closed || isCancelled()) {
+                if (worker != this || isCancelled()) {
                     return;
                 }
                 for (TranscriptSegment segment : segments) {
-                    text.append("[" + segment.timeLabel() + "] " + segment.text() + "\n\n");
+                    transcript.append("[" + segment.timeLabel() + "] " + segment.text() + "\n\n");
                 }
-                status.setText("Whisper erkennt die gesprochenen Inhalte …");
             }
 
             @Override
             protected void done() {
-                if (closed || worker != this) {
+                if (worker != this) {
                     return;
                 }
                 worker = null;
-                updateAvailableActions();
+                updateActions();
                 try {
                     get();
-                    status.setText("Transkription abgeschlossen. Der Text ist noch nicht indexiert.");
-                    if (text.getText().isEmpty()) {
-                        text.setText("(Keine Sprache erkannt)");
+                    status.setText("Transkription abgeschlossen (noch nicht im Suchindex).");
+                    if (transcript.getText().isEmpty()) {
+                        transcript.setText("(Keine Sprache erkannt)");
                     }
                 } catch (CancellationException cancelled) {
                     status.setText("Transkription abgebrochen.");
@@ -181,14 +151,13 @@ final class VideoTranscriptionPanel extends JPanel implements AutoCloseable {
                     Thread.currentThread().interrupt();
                     status.setText("Transkription unterbrochen.");
                 } catch (ExecutionException failure) {
-                    String reason = failure.getCause() == null ? "Unbekannter Fehler"
-                            : failure.getCause().getMessage();
                     status.setText("Transkription fehlgeschlagen.");
-                    text.append("\nFehler: " + reason);
+                    Throwable cause = failure.getCause();
+                    transcript.append("\nFehler: " + (cause == null ? "Unbekannter Fehler" : cause.getMessage()));
                 }
             }
         };
-        updateAvailableActions();
+        updateActions();
         worker.execute();
     }
 
@@ -196,36 +165,13 @@ final class VideoTranscriptionPanel extends JPanel implements AutoCloseable {
         if (worker != null) {
             worker.cancel(true);
             worker = null;
+            status.setText("Transkription abgebrochen.");
         }
-        status.setText("Transkription abgebrochen.");
-        updateAvailableActions();
+        updateActions();
     }
 
-    private void updateAvailableActions() {
-        chooseModel.setEnabled(!closed && worker == null);
-        transcribe.setEnabled(!closed && worker == null && audioSource != null
-                && WhisperSpeechTranscriber.isModelAvailable(modelDirectory));
-        cancel.setEnabled(!closed && worker != null);
-    }
-
-    private static Path defaultModelDirectory() {
-        String configured = System.getProperty("spaceharvester.whisper.model");
-        if (configured != null && !configured.trim().isEmpty()) {
-            return Paths.get(configured.trim());
-        }
-        Path personal = Paths.get(System.getProperty("user.home", "."), ".space-harvester",
-                "models", "whisper-tiny");
-        if (WhisperSpeechTranscriber.isModelAvailable(personal)) {
-            return personal;
-        }
-        return Paths.get("model", "whisper-tiny").toAbsolutePath();
-    }
-
-    @Override
-    public void close() {
-        closed = true;
-        cancelTranscription();
-        audioSource = null;
-        updateAvailableActions();
+    private void updateActions() {
+        start.setEnabled(worker == null && videoSource != null);
+        cancel.setEnabled(worker != null);
     }
 }

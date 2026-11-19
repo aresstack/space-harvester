@@ -20,6 +20,11 @@ import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderFileOpener;
 import com.aresstack.spaceharvester.app.ui.content.viewer.VideoViewerPanel;
+import com.aresstack.spaceharvester.app.ui.content.viewer.VideoTranscriptSource;
+import com.aresstack.spaceharvester.app.ui.content.viewer.VideoTranscriptionPanel;
+import com.aresstack.spaceharvester.app.transcription.TranscribeAudioUseCase;
+import com.aresstack.spaceharvester.app.transcription.VlcPcmAudioDecoder;
+import com.aresstack.spaceharvester.app.transcription.WhisperSpeechTranscriber;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
@@ -203,6 +208,12 @@ public final class PageDetailPanel extends JPanel {
         }
     };
     /** Reiter „Text“: der Lesetext mit dem Navigationsbanner der Dokumentnavigation darüber (Kopie aus dem EAC). */
+    private static final String TEXT_READER_CARD = "reader";
+    private static final String TEXT_VIDEO_TRANSCRIPT_CARD = "video-transcript";
+    private final java.awt.CardLayout textCardLayout = new java.awt.CardLayout();
+    private final JPanel textContents = new JPanel(textCardLayout);
+    private final VideoTranscriptionPanel videoTranscript = new VideoTranscriptionPanel(
+            new TranscribeAudioUseCase(new VlcPcmAudioDecoder(), new WhisperSpeechTranscriber()));
     private final NavigableDocumentPage readerPage;
     private final JLabel acronymHint = Comic.muted(" ");
     private final JLabel acronymDetail = Comic.muted(" ");
@@ -426,7 +437,9 @@ public final class PageDetailPanel extends JPanel {
         readerPanel.add(acronymBar, BorderLayout.NORTH);
         // Der Banner liegt als eigene Ebene über dem Lesetext und nimmt ihm keine Breite.
         readerPage = new NavigableDocumentPage(Comic.scroll(reader), reader, READER_PADDING_TOP);
-        readerPanel.add(readerPage, BorderLayout.CENTER);
+        textContents.add(readerPage, TEXT_READER_CARD);
+        textContents.add(videoTranscript, TEXT_VIDEO_TRANSCRIPT_CARD);
+        readerPanel.add(textContents, BorderLayout.CENTER);
         // Ein Themenabschnitt beginnt mit einem Absatz: unter „Absätze“ steht derselbe Absatz gewählt bereit.
         readerPage.onJump(section -> {
             if (section.passageId() != null) {
@@ -1498,10 +1511,10 @@ public final class PageDetailPanel extends JPanel {
         final java.util.concurrent.atomic.AtomicReference<
                 com.aresstack.spaceharvester.application.sources.MediaByteRange> media =
                 new java.util.concurrent.atomic.AtomicReference<>();
-        originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, (offset, count) -> {
+        com.aresstack.spaceharvester.application.sources.MediaByteRange ranges = (offset, count) -> {
             AppRuntime runtime = context.runtime();
             if (runtime == null) {
-                throw new IOException("Die Quelle ist nicht mehr verbunden.");
+                throw new IllegalStateException("Die Quelle ist nicht mehr verbunden.");
             }
             com.aresstack.spaceharvester.application.sources.MediaByteRange reader = media.get();
             if (reader == null) {
@@ -1514,7 +1527,12 @@ public final class PageDetailPanel extends JPanel {
                 }
             }
             return reader.read(offset, count);
-        });
+        };
+        originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, ranges::read);
+        if (size > 0 && file.endsWith(".mp4")) {
+            videoTranscript.setVideoSource(new VideoTranscriptSource(size, ranges));
+            textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
+        }
         fileContent.add(originalVideoViewer, BorderLayout.CENTER);
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
         fileContent.revalidate();
@@ -1611,6 +1629,8 @@ public final class PageDetailPanel extends JPanel {
 
     /** Release the previous document viewer before a page switch or source switch. */
     private void closeOriginalFile() {
+        videoTranscript.setVideoSource(null);
+        textCardLayout.show(textContents, TEXT_READER_CARD);
         if (originalFileViewer != null) {
             originalFileViewer.close();
             originalFileViewer = null;

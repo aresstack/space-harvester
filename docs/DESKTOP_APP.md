@@ -45,6 +45,25 @@ das öffnet denselben Assistenten wie **Verwaltung › Wissensquellen verwalten 
 [Quellen-Assistent](#quellen-assistent)). Alternativ legt **Einstellungen › Beispiel anlegen** eine kommentierte
 Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu laden** wählen.
 
+## Whisper-Modell im ausführbaren Desktop-JAR
+
+Das ausführbare **`space-harvester-app.jar`** enthält die vier Dateien von
+`openai/whisper-tiny` sowie die MIT- und Apache-2.0-Lizenztexte mit Herkunftshinweis.
+Für die lokale Transkription ist **kein separates ZIP, kein zweites Modellpaket und kein
+Download beim Programmstart** nötig. Der JAR-Build beschafft die festgelegte
+Modellrevision und prüft die SHA-256-Werte; `verifyWhisperJar` kontrolliert
+die Einbettung. Die große `model.safetensors` ist dabei im Build etwa 151 MB
+groß und wird bewusst nicht als Binärdatei ins Git-Repository eingecheckt.
+
+Öffne ein MP4-Video aus BSCW in der **Leseransicht**, wechsle danach zum
+Reiter **Text** und klicke auf **Transkript erzeugen**. Space Harvester liest
+ausschließlich die erforderlichen Audio-Bytebereiche vom BSCW-Server und
+verwendet Whisper lokal. Bei der ersten Verwendung werden die Modellgewichte
+aus dem JAR in `%USERPROFILE%\\.space-harvester\\models` extrahiert und
+überprüft; anschließend kann der Cache weiterverwendet werden. Der erzeugte
+Text erscheint mit groben Zeitmarken im Text-Reiter und wird beim Prototyp
+noch nicht automatisch in den Suchindex übernommen.
+
 ## Erscheinungsbild
 
 Die beiden Markenbilder liegen unverändert als Original in

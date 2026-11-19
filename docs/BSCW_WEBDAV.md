@@ -233,41 +233,51 @@ Audiostream; 34.540 Byte über 28 Range-Anfragen von BSCW gelesen.
 Für die gesamte Datei und die hörbare VLC-Wiedergabe steht eine
 abschließende manuelle Abnahme noch aus.
 
-### Lokale Whisper-Transkription (erste Integration)
+### Lokale Whisper-Transkription aus der Textansicht
 
-Im Audio-only-Modus gibt es eine eigenständige Transkriptionsansicht. Der
-Button **Whisper-Modell wählen** erwartet einen lokalen Ordner mit
-`config.json`, `model.safetensors`, `tokenizer.json` und `vocab.json`.
-Alternativ kann der Ordner beim Start mit
-`-Dspaceharvester.whisper.model=<Modellordner>` festgelegt werden.
-Der Modellordner wird nicht ins App-JAR eingebaut. Maven Central stellt die
-Engine `com.aresstack:directml-inference:0.3.0` bereit, **nicht die
-Modellgewichte**. Die Desktop-Anwendung benötigt weiterhin Java 21; der
-Java-8-kompatible Launcher bleibt unverändert.
+Für eine MP4 mit BSCW-Range-Unterstützung bleibt der Videoplayer in der
+**Leseransicht**. Im benachbarten Reiter **Text** erscheint die Schaltfläche
+**Transkript erzeugen**. Sie startet die lokale Whisper-Verarbeitung
+ausschließlich auf ausdrücklichen Klick; die automatische Videoindexierung
+bleibt ausgeschaltet.
 
-Die Transkription verwendet **ausschließlich** den bereits vorhandenen,
-authentifizierten Audio-only-Stream (virtuelles MP4 mit nur der Tonspur).
-`VlcPcmAudioDecoder` dekodiert diesen lokal über die vorhandene libVLC-
-Installation zu 16-kHz-Mono-PCM in eine temporäre Datei. Der separate
-`TranscribeAudioUseCase` gibt die 30-Sekunden-Segmente an
-`WhisperSpeechTranscriber` weiter und löscht die temporären PCM-Daten nach
-Abschluss, Abbruch oder Fehler. Während eines Modellwechsels oder beim
-Schließen wird die Verarbeitung abgebrochen. Es wird weder die vollständige
-Videodatei abgerufen noch ein Videobild dekodiert.
+Der Text-Reiter legt dafür bei der Dateiauswahl eine unabhängige
+`VideoTranscriptSource` an. Diese erstellt beim Start der Transkription einen
+virtuellen MP4-Stream **nur mit den indexierten Audiopaketen**; der normale
+Videostream wird weder zum Transkribieren geöffnet noch als Fallback verwendet.
+`VlcPcmAudioDecoder` wandelt das Audio-only-MP4 lokal in 16-kHz-Mono-PCM um.
+`TranscribeAudioUseCase` führt die Erkennung mit der Maven-Central-Bibliothek
+`com.aresstack:directml-inference:0.3.0` aus und entfernt die temporären
+PCM-Daten nach Abschluss, Abbruch oder Fehler. Die Oberfläche zeigt grobe
+30-Sekunden-Segmente mit Zeitmarken, noch keine wortgenaue Zeitzuordnung.
+Die Vorschau wird **nicht** automatisch in den Suchindex aufgenommen.
 
-**Abgrenzung:** Das ist zunächst eine lokale Transkriptionsvorschau. Die
-angezeigten Zeitmarken sind die Anfänge von groben 30-Sekunden-Segmenten
-und noch keine exakten Wort-Zeitmarken. Eine dauerhafte Speicherung im
-Space-Harvester-Index, Wiederaufnahme nach Abbruch, Hintergrundjobs und
-Laufzeitoptimierung für sehr lange Videos sind separat umzusetzen. Die
-Dekodierung kann beim aktuellen libVLC-Backend ungefähr in Echtzeit laufen;
-das anschließende Whisper-Modell benötigt zusätzliche Rechenzeit.
+**Ein einziges ausführbares JAR:** Das Gradle-Task `prepareWhisperModel`
+beschafft **nur beim Build** vier Whisper-Tiny-Dateien aus der festgelegten
+Hugging-Face-Revision
+`169d4a4341b33bc18d8881c4b69c2e104e1cc0af`.
+SHA-256 wird für jede Datei geprüft; ein vorhandener geprüfter Gradle-Cache
+oder eine lokale Quelle kann wiederverwendet werden. Der App-Build bettet die
+Dateien unter `BOOT-INF/classes/models/whisper-tiny/` in das **bestehende
+ausführbare Spring-Boot-JAR** ein. MIT-, Apache-2.0- und Herkunftshinweise
+liegen im JAR unter `BOOT-INF/classes/licenses/`.
+`verifyWhisperJar` prüft deren Vollständigkeit bei jedem `build`.
 
-Ein lokaler Test der echten PCM-Dekodierung (ohne Zugangsdaten und ohne BSCW)
-ist ausdrücklich optional:
-`-Dspaceharvester.test.vlcpcm=true` für
-`VlcPcmAudioDecoderLiveTest`. Normale CI-Läufe benötigen weder VLC noch
-ein heruntergeladenes Whisper-Modell.
+Beim ersten Klick entpackt `WhisperModelLocation` die Modellgewichte aus dem
+JAR in einen versionsgebundenen lokalen Cache unter
+`%USERPROFILE%\\.space-harvester\\models` (erneut mit SHA-256-Prüfung).
+Whisper benötigt diese Dateipfade; **ein Modelldownload zur Laufzeit ist
+nicht nötig**. Ein separates ZIP, ein Modellinstallationsdialog oder eine
+zweite Datei für den Anwender sind nicht erforderlich. Für lokale Tests kann
+`-Dspaceharvester.whisper.model=<Modellverzeichnis>` den eingebetteten
+Modellpfad übersteuern.
+
+Bei sehr langen Aufnahmen kann die Indexierung der Audio-Chunks und die
+Audio-Dekodierung einige Zeit dauern. Der erste Prototyp transkribiert nur
+auf Anforderung; persistente Transkripte, Wort-Zeitmarken, Wiederaufnahme und
+automatisierte Hintergrundjobs gehören nicht zu diesem Schritt.
+Der opt-in-Live-Test `VlcPcmAudioDecoderLiveTest` benötigt eine vorhandene
+libVLC-Installation (`-Dspaceharvester.test.vlcpcm=true`).
 
 ## Technischer Aufbau
 
