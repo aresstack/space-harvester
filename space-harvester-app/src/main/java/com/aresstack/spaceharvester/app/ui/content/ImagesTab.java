@@ -68,6 +68,11 @@ final class ImagesTab extends JPanel {
     /** Quelle nicht freigegeben: Hinweis mit der Wahl, es für diese Seite oder die Quelle zu erlauben. */
     private final HintActions notReleased = new HintActions(NOT_RELEASED, describeOnce, release);
     private boolean released = true;
+    /** Die Rahmen der Vorschauen in der Reihenfolge der Bilder; gefüllt werden sie nach dem Zeigen. */
+    private final List<JLabel> previews = new ArrayList<>();
+    private java.util.function.IntConsumer onOpen = index -> { };
+    static final String PREVIEW_LOADING = "Lädt …";
+    static final String NO_PREVIEW = "Keine Vorschau";
 
     ImagesTab() {
         super(new BorderLayout(0, 10));
@@ -96,6 +101,21 @@ final class ImagesTab extends JPanel {
     /** {@code listener} startet die Beschreibung im Hintergrund; nur auf Abruf, nie beim bloßen Anzeigen. */
     void onDescribe(Runnable listener) {
         onDescribe = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** {@code listener} öffnet das Bild dieser Zeile groß, etwa um seine Beschreibung zu prüfen. */
+    void onOpen(java.util.function.IntConsumer listener) {
+        onOpen = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Füllt den Rahmen der Vorschau eines Bildes; {@code null}: es gibt keine. */
+    void preview(int index, Icon icon) {
+        if (index < 0 || index >= previews.size()) {
+            return;
+        }
+        JLabel preview = previews.get(index);
+        preview.setIcon(icon);
+        preview.setText(icon == null ? NO_PREVIEW : null);
     }
 
     /** {@code listener} bekommt die Erläuterung zum Stand für die Statuszeile des Hauptfensters (" " ohne). */
@@ -168,6 +188,7 @@ final class ImagesTab extends JPanel {
         };
         head.status(stateText(current), tone);
         list.removeAll();
+        previews.clear();
         lines.clear();
         copyLines.clear();
         boolean stale = current == PassagesTab.State.STALE;
@@ -177,7 +198,7 @@ final class ImagesTab extends JPanel {
             if (i > 0) {
                 list.add(Box.createVerticalStrut(6));
             }
-            list.add(entry(shown.get(i), stale));
+            list.add(entry(i, shown.get(i), stale));
             lines.add(shown.get(i).name() + " · " + statusText(shown.get(i)) + (stale ? " · Veraltet" : ""));
             copyLines.add(lines.get(lines.size() - 1));
             if (shown.get(i).description() != null && !shown.get(i).description().isBlank()) {
@@ -197,15 +218,17 @@ final class ImagesTab extends JPanel {
         list.repaint();
     }
 
-    private JPanel entry(Image image, boolean stale) {
+    private JPanel entry(int index, Image image, boolean stale) {
+        // Erst der Rahmen; seinen Inhalt füllt {@link #preview} im Hintergrund nach.
         JLabel preview = new JLabel(image.preview(), SwingConstants.CENTER);
         preview.setPreferredSize(new Dimension(96, 72));
         preview.setBorder(BorderFactory.createLineBorder(Comic.MUTED, 1, true));
+        preview.setFont(Comic.regular(11f));
+        preview.setForeground(Comic.MUTED);
         if (image.preview() == null) {
-            preview.setText("Keine Vorschau");
-            preview.setFont(Comic.regular(11f));
-            preview.setForeground(Comic.MUTED);
+            preview.setText(PREVIEW_LOADING);
         }
+        previews.add(preview);
         JLabel name = Comic.text(image.name());
         name.setFont(Comic.semiBold(13f));
         JLabel status = Comic.muted(statusText(image) + (stale ? " · Veraltet" : ""));
@@ -231,6 +254,18 @@ final class ImagesTab extends JPanel {
         row.add(preview, BorderLayout.WEST);
         row.add(lines, BorderLayout.CENTER);
         row.setAlignmentX(LEFT_ALIGNMENT);
+        // Ein Klick öffnet das Bild groß, mit seiner Beschreibung.
+        row.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        row.setToolTipText("Bild groß öffnen und die Beschreibung prüfen");
+        java.awt.event.MouseAdapter open = new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent event) {
+                onOpen.accept(index);
+            }
+        };
+        row.addMouseListener(open);
+        preview.addMouseListener(open);
+        name.addMouseListener(open);
         return row;
     }
 

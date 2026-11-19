@@ -590,6 +590,7 @@ public final class PageDetailPanel extends JPanel {
         graphView.onDeleted(statementsView::reload);
         knowledgeGraphTab(graphView);
         images.onDescribe(() -> describeImages(false));
+        images.onOpen(this::openImage);
         images.onDescribeOnce(() -> describeImages(true));
         images.onRelease(this::releaseSourceAndDescribe);
 
@@ -2369,8 +2370,7 @@ public final class PageDetailPanel extends JPanel {
                 runtime.workspace().images(shown)), found -> {
             if (shown == page) {
                 images.describing(false);
-                images.released(found.released());
-                images.show(found.state(), found.reason(), found.warnings(), found.images());
+                showImages(found);
             }
         }, error -> {
             if (shown == page) {
@@ -2402,8 +2402,7 @@ public final class PageDetailPanel extends JPanel {
             if (shown != page) {
                 return;
             }
-            images.released(found.released());
-            images.show(found.state(), found.reason(), found.warnings(), found.images());
+            showImages(found);
             feedback.success(found.images().isEmpty() ? "Keine Bilder auf dieser Seite"
                     : "Bilder beschrieben: " + found.described() + " von " + found.images().size());
         }, error -> {
@@ -2583,7 +2582,7 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
-    /** Die Bilder für den Reiter; Vorschauen nur aus der Ablage, außerhalb des EDT. */
+    /** Die Bilder für den Reiter: erst die Rahmen ohne Vorschau; die Bytes holt jeder aus der Ablage nach. */
     private static ImageRows imageRows(AppRuntime runtime, String sourceId, String pageId, PageImages found) {
         List<ImagesTab.Image> rows = new ArrayList<>();
         java.util.Map<String, String> versions;
@@ -2593,17 +2592,20 @@ public final class PageDetailPanel extends JPanel {
         } catch (IllegalArgumentException e) {
             versions = java.util.Map.of();
         }
+        List<java.util.function.Supplier<java.util.Optional<byte[]>>> bytes = new ArrayList<>();
         for (ImagePayload.Entry entry : found.images()) {
             String version = entry.assetId() == null ? null : versions.get(entry.assetId());
-            Icon preview = preview(() -> runtime.workspace().storedImage(sourceId, entry, version));
+            bytes.add(() -> entry.sha256() == null ? java.util.Optional.empty()
+                    : runtime.workspace().storedImage(sourceId, entry, version));
             String name = entry.title().isBlank() ? entry.filename().isBlank() ? "Bild " + (entry.index() + 1)
                     : entry.filename() : entry.title();
             rows.add(new ImagesTab.Image(name, ImagesTab.Status.valueOf(entry.status().name()), entry.description(),
-                    entry.reason(), preview));
+                    entry.reason(), null));
         }
         return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), found.warnings(),
                 // Freigegeben ist die Quelle oder die Seite selbst (Liste freigegebener Seiten, ADR 0028).
-                List.copyOf(rows), found.describedCount(), runtime.workspace().imagesReleased(sourceId, pageId));
+                List.copyOf(rows), found.describedCount(), runtime.workspace().imagesReleased(sourceId, pageId),
+                List.copyOf(bytes));
     }
 
     /**
@@ -2640,8 +2642,113 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    /** @param bytes je Bild seine abgelegten Bytes, im Hintergrund zu lesen */
     private record ImageRows(PassagesTab.State state, String reason, List<String> warnings,
-                             List<ImagesTab.Image> images, int described, boolean released) {
+                             List<ImagesTab.Image> images, int described, boolean released,
+                             List<java.util.function.Supplier<java.util.Optional<byte[]>>> bytes) {
+    }
+
+    /** Die gezeigten Bilder, für den großen Viewer. */
+    private ImageRows shownImages;
+    /** Zählt jedes Zeigen, damit ein später fertiger Lauf keine fremden Rahmen füllt. */
+    private int imageFill;
+
+    /**
+     * Zeigt die Bilder: sofort die Rahmen mit Name und Stand, dann füllt ein Hintergrundlauf die Rahmen der Reihe nach
+     * mit den Vorschauen aus der Ablage, ohne den EDT zu blockieren.
+     */
+    private void showImages(ImageRows found) {
+        images.released(found.released());
+        images.show(found.state(), found.reason(), found.warnings(), found.images());
+        shownImages = found;
+        int fill = ++imageFill;
+        Background.run(() -> {
+            for (int index = 0; index < found.bytes().size() && fill == imageFill; index++) {
+                Icon icon = preview(found.bytes().get(index));
+                int at = index;
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (fill == imageFill) {
+                        images.preview(at, icon);
+                    }
+                });
+            }
+            return null;
+        }, done -> { }, error -> { });
+    }
+
+    /**
+     * Öffnet ein Bild aus „Analysen › Bilder“ groß, mit seiner Beschreibung darunter; die Pfeile blättern zu den
+     * übrigen Bildern der Seite. So lässt sich jede Beschreibung am Bild prüfen.
+     */
+    private void openImage(int index) {
+        ImageRows found = shownImages;
+        if (found == null || index < 0 || index >= found.images().size()) {
+            return;
+        }
+        JPanel body = new JPanel(new BorderLayout(0, 8));
+        body.setOpaque(false);
+        javax.swing.JTextArea text = new javax.swing.JTextArea(4, 60);
+        text.setEditable(false);
+        text.setLineWrap(true);
+        text.setWrapStyleWord(true);
+        text.setFont(Comic.regular(13f));
+        JLabel heading = Comic.text(" ");
+        heading.setFont(Comic.semiBold(13f));
+        JPanel south = new JPanel(new BorderLayout(0, 4));
+        south.setOpaque(false);
+        south.add(heading, BorderLayout.NORTH);
+        south.add(Comic.scroll(text), BorderLayout.CENTER);
+        body.add(south, BorderLayout.SOUTH);
+        java.util.function.IntConsumer[] show = new java.util.function.IntConsumer[1];
+        AttachmentViewerPanel[] viewer = new AttachmentViewerPanel[1];
+        show[0] = at -> {
+            ImagesTab.Image image = found.images().get(at);
+            if (viewer[0] != null) {
+                body.remove(viewer[0]);
+                viewer[0].close();
+            }
+            ReaderAttachment picture = new ReaderAttachment("image-" + at, image.name(), "image/png", -1);
+            viewer[0] = new AttachmentViewerPanel(picture, new ReaderAttachmentLoader() {
+                @Override
+                public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                    Background.run(() -> found.bytes().get(at).get().orElseThrow(() -> new IllegalStateException(
+                            "Das Bild ist noch nicht abgelegt.")), done, error -> failed.accept(reason(error)));
+                }
+            }, fileOpener, attachmentRenderer);
+            viewer[0].neighbours(new AttachmentViewerPanel.Neighbours() {
+                @Override
+                public boolean hasPrevious() {
+                    return at > 0;
+                }
+
+                @Override
+                public boolean hasNext() {
+                    return at < found.images().size() - 1;
+                }
+
+                @Override
+                public void previous() {
+                    show[0].accept(at - 1);
+                }
+
+                @Override
+                public void next() {
+                    show[0].accept(at + 1);
+                }
+            });
+            body.add(viewer[0], BorderLayout.CENTER);
+            heading.setText(image.name() + " · " + ImagesTab.statusText(image));
+            text.setText(image.description() == null ? "" : image.description());
+            text.setCaretPosition(0);
+            body.revalidate();
+            body.repaint();
+            viewer[0].requestFocusInWindow();
+        };
+        show[0].accept(index);
+        com.aresstack.spaceharvester.app.ui.Dialogs.viewSized(this, "Bilder der Seite", body, "analysis.images", 0.8);
+        if (viewer[0] != null) {
+            viewer[0].close();
+        }
     }
 
     private void harvestAssets() {
