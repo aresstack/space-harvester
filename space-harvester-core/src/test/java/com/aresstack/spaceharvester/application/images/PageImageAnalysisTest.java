@@ -432,9 +432,15 @@ class PageImageAnalysisTest {
                 .isEqualTo((long) PNG.length);
         assertThat(assets.videoFrames("wiki", "1", "3")).extracting(HarvestSource.ViewImage::title)
                 .containsExactly("00-03-12.png");
-        // Dieselbe Fassung noch einmal angekündigt: das abgelegte Standbild bleibt.
-        assertThat(assets.putVideoSlides("wiki", "1", "3", List.of(0L, 192_000L, 3_725_000L)))
+        // Dieselbe Fassung noch einmal angekündigt, jetzt mit der Länge: das abgelegte Standbild bleibt, und der Player
+        // kann die Marken beim nächsten Öffnen ohne Abspielen zeigen.
+        assertThat(assets.putVideoSlides("wiki", "1", "3", 3_800_000L, List.of(0L, 192_000L, 3_725_000L)))
                 .containsExactly(0L, 3_725_000L);
+        assertThat(assets.videoSlides("wiki", "1", "3")).hasValueSatisfying(slides -> {
+            assertThat(slides.durationMillis()).isEqualTo(3_800_000L);
+            assertThat(slides.slides()).containsExactly(0L, 192_000L, 3_725_000L);
+        });
+        assertThat(assets.videoSlides("wiki", "1", "4")).as("eine andere Fassung").isEmpty();
     }
 
     @Test

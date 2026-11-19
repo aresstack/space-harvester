@@ -958,8 +958,22 @@ public class Assets implements DocumentInventory {
      * @return die Folien ohne Standbild, in zeitlicher Reihenfolge
      */
     public List<Long> putVideoSlides(String sourceId, String pageId, String version, List<Long> slides) {
+        return putVideoSlides(sourceId, pageId, version, 0, slides);
+    }
+
+    /**
+     * Wie {@link #putVideoSlides(String, String, String, List)} mit der Länge des Videos, damit der Player die Marken
+     * beim nächsten Öffnen sofort zeigen kann ({@link #videoSlides}).
+     *
+     * @param durationMillis Länge des Videos oder 0, wenn unbekannt
+     */
+    public List<Long> putVideoSlides(String sourceId, String pageId, String version, long durationMillis,
+                                     List<Long> slides) {
         version = frameVersion(version);
         StringBuilder list = new StringBuilder(version).append('\n');
+        if (durationMillis > 0) {
+            list.append(DURATION).append(durationMillis).append('\n');
+        }
         slides.stream().distinct().sorted().forEach(millis -> list.append(millis).append('\n'));
         byte[] content = list.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         store.put(new Asset(sourceId, pageId, VIDEO_FRAMES + framePage(pageId), FRAME_LIST_VERSION, "Folien",
@@ -981,8 +995,24 @@ public class Assets implements DocumentInventory {
         frames.forEach(frame -> putVideoFrame(sourceId, pageId, version, frame));
     }
 
-    /** Die Folien eines Videos: zu welcher Fassung sie gehören und wo sie beginnen. */
-    private record FrameList(String version, List<Long> millis) {
+    /** Zeile der Liste mit der Länge des Videos. */
+    private static final String DURATION = "duration=";
+
+    /** Die Folien eines Videos: zu welcher Fassung sie gehören, wie lang es ist (0: unbekannt) und wo sie beginnen. */
+    private record FrameList(String version, long durationMillis, List<Long> millis) {
+    }
+
+    /** Die bekannten Folien eines Videos: seine Länge (0: unbekannt) und der Beginn jeder Folie. */
+    public record VideoSlides(long durationMillis, List<Long> slides) {
+
+        public VideoSlides {
+            slides = List.copyOf(slides);
+        }
+    }
+
+    /** Die abgelegten Folien dieser Fassung eines Videos; leer, solange der Player sie nicht gefunden hat. */
+    public Optional<VideoSlides> videoSlides(String sourceId, String pageId, String version) {
+        return frameList(sourceId, pageId, version).map(list -> new VideoSlides(list.durationMillis(), list.millis()));
     }
 
     private Optional<FrameList> frameList(String sourceId, String pageId, String version) {
@@ -997,12 +1027,16 @@ public class Assets implements DocumentInventory {
             return Optional.empty();
         }
         List<Long> millis = new java.util.ArrayList<>();
+        long duration = 0;
         for (int i = 1; i < lines.length; i++) {
-            if (!lines[i].isBlank()) {
-                millis.add(Long.parseLong(lines[i].strip()));
+            String line = lines[i].strip();
+            if (line.startsWith(DURATION)) {
+                duration = Long.parseLong(line.substring(DURATION.length()));
+            } else if (!line.isEmpty()) {
+                millis.add(Long.parseLong(line));
             }
         }
-        FrameList found = new FrameList(lines[0].strip(), List.copyOf(millis));
+        FrameList found = new FrameList(lines[0].strip(), duration, List.copyOf(millis));
         return version == null || found.version().equals(frameVersion(version)) ? Optional.of(found)
                 : Optional.empty();
     }

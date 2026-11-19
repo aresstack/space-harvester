@@ -32,6 +32,30 @@ final class SlideChanges {
 
     /** Read the MP4 index of a remote file and return its slide changes in milliseconds. */
     static List<Long> load(MediaStreamBridge.ChunkSource source, long length) throws IOException {
+        byte[] moov = moov(source, length);
+        return moov == null ? Collections.emptyList() : detect(moov);
+    }
+
+    /** The length of a remote MP4 file from its movie header ({@code mvhd}), or 0 if unreadable. */
+    static long durationMillis(MediaStreamBridge.ChunkSource source, long length) throws IOException {
+        byte[] moov = moov(source, length);
+        if (moov == null) {
+            return 0;
+        }
+        int start = moov.length >= 8 && "moov".equals(new String(moov, 4, 4, StandardCharsets.ISO_8859_1)) ? 8 : 0;
+        int[] mvhd = find(moov, start, moov.length, "mvhd");
+        if (mvhd == null) {
+            return 0;
+        }
+        ByteBuffer data = ByteBuffer.wrap(moov);
+        boolean wide = data.get(mvhd[0]) == 1;
+        long timescale = data.getInt(mvhd[0] + (wide ? 20 : 12)) & 0xffffffffL;
+        long duration = wide ? data.getLong(mvhd[0] + 24) : data.getInt(mvhd[0] + 16) & 0xffffffffL;
+        return timescale == 0 ? 0 : duration * 1000 / timescale;
+    }
+
+    /** The {@code moov} box of a remote MP4 file, or {@code null} if there is none near the top level. */
+    private static byte[] moov(MediaStreamBridge.ChunkSource source, long length) throws IOException {
         long offset = 0;
         for (int inspected = 0; offset + 8 <= length && inspected < 128; inspected++) {
             byte[] head = Mp4AudioOnlySource.fetch(source, offset, (int) Math.min(16, length - offset));
@@ -47,11 +71,11 @@ final class SlideChanges {
                 break;
             }
             if ("moov".equals(type)) {
-                return detect(Mp4AudioOnlySource.readBox(source, offset, size));
+                return Mp4AudioOnlySource.readBox(source, offset, size);
             }
             offset += size;
         }
-        return Collections.emptyList();
+        return null;
     }
 
     /** Detect slide changes in a {@code moov} box (with or without its own header). */

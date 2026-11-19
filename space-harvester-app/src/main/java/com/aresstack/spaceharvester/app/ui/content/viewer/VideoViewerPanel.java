@@ -558,6 +558,18 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (slideDetection != null || !mp4 || fileSize < 16) {
             return;
         }
+        if (knownSlides != null) {
+            // Already shown when the page opened: do not read the index again, but tell whoever needs them.
+            java.util.List<Long> known = knownSlides;
+            slideDetection = new SwingWorker<>() {
+                @Override
+                protected java.util.List<Long> doInBackground() {
+                    return known;
+                }
+            };
+            onSlides.accept(known);
+            return;
+        }
         slideDetection = new SwingWorker<java.util.List<Long>, Void>() {
             @Override
             protected java.util.List<Long> doInBackground() throws IOException {
@@ -581,6 +593,54 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             }
         };
         slideDetection.execute();
+    }
+
+    /** Slide changes already known when the page opened, or {@code null}. */
+    private java.util.List<Long> knownSlides;
+
+    /**
+     * Show the slide changes the page already knows (its slide attachments) as soon as it opens, before anything is
+     * played; playback then does not look for them again. Without a known length the length comes from the MP4
+     * header once.
+     *
+     * @param changes        slide changes in milliseconds, without the first slide at 0
+     * @param durationMillis length of the video, or 0 if unknown
+     */
+    public void knownSlides(java.util.List<Long> changes, long durationMillis) {
+        if (closed || started || changes.isEmpty()) {
+            return;
+        }
+        knownSlides = java.util.List.copyOf(changes);
+        transport.slides(knownSlides);
+        if (durationMillis > 0) {
+            transport.seekBar().update(0, durationMillis);
+            return;
+        }
+        new SwingWorker<Long, Void>() {
+            @Override
+            protected Long doInBackground() throws IOException {
+                return SlideChanges.durationMillis(reader, fileSize);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    long duration = get();
+                    if (!closed && !started && duration > 0) {
+                        transport.seekBar().update(0, duration);
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException unavailable) {
+                    // Without a readable header the marks appear once playback reports the length.
+                }
+            }
+        }.execute();
+    }
+
+    /** The length of the video as VLC reports it, or 0 while unknown. */
+    public long durationMillis() {
+        return transport.seekBar().durationMillis();
     }
 
     /** Whoever wants the slide changes once they are found, e.g. to keep a still frame of every slide. */

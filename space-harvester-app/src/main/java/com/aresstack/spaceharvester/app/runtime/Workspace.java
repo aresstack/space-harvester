@@ -708,9 +708,18 @@ public final class Workspace {
      * @param slides Beginn jeder Folie in Millisekunden
      * @return die Folien, deren Standbild noch fehlt
      */
-    public List<Long> announceVideoSlides(String sourceId, String pageId, List<Long> slides) {
+    public List<Long> announceVideoSlides(String sourceId, String pageId, long durationMillis, List<Long> slides) {
         DeliveredPage page = syncedPage(sourceId, pageId);
-        return harvester.assets().putVideoSlides(sourceId, pageId, page.snapshot().revision(), slides);
+        return harvester.assets().putVideoSlides(sourceId, pageId, page.snapshot().revision(), durationMillis, slides);
+    }
+
+    /**
+     * Die schon gefundenen Folien der gespeicherten Fassung eines Videos samt seiner Länge, damit der Player die Marken
+     * ohne Abspielen zeigt; leer, solange keine gefunden sind. Fragt die Quelle nicht.
+     */
+    public Optional<Assets.VideoSlides> videoSlides(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        return harvester.assets().videoSlides(sourceId, pageId, page.snapshot().revision());
     }
 
     /** Legt das Standbild einer Folie ab; es füllt ihren Platzhalter unter „Anhänge“. */

@@ -59,7 +59,7 @@ class VideoFramesLiveProbe {
         MediaByteRange ranges = workspace.openMediaRange(source, pageId);
         long start = System.nanoTime();
         List<Long> slides = VideoFrameGrabber.slides(SlideChanges.load(ranges::read, size), 200);
-        List<Long> missing = workspace.announceVideoSlides(source, pageId, slides);
+        List<Long> missing = workspace.announceVideoSlides(source, pageId, 0, slides);
         System.out.printf(Locale.ROOT, "PROBE %d slides announced, %d missing, after %.1f s%n", slides.size(),
                 missing.size(), (System.nanoTime() - start) / 1e9);
         listAttachments(workspace, source, pageId);

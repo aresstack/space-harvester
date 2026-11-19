@@ -1555,7 +1555,9 @@ public final class PageDetailPanel extends JPanel {
         if (size > 0 && file.endsWith(".mp4")) {
             VideoFrameSource frames = new VideoFrameSource(ranges::read, size, mediaType);
             videoFrames = frames;
-            originalVideoViewer.onSlides(changes -> storeSlideFrames(frames, source, id, changes));
+            VideoViewerPanel viewer = originalVideoViewer;
+            viewer.onSlides(changes -> storeSlideFrames(frames, source, id, viewer.durationMillis(), changes));
+            showKnownSlides(viewer, source, id);
             videoTranscript.setVideoSource(new VideoTranscriptSource(size, ranges));
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
             videoTranscriptShown = true;
@@ -2413,15 +2415,17 @@ public final class PageDetailPanel extends JPanel {
      * ablegen, einmal je Fassung und im Hintergrund. „Analysen › Bilder“ beschreibt sie dann wie die Bilder einer
      * Seite.
      */
-    private void storeSlideFrames(VideoFrameSource video, String source, String id, List<Long> changes) {
+    private void storeSlideFrames(VideoFrameSource video, String source, String id, long durationMillis,
+                                  List<Long> changes) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || video != videoFrames) {
             return;
         }
         Background.run(() -> {
             // Erst die Platzhalter, damit die Folien sofort unter „Anhänge“ stehen; dann Bild für Bild.
-            List<Long> missing = runtime.workspace().announceVideoSlides(source, id, VideoFrameGrabber.slides(changes,
-                    com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES));
+            List<Long> missing = runtime.workspace().announceVideoSlides(source, id, durationMillis,
+                    VideoFrameGrabber.slides(changes,
+                            com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES));
             javax.swing.SwingUtilities.invokeLater(() -> attachmentsChanged(video));
             int[] stored = {0};
             VideoFrameGrabber.grab(video.reader(), video.size(), video.mediaType(), missing, frame -> {
@@ -2441,6 +2445,26 @@ public final class PageDetailPanel extends JPanel {
             if (!(error instanceof java.util.concurrent.CancellationException) && video == videoFrames) {
                 feedback.problem(error, Problems.Step.PAGE);
             }
+        });
+    }
+
+    /**
+     * Sind die Folien dieses Videos schon bekannt (aus einem früheren Abspielen), zeigt der Player ihre Marken gleich
+     * beim Öffnen; aus der Ablage, ohne die Quelle zu fragen.
+     */
+    private void showKnownSlides(VideoViewerPanel viewer, String source, String id) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().videoSlides(source, id), known -> known.ifPresent(slides -> {
+            if (viewer == originalVideoViewer) {
+                // Die erste Folie beginnt bei 0 und ist keine Marke.
+                viewer.knownSlides(slides.slides().stream().filter(millis -> millis > 0).toList(),
+                        slides.durationMillis());
+            }
+        }), error -> {
+            // Ohne gespeicherte Folien erscheinen die Marken wie bisher beim Abspielen.
         });
     }
 
