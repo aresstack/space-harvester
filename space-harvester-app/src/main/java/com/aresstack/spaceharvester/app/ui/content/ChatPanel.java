@@ -123,6 +123,10 @@ public final class ChatPanel extends JPanel {
     /** Wie im Enterprise AI Client: die Erkennung nach dem Stopp ist orange in der Statuszeile zu sehen. */
     static final String RECOGNIZING_STATUS = "Erkenne Sprache …";
     private static final int MIN_EDITOR_HEIGHT = 64;
+    private static final int MAX_NORMAL_EDITOR_HEIGHT = 400;
+    private static final String NORMAL_EDITOR_HEIGHT = "composer.normalHeight";
+    private static final java.util.prefs.Preferences PREFERENCES =
+            java.util.prefs.Preferences.userNodeForPackage(ChatPanel.class);
     static final String WEB = "Websuche folgt";
     static final String NO_MODEL = "Kein Chat-Modell";
     static final String MODEL_TIP = "Chat-Modell aus Einstellungen › KI";
@@ -213,6 +217,10 @@ public final class ChatPanel extends JPanel {
     /** Die Statuszeile des Composers („Chat folgt“); leer unsichtbar. */
     private final JLabel status = Comic.muted(" ");
     private final Color statusColor = status.getForeground();
+    private int normalEditorHeight = Math.max(MIN_EDITOR_HEIGHT,
+            Math.min(MAX_NORMAL_EDITOR_HEIGHT, PREFERENCES.getInt(NORMAL_EDITOR_HEIGHT, MIN_EDITOR_HEIGHT)));
+    private final ComposerResizeGrip resizeGrip = new ComposerResizeGrip(() -> normalEditorHeight,
+            this::setNormalEditorHeight, () -> PREFERENCES.putInt(NORMAL_EDITOR_HEIGHT, normalEditorHeight));
     private final JPanel composer;
     private boolean editorFocused;
 
@@ -385,14 +393,15 @@ public final class ChatPanel extends JPanel {
                 surface.repaint();
             }
         });
-        // Der Editor wächst mit dem Text bis zu zwei Fünfteln der Chat-Höhe und schrumpft nach dem Senden wieder.
+        // Leer hat der Editor die gezogene Normalhöhe; mit langem Text wächst er bis zu zwei Fünfteln der Chat-Höhe
+        // und schrumpft nach dem Senden wieder auf die Normalhöhe.
         JScrollPane editorScroll = new JScrollPane(editor, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
                 JScrollPane.HORIZONTAL_SCROLLBAR_NEVER) {
             @Override
             public Dimension getPreferredSize() {
                 int content = editor.getPreferredSize().height;
-                int maximum = Math.max(MIN_EDITOR_HEIGHT, ChatPanel.this.getHeight() * 2 / 5);
-                return new Dimension(520, Math.max(MIN_EDITOR_HEIGHT, Math.min(content, maximum)));
+                int maximum = Math.max(normalEditorHeight, ChatPanel.this.getHeight() * 2 / 5);
+                return new Dimension(520, Math.max(normalEditorHeight, Math.min(content, maximum)));
             }
         };
         editorScroll.setOpaque(false);
@@ -464,8 +473,12 @@ public final class ChatPanel extends JPanel {
 
         JPanel body = new JPanel(new BorderLayout(0, 4));
         body.setOpaque(false);
-        body.setBorder(BorderFactory.createEmptyBorder(9, 11, 8, 8));
-        body.add(chips, BorderLayout.NORTH);
+        body.setBorder(BorderFactory.createEmptyBorder(0, 11, 8, 8));
+        JPanel top = new JPanel(new BorderLayout(0, 0));
+        top.setOpaque(false);
+        top.add(resizeGrip, BorderLayout.NORTH);
+        top.add(chips, BorderLayout.CENTER);
+        body.add(top, BorderLayout.NORTH);
         final JScrollPane scroll = editorScroll;
         JLayeredPane editorLayers = new JLayeredPane() {
             @Override
@@ -492,7 +505,46 @@ public final class ChatPanel extends JPanel {
         status.setBorder(BorderFactory.createEmptyBorder(0, 12, 2, 0));
         surface.add(status, BorderLayout.NORTH);
         surface.add(body, BorderLayout.CENTER);
+        trackComposerHover(surface, surface);
         return surface;
+    }
+
+    /** Den Ziehgriff nur zeigen, solange die Maus irgendwo über dem Composer steht. */
+    private void trackComposerHover(JComponent surface, Component component) {
+        java.awt.event.MouseAdapter hover = new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent e) {
+                resizeGrip.setShown(true);
+            }
+
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent e) {
+                // Beim Wechsel zwischen Kindern bleibt die Maus über dem Composer.
+                SwingUtilities.invokeLater(() -> resizeGrip.setShown(surface.getMousePosition(true) != null));
+            }
+        };
+        component.addMouseListener(hover);
+        if (component instanceof java.awt.Container container) {
+            for (Component child : container.getComponents()) {
+                trackComposerHover(surface, child);
+            }
+        }
+    }
+
+    /** Die Normalhöhe des leeren Editors setzen (Ziehgriff); lange Texte wachsen weiterhin darüber hinaus. */
+    void setNormalEditorHeight(int height) {
+        int maximum = Math.max(MIN_EDITOR_HEIGHT, getHeight() > 0 ? getHeight() * 2 / 5 : MAX_NORMAL_EDITOR_HEIGHT);
+        normalEditorHeight = Math.max(MIN_EDITOR_HEIGHT, Math.min(height, Math.min(maximum, MAX_NORMAL_EDITOR_HEIGHT)));
+        composer.revalidate();
+        composer.repaint();
+    }
+
+    int normalEditorHeight() {
+        return normalEditorHeight;
+    }
+
+    ComposerResizeGrip resizeGrip() {
+        return resizeGrip;
     }
 
     /** Den Composer nach einer Textänderung neu bemessen (nach dem laufenden Ereignis, wenn die Umbrüche feststehen). */
