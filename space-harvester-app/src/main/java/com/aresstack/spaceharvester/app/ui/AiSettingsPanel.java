@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.spaceharvester.app.settings.AiAccess;
@@ -62,7 +63,17 @@ final class AiSettingsPanel {
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 10));
+    /** „Anbieter“: OpenAI-kompatibler Dienst oder Ollama-Server ({@code provider}); Ollama braucht keinen Key. */
+    final JComboBox<String> provider = Comic.combo();
+    static final String OPENAI_HINT = "OpenAI-kompatibel, z. B. https://api.openai.com/v1";
+    static final String OLLAMA_HINT = "Ollama-Server, z. B. " + AiProvider.OLLAMA_DEFAULT_URL
+            + "; Chat, Embeddings und Bilder über dessen /v1, ohne API-Key";
     final JTextField baseUrl = Comic.field(32);
+    /** Kontextlänge je Anfrage an Ollama ({@code context-tokens}); leer: Standard des Core. */
+    final JTextField contextTokens = Comic.field(8);
+    static final String CONTEXT_TOKENS_LABEL = "Kontextlänge";
+    static final String CONTEXT_TOKENS_HINT = "Tokens je Anfrage (num_ctx); leer: 8192. Größer braucht mehr "
+            + "Grafikspeicher, Ollama lädt das Modell dafür neu";
     final JPasswordField apiKey = new JPasswordField(32);
     final JTextField chatModel = Comic.field(24);
     final JTextField embeddingModel = Comic.field(24);
@@ -259,6 +270,12 @@ final class AiSettingsPanel {
         root.setOpaque(false);
         Comic.style(apiKey);
         PasswordReveal.install(apiKey);
+        for (AiProvider each : AiProvider.values()) {
+            provider.addItem(each.displayName());
+        }
+        rows.add("Anbieter", provider, "Ollama läuft meist auf diesem Rechner und meldet seine Modelle mit ihren "
+                + "Fähigkeiten (Text, Bild, Embedding)");
+        provider.addActionListener(e -> updateProvider());
         access.addItem(KEEPASS);
         access.addItem(MANUAL);
         entry.setEditable(true);
@@ -286,7 +303,8 @@ final class AiSettingsPanel {
                 }
             });
         }
-        rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
+        rows.add("Basisadresse", baseUrl, OPENAI_HINT);
+        rows.add(CONTEXT_TOKENS_LABEL, contextTokens, CONTEXT_TOKENS_HINT);
         rows.add("API-Key", apiKey, " ");
         modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über das Auswahlmenü rechts");
         modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
@@ -410,7 +428,9 @@ final class AiSettingsPanel {
     void render() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
+        provider.setSelectedItem(current.provider().displayName());
         baseUrl.setText(current.baseUrl() == null ? "" : current.baseUrl());
+        contextTokens.setText(current.contextTokens() == null ? "" : current.contextTokens());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
         dimensions.setText(current.embeddingDimensions() == null ? "" : current.embeddingDimensions());
@@ -456,7 +476,40 @@ final class AiSettingsPanel {
         updateAccess();
         refreshPairing();
         shownAccess = accessDraft();
-        removeKey.setVisible(context.aiKeyAvailable() && !keePassChosen());
+        updateProvider();
+    }
+
+    /** Der gewählte Anbieter. */
+    AiProvider chosenProvider() {
+        for (AiProvider each : AiProvider.values()) {
+            if (each.displayName().equals(provider.getSelectedItem())) {
+                return each;
+            }
+        }
+        return AiProvider.OPENAI_COMPATIBLE;
+    }
+
+    boolean ollamaChosen() {
+        return chosenProvider() == AiProvider.OLLAMA;
+    }
+
+    /**
+     * Ollama: ohne Zugangsdaten (KeePass, API-Key), die Adresse mit dem Server dieses Rechners vorbelegt, solange
+     * keine eingetragen ist. Sonst die Zeilen wie zuvor.
+     */
+    private void updateProvider() {
+        boolean ollama = ollamaChosen();
+        rows.visible(access, !ollama);
+        rows.visible(entryRow, !ollama && keePassChosen());
+        rows.visible(apiKey, !ollama);
+        rows.visible(contextTokens, ollama);
+        rows.hint(baseUrl, ollama ? OLLAMA_HINT : OPENAI_HINT);
+        if (ollama && baseUrl.getText().isBlank()) {
+            baseUrl.setText(AiProvider.OLLAMA_DEFAULT_URL);
+        }
+        removeKey.setVisible(!ollama && context.aiKeyAvailable() && !keePassChosen());
+        root.revalidate();
+        root.repaint();
     }
 
     private String manualHint() {
@@ -534,7 +587,7 @@ final class AiSettingsPanel {
 
     private void updateAccess() {
         boolean keePass = keePassChosen();
-        rows.visible(entryRow, keePass);
+        rows.visible(entryRow, keePass && !ollamaChosen());
         if (keePass) {
             entryChosen();
         } else {
@@ -662,7 +715,8 @@ final class AiSettingsPanel {
     AiDraft draft() {
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
                 timeout, releasedDraft(), rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
-                visionModel.getText(), chatMaxTokens.getText());
+                visionModel.getText(), chatMaxTokens.getText(), chosenProvider(),
+                ollamaChosen() ? contextTokens.getText() : null);
     }
 
     /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */
@@ -743,7 +797,8 @@ final class AiSettingsPanel {
     boolean changed() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess)
+        return !draft().equals(current) || !ollamaChosen() && (typedKey().length > 0
+                || !accessDraft().equals(shownAccess))
                 || judgedPairs() != savedBudget(settings).maxJudgedPairs()
                 || automaticSynonyms() != savedBudget(settings).automatic()
                 || !simplification().equals(savedSimplification(settings))
@@ -795,10 +850,12 @@ final class AiSettingsPanel {
                     String.join(" ", draft.problems()));
             return;
         }
-        char[] key = typedKey();
+        // Ollama braucht keinen Key: weder ein eingetippter noch die Bezugsart zählen, die gespeicherte bleibt.
+        boolean ollama = draft.ollama();
+        char[] key = ollama ? new char[0] : typedKey();
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        AiAccess chosen = accessDraft();
+        AiAccess chosen = ollama ? shownAccess : accessDraft();
         int judged = judgedPairs();
         boolean automatic = automaticSynonyms();
         SimplificationSettings simplification = simplification();
@@ -812,18 +869,18 @@ final class AiSettingsPanel {
             then.run();
             return;
         }
-        if (chosen.mode() == AiAccess.Mode.KEEPASS && chosen.entry() == null) {
+        if (!ollama && chosen.mode() == AiAccess.Mode.KEEPASS && chosen.entry() == null) {
             Arrays.fill(key, '\0');
             feedback.warning("Eintrag fehlt", "Bitte einen KeePass-Eintrag wählen oder einen neuen Namen eintippen.");
             return;
         }
         boolean known = chosen.entry() != null && titles.contains(chosen.entry()) || chosen.equals(savedAccess());
-        if (chosen.fromKeePass() && !known && key.length == 0) {
+        if (!ollama && chosen.fromKeePass() && !known && key.length == 0) {
             feedback.warning("API-Key fehlt", "Für den neuen KeePass-Eintrag „" + chosen.entry() + "“ bitte den "
                     + "API-Key eingeben; er wird nur in KeePass gespeichert.");
             return;
         }
-        if (chosen.fromKeePass() && known && Boolean.FALSE.equals(keePassKeyPresent)) {
+        if (!ollama && chosen.fromKeePass() && known && Boolean.FALSE.equals(keePassKeyPresent)) {
             // Zuletzt ohne Passwort gelesen: erst neu lesen, denn vielleicht ist es inzwischen in KeePass nachgetragen.
             String title = chosen.entry();
             Background.run(() -> {
@@ -859,6 +916,11 @@ final class AiSettingsPanel {
         boolean vault = context.aiVault().available();
         AppRuntime runtime = context.runtime();
         Background.run(() -> {
+            if (ollama) {
+                Measured measured = measure(context, runtime, draft, new char[0], false);
+                store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check);
+                return measured;
+            }
             if (chosen.fromKeePass()) {
                 // Neuer Eintrag: Basisadresse und Key gehen nach KeePass, nie in Tresor oder Datei.
                 if (!known) {
@@ -881,10 +943,11 @@ final class AiSettingsPanel {
                     check);
             return measured;
         }, measured -> {
-            if (!chosen.fromKeePass() && !vault && key.length > 0) {
+            if (!ollama && !chosen.fromKeePass() && !vault && key.length > 0) {
                 context.sessionAiKey(key);
             }
             boolean serviceChanged = key.length > 0 || !chosen.equals(shownAccess)
+                    || draft.provider() != current.provider()
                     || !java.util.Objects.equals(blankToNull(draft.baseUrl()), blankToNull(current.baseUrl()));
             Arrays.fill(key, '\0');
             if (save != null) {
@@ -1148,9 +1211,10 @@ final class AiSettingsPanel {
 
     /** Die Eingaben als Einstellungen des Core, mit dem API-Key nur im Speicher. */
     static AiServiceSettings service(AiDraft draft, char[] key) {
-        return new AiServiceSettings(URI.create(draft.baseUrl().strip()), key == null || key.length == 0 ? null
-                : new String(key), blankToNull(draft.chatModel()), blankToNull(draft.embeddingModel()),
-                draft.dimensions(), draft.timeout(), null, Set.of());
+        return new AiServiceSettings(URI.create(draft.baseUrl().strip()),
+                key == null || key.length == 0 || draft.ollama() ? null : new String(key),
+                blankToNull(draft.chatModel()), blankToNull(draft.embeddingModel()), draft.dimensions(),
+                draft.timeout(), null, Set.of()).withProvider(draft.provider()).withContextTokens(draft.context());
     }
 
     static final String CHAT_MAX_TOKENS_LABEL = "Ausgabelimit";
@@ -1261,8 +1325,9 @@ final class AiSettingsPanel {
         modelsFeedback.working(outcome != null && modelRetry.attempts() > 1
                 ? "Modelle werden geladen … (Versuch " + modelRetry.attempts() + ")" : "Modelle werden geladen …");
         boolean[] keyGiven = {false};
+        boolean ollama = draft.ollama();
         Background.run(() -> {
-            char[] key = currentKey(typed, chosenAccess, knownEntry);
+            char[] key = ollama ? null : currentKey(typed, chosenAccess, knownEntry);
             keyGiven[0] = key != null && key.length > 0;
             try {
                 return runtime.workspace().aiModels(service(draft, key));
@@ -1294,7 +1359,8 @@ final class AiSettingsPanel {
 
     /** Wofür eine Modellliste gilt: Adresse und Bezugsart des Keys (nie der Key selbst). */
     private static String serviceKey(AiDraft draft, AiAccess access) {
-        return String.valueOf(blankToNull(draft.baseUrl())) + "|" + access.mode() + "|" + access.entry();
+        return draft.provider().key() + "|" + blankToNull(draft.baseUrl()) + "|" + access.mode() + "|"
+                + access.entry();
     }
 
     private String currentService() {

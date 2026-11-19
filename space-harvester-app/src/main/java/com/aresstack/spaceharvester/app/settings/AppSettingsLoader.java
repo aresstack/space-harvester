@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
@@ -1062,7 +1063,8 @@ public final class AppSettingsLoader {
                 optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released,
                 text(get(ai, "rerank-model"), problems), text(get(ai, "embedding-chunk-tokens"), problems),
                 text(get(ai, "embedding-chunk-overlap-sentences"), problems), text(get(ai, "vision-model"), problems),
-                text(get(ai, "chat-max-tokens"), problems));
+                text(get(ai, "chat-max-tokens"), problems), provider(text(get(ai, "provider"), problems), problems),
+                text(get(ai, "context-tokens"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1070,7 +1072,18 @@ public final class AppSettingsLoader {
         boolean valid = draft.problems().isEmpty();
         return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
                 draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
-                draft.tokens(), draft.overlap(), draft.visionModel(), draft.maxTokens());
+                draft.tokens(), draft.overlap(), draft.visionModel(), draft.maxTokens(), draft.provider(),
+                draft.context());
+    }
+
+    /** Die Art des KI-Dienstes; ein unbekannter Wert ist ein Problem, und es gilt OpenAI-kompatibel. */
+    private static AiProvider provider(String key, List<String> problems) {
+        try {
+            return AiProvider.fromKey(key);
+        } catch (IllegalArgumentException e) {
+            problems.add(e.getMessage() + "; es gilt openai-compatible");
+            return AiProvider.OPENAI_COMPATIBLE;
+        }
     }
 
     // ------------------------------------------------------------------ Werte

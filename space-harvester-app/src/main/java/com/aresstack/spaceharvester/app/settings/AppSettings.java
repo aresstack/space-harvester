@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
@@ -458,16 +459,28 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param timeout       {@code null} für den Standard des Core
      * @param chatMaxTokens Ausgabelimit einer Antwort des Chat-Modells in Tokens ({@code chat-max-tokens});
      *                      {@code null} für den Standard des Core (8192)
+     * @param provider      Art des Dienstes ({@code provider}): OpenAI-kompatibel oder Ollama (Basisadresse = Server)
+     * @param contextTokens Kontextlänge je Anfrage an Ollama ({@code context-tokens}); {@code null}: Standard des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
                              Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
-                             Integer chatMaxTokens) {
+                             Integer chatMaxTokens, AiProvider provider, Integer contextTokens) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
         public AiSettings {
             externalProcessingSources = List.copyOf(externalProcessingSources);
+            provider = provider == null ? AiProvider.OPENAI_COMPATIBLE : provider;
+        }
+
+        /** Für einen OpenAI-kompatiblen Dienst. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, null, null);
         }
 
         /** Mit dem Ausgabelimit des Core. */

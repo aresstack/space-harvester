@@ -66,7 +66,7 @@ public final class ChatStepModel implements StepModel {
         return new AiServiceSettings(current.baseUrl(), current.apiKey(), step.strip(), current.embeddingModel(),
                 current.embeddingDimensions(), current.timeout(), current.trustBundle(),
                 current.externalProcessingSources(), current.rerankModel(), current.visionModel(),
-                current.chatMaxTokens());
+                current.chatMaxTokens(), current.provider(), current.contextTokens());
     }
 
     /** Verfahren, Modell und ein Fingerabdruck der Dienstadresse; nie die Adresse selbst. */

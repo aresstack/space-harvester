@@ -30,6 +30,7 @@ import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiChatException;
 import com.aresstack.spaceharvester.ai.AiModel;
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
@@ -167,7 +168,7 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        ChatCompletionPort adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        ChatCompletionPort adapter = chatPort(settings.chatModel(), timeoutMillis());
         return (request, listener) -> {
             List<ChatMessage> messages = new ArrayList<>();
             for (AiChat.Message message : request.messages()) {
@@ -235,7 +236,7 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        ChatCompletionPort adapter = chatPort(settings.chatModel(), timeoutMillis());
         // Die Antwort ist eine kurze JSON-Liste; die Obergrenze hält auch einen fehlerhaften Dienst kurz.
         ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_VARIANT_TOKENS).build();
         return (instructions, question) -> {
@@ -278,8 +279,7 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
-                (int) EXPANSION_TIMEOUT.toMillis()));
+        ChatCompletionPort adapter = chatPort(settings.chatModel(), (int) EXPANSION_TIMEOUT.toMillis());
         int maxTokens = settings.chatMaxTokens();
         ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens).build();
         return (instructions, input) -> {
@@ -309,8 +309,7 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
-                (int) LABEL_TIMEOUT.toMillis()));
+        ChatCompletionPort adapter = chatPort(settings.chatModel(), (int) LABEL_TIMEOUT.toMillis());
         AtomicBoolean failed = new AtomicBoolean();
         ChatCompletionPort port = new ChatCompletionPort() {
             @Override
@@ -350,7 +349,7 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        ChatCompletionPort adapter = chatPort(settings.chatModel(), timeoutMillis());
         String model = settings.chatModel();
         String endpoint = ChatNavigationLabeler.fingerprint(String.valueOf(settings.baseUrl()));
         ChatOptions options = ChatOptions.builder().model(model).build();
@@ -396,7 +395,7 @@ public final class RemoteAi {
         if (!settings.vision()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Vision-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.visionModel()));
+        ChatCompletionPort adapter = chatPort(settings.visionModel(), timeoutMillis());
         String model = settings.visionModel();
         SourceImageAnalysisUseCase useCase = new SourceImageAnalysisUseCase(List::of, adapter, () -> null,
                 () -> model, NO_CACHE);
@@ -433,6 +432,10 @@ public final class RemoteAi {
     public List<AiModel> models() {
         if (!settings.configured()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "Kein KI-Dienst eingerichtet");
+        }
+        if (settings.provider() == AiProvider.OLLAMA) {
+            // Ollama meldet die Fähigkeiten seiner Modelle nur über die eigene Schnittstelle, nicht unter /v1/models.
+            return new OllamaModelCatalog(ollama(timeoutMillis())).models();
         }
         List<ModelDescriptor> descriptors = null;
         // Ein kurz nicht erreichbarer Dienst (Neustart, 5xx) wird mit wachsendem Abstand erneut gefragt; Ablehnung,
@@ -484,7 +487,7 @@ public final class RemoteAi {
 
     /** Verbindung zum Katalog der Enterprise-API: Route, TLS und Token wie die übrigen Aufrufe. */
     private KipitzModelCatalogConfig catalogConfig() {
-        KipitzModelCatalogConfig.Builder config = KipitzModelCatalogConfig.builder(settings.baseUrl())
+        KipitzModelCatalogConfig.Builder config = KipitzModelCatalogConfig.builder(settings.apiBaseUrl())
                 .routes(routes)
                 .userAgent(userAgent)
                 .connectTimeoutMillis(timeoutMillis())
@@ -499,18 +502,27 @@ public final class RemoteAi {
         return config.build();
     }
 
-    /** Verbindung zum Chat-Modell: Route, TLS, Token und Fristen wie {@link #catalogConfig()}. */
-    private OpenAiCompatibleChatConfig chatConfig() {
-        return chatConfig(settings.chatModel());
+    /**
+     * Der Chat mit {@code model}: bei Ollama über dessen eigene Schnittstelle mit der Kontextlänge
+     * ({@link OllamaChatAdapter}), sonst über den unveränderten {@code OpenAiCompatibleChatAdapter}.
+     */
+    private ChatCompletionPort chatPort(String model, int timeoutMillis) {
+        if (settings.provider() == AiProvider.OLLAMA) {
+            return new OllamaChatAdapter(ollama(timeoutMillis), model, settings.contextTokens());
+        }
+        return new OpenAiCompatibleChatAdapter(chatConfig(model, timeoutMillis));
     }
 
-    private OpenAiCompatibleChatConfig chatConfig(String model) {
-        return chatConfig(model, timeoutMillis());
+    /** Verbindungen zum Ollama-Server mit Route, TLS und Frist wie die übrigen Aufrufe. */
+    private OllamaConnections ollama(int timeoutMillis) {
+        return new OllamaConnections(settings.ollamaServer(), routes, tls, userAgent, timeoutMillis);
     }
+
+    /** Verbindung zum Chat-Modell: Route, TLS, Token und Fristen wie {@link #catalogConfig()}. */
 
     private OpenAiCompatibleChatConfig chatConfig(String model, int timeoutMillis) {
         OpenAiCompatibleChatConfig.Builder config = OpenAiCompatibleChatConfig
-                .builder(settings.baseUrl(), model)
+                .builder(settings.apiBaseUrl(), model)
                 .routes(routes)
                 .userAgent(userAgent)
                 .connectTimeoutMillis(timeoutMillis)
@@ -526,7 +538,7 @@ public final class RemoteAi {
 
     private OpenAiCompatibleEmbeddingAdapter adapter(String model, int dimension) {
         OpenAiCompatibleEmbeddingConfiguration.Builder config = OpenAiCompatibleEmbeddingConfiguration
-                .builder(settings.baseUrl().toString(), model, dimension)
+                .builder(settings.apiBaseUrl().toString(), model, dimension)
                 .routes(routes)
                 .userAgent(userAgent)
                 .connectTimeoutMillis(timeoutMillis())

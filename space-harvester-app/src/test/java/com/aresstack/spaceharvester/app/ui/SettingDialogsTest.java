@@ -663,6 +663,79 @@ class SettingDialogsTest {
         }
     }
 
+    @Test
+    void anOllamaServerNeedsNoKeyAndReportsItsModelsWithTheirCapabilities() throws Exception {
+        List<String> authorizations = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.sun.net.httpserver.HttpServer service = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        service.createContext("/api/tags", exchange -> {
+            authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            respond(exchange, """
+                    {"models":[{"name":"gemma4:12b","model":"gemma4:12b"},{"name":"bge-m3:latest","model":"bge-m3:latest"}]}""");
+        });
+        service.createContext("/api/show", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            respond(exchange, body.contains("gemma4") ? "{\"capabilities\":[\"completion\",\"vision\"]}"
+                    : "{\"capabilities\":[\"embedding\"]}");
+        });
+        service.createContext("/v1/embeddings", exchange -> {
+            authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            exchange.getRequestBody().readAllBytes();
+            respond(exchange, """
+                    {"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.6,0.8,0.0,0.0]}]}""");
+        });
+        service.start();
+        try {
+            AiSettingsPanel[] panel = new AiSettingsPanel[1];
+            SwingUtilities.invokeAndWait(() -> {
+                panel[0] = new AiSettingsPanel(context);
+                panel[0].access.setSelectedItem(AiSettingsPanel.MANUAL);
+                panel[0].apiKey.setText("sk-nicht-fuer-ollama");
+                panel[0].provider.setSelectedItem(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA.displayName());
+                assertThat(panel[0].rows.shows(panel[0].apiKey)).as("ohne API-Key").isFalse();
+                assertThat(panel[0].rows.shows(panel[0].access)).as("ohne Zugangsdaten").isFalse();
+                assertThat(panel[0].baseUrl.getText()).as("Server dieses Rechners vorbelegt")
+                        .isEqualTo("http://localhost:11434");
+                assertThat(panel[0].rows.hint(panel[0].baseUrl)).contains("Ollama");
+                assertThat(panel[0].rows.shows(panel[0].contextTokens)).as("Kontextlänge nur bei Ollama").isTrue();
+                panel[0].contextTokens.setText("16384");
+                panel[0].baseUrl.setText("http://127.0.0.1:" + service.getAddress().getPort());
+                panel[0].loadModels.doClick();
+            });
+            awaitFeedback(panel[0], "Modelle geladen");
+            SwingUtilities.invokeAndWait(() -> {
+                assertThat(panel[0].choices(com.aresstack.spaceharvester.ai.AiModel.VISION))
+                        .extracting(com.aresstack.spaceharvester.ai.AiModel::id).containsExactly("gemma4:12b");
+                assertThat(panel[0].choices(com.aresstack.spaceharvester.ai.AiModel.EMBEDDING))
+                        .extracting(com.aresstack.spaceharvester.ai.AiModel::id).containsExactly("bge-m3:latest");
+                panel[0].embeddingModel.setText("bge-m3:latest");
+                panel[0].visionModel.setText("gemma4:12b");
+                panel[0].save.doClick();
+            });
+            awaitFeedback(panel[0], "übernommen");
+
+            assertThat(Files.readString(config)).contains("provider: \"ollama\"", "embedding-dimensions: 4",
+                    "vision-model: \"gemma4:12b\"", "context-tokens: 16384").doesNotContain("sk-nicht-fuer-ollama");
+            assertThat(context.settings().ai().provider()).isEqualTo(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA);
+            assertThat(context.aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN))
+                    .as("kein Key im Tresor").isFalse();
+            assertThat(authorizations).hasSize(2).containsOnly("null");
+            assertThat(context.runtime().workspace().semanticSearch()).isTrue();
+            SwingUtilities.invokeAndWait(() -> {
+                AiSettingsPanel fresh = new AiSettingsPanel(context);
+                assertThat(fresh.ollamaChosen()).isTrue();
+                assertThat(fresh.rows.shows(fresh.apiKey)).isFalse();
+                assertThat(fresh.changed()).isFalse();
+                fresh.provider.setSelectedItem(com.aresstack.spaceharvester.ai.AiProvider.OPENAI_COMPATIBLE.displayName());
+                assertThat(fresh.rows.shows(fresh.apiKey)).isTrue();
+                assertThat(fresh.rows.shows(fresh.contextTokens)).isFalse();
+                assertThat(fresh.changed()).isTrue();
+            });
+        } finally {
+            service.stop(0);
+        }
+    }
+
     static void await(BooleanSupplier condition) throws Exception {
         long until = System.currentTimeMillis() + 30_000;
         boolean[] met = {false};

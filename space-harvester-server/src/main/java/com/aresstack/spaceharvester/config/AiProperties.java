@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import java.net.URI;
 import java.time.Duration;
@@ -20,6 +21,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param rerankModel         Rerank-Modell des Dienstes ({@code POST /rerank}, #181) oder leer
  * @param visionModel         Vision-Modell für Bildbeschreibungen (ADR 0021) oder leer
  * @param chatMaxTokens       Ausgabelimit einer Antwort des Chat-Modells in Tokens ({@code max_tokens}), 1 bis 1000000
+ * @param provider            {@code openai-compatible} (leer) oder {@code ollama}; bei Ollama ist {@code base-url} der
+ *                            Server, etwa {@code http://localhost:11434}
+ * @param contextTokens       Kontextlänge je Anfrage an Ollama ({@code num_ctx}); leer: 8192
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -28,11 +32,13 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            @DefaultValue("0") int embeddingChunkChars, String rerankModel,
                            @DefaultValue("350") int embeddingChunkTokens,
                            @DefaultValue("1") int embeddingChunkOverlapSentences, String visionModel,
-                           @DefaultValue("8192") int chatMaxTokens) {
+                           @DefaultValue("8192") int chatMaxTokens, String provider,
+                           Integer contextTokens) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
-                trustBundle, externalProcessingSources, rerankModel, visionModel, chatMaxTokens);
+                trustBundle, externalProcessingSources, rerankModel, visionModel, chatMaxTokens,
+                AiProvider.fromKey(provider), contextTokens);
     }
 
     /** Ohne API-Key. */

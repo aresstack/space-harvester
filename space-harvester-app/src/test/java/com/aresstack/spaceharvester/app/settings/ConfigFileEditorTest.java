@@ -953,6 +953,38 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void anOllamaServerGoesIntoTheAiBlockAsProvider() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("http://localhost:11434", "gemma4:12b", "bge-m3:latest", "1024", null,
+                java.util.List.of(), null, null, null, "gemma4:12b")
+                .withProvider(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA).withContextTokens("16384");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("provider: \"ollama\"", "base-url: \"http://localhost:11434\"",
+                "context-tokens: 16384");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().provider()).isEqualTo(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA);
+        assertThat(settings.ai().contextTokens()).isEqualTo(16384);
+        assertThat(ai.withContextTokens("100").problems()).anyMatch(p -> p.contains("Kontextlänge"));
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(ai.withProvider(null).yaml("")).as("OpenAI-kompatibel ist die Vorgabe").doesNotContain("provider");
+        assertThat(new AiDraft(null, null, null, null, null, null)
+                .withProvider(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA).problems())
+                .anyMatch(p -> p.contains("Basisadresse"));
+        Files.writeString(file, """
+                space-harvester:
+                  ai:
+                    provider: lmstudio
+                    base-url: "http://x:1"
+                """);
+        AppSettings unknown = loader.load(file);
+        assertThat(unknown.problems()).anyMatch(p -> p.contains("provider"));
+        assertThat(unknown.ai().provider()).isEqualTo(com.aresstack.spaceharvester.ai.AiProvider.OPENAI_COMPATIBLE);
+    }
+
+    @Test
     void addsTheProxyWhereNetworkOrTheWholeBlockIsMissing() throws Exception {
         ProxyDraft pac = new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, "http://proxy.firma.de/proxy.pac", null,
                 null, null, null, null, null);

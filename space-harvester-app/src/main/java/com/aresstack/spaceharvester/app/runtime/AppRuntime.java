@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.app.nlp.MaltStatementAnalyzer;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
@@ -360,8 +361,11 @@ public final class AppRuntime implements AutoCloseable {
         }
         AiServiceSettings service;
         try {
-            service = new AiServiceSettings(URI.create(ai.baseUrl()), apiKey, ai.chatModel(), ai.embeddingModel(),
-                    ai.embeddingDimensions(), ai.timeout(), null, Set.copyOf(ai.externalProcessingSources()));
+            // Ein Ollama-Server braucht keinen Key; ein gespeicherter Key des anderen Dienstes geht nicht an ihn.
+            String key = ai.provider() == AiProvider.OLLAMA ? null : apiKey;
+            service = new AiServiceSettings(URI.create(ai.baseUrl()), key, ai.chatModel(), ai.embeddingModel(),
+                    ai.embeddingDimensions(), ai.timeout(), null, Set.copyOf(ai.externalProcessingSources()))
+                    .withProvider(ai.provider()).withContextTokens(ai.contextTokens());
         } catch (IllegalArgumentException e) {
             LOG.log(System.Logger.Level.WARNING, "KI-Dienst nicht nutzbar: {0}", e.getMessage());
             return AiServiceSettings.NONE;
