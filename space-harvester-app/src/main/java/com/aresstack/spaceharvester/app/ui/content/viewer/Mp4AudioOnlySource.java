@@ -26,12 +26,30 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
     private final int[] chunkLengths;
     private final long length;
     /**
-     * Recently read runs of audio chunks that are contiguous in the original file. Every remote read costs a full
-     * round trip (about 0.65 s from BSCW), so reading each 20-KB chunk on its own stalled audio playback for
-     * seconds. A run never spans a byte that does not belong to an audio chunk, so no video data is read.
+     * Audio chunks grouped once into runs that lie back to back in the original file (at most 256 KiB each).
+     * Every remote read costs a full round trip (about 0.65 s from BSCW), so reading each 20-KB chunk on its own
+     * stalled audio playback for seconds. A group never spans a byte outside its audio chunks, so no video data is
+     * read. Groups are fixed, so concurrent reads share one remote read instead of fetching overlapping bytes, and
+     * all groups a read needs are requested in parallel.
      */
-    private final java.util.Deque<Run> runs = new java.util.ArrayDeque<>();
-    private static final int CACHED_RUNS = 16;
+    private final int[] groupOfChunk;
+    private final int[] groupFirstChunk;
+    private final int[] groupLastChunk;
+    private static final int CACHED_GROUPS = 64;
+    private static final java.util.concurrent.ExecutorService GROUP_READERS =
+            java.util.concurrent.Executors.newFixedThreadPool(4, task -> {
+                Thread reader = new Thread(task, "space-harvester-audio-fetch");
+                reader.setDaemon(true);
+                return reader;
+            });
+    private final java.util.Map<Integer, java.util.concurrent.CompletableFuture<byte[]>> groups =
+            new java.util.LinkedHashMap<Integer, java.util.concurrent.CompletableFuture<byte[]>>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(
+                        java.util.Map.Entry<Integer, java.util.concurrent.CompletableFuture<byte[]>> eldest) {
+                    return size() > CACHED_GROUPS;
+                }
+            };
 
     private Mp4AudioOnlySource(MediaStreamBridge.ChunkSource remote, byte[] header,
                                long[] inputOffsets, long[] outputOffsets,
@@ -42,6 +60,27 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
         this.outputOffsets = outputOffsets;
         this.chunkLengths = chunkLengths;
         this.length = length;
+        this.groupOfChunk = new int[chunkLengths.length];
+        int[] first = new int[chunkLengths.length];
+        int[] last = new int[chunkLengths.length];
+        int count = -1;
+        long total = 0;
+        for (int chunk = 0; chunk < chunkLengths.length; chunk++) {
+            boolean joins = count >= 0 && chunkLengths[chunk] <= REMOTE_READ_BYTES
+                    && chunkLengths[last[count]] <= REMOTE_READ_BYTES
+                    && inputOffsets[chunk] == inputOffsets[chunk - 1] + chunkLengths[chunk - 1]
+                    && total + chunkLengths[chunk] <= REMOTE_READ_BYTES;
+            if (!joins) {
+                count++;
+                first[count] = chunk;
+                total = 0;
+            }
+            last[count] = chunk;
+            total += chunkLengths[chunk];
+            groupOfChunk[chunk] = count;
+        }
+        this.groupFirstChunk = java.util.Arrays.copyOf(first, count + 1);
+        this.groupLastChunk = java.util.Arrays.copyOf(last, count + 1);
     }
 
     static Mp4AudioStream open(MediaStreamBridge.ChunkSource source, long sourceLength)
@@ -137,6 +176,17 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
             throw new IOException("Invalid audio-only byte range");
         }
         int count = (int) Math.min(maximumBytes, length - offset);
+        long end = offset + count;
+        if (end > header.length) {
+            // Request every group this read needs at once, so they arrive in parallel.
+            int lastChunk = findChunk(end - 1);
+            for (int chunk = findChunk(Math.max(offset, header.length)); chunk <= lastChunk;
+                 chunk = groupLastChunk[groupOfChunk[chunk]] + 1) {
+                if (chunkLengths[chunk] <= REMOTE_READ_BYTES) {
+                    group(groupOfChunk[chunk]);
+                }
+            }
+        }
         byte[] output = new byte[count];
         int copied = 0;
         while (copied < count) {
@@ -153,9 +203,10 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
                     byte[] data = fetch(remote, inputOffsets[chunk] + inside, bytes);
                     System.arraycopy(data, 0, output, copied, bytes);
                 } else {
-                    Run run = run(chunk);
-                    System.arraycopy(run.bytes, (int) (inputOffsets[chunk] - run.inputStart + inside),
-                            output, copied, bytes);
+                    int group = groupOfChunk[chunk];
+                    byte[] data = join(group(group));
+                    long groupStart = inputOffsets[groupFirstChunk[group]];
+                    System.arraycopy(data, (int) (inputOffsets[chunk] - groupStart + inside), output, copied, bytes);
                 }
                 copied += bytes;
             }
@@ -163,45 +214,45 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
         return output;
     }
 
-    /** The cached run containing {@code chunk}, or a newly read run of contiguous audio chunks starting at it. */
-    private Run run(int chunk) throws IOException {
-        synchronized (runs) {
-            for (Run cached : runs) {
-                if (chunk >= cached.firstChunk && chunk <= cached.lastChunk) {
-                    return cached;
+    /** The cached or newly requested bytes of one chunk group; a failed read is forgotten and retried later. */
+    private java.util.concurrent.CompletableFuture<byte[]> group(int group) {
+        synchronized (groups) {
+            java.util.concurrent.CompletableFuture<byte[]> cached = groups.get(group);
+            if (cached != null) {
+                return cached;
+            }
+            long start = inputOffsets[groupFirstChunk[group]];
+            int last = groupLastChunk[group];
+            int size = (int) (inputOffsets[last] + chunkLengths[last] - start);
+            java.util.concurrent.CompletableFuture<byte[]> read = java.util.concurrent.CompletableFuture.supplyAsync(
+                    () -> {
+                        try {
+                            return fetch(remote, start, size);
+                        } catch (IOException failure) {
+                            throw new java.util.concurrent.CompletionException(failure);
+                        }
+                    }, GROUP_READERS);
+            groups.put(group, read);
+            read.whenComplete((data, failure) -> {
+                if (failure != null) {
+                    synchronized (groups) {
+                        groups.remove(group, read);
+                    }
                 }
-            }
+            });
+            return read;
         }
-        int last = chunk;
-        long total = chunkLengths[chunk];
-        while (last + 1 < chunkLengths.length
-                && inputOffsets[last + 1] == inputOffsets[last] + chunkLengths[last]
-                && total + chunkLengths[last + 1] <= REMOTE_READ_BYTES) {
-            last++;
-            total += chunkLengths[last];
-        }
-        Run run = new Run(chunk, last, inputOffsets[chunk], fetch(remote, inputOffsets[chunk], (int) total));
-        synchronized (runs) {
-            runs.addFirst(run);
-            while (runs.size() > CACHED_RUNS) {
-                runs.removeLast();
-            }
-        }
-        return run;
     }
 
-    /** Audio chunks {@code firstChunk..lastChunk}, stored back to back in the original file. */
-    private static final class Run {
-        final int firstChunk;
-        final int lastChunk;
-        final long inputStart;
-        final byte[] bytes;
-
-        Run(int firstChunk, int lastChunk, long inputStart, byte[] bytes) {
-            this.firstChunk = firstChunk;
-            this.lastChunk = lastChunk;
-            this.inputStart = inputStart;
-            this.bytes = bytes;
+    private static byte[] join(java.util.concurrent.CompletableFuture<byte[]> pending) throws IOException {
+        try {
+            return pending.get();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new java.io.InterruptedIOException("Audio read interrupted");
+        } catch (java.util.concurrent.ExecutionException failed) {
+            Throwable cause = failed.getCause();
+            throw cause instanceof IOException ? (IOException) cause : new IOException("Audio range unavailable", cause);
         }
     }
 
@@ -414,11 +465,31 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
             throw unsupported("MP4 metadata exceeds safe size limit");
         }
         byte[] target = new byte[(int) size];
-        for (int position = 0; position < target.length;) {
+        // Read the parts of a large box (the MP4 index can be several MiB) in parallel: every remote read is
+        // latency-bound, so sequential 256-KiB reads made the first switch to audio wait for seconds.
+        java.util.List<java.util.concurrent.CompletableFuture<Void>> parts = new java.util.ArrayList<>();
+        for (int position = 0; position < target.length; position += REMOTE_READ_BYTES) {
+            int at = position;
             int count = Math.min(REMOTE_READ_BYTES, target.length - position);
-            byte[] data = fetch(source, offset + position, count);
-            System.arraycopy(data, 0, target, position, count);
-            position += count;
+            parts.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    System.arraycopy(fetch(source, offset + at, count), 0, target, at, count);
+                } catch (IOException failure) {
+                    throw new java.util.concurrent.CompletionException(failure);
+                }
+            }, GROUP_READERS));
+        }
+        for (java.util.concurrent.CompletableFuture<Void> part : parts) {
+            try {
+                part.get();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new java.io.InterruptedIOException("MP4 metadata read interrupted");
+            } catch (java.util.concurrent.ExecutionException failed) {
+                Throwable cause = failed.getCause();
+                throw cause instanceof IOException ? (IOException) cause
+                        : new IOException("MP4 metadata unavailable", cause);
+            }
         }
         return target;
     }
