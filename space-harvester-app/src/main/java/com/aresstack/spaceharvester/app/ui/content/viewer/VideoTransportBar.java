@@ -27,6 +27,8 @@ final class VideoTransportBar extends JPanel {
     private final JButton play = iconButton("Abspielen", ComposerIcons.play());
     private final JButton pause = iconButton("Pausieren", ComposerIcons.pause());
     private final JButton stop = iconButton("Stoppen", ComposerIcons.stop());
+    private final JButton previousSlide = iconButton("Vorige Folie", ComposerIcons.chevronLeft());
+    private final JButton nextSlide = iconButton("Nächste Folie", ComposerIcons.chevronRight());
     private final JButton download = iconButton("Herunterladen", ComposerIcons.download());
     private final JButton cancelDownload = iconButton("Download abbrechen", ComposerIcons.stop());
     private final JButton fullScreen = iconButton("Vollbild", new VideoFullScreenIcon(false));
@@ -47,6 +49,10 @@ final class VideoTransportBar extends JPanel {
         playback.add(play);
         playback.add(pause);
         playback.add(stop);
+        playback.add(previousSlide);
+        playback.add(nextSlide);
+        previousSlide.setVisible(false);
+        nextSlide.setVisible(false);
         JPanel transfers = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
         transfers.setOpaque(false);
         download.setText("Herunterladen");
@@ -70,6 +76,29 @@ final class VideoTransportBar extends JPanel {
         add(seekBar, BorderLayout.CENTER);
         pause.setEnabled(false);
         stop.setEnabled(false);
+    }
+
+    JButton previousSlide() {
+        return previousSlide;
+    }
+
+    JButton nextSlide() {
+        return nextSlide;
+    }
+
+    /** Show slide marks and the slide buttons once slide changes are known. */
+    void slides(java.util.List<Long> changes) {
+        seekBar.slides(changes);
+        boolean any = changes != null && !changes.isEmpty();
+        previousSlide.setVisible(any);
+        nextSlide.setVisible(any);
+        if (any) {
+            String found = changes.size() + " Folienwechsel erkannt";
+            previousSlide.setToolTipText("Vorige Folie (" + found + ")");
+            nextSlide.setToolTipText("Nächste Folie (" + found + ")");
+        }
+        revalidate();
+        repaint();
     }
 
     JButton play() {

@@ -61,6 +61,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private MediaStreamBridge bridge;
     private MediaStreamBridge audioBridge;
     private SwingWorker<Mp4AudioStream, Void> audioPreparation;
+    /** Reads the MP4 index once after the first playback start and marks the slide changes. */
+    private SwingWorker<java.util.List<Long>, Void> slideDetection;
     private volatile boolean switchingMedia;
     private long resumePositionMillis;
     private boolean pauseAfterSwitch;
@@ -109,6 +111,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.cancelDownload().addActionListener(event -> cancelDownload());
         transport.fullScreen().addActionListener(event -> fullScreen.toggle());
         transport.audioOnly().addActionListener(event -> toggleAudioOnly());
+        transport.previousSlide().addActionListener(event -> jumpToSlide(false));
+        transport.nextSlide().addActionListener(event -> jumpToSlide(true));
         transport.fullScreen().setEnabled(false);
         transport.audioOnly().setEnabled(false);
         transport.seekBar().reset();
@@ -532,6 +536,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (closed) {
             return;
         }
+        detectSlidesOnce();
         if (switchingMedia) {
             resumePlaybackAfterSwitch();
         }
@@ -542,6 +547,52 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.pause().setEnabled(true);
         transport.stop().setEnabled(true);
         message.setText(playbackMessage());
+    }
+
+    /**
+     * Find the slide changes of a screen-recorded presentation from the MP4 index, once and in the background, so
+     * opening a page without playing it causes no extra BSCW traffic. Other formats simply show no marks.
+     */
+    private void detectSlidesOnce() {
+        boolean mp4 = fileName != null && fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4");
+        if (slideDetection != null || !mp4 || fileSize < 16) {
+            return;
+        }
+        slideDetection = new SwingWorker<java.util.List<Long>, Void>() {
+            @Override
+            protected java.util.List<Long> doInBackground() throws IOException {
+                return SlideChanges.load(reader, fileSize);
+            }
+
+            @Override
+            protected void done() {
+                if (closed || isCancelled()) {
+                    return;
+                }
+                try {
+                    transport.slides(get());
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException unavailable) {
+                    // Without a readable index the video simply has no slide marks.
+                }
+            }
+        };
+        slideDetection.execute();
+    }
+
+    /** Jump to the next slide, or to the start of the current or previous one like a player's previous button. */
+    private void jumpToSlide(boolean forward) {
+        java.util.List<Long> changes = transport.seekBar().slides();
+        long duration = transport.seekBar().durationMillis();
+        long position = transport.seekBar().displayedMillis();
+        if (changes.isEmpty() || duration <= 0 || position < 0) {
+            return;
+        }
+        long target = forward ? SlideChanges.next(changes, position) : SlideChanges.previous(changes, position);
+        if (target >= 0) {
+            seek(target / (double) duration);
+        }
     }
 
     private void playbackPaused() {
@@ -741,6 +792,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     @Override
     public void close() {
+        if (slideDetection != null) {
+            slideDetection.cancel(true);
+        }
         if (closed) {
             return;
         }

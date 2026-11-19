@@ -31,6 +31,9 @@ final class VideoSeekBar extends JComponent {
     private static final Color TRACK = new Color(0x303C4B);
     private static final Color PLAYED = new Color(0x68BEDD);
     private static final Color LABEL = new Color(0xC9D6E1);
+    private static final Color SLIDE = new Color(0xF4D35E);
+    /** Slide changes in milliseconds, drawn as marks on the track. */
+    private java.util.List<Long> slides = java.util.Collections.emptyList();
 
     private final DoubleConsumer seek;
     private long durationMillis;
@@ -113,6 +116,27 @@ final class VideoSeekBar extends JComponent {
         repaint();
     }
 
+    /** Show slide changes as marks on the track; their number appears in the tooltip. */
+    void slides(java.util.List<Long> changes) {
+        slides = changes == null ? java.util.Collections.emptyList() : java.util.List.copyOf(changes);
+        repaint();
+    }
+
+    java.util.List<Long> slides() {
+        return slides;
+    }
+
+    /** The slide number (1 = before the first change) shown at a position. */
+    static int slideAt(java.util.List<Long> changes, long millis) {
+        int slide = 1;
+        for (long change : changes) {
+            if (change <= millis) {
+                slide++;
+            }
+        }
+        return slide;
+    }
+
     boolean isDragging() {
         return dragging;
     }
@@ -147,8 +171,11 @@ final class VideoSeekBar extends JComponent {
         if (!canSeek()) {
             return "Die Videolänge wird ermittelt";
         }
-        return durationMillis > 0 ? clock(Math.round(shareAt(event.getX()) * durationMillis))
-                : Math.round(shareAt(event.getX()) * 100) + " %";
+        if (durationMillis > 0) {
+            long at = Math.round(shareAt(event.getX()) * durationMillis);
+            return slides.isEmpty() ? clock(at) : clock(at) + " · Folie " + slideAt(slides, at);
+        }
+        return Math.round(shareAt(event.getX()) * 100) + " %";
     }
 
     private void preview(int x) {
@@ -197,6 +224,13 @@ final class VideoSeekBar extends JComponent {
                 int x = INSET + span * tick / 4;
                 g.setColor(new Color(0x748494));
                 g.fillRect(x, TRACK_TOP + 2, 1, 3);
+            }
+            if (durationMillis > 0) {
+                g.setColor(SLIDE);
+                for (long change : slides) {
+                    int x = INSET + (int) Math.round(span * Math.min(1d, change / (double) durationMillis));
+                    g.fillRect(x, TRACK_TOP - 2, 2, TRACK_HEIGHT + 4);
+                }
             }
             if (canSeek()) {
                 int x = INSET + playedWidth;
