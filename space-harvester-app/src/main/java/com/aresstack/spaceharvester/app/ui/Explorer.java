@@ -440,6 +440,8 @@ public final class Explorer {
             if (!merging) {
                 selectionChanged();
             }
+            // Die Favoritenliste zeigt, welcher Favorit gerade geöffnet bzw. im Baum gewählt ist.
+            selectCurrentFavorite();
         });
         MouseAdapter mouse = new MouseAdapter() {
             @Override
@@ -1964,7 +1966,37 @@ public final class Explorer {
         if (onlyFavorites && filter.getText().trim().isEmpty()) {
             note.setText(all.isEmpty() ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
+        selectCurrentFavorite();
         tree.repaint();
+    }
+
+    /**
+     * Markiert in der Favoritenliste den Favoriten des im Baum gewählten Knotens, also der geöffneten Seite. Ohne
+     * diese Markierung sah ein Klick auf den Favoriten der schon offenen Seite so aus, als passiere nichts.
+     */
+    private void selectCurrentFavorite() {
+        TreePath path = tree.getSelectionPath();
+        Item item = path != null && path.getLastPathComponent() instanceof Node node ? node.item() : null;
+        for (int index = 0; item != null && index < favoriteModel.size(); index++) {
+            if (matches(favoriteModel.get(index), item)) {
+                favorites.setSelectedIndex(index);
+                favorites.ensureIndexIsVisible(index);
+                return;
+            }
+        }
+        favorites.clearSelection();
+    }
+
+    private static boolean matches(Favorites.Favorite favorite, Item item) {
+        return switch (item) {
+            case SourceItem source -> favorite.isSource() && favorite.sourceId().equals(source.sourceId());
+            case SpaceItem space -> !favorite.isSource() && favorite.pageId() == null
+                    && favorite.sourceId().equals(space.sourceId())
+                    && java.util.Objects.equals(favorite.spaceKey(), space.spaceKey());
+            case PageItem page -> favorite.sourceId().equals(page.sourceId())
+                    && page.pageId().equals(favorite.pageId());
+            default -> false;
+        };
     }
 
     /** Ein Favorit in der Liste: die Seite öffnen bzw. den Space zeigen; der Baum folgt der geöffneten Seite. */
