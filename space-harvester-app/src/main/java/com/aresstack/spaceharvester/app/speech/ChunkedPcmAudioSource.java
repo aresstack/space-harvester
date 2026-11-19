@@ -15,6 +15,7 @@ import java.util.List;
  * Keep the current and preceding two-minute PCM chunks in RAM.
  * Spill the older full chunk only when the newer chunk becomes full.
  * Read arbitrary Whisper windows across chunk boundaries without gathering all audio.
+ * Appends and reads are synchronized, so {@link #liveView()} can be read while recording continues.
  */
 final class ChunkedPcmAudioSource implements WhisperAudioSource, AutoCloseable {
     private static final int CHUNK_SECONDS = 120;
@@ -22,6 +23,8 @@ final class ChunkedPcmAudioSource implements WhisperAudioSource, AutoCloseable {
     private static final int TARGET_RATE = WhisperLogMelSpectrogram.SAMPLE_RATE;
     private static final int ALIGNMENT_SAMPLES = TARGET_RATE / 100;
     private static final int RESAMPLING_MARGIN_SAMPLES = 2 * ALIGNMENT_SAMPLES;
+    /** While recording, withhold the newest samples whose resampling would still change with more audio. */
+    private static final int LIVE_MARGIN_SAMPLES = ALIGNMENT_SAMPLES + RESAMPLING_MARGIN_SAMPLES;
 
     private final int sourceRate;
     private final int chunkBytes;
@@ -44,7 +47,7 @@ final class ChunkedPcmAudioSource implements WhisperAudioSource, AutoCloseable {
         currentChunk = new byte[chunkBytes];
     }
 
-    void append(byte[] pcm, int offset, int length) throws IOException {
+    synchronized void append(byte[] pcm, int offset, int length) throws IOException {
         if (sealed || closed) {
             throw new IllegalStateException("The recording has already been stopped");
         }
@@ -66,38 +69,67 @@ final class ChunkedPcmAudioSource implements WhisperAudioSource, AutoCloseable {
         }
     }
 
-    void finish() {
+    synchronized void finish() {
         sealed = true;
     }
 
-    boolean isEmpty() {
+    synchronized boolean isEmpty() {
         return totalBytes == 0;
     }
 
-    int spilledChunkCount() {
+    synchronized int spilledChunkCount() {
         return spilledChunks.size();
     }
 
-    long residentAudioBytes() {
+    synchronized long residentAudioBytes() {
         return (previousChunk == null ? 0L : chunkBytes) + currentLength;
     }
 
     @Override
-    public long sampleCount() {
+    public synchronized long sampleCount() {
         long sourceFrames = totalBytes / BYTES_PER_FRAME;
         return Math.round((double) sourceFrames * TARGET_RATE / sourceRate);
     }
 
     @Override
-    public float[] readSamples(long startSample, int requestedCount) throws IOException {
-        if (closed) {
-            throw new IOException("The recording has been discarded");
-        }
+    public synchronized float[] readSamples(long startSample, int requestedCount) throws IOException {
         if (!sealed) {
             throw new IllegalStateException("Stop recording before reading its audio");
         }
+        return read(startSample, requestedCount, sampleCount());
+    }
+
+    /**
+     * A view for transcription while recording: it reports only samples that are final, that is
+     * every sample once recording stopped, and while recording all but the newest few milliseconds
+     * whose resampled values could still change. Reads return exactly what the stopped recording
+     * returns for the same interval.
+     */
+    WhisperAudioSource liveView() {
+        return new WhisperAudioSource() {
+            @Override
+            public long sampleCount() {
+                synchronized (ChunkedPcmAudioSource.this) {
+                    long recorded = ChunkedPcmAudioSource.this.sampleCount();
+                    return sealed ? recorded : Math.max(0, recorded - LIVE_MARGIN_SAMPLES);
+                }
+            }
+
+            @Override
+            public float[] readSamples(long startSample, int sampleCount) throws IOException {
+                synchronized (ChunkedPcmAudioSource.this) {
+                    return read(startSample, sampleCount, sampleCount());
+                }
+            }
+        };
+    }
+
+    private float[] read(long startSample, int requestedCount, long available) throws IOException {
+        if (closed) {
+            throw new IOException("The recording has been discarded");
+        }
         if (startSample < 0 || requestedCount < 0
-                || startSample > sampleCount() - requestedCount) {
+                || startSample > available - requestedCount) {
             throw new IllegalArgumentException("Requested audio interval is outside the recording");
         }
         if (requestedCount == 0) {
@@ -199,7 +231,7 @@ final class ChunkedPcmAudioSource implements WhisperAudioSource, AutoCloseable {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         if (closed) {
             return;
         }

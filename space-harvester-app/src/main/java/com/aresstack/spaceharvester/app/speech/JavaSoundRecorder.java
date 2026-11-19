@@ -117,6 +117,11 @@ final class JavaSoundRecorder {
         return (short) ((input[position] & 0xff) | (input[position + 1] << 8));
     }
 
+    /** The audio recorded so far, readable while recording continues (see {@link ChunkedPcmAudioSource#liveView()}). */
+    com.aresstack.windirectml.inference.whisper.WhisperAudioSource liveAudio() {
+        return audio.liveView();
+    }
+
     int consumeRecentPeak() {
         int value = recentPeak;
         recentPeak = 0;

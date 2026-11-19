@@ -610,7 +610,7 @@ public final class ChatPanel extends JPanel {
 
             @Override
             public void partial(String text) {
-                if (dictationPhase == DictationPhase.RECOGNIZING) {
+                if (dictationPhase != DictationPhase.IDLE) {
                     insertDictated(text);
                 }
             }

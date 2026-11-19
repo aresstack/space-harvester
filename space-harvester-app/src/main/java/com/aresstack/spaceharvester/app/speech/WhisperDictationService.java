@@ -4,6 +4,8 @@ import com.aresstack.spaceharvester.app.transcription.WhisperModelLocation;
 import com.aresstack.spaceharvester.app.transcription.WhisperPipelines;
 import com.aresstack.windirectml.inference.whisper.TranscriptionResult;
 import com.aresstack.windirectml.inference.whisper.TranscriptionSegment;
+import com.aresstack.windirectml.inference.whisper.WhisperAudioSource;
+import com.aresstack.windirectml.inference.whisper.WhisperIncrementalTranscription;
 import com.aresstack.windirectml.inference.whisper.WhisperTranscriber;
 import com.aresstack.windirectml.whisper.audio.AskAiWhisperPipeline;
 
@@ -35,6 +37,41 @@ final class WhisperDictationService {
     private AskAiWhisperPipeline audioPipeline;
     private WhisperTranscriber transcriber;
 
+    /**
+     * Start transcribing the growing recording; {@code decodeAvailable()} decodes completed windows
+     * while recording continues and {@link #finishLive} the rest after stop.
+     */
+    synchronized WhisperIncrementalTranscription startLive(WhisperAudioSource growing,
+                                                           java.util.function.Consumer<String> onWindow)
+            throws IOException {
+        load();
+        LOG.info("Spracheingabe: Erkennung läuft während der Aufnahme");
+        return audioPipeline.transcribeIncrementally(growing, transcriber, window -> {
+            logWindow(window);
+            if (!window.getText().isBlank()) {
+                onWindow.accept(window.getText());
+            }
+        });
+    }
+
+    /** Decode the rest of a live transcription after the recording has stopped. */
+    String finishLive(WhisperIncrementalTranscription live, RecordedSpeech speech) throws IOException {
+        if (Boolean.getBoolean(KEEP_RECORDING)) {
+            keep(speech);
+        }
+        LOG.info("Spracheingabe: " + speech.durationMillis() + " ms Aufnahme, Rest wird erkannt");
+        return live.finish().getText();
+    }
+
+    private void load() throws IOException {
+        if (transcriber == null) {
+            transcriber = new WhisperTranscriber(WhisperModelLocation.resolve());
+        }
+        if (audioPipeline == null) {
+            audioPipeline = WhisperPipelines.create();
+        }
+    }
+
     synchronized String transcribe(RecordedSpeech speech) throws IOException {
         return transcribe(speech, ignored -> { });
     }
@@ -42,12 +79,7 @@ final class WhisperDictationService {
     /** Erkennt die Aufnahme und meldet den Text jedes fertigen Fensters, sobald es erkannt ist. */
     synchronized String transcribe(RecordedSpeech speech, java.util.function.Consumer<String> onWindow)
             throws IOException {
-        if (transcriber == null) {
-            transcriber = new WhisperTranscriber(WhisperModelLocation.resolve());
-        }
-        if (audioPipeline == null) {
-            audioPipeline = WhisperPipelines.create();
-        }
+        load();
         if (Boolean.getBoolean(KEEP_RECORDING)) {
             keep(speech);
         }

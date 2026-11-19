@@ -127,4 +127,37 @@ class ChunkedPcmAudioSourceTest {
         }
         return pcm;
     }
+
+    @Test
+    void liveViewReturnsExactlyTheSamplesOfTheStoppedRecording() throws Exception {
+        int sourceRate = 48000;
+        int chunkBytes = sourceRate * 120 * 2;
+        java.util.Random random = new java.util.Random(5);
+        byte[] pcm = new byte[chunkBytes * 2 + 48000 * 2 * 7];
+        random.nextBytes(pcm);
+        java.util.List<float[]> liveWindows = new java.util.ArrayList<>();
+        java.util.List<long[]> requested = new java.util.ArrayList<>();
+        try (ChunkedPcmAudioSource recording = new ChunkedPcmAudioSource(sourceRate)) {
+            com.aresstack.windirectml.inference.whisper.WhisperAudioSource live = recording.liveView();
+            for (int offset = 0; offset < pcm.length; offset += 9600) {
+                recording.append(pcm, offset, Math.min(9600, pcm.length - offset));
+                long available = live.sampleCount();
+                if (available >= 16000 * 30 && liveWindows.size() < 12 && offset % (9600 * 50) == 0) {
+                    long start = available - 16000 * 30;
+                    liveWindows.add(live.readSamples(start, 16000 * 30));
+                    requested.add(new long[]{start});
+                }
+            }
+            assertTrue(recording.spilledChunkCount() >= 1, "The test must cover a spilled chunk");
+            assertTrue(live.sampleCount() < recording.sampleCount(), "Unsettled samples are withheld while recording");
+            recording.finish();
+            assertEquals(recording.sampleCount(), live.sampleCount());
+            assertTrue(liveWindows.size() > 3);
+            for (int i = 0; i < liveWindows.size(); i++) {
+                float[] stopped = recording.readSamples(requested.get(i)[0], 16000 * 30);
+                assertTrue(java.util.Arrays.equals(stopped, liveWindows.get(i)),
+                        "Live window " + i + " differs from the stopped recording");
+            }
+        }
+    }
 }
