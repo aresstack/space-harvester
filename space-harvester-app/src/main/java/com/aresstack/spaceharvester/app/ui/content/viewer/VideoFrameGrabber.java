@@ -47,20 +47,22 @@ public final class VideoFrameGrabber {
     private VideoFrameGrabber() {
     }
 
-    /**
-     * Die Positionen der Standbilder: die erste Folie und jede erkannte Folie, jeweils {@link #SETTLE_MILLIS} nach
-     * ihrem Erscheinen; höchstens {@code limit}.
-     */
-    static List<Long> positions(List<Long> changes, int limit) {
-        List<Long> positions = new ArrayList<>();
-        positions.add(SETTLE_MILLIS);
+    /** Nimmt jedes Standbild entgegen, sobald es gezogen ist. */
+    public interface FrameSink {
+        void frame(Assets.VideoFrame frame) throws IOException;
+    }
+
+    /** Der Beginn jeder Folie: die erste ab 0, dann jede erkannte; höchstens {@code limit}. */
+    public static List<Long> slides(List<Long> changes, int limit) {
+        List<Long> slides = new ArrayList<>();
+        slides.add(0L);
         for (long change : changes) {
-            if (positions.size() >= limit) {
+            if (slides.size() >= limit) {
                 break;
             }
-            positions.add(change + SETTLE_MILLIS);
+            slides.add(change);
         }
-        return positions;
+        return slides;
     }
 
     /**
@@ -73,19 +75,29 @@ public final class VideoFrameGrabber {
     public static List<Assets.VideoFrame> grab(MediaStreamBridge.ChunkSource reader, long size, String mediaType,
                                                int limit, Progress progress, BooleanSupplier cancelled)
             throws IOException {
-        return grab(reader, size, mediaType, SlideChanges.load(reader, size), limit, progress, cancelled);
+        List<Assets.VideoFrame> frames = new ArrayList<>();
+        grab(reader, size, mediaType, slides(SlideChanges.load(reader, size), limit), frames::add, progress,
+                cancelled);
+        return frames;
     }
 
-    /** Wie {@link #grab(MediaStreamBridge.ChunkSource, long, String, int, Progress, BooleanSupplier)} mit schon gefundenen Folienwechseln. */
-    public static List<Assets.VideoFrame> grab(MediaStreamBridge.ChunkSource reader, long size, String mediaType,
-                                               List<Long> changes, int limit, Progress progress,
-                                               BooleanSupplier cancelled) throws IOException {
-        List<Long> positions = positions(changes, limit);
+    /**
+     * Springt jede Folie {@link #SETTLE_MILLIS} nach ihrem Beginn an und gibt ihr Standbild sofort an {@code sink};
+     * das Standbild trägt den Beginn der Folie. Läuft im aufrufenden Thread, nie auf dem EDT.
+     *
+     * @param slides Beginn der Folien, deren Standbild gebraucht wird
+     * @throws IOException           wenn VLC fehlt oder das Video nicht spielt
+     * @throws CancellationException wenn {@code cancelled} zutrifft
+     */
+    public static void grab(MediaStreamBridge.ChunkSource reader, long size, String mediaType, List<Long> slides,
+                            FrameSink sink, Progress progress, BooleanSupplier cancelled) throws IOException {
+        if (slides.isEmpty()) {
+            return;
+        }
         if (!VlcRuntimeLocator.configure()) {
             throw new IOException("VLC ist nicht verfügbar");
         }
         Surface surface = new Surface();
-        List<Assets.VideoFrame> frames = new ArrayList<>();
         MediaPlayerFactory factory = new MediaPlayerFactory("--intf=dummy", "--no-audio", "--quiet",
                 "--no-video-title-show");
         try (MediaStreamBridge bridge = new MediaStreamBridge(reader, size, mediaType)) {
@@ -109,9 +121,10 @@ public final class VideoFrameGrabber {
                     sleep(100);
                 }
                 sleep(QUIET_MILLIS);
-                for (int index = 0; index < positions.size(); index++) {
+                for (int index = 0; index < slides.size(); index++) {
                     check(cancelled);
-                    long position = positions.get(index);
+                    long slide = slides.get(index);
+                    long position = slide + SETTLE_MILLIS;
                     long seen = surface.count();
                     player.controls().setTime(position);
                     // Ein Bild aus der Zeit vor dem Sprung kann noch nachkommen: es gilt erst eines an der Stelle.
@@ -129,9 +142,9 @@ public final class VideoFrameGrabber {
                         }
                     }
                     if (image != null) {
-                        frames.add(new Assets.VideoFrame(position, png(image)));
+                        sink.frame(new Assets.VideoFrame(slide, png(image)));
                     }
-                    progress.frames(index + 1, positions.size());
+                    progress.frames(index + 1, slides.size());
                 }
             } finally {
                 player.controls().stop();
@@ -140,7 +153,6 @@ public final class VideoFrameGrabber {
         } finally {
             factory.release();
         }
-        return frames;
     }
 
     private static byte[] png(BufferedImage image) throws IOException {

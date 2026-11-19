@@ -702,13 +702,33 @@ public final class Workspace {
     }
 
     /**
-     * Legt die an den Folienwechseln gefundenen Standbilder eines Videos als Anhänge der Seite ab; „Bilder beschreiben“
-     * beschreibt sie danach wie die Bilder einer Seite. Braucht wie das Ablegen von Anhängen die sync-Freigabe.
+     * Legt die Folien eines Videos als Anhänge der Seite an, sobald der Player ihre Wechsel gefunden hat: je Folie ein
+     * Platzhalter, benannt nach ihrer Position im Video. Braucht wie das Ablegen von Anhängen die sync-Freigabe.
+     *
+     * @param slides Beginn jeder Folie in Millisekunden
+     * @return die Folien, deren Standbild noch fehlt
      */
+    public List<Long> announceVideoSlides(String sourceId, String pageId, List<Long> slides) {
+        DeliveredPage page = syncedPage(sourceId, pageId);
+        return harvester.assets().putVideoSlides(sourceId, pageId, page.snapshot().revision(), slides);
+    }
+
+    /** Legt das Standbild einer Folie ab; es füllt ihren Platzhalter unter „Anhänge“. */
+    public void storeVideoFrame(String sourceId, String pageId, Assets.VideoFrame frame) {
+        DeliveredPage page = syncedPage(sourceId, pageId);
+        harvester.assets().putVideoFrame(sourceId, pageId, page.snapshot().revision(), frame);
+    }
+
+    /** Wie {@link #announceVideoSlides} und {@link #storeVideoFrame} für schon gezogene Standbilder. */
     public void storeVideoFrames(String sourceId, String pageId, List<Assets.VideoFrame> frames) {
+        DeliveredPage page = syncedPage(sourceId, pageId);
+        harvester.assets().putVideoFrames(sourceId, pageId, page.snapshot().revision(), frames);
+    }
+
+    private DeliveredPage syncedPage(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
-        harvester.assets().putVideoFrames(sourceId, pageId, page.snapshot().revision(), frames);
+        return page;
     }
 
     /**
@@ -2115,7 +2135,8 @@ public final class Workspace {
             if (e.reason() != com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNSUPPORTED) {
                 throw e;
             }
-            String spaceKey = harvester.sources().pageMetadata(sourceId, pageId).entry().page().partitionKey();
+            String spaceKey = harvester.pages().page(caller, sourceId, pageId, false).header().metadata()
+                    .partitionKey();
             java.time.Instant now = java.time.Instant.now();
             PageAttachmentList none = new PageAttachmentList(sourceId, spaceKey,
                     new com.aresstack.spaceharvester.application.sources.PageAttachments(pageId, List.of(), List.of(),

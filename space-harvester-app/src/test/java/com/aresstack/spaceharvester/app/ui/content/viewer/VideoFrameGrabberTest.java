@@ -18,11 +18,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class VideoFrameGrabberTest {
 
     @Test
-    void takesTheFirstSlideAndEachChangeOnceItHasSettled() {
-        assertThat(VideoFrameGrabber.positions(List.of(12_000L, 40_000L), 10)).containsExactly(2_000L, 14_000L,
-                42_000L);
-        assertThat(VideoFrameGrabber.positions(List.of(12_000L, 40_000L), 2)).containsExactly(2_000L, 14_000L);
-        assertThat(VideoFrameGrabber.positions(List.of(), 10)).containsExactly(2_000L);
+    void everySlideBeginsAtItsChangeAndTheFirstAtZero() {
+        assertThat(VideoFrameGrabber.slides(List.of(12_000L, 40_000L), 10)).containsExactly(0L, 12_000L, 40_000L);
+        assertThat(VideoFrameGrabber.slides(List.of(12_000L, 40_000L), 2)).containsExactly(0L, 12_000L);
+        assertThat(VideoFrameGrabber.slides(List.of(), 10)).containsExactly(0L);
     }
 
     /** Local check against a real BSCW recording downloaded by the frame-grab probe; skipped elsewhere. */
@@ -52,7 +51,8 @@ class VideoFrameGrabberTest {
         }
         assertThat(frames).hasSize(6);
         assertThat(progress).hasValue(6);
-        assertThat(frames).extracting(Assets.VideoFrame::millis).startsWith(2_000L);
+        assertThat(frames).extracting(Assets.VideoFrame::millis).as("named after the slide, grabbed 2 s later")
+                .startsWith(0L);
         assertThat(frames.stream().map(frame -> Assets.sha256(frame.png())).distinct()).as("every slide its own frame")
                 .hasSize(6);
         BufferedImage first = ImageIO.read(new ByteArrayInputStream(frames.get(0).png()));

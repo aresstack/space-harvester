@@ -58,14 +58,16 @@ class VideoFramesLiveProbe {
                 + " released " + workspace.imagesReleased(source, pageId));
         MediaByteRange ranges = workspace.openMediaRange(source, pageId);
         long start = System.nanoTime();
-        List<Assets.VideoFrame> frames = VideoFrameGrabber.grab(ranges::read, size, "video/mp4", limit,
-                (done, total) -> System.out.printf(Locale.ROOT, "PROBE frame %d/%d after %.1f s%n", done, total,
-                        (System.nanoTime() - start) / 1e9), () -> false);
-        workspace.storeVideoFrames(source, pageId, frames);
-        System.out.println("PROBE stored " + frames.size() + " frames, stored=" + workspace.videoFramesStored(source,
-                pageId));
-        workspace.attachments(source, pageId).attachments().attachments().forEach(attachment -> System.out.println(
-                "PROBE attachment " + attachment.title() + " " + attachment.mediaType() + " " + attachment.fileSize()));
+        List<Long> slides = VideoFrameGrabber.slides(SlideChanges.load(ranges::read, size), 200);
+        List<Long> missing = workspace.announceVideoSlides(source, pageId, slides);
+        System.out.printf(Locale.ROOT, "PROBE %d slides announced, %d missing, after %.1f s%n", slides.size(),
+                missing.size(), (System.nanoTime() - start) / 1e9);
+        listAttachments(workspace, source, pageId);
+        VideoFrameGrabber.grab(ranges::read, size, "video/mp4", missing.subList(0, Math.min(limit, missing.size())),
+                frame -> workspace.storeVideoFrame(source, pageId, frame), (done, total) -> { }, () -> false);
+        System.out.printf(Locale.ROOT, "PROBE %d frames grabbed after %.1f s%n", Math.min(limit, missing.size()),
+                (System.nanoTime() - start) / 1e9);
+        listAttachments(workspace, source, pageId);
         long describing = System.nanoTime();
         PageImages images = workspace.describeImages(source, pageId);
         System.out.printf(Locale.ROOT, "PROBE described %d of %d in %.1f s, state %s, warnings %s%n",
@@ -75,5 +77,17 @@ class VideoFramesLiveProbe {
             System.out.println("PROBE " + image.title() + " | " + image.status() + " | " + image.description());
         }
         context.shutdown();
+    }
+
+    private static void listAttachments(com.aresstack.spaceharvester.app.runtime.Workspace workspace, String source,
+                                        String pageId) {
+        long start = System.nanoTime();
+        var overview = workspace.assets(source, pageId);
+        long stored = overview.entries().stream().filter(entry -> entry.stored() != null).count();
+        System.out.printf(Locale.ROOT, "PROBE attachments %d (%d stored) loaded in %.1f s, first %s, last %s%n",
+                overview.entries().size(), stored, (System.nanoTime() - start) / 1e9,
+                overview.entries().isEmpty() ? "-" : overview.entries().get(0).attachment().title(),
+                overview.entries().isEmpty() ? "-" : overview.entries().get(overview.entries().size() - 1)
+                        .attachment().title());
     }
 }

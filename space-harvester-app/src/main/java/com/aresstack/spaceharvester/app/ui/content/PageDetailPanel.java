@@ -2414,32 +2414,45 @@ public final class PageDetailPanel extends JPanel {
      */
     private void storeSlideFrames(VideoFrameSource video, String source, String id, List<Long> changes) {
         AppRuntime runtime = context.runtime();
-        if (runtime == null || changes.isEmpty() || video != videoFrames) {
+        if (runtime == null || video != videoFrames) {
             return;
         }
         Background.run(() -> {
-            if (runtime.workspace().videoFramesStored(source, id)) {
-                return 0;
-            }
-            List<com.aresstack.spaceharvester.application.assets.Assets.VideoFrame> frames = VideoFrameGrabber.grab(
-                    video.reader(), video.size(), video.mediaType(), changes,
-                    com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES,
-                    (done, total) -> { }, () -> video != videoFrames);
-            if (!frames.isEmpty()) {
-                runtime.workspace().storeVideoFrames(source, id, frames);
-            }
-            return frames.size();
+            // Erst die Platzhalter, damit die Folien sofort unter „Anhänge“ stehen; dann Bild für Bild.
+            List<Long> missing = runtime.workspace().announceVideoSlides(source, id, VideoFrameGrabber.slides(changes,
+                    com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES));
+            javax.swing.SwingUtilities.invokeLater(() -> attachmentsChanged(video));
+            int[] stored = {0};
+            VideoFrameGrabber.grab(video.reader(), video.size(), video.mediaType(), missing, frame -> {
+                runtime.workspace().storeVideoFrame(source, id, frame);
+                // Die Liste lädt live: nur jedes zehnte Bild neu zeigen, den Rest am Ende.
+                if (++stored[0] % 10 == 0) {
+                    javax.swing.SwingUtilities.invokeLater(() -> attachmentsChanged(video));
+                }
+            }, (done, total) -> { }, () -> video != videoFrames);
+            return stored[0];
         }, stored -> {
             if (stored > 0 && video == videoFrames) {
-                // Die Anhangsliste und die Bilder gelten neu.
-                imagesLoaded = false;
-                feedback.success(stored + " Standbilder als Anhänge abgelegt");
+                attachmentsChanged(video);
+                feedback.success(stored + " Standbilder der Folien unter „Anhänge“ abgelegt");
             }
         }, error -> {
             if (!(error instanceof java.util.concurrent.CancellationException) && video == videoFrames) {
                 feedback.problem(error, Problems.Step.PAGE);
             }
         });
+    }
+
+    /** Die Folien des gezeigten Videos haben sich unter „Anhänge“ geändert: Liste und Bilder gelten neu. */
+    private void attachmentsChanged(VideoFrameSource video) {
+        if (video != videoFrames) {
+            return;
+        }
+        imagesLoaded = false;
+        assetsLoaded = false;
+        if (ATTACHMENTS.equals(selectedTab())) {
+            loadAssets(true);
+        }
     }
 
     /**
