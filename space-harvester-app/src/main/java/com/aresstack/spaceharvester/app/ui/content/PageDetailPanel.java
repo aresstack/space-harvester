@@ -2411,8 +2411,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Der Player hat die Folienwechsel des Videos gefunden: je Wechsel ein Standbild ziehen und als Anhang der Seite
-     * ablegen, einmal je Fassung und im Hintergrund. „Analysen › Bilder“ beschreibt sie dann wie die Bilder einer
+     * Die Folienwechsel des Videos sind beim Öffnen gefunden oder bekannt: je Folie ein Anhang, fehlende Standbilder
+     * ziehen und ablegen, einmal je Fassung und im Hintergrund. „Analysen › Bilder“ beschreibt sie dann wie die Bilder einer
      * Seite.
      */
     private void storeSlideFrames(VideoFrameSource video, String source, String id, long durationMillis,
@@ -2449,22 +2449,31 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Sind die Folien dieses Videos schon bekannt (aus einem früheren Abspielen), zeigt der Player ihre Marken gleich
-     * beim Öffnen; aus der Ablage, ohne die Quelle zu fragen.
+     * Beim Öffnen eines Videos: Sind seine Folien schon als Anhänge bekannt, zeigt der Player ihre Marken sofort; sonst
+     * findet er sie im MP4-Index, und die Anhänge entstehen dabei. Beim Abspielen passiert dafür nichts mehr.
      */
     private void showKnownSlides(VideoViewerPanel viewer, String source, String id) {
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             return;
         }
-        Background.run(() -> runtime.workspace().videoSlides(source, id), known -> known.ifPresent(slides -> {
-            if (viewer == originalVideoViewer) {
-                // Die erste Folie beginnt bei 0 und ist keine Marke.
-                viewer.knownSlides(slides.slides().stream().filter(millis -> millis > 0).toList(),
-                        slides.durationMillis());
+        Background.run(() -> runtime.workspace().videoSlides(source, id), known -> {
+            if (viewer != originalVideoViewer) {
+                return;
             }
-        }), error -> {
-            // Ohne gespeicherte Folien erscheinen die Marken wie bisher beim Abspielen.
+            List<Long> changes = known.map(slides -> slides.slides().stream().filter(millis -> millis > 0).toList())
+                    .orElse(List.of());
+            if (changes.isEmpty()) {
+                // Noch keine Folien-Anhänge: jetzt aus dem MP4-Index finden; das legt sie an.
+                viewer.findSlides();
+            } else {
+                // Die erste Folie beginnt bei 0 und ist keine Marke.
+                viewer.knownSlides(changes, known.get().durationMillis());
+            }
+        }, error -> {
+            if (viewer == originalVideoViewer) {
+                viewer.findSlides();
+            }
         });
     }
 

@@ -970,6 +970,10 @@ public class Assets implements DocumentInventory {
     public List<Long> putVideoSlides(String sourceId, String pageId, String version, long durationMillis,
                                      List<Long> slides) {
         version = frameVersion(version);
+        if (durationMillis <= 0) {
+            // Ohne neue Angabe bleibt die schon bekannte Länge dieser Fassung.
+            durationMillis = frameList(sourceId, pageId, version).map(FrameList::durationMillis).orElse(0L);
+        }
         StringBuilder list = new StringBuilder(version).append('\n');
         if (durationMillis > 0) {
             list.append(DURATION).append(durationMillis).append('\n');

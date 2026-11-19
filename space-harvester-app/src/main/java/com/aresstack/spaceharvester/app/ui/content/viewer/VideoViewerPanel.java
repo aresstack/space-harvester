@@ -62,7 +62,11 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private MediaStreamBridge audioBridge;
     private SwingWorker<Mp4AudioStream, Void> audioPreparation;
     /** Reads the MP4 index once after the first playback start and marks the slide changes. */
-    private SwingWorker<java.util.List<Long>, Void> slideDetection;
+    private SwingWorker<SlideIndex, Void> slideDetection;
+
+    /** The slide changes and the length of a video, read from its MP4 index. */
+    private record SlideIndex(java.util.List<Long> changes, long durationMillis) {
+    }
     private volatile boolean switchingMedia;
     private long resumePositionMillis;
     private boolean pauseAfterSwitch;
@@ -536,7 +540,6 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (closed) {
             return;
         }
-        detectSlidesOnce();
         if (switchingMedia) {
             resumePlaybackAfterSwitch();
         }
@@ -550,30 +553,19 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     }
 
     /**
-     * Find the slide changes of a screen-recorded presentation from the MP4 index, once and in the background, so
-     * opening a page without playing it causes no extra BSCW traffic. Other formats simply show no marks.
+     * Find the slide changes of a screen-recorded presentation from the MP4 index when the page opens, once and in the
+     * background: their marks appear before anything is played, and whoever listens ({@link #onSlides}) keeps a
+     * still frame of every slide. Other formats simply show no marks.
      */
-    private void detectSlidesOnce() {
+    public void findSlides() {
         boolean mp4 = fileName != null && fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4");
-        if (slideDetection != null || !mp4 || fileSize < 16) {
+        if (slideDetection != null || knownSlides != null || closed || !mp4 || fileSize < 16) {
             return;
         }
-        if (knownSlides != null) {
-            // Already shown when the page opened: do not read the index again, but tell whoever needs them.
-            java.util.List<Long> known = knownSlides;
-            slideDetection = new SwingWorker<>() {
-                @Override
-                protected java.util.List<Long> doInBackground() {
-                    return known;
-                }
-            };
-            onSlides.accept(known);
-            return;
-        }
-        slideDetection = new SwingWorker<java.util.List<Long>, Void>() {
+        slideDetection = new SwingWorker<SlideIndex, Void>() {
             @Override
-            protected java.util.List<Long> doInBackground() throws IOException {
-                return SlideChanges.load(reader, fileSize);
+            protected SlideIndex doInBackground() throws IOException {
+                return new SlideIndex(SlideChanges.load(reader, fileSize), SlideChanges.durationMillis(reader, fileSize));
             }
 
             @Override
@@ -582,9 +574,12 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                     return;
                 }
                 try {
-                    java.util.List<Long> changes = get();
-                    transport.slides(changes);
-                    onSlides.accept(changes);
+                    SlideIndex index = get();
+                    transport.slides(index.changes());
+                    if (!started && index.durationMillis() > 0) {
+                        transport.seekBar().update(0, index.durationMillis());
+                    }
+                    onSlides.accept(index.changes());
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                 } catch (ExecutionException unavailable) {
@@ -599,9 +594,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private java.util.List<Long> knownSlides;
 
     /**
-     * Show the slide changes the page already knows (its slide attachments) as soon as it opens, before anything is
-     * played; playback then does not look for them again. Without a known length the length comes from the MP4
-     * header once.
+     * Show the slide changes the page already knows (its slide attachments) as soon as it opens, instead of
+     * {@link #findSlides}; whoever listens ({@link #onSlides}) gets them to complete missing still frames. Without a
+     * known length the length comes from the MP4 header once.
      *
      * @param changes        slide changes in milliseconds, without the first slide at 0
      * @param durationMillis length of the video, or 0 if unknown
@@ -612,6 +607,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         }
         knownSlides = java.util.List.copyOf(changes);
         transport.slides(knownSlides);
+        onSlides.accept(knownSlides);
         if (durationMillis > 0) {
             transport.seekBar().update(0, durationMillis);
             return;
@@ -646,7 +642,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     /** Whoever wants the slide changes once they are found, e.g. to keep a still frame of every slide. */
     private java.util.function.Consumer<java.util.List<Long>> onSlides = changes -> { };
 
-    /** {@code listener} gets the slide changes in milliseconds once, on the EDT, when playback found them. */
+    /** {@code listener} gets the slide changes in milliseconds once, on the EDT, when they are found or known. */
     public void onSlides(java.util.function.Consumer<java.util.List<Long>> listener) {
         onSlides = java.util.Objects.requireNonNull(listener, "listener");
     }
