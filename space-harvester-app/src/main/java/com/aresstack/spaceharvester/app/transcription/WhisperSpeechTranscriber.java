@@ -3,7 +3,6 @@ package com.aresstack.spaceharvester.app.transcription;
 import com.aresstack.windirectml.inference.whisper.TranscriptionResult;
 import com.aresstack.windirectml.inference.whisper.TranscriptionSegment;
 import com.aresstack.windirectml.inference.whisper.WhisperTranscriber;
-import com.aresstack.windirectml.whisper.audio.AskAiWhisperPipeline;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
@@ -27,7 +26,7 @@ public final class WhisperSpeechTranscriber implements SpeechTranscriber {
         WhisperTranscriber whisper = new WhisperTranscriber(modelDirectory);
         long[] lastPosition = {0};
         try (PcmFileAudioSource source = new PcmFileAudioSource(pcmFile, cancelled)) {
-            new AskAiWhisperPipeline().transcribe(source, whisper,
+            WhisperPipelines.create().transcribe(source, whisper,
                     window -> publish(window, lastPosition, onSegment));
         } catch (CancellationException | InterruptedIOException stopped) {
             // Cancelled by the user; segments recognized so far have already been published.

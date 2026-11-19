@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.speech;
 
 import com.aresstack.spaceharvester.app.transcription.WhisperModelLocation;
+import com.aresstack.spaceharvester.app.transcription.WhisperPipelines;
 import com.aresstack.windirectml.inference.whisper.TranscriptionResult;
 import com.aresstack.windirectml.inference.whisper.TranscriptionSegment;
 import com.aresstack.windirectml.inference.whisper.WhisperTranscriber;
@@ -31,12 +32,15 @@ final class WhisperDictationService {
     private static final int SAMPLE_RATE = 16000;
     private static final int WINDOW_SAMPLES = SAMPLE_RATE * 30;
 
-    private final AskAiWhisperPipeline audioPipeline = new AskAiWhisperPipeline();
+    private AskAiWhisperPipeline audioPipeline;
     private WhisperTranscriber transcriber;
 
     synchronized String transcribe(RecordedSpeech speech) throws IOException {
         if (transcriber == null) {
             transcriber = new WhisperTranscriber(WhisperModelLocation.resolve());
+        }
+        if (audioPipeline == null) {
+            audioPipeline = WhisperPipelines.create();
         }
         if (Boolean.getBoolean(KEEP_RECORDING)) {
             keep(speech);
