@@ -25,6 +25,13 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
     private final long[] outputOffsets;
     private final int[] chunkLengths;
     private final long length;
+    /**
+     * Recently read runs of audio chunks that are contiguous in the original file. Every remote read costs a full
+     * round trip (about 0.65 s from BSCW), so reading each 20-KB chunk on its own stalled audio playback for
+     * seconds. A run never spans a byte that does not belong to an audio chunk, so no video data is read.
+     */
+    private final java.util.Deque<Run> runs = new java.util.ArrayDeque<>();
+    private static final int CACHED_RUNS = 16;
 
     private Mp4AudioOnlySource(MediaStreamBridge.ChunkSource remote, byte[] header,
                                long[] inputOffsets, long[] outputOffsets,
@@ -142,12 +149,60 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
                 int chunk = findChunk(position);
                 long inside = position - outputOffsets[chunk];
                 int bytes = (int) Math.min(count - copied, chunkLengths[chunk] - inside);
-                byte[] data = fetch(remote, inputOffsets[chunk] + inside, bytes);
-                System.arraycopy(data, 0, output, copied, bytes);
+                if (chunkLengths[chunk] > REMOTE_READ_BYTES) {
+                    byte[] data = fetch(remote, inputOffsets[chunk] + inside, bytes);
+                    System.arraycopy(data, 0, output, copied, bytes);
+                } else {
+                    Run run = run(chunk);
+                    System.arraycopy(run.bytes, (int) (inputOffsets[chunk] - run.inputStart + inside),
+                            output, copied, bytes);
+                }
                 copied += bytes;
             }
         }
         return output;
+    }
+
+    /** The cached run containing {@code chunk}, or a newly read run of contiguous audio chunks starting at it. */
+    private Run run(int chunk) throws IOException {
+        synchronized (runs) {
+            for (Run cached : runs) {
+                if (chunk >= cached.firstChunk && chunk <= cached.lastChunk) {
+                    return cached;
+                }
+            }
+        }
+        int last = chunk;
+        long total = chunkLengths[chunk];
+        while (last + 1 < chunkLengths.length
+                && inputOffsets[last + 1] == inputOffsets[last] + chunkLengths[last]
+                && total + chunkLengths[last + 1] <= REMOTE_READ_BYTES) {
+            last++;
+            total += chunkLengths[last];
+        }
+        Run run = new Run(chunk, last, inputOffsets[chunk], fetch(remote, inputOffsets[chunk], (int) total));
+        synchronized (runs) {
+            runs.addFirst(run);
+            while (runs.size() > CACHED_RUNS) {
+                runs.removeLast();
+            }
+        }
+        return run;
+    }
+
+    /** Audio chunks {@code firstChunk..lastChunk}, stored back to back in the original file. */
+    private static final class Run {
+        final int firstChunk;
+        final int lastChunk;
+        final long inputStart;
+        final byte[] bytes;
+
+        Run(int firstChunk, int lastChunk, long inputStart, byte[] bytes) {
+            this.firstChunk = firstChunk;
+            this.lastChunk = lastChunk;
+            this.inputStart = inputStart;
+            this.bytes = bytes;
+        }
     }
 
     private int findChunk(long position) throws IOException {

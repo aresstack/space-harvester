@@ -282,7 +282,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         }
 
         switchingMedia = true;
-        resumePositionMillis = position;
+        // VLC starts the new stream at the saved position itself; seeking after "playing" first played from the
+        // beginning and then stalled until the seek was served.
+        resumePositionMillis = 0;
         pauseAfterSwitch = wasPaused;
         actuallyPlaying = false;
         startRequestedAtNanos = System.nanoTime();
@@ -291,7 +293,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         message.setText(audio ? "Audio wird geladen …" : "Video wird geladen …");
         try {
             player.mediaPlayer().controls().stop();
-            boolean accepted = player.mediaPlayer().media().play(activeBridge().address().toASCIIString());
+            boolean accepted = player.mediaPlayer().media().play(activeBridge().address().toASCIIString(),
+                    startAt(position));
             if (!accepted) {
                 switchingMedia = false;
                 playbackFailed("VLC hat den Wechsel des Medienmodus abgelehnt.");
@@ -302,6 +305,12 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             switchingMedia = false;
             playbackFailed("Medienmodus konnte nicht gewechselt werden.");
         }
+    }
+
+    /** The VLC media option that starts playback at a position, or none at the beginning. */
+    static String[] startAt(long positionMillis) {
+        return positionMillis <= 0 ? new String[0]
+                : new String[]{String.format(java.util.Locale.ROOT, ":start-time=%.3f", positionMillis / 1000.0)};
     }
 
     private MediaStreamBridge activeBridge() {
@@ -373,9 +382,11 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             return;
         }
         resumeVideoAfterFullScreen = false;
+        long position = resumePositionMillis;
+        resumePositionMillis = 0;
         try {
             startRequestedAtNanos = System.nanoTime();
-            if (!player.mediaPlayer().media().play(bridge.address().toASCIIString())) {
+            if (!player.mediaPlayer().media().play(bridge.address().toASCIIString(), startAt(position))) {
                 switchingMedia = false;
                 playbackFailed("VLC konnte die Bildausgabe nach dem Vollbildwechsel nicht starten.");
             }

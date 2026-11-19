@@ -27,4 +27,11 @@ final class VideoAudioModeControlsTest {
             assertThat(bar.audioOnly().getText()).isEqualTo("Nur Audio");
         });
     }
+
+    @Test
+    void switchingModesStartsTheNewStreamAtTheSavedPosition() {
+        org.assertj.core.api.Assertions.assertThat(VideoViewerPanel.startAt(0)).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(VideoViewerPanel.startAt(12_651))
+                .containsExactly(":start-time=12.651");
+    }
 }
