@@ -8,11 +8,7 @@ import java.io.IOException;
 
 /** Apply the published Ask AI PCM/VAD pipeline to the bundled local Whisper checkpoint. */
 final class WhisperDictationService {
-    /**
-     * The pipeline decodes greedily in six-second windows; even fast German speech stays well
-     * below ten tokens per second, so a larger budget only gives decoding loops room to grow.
-     */
-    private static final int MAXIMUM_TOKENS_PER_WINDOW = 64;
+    private static final int MAXIMUM_TOKENS_PER_WINDOW = 256;
 
     private final AskAiWhisperPipeline audioPipeline = new AskAiWhisperPipeline();
     private WhisperTranscriber transcriber;
@@ -21,7 +17,6 @@ final class WhisperDictationService {
         if (transcriber == null) {
             transcriber = new WhisperTranscriber(WhisperModelLocation.resolve());
         }
-        return RepetitionCollapser.collapse(
-                audioPipeline.transcribePlain(speech, transcriber, MAXIMUM_TOKENS_PER_WINDOW));
+        return audioPipeline.transcribePlain(speech, transcriber, MAXIMUM_TOKENS_PER_WINDOW);
     }
 }
