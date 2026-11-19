@@ -35,4 +35,11 @@ public interface View {
     default JComponent tools() {
         return null;
     }
+
+    /**
+     * Client-Eigenschaft für {@link #tools()}: {@code Boolean.TRUE} lässt die Werkzeuge die ganze Zeile rechts der Lupe
+     * füllen statt mittig zu stehen, etwa die Datei-Aktionen der Vorschau direkt neben der Lupe und „Typ · Größe“
+     * rechtsbündig (Angelo, 19.11.2026). Die Eigenschaft darf sich ändern; die Leiste liest sie bei jedem Layout.
+     */
+    String TOOLS_FILL = "spaceHarvester.tools.fill";
 }

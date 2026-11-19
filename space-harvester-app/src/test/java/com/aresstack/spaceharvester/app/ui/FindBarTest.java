@@ -59,6 +59,30 @@ class FindBarTest {
         });
     }
 
+    /** Datei-Aktionen der Vorschau (Angelo, 19.11.2026): direkt neben der Lupe, die Werkzeuge füllen die Zeile. */
+    @Test
+    void fillingToolsStartRightOfTheMagnifierAndReachTheRightEdge() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            FindBar bar = new FindBar(JPanel::new);
+            JPanel actions = new JPanel(new java.awt.BorderLayout());
+            actions.add(new javax.swing.JButton("S"), java.awt.BorderLayout.WEST);
+            actions.add(new javax.swing.JLabel("Word · 4,0 MB"), java.awt.BorderLayout.EAST);
+            actions.putClientProperty(View.TOOLS_FILL, Boolean.TRUE);
+            bar.tools(actions);
+            bar.setSize(800, 36);
+            bar.doLayout();
+            java.awt.Rectangle magnifier = bar.findButton().getBounds();
+            java.awt.Rectangle tools = bar.toolsArea().getBounds();
+            assertThat(tools.x).isGreaterThan(magnifier.x + magnifier.width - 1)
+                    .isLessThanOrEqualTo(magnifier.x + magnifier.width + 8);
+            assertThat(tools.x + tools.width).isEqualTo(800 - bar.getInsets().right);
+            // Zurück ohne Eigenschaft: wieder mittig.
+            actions.putClientProperty(View.TOOLS_FILL, Boolean.FALSE);
+            bar.doLayout();
+            assertThat(bar.toolsArea().getX()).isGreaterThan(tools.x);
+        });
+    }
+
     @Test
     void theMagnifierUnfoldsTheSearchOverTheToolsAndEscapeFoldsItAgain() throws Exception {
         SwingUtilities.invokeAndWait(() -> {

@@ -112,10 +112,16 @@ public final class AttachmentViewerPanel extends JPanel {
     private final ReaderFileOpener fileOpener;
     private final Executor renderer;
     private final JLabel fileInfo = new JLabel(" ");
-    private final ComposerButton saveButton = new ComposerButton(ComposerIcons.download(), SAVE_TEXT, false,
+    private final ComposerButton saveButton = ComposerButton.iconButton(ComposerIcons.download(),
             "Originaldatei speichern");
-    private final ComposerButton openButton = new ComposerButton(ComposerIcons.openExternal(), OPEN_TEXT, false,
+    private final ComposerButton openButton = ComposerButton.iconButton(ComposerIcons.openExternal(),
             "Originaldatei mit dem Standardprogramm öffnen");
+    /**
+     * Die Leiste unten: links neben der Lupe „Speichern“ und „Öffnen“ als Symbolknöpfe, mittig Seite und Zoom, rechts
+     * „Typ · Größe“ (Angelo, 19.11.2026). In der Leseansicht steht sie in der Werkzeugleiste mit der Lupe
+     * ({@link #detachFooter()}), sonst (Anhang als Overlay) unter der Vorschau.
+     */
+    private final JPanel footer = new JPanel(new BorderLayout());
     /** Die Originaldatei, sobald geladen. */
     private byte[] original;
     private List<Consumer<byte[]>> originalWaiting;
@@ -214,24 +220,23 @@ public final class AttachmentViewerPanel extends JPanel {
 
         info.setFont(info.getFont().deriveFont(Font.ITALIC, 11f));
         info.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
-        JPanel bar = new JPanel(new BorderLayout());
-        bar.setOpaque(false);
-        // Wie Angelos Skizze: unten „Typ · Größe“ links, Seite und Zoom in der Mitte, rechts die Datei-Aktionen.
+        footer.setOpaque(false);
         fileInfo.setText(attachment.summary());
         fileInfo.setFont(ResearchUiTypography.semiBold(12f));
-        fileInfo.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
-        bar.add(fileInfo, BorderLayout.WEST);
-        saveButton.setFont(ResearchUiTypography.semiBold(12f));
-        openButton.setFont(ResearchUiTypography.semiBold(12f));
+        fileInfo.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 0));
+        saveButton.getAccessibleContext().setAccessibleName(SAVE_TEXT);
+        openButton.getAccessibleContext().setAccessibleName(OPEN_TEXT);
         saveButton.addActionListener(event -> saveAttachment());
         openButton.addActionListener(event -> openAttachment());
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         actions.setOpaque(false);
         actions.add(saveButton);
         actions.add(openButton);
-        bar.add(actions, BorderLayout.EAST);
-        bar.add(info, BorderLayout.CENTER);
-        add(bar, BorderLayout.SOUTH);
+        footer.add(actions, BorderLayout.WEST);
+        footer.add(info, BorderLayout.CENTER);
+        footer.add(fileInfo, BorderLayout.EAST);
+        footer.putClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL, Boolean.TRUE);
+        add(footer, BorderLayout.SOUTH);
 
         installCanvasInteractions();
         installHover();
@@ -324,6 +329,20 @@ public final class AttachmentViewerPanel extends JPanel {
         sharpenPage();
     }
 
+    /** Die Leiste mit „Speichern“, „Öffnen“, Seite/Zoom und „Typ · Größe“. */
+    public JComponent footer() {
+        return footer;
+    }
+
+    /**
+     * Nimmt die Leiste aus der Vorschau, damit sie in der Werkzeugleiste mit der Lupe stehen kann; liefert sie.
+     */
+    public JComponent detachFooter() {
+        remove(footer);
+        revalidate();
+        return footer;
+    }
+
     /** Die Knöpfe „Speichern“ und „Öffnen“ des Anhang-Viewers. */
     ComposerButton saveButton() {
         return saveButton;
@@ -333,7 +352,7 @@ public final class AttachmentViewerPanel extends JPanel {
         return openButton;
     }
 
-    /** „Typ · Größe“ unten links. */
+    /** „Typ · Größe“ unten rechts. */
     public String fileInfoText() {
         return fileInfo.getText();
     }
@@ -708,7 +727,7 @@ public final class AttachmentViewerPanel extends JPanel {
             }
         }
         html.append("<br><br>").append(escape("Mit „" + SAVE_TEXT + "“ oder „" + OPEN_TEXT
-                + "“ unten rechts bekommst du die Originaldatei.")).append("</div></html>");
+                + "“ unten links bekommst du die Originaldatei.")).append("</div></html>");
         busy.setText(html.toString());
         updateInfo();
     }

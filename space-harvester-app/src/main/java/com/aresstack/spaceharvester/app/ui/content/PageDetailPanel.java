@@ -318,6 +318,14 @@ public final class PageDetailPanel extends JPanel {
     private final JPanel originalContent = new JPanel(originalCards);
     private final JPanel fileContent = new JPanel(new BorderLayout());
     private AttachmentViewerPanel originalFileViewer;
+    /** Ob im Reiter „Text“ die Transkription eines Videos steht. */
+    private boolean videoTranscriptShown;
+    /**
+     * Die Werkzeuge dieser Ansicht in der Leiste mit der Lupe ({@code ContentView.tools()}), je nach Reiter: im Chat
+     * die Schnellaktionen (mittig), in der Leseansicht einer Datei „Speichern“/„Öffnen“ samt „Typ · Größe“, im Text
+     * eines Videos der Transkript-Knopf (Angelo, 19.11.2026: eine Leiste, die je nach Ansicht wechselt).
+     */
+    private final JPanel footTools = new JPanel(new BorderLayout());
     private VideoViewerPanel originalVideoViewer;
     private boolean originalLinkShown;
     /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
@@ -407,6 +415,7 @@ public final class PageDetailPanel extends JPanel {
                 : context.runtime().workspace());
         this.export = new ExportPanel(context);
         this.chat = new ChatPanel(context);
+        footTools.setOpaque(false);
         this.standing = new StandingTab(context::runtime);
         this.analysisView = new AnalysisView(context, true);
         this.wideAnalysis = new AnalysisView(context, false);
@@ -807,6 +816,7 @@ public final class PageDetailPanel extends JPanel {
         chat.headerActions().setVisible(chatTab);
         // Die Schnellaktionen in der unteren Leiste gehören nur zum Chat.
         chat.quickActions().setVisible(chatTab);
+        updateFootTools(selected);
         heading.revalidate();
         heading.repaint();
         String page = pageCard;
@@ -1487,10 +1497,13 @@ public final class PageDetailPanel extends JPanel {
                     error -> failed.accept(reason(error)));
         };
         originalFileViewer = new AttachmentViewerPanel(attachment, loader, fileOpener, attachmentRenderer);
+        // Speichern, Öffnen und „Typ · Größe“ stehen unten in der Leiste mit der Lupe, nicht in der Vorschau.
+        originalFileViewer.detachFooter();
         fileContent.add(originalFileViewer, BorderLayout.CENTER);
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
         fileContent.revalidate();
         fileContent.repaint();
+        updateFootTools(tabs.selected());
     }
 
     /** Keep remote video content out of the native snapshot; stream it after a deliberate play action. */
@@ -1532,11 +1545,13 @@ public final class PageDetailPanel extends JPanel {
         if (size > 0 && file.endsWith(".mp4")) {
             videoTranscript.setVideoSource(new VideoTranscriptSource(size, ranges));
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
+            videoTranscriptShown = true;
         }
         fileContent.add(originalVideoViewer, BorderLayout.CENTER);
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
         fileContent.revalidate();
         fileContent.repaint();
+        updateFootTools(tabs.selected());
     }
 
     /**
@@ -1640,8 +1655,37 @@ public final class PageDetailPanel extends JPanel {
             originalVideoViewer = null;
         }
         originalLinkShown = false;
+        videoTranscriptShown = false;
         fileContent.removeAll();
         originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
+        updateFootTools(tabs.selected());
+    }
+
+    /** Die Werkzeuge der Leiste mit der Lupe für diese Ansicht ({@link #footTools}). */
+    public JComponent footTools() {
+        return footTools;
+    }
+
+    /** Setzt in {@link #footTools}, was zum Reiter {@code selected} gehört; nichts, wenn er keine Werkzeuge hat. */
+    private void updateFootTools(String selected) {
+        // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
+        JComponent shown = CHAT.equals(selected) ? chat.quickActions()
+                : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
+                : READ.equals(selected) && videoTranscriptShown ? videoTranscript.action()
+                : null;
+        if (footTools.getComponentCount() == (shown == null ? 0 : 1)
+                && (shown == null || footTools.getComponent(0) == shown)) {
+            return;
+        }
+        footTools.removeAll();
+        if (shown != null) {
+            footTools.add(shown, BorderLayout.CENTER);
+        }
+        // Chat-Chips mittig; Datei-Aktionen und Transkript-Knopf direkt neben der Lupe über die ganze Zeile.
+        footTools.putClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL,
+                shown != null && shown != chat.quickActions());
+        footTools.revalidate();
+        footTools.repaint();
     }
 
     /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */

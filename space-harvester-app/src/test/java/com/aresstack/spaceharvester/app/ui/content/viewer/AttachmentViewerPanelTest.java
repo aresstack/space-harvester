@@ -160,6 +160,17 @@ class AttachmentViewerPanelTest {
             assertThat(viewer.showsPicture()).isFalse();
             assertThat(loader.loads).isEmpty();
             assertThat(viewer.saveButton().isEnabled()).isTrue();
+            // Symbolknöpfe ohne Text (Angelo, 19.11.2026); die Leiste lässt sich in die Werkzeugleiste mit der Lupe
+            // umsetzen und füllt dort die Zeile: Knöpfe links, „Typ · Größe“ rechts.
+            assertThat(viewer.saveButton().getText()).isNullOrEmpty();
+            assertThat(viewer.openButton().getText()).isNullOrEmpty();
+            assertThat(viewer.footer().getParent()).isSameAs(viewer);
+            assertThat(viewer.detachFooter().getParent()).isNull();
+            assertThat(viewer.footer().getClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL))
+                    .isEqualTo(Boolean.TRUE);
+            assertThat(((java.awt.BorderLayout) viewer.footer().getLayout())
+                    .getLayoutComponent(java.awt.BorderLayout.EAST)).isInstanceOfSatisfying(javax.swing.JLabel.class,
+                            label -> assertThat(label.getText()).isEqualTo(viewer.fileInfoText()));
             viewer.openButton().doClick();
         });
         assertThat(opened).singleElement().satisfies(file -> assertThat(file.getName()).isEqualTo("daten.bin"));

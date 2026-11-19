@@ -289,12 +289,13 @@ public final class ContentView implements View {
     }
 
     /**
-     * Mittig in der unteren Leiste die Schnellaktionen des Chats (Angelo, 17.11.2026), sichtbar nur im Reiter Chat:
-     * „Seite zusammenfassen“, „Seite samt Unterseiten zusammenfassen“ bzw. „Bereich zusammenfassen“, „Was ist neu?“.
+     * Die Werkzeuge der Seitenansicht in der unteren Leiste, je nach Reiter ({@link PageDetailPanel#footTools()}): im
+     * Chat mittig die Schnellaktionen (Angelo, 17.11.2026), in der Leseansicht einer Datei „Speichern“ und „Öffnen“
+     * neben der Lupe samt „Typ · Größe“ rechts, im Text eines Videos der Transkript-Knopf (Angelo, 19.11.2026).
      */
     @Override
     public JComponent tools() {
-        return detail.chat().quickActions();
+        return detail.footTools();
     }
 
     /** Ob die Reiter ihre Auswahl zeigen: nur, solange die Mitte die Seitenansicht zeigt ({@link PillTabs#showSelection}). */
