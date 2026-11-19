@@ -63,7 +63,9 @@ dependencies {
     // Embed VLC in Swing; keep libVLC native installation optional at runtime.
     implementation 'uk.co.caprica:vlcj:4.8.2'
     // Use the published Java 21 Whisper inference library; keep model files external.
-    implementation 'com.aresstack:directml-inference:0.3.0'
+    implementation 'com.aresstack:directml-inference:0.3.1'
+    // Reuse the published Ask AI Java DSP/VAD pipeline, without Silero or an ONNX runtime.
+    implementation 'com.aresstack:directml-whisper-audio:0.3.1'
     implementation "org.apache.poi:poi-scratchpad:${libs.versions.poi.get()}"
     // Protokoll auf Konsole und in <Benutzerordner>/.space-harvester/logs; Version aus der Boot-BOM wie beim Dienst.
     // Schon zum Übersetzen nötig: Der Filter der Terminal-Ausgabe (ConsoleThreshold) ist ein Logback-Filter.

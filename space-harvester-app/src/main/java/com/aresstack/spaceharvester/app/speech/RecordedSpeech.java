@@ -1,36 +1,39 @@
 package com.aresstack.spaceharvester.app.speech;
 
-/** Eine Aufnahme für die Spracheingabe: Abtastwerte in [-1, 1], mono, {@value #SAMPLE_RATE} Hz. Unveränderlich. */
-public final class RecordedSpeech {
+import com.aresstack.windirectml.inference.whisper.WhisperAudioSource;
 
-    /** Abtastrate aller Aufnahmen. */
+import java.io.IOException;
+import java.util.Objects;
+
+/**
+ * Own a sealed disk-backed microphone recording for transcription and retry.
+ * Expose bounded 16-kHz mono windows without materializing the full recording.
+ */
+public final class RecordedSpeech implements WhisperAudioSource, AutoCloseable {
     public static final int SAMPLE_RATE = 16000;
 
-    private final float[] samples;
+    private final ChunkedPcmAudioSource audio;
 
-    private RecordedSpeech(float[] samples) {
-        this.samples = samples;
+    RecordedSpeech(ChunkedPcmAudioSource audio) {
+        this.audio = Objects.requireNonNull(audio, "audio");
     }
 
-    /** @param samples mono, {@value #SAMPLE_RATE} Hz, Werte in [-1, 1]; wird kopiert */
-    public static RecordedSpeech of(float[] samples) {
-        if (samples == null) {
-            throw new IllegalArgumentException("samples must not be null");
-        }
-        return new RecordedSpeech(samples.clone());
+    @Override
+    public long sampleCount() {
+        return audio.sampleCount();
     }
 
-    /** Kopie der Abtastwerte. */
-    public float[] samples() {
-        return samples.clone();
+    @Override
+    public float[] readSamples(long startSample, int sampleCount) throws IOException {
+        return audio.readSamples(startSample, sampleCount);
     }
 
-    public int length() {
-        return samples.length;
-    }
-
-    /** Dauer in Millisekunden. */
     public long durationMillis() {
-        return samples.length * 1000L / SAMPLE_RATE;
+        return sampleCount() * 1000L / SAMPLE_RATE;
+    }
+
+    @Override
+    public void close() {
+        audio.close();
     }
 }

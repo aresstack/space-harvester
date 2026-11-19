@@ -1,48 +1,39 @@
 package com.aresstack.spaceharvester.app.speech;
 
-import com.aresstack.spaceharvester.app.speech.RecordedSpeech;
-
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.TargetDataLine;
-import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 
 /**
- * Nimmt vom Standard-Mikrofon über Java Sound auf (reines Java 8, kein externes Programm, keine DSP-Kette): bevorzugt
- * 16 kHz mono, sonst das erste Format, das das Gerät annimmt; danach Abmischen auf mono und Umrechnen auf 16 kHz
- * (Mittelwert je Fenster beim Heruntertakten, sonst linear). Eine Instanz je Aufnahme; {@link #stop()} liefert die Aufnahme.
+ * Capture unlimited PCM16 microphone audio into delayed two-minute disk chunks.
+ * Convert stereo to mono while recording; resample only the windows requested by Whisper.
  */
 final class JavaSoundRecorder {
-
-    /** Länger nimmt der Client nicht auf (10 Minuten); danach wird still abgeschnitten. */
-    private static final int MAX_SECONDS = 600;
     private static final float[][] CANDIDATES = {
-            {16000f, 1}, {48000f, 1}, {44100f, 1}, {32000f, 1}, {22050f, 1}, {48000f, 2}, {44100f, 2}};
+            {16000f, 1}, {48000f, 1}, {44100f, 1}, {32000f, 1},
+            {48000f, 2}, {44100f, 2}
+    };
 
     private final TargetDataLine line;
     private final AudioFormat format;
-    private final ByteArrayOutputStream captured = new ByteArrayOutputStream();
+    private final ChunkedPcmAudioSource audio;
     private final Thread reader;
     private volatile boolean running = true;
-    /** Spitzenwert seit dem letzten {@link #consumeRecentPeak()} (16 Bit, Betrag) für die Pegelanzeige. */
+    private volatile IOException captureFailure;
     private volatile int recentPeak;
     private volatile boolean clipped;
 
     private JavaSoundRecorder(TargetDataLine line, AudioFormat format) {
         this.line = line;
         this.format = format;
-        this.reader = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                read();
-            }
-        }, "enterprise-ai-microphone");
-        reader.setDaemon(true);
+        this.audio = new ChunkedPcmAudioSource(Math.round(format.getSampleRate()));
+        this.reader = new Thread(this::read, "space-harvester-microphone");
+        this.reader.setDaemon(true);
     }
 
-    /** Öffnet das Mikrofon und startet die Aufnahme. */
     static JavaSoundRecorder start() throws LineUnavailableException {
         LineUnavailableException last = null;
         for (float[] candidate : CANDIDATES) {
@@ -54,39 +45,48 @@ final class JavaSoundRecorder {
             try {
                 TargetDataLine line = (TargetDataLine) AudioSystem.getLine(info);
                 line.open(format);
-                line.start();
                 JavaSoundRecorder recorder = new JavaSoundRecorder(line, format);
+                line.start();
                 recorder.reader.start();
                 return recorder;
-            } catch (LineUnavailableException | IllegalArgumentException | SecurityException failed) {
-                last = failed instanceof LineUnavailableException ? (LineUnavailableException) failed
-                        : new LineUnavailableException(failed.getMessage());
+            } catch (LineUnavailableException | IllegalArgumentException | SecurityException error) {
+                last = error instanceof LineUnavailableException ? (LineUnavailableException) error
+                        : new LineUnavailableException(error.getMessage());
             }
         }
         throw last != null ? last : new LineUnavailableException("Kein Mikrofon gefunden");
     }
 
     private void read() {
-        byte[] buffer = new byte[Math.max(4096, line.getBufferSize() / 4)];
-        long limit = (long) (MAX_SECONDS * format.getSampleRate() * format.getFrameSize());
-        while (running) {
-            int count = line.read(buffer, 0, buffer.length);
-            if (count > 0) {
-                measure(buffer, count);
-            }
-            if (count > 0 && captured.size() < limit) {
-                synchronized (captured) {
-                    captured.write(buffer, 0, count);
+        byte[] input = new byte[8192];
+        try {
+            while (running) {
+                int count = line.read(input, 0, input.length);
+                if (count <= 0) {
+                    break;
+                }
+                measure(input, count);
+                if (format.getChannels() == 1) {
+                    audio.append(input, 0, count - (count & 1));
+                } else {
+                    byte[] mono = downmixStereo(input, count);
+                    audio.append(mono, 0, mono.length);
                 }
             }
+        } catch (IOException | RuntimeException error) {
+            if (running) {
+                captureFailure = new IOException("Mikrofonaufnahme fehlgeschlagen", error);
+            }
+        } finally {
+            running = false;
         }
     }
 
-    /** Pegel wie arch {@code AudioLevelMeter}: Spitzenbetrag je Puffer, übersteuert ab Vollausschlag. */
     private void measure(byte[] pcm, int count) {
         int peak = recentPeak;
-        for (int offset = 0; offset + 1 < count; offset += 2) {
-            int magnitude = Math.abs((int) (short) ((pcm[offset] & 0xFF) | (pcm[offset + 1] << 8)));
+        for (int position = 0; position + 1 < count; position += 2) {
+            int value = sample(pcm, position);
+            int magnitude = Math.abs(value);
             if (magnitude > peak) {
                 peak = magnitude;
             }
@@ -97,76 +97,71 @@ final class JavaSoundRecorder {
         recentPeak = peak;
     }
 
-    /** Der Spitzenwert seit dem letzten Aufruf (live, nicht das Maximum der ganzen Aufnahme). */
+    static byte[] downmixStereo(byte[] input, int count) {
+        if (count < 0 || count > input.length || (count & 3) != 0) {
+            throw new IllegalArgumentException("Require complete stereo PCM16 frames");
+        }
+        byte[] mono = new byte[count / 2];
+        for (int position = 0; position < count; position += 4) {
+            int left = sample(input, position);
+            int right = sample(input, position + 2);
+            short mixed = (short) ((left + right) / 2);
+            int target = position / 2;
+            mono[target] = (byte) mixed;
+            mono[target + 1] = (byte) (mixed >>> 8);
+        }
+        return mono;
+    }
+
+    private static short sample(byte[] input, int position) {
+        return (short) ((input[position] & 0xff) | (input[position + 1] << 8));
+    }
+
     int consumeRecentPeak() {
         int value = recentPeak;
         recentPeak = 0;
         return value;
     }
 
-    /** Ob die Aufnahme irgendwann übersteuert war. */
     boolean clipped() {
         return clipped;
     }
 
-    /** Beendet die Aufnahme; 16 kHz mono. */
-    RecordedSpeech stop() {
-        close();
-        byte[] bytes;
-        synchronized (captured) {
-            bytes = captured.toByteArray();
+    RecordedSpeech stop() throws IOException {
+        stopCapture();
+        if (reader.isAlive()) {
+            throw new IOException("Microphone capture thread did not stop");
         }
-        return RecordedSpeech.of(toMono16k(bytes, format.getChannels(), format.getSampleRate()));
+        audio.finish();
+        if (captureFailure != null) {
+            audio.close();
+            throw captureFailure;
+        }
+        if (audio.isEmpty()) {
+            audio.close();
+            throw new IOException("Keine Audiodaten aufgenommen");
+        }
+        return new RecordedSpeech(audio);
     }
 
-    /** Verwirft die Aufnahme; idempotent. */
     void close() {
+        stopCapture();
+        if (!reader.isAlive()) {
+            audio.close();
+        }
+    }
+
+    private void stopCapture() {
         running = false;
         line.stop();
         line.close();
+        if (Thread.currentThread() == reader) {
+            return;
+        }
         try {
-            reader.join(1000);
+            reader.join(3000);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
-    }
-
-    /** 16 Bit little-endian, verschachtelte Kanäle zu mono in [-1, 1], auf 16 kHz umgerechnet. */
-    static float[] toMono16k(byte[] pcm, int channels, float sampleRate) {
-        int frames = pcm.length / (2 * channels);
-        float[] mono = new float[frames];
-        for (int frame = 0; frame < frames; frame++) {
-            float sum = 0;
-            for (int channel = 0; channel < channels; channel++) {
-                int offset = (frame * channels + channel) * 2;
-                sum += (short) ((pcm[offset] & 0xFF) | (pcm[offset + 1] << 8)) / 32768f;
-            }
-            mono[frame] = sum / channels;
-        }
-        if (Math.abs(sampleRate - RecordedSpeech.SAMPLE_RATE) < 1f || frames == 0) {
-            return mono;
-        }
-        double ratio = sampleRate / RecordedSpeech.SAMPLE_RATE;
-        int length = (int) Math.floor(frames / ratio);
-        float[] resampled = new float[length];
-        for (int i = 0; i < length; i++) {
-            if (ratio > 1) {
-                // Mittelwert über das Quellfenster: grober Tiefpass gegen Aliasing beim Heruntertakten.
-                int from = (int) Math.floor(i * ratio);
-                int to = Math.min(frames, Math.max(from + 1, (int) Math.floor((i + 1) * ratio)));
-                float sum = 0;
-                for (int k = from; k < to; k++) {
-                    sum += mono[k];
-                }
-                resampled[i] = sum / (to - from);
-            } else {
-                double position = i * ratio;
-                int index = (int) position;
-                double fraction = position - index;
-                float next = index + 1 < frames ? mono[index + 1] : mono[index];
-                resampled[i] = (float) (mono[index] * (1 - fraction) + next * fraction);
-            }
-        }
-        return resampled;
     }
 }

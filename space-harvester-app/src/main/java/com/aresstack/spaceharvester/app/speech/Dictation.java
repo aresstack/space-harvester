@@ -30,7 +30,7 @@ public final class Dictation implements DictationControl {
         }
     });
     private final WhisperDictationService service = new WhisperDictationService();
-    private final String description = "Whisper Tiny (lokal, CPU)";
+    private final String description = "Whisper Tiny + Ask AI DSP/VAD (lokal, CPU)";
     private JavaSoundRecorder recorder;
     private Result pending;
     /** Die zuletzt fehlgeschlagene Aufnahme (für „Erneut“); weg nach Erfolg, Verwerfen oder neuer Aufnahme. */
@@ -55,8 +55,6 @@ public final class Dictation implements DictationControl {
     @Override
     public void start(Result result) {
         cancel();
-        failedSpeech = null;
-        generation++;
         if (service == null) {
             result.failed(description);
             return;
@@ -77,7 +75,11 @@ public final class Dictation implements DictationControl {
         final WhisperDictationService current = service;
         recorder = null;
         pending = null;
-        if (active == null || result == null) {
+        if (active == null) {
+            return;
+        }
+        if (result == null) {
+            active.close();
             return;
         }
         if (current == null) {
@@ -85,7 +87,13 @@ public final class Dictation implements DictationControl {
             result.failed(description);
             return;
         }
-        transcribe(active.stop(), result, current);
+        try {
+            transcribe(active.stop(), result, current);
+        } catch (java.io.IOException failed) {
+            active.close();
+            LOG.log(Level.WARNING, "Mikrofonaufnahme fehlgeschlagen", failed);
+            result.failed(failed.getMessage() == null ? "Mikrofonaufnahme fehlgeschlagen" : failed.getMessage());
+        }
     }
 
     @Override
@@ -96,6 +104,7 @@ public final class Dictation implements DictationControl {
     @Override
     public void retry(Result result) {
         RecordedSpeech speech = failedSpeech;
+        failedSpeech = null;
         WhisperDictationService current = service;
         cancel();
         if (speech == null || current == null) {
@@ -144,12 +153,15 @@ public final class Dictation implements DictationControl {
                     @Override
                     public void run() {
                         if (expected != generation) {
+                            speech.close();
                             return;
                         }
                         if (message != null) {
+                            discardFailedSpeech();
                             failedSpeech = speech;
                             result.failed(message);
                         } else {
+                            speech.close();
                             result.recognized(recognized);
                         }
                     }
@@ -158,9 +170,17 @@ public final class Dictation implements DictationControl {
         });
     }
 
+    private void discardFailedSpeech() {
+        if (failedSpeech != null) {
+            failedSpeech.close();
+            failedSpeech = null;
+        }
+    }
+
     @Override
     public void cancel() {
         generation++;
+        discardFailedSpeech();
         if (recorder != null) {
             recorder.close();
             recorder = null;
