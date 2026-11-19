@@ -361,7 +361,7 @@ class PageImageAnalysisTest {
     }
 
     @Test
-    void theStillFramesOfAVideoAreItsImagesAsPseudoAttachments() {
+    void theStillFramesOfAVideoAreAttachmentsOfItsPageAndItsImages() {
         byte[] second = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 4, 5};
         Assets assets = assets();
         // Ein zweites Video derselben Quelle mit eigenen Standbildern: Anhangs-IDs gelten je Quelle.
@@ -387,6 +387,16 @@ class PageImageAnalysisTest {
                 .containsExactly("Standbild 0:02", "Standbild 5:01");
         assertThat(assets.videoFrames("wiki", "1", "4")).as("eine neue Fassung braucht neue Standbilder").isEmpty();
         assertThat(assets.videoFrames("wiki", "2", "3")).hasSize(1);
+        // In der Anhangsliste der Seite stehen sie als Anhänge; ihre Bytes kommen aus der Ablage.
+        com.aresstack.spaceharvester.application.sources.PageAttachmentList listed = assets.withVideoFrames(
+                new com.aresstack.spaceharvester.application.sources.PageAttachmentList("wiki", "S",
+                        source.attachments("1"), NOW));
+        assertThat(listed.attachments().attachments()).extracting(PageAttachment::title, PageAttachment::mediaType)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("Standbild 0:02.png", "image/png"),
+                        org.assertj.core.groups.Tuple.tuple("Standbild 5:01.png", "image/png"));
+        assertThat(assets.content(listed, listed.attachments().attachments().get(1).attachmentId(), false)
+                .content()).isEqualTo(second);
+        assertThat(source.loads).isZero();
         // Neue Standbilder derselben Fassung: das Ergebnis gilt nicht mehr.
         assets.putVideoFrames("wiki", "1", "3", List.of(new Assets.VideoFrame(2_000, PNG)));
         assertThat(analysis.read(page("1", "")).state()).isEqualTo(PageImages.State.STALE);

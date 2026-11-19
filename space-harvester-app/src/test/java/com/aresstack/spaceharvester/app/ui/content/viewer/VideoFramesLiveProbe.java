@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit;
  * Manual probe, not a regression test: the path of „Bilder beschreiben“ for a video with the user's configuration
  * (copy {@code probe-video.yml} with its own data directory and an AI service with a vision model): stream the N-th
  * video bookmark from its source, grab a still frame per slide change, store them as pseudo attachments and describe
- * them. Runs only with the environment variable {@code SPACEHARVESTER_PROBE_FRAMES=N} (optionally
+ * them. They appear in the attachment list of the page. Runs only with the environment variable {@code SPACEHARVESTER_PROBE_FRAMES=N} (optionally
  * {@code SPACEHARVESTER_PROBE_LIMIT}).
  */
 class VideoFramesLiveProbe {
@@ -64,6 +64,8 @@ class VideoFramesLiveProbe {
         workspace.storeVideoFrames(source, pageId, frames);
         System.out.println("PROBE stored " + frames.size() + " frames, stored=" + workspace.videoFramesStored(source,
                 pageId));
+        workspace.attachments(source, pageId).attachments().attachments().forEach(attachment -> System.out.println(
+                "PROBE attachment " + attachment.title() + " " + attachment.mediaType() + " " + attachment.fileSize()));
         long describing = System.nanoTime();
         PageImages images = workspace.describeImages(source, pageId);
         System.out.printf(Locale.ROOT, "PROBE described %d of %d in %.1f s, state %s, warnings %s%n",

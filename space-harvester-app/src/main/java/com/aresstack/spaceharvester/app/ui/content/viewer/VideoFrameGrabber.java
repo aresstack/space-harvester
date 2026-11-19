@@ -73,7 +73,14 @@ public final class VideoFrameGrabber {
     public static List<Assets.VideoFrame> grab(MediaStreamBridge.ChunkSource reader, long size, String mediaType,
                                                int limit, Progress progress, BooleanSupplier cancelled)
             throws IOException {
-        List<Long> positions = positions(SlideChanges.load(reader, size), limit);
+        return grab(reader, size, mediaType, SlideChanges.load(reader, size), limit, progress, cancelled);
+    }
+
+    /** Wie {@link #grab(MediaStreamBridge.ChunkSource, long, String, int, Progress, BooleanSupplier)} mit schon gefundenen Folienwechseln. */
+    public static List<Assets.VideoFrame> grab(MediaStreamBridge.ChunkSource reader, long size, String mediaType,
+                                               List<Long> changes, int limit, Progress progress,
+                                               BooleanSupplier cancelled) throws IOException {
+        List<Long> positions = positions(changes, limit);
         if (!VlcRuntimeLocator.configure()) {
             throw new IOException("VLC ist nicht verfügbar");
         }

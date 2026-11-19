@@ -570,7 +570,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                     return;
                 }
                 try {
-                    transport.slides(get());
+                    java.util.List<Long> changes = get();
+                    transport.slides(changes);
+                    onSlides.accept(changes);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                 } catch (ExecutionException unavailable) {
@@ -579,6 +581,14 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             }
         };
         slideDetection.execute();
+    }
+
+    /** Whoever wants the slide changes once they are found, e.g. to keep a still frame of every slide. */
+    private java.util.function.Consumer<java.util.List<Long>> onSlides = changes -> { };
+
+    /** {@code listener} gets the slide changes in milliseconds once, on the EDT, when playback found them. */
+    public void onSlides(java.util.function.Consumer<java.util.List<Long>> listener) {
+        onSlides = java.util.Objects.requireNonNull(listener, "listener");
     }
 
     /** Jump to the next slide, or to the start of the current or previous one like a player's previous button. */

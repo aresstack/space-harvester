@@ -933,8 +933,10 @@ public class Assets implements DocumentInventory {
 
     /** Präfix der Pseudo-Anhänge, die Standbilder eines Videos tragen ({@link #putVideoFrames}). */
     public static final String VIDEO_FRAME = "video-frame-";
-    /** Präfix der Liste der Standbilder eines Videos in der Ablage. */
+    /** Präfix der Liste der Standbilder eines Videos in der Ablage; sie liegt unter {@link #FRAME_LIST_VERSION}. */
     static final String VIDEO_FRAMES = "video-frames-";
+    /** Feste Version der Liste: sie nennt selbst, zu welcher Fassung des Videos die Standbilder gehören. */
+    static final String FRAME_LIST_VERSION = "list";
 
     /** Ein Standbild eines Videos an {@code millis} als PNG. */
     public record VideoFrame(long millis, byte[] png) {
@@ -947,55 +949,101 @@ public class Assets implements DocumentInventory {
     }
 
     /**
-     * Legt Standbilder eines Videos als Pseudo-Anhänge seiner Seite ab: je Bild ein Asset {@value #VIDEO_FRAME}… mit
-     * der Fassung des Videos und dazu ihre Liste. Die Bildanalyse (ADR 0021) nimmt sie für Seiten ohne Lese-Ansicht
-     * wie Bilder der Seite ({@link #videoFrames}); beschrieben werden sie über denselben Weg, je Bildbytes und Modell
-     * einmal. Eine neue Fassung des Videos braucht neue Standbilder. Das Recht auf die Seite prüft der Aufrufer.
+     * Legt die an den Folienwechseln gefundenen Standbilder eines Videos als Anhänge seiner Seite ab: je Bild ein
+     * Asset {@value #VIDEO_FRAME}… mit der Fassung des Videos und dazu ihre Liste. Die Anhangsliste der Seite zeigt sie
+     * ({@link #withVideoFrames}), und die Bildanalyse (ADR 0021) beschreibt sie wie die Bilder einer Seite
+     * ({@link #videoFrames}). Neue Standbilder ersetzen die alten. Das Recht auf die Seite prüft der Aufrufer.
      */
     public void putVideoFrames(String sourceId, String pageId, String version, List<VideoFrame> frames) {
         version = frameVersion(version);
         String page = framePage(pageId);
-        StringBuilder list = new StringBuilder();
+        StringBuilder list = new StringBuilder(version).append('\n');
         for (VideoFrame frame : frames) {
             Asset asset = new Asset(sourceId, pageId, VIDEO_FRAME + page + "-" + frame.millis(), version,
-                    frameTitle(frame.millis()), "image/png", AssetKind.IMAGE, frame.png().length, sha256(frame.png()),
-                    clock.instant());
+                    frameTitle(frame.millis()) + ".png", "image/png", AssetKind.IMAGE, frame.png().length,
+                    sha256(frame.png()), clock.instant());
             store.put(asset, frame.png());
             list.append(frame.millis()).append('\n');
         }
         byte[] content = list.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        store.put(new Asset(sourceId, pageId, VIDEO_FRAMES + page, version, "Standbilder", "text/plain",
+        store.put(new Asset(sourceId, pageId, VIDEO_FRAMES + page, FRAME_LIST_VERSION, "Standbilder", "text/plain",
                 AssetKind.of("text/plain", "Standbilder.txt"), content.length, sha256(content), clock.instant()),
                 content);
     }
 
+    /** Die abgelegten Standbilder eines Videos: zu welcher Fassung sie gehören und ihre Zeiten. */
+    private record FrameList(String version, List<Long> millis, String sha256) {
+    }
+
+    private Optional<FrameList> frameList(String sourceId, String pageId) {
+        Optional<Asset> list = store.find(sourceId, VIDEO_FRAMES + framePage(pageId), FRAME_LIST_VERSION);
+        if (list.isEmpty()) {
+            return Optional.empty();
+        }
+        String[] lines;
+        try {
+            lines = new String(store.read(list.get()), java.nio.charset.StandardCharsets.UTF_8).split("\n");
+        } catch (AssetStoreException e) {
+            return Optional.empty();
+        }
+        List<Long> millis = new java.util.ArrayList<>();
+        for (int i = 1; i < lines.length; i++) {
+            if (!lines[i].isBlank()) {
+                millis.add(Long.parseLong(lines[i].strip()));
+            }
+        }
+        return Optional.of(new FrameList(lines[0].strip(), List.copyOf(millis), list.get().sha256()));
+    }
+
     /**
      * Die abgelegten Standbilder eines Videos in dieser Fassung als Bilder der Seite, in zeitlicher Reihenfolge; leer,
-     * wenn es (noch) keine gibt. Liest nie von der Quelle: ihre Bytes liegen in der Ablage.
+     * wenn es (noch) keine oder nur welche einer anderen Fassung gibt. Liest nie von der Quelle.
      */
     public List<HarvestSource.ViewImage> videoFrames(String sourceId, String pageId, String version) {
-        version = frameVersion(version);
-        String page = framePage(pageId);
-        Optional<Asset> list = store.find(sourceId, VIDEO_FRAMES + page, version);
+        Optional<FrameList> list = frameList(sourceId, pageId).filter(found -> found.version()
+                .equals(frameVersion(version)));
         if (list.isEmpty()) {
             return List.of();
         }
-        String text;
-        try {
-            text = new String(store.read(list.get()), java.nio.charset.StandardCharsets.UTF_8);
-        } catch (AssetStoreException e) {
-            return List.of();
-        }
+        String page = framePage(pageId);
         List<HarvestSource.ViewImage> frames = new java.util.ArrayList<>();
-        for (String line : text.split("\n")) {
-            if (line.isBlank()) {
-                continue;
-            }
-            long millis = Long.parseLong(line.strip());
+        for (long millis : list.get().millis()) {
             String id = VIDEO_FRAME + page + "-" + millis;
-            frames.add(new HarvestSource.ViewImage(id + ".png", frameTitle(millis), id, "image/png", version));
+            frames.add(new HarvestSource.ViewImage(id + ".png", frameTitle(millis), id, "image/png",
+                    list.get().version()));
         }
         return List.copyOf(frames);
+    }
+
+    /** Ob für diese Fassung eines Videos schon Standbilder abgelegt sind. */
+    public boolean hasVideoFrames(String sourceId, String pageId, String version) {
+        return frameList(sourceId, pageId).filter(found -> found.version().equals(frameVersion(version))).isPresent();
+    }
+
+    /**
+     * Die Anhangsliste einer Seite samt den abgelegten Standbildern ihres Videos als Anhänge; ihre Bytes liefert
+     * {@link #content} aus der Ablage, ohne die Quelle zu fragen.
+     */
+    public PageAttachmentList withVideoFrames(PageAttachmentList list) {
+        String pageId = list.attachments().pageId();
+        Optional<FrameList> frames = frameList(list.sourceId(), pageId);
+        if (frames.isEmpty() || frames.get().millis().isEmpty()) {
+            return list;
+        }
+        String page = framePage(pageId);
+        List<PageAttachment> attachments = new java.util.ArrayList<>(list.attachments().attachments());
+        for (long millis : frames.get().millis()) {
+            String id = VIDEO_FRAME + page + "-" + millis;
+            Optional<Asset> asset = store.find(list.sourceId(), id, frames.get().version());
+            if (asset.isPresent()) {
+                attachments.add(new PageAttachment(id, id, asset.get().title(), "image/png", asset.get().size(),
+                        frames.get().version(), asset.get().retrievedAt(), null));
+            }
+        }
+        PageAttachments source = list.attachments();
+        return new PageAttachmentList(list.sourceId(), list.spaceKey(), new PageAttachments(source.pageId(),
+                attachments, source.responses(), source.mediaType(), source.nativeFormat(), source.warnings(),
+                source.retrievedAt()), list.retrievedAt());
     }
 
     /**
@@ -1003,7 +1051,8 @@ public class Assets implements DocumentInventory {
      * Text; leer ohne Standbilder.
      */
     public Optional<String> videoFramesInput(String sourceId, String pageId, String version) {
-        return store.find(sourceId, VIDEO_FRAMES + framePage(pageId), frameVersion(version)).map(Asset::sha256);
+        return frameList(sourceId, pageId).filter(found -> found.version().equals(frameVersion(version)))
+                .map(FrameList::sha256);
     }
 
     /** Die Fassung des Videos; eine Quelle ohne Fassung legt seine Standbilder unter einer festen ab. */

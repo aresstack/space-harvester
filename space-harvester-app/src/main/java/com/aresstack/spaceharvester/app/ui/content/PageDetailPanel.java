@@ -1552,7 +1552,9 @@ public final class PageDetailPanel extends JPanel {
         };
         originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, ranges::read);
         if (size > 0 && file.endsWith(".mp4")) {
-            videoFrames = new VideoFrameSource(ranges::read, size, mediaType);
+            VideoFrameSource frames = new VideoFrameSource(ranges::read, size, mediaType);
+            videoFrames = frames;
+            originalVideoViewer.onSlides(changes -> storeSlideFrames(frames, source, id, changes));
             videoTranscript.setVideoSource(new VideoTranscriptSource(size, ranges));
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
             videoTranscriptShown = true;
@@ -2383,16 +2385,10 @@ public final class PageDetailPanel extends JPanel {
         String source = sourceId;
         String id = pageId;
         DeliveredPage shown = page;
-        VideoFrameSource video = videoFrames;
         images.describing(true);
-        feedback.working(video == null ? "Bilder werden beschrieben …" : "Standbilder werden vorbereitet …");
-        Background.run(() -> {
-            if (video != null) {
-                storeVideoFrames(runtime, source, id, video, once, shown);
-            }
-            return imageRows(runtime, source, id, once ? runtime.workspace().describeImagesOnce(source, id)
-                    : runtime.workspace().describeImages(source, id));
-        }, found -> {
+        feedback.working("Bilder werden beschrieben …");
+        Background.run(() -> imageRows(runtime, source, id, once ? runtime.workspace().describeImagesOnce(source, id)
+                : runtime.workspace().describeImages(source, id)), found -> {
             // Der Reiter gehört allen Seiten: auch nach einem Seitenwechsel wieder freigeben.
             images.describing(false);
             if (shown != page) {
@@ -2412,31 +2408,36 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Ein Video hat keine Bilder in einer Lese-Ansicht: Für die gespeicherte Fassung zieht das an jedem Folienwechsel
-     * ein Standbild und legt es als Pseudo-Anhang der Seite ab, einmal je Fassung. Nur, wenn das Vision-Modell die
-     * Bilder danach auch beschreiben darf; sonst meldet das Beschreiben selbst, was fehlt. Läuft im Hintergrund.
+     * Der Player hat die Folienwechsel des Videos gefunden: je Wechsel ein Standbild ziehen und als Anhang der Seite
+     * ablegen, einmal je Fassung und im Hintergrund. „Analysen › Bilder“ beschreibt sie dann wie die Bilder einer
+     * Seite.
      */
-    private void storeVideoFrames(AppRuntime runtime, String source, String id, VideoFrameSource video, boolean once,
-                                  DeliveredPage shown) throws java.io.IOException {
-        boolean allowed = runtime.workspace().imagesAvailable()
-                && (once || runtime.workspace().imagesReleased(source, id));
-        if (!allowed || runtime.workspace().videoFramesStored(source, id)) {
+    private void storeSlideFrames(VideoFrameSource video, String source, String id, List<Long> changes) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || changes.isEmpty() || video != videoFrames) {
             return;
         }
-        List<com.aresstack.spaceharvester.application.assets.Assets.VideoFrame> frames = VideoFrameGrabber.grab(
-                video.reader(), video.size(), video.mediaType(),
-                com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES,
-                (done, total) -> javax.swing.SwingUtilities.invokeLater(() -> {
-                    if (shown == page) {
-                        feedback.working("Standbilder werden gezogen … " + done + " von " + total);
-                    }
-                }), () -> false);
-        if (!frames.isEmpty()) {
-            runtime.workspace().storeVideoFrames(source, id, frames);
-        }
-        javax.swing.SwingUtilities.invokeLater(() -> {
-            if (shown == page) {
-                feedback.working("Bilder werden beschrieben …");
+        Background.run(() -> {
+            if (runtime.workspace().videoFramesStored(source, id)) {
+                return 0;
+            }
+            List<com.aresstack.spaceharvester.application.assets.Assets.VideoFrame> frames = VideoFrameGrabber.grab(
+                    video.reader(), video.size(), video.mediaType(), changes,
+                    com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES,
+                    (done, total) -> { }, () -> video != videoFrames);
+            if (!frames.isEmpty()) {
+                runtime.workspace().storeVideoFrames(source, id, frames);
+            }
+            return frames.size();
+        }, stored -> {
+            if (stored > 0 && video == videoFrames) {
+                // Die Anhangsliste und die Bilder gelten neu.
+                imagesLoaded = false;
+                feedback.success(stored + " Standbilder als Anhänge abgelegt");
+            }
+        }, error -> {
+            if (!(error instanceof java.util.concurrent.CancellationException) && video == videoFrames) {
+                feedback.problem(error, Problems.Step.PAGE);
             }
         });
     }

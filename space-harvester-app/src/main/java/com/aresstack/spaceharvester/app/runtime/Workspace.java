@@ -695,15 +695,15 @@ public final class Workspace {
         return images;
     }
 
-    /** Ob für die gespeicherte Fassung eines Videos schon Standbilder als Pseudo-Anhänge abgelegt sind. */
+    /** Ob für die gespeicherte Fassung eines Videos schon Standbilder als Anhänge abgelegt sind. */
     public boolean videoFramesStored(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
-        return !harvester.assets().videoFrames(sourceId, pageId, page.snapshot().revision()).isEmpty();
+        return harvester.assets().hasVideoFrames(sourceId, pageId, page.snapshot().revision());
     }
 
     /**
-     * Legt Standbilder eines Videos (an seinen Folienwechseln) als Pseudo-Anhänge der Seite ab; „Bilder beschreiben“
-     * beschreibt sie danach wie die Bilder einer Seite. Braucht wie das Beschreiben die sync-Freigabe.
+     * Legt die an den Folienwechseln gefundenen Standbilder eines Videos als Anhänge der Seite ab; „Bilder beschreiben“
+     * beschreibt sie danach wie die Bilder einer Seite. Braucht wie das Ablegen von Anhängen die sync-Freigabe.
      */
     public void storeVideoFrames(String sourceId, String pageId, List<Assets.VideoFrame> frames) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
@@ -2094,13 +2094,38 @@ public final class Workspace {
     // ------------------------------------------------------------------ intern
 
     private PageAttachmentList visibleAttachments(String sourceId, String pageId, AccessKind kind) {
+        // Die Standbilder eines Videos stehen als Anhänge mit in der Liste; ihre Bytes liegen in der Ablage.
         if (access.permits(caller, ResourceScope.page(sourceId, null, pageId), kind)) {
-            return harvester.sources().attachments(sourceId, pageId);
+            return sourceAttachments(sourceId, pageId);
         }
         access.require(caller, ResourceScope.source(sourceId), kind);
-        PageAttachmentList list = harvester.sources().attachments(sourceId, pageId);
+        PageAttachmentList list = sourceAttachments(sourceId, pageId);
         access.requireConcealed(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), kind);
         return list;
+    }
+
+    /**
+     * Die Anhänge der Quelle samt den Standbildern eines Videos. Eine Quelle ohne Anhangslisten (etwa ein
+     * BSCW-Dokument) hat dann nur die Standbilder; ohne sie bleibt es bei {@code UNSUPPORTED}.
+     */
+    private PageAttachmentList sourceAttachments(String sourceId, String pageId) {
+        try {
+            return harvester.assets().withVideoFrames(harvester.sources().attachments(sourceId, pageId));
+        } catch (com.aresstack.spaceharvester.application.sources.SourceAccessException e) {
+            if (e.reason() != com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNSUPPORTED) {
+                throw e;
+            }
+            String spaceKey = harvester.sources().pageMetadata(sourceId, pageId).entry().page().partitionKey();
+            java.time.Instant now = java.time.Instant.now();
+            PageAttachmentList none = new PageAttachmentList(sourceId, spaceKey,
+                    new com.aresstack.spaceharvester.application.sources.PageAttachments(pageId, List.of(), List.of(),
+                            "application/json", "video-frames", List.of(), now), now);
+            PageAttachmentList frames = harvester.assets().withVideoFrames(none);
+            if (frames.attachments().attachments().isEmpty()) {
+                throw e;
+            }
+            return frames;
+        }
     }
 
     private void requireVisible(JobStatus status, AccessKind kind) {
