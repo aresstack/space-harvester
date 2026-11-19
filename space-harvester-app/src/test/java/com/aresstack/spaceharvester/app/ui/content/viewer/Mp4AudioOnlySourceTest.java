@@ -41,9 +41,51 @@ final class Mp4AudioOnlySourceTest {
             long end = start + Integer.parseInt(values[1]);
             assertThat(overlaps(start, end, fixture.videoStart1, fixture.videoStart1 + 4)
                     && start >= fixture.mediaStart).isFalse();
-            assertThat(overlaps(start, end, fixture.videoStart2, fixture.videoStart2 + 5)
-                    && start >= fixture.mediaStart).isFalse();
+            // Video between two audio chunks is fetched along only inside one request from audio to audio
+            // (AudioChunkPrefetcher.MAXIMUM_GAP), never on its own and never into the result.
+            if (overlaps(start, end, fixture.videoStart2, fixture.videoStart2 + 5) && start >= fixture.mediaStart) {
+                assertThat(start).isEqualTo(fixture.videoStart2 - 4);
+                assertThat(end).isEqualTo(fixture.videoStart2 + 5 + 5);
+            }
         }
+    }
+
+    @Test
+    void neighbouringAudioChunksShareOneRequestOnlyAcrossSmallVideoGaps() throws Exception {
+        long[] offsets = {1_000, 1_100, 1_000_000, 2_000_000};
+        int[] lengths = {100, 50, 10, 300_000};
+        AudioChunkPrefetcher prefetcher = new AudioChunkPrefetcher((offset, count) -> {
+            byte[] bytes = new byte[count];
+            for (int i = 0; i < count; i++) {
+                bytes[i] = (byte) (offset + i);
+            }
+            return bytes;
+        }, offsets, lengths, 256 * 1024);
+
+        // Chunks 0 and 1 touch: one request. Chunk 2 lies far behind video: its own request. Chunk 3 is larger
+        // than one request and is read directly.
+        assertThat(prefetcher.requests()).isEqualTo(2);
+        assertThat(prefetcher.read(1, 10, 5)).containsExactly((byte) 1_110, (byte) 1_111, (byte) 1_112,
+                (byte) 1_113, (byte) 1_114);
+        assertThat(prefetcher.read(2, 0, 2)).containsExactly((byte) 1_000_000, (byte) 1_000_001);
+        assertThat(prefetcher.read(3, 7, 1)).containsExactly((byte) 2_000_007);
+    }
+
+    @Test
+    void aFailedPrefetchIsRequestedAgainOnTheNextRead() throws Exception {
+        int[] calls = new int[1];
+        AudioChunkPrefetcher prefetcher = new AudioChunkPrefetcher((offset, count) -> {
+            synchronized (calls) {
+                if (calls[0]++ == 0) {
+                    throw new java.io.IOException("BSCW kurz weg");
+                }
+            }
+            return new byte[count];
+        }, new long[] {0}, new int[] {16}, 256 * 1024);
+
+        assertThatThrownBy(() -> prefetcher.read(0, 0, 16)).isInstanceOf(java.io.IOException.class)
+                .hasMessage("BSCW kurz weg");
+        assertThat(prefetcher.read(0, 0, 16)).hasSize(16);
     }
 
     @Test

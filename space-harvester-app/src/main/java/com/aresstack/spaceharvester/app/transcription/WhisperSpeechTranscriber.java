@@ -10,7 +10,7 @@ import java.nio.file.Path;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
-/** Apply the published Whisper engine to bounded, thirty-second windows of 16-kHz mono PCM. */
+/** Apply the published Whisper engine to bounded, thirty-second windows of a (possibly still growing) PCM stream. */
 public final class WhisperSpeechTranscriber implements SpeechTranscriber {
 
     private static final int SAMPLE_RATE = 16_000;
@@ -18,13 +18,14 @@ public final class WhisperSpeechTranscriber implements SpeechTranscriber {
     private static final int MAXIMUM_TOKENS = 256;
 
     @Override
-    public void transcribe(Path pcmFile, Path modelDirectory, BooleanSupplier cancelled,
+    public void transcribe(InputStream pcmStream, Path modelDirectory, BooleanSupplier cancelled,
                            Consumer<TranscriptSegment> onSegment) throws Exception {
         requireModel(modelDirectory);
         WhisperTranscriber whisper = new WhisperTranscriber(modelDirectory);
         byte[] pcm = new byte[SAMPLES_PER_WINDOW * 2];
         long sampleOffset = 0;
-        try (InputStream source = new BufferedInputStream(Files.newInputStream(pcmFile))) {
+        // Each window waits only for its own thirty seconds of audio, then its text is reported at once.
+        try (InputStream source = new BufferedInputStream(pcmStream)) {
             int bytesRead;
             while (!cancelled.getAsBoolean() && (bytesRead = fill(source, pcm)) > 0) {
                 if (Thread.currentThread().isInterrupted()) {

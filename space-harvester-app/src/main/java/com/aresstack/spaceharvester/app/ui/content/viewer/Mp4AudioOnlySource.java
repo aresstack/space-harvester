@@ -25,6 +25,7 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
     private final long[] outputOffsets;
     private final int[] chunkLengths;
     private final long length;
+    private final AudioChunkPrefetcher prefetcher;
 
     private Mp4AudioOnlySource(MediaStreamBridge.ChunkSource remote, byte[] header,
                                long[] inputOffsets, long[] outputOffsets,
@@ -35,6 +36,7 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
         this.outputOffsets = outputOffsets;
         this.chunkLengths = chunkLengths;
         this.length = length;
+        this.prefetcher = new AudioChunkPrefetcher(remote, inputOffsets, chunkLengths, REMOTE_READ_BYTES);
     }
 
     static Mp4AudioStream open(MediaStreamBridge.ChunkSource source, long sourceLength)
@@ -142,7 +144,7 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
                 int chunk = findChunk(position);
                 long inside = position - outputOffsets[chunk];
                 int bytes = (int) Math.min(count - copied, chunkLengths[chunk] - inside);
-                byte[] data = fetch(remote, inputOffsets[chunk] + inside, bytes);
+                byte[] data = prefetcher.read(chunk, inside, bytes);
                 System.arraycopy(data, 0, output, copied, bytes);
                 copied += bytes;
             }
