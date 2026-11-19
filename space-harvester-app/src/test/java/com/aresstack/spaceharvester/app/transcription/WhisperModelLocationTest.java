@@ -77,6 +77,44 @@ final class WhisperModelLocationTest {
         }
     }
 
+    @Test
+    void resolvesVerifiedStagedModelFromProjectRootForDirectIntelliJStart() throws Exception {
+        byte[] model = "verified-local-model".getBytes(StandardCharsets.UTF_8);
+        Path staged = workspace.resolve("space-harvester-app/build/embedded-whisper-model");
+        Files.createDirectories(staged);
+        Files.write(staged.resolve("config.json"), model);
+
+        Path resolved = WhisperModelLocation.resolveDevelopmentModel(workspace,
+                Collections.singletonMap("config.json", sha256(model)));
+
+        assertThat(resolved).isEqualTo(staged.toAbsolutePath());
+    }
+
+    @Test
+    void resolvesVerifiedStagedModelFromModuleWorkingDirectory() throws Exception {
+        byte[] model = "verified-local-model".getBytes(StandardCharsets.UTF_8);
+        Path staged = workspace.resolve("build/embedded-whisper-model");
+        Files.createDirectories(staged);
+        Files.write(staged.resolve("config.json"), model);
+
+        Path resolved = WhisperModelLocation.resolveDevelopmentModel(workspace,
+                Collections.singletonMap("config.json", sha256(model)));
+
+        assertThat(resolved).isEqualTo(staged.toAbsolutePath());
+    }
+
+    @Test
+    void refusesCorruptedOrIncompleteDevelopmentModel() throws Exception {
+        Path staged = workspace.resolve("space-harvester-app/build/embedded-whisper-model");
+        Files.createDirectories(staged);
+        Files.write(staged.resolve("config.json"), "corrupted".getBytes(StandardCharsets.UTF_8));
+        Map<String, String> hashes = new LinkedHashMap<>();
+        hashes.put("config.json", sha256("expected".getBytes(StandardCharsets.UTF_8)));
+        hashes.put("model.safetensors", sha256("missing".getBytes(StandardCharsets.UTF_8)));
+
+        assertThat(WhisperModelLocation.resolveDevelopmentModel(workspace, hashes)).isNull();
+    }
+
     private static String sha256(byte[] content) throws Exception {
         byte[] bytes = MessageDigest.getInstance("SHA-256").digest(content);
         StringBuilder result = new StringBuilder();

@@ -35,8 +35,48 @@ public final class WhisperModelLocation {
         }
         Path destination = Paths.get(System.getProperty("user.home", "."), ".space-harvester",
                 "models", "whisper-tiny-" + REVISION);
+        if (isDevelopmentClasspath() && !isEmbeddedModelAvailable()) {
+            Path prepared = resolveDevelopmentModel(Paths.get("").toAbsolutePath(), MODEL_HASHES);
+            if (prepared != null) {
+                return prepared;
+            }
+        }
         return extract(destination, name -> WhisperModelLocation.class.getResourceAsStream(
                 MODEL_RESOURCE + name), MODEL_HASHES);
+    }
+
+    private static boolean isDevelopmentClasspath() {
+        java.net.URL classResource = WhisperModelLocation.class.getResource("WhisperModelLocation.class");
+        return classResource != null && "file".equals(classResource.getProtocol());
+    }
+
+    private static boolean isEmbeddedModelAvailable() {
+        return WhisperModelLocation.class.getResource(MODEL_RESOURCE + "config.json") != null;
+    }
+
+    /**
+     * Reuse an already verified Gradle-staged model for direct IntelliJ launches.
+     * Never download a model at runtime or trust unverified local model files.
+     */
+    static Path resolveDevelopmentModel(Path workingDirectory, Map<String, String> hashes)
+            throws IOException {
+        Path[] candidates = {
+                workingDirectory.resolve("build/embedded-whisper-model"),
+                workingDirectory.resolve("space-harvester-app/build/embedded-whisper-model")
+        };
+        for (Path directory : candidates) {
+            boolean valid = true;
+            for (Map.Entry<String, String> entry : hashes.entrySet()) {
+                if (!matches(directory.resolve(entry.getKey()), entry.getValue())) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (valid) {
+                return directory.toAbsolutePath().normalize();
+            }
+        }
+        return null;
     }
 
     static synchronized Path extract(Path destination, Function<String, InputStream> resources,

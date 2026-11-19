@@ -91,10 +91,12 @@ def prepareModel = tasks.register('prepareWhisperModel') {
     }
 }
 
-tasks.named('bootJar') {
+// Make the verified model available to IDE and Gradle classpaths as well as the
+// executable JAR. BootJar automatically packages processResources output.
+tasks.named('processResources') {
     dependsOn prepareModel
     from(prepareModel) {
-        into 'BOOT-INF/classes/models/whisper-tiny'
+        into 'models/whisper-tiny'
     }
 }
 

@@ -262,6 +262,11 @@ Dateien unter `BOOT-INF/classes/models/whisper-tiny/` in das **bestehende
 ausführbare Spring-Boot-JAR** ein. MIT-, Apache-2.0- und Herkunftshinweise
 liegen im JAR unter `BOOT-INF/classes/licenses/`.
 `verifyWhisperJar` prüft deren Vollständigkeit bei jedem `build`.
+Auch `processResources` enthält die verifizierten Modelldateien, damit direkte
+IntelliJ-/Gradle-Starts dieselben Classpath-Ressourcen sehen. Für nicht an Gradle
+delegierte IntelliJ-Starts kann `WhisperModelLocation` alternativ die bereits
+unter `space-harvester-app/build/embedded-whisper-model` vorbereiteten Dateien
+nach SHA-256-Prüfung direkt verwenden. Dabei erfolgt kein Laufzeitdownload.
 
 Beim ersten Klick entpackt `WhisperModelLocation` die Modellgewichte aus dem
 JAR in einen versionsgebundenen lokalen Cache unter
