@@ -605,21 +605,38 @@ public final class ChatPanel extends JPanel {
     /** Insert the transcript at the caret, preserving adjacent text and selection. */
     private DictationControl.Result dictationResult() {
         return new DictationControl.Result() {
+            /** Hinter dem zuletzt eingefügten Abschnitt geht es weiter; -1, solange noch nichts eingefügt ist. */
+            private int streamCaret = -1;
+
+            @Override
+            public void partial(String text) {
+                if (dictationPhase == DictationPhase.RECOGNIZING) {
+                    insertDictated(text);
+                }
+            }
+
             @Override
             public void recognized(String text) {
                 dictationPhase = DictationPhase.IDLE;
                 stopDictationLevelMeter();
-                if (text == null || text.trim().isEmpty()) {
-                    status.setText("Keine Sprache erkannt");
-                } else {
-                    DictationInsertion insertion = DictationInsertion.insert(editor.getText(),
-                            editor.getSelectionStart(), editor.getSelectionEnd(), text);
-                    editor.setText(insertion.text);
-                    editor.setCaretPosition(insertion.caret);
+                if (streamCaret < 0 && text != null && !text.trim().isEmpty()) {
+                    insertDictated(text);
+                }
+                status.setText(streamCaret < 0 ? "Keine Sprache erkannt" : "Sprache erkannt – Text vor dem Senden prüfen");
+                if (streamCaret >= 0) {
                     editor.requestFocusInWindow();
-                    status.setText("Sprache erkannt – Text vor dem Senden prüfen");
                 }
                 refreshDictationControls();
+            }
+
+            /** Fügt einen erkannten Abschnitt ein: zuerst am Cursor bzw. statt der Auswahl, dann hinter dem vorigen. */
+            private void insertDictated(String text) {
+                int start = streamCaret < 0 ? editor.getSelectionStart() : streamCaret;
+                int end = streamCaret < 0 ? editor.getSelectionEnd() : streamCaret;
+                DictationInsertion insertion = DictationInsertion.insert(editor.getText(), start, end, text);
+                editor.setText(insertion.text);
+                editor.setCaretPosition(insertion.caret);
+                streamCaret = insertion.caret;
             }
 
             @Override

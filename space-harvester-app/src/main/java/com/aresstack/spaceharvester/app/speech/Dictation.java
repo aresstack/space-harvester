@@ -137,7 +137,11 @@ public final class Dictation implements DictationControl {
                 String problem = null;
                 try {
                     long started = System.currentTimeMillis();
-                    text = current.transcribe(speech);
+                    text = current.transcribe(speech, piece -> SwingUtilities.invokeLater(() -> {
+                        if (expected == generation) {
+                            result.partial(piece);
+                        }
+                    }));
                     LOG.info("Spracheingabe: " + speech.durationMillis() + " ms Audio in "
                             + (System.currentTimeMillis() - started) + " ms erkannt");
                 } catch (Exception failed) {

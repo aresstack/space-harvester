@@ -14,8 +14,15 @@ public interface DictationControl {
         void dictationChanged();
     }
 
-    /** Ausgang einer Aufnahme; genau ein Aufruf je {@link #start}, auf dem EDT. */
+    /**
+     * Ausgang einer Aufnahme; genau ein Aufruf von {@link #recognized} oder {@link #failed} je {@link #start}, auf dem
+     * EDT. Davor meldet {@link #partial} jeden schon erkannten Abschnitt, damit der Text während der Erkennung wächst.
+     */
     interface Result {
+        /** Ein fertig erkannter Abschnitt in Reihenfolge; {@link #recognized} bringt danach den ganzen Text. */
+        default void partial(String text) {
+        }
+
         void recognized(String text);
 
         void failed(String message);

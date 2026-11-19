@@ -36,6 +36,12 @@ final class WhisperDictationService {
     private WhisperTranscriber transcriber;
 
     synchronized String transcribe(RecordedSpeech speech) throws IOException {
+        return transcribe(speech, ignored -> { });
+    }
+
+    /** Erkennt die Aufnahme und meldet den Text jedes fertigen Fensters, sobald es erkannt ist. */
+    synchronized String transcribe(RecordedSpeech speech, java.util.function.Consumer<String> onWindow)
+            throws IOException {
         if (transcriber == null) {
             transcriber = new WhisperTranscriber(WhisperModelLocation.resolve());
         }
@@ -46,7 +52,12 @@ final class WhisperDictationService {
             keep(speech);
         }
         LOG.info("Spracheingabe: " + speech.durationMillis() + " ms Aufnahme, Erkennung beginnt");
-        TranscriptionResult result = audioPipeline.transcribe(speech, transcriber, this::logWindow);
+        TranscriptionResult result = audioPipeline.transcribe(speech, transcriber, window -> {
+            logWindow(window);
+            if (!window.getText().isBlank()) {
+                onWindow.accept(window.getText());
+            }
+        });
         return result.getText();
     }
 
