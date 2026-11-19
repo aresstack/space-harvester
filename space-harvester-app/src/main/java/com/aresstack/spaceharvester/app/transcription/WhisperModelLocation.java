@@ -17,12 +17,21 @@ import java.util.function.Function;
 /**
  * Extract the model shipped inside the executable JAR into a verified, versioned local cache.
  * Never retrieve model files over the network at runtime.
+ *
+ * <p>Another Hugging Face Whisper checkpoint (for example {@code openai/whisper-base}) can be installed
+ * manually: copy {@code config.json}, {@code model.safetensors}, {@code tokenizer.json} and
+ * {@code vocab.json} (optionally {@code generation_config.json}) into
+ * {@code ~/.space-harvester/models/whisper}. The system property {@value #PROPERTY} names any other
+ * directory and takes precedence; without either, the embedded Whisper Tiny model is used.
  */
 public final class WhisperModelLocation {
 
     private static final String REVISION = "169d4a4341b33bc18d8881c4b69c2e104e1cc0af";
     private static final String MODEL_RESOURCE = "/models/whisper-tiny/";
-    private static final String PROPERTY = "spaceharvester.whisper.model";
+    static final String PROPERTY = "spaceharvester.whisper.model";
+    static final String INSTALLED_FOLDER = "whisper";
+    private static final java.util.logging.Logger LOG =
+            java.util.logging.Logger.getLogger(WhisperModelLocation.class.getName());
     private static final Map<String, String> MODEL_HASHES = modelHashes();
 
     private WhisperModelLocation() {
@@ -33,8 +42,13 @@ public final class WhisperModelLocation {
         if (overridden != null && !overridden.trim().isEmpty()) {
             return Paths.get(overridden.trim()).toAbsolutePath();
         }
-        Path destination = Paths.get(System.getProperty("user.home", "."), ".space-harvester",
-                "models", "whisper-tiny-" + REVISION);
+        Path models = Paths.get(System.getProperty("user.home", "."), ".space-harvester", "models");
+        Path installed = resolveInstalledModel(models);
+        if (installed != null) {
+            LOG.info("Whisper: manuell installiertes Modell " + installed);
+            return installed;
+        }
+        Path destination = models.resolve("whisper-tiny-" + REVISION);
         if (isDevelopmentClasspath() && !isEmbeddedModelAvailable()) {
             Path prepared = resolveDevelopmentModel(Paths.get("").toAbsolutePath(), MODEL_HASHES);
             if (prepared != null) {
@@ -43,6 +57,13 @@ public final class WhisperModelLocation {
         }
         return extract(destination, name -> WhisperModelLocation.class.getResourceAsStream(
                 MODEL_RESOURCE + name), MODEL_HASHES);
+    }
+
+    /** Return the manually installed model under {@code models/whisper}, or {@code null} if it is incomplete. */
+    static Path resolveInstalledModel(Path modelsDirectory) {
+        Path directory = modelsDirectory.resolve(INSTALLED_FOLDER);
+        return WhisperSpeechTranscriber.isModelAvailable(directory)
+                ? directory.toAbsolutePath().normalize() : null;
     }
 
     private static boolean isDevelopmentClasspath() {

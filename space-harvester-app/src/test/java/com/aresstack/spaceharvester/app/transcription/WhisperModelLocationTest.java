@@ -124,4 +124,25 @@ final class WhisperModelLocationTest {
         }
         return result.toString();
     }
+
+    @Test
+    void prefersACompleteManuallyInstalledModel() throws Exception {
+        Path installed = Files.createDirectories(workspace.resolve("models").resolve("whisper"));
+        for (String file : new String[]{"config.json", "model.safetensors", "tokenizer.json", "vocab.json"}) {
+            Files.write(installed.resolve(file), new byte[]{1});
+        }
+
+        assertThat(WhisperModelLocation.resolveInstalledModel(workspace.resolve("models")))
+                .isEqualTo(installed.toAbsolutePath().normalize());
+    }
+
+    @Test
+    void ignoresAnIncompleteManualInstallation() throws Exception {
+        Path installed = Files.createDirectories(workspace.resolve("models").resolve("whisper"));
+        Files.write(installed.resolve("config.json"), new byte[]{1});
+        Files.write(installed.resolve("model.safetensors"), new byte[]{1});
+
+        assertThat(WhisperModelLocation.resolveInstalledModel(workspace.resolve("models"))).isNull();
+        assertThat(WhisperModelLocation.resolveInstalledModel(workspace.resolve("nothing"))).isNull();
+    }
 }
