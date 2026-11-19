@@ -554,12 +554,12 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     /**
      * Find the slide changes of a screen-recorded presentation from the MP4 index when the page opens, once and in the
-     * background: their marks appear before anything is played, and whoever listens ({@link #onSlides}) keeps a
-     * still frame of every slide. Other formats simply show no marks.
+     * background: their marks appear before anything is played, and whoever listens ({@link #onSlides}) gets the same
+     * marks, e.g. for one virtual attachment per slide. Other formats simply show no marks.
      */
     public void findSlides() {
         boolean mp4 = fileName != null && fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4");
-        if (slideDetection != null || knownSlides != null || closed || !mp4 || fileSize < 16) {
+        if (slideDetection != null || closed || !mp4 || fileSize < 16) {
             return;
         }
         slideDetection = new SwingWorker<SlideIndex, Void>() {
@@ -590,59 +590,10 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         slideDetection.execute();
     }
 
-    /** Slide changes already known when the page opened, or {@code null}. */
-    private java.util.List<Long> knownSlides;
-
-    /**
-     * Show the slide changes the page already knows (its slide attachments) as soon as it opens, instead of
-     * {@link #findSlides}; whoever listens ({@link #onSlides}) gets them to complete missing still frames. Without a
-     * known length the length comes from the MP4 header once.
-     *
-     * @param changes        slide changes in milliseconds, without the first slide at 0
-     * @param durationMillis length of the video, or 0 if unknown
-     */
-    public void knownSlides(java.util.List<Long> changes, long durationMillis) {
-        if (closed || started || changes.isEmpty()) {
-            return;
-        }
-        knownSlides = java.util.List.copyOf(changes);
-        transport.slides(knownSlides);
-        onSlides.accept(knownSlides);
-        if (durationMillis > 0) {
-            transport.seekBar().update(0, durationMillis);
-            return;
-        }
-        new SwingWorker<Long, Void>() {
-            @Override
-            protected Long doInBackground() throws IOException {
-                return SlideChanges.durationMillis(reader, fileSize);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    long duration = get();
-                    if (!closed && !started && duration > 0) {
-                        transport.seekBar().update(0, duration);
-                    }
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                } catch (ExecutionException unavailable) {
-                    // Without a readable header the marks appear once playback reports the length.
-                }
-            }
-        }.execute();
-    }
-
-    /** The length of the video as VLC reports it, or 0 while unknown. */
-    public long durationMillis() {
-        return transport.seekBar().durationMillis();
-    }
-
-    /** Whoever wants the slide changes once they are found, e.g. to keep a still frame of every slide. */
+    /** Whoever wants the slide changes once they are found, e.g. for one virtual attachment per slide. */
     private java.util.function.Consumer<java.util.List<Long>> onSlides = changes -> { };
 
-    /** {@code listener} gets the slide changes in milliseconds once, on the EDT, when they are found or known. */
+    /** {@code listener} gets the slide changes in milliseconds once, on the EDT, when they are found. */
     public void onSlides(java.util.function.Consumer<java.util.List<Long>> listener) {
         onSlides = java.util.Objects.requireNonNull(listener, "listener");
     }

@@ -695,43 +695,38 @@ public final class Workspace {
         return images;
     }
 
-    /** Ob für die gespeicherte Fassung eines Videos schon Standbilder als Anhänge abgelegt sind. */
-    public boolean videoFramesStored(String sourceId, String pageId) {
-        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
-        return harvester.assets().hasVideoFrames(sourceId, pageId, page.snapshot().revision());
-    }
+    /** Die Folien je gezeigtem Video, wie der Player sie als Marken gefunden hat; nur im Speicher. */
+    private final java.util.Map<PageKey, List<Long>> videoSlides = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * Legt die Folien eines Videos als Anhänge der Seite an, sobald der Player ihre Wechsel gefunden hat: je Folie ein
-     * Platzhalter, benannt nach ihrer Position im Video. Braucht wie das Ablegen von Anhängen die sync-Freigabe.
+     * Die Folien eines gezeigten Videos aus den Marken des Players: je Folie steht ein virtueller Anhang in der
+     * Anhangsliste der Seite; leer entfernt sie. Gespeichert wird davon nichts.
      *
      * @param slides Beginn jeder Folie in Millisekunden
-     * @return die Folien, deren Standbild noch fehlt
      */
-    public List<Long> announceVideoSlides(String sourceId, String pageId, long durationMillis, List<Long> slides) {
-        DeliveredPage page = syncedPage(sourceId, pageId);
-        return harvester.assets().putVideoSlides(sourceId, pageId, page.snapshot().revision(), durationMillis, slides);
+    public void videoSlides(String sourceId, String pageId, List<Long> slides) {
+        PageKey key = new PageKey(sourceId, pageId);
+        if (slides.isEmpty()) {
+            videoSlides.remove(key);
+        } else {
+            videoSlides.put(key, List.copyOf(slides));
+        }
     }
 
-    /**
-     * Die schon gefundenen Folien der gespeicherten Fassung eines Videos samt seiner Länge, damit der Player die Marken
-     * ohne Abspielen zeigt; leer, solange keine gefunden sind. Fragt die Quelle nicht.
-     */
-    public Optional<Assets.VideoSlides> videoSlides(String sourceId, String pageId) {
+    /** Die Folien des Videos, deren virtueller Anhang noch kein Standbild hat. */
+    public List<Long> missingVideoFrames(String sourceId, String pageId) {
+        List<Long> slides = videoSlides.getOrDefault(new PageKey(sourceId, pageId), List.of());
+        if (slides.isEmpty()) {
+            return List.of();
+        }
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
-        return harvester.assets().videoSlides(sourceId, pageId, page.snapshot().revision());
+        return harvester.assets().missingVideoFrames(sourceId, pageId, page.snapshot().revision(), slides);
     }
 
-    /** Legt das Standbild einer Folie ab; es füllt ihren Platzhalter unter „Anhänge“. */
+    /** Legt das Standbild einer Folie ab; es füllt ihren virtuellen Anhang unter „Anhänge“. */
     public void storeVideoFrame(String sourceId, String pageId, Assets.VideoFrame frame) {
         DeliveredPage page = syncedPage(sourceId, pageId);
         harvester.assets().putVideoFrame(sourceId, pageId, page.snapshot().revision(), frame);
-    }
-
-    /** Wie {@link #announceVideoSlides} und {@link #storeVideoFrame} für schon gezogene Standbilder. */
-    public void storeVideoFrames(String sourceId, String pageId, List<Assets.VideoFrame> frames) {
-        DeliveredPage page = syncedPage(sourceId, pageId);
-        harvester.assets().putVideoFrames(sourceId, pageId, page.snapshot().revision(), frames);
     }
 
     private DeliveredPage syncedPage(String sourceId, String pageId) {
@@ -2123,7 +2118,7 @@ public final class Workspace {
     // ------------------------------------------------------------------ intern
 
     private PageAttachmentList visibleAttachments(String sourceId, String pageId, AccessKind kind) {
-        // Die Standbilder eines Videos stehen als Anhänge mit in der Liste; ihre Bytes liegen in der Ablage.
+        // Die Folien eines gezeigten Videos stehen als virtuelle Anhänge mit in der Liste.
         if (access.permits(caller, ResourceScope.page(sourceId, null, pageId), kind)) {
             return sourceAttachments(sourceId, pageId);
         }
@@ -2134,28 +2129,32 @@ public final class Workspace {
     }
 
     /**
-     * Die Anhänge der Quelle samt den Standbildern eines Videos. Eine Quelle ohne Anhangslisten (etwa ein
-     * BSCW-Dokument) hat dann nur die Standbilder; ohne sie bleibt es bei {@code UNSUPPORTED}.
+     * Die Anhänge der Quelle samt einem virtuellen Anhang je Folie eines gezeigten Videos ({@link #videoSlides}). Eine
+     * Quelle ohne Anhangslisten (etwa ein BSCW-Dokument) hat dann nur die Folien; ohne Folien bleibt es bei
+     * {@code UNSUPPORTED}.
      */
     private PageAttachmentList sourceAttachments(String sourceId, String pageId) {
+        List<Long> slides = videoSlides.getOrDefault(new PageKey(sourceId, pageId), List.of());
+        PageAttachmentList list;
         try {
-            return harvester.assets().withVideoFrames(harvester.sources().attachments(sourceId, pageId));
+            list = harvester.sources().attachments(sourceId, pageId);
         } catch (com.aresstack.spaceharvester.application.sources.SourceAccessException e) {
-            if (e.reason() != com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNSUPPORTED) {
+            if (slides.isEmpty()
+                    || e.reason() != com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNSUPPORTED) {
                 throw e;
             }
             String spaceKey = harvester.pages().page(caller, sourceId, pageId, false).header().metadata()
                     .partitionKey();
             java.time.Instant now = java.time.Instant.now();
-            PageAttachmentList none = new PageAttachmentList(sourceId, spaceKey,
+            list = new PageAttachmentList(sourceId, spaceKey,
                     new com.aresstack.spaceharvester.application.sources.PageAttachments(pageId, List.of(), List.of(),
                             "application/json", "video-frames", List.of(), now), now);
-            PageAttachmentList frames = harvester.assets().withVideoFrames(none);
-            if (frames.attachments().attachments().isEmpty()) {
-                throw e;
-            }
-            return frames;
         }
+        if (slides.isEmpty()) {
+            return list;
+        }
+        String version = harvester.pages().page(caller, sourceId, pageId, false).snapshot().revision();
+        return harvester.assets().withVideoFrames(list, version, slides);
     }
 
     private void requireVisible(JobStatus status, AccessKind kind) {

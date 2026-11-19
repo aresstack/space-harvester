@@ -331,8 +331,8 @@ public final class PageDetailPanel extends JPanel {
     /** Das gezeigte MP4-Video für seine Standbilder in „Analysen › Bilder“; {@code null} ohne Video. */
     private VideoFrameSource videoFrames;
 
-    /** Woher die Standbilder eines Videos kommen: dieselben Bereichsabrufe wie der Player. */
-    private record VideoFrameSource(
+    /** Woher die Standbilder eines Videos kommen: dieselben Bereichsabrufe wie der Player, zu dieser Seite. */
+    private record VideoFrameSource(String sourceId, String pageId,
             com.aresstack.spaceharvester.app.ui.content.viewer.MediaStreamBridge.ChunkSource reader, long size,
             String mediaType) {
     }
@@ -1553,11 +1553,11 @@ public final class PageDetailPanel extends JPanel {
         };
         originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, ranges::read);
         if (size > 0 && file.endsWith(".mp4")) {
-            VideoFrameSource frames = new VideoFrameSource(ranges::read, size, mediaType);
+            VideoFrameSource frames = new VideoFrameSource(source, id, ranges::read, size, mediaType);
             videoFrames = frames;
-            VideoViewerPanel viewer = originalVideoViewer;
-            viewer.onSlides(changes -> storeSlideFrames(frames, source, id, viewer.durationMillis(), changes));
-            showKnownSlides(viewer, source, id);
+            // Die Marken des Players sind die einzige Quelle der Folien, auch für die virtuellen Anhänge.
+            originalVideoViewer.onSlides(changes -> slidesFound(frames, changes));
+            originalVideoViewer.findSlides();
             videoTranscript.setVideoSource(new VideoTranscriptSource(size, ranges));
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
             videoTranscriptShown = true;
@@ -1671,6 +1671,9 @@ public final class PageDetailPanel extends JPanel {
         }
         originalLinkShown = false;
         videoTranscriptShown = false;
+        if (videoFrames != null && context.runtime() != null) {
+            context.runtime().workspace().videoSlides(videoFrames.sourceId(), videoFrames.pageId(), List.of());
+        }
         videoFrames = null;
         fileContent.removeAll();
         originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
@@ -1965,6 +1968,9 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             assetsModel.set(overview);
+            if (videoFrames != null && ATTACHMENTS.equals(selectedTab())) {
+                fillVideoFrames();
+            }
             assetsHint.setText(Texts.count(overview.entries().size(), "Anhang", "Anhänge")
                     + (overview.listComplete() ? "" : " (Liste unvollständig)") + " · live, "
                     + Texts.time(overview.retrievedAt()));
@@ -2411,25 +2417,38 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Die Folienwechsel des Videos sind beim Öffnen gefunden oder bekannt: je Folie ein Anhang, fehlende Standbilder
-     * ziehen und ablegen, einmal je Fassung und im Hintergrund. „Analysen › Bilder“ beschreibt sie dann wie die Bilder einer
-     * Seite.
+     * Der Player hat die Marken des Videos gefunden: je Folie ein virtueller Anhang (Platzhalter, benannt nach ihrer
+     * Position), gespeichert wird davon nichts. Ohne Marken gibt es keine virtuellen Anhänge.
      */
-    private void storeSlideFrames(VideoFrameSource video, String source, String id, long durationMillis,
-                                  List<Long> changes) {
+    private void slidesFound(VideoFrameSource video, List<Long> changes) {
         AppRuntime runtime = context.runtime();
-        if (runtime == null || video != videoFrames) {
+        if (runtime == null || video != videoFrames || changes.isEmpty()) {
             return;
         }
+        runtime.workspace().videoSlides(video.sourceId(), video.pageId(), VideoFrameGrabber.slides(changes,
+                com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES));
+        attachmentsChanged(video);
+    }
+
+    /** Ob gerade Standbilder für die Platzhalter gezogen werden. */
+    private boolean fillingFrames;
+
+    /**
+     * Unter „Anhänge“: die Platzhalter des gezeigten Videos mit Standbildern füllen, Bild für Bild im Hintergrund; die
+     * Liste zeigt sie nach und nach. Erst hier entstehen die Bilder.
+     */
+    private void fillVideoFrames() {
+        AppRuntime runtime = context.runtime();
+        VideoFrameSource video = videoFrames;
+        if (runtime == null || video == null || fillingFrames) {
+            return;
+        }
+        fillingFrames = true;
         Background.run(() -> {
-            // Erst die Platzhalter, damit die Folien sofort unter „Anhänge“ stehen; dann Bild für Bild.
-            List<Long> missing = runtime.workspace().announceVideoSlides(source, id, durationMillis,
-                    VideoFrameGrabber.slides(changes,
-                            com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES));
-            javax.swing.SwingUtilities.invokeLater(() -> attachmentsChanged(video));
+            List<Long> missing = runtime.workspace().missingVideoFrames(video.sourceId(), video.pageId());
             int[] stored = {0};
             VideoFrameGrabber.grab(video.reader(), video.size(), video.mediaType(), missing, frame -> {
-                runtime.workspace().storeVideoFrame(source, id, frame);
+                runtime.workspace().storeVideoFrame(video.sourceId(), video.pageId(), frame);
                 // Die Liste lädt live: nur jedes zehnte Bild neu zeigen, den Rest am Ende.
                 if (++stored[0] % 10 == 0) {
                     javax.swing.SwingUtilities.invokeLater(() -> attachmentsChanged(video));
@@ -2437,42 +2456,14 @@ public final class PageDetailPanel extends JPanel {
             }, (done, total) -> { }, () -> video != videoFrames);
             return stored[0];
         }, stored -> {
+            fillingFrames = false;
             if (stored > 0 && video == videoFrames) {
                 attachmentsChanged(video);
-                feedback.success(stored + " Standbilder der Folien unter „Anhänge“ abgelegt");
             }
         }, error -> {
+            fillingFrames = false;
             if (!(error instanceof java.util.concurrent.CancellationException) && video == videoFrames) {
                 feedback.problem(error, Problems.Step.PAGE);
-            }
-        });
-    }
-
-    /**
-     * Beim Öffnen eines Videos: Sind seine Folien schon als Anhänge bekannt, zeigt der Player ihre Marken sofort; sonst
-     * findet er sie im MP4-Index, und die Anhänge entstehen dabei. Beim Abspielen passiert dafür nichts mehr.
-     */
-    private void showKnownSlides(VideoViewerPanel viewer, String source, String id) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null) {
-            return;
-        }
-        Background.run(() -> runtime.workspace().videoSlides(source, id), known -> {
-            if (viewer != originalVideoViewer) {
-                return;
-            }
-            List<Long> changes = known.map(slides -> slides.slides().stream().filter(millis -> millis > 0).toList())
-                    .orElse(List.of());
-            if (changes.isEmpty()) {
-                // Noch keine Folien-Anhänge: jetzt aus dem MP4-Index finden; das legt sie an.
-                viewer.findSlides();
-            } else {
-                // Die erste Folie beginnt bei 0 und ist keine Marke.
-                viewer.knownSlides(changes, known.get().durationMillis());
-            }
-        }, error -> {
-            if (viewer == originalVideoViewer) {
-                viewer.findSlides();
             }
         });
     }

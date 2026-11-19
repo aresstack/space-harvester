@@ -931,12 +931,8 @@ public class Assets implements DocumentInventory {
         return source(sourceId).viewImages(pageId);
     }
 
-    /** Präfix der Anhänge, die Standbilder eines Videos tragen ({@link #putVideoFrame}). */
+    /** Präfix der virtuellen Anhänge, die die Folien eines Videos zeigen. */
     public static final String VIDEO_FRAME = "video-frame-";
-    /** Präfix der Liste der Folien eines Videos in der Ablage; sie liegt unter {@link #FRAME_LIST_VERSION}. */
-    static final String VIDEO_FRAMES = "video-frames-";
-    /** Feste Version der Liste: sie nennt selbst, zu welcher Fassung des Videos die Folien gehören. */
-    static final String FRAME_LIST_VERSION = "list";
 
     /** Das Standbild der Folie, die im Video an {@code millis} beginnt, als PNG. */
     public record VideoFrame(long millis, byte[] png) {
@@ -949,159 +945,33 @@ public class Assets implements DocumentInventory {
     }
 
     /**
-     * Legt die Folien eines Videos als Anhänge seiner Seite an, sobald ihre Wechsel bekannt sind: je Folie ein
-     * Platzhalter, benannt nach ihrer Position im Video ({@link #frameName}), bis {@link #putVideoFrame} ihr Standbild
-     * ablegt. Für dieselbe Fassung bleiben schon abgelegte Standbilder gültig. Das Recht auf die Seite prüft der
-     * Aufrufer.
-     *
-     * @param slides Beginn jeder Folie in Millisekunden
-     * @return die Folien ohne Standbild, in zeitlicher Reihenfolge
+     * Legt das Standbild einer Folie ab; es füllt ihren virtuellen Anhang ({@link #withVideoFrames}), und die
+     * Bildanalyse (ADR 0021) beschreibt es ({@link #videoFrames}). Das Recht auf die Seite prüft der Aufrufer.
      */
-    public List<Long> putVideoSlides(String sourceId, String pageId, String version, List<Long> slides) {
-        return putVideoSlides(sourceId, pageId, version, 0, slides);
-    }
-
-    /**
-     * Wie {@link #putVideoSlides(String, String, String, List)} mit der Länge des Videos, damit der Player die Marken
-     * beim nächsten Öffnen sofort zeigen kann ({@link #videoSlides}).
-     *
-     * @param durationMillis Länge des Videos oder 0, wenn unbekannt
-     */
-    public List<Long> putVideoSlides(String sourceId, String pageId, String version, long durationMillis,
-                                     List<Long> slides) {
-        version = frameVersion(version);
-        if (durationMillis <= 0) {
-            // Ohne neue Angabe bleibt die schon bekannte Länge dieser Fassung.
-            durationMillis = frameList(sourceId, pageId, version).map(FrameList::durationMillis).orElse(0L);
-        }
-        StringBuilder list = new StringBuilder(version).append('\n');
-        if (durationMillis > 0) {
-            list.append(DURATION).append(durationMillis).append('\n');
-        }
-        slides.stream().distinct().sorted().forEach(millis -> list.append(millis).append('\n'));
-        byte[] content = list.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        store.put(new Asset(sourceId, pageId, VIDEO_FRAMES + framePage(pageId), FRAME_LIST_VERSION, "Folien",
-                "text/plain", AssetKind.of("text/plain", "Folien.txt"), content.length, sha256(content),
-                clock.instant()), content);
-        return missingVideoFrames(sourceId, pageId, version);
-    }
-
-    /** Legt das Standbild einer Folie ab; es füllt ihren Platzhalter in der Anhangsliste. */
     public void putVideoFrame(String sourceId, String pageId, String version, VideoFrame frame) {
         store.put(new Asset(sourceId, pageId, frameId(pageId, frame.millis()), frameVersion(version),
                 frameName(frame.millis()), "image/png", AssetKind.IMAGE, frame.png().length, sha256(frame.png()),
                 clock.instant()), frame.png());
     }
 
-    /** Wie {@link #putVideoSlides} und {@link #putVideoFrame} für Folien, deren Standbilder schon vorliegen. */
-    public void putVideoFrames(String sourceId, String pageId, String version, List<VideoFrame> frames) {
-        putVideoSlides(sourceId, pageId, version, frames.stream().map(VideoFrame::millis).toList());
-        frames.forEach(frame -> putVideoFrame(sourceId, pageId, version, frame));
-    }
-
-    /** Zeile der Liste mit der Länge des Videos. */
-    private static final String DURATION = "duration=";
-
-    /** Die Folien eines Videos: zu welcher Fassung sie gehören, wie lang es ist (0: unbekannt) und wo sie beginnen. */
-    private record FrameList(String version, long durationMillis, List<Long> millis) {
-    }
-
-    /** Die bekannten Folien eines Videos: seine Länge (0: unbekannt) und der Beginn jeder Folie. */
-    public record VideoSlides(long durationMillis, List<Long> slides) {
-
-        public VideoSlides {
-            slides = List.copyOf(slides);
-        }
-    }
-
-    /** Die abgelegten Folien dieser Fassung eines Videos; leer, solange der Player sie nicht gefunden hat. */
-    public Optional<VideoSlides> videoSlides(String sourceId, String pageId, String version) {
-        return frameList(sourceId, pageId, version).map(list -> new VideoSlides(list.durationMillis(), list.millis()));
-    }
-
-    private Optional<FrameList> frameList(String sourceId, String pageId, String version) {
-        Optional<Asset> list = store.find(sourceId, VIDEO_FRAMES + framePage(pageId), FRAME_LIST_VERSION);
-        if (list.isEmpty()) {
-            return Optional.empty();
-        }
-        String[] lines;
-        try {
-            lines = new String(store.read(list.get()), java.nio.charset.StandardCharsets.UTF_8).split("\n");
-        } catch (AssetStoreException e) {
-            return Optional.empty();
-        }
-        List<Long> millis = new java.util.ArrayList<>();
-        long duration = 0;
-        for (int i = 1; i < lines.length; i++) {
-            String line = lines[i].strip();
-            if (line.startsWith(DURATION)) {
-                duration = Long.parseLong(line.substring(DURATION.length()));
-            } else if (!line.isEmpty()) {
-                millis.add(Long.parseLong(line));
-            }
-        }
-        FrameList found = new FrameList(lines[0].strip(), duration, List.copyOf(millis));
-        return version == null || found.version().equals(frameVersion(version)) ? Optional.of(found)
-                : Optional.empty();
-    }
-
-    /** Die abgelegten Standbilder der Folien dieser Fassung, in zeitlicher Reihenfolge. */
-    private List<Asset> storedFrames(String sourceId, String pageId, FrameList list) {
-        List<Asset> frames = new java.util.ArrayList<>();
-        for (long millis : list.millis()) {
-            store.find(sourceId, frameId(pageId, millis), list.version()).ifPresent(frames::add);
-        }
-        return frames;
-    }
-
     /**
-     * Die abgelegten Standbilder eines Videos in dieser Fassung als Bilder der Seite, in zeitlicher Reihenfolge;
-     * Folien ohne Standbild fehlen noch. Liest nie von der Quelle.
+     * Die Anhangsliste einer Seite samt einem virtuellen Anhang je Folie ihres Videos, benannt nach ihrer Position
+     * ({@link #frameName}): mit abgelegtem Standbild samt Größe, sonst als Platzhalter ohne Größe. Die Folien kennt nur
+     * der Player (seine Marken); gespeichert wird von ihnen nichts.
+     *
+     * @param slides Beginn jeder Folie in Millisekunden; leer: keine virtuellen Anhänge
      */
-    public List<HarvestSource.ViewImage> videoFrames(String sourceId, String pageId, String version) {
-        Optional<FrameList> list = frameList(sourceId, pageId, version);
-        if (list.isEmpty()) {
-            return List.of();
-        }
-        List<HarvestSource.ViewImage> frames = new java.util.ArrayList<>();
-        for (Asset frame : storedFrames(sourceId, pageId, list.get())) {
-            frames.add(new HarvestSource.ViewImage(frame.title(), frame.title(), frame.attachmentId(), "image/png",
-                    frame.version()));
-        }
-        return List.copyOf(frames);
-    }
-
-    /** Ob die Folien dieser Fassung eines Videos schon als Anhänge angelegt sind. */
-    public boolean hasVideoFrames(String sourceId, String pageId, String version) {
-        return frameList(sourceId, pageId, version).isPresent();
-    }
-
-    /** Die Folien dieser Fassung, deren Standbild noch fehlt; leer, wenn keine angelegt sind. */
-    public List<Long> missingVideoFrames(String sourceId, String pageId, String version) {
-        Optional<FrameList> list = frameList(sourceId, pageId, version);
-        if (list.isEmpty()) {
-            return List.of();
-        }
-        return list.get().millis().stream().filter(millis -> store.find(sourceId, frameId(pageId, millis),
-                list.get().version()).isEmpty()).toList();
-    }
-
-    /**
-     * Die Anhangsliste einer Seite samt den Folien ihres Videos: abgelegte Standbilder mit Größe, die übrigen als
-     * Platzhalter ohne Größe. Ihre Bytes liefert {@link #content} aus der Ablage, ohne die Quelle zu fragen.
-     */
-    public PageAttachmentList withVideoFrames(PageAttachmentList list) {
-        String pageId = list.attachments().pageId();
-        Optional<FrameList> frames = frameList(list.sourceId(), pageId, null);
-        if (frames.isEmpty() || frames.get().millis().isEmpty()) {
+    public PageAttachmentList withVideoFrames(PageAttachmentList list, String version, List<Long> slides) {
+        if (slides.isEmpty()) {
             return list;
         }
+        String pageId = list.attachments().pageId();
         List<PageAttachment> attachments = new java.util.ArrayList<>(list.attachments().attachments());
-        for (long millis : frames.get().millis()) {
+        for (long millis : slides) {
             String id = frameId(pageId, millis);
-            Optional<Asset> asset = store.find(list.sourceId(), id, frames.get().version());
+            Optional<Asset> asset = store.find(list.sourceId(), id, frameVersion(version));
             attachments.add(new PageAttachment(id, id, frameName(millis), "image/png",
-                    asset.map(Asset::size).orElse(null), frames.get().version(),
+                    asset.map(Asset::size).orElse(null), frameVersion(version),
                     asset.map(Asset::retrievedAt).orElse(null), null));
         }
         PageAttachments source = list.attachments();
@@ -1110,17 +980,43 @@ public class Assets implements DocumentInventory {
                 source.retrievedAt()), list.retrievedAt());
     }
 
+    /** Die Folien, deren Standbild in dieser Fassung noch nicht abgelegt ist. */
+    public List<Long> missingVideoFrames(String sourceId, String pageId, String version, List<Long> slides) {
+        return slides.stream().filter(millis -> store.find(sourceId, frameId(pageId, millis), frameVersion(version))
+                .isEmpty()).toList();
+    }
+
+    /** Die abgelegten Standbilder der Folien dieser Fassung eines Videos, in zeitlicher Reihenfolge. */
+    private List<Asset> storedFrames(String sourceId, String pageId, String version) {
+        String prefix = VIDEO_FRAME + framePage(pageId) + "-";
+        String at = frameVersion(version);
+        try (java.util.stream.Stream<Asset> entries = store.entries(sourceId)) {
+            return entries.filter(asset -> asset.attachmentId().startsWith(prefix) && at.equals(asset.version()))
+                    .sorted(java.util.Comparator.comparingLong(asset ->
+                            Long.parseLong(asset.attachmentId().substring(prefix.length()))))
+                    .toList();
+        }
+    }
+
+    /**
+     * Die abgelegten Standbilder eines Videos in dieser Fassung als Bilder der Seite, in zeitlicher Reihenfolge; nur
+     * gefüllte Platzhalter. Liest nie von der Quelle.
+     */
+    public List<HarvestSource.ViewImage> videoFrames(String sourceId, String pageId, String version) {
+        return storedFrames(sourceId, pageId, version).stream().map(frame -> new HarvestSource.ViewImage(
+                frame.title(), frame.title(), frame.attachmentId(), "image/png", frame.version())).toList();
+    }
+
     /**
      * Der Bezug der Bildanalyse für ein Video ohne Text: Fassung und abgelegte Standbilder. Jedes neue Standbild macht
      * das Ergebnis veraltet; leer ohne Standbilder.
      */
     public Optional<String> videoFramesInput(String sourceId, String pageId, String version) {
-        Optional<FrameList> list = frameList(sourceId, pageId, version);
-        List<Asset> frames = list.map(found -> storedFrames(sourceId, pageId, found)).orElse(List.of());
+        List<Asset> frames = storedFrames(sourceId, pageId, version);
         if (frames.isEmpty()) {
             return Optional.empty();
         }
-        StringBuilder input = new StringBuilder(list.get().version());
+        StringBuilder input = new StringBuilder(frameVersion(version));
         frames.forEach(frame -> input.append('\n').append(frame.attachmentId()).append(' ').append(frame.sha256()));
         return Optional.of(sha256(input.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
