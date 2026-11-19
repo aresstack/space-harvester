@@ -271,6 +271,12 @@ final class FindBar extends JPanel {
         nextButton.setEnabled(active && find.hitCount() > 0);
     }
 
+    /** Ob die gesetzten Werkzeuge die Zeile rechts der Lupe füllen wollen ({@link View#TOOLS_FILL}). */
+    private boolean fills() {
+        return tools.getComponentCount() > 0 && tools.getComponent(0) instanceof JComponent component
+                && Boolean.TRUE.equals(component.getClientProperty(View.TOOLS_FILL));
+    }
+
     private static ComposerButton small(javax.swing.Icon icon, String tooltip) {
         ComposerButton button = ComposerButton.iconButton(icon, tooltip);
         button.setPreferredSize(new Dimension(BUTTON_SIZE, BUTTON_SIZE));
@@ -323,6 +329,10 @@ final class FindBar extends JPanel {
             Dimension field = search.getPreferredSize();
             int fieldHeight = Math.min(height, field.height);
             search.setBounds(start, top + (height - fieldHeight) / 2, Math.max(0, right - start), fieldHeight);
+            if (fills()) {
+                tools.setBounds(start, top, Math.max(0, right - start), height);
+                return;
+            }
             int middle = Math.min(tools.getPreferredSize().width, Math.max(0, right - start));
             int x = Math.max(start, Math.min((parent.getWidth() - middle) / 2, right - middle));
             tools.setBounds(x, top, middle, height);

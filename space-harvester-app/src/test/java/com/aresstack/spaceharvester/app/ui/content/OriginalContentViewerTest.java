@@ -56,8 +56,12 @@ final class OriginalContentViewerTest {
         onEdt(() -> {
             panel.tabs().select("Text");
             assertThat(panel.selectedTab()).isEqualTo("Text");
+            assertThat(panel.footTools().getComponentCount()).isZero();
             panel.tabs().select("Leseansicht");
             assertThat(panel.originalViewer()).isSameAs(viewer);
+            // Speichern, Öffnen und „Typ · Größe“ stehen in der Leiste mit der Lupe, nicht mehr in der Vorschau.
+            assertThat(panel.footTools().getComponent(0)).isSameAs(viewer.footer());
+            assertThat(viewer.footer().getParent()).isSameAs(panel.footTools());
             return null;
         });
     }

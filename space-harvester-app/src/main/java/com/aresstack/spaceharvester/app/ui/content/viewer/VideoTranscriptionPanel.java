@@ -1,12 +1,14 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.transcription.TranscribeAudioUseCase;
 import com.aresstack.spaceharvester.app.transcription.TranscriptSegment;
 import com.aresstack.spaceharvester.app.transcription.TranscriptionStatusListener;
 import com.aresstack.spaceharvester.app.transcription.WhisperModelLocation;
 
 import javax.swing.BorderFactory;
-import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -27,8 +29,17 @@ import java.util.concurrent.ExecutionException;
 public final class VideoTranscriptionPanel extends JPanel {
 
     private final TranscribeAudioUseCase transcription;
-    private final JButton start = new JButton("Transkript erzeugen");
-    private final JButton cancel = new JButton("Abbrechen");
+    /** Beschriftung (Tooltip) des Knopfs, solange keine Transkription läuft. */
+    public static final String START_TIP = "Transkript erzeugen";
+    /** Beschriftung (Tooltip) desselben Knopfs während der Transkription. */
+    public static final String CANCEL_TIP = "Transkription abbrechen";
+
+    /**
+     * Ein Symbolknopf für Start und Abbruch (Angelo, 19.11.2026): Mikrofon startet, während der Transkription wird er zu
+     * Stopp. Er steht in der Werkzeugleiste unten neben der Lupe ({@link #action()}), nicht im Panel.
+     */
+    private final ComposerButton toggle = ComposerButton.iconButton(ComposerIcons.microphone(), START_TIP);
+    private final JPanel action = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final JTextArea transcript = new JTextArea();
     private final JLabel status = new JLabel("Transkription noch nicht gestartet.");
     private VideoTranscriptSource videoSource;
@@ -39,23 +50,26 @@ public final class VideoTranscriptionPanel extends JPanel {
         this.transcription = transcription;
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        actions.setOpaque(false);
-        actions.add(start);
-        actions.add(cancel);
-        add(actions, BorderLayout.NORTH);
+        action.setOpaque(false);
+        action.add(toggle);
+        action.putClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL, Boolean.TRUE);
 
         transcript.setEditable(false);
         transcript.setLineWrap(true);
         transcript.setWrapStyleWord(true);
         transcript.setFont(transcript.getFont().deriveFont(15f));
-        transcript.setText("Klicke auf „Transkript erzeugen“, um die MP4-Audiospur lokal "
-                + "mit Whisper zu transkribieren.");
+        transcript.setText("Klicke unten neben der Lupe auf das Mikrofon („Transkript erzeugen“), "
+                + "um die MP4-Audiospur lokal mit Whisper zu transkribieren.");
         add(new JScrollPane(transcript), BorderLayout.CENTER);
         add(status, BorderLayout.SOUTH);
 
-        start.addActionListener(event -> startTranscription());
-        cancel.addActionListener(event -> cancelTranscription());
+        toggle.addActionListener(event -> {
+            if (worker == null) {
+                startTranscription();
+            } else {
+                cancelTranscription();
+            }
+        });
         updateActions();
     }
 
@@ -65,8 +79,8 @@ public final class VideoTranscriptionPanel extends JPanel {
             videoSource.close();
         }
         videoSource = source;
-        transcript.setText("Klicke auf „Transkript erzeugen“, um die MP4-Audiospur lokal "
-                + "mit Whisper zu transkribieren.");
+        transcript.setText("Klicke unten neben der Lupe auf das Mikrofon („Transkript erzeugen“), "
+                + "um die MP4-Audiospur lokal mit Whisper zu transkribieren.");
         status.setText("Transkription noch nicht gestartet.");
         updateActions();
     }
@@ -171,7 +185,21 @@ public final class VideoTranscriptionPanel extends JPanel {
     }
 
     private void updateActions() {
-        start.setEnabled(worker == null && videoSource != null);
-        cancel.setEnabled(worker != null);
+        boolean running = worker != null;
+        toggle.setIcon(running ? ComposerIcons.stop() : ComposerIcons.microphone());
+        toggle.setToolTipText(running ? CANCEL_TIP : START_TIP);
+        toggle.getAccessibleContext().setAccessibleName(running ? CANCEL_TIP : START_TIP);
+        toggle.setEmphasized(running);
+        toggle.setEnabled(running || videoSource != null);
+    }
+
+    /** Der Knopf für die Werkzeugleiste unten: links neben der Lupe, wechselt zwischen Start und Abbruch. */
+    public JComponent action() {
+        return action;
+    }
+
+    /** Der Start-/Abbruch-Knopf (für Tests). */
+    ComposerButton toggle() {
+        return toggle;
     }
 }

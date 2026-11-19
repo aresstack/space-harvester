@@ -374,8 +374,10 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
         // Unten in der Werkzeugleiste stehen nur die Schnellaktionen des Chats, außerhalb des Reiters Chat unsichtbar.
-        assertThat(onEdt(() -> view.tools() == view.detail().chat().quickActions() && !view.tools().isVisible()))
-                .as("unten nur die unsichtbaren Chat-Chips").isTrue();
+        assertThat(onEdt(() -> view.tools() == view.detail().footTools()
+                && view.detail().footTools().getComponentCount() == 0
+                && !view.detail().chat().quickActions().isVisible()))
+                .as("unten außerhalb des Chats keine Chat-Chips").isTrue();
         // Ohne gezeigte Mitte verschwindet nur die dunkle Füllung, der gewählte Reiter bleibt.
         onEdt(() -> {
             view.tabsActive(false);
@@ -521,7 +523,9 @@ class ContentViewTest {
         await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
         // Schnellaktionen in der unteren Leiste (Angelo, 17.11.2026): die Werkzeuge der Ansicht sind die Chips des
         // Chats, nur im Reiter Chat sichtbar; bei einer Quelle „Bereich zusammenfassen“ und „Was ist neu?“.
-        assertThat(onEdt(() -> view.tools() == chat.quickActions() && chat.quickActions().isVisible())).isTrue();
+        assertThat(onEdt(() -> view.tools() == view.detail().footTools()
+                && view.detail().footTools().getComponent(0) == chat.quickActions()
+                && chat.quickActions().isVisible())).isTrue();
         assertThat(onEdt(() -> chipLabels(chat))).containsExactly(ChatPanel.SUMMARIZE_AREA, ChatPanel.WHATS_NEW);
         await(() -> chipsEnabled(chat));
         // Bei einer Seite: nur die Seite, die Seite samt Unterseiten, Was ist neu – nie die Eltern.
