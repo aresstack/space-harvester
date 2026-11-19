@@ -1,5 +1,9 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.spaceharvester.app.transcription.TranscribeAudioUseCase;
+import com.aresstack.spaceharvester.app.transcription.VlcPcmAudioDecoder;
+import com.aresstack.spaceharvester.app.transcription.WhisperSpeechTranscriber;
+
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 import uk.co.caprica.vlcj.player.component.EmbeddedMediaPlayerComponent;
@@ -42,6 +46,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private final CardLayout displayLayout = new CardLayout();
     private final JPanel display = new JPanel(displayLayout);
     private final JPanel audioDisplay = new JPanel(new BorderLayout());
+    private final VideoTranscriptionPanel transcriptionPanel = new VideoTranscriptionPanel(
+            new TranscribeAudioUseCase(new VlcPcmAudioDecoder(), new WhisperSpeechTranscriber()));
     private final VideoTransportBar transport = new VideoTransportBar(this::seek);
     private final VideoFullScreenController fullScreen =
             new VideoFullScreenController(this, this::prepareForFullScreenTransfer,
@@ -98,7 +104,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         JLabel audioTitle = new JLabel("Nur Audio – Videobild ausgeschaltet", SwingConstants.CENTER);
         audioTitle.setForeground(new Color(0xD6E8F6));
         audioTitle.setFont(audioTitle.getFont().deriveFont(Font.BOLD, 17f));
-        audioDisplay.add(audioTitle, BorderLayout.CENTER);
+        audioDisplay.add(audioTitle, BorderLayout.NORTH);
+        audioDisplay.add(transcriptionPanel, BorderLayout.CENTER);
         display.add(audioDisplay, AUDIO_CARD);
         add(display, BorderLayout.CENTER);
         transport.play().addActionListener(event -> play());
@@ -263,6 +270,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         preparationHadPlayback = false;
         preparationPositionMillis = 0;
         audioOnly = audio;
+        transcriptionPanel.setAudioSource(audio ? audioBridge.address() : null);
         transport.setAudioOnly(audio);
         transport.fullScreen().setEnabled(!audio);
         displayLayout.show(display, audio ? AUDIO_CARD : VIDEO_CARD);
@@ -734,6 +742,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         }
         fullScreen.close();
         closed = true;
+        transcriptionPanel.close();
         progress.stop();
         seekWorker.shutdownNow();
         if (audioPreparation != null) {

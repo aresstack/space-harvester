@@ -233,6 +233,42 @@ Audiostream; 34.540 Byte über 28 Range-Anfragen von BSCW gelesen.
 Für die gesamte Datei und die hörbare VLC-Wiedergabe steht eine
 abschließende manuelle Abnahme noch aus.
 
+### Lokale Whisper-Transkription (erste Integration)
+
+Im Audio-only-Modus gibt es eine eigenständige Transkriptionsansicht. Der
+Button **Whisper-Modell wählen** erwartet einen lokalen Ordner mit
+`config.json`, `model.safetensors`, `tokenizer.json` und `vocab.json`.
+Alternativ kann der Ordner beim Start mit
+`-Dspaceharvester.whisper.model=<Modellordner>` festgelegt werden.
+Der Modellordner wird nicht ins App-JAR eingebaut. Maven Central stellt die
+Engine `com.aresstack:directml-inference:0.3.0` bereit, **nicht die
+Modellgewichte**. Die Desktop-Anwendung benötigt weiterhin Java 21; der
+Java-8-kompatible Launcher bleibt unverändert.
+
+Die Transkription verwendet **ausschließlich** den bereits vorhandenen,
+authentifizierten Audio-only-Stream (virtuelles MP4 mit nur der Tonspur).
+`VlcPcmAudioDecoder` dekodiert diesen lokal über die vorhandene libVLC-
+Installation zu 16-kHz-Mono-PCM in eine temporäre Datei. Der separate
+`TranscribeAudioUseCase` gibt die 30-Sekunden-Segmente an
+`WhisperSpeechTranscriber` weiter und löscht die temporären PCM-Daten nach
+Abschluss, Abbruch oder Fehler. Während eines Modellwechsels oder beim
+Schließen wird die Verarbeitung abgebrochen. Es wird weder die vollständige
+Videodatei abgerufen noch ein Videobild dekodiert.
+
+**Abgrenzung:** Das ist zunächst eine lokale Transkriptionsvorschau. Die
+angezeigten Zeitmarken sind die Anfänge von groben 30-Sekunden-Segmenten
+und noch keine exakten Wort-Zeitmarken. Eine dauerhafte Speicherung im
+Space-Harvester-Index, Wiederaufnahme nach Abbruch, Hintergrundjobs und
+Laufzeitoptimierung für sehr lange Videos sind separat umzusetzen. Die
+Dekodierung kann beim aktuellen libVLC-Backend ungefähr in Echtzeit laufen;
+das anschließende Whisper-Modell benötigt zusätzliche Rechenzeit.
+
+Ein lokaler Test der echten PCM-Dekodierung (ohne Zugangsdaten und ohne BSCW)
+ist ausdrücklich optional:
+`-Dspaceharvester.test.vlcpcm=true` für
+`VlcPcmAudioDecoderLiveTest`. Normale CI-Läufe benötigen weder VLC noch
+ein heruntergeladenes Whisper-Modell.
+
 ## Technischer Aufbau
 
 `BscwSourceAdapter` registriert den neuen Quellentyp `bscw`. Der transportseitige
