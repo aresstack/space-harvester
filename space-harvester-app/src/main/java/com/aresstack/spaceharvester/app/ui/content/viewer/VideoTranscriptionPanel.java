@@ -31,6 +31,8 @@ public final class VideoTranscriptionPanel extends JPanel {
     private final TranscribeAudioUseCase transcription;
     /** Beschriftung (Tooltip) des Knopfs, solange keine Transkription läuft. */
     public static final String START_TIP = "Transkript erzeugen";
+    /** Statuszeile nach Abbrechen; das bisher erkannte Transkript bleibt stehen. */
+    static final String CANCELLED_STATUS = "Transkription abgebrochen. Das bisher Erkannte bleibt stehen.";
     /** Beschriftung (Tooltip) desselben Knopfs während der Transkription. */
     public static final String CANCEL_TIP = "Transkription abbrechen";
 
@@ -119,7 +121,8 @@ public final class VideoTranscriptionPanel extends JPanel {
                                 SwingUtilities.invokeLater(() -> {
                                     if (worker == active) {
                                         status.setText(String.format(java.util.Locale.ROOT,
-                                                "Audiodekodierung: %d:%02d Minuten", seconds / 60, seconds % 60));
+                                                "Audio geladen: %d:%02d Minuten · Whisper schreibt mit …",
+                                                seconds / 60, seconds % 60));
                                     }
                                 });
                             }
@@ -128,7 +131,8 @@ public final class VideoTranscriptionPanel extends JPanel {
                             public void onRecognitionStarted() {
                                 SwingUtilities.invokeLater(() -> {
                                     if (worker == active) {
-                                        status.setText("Whisper transkribiert die Audiospur …");
+                                        status.setText("Audiospur wird geladen · Whisper schreibt jeden "
+                                                + "30-Sekunden-Abschnitt sofort mit …");
                                     }
                                 });
                             }
@@ -138,7 +142,8 @@ public final class VideoTranscriptionPanel extends JPanel {
 
             @Override
             protected void process(List<TranscriptSegment> segments) {
-                if (worker != this || isCancelled()) {
+                // Auch nach Abbrechen: was Whisper schon erkannt hat, bleibt stehen (nur nicht nach Videowechsel).
+                if (videoSource != requestedSource || (worker != null && worker != this)) {
                     return;
                 }
                 for (TranscriptSegment segment : segments) {
@@ -160,7 +165,7 @@ public final class VideoTranscriptionPanel extends JPanel {
                         transcript.setText("(Keine Sprache erkannt)");
                     }
                 } catch (CancellationException cancelled) {
-                    status.setText("Transkription abgebrochen.");
+                    status.setText(CANCELLED_STATUS);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     status.setText("Transkription unterbrochen.");
@@ -179,7 +184,7 @@ public final class VideoTranscriptionPanel extends JPanel {
         if (worker != null) {
             worker.cancel(true);
             worker = null;
-            status.setText("Transkription abgebrochen.");
+            status.setText(CANCELLED_STATUS);
         }
         updateActions();
     }

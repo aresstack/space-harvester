@@ -10,7 +10,6 @@ import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import java.io.ByteArrayInputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,14 +29,11 @@ final class VlcPcmAudioDecoderLiveTest {
 
         Path audioFile = workspace.resolve("reference.wav");
         writeTone(audioFile);
-        Path decoded = new VlcPcmAudioDecoder().decode(audioFile.toUri(), () -> false);
-        try {
-            long bytes = Files.size(decoded);
-            assertThat(bytes).as("Decoded PCM must contain nonzero audio").isGreaterThan(16_000);
-            assertThat(bytes).as("The test source lasts just one second").isLessThan(64_000);
-        } finally {
-            Files.deleteIfExists(decoded);
-        }
+        java.io.ByteArrayOutputStream decoded = new java.io.ByteArrayOutputStream();
+        new VlcPcmAudioDecoder().decode(audioFile.toUri(), () -> false, decoded::write, seconds -> {});
+        long bytes = decoded.size();
+        assertThat(bytes).as("Decoded PCM must contain nonzero audio").isGreaterThan(16_000);
+        assertThat(bytes).as("The test source lasts just one second").isLessThan(64_000);
     }
 
     private static void writeTone(Path file) throws Exception {

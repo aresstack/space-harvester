@@ -2,9 +2,12 @@ package com.aresstack.spaceharvester.app.transcription;
 
 import com.aresstack.windirectml.inference.whisper.TranscriptionResult;
 import com.aresstack.windirectml.inference.whisper.TranscriptionSegment;
+import com.aresstack.windirectml.inference.whisper.WhisperIncrementalTranscription;
 import com.aresstack.windirectml.inference.whisper.WhisperTranscriber;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,20 +17,34 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
- * Transcribe 16-kHz mono PCM with the published Ask AI pipeline: 80-Hz high-pass, VAD and the
- * guarded Whisper decoder, which joins windows of at most thirty seconds at segment boundaries.
+ * Transcribe a (possibly still growing) 16-kHz mono PCM stream with the published Ask AI speech profile and the
+ * guarded Whisper decoder: every completed thirty-second window is decoded and reported while the decoder still
+ * delivers audio, and windows are joined at segment boundaries instead of fixed cuts.
  */
 public final class WhisperSpeechTranscriber implements SpeechTranscriber {
 
+    /** Read the stream in five-second steps; a window is decoded as soon as its thirty seconds are complete. */
+    private static final int READ_BYTES = 16_000 * 2 * 5;
+
     @Override
-    public void transcribe(Path pcmFile, Path modelDirectory, BooleanSupplier cancelled,
+    public void transcribe(InputStream pcmStream, Path modelDirectory, BooleanSupplier cancelled,
                            Consumer<TranscriptSegment> onSegment) throws Exception {
         requireModel(modelDirectory);
         WhisperTranscriber whisper = new WhisperTranscriber(modelDirectory);
         long[] lastPosition = {0};
-        try (PcmFileAudioSource source = new PcmFileAudioSource(pcmFile, cancelled)) {
-            WhisperPipelines.create().transcribe(source, whisper,
-                    window -> publish(window, lastPosition, onSegment));
+        try (GrowingPcmAudioSource audio = new GrowingPcmAudioSource(cancelled);
+             InputStream source = new BufferedInputStream(pcmStream)) {
+            WhisperIncrementalTranscription live = WhisperPipelines.create().transcribeIncrementally(
+                    audio, whisper, window -> publish(window, lastPosition, onSegment));
+            byte[] buffer = new byte[READ_BYTES];
+            int read;
+            while (!cancelled.getAsBoolean() && (read = source.read(buffer)) > 0) {
+                audio.append(buffer, 0, read);
+                live.decodeAvailable();
+            }
+            if (!cancelled.getAsBoolean()) {
+                live.finish();
+            }
         } catch (CancellationException | InterruptedIOException stopped) {
             // Cancelled by the user; segments recognized so far have already been published.
         }
