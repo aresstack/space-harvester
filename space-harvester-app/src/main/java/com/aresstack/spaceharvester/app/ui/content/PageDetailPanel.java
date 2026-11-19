@@ -111,7 +111,8 @@ public final class PageDetailPanel extends JPanel {
     static final String STATEMENTS_PLACEHOLDER = "Noch keine Aussagen – Analyse folgt";
     private static final String GRAPH = "Graph";
     static final String GRAPH_PLACEHOLDER = "Noch kein Wissensgraph – Analyse folgt";
-    private static final String ADVANCED = "Erweitert";
+    /** Eigenschaften und Technik der Seite; „Eigenschaften“ ist sein erster Unterreiter (Angelo, 19.11.2026). */
+    private static final String ADVANCED = "Info";
     /** Reiter „Stand“ (ADR 0032, FL6): was in der Auswahl links gilt, geplant, unklar oder überholt ist. */
     static final String STAND = "Stand";
     /** Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links, auch ohne gezeigte Seite. */
@@ -128,7 +129,6 @@ public final class PageDetailPanel extends JPanel {
     /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
     private static final String SOURCE_CARD = "source";
     private static final String SOURCE_TEXT_CARD = "source-text";
-    private static final String SOURCE_PROPERTIES_CARD = "source-properties";
     /** Technik-Reiter ohne Seite: dieselben drei Unterreiter, unter „Analyse“ nur die Beziehungen der Auswahl. */
     private static final String WIDE_ADVANCED_CARD = "wide-advanced";
     static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
@@ -489,20 +489,24 @@ public final class PageDetailPanel extends JPanel {
         PillTabs rawTabs = new PillTabs()
                 .tab("Payload", Comic.scroll(raw))
                 .tab("Storage-Format", Comic.scroll(storage));
-        advancedTabs.tab(TECHNICAL, Comic.scroll(padded(technical)))
+        advancedTabs.tab(PROPERTIES, Comic.scroll(padded(properties)))
+                .tab(TECHNICAL, Comic.scroll(padded(technical)))
                 .tab(ANALYSIS, analysisView)
                 .tab(RAW, rawTabs);
         // Die Aktionen stehen rechts in der Zeile der Unterreiter, nicht als eigene Knopfzeilen darüber und darunter;
         // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Analyse“ gewählt ist (BG2b).
         advancedTabs.actions(analysisView.proposeButton(), analysisView.createButton(), refresh, saveRaw, recompute);
+        advancedTabs.select(PROPERTIES);
         advancedTabs.onSelect(name -> showAdvanced());
-        // Ohne Seite: dieselben Unterreiter; „Technische Angaben“ und „Originaldaten“ bleiben dort leer.
-        wideAdvanced.tab(TECHNICAL, new JPanel())
+        // Ohne Seite: dieselben Unterreiter; „Eigenschaften“ zeigt die der Quelle (oder aller Quellen),
+        // „Technische Angaben“ und „Originaldaten“ bleiben dort leer.
+        wideAdvanced.tab(PROPERTIES, sourceProperties)
+                .tab(TECHNICAL, new JPanel())
                 .tab(ANALYSIS, wideAnalysis)
                 .tab(RAW, new JPanel())
                 .actions(wideAnalysis.proposeButton(), wideAnalysis.createButton());
-        wideAdvanced.select(ANALYSIS);
-        wideAdvanced.onSelect(name -> showAdvanced());
+        wideAdvanced.select(PROPERTIES);
+        wideAdvanced.onSelect(name -> showDeck());
         JPanel advanced = new JPanel(new BorderLayout(0, 8));
         advanced.setOpaque(false);
         advanced.add(advancedTabs, BorderLayout.CENTER);
@@ -526,7 +530,6 @@ public final class PageDetailPanel extends JPanel {
         tabs.tab(READING, originalContent)
                 .tab(READ, readerPanel)
                 .tab(ATTACHMENTS, attachmentsPanel)
-                .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ANALYSES, analysisTabs)
                 .tab(ADVANCED, advanced)
                 // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
@@ -540,9 +543,8 @@ public final class PageDetailPanel extends JPanel {
         icons.put(READING, PageTabIcons.reading());
         icons.put(READ, PageTabIcons.text());
         icons.put(ATTACHMENTS, PageTabIcons.attachments());
-        icons.put(PROPERTIES, PageTabIcons.properties());
         icons.put(ANALYSES, PageTabIcons.analyses());
-        icons.put(ADVANCED, PageTabIcons.advanced());
+        icons.put(ADVANCED, PageTabIcons.properties());
         icons.put(EXPORT, PageTabIcons.export());
         icons.put(CHAT, ChatIcons.chat());
         tabIcons = tabs.iconBar(icons);
@@ -684,7 +686,6 @@ public final class PageDetailPanel extends JPanel {
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
         deck.add(sourceChanges, SOURCE_TEXT_CARD);
-        deck.add(sourceProperties, SOURCE_PROPERTIES_CARD);
         add(deck, BorderLayout.CENTER);
         clear();
     }
@@ -811,7 +812,8 @@ public final class PageDetailPanel extends JPanel {
         // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
         sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected));
         sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected));
-        sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && PROPERTIES.equals(selected));
+        sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && ADVANCED.equals(selected) && wide
+                && PROPERTIES.equals(wideAdvanced.selected()));
         readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
         // Analysen ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): der Stand der Auswahl links, mit den
         // Unterreitern „Aussagen“, „Zuerst lesen“, „Mögliche Widersprüche“ (Angelo 17.11.2026, kein eigenes Symbol).
@@ -831,8 +833,7 @@ public final class PageDetailPanel extends JPanel {
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
             // Quellenseite: „Leseansicht“ die KI-Zusammenfassung, „Text“ die Updates; die übrigen Reiter noch leer.
-            page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD
-                    : PROPERTIES.equals(selected) ? SOURCE_PROPERTIES_CARD : EMPTY;
+            page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD : EMPTY;
         }
         boolean wideAdvancedShown = ADVANCED.equals(selected) && wide;
         cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD
@@ -3123,13 +3124,17 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Wählt einen Reiter über seinen Namen; ein Unterreiter von „Analysen“ (z. B. „Absätze“) wählt zuerst den
-     * Unterreiter und dann den Hauptreiter „Analysen“.
+     * Wählt einen Reiter über seinen Namen; ein Unterreiter von „Analysen“ (z. B. „Absätze“) oder „Info“ (z. B.
+     * „Eigenschaften“) wählt zuerst den Unterreiter und dann den Hauptreiter.
      */
     void selectTab(String name) {
         if (analysisTabs.button(name) != null) {
             analysisTabs.select(name);
             tabs.select(ANALYSES);
+        } else if (advancedTabs.button(name) != null) {
+            advancedTabs.select(name);
+            wideAdvanced.select(name);
+            tabs.select(ADVANCED);
         } else {
             tabs.select(name);
         }

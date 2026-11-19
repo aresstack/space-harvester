@@ -147,8 +147,8 @@ class MainWindowTest {
         // 13.11.2026); Inhalte hat keinen eigenen Knopf mehr.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
-                .containsSubsequence("Suche", "Leseansicht", "Text", "Anhänge", "Eigenschaften", "Analysen",
-                        "Erweitert", "Export", "Chat", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
+                .containsSubsequence("Suche", "Leseansicht", "Text", "Anhänge", "Analysen", "Info",
+                        "Export", "Chat", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
                 .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
                 .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");

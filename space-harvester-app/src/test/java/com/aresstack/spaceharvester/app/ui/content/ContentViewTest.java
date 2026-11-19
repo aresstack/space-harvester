@@ -241,9 +241,13 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Anhänge", "Eigenschaften", "Analysen", "Erweitert", "Export", "Chat");
+                .containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export", "Chat");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
+        // „Info“ hat die Eigenschaften als ersten Unterreiter (Angelo, 19.11.2026).
+        assertThat(onEdt(() -> detail.advancedTabs().names())).containsExactly("Eigenschaften",
+                "Technische Angaben", "Analyse", "Originaldaten");
+        assertThat(onEdt(() -> detail.advancedTabs().selected())).isEqualTo("Eigenschaften");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
         // Die Hauptreiter sind quadratische Symbolknöpfe für die Icon-Leiste des Hauptfensters; ihr Name steht im
         // Tooltip, die Reiterzeile oben entfällt, die Unterreiter von „Analysen“ stehen ganz oben.
@@ -257,7 +261,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Anhänge", "Eigenschaften", "Analysen", "Erweitert", "Export", "Chat");
+        })).containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export", "Chat");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -357,12 +361,12 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
         // Technik-Reiter ohne Seite (BG2b): dieselben Unterreiter, unter „Analyse“ nur die Beziehungen der Auswahl.
         onEdt(() -> {
-            detail.tabs().select("Erweitert");
+            detail.tabs().select("Info");
+            detail.wideAdvanced().select("Analyse");
             return null;
         });
-        assertThat(onEdt(() -> detail.wideAdvanced().names())).containsExactly("Technische Angaben", "Analyse",
-                "Originaldaten");
-        assertThat(onEdt(() -> detail.wideAdvanced().selected())).isEqualTo("Analyse");
+        assertThat(onEdt(() -> detail.wideAdvanced().names())).containsExactly("Eigenschaften",
+                "Technische Angaben", "Analyse", "Originaldaten");
         assertThat(onEdt(() -> detail.wideAnalysis().isVisible() && !detail.wideAnalysis().showsSteps())).isTrue();
         assertThat(onEdt(() -> detail.wideAnalysis().proposeButton().isVisible()
                 && detail.wideAnalysis().createButton().isVisible())).isTrue();
@@ -436,16 +440,17 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
         onEdt(() -> {
-            view.detail().tabs().select("Eigenschaften");
+            view.detail().selectTab("Eigenschaften");
             return null;
         });
-        assertThat(onEdt(() -> view.detail().sourceProperties().isVisible())).as("„Eigenschaften“: die Quelle")
-                .isTrue();
+        assertThat(onEdt(() -> view.detail().tabs().selected())).isEqualTo("Info");
+        assertThat(onEdt(() -> view.detail().wideAdvanced().isVisible()
+                && view.detail().sourceProperties().isVisible())).as("„Info › Eigenschaften“: die Quelle").isTrue();
         assertThat(onEdt(() -> view.detail().sourceProperties().sourceId())).isEqualTo("handbuch");
         assertThat(onEdt(() -> view.detail().sourceProperties().tools().isVisible())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isFalse();
         onEdt(() -> {
-            view.detail().tabs().select("Erweitert");
+            view.detail().wideAdvanced().select("Technische Angaben");
             return null;
         });
         assertThat(onEdt(() -> view.detail().sourceView().isVisible())).as("übrige Reiter leer").isFalse();
@@ -493,8 +498,7 @@ class ContentViewTest {
     }
 
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
-        return java.util.stream.Stream.of("Leseansicht", "Text", "Anhänge", "Eigenschaften", "Analysen", "Erweitert",
-                "Export", "Chat").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
+        return java.util.stream.Stream.of("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export", "Chat").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 
     @Test
