@@ -120,6 +120,9 @@ public final class ChatPanel extends JPanel {
     static final String DOWNLOAD_FAILED = "fehlgeschlagen";
     static final String ATTACH = "Dateien anhängen";
     static final String DICTATE = "Spracheingabe mit Whisper Tiny";
+    /** Wie im Enterprise AI Client: die Erkennung nach dem Stopp ist orange in der Statuszeile zu sehen. */
+    static final String RECOGNIZING_STATUS = "Erkenne Sprache …";
+    private static final int MIN_EDITOR_HEIGHT = 64;
     static final String WEB = "Websuche folgt";
     static final String NO_MODEL = "Kein Chat-Modell";
     static final String MODEL_TIP = "Chat-Modell aus Einstellungen › KI";
@@ -209,6 +212,7 @@ public final class ChatPanel extends JPanel {
             "Senden (Enter)");
     /** Die Statuszeile des Composers („Chat folgt“); leer unsichtbar. */
     private final JLabel status = Comic.muted(" ");
+    private final Color statusColor = status.getForeground();
     private final JPanel composer;
     private boolean editorFocused;
 
@@ -338,8 +342,10 @@ public final class ChatPanel extends JPanel {
                             getHeight() - top - 2, ARC, ARC);
                     g2.setColor(Color.WHITE);
                     g2.fill(shape);
-                    g2.setColor(editorFocused ? Comic.BLUE : Comic.LINE);
-                    g2.setStroke(new BasicStroke(editorFocused ? 1.6f : 1f));
+                    boolean dictating = dictationPhase != DictationPhase.IDLE;
+                    g2.setColor(dictating ? ResearchUiPalette.RECORDING_ORANGE
+                            : editorFocused ? Comic.BLUE : Comic.LINE);
+                    g2.setStroke(new BasicStroke(dictating || editorFocused ? 1.6f : 1f));
                     g2.draw(shape);
                 } finally {
                     g2.dispose();
@@ -379,12 +385,36 @@ public final class ChatPanel extends JPanel {
                 surface.repaint();
             }
         });
+        // Der Editor wächst mit dem Text bis zu zwei Fünfteln der Chat-Höhe und schrumpft nach dem Senden wieder.
         JScrollPane editorScroll = new JScrollPane(editor, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
-                JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+                JScrollPane.HORIZONTAL_SCROLLBAR_NEVER) {
+            @Override
+            public Dimension getPreferredSize() {
+                int content = editor.getPreferredSize().height;
+                int maximum = Math.max(MIN_EDITOR_HEIGHT, ChatPanel.this.getHeight() * 2 / 5);
+                return new Dimension(520, Math.max(MIN_EDITOR_HEIGHT, Math.min(content, maximum)));
+            }
+        };
         editorScroll.setOpaque(false);
         editorScroll.getViewport().setOpaque(false);
         editorScroll.setBorder(BorderFactory.createEmptyBorder());
-        editorScroll.setPreferredSize(new Dimension(520, 64));
+        com.aresstack.enterpriseai.ui.comic.control.ComicScrollBarUI.install(editorScroll.getVerticalScrollBar());
+        editor.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                resizeEditor();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                resizeEditor();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                resizeEditor();
+            }
+        });
 
         chips.setOpaque(false);
         chips.setVisible(false);
@@ -465,13 +495,21 @@ public final class ChatPanel extends JPanel {
         return surface;
     }
 
+    /** Den Composer nach einer Textänderung neu bemessen (nach dem laufenden Ereignis, wenn die Umbrüche feststehen). */
+    private void resizeEditor() {
+        SwingUtilities.invokeLater(() -> {
+            composer.revalidate();
+            composer.repaint();
+        });
+    }
+
     /** Toggle the EAC dictation lifecycle without submitting the recognized draft. */
     private void toggleDictation() {
         if (dictationPhase == DictationPhase.RECORDING) {
             dictationPhase = DictationPhase.RECOGNIZING;
             stopDictationLevelMeter();
             refreshDictationControls();
-            status.setText("Whisper Tiny erkennt die Aufnahme lokal …");
+            status.setText(RECOGNIZING_STATUS);
             dictation.finish();
             return;
         }
@@ -507,7 +545,7 @@ public final class ChatPanel extends JPanel {
             return;
         }
         dictationPhase = DictationPhase.RECOGNIZING;
-        status.setText("Whisper Tiny erkennt die Aufnahme erneut …");
+        status.setText(RECOGNIZING_STATUS);
         refreshDictationControls();
         dictation.retry(dictationResult());
     }
@@ -555,6 +593,9 @@ public final class ChatPanel extends JPanel {
         boolean active = dictationPhase != DictationPhase.IDLE;
         mic.setEnabled(dictation.isAvailable() && (active || turn == null));
         mic.setEmphasized(active);
+        mic.setIcon(dictationPhase == DictationPhase.RECORDING ? ComposerIcons.stop()
+                : dictationPhase == DictationPhase.RECOGNIZING ? ComposerIcons.close() : ComposerIcons.microphone());
+        status.setForeground(active ? ResearchUiPalette.RECORDING_ORANGE : statusColor);
         mic.setToolTipText(dictationPhase == DictationPhase.RECORDING ?
                 "Aufnahme beenden und erkennen" :
                 dictationPhase == DictationPhase.RECOGNIZING ?
