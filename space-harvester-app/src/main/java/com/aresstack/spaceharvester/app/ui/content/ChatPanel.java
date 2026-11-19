@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.app.chat.ChatRecord;
 import com.aresstack.spaceharvester.app.chat.ChatStore;
 import com.aresstack.spaceharvester.app.chat.ChatTurn;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.speech.Dictation;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.Background;
@@ -41,6 +42,9 @@ import javax.swing.JTextField;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
+import javax.swing.JLayeredPane;
+import javax.swing.JProgressBar;
+import javax.swing.Timer;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -51,6 +55,8 @@ import javax.swing.SwingUtilities;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
+import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Graphics;
@@ -113,7 +119,7 @@ public final class ChatPanel extends JPanel {
     static final String DOWNLOAD_DONE = "abgeschlossen";
     static final String DOWNLOAD_FAILED = "fehlgeschlagen";
     static final String ATTACH = "Dateien anhängen";
-    static final String DICTATE = "Spracheingabe folgt";
+    static final String DICTATE = "Spracheingabe mit Whisper Tiny";
     static final String WEB = "Websuche folgt";
     static final String NO_MODEL = "Kein Chat-Modell";
     static final String MODEL_TIP = "Chat-Modell aus Einstellungen › KI";
@@ -187,6 +193,18 @@ public final class ChatPanel extends JPanel {
     private final ComposerButton web = ComposerButton.iconButton(ChatIcons.globe(), WEB);
     private final ComposerButton attach = ComposerButton.iconButton(ComposerIcons.paperclip(), ATTACH);
     private final ComposerButton mic = ComposerButton.iconButton(ComposerIcons.microphone(), DICTATE);
+    private final ComposerButton discardButton = ComposerButton.iconButton(
+            ComposerIcons.close(), "Aufnahme verwerfen oder Erkennung abbrechen");
+    private final ComposerButton retryButton = new ComposerButton(
+            ComposerIcons.refresh(), "Erneut", false, "Letzte Aufnahme erneut erkennen");
+    private final JProgressBar levelBar = new JProgressBar(0, 100);
+    private final ComposerWaveformOverlay waveform = new ComposerWaveformOverlay();
+    private final Timer levelTimer = new Timer(100, event -> sampleDictationLevel());
+    private final Dictation dictation = new Dictation();
+    private DictationPhase dictationPhase = DictationPhase.IDLE;
+    private long recordingStartedMillis;
+
+    private enum DictationPhase { IDLE, RECORDING, RECOGNIZING }
     private final ComposerButton send = ComposerButton.primary(ComposerIcons.send(), SEND, Comic.BLUE,
             "Senden (Enter)");
     /** Die Statuszeile des Composers („Chat folgt“); leer unsichtbar. */
@@ -377,17 +395,31 @@ public final class ChatPanel extends JPanel {
         model.addActionListener(e -> showModelMenu());
         effort.addActionListener(e -> showEffortMenu());
         web.setEnabled(false);
-        mic.setEnabled(false);
+        mic.setAccent(ResearchUiPalette.RECORDING_ORANGE);
+        mic.addActionListener(e -> toggleDictation());
+        discardButton.addActionListener(e -> discardDictation());
+        retryButton.addActionListener(e -> retryDictation());
+        discardButton.setVisible(false);
+        retryButton.setVisible(false);
+        levelBar.setOpaque(false);
+        levelBar.setBorderPainted(false);
+        levelBar.setPreferredSize(new Dimension(64, 6));
+        levelBar.setMaximumSize(new Dimension(64, 6));
+        levelBar.setVisible(false);
         attach.addActionListener(e -> chooseAttachments());
         send.addActionListener(e -> send());
         JPanel west = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         west.setOpaque(false);
         west.add(model);
         west.add(effort);
+        west.add(discardButton);
+        west.add(retryButton);
         JPanel east = new JPanel();
         east.setOpaque(false);
         east.setLayout(new BoxLayout(east, BoxLayout.X_AXIS));
         east.add(Box.createHorizontalGlue());
+        east.add(levelBar);
+        east.add(Box.createHorizontalStrut(4));
         east.add(web);
         east.add(Box.createHorizontalStrut(4));
         east.add(attach);
@@ -404,12 +436,164 @@ public final class ChatPanel extends JPanel {
         body.setOpaque(false);
         body.setBorder(BorderFactory.createEmptyBorder(9, 11, 8, 8));
         body.add(chips, BorderLayout.NORTH);
-        body.add(editorScroll, BorderLayout.CENTER);
+        final JScrollPane scroll = editorScroll;
+        JLayeredPane editorLayers = new JLayeredPane() {
+            @Override
+            public void doLayout() {
+                for (Component child : getComponents()) {
+                    child.setBounds(0, 0, getWidth(), getHeight());
+                }
+            }
+
+            @Override
+            public Dimension getPreferredSize() {
+                return scroll.getPreferredSize();
+            }
+
+            @Override
+            public Dimension getMinimumSize() {
+                return scroll.getMinimumSize();
+            }
+        };
+        editorLayers.add(editorScroll, JLayeredPane.DEFAULT_LAYER);
+        editorLayers.add(waveform, JLayeredPane.PALETTE_LAYER);
+        body.add(editorLayers, BorderLayout.CENTER);
         body.add(footer, BorderLayout.SOUTH);
         status.setBorder(BorderFactory.createEmptyBorder(0, 12, 2, 0));
         surface.add(status, BorderLayout.NORTH);
         surface.add(body, BorderLayout.CENTER);
         return surface;
+    }
+
+    /** Toggle the EAC dictation lifecycle without submitting the recognized draft. */
+    private void toggleDictation() {
+        if (dictationPhase == DictationPhase.RECORDING) {
+            dictationPhase = DictationPhase.RECOGNIZING;
+            stopDictationLevelMeter();
+            refreshDictationControls();
+            status.setText("Whisper Tiny erkennt die Aufnahme lokal …");
+            dictation.finish();
+            return;
+        }
+        if (dictationPhase == DictationPhase.RECOGNIZING) {
+            discardDictation();
+            return;
+        }
+        if (!dictation.isAvailable() || turn != null) {
+            return;
+        }
+        dictationPhase = DictationPhase.RECORDING;
+        startDictationLevelMeter();
+        refreshDictationControls();
+        dictation.start(dictationResult());
+    }
+
+    /** Discard the active recording or ignore a pending recognition callback. */
+    private void discardDictation() {
+        if (dictationPhase == DictationPhase.IDLE) {
+            return;
+        }
+        boolean wasRecording = dictationPhase == DictationPhase.RECORDING;
+        dictation.cancel();
+        dictationPhase = DictationPhase.IDLE;
+        stopDictationLevelMeter();
+        status.setText(wasRecording ? "Aufnahme verworfen" : "Spracherkennung abgebrochen");
+        refreshDictationControls();
+    }
+
+    /** Retry the original microphone capture after a recognition failure. */
+    private void retryDictation() {
+        if (dictationPhase != DictationPhase.IDLE || !dictation.canRetry() || turn != null) {
+            return;
+        }
+        dictationPhase = DictationPhase.RECOGNIZING;
+        status.setText("Whisper Tiny erkennt die Aufnahme erneut …");
+        refreshDictationControls();
+        dictation.retry(dictationResult());
+    }
+
+    /** Insert the transcript at the caret, preserving adjacent text and selection. */
+    private DictationControl.Result dictationResult() {
+        return new DictationControl.Result() {
+            @Override
+            public void recognized(String text) {
+                dictationPhase = DictationPhase.IDLE;
+                stopDictationLevelMeter();
+                if (text == null || text.trim().isEmpty()) {
+                    status.setText("Keine Sprache erkannt");
+                } else {
+                    DictationInsertion insertion = DictationInsertion.insert(editor.getText(),
+                            editor.getSelectionStart(), editor.getSelectionEnd(), text);
+                    editor.setText(insertion.text);
+                    editor.setCaretPosition(insertion.caret);
+                    editor.requestFocusInWindow();
+                    status.setText("Sprache erkannt – Text vor dem Senden prüfen");
+                }
+                refreshDictationControls();
+            }
+
+            @Override
+            public void failed(String message) {
+                dictationPhase = DictationPhase.IDLE;
+                stopDictationLevelMeter();
+                String reason = message == null || message.trim().isEmpty() ?
+                        "unbekannter Fehler" : message.trim();
+                status.setText("Spracherkennung fehlgeschlagen: " + reason);
+                refreshDictationControls();
+                if (isShowing()) {
+                    javax.swing.JOptionPane.showMessageDialog(ChatPanel.this,
+                            "Die Spracheingabe ist fehlgeschlagen.\n\n" + reason +
+                                    "\n\n" + dictation.description(),
+                            "Spracheingabe", javax.swing.JOptionPane.WARNING_MESSAGE);
+                }
+            }
+        };
+    }
+
+    /** Restore the reference composer's recording, discard and retry controls. */
+    private void refreshDictationControls() {
+        boolean active = dictationPhase != DictationPhase.IDLE;
+        mic.setEnabled(dictation.isAvailable() && (active || turn == null));
+        mic.setEmphasized(active);
+        mic.setToolTipText(dictationPhase == DictationPhase.RECORDING ?
+                "Aufnahme beenden und erkennen" :
+                dictationPhase == DictationPhase.RECOGNIZING ?
+                        "Spracherkennung abbrechen" : DICTATE + " (" + dictation.description() + ")");
+        discardButton.setVisible(active);
+        retryButton.setVisible(!active && dictation.canRetry());
+        levelBar.setVisible(active);
+        if (!active) {
+            levelBar.setValue(0);
+        }
+        composer.revalidate();
+        composer.repaint();
+    }
+
+    /** Start the original EAC 100-ms live waveform and decibel level feedback. */
+    private void startDictationLevelMeter() {
+        recordingStartedMillis = System.currentTimeMillis();
+        levelBar.setValue(0);
+        waveform.setActive(true);
+        levelTimer.restart();
+    }
+
+    private void stopDictationLevelMeter() {
+        levelTimer.stop();
+        waveform.setActive(false);
+        levelBar.setValue(0);
+    }
+
+    private void sampleDictationLevel() {
+        if (dictationPhase != DictationPhase.RECORDING) {
+            levelTimer.stop();
+            return;
+        }
+        int level = dictation.level();
+        levelBar.setValue(level);
+        waveform.pushLevel(level);
+        long seconds = Math.max(0, (System.currentTimeMillis() - recordingStartedMillis) / 1000L);
+        status.setText(String.format(java.util.Locale.ROOT, "● Aufnahme %d:%02d%s",
+                seconds / 60, seconds % 60, dictation.clipping() ? " – übersteuert" : ""));
     }
 
     // ------------------------------------------------------------------ Auswahl und Wissen
