@@ -34,7 +34,11 @@ public final class VideoFrameGrabber {
     private static final long FRAME_TIMEOUT_MILLIS = 30_000;
     /** Nach dem letzten gelieferten Bild so lange Ruhe, dann gilt es als das angesprungene. */
     private static final long QUIET_MILLIS = 400;
-    /** So weit darf die Position von VLC beim gelieferten Bild von der angesprungenen Stelle abweichen. */
+    /** So viele Bilder Wiedergabe nach einem Sprung, bevor eines als Standbild gilt (bei 25 fps etwa 0,4 s). */
+    private static final int FRAMES_AFTER_SEEK = 10;
+    /** So weit darf die Position von VLC beim gelieferten Bild vor der angesprungenen Stelle liegen. */
+    private static final long EARLY_TOLERANCE_MILLIS = 500;
+    /** So weit darf die Position von VLC beim gelieferten Bild nach der angesprungenen Stelle liegen. */
     private static final long POSITION_TOLERANCE_MILLIS = 1500;
     /** Liefert VLC nach dem ersten neuen Bild weiter Bilder, gilt nach dieser Zeit das jüngste. */
     private static final long SETTLE_LIMIT_MILLIS = 3000;
@@ -126,21 +130,29 @@ public final class VideoFrameGrabber {
                     long slide = slides.get(index);
                     long position = slide + SETTLE_MILLIS;
                     long seen = surface.count();
+                    // Angehalten springt VLC nicht zuverlässig weiter: springen, abspielen, das erste Bild an der
+                    // Stelle nehmen, wieder anhalten. Die Folie steht dort noch eine Weile, ein Bild später ist gleich.
                     player.controls().setTime(position);
-                    // Ein Bild aus der Zeit vor dem Sprung kann noch nachkommen: es gilt erst eines an der Stelle.
+                    player.controls().setPause(false);
+                    // VLC meldet die neue Position schon vor dem ersten Bild von dort; Bilder aus der Zeit vor dem
+                    // Sprung sind noch unterwegs. Erst nach einigen Bildern Wiedergabe gilt eines.
                     BufferedImage image = null;
                     long frameUntil = System.currentTimeMillis() + FRAME_TIMEOUT_MILLIS;
-                    while (System.currentTimeMillis() < frameUntil) {
-                        BufferedImage candidate = surface.next(seen, cancelled);
+                    int played = 0;
+                    while (true) {
+                        BufferedImage candidate = surface.awaitNew(seen, frameUntil, cancelled);
                         if (candidate == null) {
                             break;
                         }
                         image = candidate;
                         seen = surface.count();
-                        if (Math.abs(player.status().time() - position) <= POSITION_TOLERANCE_MILLIS) {
+                        long time = player.status().time();
+                        if (++played >= FRAMES_AFTER_SEEK && time >= position - EARLY_TOLERANCE_MILLIS
+                                && time <= position + POSITION_TOLERANCE_MILLIS) {
                             break;
                         }
                     }
+                    player.controls().setPause(true);
                     if (image != null) {
                         sink.frame(new Assets.VideoFrame(slide, png(image)));
                     }
@@ -208,6 +220,26 @@ public final class VideoFrameGrabber {
 
         synchronized long count() {
             return count;
+        }
+
+        /** Das nächste Bild nach {@code before}, sobald es da ist; {@code null}, wenn bis {@code until} keines kommt. */
+        synchronized BufferedImage awaitNew(long before, long until, BooleanSupplier cancelled) {
+            while (count == before) {
+                check(cancelled);
+                long left = until - System.currentTimeMillis();
+                if (left <= 0) {
+                    return null;
+                }
+                try {
+                    wait(Math.min(left, 100));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new CancellationException("Standbilder abgebrochen");
+                }
+            }
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            image.setRGB(0, 0, width, height, pixels, 0, width);
+            return image;
         }
 
         /**
