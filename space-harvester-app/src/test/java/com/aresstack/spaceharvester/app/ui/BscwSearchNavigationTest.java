@@ -107,6 +107,80 @@ class BscwSearchNavigationTest {
         assertThat(selected).as("The nested BSCW folder is expanded and the file is selected").isTrue();
     }
 
+    /**
+     * Ein gestreamtes BSCW-Video liegt nicht im Cache; nach einem Neustart kennt der Core seinen Ordner nicht mehr.
+     * Ohne Pfad darf der Baum keinen Ersatz (den Space) wählen, sonst ersetzt dessen Ansicht die geöffnete Seite
+     * (Angelo, 19.11.2026: Video aus den Favoriten, kurz darauf KI-Zusammenfassung). Mit dem Pfad des Favoriten findet
+     * er die Datei.
+     */
+    @Test
+    void aFavoriteRevealsAnUncachedFileAfterRestartAndAMissingPathNeverSelectsTheSpace() throws Exception {
+        startServer();
+        Path config = writeConfig();
+        initialize(config);
+        String folderId = context.runtime().workspace().children(SOURCE, SOURCE, null, null).pages().get(0).pageId();
+        String fileId = context.runtime().workspace().children(SOURCE, SOURCE, folderId, null)
+                .pages().get(0).pageId();
+        context.shutdown();
+        context = null;
+        initialize(config);
+
+        PageNavigation.Position position = context.runtime().workspace().position(SOURCE, fileId);
+        assertThat(position.ancestors()).as("nach dem Neustart ohne Cache unbekannt").isEmpty();
+
+        Explorer[] explorer = new Explorer[1];
+        SwingUtilities.invokeAndWait(() -> {
+            explorer[0] = new Explorer(context);
+            explorer[0].revealPage(position);
+        });
+        boolean spaceLoaded = false;
+        for (int attempt = 0; attempt < 200 && !spaceLoaded; attempt++) {
+            boolean[] loaded = new boolean[1];
+            SwingUtilities.invokeAndWait(() -> loaded[0] = spaceLoaded(explorer[0]));
+            spaceLoaded = loaded[0];
+            if (!spaceLoaded) {
+                Thread.sleep(50);
+            }
+        }
+        assertThat(spaceLoaded).isTrue();
+        Thread.sleep(300);
+        Object[] selection = new Object[1];
+        SwingUtilities.invokeAndWait(() -> selection[0] = explorer[0].tree().getSelectionPath());
+        assertThat(selection[0]).as("kein Ersatz für die nicht gefundene Datei").isNull();
+
+        context.favorites().toggle(new Favorites.Favorite(SOURCE, position.spaceKey(), fileId, "Projektbericht.txt",
+                List.of("BSCW", "BSCW", "Vorhaben"), List.of(folderId)));
+        SwingUtilities.invokeAndWait(() -> explorer[0].revealPage(position));
+        boolean selected = false;
+        for (int attempt = 0; attempt < 200 && !selected; attempt++) {
+            boolean[] matches = new boolean[1];
+            SwingUtilities.invokeAndWait(() -> {
+                TreePath path = explorer[0].tree().getSelectionPath();
+                matches[0] = path != null && path.getLastPathComponent() instanceof Explorer.Node node
+                        && node.item() instanceof Explorer.PageItem page && fileId.equals(page.pageId());
+            });
+            selected = matches[0];
+            if (!selected) {
+                Thread.sleep(50);
+            }
+        }
+        assertThat(selected).as("der Pfad des Favoriten führt zur Datei").isTrue();
+    }
+
+    private static boolean spaceLoaded(Explorer explorer) {
+        Explorer.Node top = (Explorer.Node) explorer.tree().getModel().getRoot();
+        for (int i = 0; i < top.getChildCount(); i++) {
+            Explorer.Node source = (Explorer.Node) top.getChildAt(i);
+            for (int j = 0; j < source.getChildCount(); j++) {
+                Explorer.Node space = (Explorer.Node) source.getChildAt(j);
+                if (space.item() instanceof Explorer.SpaceItem && space.loaded && !space.loading) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private void initialize(Path config) throws Exception {
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
         CountDownLatch ready = new CountDownLatch(1);
