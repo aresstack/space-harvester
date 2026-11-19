@@ -525,8 +525,8 @@ public final class PageDetailPanel extends JPanel {
         originalContent.add(fileContent, ORIGINAL_FILE_CARD);
         tabs.tab(READING, originalContent)
                 .tab(READ, readerPanel)
-                .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
+                .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ANALYSES, analysisTabs)
                 .tab(ADVANCED, advanced)
                 // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
@@ -539,8 +539,8 @@ public final class PageDetailPanel extends JPanel {
         java.util.Map<String, Icon> icons = new java.util.LinkedHashMap<>();
         icons.put(READING, PageTabIcons.reading());
         icons.put(READ, PageTabIcons.text());
-        icons.put(PROPERTIES, PageTabIcons.properties());
         icons.put(ATTACHMENTS, PageTabIcons.attachments());
+        icons.put(PROPERTIES, PageTabIcons.properties());
         icons.put(ANALYSES, PageTabIcons.analyses());
         icons.put(ADVANCED, PageTabIcons.advanced());
         icons.put(EXPORT, PageTabIcons.export());
