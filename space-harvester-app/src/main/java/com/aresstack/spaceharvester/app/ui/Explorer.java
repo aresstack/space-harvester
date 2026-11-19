@@ -876,8 +876,10 @@ public final class Explorer {
 
     /**
      * Zeigt eine geöffnete Seite im Baum: Quelle, Space und Vorfahren aufklappen (Kinder werden bei Bedarf geladen) und
-     * die Seite wählen. Fehlt ein Schritt im Baum (etwa auf einem noch nicht geladenen Stapel), bleibt der tiefste
-     * gefundene Knoten gewählt. Der Suchumfang ändert sich dadurch nicht.
+     * die Seite wählen. Findet der Baum die Seite nicht (etwa weil die Quelle nach einem Neustart ihren Pfad nicht mehr
+     * kennt), bleibt er bis zum tiefsten gefundenen Knoten aufgeklappt, wählt aber keinen Ersatz: Die Auswahl bestimmt
+     * die Mitte, ein gewählter Ordner oder Space würde die geöffnete Seite durch seine Ansicht ersetzen. Der Suchumfang
+     * ändert sich dadurch nicht.
      */
     public void revealPage(PageNavigation.Position position) {
         reveal(position, ++revealRequest);
@@ -892,14 +894,31 @@ public final class Explorer {
         if (source == null) {
             return;
         }
+        String pageId = position.page().pageId();
         List<java.util.function.Predicate<Item>> steps = new ArrayList<>();
         steps.add(item -> item instanceof SpaceItem s && s.spaceKey().equals(position.spaceKey()));
-        for (HarvestSource.PageNode ancestor : position.ancestors()) {
-            steps.add(item -> item instanceof PageItem p && p.pageId().equals(ancestor.pageId()));
+        for (String ancestorId : ancestorIds(position)) {
+            steps.add(item -> item instanceof PageItem p && p.pageId().equals(ancestorId));
         }
-        String pageId = position.page().pageId();
         steps.add(item -> item instanceof PageItem p && p.pageId().equals(pageId));
         descend(source, steps, 0, ticket);
+    }
+
+    /**
+     * Die Vorfahren für den Abstieg: der Pfad des Core, oder der beim Favorisieren gemerkte Pfad, wenn er länger ist.
+     * Quellen ohne dauerhaften Seitenbaum (BSCW über WebDAV) kennen nach einem Neustart den Pfad einer nur gestreamten
+     * Datei nicht mehr; der Favorit hat ihn sich gemerkt.
+     */
+    private List<String> ancestorIds(PageNavigation.Position position) {
+        List<String> fromCore = position.ancestors().stream().map(HarvestSource.PageNode::pageId).toList();
+        for (Favorites.Favorite favorite : context.favorites().all()) {
+            if (favorite.sourceId().equals(position.sourceId())
+                    && position.page().pageId().equals(favorite.pageId())
+                    && favorite.ancestorIds().size() > fromCore.size()) {
+                return favorite.ancestorIds();
+            }
+        }
+        return fromCore;
     }
 
     /** Wie {@link #revealPage(PageNavigation.Position)}; den Pfad der Seite holt der Core im Hintergrund. */
@@ -952,8 +971,11 @@ public final class Explorer {
                     return;
                 }
             }
-            if (child == null || index == steps.size() - 1) {
-                select(child == null ? node : child);
+            if (child == null) {
+                // Seite nicht gefunden: aufgeklappt zeigen, wie weit der Pfad reicht, aber nichts anderes wählen.
+                tree.scrollPathToVisible(new TreePath(node.getPath()));
+            } else if (index == steps.size() - 1) {
+                select(child);
             } else {
                 descend(child, steps, index + 1, ticket);
             }
@@ -1355,6 +1377,10 @@ public final class Explorer {
                     // A previous leaf can become a directory in a newer source listing.
                     current.loaded = false;
                     model.insertNodeInto((Node) fresh.getFirstChild(), current, 0);
+                    if (tree.isExpanded(new TreePath(current.getPath()))) {
+                        // Schon aufgeklappt: Ohne erneutes Aufklappen käme kein Laden, „Lädt …“ bliebe stehen.
+                        load(current);
+                    }
                 }
                 if (parent.getIndex(current) != index) {
                     model.removeNodeFromParent(current);

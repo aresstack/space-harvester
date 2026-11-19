@@ -160,6 +160,24 @@ public abstract class EnrichmentStoreContract {
         assertThat(store.findDocuments(OTHER)).hasSize(1);
     }
 
+    @Test
+    void pagesWithListsOnlyPagesOfThatProcessorWithoutDocuments() {
+        EnrichmentStore store = store();
+        assertThat(store.pagesWith("check")).isEmpty();
+        store.save(ok(PAGE, "check", "1", "{}"));
+        store.save(ok(PAGE, "outline", "1", "{}"));
+        store.save(ok(OTHER, "outline", "1", "{}"));
+        store.save(document(DocumentKey.attachment(OTHER, "a1"), 0, "check"));
+        store.flush();
+
+        assertThat(store.pagesWith("check")).containsExactly(PAGE);
+        assertThat(store.pagesWith("outline")).containsExactlyInAnyOrder(PAGE, OTHER);
+
+        store.remove(PAGE, "check");
+        store.flush();
+        assertThat(store.pagesWith("check")).isEmpty();
+    }
+
     private static Enrichment document(DocumentKey document, int section, String processor) {
         return new Enrichment(document.page(), processor, "1", "sha256:" + "d".repeat(64), null, Enrichment.Status.OK,
                 "{\"section\":" + section + "}", List.of(), null, Instant.parse("2026-11-13T12:00:00Z"), document,
