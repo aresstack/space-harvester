@@ -56,6 +56,7 @@ import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Point;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -217,6 +218,8 @@ public final class ChatPanel extends JPanel {
     /** Die Statuszeile des Composers („Chat folgt“); leer unsichtbar. */
     private final JLabel status = Comic.muted(" ");
     private final Color statusColor = status.getForeground();
+    /** Die Editor-Fläche; Größenänderungen werden ab hier neu ausgemessen (der Rollbereich ist eine Layout-Wurzel). */
+    private JComponent editorArea;
     private int normalEditorHeight = Math.max(MIN_EDITOR_HEIGHT,
             Math.min(MAX_NORMAL_EDITOR_HEIGHT, PREFERENCES.getInt(NORMAL_EDITOR_HEIGHT, MIN_EDITOR_HEIGHT)));
     private final ComposerResizeGrip resizeGrip = new ComposerResizeGrip(() -> normalEditorHeight,
@@ -476,7 +479,10 @@ public final class ChatPanel extends JPanel {
         body.setBorder(BorderFactory.createEmptyBorder(0, 11, 8, 8));
         JPanel top = new JPanel(new BorderLayout(0, 0));
         top.setOpaque(false);
-        top.add(resizeGrip, BorderLayout.NORTH);
+        JPanel gripRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
+        gripRow.setOpaque(false);
+        gripRow.add(resizeGrip);
+        top.add(gripRow, BorderLayout.NORTH);
         top.add(chips, BorderLayout.CENTER);
         body.add(top, BorderLayout.NORTH);
         final JScrollPane scroll = editorScroll;
@@ -499,6 +505,7 @@ public final class ChatPanel extends JPanel {
             }
         };
         editorLayers.add(editorScroll, JLayeredPane.DEFAULT_LAYER);
+        editorArea = editorLayers;
         editorLayers.add(waveform, JLayeredPane.PALETTE_LAYER);
         body.add(editorLayers, BorderLayout.CENTER);
         body.add(footer, BorderLayout.SOUTH);
@@ -509,21 +516,33 @@ public final class ChatPanel extends JPanel {
         return surface;
     }
 
-    /** Den Ziehgriff nur zeigen, solange die Maus irgendwo über dem Composer steht. */
+    /** Den Ziehgriff nur zeigen, solange die Maus in seiner Nähe an der oberen Linie des Composers steht. */
     private void trackComposerHover(JComponent surface, Component component) {
         java.awt.event.MouseAdapter hover = new java.awt.event.MouseAdapter() {
             @Override
+            public void mouseMoved(java.awt.event.MouseEvent e) {
+                resizeGrip.setShown(nearGrip(SwingUtilities.convertPoint(e.getComponent(), e.getPoint(), resizeGrip)));
+            }
+
+            @Override
             public void mouseEntered(java.awt.event.MouseEvent e) {
-                resizeGrip.setShown(true);
+                mouseMoved(e);
             }
 
             @Override
             public void mouseExited(java.awt.event.MouseEvent e) {
-                // Beim Wechsel zwischen Kindern bleibt die Maus über dem Composer.
-                SwingUtilities.invokeLater(() -> resizeGrip.setShown(surface.getMousePosition(true) != null));
+                SwingUtilities.invokeLater(() -> {
+                    Point mouse = resizeGrip.getMousePosition(true);
+                    if (mouse == null) {
+                        mouse = surface.getMousePosition(true) == null ? null
+                                : SwingUtilities.convertPoint(surface, surface.getMousePosition(true), resizeGrip);
+                    }
+                    resizeGrip.setShown(mouse != null && nearGrip(mouse));
+                });
             }
         };
         component.addMouseListener(hover);
+        component.addMouseMotionListener(hover);
         if (component instanceof java.awt.Container container) {
             for (Component child : container.getComponents()) {
                 trackComposerHover(surface, child);
@@ -531,12 +550,18 @@ public final class ChatPanel extends JPanel {
         }
     }
 
+    /** Ob ein Punkt (relativ zum Griff) in der Nähe des Griffs an der oberen Linie liegt. */
+    private boolean nearGrip(Point point) {
+        int margin = 8;
+        return point.x >= -margin && point.x <= resizeGrip.getWidth() + margin
+                && point.y >= -margin && point.y <= resizeGrip.getHeight() + margin;
+    }
+
     /** Die Normalhöhe des leeren Editors setzen (Ziehgriff); lange Texte wachsen weiterhin darüber hinaus. */
     void setNormalEditorHeight(int height) {
         int maximum = Math.max(MIN_EDITOR_HEIGHT, getHeight() > 0 ? getHeight() * 2 / 5 : MAX_NORMAL_EDITOR_HEIGHT);
         normalEditorHeight = Math.max(MIN_EDITOR_HEIGHT, Math.min(height, Math.min(maximum, MAX_NORMAL_EDITOR_HEIGHT)));
-        composer.revalidate();
-        composer.repaint();
+        remeasureEditor();
     }
 
     int normalEditorHeight() {
@@ -549,10 +574,18 @@ public final class ChatPanel extends JPanel {
 
     /** Den Composer nach einer Textänderung neu bemessen (nach dem laufenden Ereignis, wenn die Umbrüche feststehen). */
     private void resizeEditor() {
-        SwingUtilities.invokeLater(() -> {
-            composer.revalidate();
-            composer.repaint();
-        });
+        SwingUtilities.invokeLater(this::remeasureEditor);
+    }
+
+    /**
+     * Den Editor neu ausmessen: ab der Editor-Fläche, damit Swing die gemerkte bevorzugte Größe aller
+     * Container bis zum Fenster verwirft (nur den Composer neu auszumessen behielt die alte Höhe).
+     */
+    private void remeasureEditor() {
+        if (editorArea != null) {
+            editorArea.revalidate();
+        }
+        composer.repaint();
     }
 
     /** Toggle the EAC dictation lifecycle without submitting the recognized draft. */

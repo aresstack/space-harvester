@@ -19,6 +19,8 @@ import java.util.function.IntSupplier;
  */
 final class ComposerResizeGrip extends JComponent {
     static final int HEIGHT = 9;
+    /** Die Fläche, auf der der Griff reagiert: nur die Mitte der oberen Linie. */
+    private static final int AREA_WIDTH = 72;
     private static final int BAR_WIDTH = 36;
     private static final int BAR_HEIGHT = 4;
 
@@ -74,7 +76,7 @@ final class ComposerResizeGrip extends JComponent {
 
     @Override
     public Dimension getPreferredSize() {
-        return new Dimension(BAR_WIDTH, HEIGHT);
+        return new Dimension(AREA_WIDTH, HEIGHT);
     }
 
     @Override
