@@ -9,10 +9,12 @@ import java.util.Objects;
  * Eine Marke eines Videos mit ihrem Standbild, für die Bildanalyse: beschrieben mit einem eigenen Prompt für Folien und
  * Bildschirmaufzeichnungen statt dem der Bildbeschreibung.
  *
- * @param millis Position der Marke im Video
- * @param frame  das abgelegte Standbild der Marke
+ * @param millis  Position der Marke im Video
+ * @param id      Kennung ihres virtuellen Anhangs
+ * @param version Fassung des Videos
+ * @param frame   das abgelegte Standbild der Marke oder {@code null}, solange es nicht gezogen ist
  */
-public record VideoMark(long millis, Assets.AssetContent frame) implements Describable {
+public record VideoMark(long millis, String id, String version, Assets.AssetContent frame) implements Describable {
 
     /** Der Prompt für das Standbild einer Marke. */
     public static final String INSTRUCTION = "Dies ist ein Standbild aus einer Videoaufzeichnung an einem "
@@ -22,17 +24,12 @@ public record VideoMark(long millis, Assets.AssetContent frame) implements Descr
             + "Adressen, die nicht klar lesbar sind.";
 
     public VideoMark {
-        Objects.requireNonNull(frame, "frame");
+        Objects.requireNonNull(id, "id");
     }
 
     @Override
-    public String id() {
-        return frame.asset().attachmentId();
-    }
-
-    @Override
-    public String version() {
-        return frame.asset().version();
+    public boolean ready() {
+        return frame != null;
     }
 
     @Override
@@ -42,12 +39,12 @@ public record VideoMark(long millis, Assets.AssetContent frame) implements Descr
 
     @Override
     public String filename() {
-        return frame.asset().title();
+        return Assets.markFileName(millis);
     }
 
     @Override
     public String mediaType() {
-        return frame.asset().mediaType();
+        return "image/png";
     }
 
     @Override
@@ -57,6 +54,9 @@ public record VideoMark(long millis, Assets.AssetContent frame) implements Descr
 
     @Override
     public Assets.AssetContent content() {
+        if (frame == null) {
+            throw new IllegalStateException("Standbild der Marke noch nicht gezogen");
+        }
         return frame;
     }
 }

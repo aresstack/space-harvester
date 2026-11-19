@@ -393,12 +393,19 @@ class PageImageAnalysisTest {
         assertThat(assets.missingVideoFrames("wiki", "1", "3", marks)).containsExactly(3_725_000L);
         assertThat(assets.content(assets.withVideoMarks(none, "3", marks), mark, false).content()).isEqualTo(second);
         PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments, Clock.fixed(NOW, ZoneOffset.UTC));
+        // Vor dem Beschreiben dieselbe Liste ohne Text.
+        assertThat(analysis.read(page("1", "")).images()).extracting(ImagePayload.Entry::title,
+                ImagePayload.Entry::status, ImagePayload.Entry::description).containsExactly(
+                org.assertj.core.groups.Tuple.tuple("00:00:02", ImageStatus.PENDING, null),
+                org.assertj.core.groups.Tuple.tuple("00:05:01", ImageStatus.PENDING, null),
+                org.assertj.core.groups.Tuple.tuple("01:02:05", ImageStatus.PENDING, null));
         PageImages images = analysis.describe(page("1", ""));
 
         assertThat(images.state()).isEqualTo(PageImages.State.CURRENT);
         assertThat(images.images()).extracting(ImagePayload.Entry::title, ImagePayload.Entry::status)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("00:00:02", ImageStatus.DESCRIBED),
-                        org.assertj.core.groups.Tuple.tuple("00:05:01", ImageStatus.DESCRIBED));
+                        org.assertj.core.groups.Tuple.tuple("00:05:01", ImageStatus.DESCRIBED),
+                        org.assertj.core.groups.Tuple.tuple("01:02:05", ImageStatus.PENDING));
         assertThat(describer.instructions).as("der Prompt der Marke")
                 .containsOnly(com.aresstack.spaceharvester.application.marks.VideoMark.INSTRUCTION);
         assertThat(source.loads).as("die Bytes liegen in der Ablage").isZero();

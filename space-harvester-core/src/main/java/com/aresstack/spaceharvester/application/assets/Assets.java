@@ -1017,6 +1017,33 @@ public class Assets implements DocumentInventory {
         return VIDEO_MARK + framePage(pageId) + "-" + millis;
     }
 
+    /** Die Kennung des virtuellen Anhangs einer Marke. */
+    public static String markAttachmentId(String pageId, long millis) {
+        return markId(pageId, millis);
+    }
+
+    /** Der Dateiname des Standbilds einer Marke, etwa {@code 00-03-12.png}. */
+    public static String markFileName(long millis) {
+        return frameName(millis);
+    }
+
+    /** Das abgelegte Standbild einer Marke ohne seine Bytes; leer, solange es nicht gezogen ist. */
+    public Optional<Asset> videoFrameAsset(String sourceId, String pageId, String version, long millis) {
+        return store.find(sourceId, markId(pageId, millis), frameVersion(version));
+    }
+
+    /**
+     * Ein abgelegtes Bild der Lese-Ansicht ohne seine Bytes, unter derselben ID und Version wie {@link #viewImage};
+     * fragt die Quelle nie.
+     */
+    public Optional<Asset> storedViewImage(String sourceId, String pageVersion, HarvestSource.ViewImage image) {
+        String attachmentId = image.attachmentId() != null ? image.attachmentId()
+                : "view-" + sha256(image.src().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                        .substring("sha256:".length(), "sha256:".length() + 32);
+        String version = image.attachmentId() != null ? image.version() : pageVersion;
+        return store.find(sourceId, attachmentId, version);
+    }
+
     /** Die Position einer Marke aus der Kennung ihres virtuellen Anhangs. */
     public static long markMillis(String attachmentId) {
         return Long.parseLong(attachmentId.substring(attachmentId.lastIndexOf('-') + 1));

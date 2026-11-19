@@ -171,7 +171,8 @@ final class ImagesTab extends JPanel {
         lines.clear();
         copyLines.clear();
         boolean stale = current == PassagesTab.State.STALE;
-        List<Image> shown = current == PassagesTab.State.CURRENT || stale ? images : List.of();
+        // Die Bilder stehen immer da, auch noch nicht beschriebene (dann ohne Text).
+        List<Image> shown = images;
         for (int i = 0; i < shown.size(); i++) {
             if (i > 0) {
                 list.add(Box.createVerticalStrut(6));

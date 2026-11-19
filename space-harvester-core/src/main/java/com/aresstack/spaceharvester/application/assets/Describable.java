@@ -30,6 +30,11 @@ public interface Describable {
         return null;
     }
 
+    /** Ob seine Bytes schon da sind; sonst steht es ohne Beschreibung in der Liste (etwa eine Marke ohne Standbild). */
+    default boolean ready() {
+        return true;
+    }
+
     /** Warum es nicht beschrieben wird (etwa {@code vector-source}), oder {@code null}. */
     default String skipReason() {
         return null;

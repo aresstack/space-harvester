@@ -108,13 +108,15 @@ public class PageImageAnalysis {
                     images.images(), images.warnings());
         }
         if (images.state() == PageImages.State.MISSING) {
+            // Noch nicht beschrieben: dieselbe Liste wie nach dem Beschreiben, nur ohne Text.
+            String reason = images.reason();
             Optional<ImageDescriber> model = assets.describerInUse();
             if (model.isEmpty()) {
-                return PageImages.missing(PageImages.VISION_MODEL_MISSING);
+                reason = PageImages.VISION_MODEL_MISSING;
+            } else if (!mayDescribe(model.get(), snapshot.key())) {
+                reason = PageImages.SOURCE_NOT_RELEASED;
             }
-            if (!mayDescribe(model.get(), snapshot.key())) {
-                return PageImages.missing(PageImages.SOURCE_NOT_RELEASED);
-            }
+            return new PageImages(PageImages.State.MISSING, reason, null, listed(snapshot), List.of());
         }
         return images;
     }
@@ -264,9 +266,43 @@ public class PageImageAnalysis {
         return results;
     }
 
+    /**
+     * Die Bilder der Seite ohne Beschreibung, ohne die Quelle zu fragen: die Marken ihres Videos, sonst die Bilder der
+     * zuletzt gespeicherten Lese-Ansicht; mit Hash, wenn ihre Bytes schon abliegen (dann hat der Reiter eine Vorschau).
+     */
+    private List<ImagePayload.Entry> listed(PageSnapshot snapshot) {
+        PageKey key = snapshot.key();
+        List<ImagePayload.Entry> entries = new ArrayList<>();
+        for (long millis : VideoMarks.in(enrichments.store()).find(key, snapshot.revision())) {
+            String sha = assets.videoFrameAsset(key.sourceId(), key.pageId(), snapshot.revision(), millis)
+                    .map(com.aresstack.spaceharvester.application.assets.Asset::sha256).orElse(null);
+            entries.add(ImagePayload.Entry.without(entries.size(), Assets.markAttachmentId(key.pageId(), millis), sha,
+                    Assets.markFileName(millis), Assets.markTitle(millis), "image/png", ImageStatus.PENDING, null));
+        }
+        if (!entries.isEmpty()) {
+            return entries;
+        }
+        List<HarvestSource.ViewImage> images = new ReadingViewStore(enrichments.store()).find(key)
+                .map(StoredReadingView::images).orElse(List.of());
+        for (HarvestSource.ViewImage image : images.subList(0, Math.min(images.size(), MAX_IMAGES))) {
+            Optional<com.aresstack.spaceharvester.application.assets.Asset> stored =
+                    assets.storedViewImage(key.sourceId(), snapshot.revision(), image);
+            entries.add(ImagePayload.Entry.without(entries.size(),
+                    stored.map(com.aresstack.spaceharvester.application.assets.Asset::attachmentId)
+                            .orElse(image.attachmentId()),
+                    stored.map(com.aresstack.spaceharvester.application.assets.Asset::sha256).orElse(null),
+                    Assets.viewFileName(image), image.title(), image.mediaType(), ImageStatus.PENDING, null));
+        }
+        return entries;
+    }
+
     private ImagePayload.Entry describe(int index, PageKey key, Describable item, boolean releasedOnce) {
         String filename = item.filename();
         String title = item.title();
+        if (!item.ready()) {
+            return ImagePayload.Entry.without(index, item.id(), null, filename, title, item.mediaType(),
+                    ImageStatus.PENDING, "not-ready");
+        }
         String skip = item.skipReason();
         if (skip != null) {
             return ImagePayload.Entry.without(index, item.id(), null, filename, title, item.mediaType(),
@@ -308,8 +344,9 @@ public class PageImageAnalysis {
         PageKey key = snapshot.key();
         List<Describable> items = new ArrayList<>();
         for (long millis : VideoMarks.in(enrichments.store()).find(key, snapshot.revision())) {
-            assets.videoFrame(key.sourceId(), key.pageId(), snapshot.revision(), millis)
-                    .ifPresent(frame -> items.add(new VideoMark(millis, frame)));
+            // Auch Marken ohne Standbild: Sie stehen ohne Beschreibung in der Liste.
+            items.add(new VideoMark(millis, Assets.markAttachmentId(key.pageId(), millis), snapshot.revision(),
+                    assets.videoFrame(key.sourceId(), key.pageId(), snapshot.revision(), millis).orElse(null)));
         }
         if (!items.isEmpty()) {
             return truncated(items, MAX_VIDEO_FRAMES, warnings);
