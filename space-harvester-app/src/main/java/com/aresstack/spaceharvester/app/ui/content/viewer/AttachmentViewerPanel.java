@@ -246,25 +246,72 @@ public final class AttachmentViewerPanel extends JPanel {
 
     // ------------------------------------------------------------------ Bedienung (auch für Tests)
 
+    /**
+     * Die benachbarten Anhänge derselben Art, zu denen die Pfeile blättern, wenn der Anhang selbst keine weitere Seite
+     * hat, wie die Pfeile über die Bilder der Leseansicht.
+     */
+    public interface Neighbours {
+
+        /** Keine Nachbarn: die Pfeile blättern nur in den Seiten. */
+        Neighbours NONE = new Neighbours() {
+            @Override
+            public boolean hasPrevious() {
+                return false;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return false;
+            }
+
+            @Override
+            public void previous() {
+            }
+
+            @Override
+            public void next() {
+            }
+        };
+
+        boolean hasPrevious();
+
+        boolean hasNext();
+
+        void previous();
+
+        void next();
+    }
+
+    private Neighbours neighbours = Neighbours.NONE;
+
+    /** Die Nachbarn für die Pfeile; ohne Aufruf blättern sie nur in den Seiten. */
+    public void neighbours(Neighbours neighbours) {
+        this.neighbours = java.util.Objects.requireNonNull(neighbours, "neighbours");
+    }
+
     public boolean hasPrevious() {
-        return pages != null && page > 0;
+        return pages != null && page > 0 || neighbours.hasPrevious();
     }
 
     public boolean hasNext() {
-        return pages != null && page < pageCount - 1;
+        return pages != null && page < pageCount - 1 || neighbours.hasNext();
     }
 
-    /** Vorige PDF-Seite. */
+    /** Vorige PDF-Seite, auf der ersten Seite der vorige Anhang derselben Art. */
     public void previous() {
-        if (hasPrevious()) {
+        if (pages != null && page > 0) {
             showPage(page - 1);
+        } else if (neighbours.hasPrevious()) {
+            neighbours.previous();
         }
     }
 
-    /** Nächste PDF-Seite. */
+    /** Nächste PDF-Seite, auf der letzten Seite der nächste Anhang derselben Art. */
     public void next() {
-        if (hasNext()) {
+        if (pages != null && page < pageCount - 1) {
             showPage(page + 1);
+        } else if (neighbours.hasNext()) {
+            neighbours.next();
         }
     }
 

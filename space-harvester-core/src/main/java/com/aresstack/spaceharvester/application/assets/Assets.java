@@ -1017,6 +1017,11 @@ public class Assets implements DocumentInventory {
         return VIDEO_MARK + framePage(pageId) + "-" + millis;
     }
 
+    /** Die Position einer Marke aus der Kennung ihres virtuellen Anhangs. */
+    public static long markMillis(String attachmentId) {
+        return Long.parseLong(attachmentId.substring(attachmentId.lastIndexOf('-') + 1));
+    }
+
     /** Die Position einer Marke im Video, etwa {@code 00:03:12}. */
     public static String markTitle(long millis) {
         long seconds = millis / 1000;

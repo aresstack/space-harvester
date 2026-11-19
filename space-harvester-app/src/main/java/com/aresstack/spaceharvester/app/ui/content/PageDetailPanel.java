@@ -2702,8 +2702,12 @@ public final class PageDetailPanel extends JPanel {
      * der Viewer über die Vorschau der Quelle, die nur Quellen mit {@code ATTACHMENT_PREVIEWS} anbieten.
      */
     void openAttachment() {
+        openAttachment(assets.getSelectedRow());
+    }
+
+    /** Öffnet den Anhang dieser Zeile; die Pfeile des Viewers blättern zu den Anhängen derselben Art. */
+    private void openAttachment(int row) {
         AppRuntime runtime = context.runtime();
-        int row = assets.getSelectedRow();
         if (runtime == null || page == null || row < 0 || row >= assetsModel.rows.size()) {
             return;
         }
@@ -2711,27 +2715,87 @@ public final class PageDetailPanel extends JPanel {
         com.aresstack.spaceharvester.application.sources.PageAttachment file = entry.attachment();
         String mediaType = file.mediaType() != null && !file.mediaType().isBlank() ? file.mediaType()
                 : entry.stored() == null ? null : entry.stored().mediaType();
-        ReaderAttachment attachment = new ReaderAttachment(file.attachmentId(), file.title(), mediaType,
-                file.fileSize() == null ? -1 : file.fileSize());
+        // Eine Marke zeigt ihr Standbild.
+        boolean mark = entry.kind() == com.aresstack.spaceharvester.application.assets.AssetKind.MARK;
+        ReaderAttachment attachment = new ReaderAttachment(file.attachmentId(), file.title(),
+                mark ? "image/png" : mediaType, file.fileSize() == null ? -1 : file.fileSize());
         String source = sourceId;
         boolean previews = runtime.workspace().attachmentPreviews(source);
-        showAttachmentOverlay(new AttachmentViewerPanel(attachment,
-                attachmentLoader(runtime, source, pageId, previews), fileOpener, attachmentRenderer),
-                attachment.fileName());
+        AttachmentViewerPanel viewer = new AttachmentViewerPanel(attachment,
+                attachmentLoader(runtime, source, pageId, previews, videoFrames), fileOpener, attachmentRenderer);
+        viewer.neighbours(neighbours(file.attachmentId(), entry.kind()));
+        showAttachmentOverlay(viewer, attachment.fileName());
+        assets.getSelectionModel().setSelectionInterval(row, row);
+    }
+
+    /** Die Nachbarn eines Anhangs derselben Art in der Liste, für die Pfeile des Viewers. */
+    private AttachmentViewerPanel.Neighbours neighbours(String attachmentId,
+                                                        com.aresstack.spaceharvester.application.assets.AssetKind kind) {
+        return new AttachmentViewerPanel.Neighbours() {
+            @Override
+            public boolean hasPrevious() {
+                return neighbour(-1) >= 0;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return neighbour(1) >= 0;
+            }
+
+            @Override
+            public void previous() {
+                openAttachment(neighbour(-1));
+            }
+
+            @Override
+            public void next() {
+                openAttachment(neighbour(1));
+            }
+
+            /** Die Zeile des nächsten Anhangs derselben Art in Richtung {@code step}, sonst -1. */
+            private int neighbour(int step) {
+                List<PageAssets.Entry> rows = assetsModel.rows;
+                int at = -1;
+                for (int i = 0; i < rows.size(); i++) {
+                    if (rows.get(i).attachment().attachmentId().equals(attachmentId)) {
+                        at = i;
+                    }
+                }
+                for (int i = at + step; at >= 0 && i >= 0 && i < rows.size(); i += step) {
+                    if (rows.get(i).kind() == kind) {
+                        return i;
+                    }
+                }
+                return -1;
+            }
+        };
     }
 
     /** Grund im Anhang-Viewer, solange die Quelle einen Einmalcode verlangt; danach lädt die Seite neu. */
     static final String SIGN_IN_PENDING = "Für diesen Anhang ist eine zusätzliche Anmeldung (Einmalcode) "
             + "erforderlich.";
 
-    /** Holt Originaldatei und Vorschau über den Workspace, abseits des EDT; Fehler als lesbarer Grund. */
+    /**
+     * Holt Originaldatei und Vorschau über den Workspace, abseits des EDT; Fehler als lesbarer Grund. Eine Marke ohne
+     * Standbild bekommt es beim Öffnen: genau dieses wird aus dem Video gezogen und abgelegt.
+     */
     private static ReaderAttachmentLoader attachmentLoader(AppRuntime runtime, String source, String id,
-                                                           boolean previews) {
+                                                           boolean previews, VideoFrameSource video) {
         return new ReaderAttachmentLoader() {
             @Override
             public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
-                Background.run(() -> runtime.workspace().assetContent(source, id, attachment.key()).content(), done,
-                        error -> failed.accept(reason(error)));
+                Background.run(() -> {
+                    String key = attachment.key();
+                    if (video != null && com.aresstack.spaceharvester.application.assets.Assets.videoMark(key)
+                            && runtime.workspace().missingVideoFrames(source, id).contains(
+                            com.aresstack.spaceharvester.application.assets.Assets.markMillis(key))) {
+                        VideoFrameGrabber.grab(video.reader(), video.size(), video.mediaType(),
+                                List.of(com.aresstack.spaceharvester.application.assets.Assets.markMillis(key)),
+                                frame -> runtime.workspace().storeVideoFrame(source, id, frame), (d, t) -> { },
+                                () -> false);
+                    }
+                    return runtime.workspace().assetContent(source, id, key).content();
+                }, done, error -> failed.accept(reason(error)));
             }
 
             @Override
