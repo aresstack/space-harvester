@@ -205,6 +205,19 @@ class StandingTabTest {
         tab.deleteAnalysesButton().doClick();
         assertThat(fixture.status.get()).startsWith("Keine Aussagen-Analysen unter „DEV“");
 
+        // ▾ „Alles löschen“: eigene Rückfrage mit „wirklich“, danach Analysen und KI-Urteile, Meldung nennt beides.
+        List<String> asked = new ArrayList<>();
+        tab.confirmDeleteWith(question -> asked.add(question));
+        fixture.deleted = 2;
+        javax.swing.JMenuItem item = (javax.swing.JMenuItem) tab.moreDeleteMenu().getComponent(0);
+        assertThat(item.isEnabled()).isTrue();
+        item.doClick();
+        flush();
+        assertThat(asked).singleElement().asString().startsWith("Wirklich alles ").contains("KI-Urteile");
+        assertThat(fixture.everything).containsExactly(SPACE);
+        assertThat(fixture.status.get()).startsWith("2 Aussagen-Analysen gelöscht · KI-Urteile aus „Aussagen prüfen“ "
+                + "gelöscht");
+
         assertThat(StandingTab.deleteQuestion(ExportPanel.Selection.ALL))
                 .isEqualTo("Wirklich die Aussagen-Analysen aller Wissensquellen löschen? Die Seiten bleiben.");
     }
@@ -742,6 +755,7 @@ class StandingTabTest {
     private static final class Fixture {
         StatusQuoView view;
         final List<ExportPanel.Selection> deletions = new ArrayList<>();
+        final List<ExportPanel.Selection> everything = new ArrayList<>();
         final AtomicReference<Runnable> analysesListener = new AtomicReference<>();
         int deleted;
         final AtomicInteger reads = new AtomicInteger();
@@ -828,6 +842,17 @@ class StandingTabTest {
                         }
                     }
                     return count;
+                }
+
+                @Override
+                public boolean canDeleteEverything() {
+                    return true;
+                }
+
+                @Override
+                public int deleteEverything(ExportPanel.Selection selection) {
+                    everything.add(selection);
+                    return deleteAnalyses(selection);
                 }
 
                 @Override
