@@ -38,10 +38,12 @@ final class SlideChanges {
 
     /** The length of a remote MP4 file from its movie header ({@code mvhd}), or 0 if unreadable. */
     static long durationMillis(MediaStreamBridge.ChunkSource source, long length) throws IOException {
-        byte[] moov = moov(source, length);
-        if (moov == null) {
+        long[] box = moovBox(source, length);
+        if (box == null) {
             return 0;
         }
+        // The movie header comes first in the moov box: its head suffices, not the whole index.
+        byte[] moov = Mp4AudioOnlySource.fetch(source, box[0], (int) Math.min(box[1], MOVIE_HEADER_BYTES));
         int start = moov.length >= 8 && "moov".equals(new String(moov, 4, 4, StandardCharsets.ISO_8859_1)) ? 8 : 0;
         int[] mvhd = find(moov, start, moov.length, "mvhd");
         if (mvhd == null) {
@@ -54,8 +56,17 @@ final class SlideChanges {
         return timescale == 0 ? 0 : duration * 1000 / timescale;
     }
 
+    /** Enough of the moov box for its movie header ({@code mvhd}), which comes first. */
+    private static final int MOVIE_HEADER_BYTES = 512;
+
     /** The {@code moov} box of a remote MP4 file, or {@code null} if there is none near the top level. */
     private static byte[] moov(MediaStreamBridge.ChunkSource source, long length) throws IOException {
+        long[] box = moovBox(source, length);
+        return box == null ? null : Mp4AudioOnlySource.readBox(source, box[0], box[1]);
+    }
+
+    /** Offset and size of the {@code moov} box of a remote MP4 file, or {@code null}. */
+    private static long[] moovBox(MediaStreamBridge.ChunkSource source, long length) throws IOException {
         long offset = 0;
         for (int inspected = 0; offset + 8 <= length && inspected < 128; inspected++) {
             byte[] head = Mp4AudioOnlySource.fetch(source, offset, (int) Math.min(16, length - offset));
@@ -71,7 +82,7 @@ final class SlideChanges {
                 break;
             }
             if ("moov".equals(type)) {
-                return Mp4AudioOnlySource.readBox(source, offset, size);
+                return new long[] {offset, size};
             }
             offset += size;
         }

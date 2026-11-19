@@ -61,11 +61,16 @@ public final class VisionImageDescriber implements ImageDescriber {
 
     @Override
     public String describe(byte[] image, String mediaType) {
+        return describe(image, mediaType, null);
+    }
+
+    @Override
+    public String describe(byte[] image, String mediaType, String instruction) {
         AiServiceSettings current = settings.get();
         if (current == null || !current.vision()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_CONFIGURED,
                     "Kein Vision-Modell eingestellt", null);
         }
-        return RemoteAi.of(current, catalog, trustBundles, userAgent).describeImage(image, mediaType);
+        return RemoteAi.of(current, catalog, trustBundles, userAgent).describeImage(image, mediaType, instruction);
     }
 }

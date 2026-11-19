@@ -1555,9 +1555,9 @@ public final class PageDetailPanel extends JPanel {
         if (size > 0 && file.endsWith(".mp4")) {
             VideoFrameSource frames = new VideoFrameSource(source, id, ranges::read, size, mediaType);
             videoFrames = frames;
-            // Die Marken des Players sind die einzige Quelle der Folien, auch für die virtuellen Anhänge.
+            // Die Marken des Players sind die einzige Quelle der Folien; gespeichert erscheinen sie als Anhänge.
             originalVideoViewer.onSlides(changes -> slidesFound(frames, changes));
-            originalVideoViewer.findSlides();
+            showVideoMarks(originalVideoViewer, frames);
             videoTranscript.setVideoSource(new VideoTranscriptSource(size, ranges));
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
             videoTranscriptShown = true;
@@ -1671,9 +1671,6 @@ public final class PageDetailPanel extends JPanel {
         }
         originalLinkShown = false;
         videoTranscriptShown = false;
-        if (videoFrames != null && context.runtime() != null) {
-            context.runtime().workspace().videoSlides(videoFrames.sourceId(), videoFrames.pageId(), List.of());
-        }
         videoFrames = null;
         fileContent.removeAll();
         originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
@@ -2417,24 +2414,57 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Der Player hat die Marken des Videos gefunden: je Folie ein virtueller Anhang (Platzhalter, benannt nach ihrer
-     * Position), gespeichert wird davon nichts. Ohne Marken gibt es keine virtuellen Anhänge.
+     * Beim Öffnen eines Videos: gespeicherte Marken zeigt der Player sofort; sonst sucht er sie im Video
+     * ({@link #slidesFound} speichert sie dann).
+     */
+    private void showVideoMarks(VideoViewerPanel viewer, VideoFrameSource video) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().videoMarks(video.sourceId(), video.pageId()), marks -> {
+            if (viewer != originalVideoViewer) {
+                return;
+            }
+            if (marks.isEmpty()) {
+                viewer.findSlides();
+            } else {
+                viewer.showMarks(marks);
+            }
+        }, error -> {
+            if (viewer == originalVideoViewer) {
+                viewer.findSlides();
+            }
+        });
+    }
+
+    /**
+     * Der Player hat die Marken des Videos gefunden: gespeichert erscheinen sie als virtuelle Anhänge (benannt nach
+     * ihrer Position), deren Standbilder „Anhänge“ zieht. Ohne Marken gibt es keine virtuellen Anhänge.
      */
     private void slidesFound(VideoFrameSource video, List<Long> changes) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || video != videoFrames || changes.isEmpty()) {
             return;
         }
-        runtime.workspace().videoSlides(video.sourceId(), video.pageId(), VideoFrameGrabber.slides(changes,
-                com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES));
-        attachmentsChanged(video);
+        List<Long> marks = changes.size() > com.aresstack.spaceharvester.application.images.PageImageAnalysis
+                .MAX_VIDEO_FRAMES ? changes.subList(0,
+                com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES) : changes;
+        Background.run(() -> {
+            runtime.workspace().saveVideoMarks(video.sourceId(), video.pageId(), marks);
+            return marks.size();
+        }, saved -> attachmentsChanged(video), error -> {
+            if (video == videoFrames) {
+                feedback.problem(error, Problems.Step.PAGE);
+            }
+        });
     }
 
     /** Ob gerade Standbilder für die Platzhalter gezogen werden. */
     private boolean fillingFrames;
 
     /**
-     * Unter „Anhänge“: die Platzhalter des gezeigten Videos mit Standbildern füllen, Bild für Bild im Hintergrund; die
+     * Unter „Anhänge“: die Marken des gezeigten Videos mit Standbildern füllen, Bild für Bild im Hintergrund; die
      * Liste zeigt sie nach und nach. Erst hier entstehen die Bilder.
      */
     private void fillVideoFrames() {
@@ -3322,6 +3352,7 @@ public final class PageDetailPanel extends JPanel {
                     case DIAGRAM -> "draw.io-Diagramm";
                     case VECTOR -> "SVG";
                     case IMAGE -> "Bild";
+                    case MARK -> "Marke";
                     case OTHER -> "Datei";
                 };
                 case 2 -> entry.attachment().fileSize() == null ? "–" : Texts.bytes(entry.attachment().fileSize());

@@ -931,10 +931,12 @@ public class Assets implements DocumentInventory {
         return source(sourceId).viewImages(pageId);
     }
 
-    /** Präfix der virtuellen Anhänge, die die Folien eines Videos zeigen. */
-    public static final String VIDEO_FRAME = "video-frame-";
+    /** Präfix der virtuellen Anhänge, die die Marken eines Videos zeigen, und ihrer Standbilder in der Ablage. */
+    public static final String VIDEO_MARK = "video-mark-";
+    /** Medientyp der virtuellen Anhänge einer Marke ({@link AssetKind#MARK}). */
+    public static final String VIDEO_MARK_MEDIA_TYPE = AssetKind.MARK_MEDIA_TYPE;
 
-    /** Das Standbild der Folie, die im Video an {@code millis} beginnt, als PNG. */
+    /** Das Standbild der Marke an {@code millis} als PNG. */
     public record VideoFrame(long millis, byte[] png) {
 
         public VideoFrame {
@@ -945,34 +947,38 @@ public class Assets implements DocumentInventory {
     }
 
     /**
-     * Legt das Standbild einer Folie ab; es füllt ihren virtuellen Anhang ({@link #withVideoFrames}), und die
-     * Bildanalyse (ADR 0021) beschreibt es ({@link #videoFrames}). Das Recht auf die Seite prüft der Aufrufer.
+     * Legt das Standbild einer Marke ab; es füllt ihren virtuellen Anhang ({@link #withVideoMarks}) und macht sie für
+     * die Bildanalyse beschreibbar ({@link #videoFrame}). Das Recht auf die Seite prüft der Aufrufer.
      */
     public void putVideoFrame(String sourceId, String pageId, String version, VideoFrame frame) {
-        store.put(new Asset(sourceId, pageId, frameId(pageId, frame.millis()), frameVersion(version),
+        store.put(new Asset(sourceId, pageId, markId(pageId, frame.millis()), frameVersion(version),
                 frameName(frame.millis()), "image/png", AssetKind.IMAGE, frame.png().length, sha256(frame.png()),
                 clock.instant()), frame.png());
     }
 
+    /** Das abgelegte Standbild einer Marke dieser Fassung; leer, solange es nicht gezogen ist. */
+    public Optional<AssetContent> videoFrame(String sourceId, String pageId, String version, long millis) {
+        return store.find(sourceId, markId(pageId, millis), frameVersion(version)).map(this::read);
+    }
+
     /**
-     * Die Anhangsliste einer Seite samt einem virtuellen Anhang je Folie ihres Videos, benannt nach ihrer Position
-     * ({@link #frameName}): mit abgelegtem Standbild samt Größe, sonst als Platzhalter ohne Größe. Die Folien kennt nur
-     * der Player (seine Marken); gespeichert wird von ihnen nichts.
+     * Die Anhangsliste einer Seite samt einem virtuellen Anhang je Marke ihres Videos ({@link AssetKind#MARK}),
+     * benannt nach ihrer Position ({@link #markTitle}); mit gezogenem Standbild samt dessen Größe, sonst ohne.
      *
-     * @param slides Beginn jeder Folie in Millisekunden; leer: keine virtuellen Anhänge
+     * @param marks die Marken des Videos in Millisekunden; leer: keine virtuellen Anhänge
      */
-    public PageAttachmentList withVideoFrames(PageAttachmentList list, String version, List<Long> slides) {
-        if (slides.isEmpty()) {
+    public PageAttachmentList withVideoMarks(PageAttachmentList list, String version, List<Long> marks) {
+        if (marks.isEmpty()) {
             return list;
         }
         String pageId = list.attachments().pageId();
         List<PageAttachment> attachments = new java.util.ArrayList<>(list.attachments().attachments());
-        for (long millis : slides) {
-            String id = frameId(pageId, millis);
-            Optional<Asset> asset = store.find(list.sourceId(), id, frameVersion(version));
-            attachments.add(new PageAttachment(id, id, frameName(millis), "image/png",
-                    asset.map(Asset::size).orElse(null), frameVersion(version),
-                    asset.map(Asset::retrievedAt).orElse(null), null));
+        for (long millis : marks) {
+            String id = markId(pageId, millis);
+            Optional<Asset> frame = store.find(list.sourceId(), id, frameVersion(version));
+            attachments.add(new PageAttachment(id, id, markTitle(millis), VIDEO_MARK_MEDIA_TYPE,
+                    frame.map(Asset::size).orElse(null), frameVersion(version),
+                    frame.map(Asset::retrievedAt).orElse(null), null));
         }
         PageAttachments source = list.attachments();
         return new PageAttachmentList(list.sourceId(), list.spaceKey(), new PageAttachments(source.pageId(),
@@ -980,54 +986,41 @@ public class Assets implements DocumentInventory {
                 source.retrievedAt()), list.retrievedAt());
     }
 
-    /** Die Folien, deren Standbild in dieser Fassung noch nicht abgelegt ist. */
-    public List<Long> missingVideoFrames(String sourceId, String pageId, String version, List<Long> slides) {
-        return slides.stream().filter(millis -> store.find(sourceId, frameId(pageId, millis), frameVersion(version))
+    /** Die Marken, deren Standbild in dieser Fassung noch nicht gezogen ist. */
+    public List<Long> missingVideoFrames(String sourceId, String pageId, String version, List<Long> marks) {
+        return marks.stream().filter(millis -> store.find(sourceId, markId(pageId, millis), frameVersion(version))
                 .isEmpty()).toList();
     }
 
-    /** Die abgelegten Standbilder der Folien dieser Fassung eines Videos, in zeitlicher Reihenfolge. */
-    private List<Asset> storedFrames(String sourceId, String pageId, String version) {
-        String prefix = VIDEO_FRAME + framePage(pageId) + "-";
-        String at = frameVersion(version);
-        try (java.util.stream.Stream<Asset> entries = store.entries(sourceId)) {
-            return entries.filter(asset -> asset.attachmentId().startsWith(prefix) && at.equals(asset.version()))
-                    .sorted(java.util.Comparator.comparingLong(asset ->
-                            Long.parseLong(asset.attachmentId().substring(prefix.length()))))
-                    .toList();
-        }
-    }
-
     /**
-     * Die abgelegten Standbilder eines Videos in dieser Fassung als Bilder der Seite, in zeitlicher Reihenfolge; nur
-     * gefüllte Platzhalter. Liest nie von der Quelle.
+     * Der Bezug der Bildanalyse für ein Video ohne Text: Fassung, Marken und ihre gezogenen Standbilder. Jede neue
+     * Marke und jedes neue Standbild machen das Ergebnis veraltet; leer ohne Standbilder.
      */
-    public List<HarvestSource.ViewImage> videoFrames(String sourceId, String pageId, String version) {
-        return storedFrames(sourceId, pageId, version).stream().map(frame -> new HarvestSource.ViewImage(
-                frame.title(), frame.title(), frame.attachmentId(), "image/png", frame.version())).toList();
-    }
-
-    /**
-     * Der Bezug der Bildanalyse für ein Video ohne Text: Fassung und abgelegte Standbilder. Jedes neue Standbild macht
-     * das Ergebnis veraltet; leer ohne Standbilder.
-     */
-    public Optional<String> videoFramesInput(String sourceId, String pageId, String version) {
-        List<Asset> frames = storedFrames(sourceId, pageId, version);
-        if (frames.isEmpty()) {
-            return Optional.empty();
-        }
+    public Optional<String> videoMarksInput(String sourceId, String pageId, String version, List<Long> marks) {
         StringBuilder input = new StringBuilder(frameVersion(version));
-        frames.forEach(frame -> input.append('\n').append(frame.attachmentId()).append(' ').append(frame.sha256()));
-        return Optional.of(sha256(input.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        boolean any = false;
+        for (long millis : marks) {
+            Optional<Asset> frame = store.find(sourceId, markId(pageId, millis), frameVersion(version));
+            input.append('\n').append(millis).append(' ').append(frame.map(Asset::sha256).orElse("-"));
+            any |= frame.isPresent();
+        }
+        return any ? Optional.of(sha256(input.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                : Optional.empty();
     }
 
-    /** Ob ein Anhang ein Standbild eines Videos ist; es liegt nur in der Ablage, nie bei der Quelle. */
-    public static boolean videoFrame(String attachmentId) {
-        return attachmentId != null && attachmentId.startsWith(VIDEO_FRAME);
+    /** Ob ein Anhang eine Marke eines Videos ist; sie liegt nur in der Ablage, nie bei der Quelle. */
+    public static boolean videoMark(String attachmentId) {
+        return attachmentId != null && attachmentId.startsWith(VIDEO_MARK);
     }
 
-    private static String frameId(String pageId, long millis) {
-        return VIDEO_FRAME + framePage(pageId) + "-" + millis;
+    private static String markId(String pageId, long millis) {
+        return VIDEO_MARK + framePage(pageId) + "-" + millis;
+    }
+
+    /** Die Position einer Marke im Video, etwa {@code 00:03:12}. */
+    public static String markTitle(long millis) {
+        long seconds = millis / 1000;
+        return String.format(Locale.ROOT, "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60);
     }
 
     /** Die Fassung des Videos; eine Quelle ohne Fassung legt seine Standbilder unter einer festen ab. */
@@ -1041,7 +1034,7 @@ public class Assets implements DocumentInventory {
                 "sha256:".length() + 16);
     }
 
-    /** Der Dateiname eines Standbilds nach der Position seiner Folie im Video, etwa {@code 00-03-12.png}. */
+    /** Der Dateiname des Standbilds einer Marke nach ihrer Position im Video, etwa {@code 00-03-12.png}. */
     static String frameName(long millis) {
         long seconds = millis / 1000;
         return String.format(Locale.ROOT, "%02d-%02d-%02d.png", seconds / 3600, seconds / 60 % 60, seconds % 60);
@@ -2253,13 +2246,44 @@ public class Assets implements DocumentInventory {
         return describer == null || !describer.available() ? Optional.empty() : Optional.of(describer);
     }
 
+    /**
+     * Beschreibt etwas Beschreibbares ({@link Describable}) mit dem eingestellten Modell und seinem eigenen Prompt, je
+     * Bildbytes, Modell und Prompt nur einmal. Nur Rasterbilder.
+     *
+     * @param releasedOnce ob der Benutzer es für genau diese Seite einer nicht freigegebenen Quelle erlaubt hat
+     * @throws ImageDescriptionException wie {@link #describeViewImage}
+     */
+    public DescribedImage describe(PageKey page, Describable item, boolean releasedOnce) {
+        ImageDescriber model = releasedOnce ? describer() : describer(page);
+        AssetContent content = item.content();
+        if (content.asset().kind() != AssetKind.IMAGE) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_AN_IMAGE, "Kein Rasterbild",
+                    null);
+        }
+        return describe(model, content, item.instruction());
+    }
+
     private DescribedImage describe(ImageDescriber model, AssetContent content) {
+        return describe(model, content, null);
+    }
+
+    /**
+     * Die Kennung des Beschreibers für die Ablage der Beschreibungen: mit eigenem Prompt samt dessen Hash, damit ein
+     * Bild unter verschiedenen Prompts verschiedene Beschreibungen hat; mit dem Standard-Prompt wie bisher.
+     */
+    static String describerKey(ImageDescriber model, String instruction) {
+        return instruction == null ? model.id() : model.id() + "#"
+                + sha256(instruction.getBytes(java.nio.charset.StandardCharsets.UTF_8)).substring(7, 19);
+    }
+
+    private DescribedImage describe(ImageDescriber model, AssetContent content, String instruction) {
         Asset asset = content.asset();
-        Optional<ImageDescription> existing = store.description(asset.sha256(), model.id(), model.modelVersion());
+        String describer = describerKey(model, instruction);
+        Optional<ImageDescription> existing = store.description(asset.sha256(), describer, model.modelVersion());
         if (existing.isPresent()) {
             return new DescribedImage(asset, existing.get(), false);
         }
-        String key = asset.sha256() + '\n' + model.id() + '\n' + model.modelVersion();
+        String key = asset.sha256() + '\n' + describer + '\n' + model.modelVersion();
         CompletableFuture<ImageDescription> mine = new CompletableFuture<>();
         CompletableFuture<ImageDescription> running = describing.putIfAbsent(key, mine);
         if (running != null) {
@@ -2267,12 +2291,12 @@ public class Assets implements DocumentInventory {
         }
         try {
             // Ein eben beendeter Lauf hat die Beschreibung womöglich zwischen Prüfung und Anmeldung abgelegt.
-            existing = store.description(asset.sha256(), model.id(), model.modelVersion());
+            existing = store.description(asset.sha256(), describer, model.modelVersion());
             if (existing.isPresent()) {
                 mine.complete(existing.get());
                 return new DescribedImage(asset, existing.get(), false);
             }
-            ImageDescription description = generate(model, content);
+            ImageDescription description = generate(model, content, instruction);
             mine.complete(description);
             return new DescribedImage(asset, description, true);
         } catch (RuntimeException e) {
@@ -2291,20 +2315,20 @@ public class Assets implements DocumentInventory {
         return described;
     }
 
-    private ImageDescription generate(ImageDescriber model, AssetContent content) {
+    private ImageDescription generate(ImageDescriber model, AssetContent content, String instruction) {
         try (LargeFileGate.Permit permit = gate.enter(content.asset().sourceId(), content.asset().size())) {
-            return generateGated(model, content);
+            return generateGated(model, content, instruction);
         }
     }
 
-    private ImageDescription generateGated(ImageDescriber model, AssetContent content) {
+    private ImageDescription generateGated(ImageDescriber model, AssetContent content, String instruction) {
         if (!descriptions.tryAcquire()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.BUSY,
                     "Zu viele gleichzeitige Bildbeschreibungen", null);
         }
         String text;
         try {
-            text = model.describe(content.content(), content.asset().mediaType());
+            text = model.describe(content.content(), content.asset().mediaType(), instruction);
         } catch (ImageDescriptionException e) {
             throw e;
         } catch (RuntimeException e) {
@@ -2316,8 +2340,8 @@ public class Assets implements DocumentInventory {
         if (text == null || text.isBlank()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Leere Beschreibung", null);
         }
-        ImageDescription description = new ImageDescription(content.asset().sha256(), model.id(),
-                model.modelVersion(), text.strip(), clock.instant());
+        ImageDescription description = new ImageDescription(content.asset().sha256(),
+                describerKey(model, instruction), model.modelVersion(), text.strip(), clock.instant());
         store.putDescription(description);
         return description;
     }
@@ -2411,10 +2435,10 @@ public class Assets implements DocumentInventory {
      */
     private Downloaded download(HarvestSource source, String pageId, PageAttachment attachment, boolean keep,
                                 boolean bytes, Path staging) {
-        if (videoFrame(attachment.attachmentId())) {
-            // Ein Platzhalter einer Folie: Das Standbild entsteht beim Abspielen, die Quelle kennt es nicht.
+        if (videoMark(attachment.attachmentId())) {
+            // Eine Marke ohne Standbild: Es entsteht unter „Anhänge“, die Quelle kennt es nicht.
             throw new SourceAccessException(source.id(), SourceAccessException.Reason.NOT_FOUND,
-                    "Standbild der Folie noch nicht gezogen", null);
+                    "Standbild der Marke noch nicht gezogen", null);
         }
         // Große Dateien zusätzlich unter der gemeinsamen Schranke, bis Typerkennung, Hash und Ablegen fertig sind.
         try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {

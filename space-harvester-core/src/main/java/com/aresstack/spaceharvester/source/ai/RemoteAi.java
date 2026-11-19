@@ -392,6 +392,29 @@ public final class RemoteAi {
      * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Vision-Modell
      */
     public String describeImage(byte[] image, String mediaType) {
+        return describeImage(image, mediaType, null);
+    }
+
+    /**
+     * Wie {@link #describeImage(byte[], String)} mit eigenem Prompt eines Beschreibbaren (etwa einer Marke eines
+     * Videos): Bild und Prompt gehen als eine Nachricht an das Vision-Modell. {@code null} ist der Prompt der
+     * Bildbeschreibung des Enterprise AI Client.
+     */
+    public String describeImage(byte[] image, String mediaType, String instruction) {
+        if (instruction != null) {
+            if (!settings.vision()) {
+                throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED,
+                        "KI-Dienst oder Vision-Modell fehlt");
+            }
+            ChatCompletionPort adapter = chatPort(settings.visionModel(), timeoutMillis());
+            try {
+                return adapter.complete(new ChatRequest(List.of(ChatMessage.userWithImages(instruction,
+                        List.of(new com.aresstack.enterpriseai.astu.chat.ChatImage(mediaType, image)))),
+                        ChatOptions.builder().model(settings.visionModel()).build())).content();
+            } catch (ChatCompletionException e) {
+                throw chatFailure(e);
+            }
+        }
         if (!settings.vision()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Vision-Modell fehlt");
         }

@@ -43,6 +43,8 @@ public class Enrichments {
      * Ablage ab. Sie ist kein Prozessor, erscheint nie in {@link #view} und wird mit der Seite entfernt.
      */
     public static final String READING_VIEW = "reading-view";
+    /** Die Marken eines Videos, wie der Player sie gefunden hat ({@code VideoMarks}); kein Analyseergebnis. */
+    public static final String VIDEO_MARKS = "video-marks";
 
     /**
      * Vorbehaltene Prozessor-ID: unter ihr legt ein Import die Bilder und Anhänge einer Seite ab, die sein Paket
@@ -386,6 +388,7 @@ public class Enrichments {
         List<View> views = new ArrayList<>();
         for (Enrichment enrichment : store.find(snapshot.key())) {
             if (READING_VIEW.equals(enrichment.processorId()) || IMPORTED_ASSETS.equals(enrichment.processorId())
+                    || VIDEO_MARKS.equals(enrichment.processorId())
                     || SIMPLIFICATIONS.equals(enrichment.processorId())
                     || STATEMENT_CHECKS.equals(enrichment.processorId())) {
                 // Rechte für eingebundene Inhalte prüft nur die Lese-Ansicht selbst; mitgebrachte Bilder gehören zum

@@ -575,10 +575,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                 }
                 try {
                     SlideIndex index = get();
-                    transport.slides(index.changes());
-                    if (!started && index.durationMillis() > 0) {
-                        transport.seekBar().update(0, index.durationMillis());
-                    }
+                    marks(index.changes(), index.durationMillis());
                     onSlides.accept(index.changes());
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
@@ -588,6 +585,46 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             }
         };
         slideDetection.execute();
+    }
+
+    /**
+     * Show marks that are already known (stored when they were found) instead of {@link #findSlides}: the index is not
+     * read again, only the movie header for the length that places the marks.
+     */
+    public void showMarks(java.util.List<Long> changes) {
+        if (closed || changes.isEmpty()) {
+            return;
+        }
+        slideDetection = new SwingWorker<SlideIndex, Void>() {
+            @Override
+            protected SlideIndex doInBackground() throws IOException {
+                return new SlideIndex(changes, SlideChanges.durationMillis(reader, fileSize));
+            }
+
+            @Override
+            protected void done() {
+                if (closed || isCancelled()) {
+                    return;
+                }
+                try {
+                    marks(changes, get().durationMillis());
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException unavailable) {
+                    // Without a readable header the marks appear once playback reports the length.
+                    marks(changes, 0);
+                }
+            }
+        };
+        slideDetection.execute();
+    }
+
+    /** The marks on the timeline; with a known length they are placed before anything is played. */
+    private void marks(java.util.List<Long> changes, long durationMillis) {
+        transport.slides(changes);
+        if (!started && durationMillis > 0) {
+            transport.seekBar().update(0, durationMillis);
+        }
     }
 
     /** Whoever wants the slide changes once they are found, e.g. for one virtual attachment per slide. */

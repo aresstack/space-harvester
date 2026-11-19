@@ -17,6 +17,14 @@ public interface ImageDescriber {
     String describe(byte[] image, String mediaType);
 
     /**
+     * Wie {@link #describe(byte[], String)} mit dem Prompt des Beschreibbaren ({@code Describable#instruction()});
+     * {@code null} ist der Standard-Prompt. Ohne eigene Umsetzung gilt der Standard-Prompt.
+     */
+    default String describe(byte[] image, String mediaType, String instruction) {
+        return describe(image, mediaType);
+    }
+
+    /**
      * Ob gerade ein Modell eingestellt ist (ADR 0021): Ein Beschreiber, der der Konfiguration zur Laufzeit folgt, gibt
      * es auch ohne Modell; dann beschreibt er nichts, und {@link #modelVersion()} hat keine Bedeutung.
      */

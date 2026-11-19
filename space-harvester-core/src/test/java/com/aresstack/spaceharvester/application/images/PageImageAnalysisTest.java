@@ -361,63 +361,52 @@ class PageImageAnalysisTest {
     }
 
     @Test
-    void theStoredFramesOfAVideoAreItsImages() {
+    void theMarksOfAVideoAreVirtualAttachmentsAndDescribedWithTheirOwnPrompt() {
         byte[] second = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 4, 5};
         Assets assets = assets();
-        // Ein zweites Video derselben Quelle mit eigenen Standbildern: Anhangs-IDs gelten je Quelle.
-        assets.putVideoFrame("wiki", "2", "3", new Assets.VideoFrame(2_000, second));
-        assets.putVideoFrame("wiki", "1", "3", new Assets.VideoFrame(2_000, PNG));
-        assets.putVideoFrame("wiki", "1", "3", new Assets.VideoFrame(301_300, second));
-        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments(), Clock.fixed(NOW, ZoneOffset.UTC));
-
-        assertThat(analysis.read(page("1", "")).reason()).isEqualTo(PageImages.NOT_ANALYSED);
-        PageImages images = analysis.describe(page("1", ""));
-
-        assertThat(images.state()).isEqualTo(PageImages.State.CURRENT);
-        assertThat(analysis.read(page("1", "")).state()).as("ohne Text, mit Standbildern").isEqualTo(
-                PageImages.State.CURRENT);
-        assertThat(images.images()).extracting(ImagePayload.Entry::title, ImagePayload.Entry::status,
-                ImagePayload.Entry::description).containsExactly(
-                org.assertj.core.groups.Tuple.tuple("00-00-02.png", ImageStatus.DESCRIBED, "Ein Bild mit 11 Bytes"),
-                org.assertj.core.groups.Tuple.tuple("00-05-01.png", ImageStatus.DESCRIBED, "Ein Bild mit 10 Bytes"));
-        assertThat(source.loads).as("die Bytes liegen in der Ablage").isZero();
-        assertThat(assets.videoFrames("wiki", "1", "4")).as("eine neue Fassung braucht neue Standbilder").isEmpty();
-        assertThat(assets.videoFrames("wiki", "2", "3")).hasSize(1);
-        // Ein weiteres Standbild: das Ergebnis gilt nicht mehr.
-        assets.putVideoFrame("wiki", "1", "3", new Assets.VideoFrame(400_000, PNG));
-        assertThat(analysis.read(page("1", "")).state()).isEqualTo(PageImages.State.STALE);
-        assertThat(analysis.describe(page("3", "")).reason()).as("weder Text noch Standbilder")
-                .isEqualTo(PageImages.NO_TEXT);
-    }
-
-    @Test
-    void theMarksOfAVideoAreVirtualAttachmentsFilledByTheirFrames() {
-        Assets assets = assets();
+        Enrichments enrichments = enrichments();
+        PageKey video = new PageKey("wiki", "1");
+        List<Long> marks = List.of(2_000L, 301_300L, 3_725_000L);
+        com.aresstack.spaceharvester.application.marks.VideoMarks.in(store).save(video, "3", marks);
         com.aresstack.spaceharvester.application.sources.PageAttachmentList none =
                 new com.aresstack.spaceharvester.application.sources.PageAttachmentList("wiki", "S",
                         source.attachments("1"), NOW);
-        List<Long> slides = List.of(0L, 192_000L, 3_725_000L);
 
-        assertThat(assets.withVideoFrames(none, "3", List.of())).as("ohne Marken keine virtuellen Anhänge")
+        // Unter „Anhänge“: je Marke ein virtueller Anhang der Art Marke, ohne Standbild noch ohne Größe.
+        assertThat(assets.withVideoMarks(none, "3", List.of())).as("ohne Marken keine virtuellen Anhänge")
                 .isSameAs(none);
-        assertThat(assets.withVideoFrames(none, "3", slides).attachments().attachments())
+        assertThat(assets.withVideoMarks(none, "3", marks).attachments().attachments())
                 .extracting(PageAttachment::title, PageAttachment::fileSize).containsExactly(
-                        org.assertj.core.groups.Tuple.tuple("00-00-00.png", null),
-                        org.assertj.core.groups.Tuple.tuple("00-03-12.png", null),
-                        org.assertj.core.groups.Tuple.tuple("01-02-05.png", null));
-        String placeholder = assets.withVideoFrames(none, "3", slides).attachments().attachments().get(1)
-                .attachmentId();
-        assertThatThrownBy(() -> assets.content(assets.withVideoFrames(none, "3", slides), placeholder, false))
+                        org.assertj.core.groups.Tuple.tuple("00:00:02", null),
+                        org.assertj.core.groups.Tuple.tuple("00:05:01", null),
+                        org.assertj.core.groups.Tuple.tuple("01:02:05", null));
+        assertThat(com.aresstack.spaceharvester.application.assets.AssetKind.of(
+                assets.withVideoMarks(none, "3", marks).attachments().attachments().get(0).mediaType(), "00:00:02"))
+                .isEqualTo(com.aresstack.spaceharvester.application.assets.AssetKind.MARK);
+        String mark = assets.withVideoMarks(none, "3", marks).attachments().attachments().get(1).attachmentId();
+        assertThatThrownBy(() -> assets.content(assets.withVideoMarks(none, "3", marks), mark, false))
                 .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceAccessException.class);
-        assertThat(source.loads).as("die Quelle kennt die Standbilder nicht").isZero();
 
-        assets.putVideoFrame("wiki", "1", "3", new Assets.VideoFrame(192_000, PNG));
+        assets.putVideoFrame("wiki", "1", "3", new Assets.VideoFrame(2_000, PNG));
+        assets.putVideoFrame("wiki", "1", "3", new Assets.VideoFrame(301_300, second));
 
-        assertThat(assets.missingVideoFrames("wiki", "1", "3", slides)).containsExactly(0L, 3_725_000L);
-        assertThat(assets.withVideoFrames(none, "3", slides).attachments().attachments().get(1).fileSize())
-                .isEqualTo((long) PNG.length);
-        assertThat(assets.content(assets.withVideoFrames(none, "3", slides), placeholder, false).content())
-                .isEqualTo(PNG);
+        assertThat(assets.missingVideoFrames("wiki", "1", "3", marks)).containsExactly(3_725_000L);
+        assertThat(assets.content(assets.withVideoMarks(none, "3", marks), mark, false).content()).isEqualTo(second);
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments, Clock.fixed(NOW, ZoneOffset.UTC));
+        PageImages images = analysis.describe(page("1", ""));
+
+        assertThat(images.state()).isEqualTo(PageImages.State.CURRENT);
+        assertThat(images.images()).extracting(ImagePayload.Entry::title, ImagePayload.Entry::status)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("00:00:02", ImageStatus.DESCRIBED),
+                        org.assertj.core.groups.Tuple.tuple("00:05:01", ImageStatus.DESCRIBED));
+        assertThat(describer.instructions).as("der Prompt der Marke")
+                .containsOnly(com.aresstack.spaceharvester.application.marks.VideoMark.INSTRUCTION);
+        assertThat(source.loads).as("die Bytes liegen in der Ablage").isZero();
+        // Das dritte Standbild: das Ergebnis gilt nicht mehr.
+        assets.putVideoFrame("wiki", "1", "3", new Assets.VideoFrame(3_725_000, PNG));
+        assertThat(analysis.read(page("1", "")).state()).isEqualTo(PageImages.State.STALE);
+        assertThat(analysis.describe(page("3", "")).reason()).as("weder Text noch Marken")
+                .isEqualTo(PageImages.NO_TEXT);
     }
 
     @Test
@@ -489,6 +478,14 @@ class PageImageAnalysisTest {
         @Override
         public String modelVersion() {
             return model;
+        }
+
+        final List<String> instructions = new ArrayList<>();
+
+        @Override
+        public String describe(byte[] image, String mediaType, String instruction) {
+            instructions.add(instruction);
+            return describe(image, mediaType);
         }
 
         @Override
