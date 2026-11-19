@@ -1,6 +1,6 @@
 package com.aresstack.spaceharvester.app.transcription;
 
-/** Represent one coarse, thirty-second Whisper recognition segment. */
+/** Represent one committed Whisper window of at most thirty seconds, starting at its first segment. */
 public final class TranscriptSegment {
 
     private final long startMillis;

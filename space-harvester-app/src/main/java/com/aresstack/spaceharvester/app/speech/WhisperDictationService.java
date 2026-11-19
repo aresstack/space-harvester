@@ -6,10 +6,11 @@ import com.aresstack.windirectml.whisper.audio.AskAiWhisperPipeline;
 
 import java.io.IOException;
 
-/** Apply the published Ask AI PCM/VAD pipeline to the bundled local Whisper checkpoint. */
+/**
+ * Transcribe dictation with the published Ask AI pipeline: 80-Hz high-pass and VAD, then the
+ * guarded Whisper decoder with 30-second windows, using the bundled local checkpoint.
+ */
 final class WhisperDictationService {
-    private static final int MAXIMUM_TOKENS_PER_WINDOW = 256;
-
     private final AskAiWhisperPipeline audioPipeline = new AskAiWhisperPipeline();
     private WhisperTranscriber transcriber;
 
@@ -17,6 +18,6 @@ final class WhisperDictationService {
         if (transcriber == null) {
             transcriber = new WhisperTranscriber(WhisperModelLocation.resolve());
         }
-        return audioPipeline.transcribePlain(speech, transcriber, MAXIMUM_TOKENS_PER_WINDOW);
+        return audioPipeline.transcribePlain(speech, transcriber);
     }
 }

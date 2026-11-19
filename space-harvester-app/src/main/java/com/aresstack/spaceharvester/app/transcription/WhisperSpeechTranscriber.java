@@ -1,44 +1,55 @@
 package com.aresstack.spaceharvester.app.transcription;
 
+import com.aresstack.windirectml.inference.whisper.TranscriptionResult;
+import com.aresstack.windirectml.inference.whisper.TranscriptionSegment;
 import com.aresstack.windirectml.inference.whisper.WhisperTranscriber;
+import com.aresstack.windirectml.whisper.audio.AskAiWhisperPipeline;
 
-import java.io.BufferedInputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
-/** Apply the published Whisper engine to bounded, thirty-second windows of 16-kHz mono PCM. */
+/**
+ * Transcribe 16-kHz mono PCM with the published Ask AI pipeline: 80-Hz high-pass, VAD and the
+ * guarded Whisper decoder, which joins windows of at most thirty seconds at segment boundaries.
+ */
 public final class WhisperSpeechTranscriber implements SpeechTranscriber {
-
-    private static final int SAMPLE_RATE = 16_000;
-    private static final int SAMPLES_PER_WINDOW = SAMPLE_RATE * 30;
-    private static final int MAXIMUM_TOKENS = 256;
 
     @Override
     public void transcribe(Path pcmFile, Path modelDirectory, BooleanSupplier cancelled,
                            Consumer<TranscriptSegment> onSegment) throws Exception {
         requireModel(modelDirectory);
         WhisperTranscriber whisper = new WhisperTranscriber(modelDirectory);
-        byte[] pcm = new byte[SAMPLES_PER_WINDOW * 2];
-        long sampleOffset = 0;
-        try (InputStream source = new BufferedInputStream(Files.newInputStream(pcmFile))) {
-            int bytesRead;
-            while (!cancelled.getAsBoolean() && (bytesRead = fill(source, pcm)) > 0) {
-                if (Thread.currentThread().isInterrupted()) {
-                    return;
-                }
-                float[] samples = decode16BitMono(pcm, bytesRead);
-                String recognized = whisper.transcribe(samples, MAXIMUM_TOKENS);
-                if (recognized != null && !recognized.trim().isEmpty()) {
-                    onSegment.accept(new TranscriptSegment(
-                            sampleOffset * 1000 / SAMPLE_RATE, recognized.trim()));
-                }
-                sampleOffset += samples.length;
-            }
+        long[] lastPosition = {0};
+        try (PcmFileAudioSource source = new PcmFileAudioSource(pcmFile, cancelled)) {
+            new AskAiWhisperPipeline().transcribe(source, whisper,
+                    window -> publish(window, lastPosition, onSegment));
+        } catch (CancellationException | InterruptedIOException stopped) {
+            // Cancelled by the user; segments recognized so far have already been published.
         }
+    }
+
+    /**
+     * Publish each committed window at the start of its first model-confirmed segment;
+     * a window without timestamps follows the end of the previous one.
+     */
+    private static void publish(TranscriptionResult window, long[] lastPosition,
+                                Consumer<TranscriptSegment> onSegment) {
+        String text = window.getText().trim();
+        if (text.isEmpty()) {
+            return;
+        }
+        List<TranscriptionSegment> segments = window.getSegments();
+        long start = segments.isEmpty() ? lastPosition[0] : segments.get(0).getStartMillis();
+        if (!segments.isEmpty()) {
+            lastPosition[0] = segments.get(segments.size() - 1).getEndMillis();
+        }
+        onSegment.accept(new TranscriptSegment(start, text));
     }
 
     public static boolean isModelAvailable(Path modelDirectory) {
@@ -61,21 +72,6 @@ public final class WhisperSpeechTranscriber implements SpeechTranscriber {
             audio[i] = sample / 32768.0f;
         }
         return audio;
-    }
-
-    private static int fill(InputStream input, byte[] target) throws IOException {
-        int total = 0;
-        while (total < target.length) {
-            int received = input.read(target, total, target.length - total);
-            if (received < 0) {
-                break;
-            }
-            if (received == 0) {
-                continue;
-            }
-            total += received;
-        }
-        return total;
     }
 
     private static void requireModel(Path modelDirectory) throws IOException {
