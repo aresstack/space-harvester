@@ -46,7 +46,24 @@ public final class TranscribeAudioUseCase {
     public void execute(URI audioOnlySource, Path modelDirectory, BooleanSupplier cancelled,
                         Consumer<TranscriptSegment> onSegment, TranscriptionStatusListener status)
             throws Exception {
+        execute(audioOnlySource, 0, 0, modelDirectory, cancelled, onSegment, status);
+    }
+
+    /**
+     * Like {@link #execute(URI, Path, BooleanSupplier, Consumer, TranscriptionStatusListener)}, but resuming at
+     * {@code resumeMillis}, where a stopped transcription ended. The audio of the source begins at
+     * {@code sourceStartMillis} (at or before the resume point, a chunk start); the decoded PCM up to the resume point
+     * is dropped sample for sample, and every window carries its time in the whole video.
+     */
+    public void execute(URI audioOnlySource, long sourceStartMillis, long resumeMillis, Path modelDirectory,
+                        BooleanSupplier cancelled, Consumer<TranscriptSegment> onSegment,
+                        TranscriptionStatusListener status) throws Exception {
         Objects.requireNonNull(audioOnlySource, "audioOnlySource");
+        if (sourceStartMillis < 0 || resumeMillis < sourceStartMillis) {
+            throw new IllegalArgumentException("The source must start at or before the resume point");
+        }
+        // 16 kHz mono S16LE: 32 bytes per millisecond.
+        long skipBytes = (resumeMillis - sourceStartMillis) * 32;
         Objects.requireNonNull(modelDirectory, "modelDirectory");
         Objects.requireNonNull(cancelled, "cancelled");
         Objects.requireNonNull(onSegment, "onSegment");
@@ -60,7 +77,8 @@ public final class TranscribeAudioUseCase {
         try (PcmSpool spool = new PcmSpool()) {
             Thread decoding = new Thread(() -> {
                 try {
-                    decoder.decode(audioOnlySource, stopped, spool, status::onDecodedSeconds);
+                    decoder.decode(audioOnlySource, stopped, skipping(spool, skipBytes),
+                            seconds -> status.onDecodedSeconds(sourceStartMillis / 1000 + seconds));
                 } catch (Throwable failure) {
                     decoderFailure.set(failure);
                 } finally {
@@ -71,7 +89,8 @@ public final class TranscribeAudioUseCase {
             decoding.start();
             try {
                 status.onRecognitionStarted();
-                transcriber.transcribe(spool.reader(stopped), modelDirectory, stopped, onSegment);
+                transcriber.transcribe(spool.reader(stopped), modelDirectory, stopped,
+                        segment -> onSegment.accept(segment.shifted(resumeMillis)));
             } catch (InterruptedIOException interrupted) {
                 if (!cancelled.getAsBoolean()) {
                     throw interrupted;
@@ -95,6 +114,21 @@ public final class TranscribeAudioUseCase {
                 throw error;
             }
         }
+    }
+
+    /** {@code sink} without the first {@code bytes} bytes of PCM: the audio between the chunk start and the resume point. */
+    static PcmSink skipping(PcmSink sink, long bytes) {
+        if (bytes <= 0) {
+            return sink;
+        }
+        long[] left = {bytes};
+        return (samples, offset, length) -> {
+            int drop = (int) Math.min(length, left[0]);
+            left[0] -= drop;
+            if (length > drop) {
+                sink.write(samples, offset + drop, length - drop);
+            }
+        };
     }
 
     /** The decoder notices {@code stop} within a fraction of a second; never leave it writing into a closed spool. */

@@ -63,9 +63,10 @@ public final class WhisperSpeechTranscriber implements SpeechTranscriber {
         List<TranscriptionSegment> segments = window.getSegments();
         long start = segments.isEmpty() ? lastPosition[0] : segments.get(0).getStartMillis();
         if (!segments.isEmpty()) {
-            lastPosition[0] = segments.get(segments.size() - 1).getEndMillis();
+            lastPosition[0] = Math.max(start, segments.get(segments.size() - 1).getEndMillis());
         }
-        onSegment.accept(new TranscriptSegment(start, text));
+        // The end of the window is where the next one starts, and where a stopped transcription resumes.
+        onSegment.accept(new TranscriptSegment(start, Math.max(start, lastPosition[0]), text));
     }
 
     public static boolean isModelAvailable(Path modelDirectory) {

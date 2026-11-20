@@ -31,8 +31,15 @@ public final class VideoTranscriptionPanel extends JPanel {
     private final TranscribeAudioUseCase transcription;
     /** Beschriftung (Tooltip) des Knopfs, solange keine Transkription läuft. */
     public static final String START_TIP = "Transkript erzeugen";
+    /** Beschriftung des Knopfs über einem unvollständigen Transkript; dahinter die Stelle. */
+    public static final String RESUME_TIP = "Transkript fortsetzen ab ";
+    /** Ein Abschnitt im Text: {@code [00:01:13 – 00:01:40]} oder (ältere) {@code [00:01:13]}. */
+    private static final java.util.regex.Pattern SECTION = java.util.regex.Pattern.compile(
+            "^\\[(\\d{2}):(\\d{2}):(\\d{2})(?:" + java.util.regex.Pattern.quote(TranscriptSegment.RANGE_SEPARATOR)
+                    + "(\\d{2}):(\\d{2}):(\\d{2}))?\\] ", java.util.regex.Pattern.MULTILINE);
     /** Statuszeile nach Abbrechen; das bisher erkannte Transkript bleibt stehen. */
-    static final String CANCELLED_STATUS = "Transkription abgebrochen. Das bisher Erkannte bleibt stehen.";
+    static final String CANCELLED_STATUS = "Transkription abgebrochen. Das bisher Erkannte bleibt stehen; das "
+            + "Mikrofon setzt am Ende des letzten Abschnitts fort.";
     /** Beschriftung (Tooltip) desselben Knopfs während der Transkription. */
     public static final String CANCEL_TIP = "Transkription abbrechen";
 
@@ -50,6 +57,11 @@ public final class VideoTranscriptionPanel extends JPanel {
     private final StringBuilder recognized = new StringBuilder();
     /** Bekommt das bisher erkannte Transkript nach jedem neuen Abschnitt und am Ende, um es zu speichern. */
     private java.util.function.Consumer<String> onTranscript = text -> { };
+    /**
+     * Wo eine gestoppte Transkription fortsetzt: am Ende des zuletzt erkannten Abschnitts, wie Whisper sein Fenster
+     * auch während eines Laufs verschiebt; {@code 0} ohne Transkript oder nach einem abgeschlossenen Lauf.
+     */
+    private long resumeMillis;
     /** Statuszeile über einem gespeicherten Transkript. */
     public static final String STORED_STATUS = "Gespeichertes Transkript (auch unter Anhänge) · das Mikrofon "
             + "erzeugt es neu.";
@@ -88,6 +100,8 @@ public final class VideoTranscriptionPanel extends JPanel {
             videoSource.close();
         }
         videoSource = source;
+        resumeMillis = 0;
+        recognized.setLength(0);
         transcript.setText("Klicke unten neben der Lupe auf das Mikrofon („Transkript erzeugen“), "
                 + "um die MP4-Audiospur lokal mit Whisper zu transkribieren.");
         status.setText("Transkription noch nicht gestartet.");
@@ -108,7 +122,35 @@ public final class VideoTranscriptionPanel extends JPanel {
         recognized.append(text);
         transcript.setText(text);
         transcript.setCaretPosition(0);
+        resumeMillis = resumePoint(text);
         status.setText(STORED_STATUS);
+        updateActions();
+    }
+
+    /**
+     * Wo ein Transkript fortgesetzt wird: am Ende seines letzten Abschnitts. Kennt der Text nur Anfänge (ältere
+     * Transkripte), wird der letzte Abschnitt verworfen und von seinem Anfang an neu erkannt.
+     */
+    long resumePoint(String text) {
+        java.util.regex.Matcher section = SECTION.matcher(text);
+        long point = 0;
+        int lastStart = -1;
+        boolean ended = false;
+        while (section.find()) {
+            lastStart = section.start();
+            ended = section.group(4) != null;
+            point = ended ? millis(section, 4) : millis(section, 1);
+        }
+        if (lastStart >= 0 && !ended) {
+            recognized.setLength(lastStart);
+            transcript.setText(recognized.toString());
+        }
+        return point;
+    }
+
+    private static long millis(java.util.regex.Matcher section, int first) {
+        return (Long.parseLong(section.group(first)) * 3600 + Long.parseLong(section.group(first + 1)) * 60
+                + Long.parseLong(section.group(first + 2))) * 1000;
     }
 
     private void startTranscription() {
@@ -116,8 +158,12 @@ public final class VideoTranscriptionPanel extends JPanel {
             return;
         }
         VideoTranscriptSource requestedSource = videoSource;
-        transcript.setText("");
-        recognized.setLength(0);
+        // Ein unvollständiges Transkript wird fortgesetzt, nicht neu begonnen; nur ein abgeschlossenes neu erzeugt.
+        long startMillis = resumeMillis;
+        if (startMillis <= 0) {
+            transcript.setText("");
+            recognized.setLength(0);
+        }
         status.setText("Whisper-Modell wird aus dem Anwendungs-JAR bereitgestellt …");
         worker = new SwingWorker<Void, TranscriptSegment>() {
             @Override
@@ -134,12 +180,13 @@ public final class VideoTranscriptionPanel extends JPanel {
                         status.setText("MP4-Audiospur wird ohne Videodaten vorbereitet …");
                     }
                 });
-                java.net.URI audioOnly = requestedSource.openAudioOnly();
+                VideoTranscriptSource.AudioOnly audioOnly = requestedSource.openAudioOnly(startMillis);
                 if (isCancelled()) {
                     return null;
                 }
                 SwingWorker<Void, TranscriptSegment> active = this;
-                transcription.execute(audioOnly, model, this::isCancelled, this::publish,
+                transcription.execute(audioOnly.address(), audioOnly.startMillis(), startMillis, model,
+                        this::isCancelled, this::publish,
                         new TranscriptionStatusListener() {
                             @Override
                             public void onDecodedSeconds(long seconds) {
@@ -172,10 +219,12 @@ public final class VideoTranscriptionPanel extends JPanel {
                     return;
                 }
                 for (TranscriptSegment segment : segments) {
-                    String line = "[" + segment.timeLabel() + "] " + segment.text() + "\n\n";
+                    String line = "[" + segment.rangeLabel() + "] " + segment.text() + "\n\n";
                     transcript.append(line);
                     recognized.append(line);
+                    resumeMillis = Math.max(resumeMillis, segment.endMillis());
                 }
+                updateActions();
                 // Jeder Abschnitt wird sofort gespeichert: nichts geht beim Seitenwechsel verloren.
                 onTranscript.accept(recognized.toString());
             }
@@ -186,9 +235,10 @@ public final class VideoTranscriptionPanel extends JPanel {
                     return;
                 }
                 worker = null;
-                updateActions();
                 try {
                     get();
+                    // Bis zum Ende erkannt: das Mikrofon erzeugt es beim nächsten Mal neu.
+                    resumeMillis = 0;
                     status.setText("Transkription abgeschlossen und unter Anhänge gespeichert (noch nicht im "
                             + "Suchindex).");
                     if (transcript.getText().isEmpty()) {
@@ -203,6 +253,8 @@ public final class VideoTranscriptionPanel extends JPanel {
                     status.setText("Transkription fehlgeschlagen.");
                     Throwable cause = failure.getCause();
                     transcript.append("\nFehler: " + (cause == null ? "Unbekannter Fehler" : cause.getMessage()));
+                } finally {
+                    updateActions();
                 }
             }
         };
@@ -222,8 +274,10 @@ public final class VideoTranscriptionPanel extends JPanel {
     private void updateActions() {
         boolean running = worker != null;
         toggle.setIcon(running ? ComposerIcons.stop() : ComposerIcons.microphone());
-        toggle.setToolTipText(running ? CANCEL_TIP : START_TIP);
-        toggle.getAccessibleContext().setAccessibleName(running ? CANCEL_TIP : START_TIP);
+        String tip = running ? CANCEL_TIP : resumeMillis > 0 ? RESUME_TIP + TranscriptSegment.clock(resumeMillis)
+                : START_TIP;
+        toggle.setToolTipText(tip);
+        toggle.getAccessibleContext().setAccessibleName(tip);
         toggle.setEmphasized(running);
         toggle.setEnabled(running || videoSource != null);
     }

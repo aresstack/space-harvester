@@ -17,6 +17,9 @@ public final class VideoTranscriptSource implements AutoCloseable {
     private final MediaByteRange remote;
     private final VideoSettings settings;
     private MediaStreamBridge audioStream;
+    /** Requested and actual start of the open audio stream. */
+    private long audioFrom;
+    private long audioStart;
     private boolean closed;
 
     public VideoTranscriptSource(long fileSize, MediaByteRange remote) {
@@ -33,29 +36,46 @@ public final class VideoTranscriptSource implements AutoCloseable {
         this.remote = Objects.requireNonNull(remote, "remote");
     }
 
+    /**
+     * The audio-only MP4 and where its audio begins in the video.
+     *
+     * @param startMillis the start of the first chunk; a resumed transcription drops the audio up to its resume point
+     */
+    public record AudioOnly(URI address, long startMillis) {
+    }
+
     public URI openAudioOnly() throws IOException {
+        return openAudioOnly(0).address();
+    }
+
+    /**
+     * The audio from the chunk that holds {@code fromMillis} on; nothing before it is fetched. The same start again
+     * reuses the open stream.
+     */
+    public AudioOnly openAudioOnly(long fromMillis) throws IOException {
         synchronized (this) {
             if (closed) {
                 throw new IOException("The selected video is no longer available");
             }
-            if (audioStream != null) {
-                return audioStream.address();
+            if (audioStream != null && audioFrom == fromMillis) {
+                return new AudioOnly(audioStream.address(), audioStart);
             }
         }
 
-        Mp4AudioStream audio = Mp4AudioOnlySource.open(remote::read, fileSize, settings);
+        Mp4AudioStream audio = Mp4AudioOnlySource.open(remote::read, fileSize, settings, fromMillis);
         MediaStreamBridge prepared = new MediaStreamBridge(audio, audio.length(), "video/mp4", settings);
         synchronized (this) {
             if (closed) {
                 prepared.close();
                 throw new IOException("The selected video was closed during audio indexing");
             }
-            if (audioStream == null) {
-                audioStream = prepared;
-            } else {
-                prepared.close();
+            if (audioStream != null) {
+                audioStream.close();
             }
-            return audioStream.address();
+            audioStream = prepared;
+            audioFrom = fromMillis;
+            audioStart = audio.startMillis();
+            return new AudioOnly(audioStream.address(), audioStart);
         }
     }
 

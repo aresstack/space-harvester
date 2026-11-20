@@ -112,7 +112,13 @@ class TranscriptAudioProbe {
         Path video = Path.of(file);
         long size = Files.size(video);
         try (RandomAccessFile in = new RandomAccessFile(video.toFile(), "r")) {
+            java.util.concurrent.atomic.AtomicLong lowest = new java.util.concurrent.atomic.AtomicLong(Long.MAX_VALUE);
+            java.util.concurrent.atomic.AtomicLong audioReads = new java.util.concurrent.atomic.AtomicLong();
             MediaStreamBridge.ChunkSource source = (offset, count) -> {
+                if (offset > 4_000_000) {
+                    lowest.accumulateAndGet(offset, Math::min);
+                }
+                audioReads.incrementAndGet();
                 synchronized (in) {
                     byte[] bytes = new byte[(int) Math.min(count, size - offset)];
                     in.seek(offset);
@@ -121,24 +127,39 @@ class TranscriptAudioProbe {
                 }
             };
             long start = System.nanoTime();
-            Mp4AudioStream audio = Mp4AudioOnlySource.open(source, size);
+            long from = Long.parseLong(System.getenv().getOrDefault("SPACEHARVESTER_PROBE_AUDIO_START", "0"));
+            Mp4AudioStream audio = Mp4AudioOnlySource.open(source, size,
+                    com.aresstack.spaceharvester.app.settings.VideoSettings.DEFAULT, from);
+            System.out.println("PROBE resume at " + from + " ms, audio starts at " + audio.startMillis() + " ms");
             System.out.printf(Locale.ROOT, "PROBE audio-only mp4 %d bytes after %.1f s%n", audio.length(),
                     (System.nanoTime() - start) / 1e9);
             try (MediaStreamBridge bridge = new MediaStreamBridge(audio, audio.length(), "video/mp4")) {
                 System.out.println("PROBE bridge " + bridge.address());
                 AtomicLong bytes = new AtomicLong();
-                long limit = 32_000L * 120;
+                long limit = 32_000L * Long.parseLong(System.getenv().getOrDefault("SPACEHARVESTER_PROBE_AUDIO_SECONDS",
+                        "120"));
+                long skip = (from - audio.startMillis()) * 32;
+                AtomicLong skipped = new AtomicLong();
+                String out = System.getenv("SPACEHARVESTER_PROBE_AUDIO_OUT");
+                java.io.OutputStream pcm = out == null ? java.io.OutputStream.nullOutputStream()
+                        : new java.io.BufferedOutputStream(Files.newOutputStream(Path.of(out)));
                 try {
                     new VlcPcmAudioDecoder().decode(bridge.address(), () -> bytes.get() > limit,
-                            (data, offset, count) -> bytes.addAndGet(count),
+                            (data, offset, count) -> {
+                                int drop = (int) Math.min(count, skip - skipped.get());
+                                skipped.addAndGet(drop);
+                                bytes.addAndGet(count - drop);
+                                pcm.write(data, offset + drop, count - drop);
+                            },
                             seconds -> System.out.printf(Locale.ROOT, "PROBE   %d s decoded after %.1f s%n",
                                     seconds, (System.nanoTime() - start) / 1e9));
                 } catch (Exception e) {
                     System.out.println("PROBE decode ended: " + e + (e.getCause() == null ? "" : " / " + e.getCause()));
                     System.out.println("PROBE bridge failure: " + bridge.lastFailure());
                 }
-                System.out.printf(Locale.ROOT, "PROBE %d PCM bytes after %.1f s%n", bytes.get(),
-                        (System.nanoTime() - start) / 1e9);
+                pcm.close();
+                System.out.printf(Locale.ROOT, "PROBE %d PCM bytes after %.1f s, %d source reads, lowest data offset %d of %d%n",
+                        bytes.get(), (System.nanoTime() - start) / 1e9, audioReads.get(), lowest.get(), size);
             }
         }
     }

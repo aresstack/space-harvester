@@ -28,6 +28,13 @@ public final class VlcPcmAudioDecoder implements AudioPcmDecoder {
     static final int BYTES_PER_SECOND = SAMPLE_RATE * 2;
     private static final long NO_AUDIO_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(60);
     private static final int READ_BYTES = 64 * 1024;
+    /**
+     * VLC's resampler for 48 kHz to 16 kHz. The default one rounds down per AAC frame (341 instead of 341.33 samples)
+     * and lost 1/1024 of the audio: over 42 minutes the PCM was 2.48 s short and every timestamp drifted, a resumed
+     * transcription started up to half a second off. Speex keeps the length (measured: 21 ms short, one frame of
+     * encoder delay, without drift).
+     */
+    static final String RESAMPLER = "speex_resampler";
 
     @Override
     public void decode(URI audioSource, BooleanSupplier cancelled, PcmSink sink,
@@ -62,7 +69,7 @@ public final class VlcPcmAudioDecoder implements AudioPcmDecoder {
                                 LongConsumer onDecodedSeconds) throws Exception {
         CountDownLatch completed = new CountDownLatch(1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
-        MediaPlayerFactory factory = new MediaPlayerFactory("--quiet");
+        MediaPlayerFactory factory = new MediaPlayerFactory("--quiet", "--audio-resampler=" + RESAMPLER);
         try {
             MediaPlayer player = factory.mediaPlayers().newMediaPlayer();
             try {

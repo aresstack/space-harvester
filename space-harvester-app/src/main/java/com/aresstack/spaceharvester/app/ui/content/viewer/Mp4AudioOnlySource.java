@@ -26,6 +26,7 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
     private final long[] outputOffsets;
     private final int[] chunkLengths;
     private final long length;
+    private final long startMillis;
     private final AudioChunkPrefetcher prefetcher;
     /**
      * Reads the parts of a large MP4 box (the index) in parallel; every remote read is latency-bound
@@ -41,7 +42,8 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
 
     private Mp4AudioOnlySource(MediaStreamBridge.ChunkSource remote, byte[] header,
                                long[] inputOffsets, long[] outputOffsets,
-                               int[] chunkLengths, long length, VideoSettings settings) {
+                               int[] chunkLengths, long length, long startMillis, VideoSettings settings) {
+        this.startMillis = startMillis;
         this.remote = remote;
         this.header = header;
         this.inputOffsets = inputOffsets;
@@ -59,6 +61,16 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
     /** @param settings parallel reads of the index and of the audio chunks */
     static Mp4AudioStream open(MediaStreamBridge.ChunkSource source, long sourceLength, VideoSettings settings)
             throws IOException {
+        return open(source, sourceLength, settings, 0);
+    }
+
+    /**
+     * The audio from the chunk that holds {@code fromMillis} on ({@link Mp4AudioTrim}): nothing before it is fetched,
+     * and {@link Mp4AudioStream#startMillis()} tells where it begins exactly. A track that cannot be cut, and a
+     * fragmented MP4, start at the beginning.
+     */
+    static Mp4AudioStream open(MediaStreamBridge.ChunkSource source, long sourceLength, VideoSettings settings,
+                               long fromMillis) throws IOException {
         indexReaders(settings);
         if (source == null || sourceLength < 16) {
             throw unsupported("Invalid MP4 source");
@@ -102,15 +114,29 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
             throw unsupported("MP4 has no indexed audio track");
         }
         TrackChunks chunks = indexAudio(moov, audioTrack, sourceLength);
+        Mp4AudioTrim.Result trim = fromMillis > 0
+                ? Mp4AudioTrim.from(moov, audioTrack, fromMillis, movieTimescale(moov, children)) : null;
+        long startMillis = 0;
+        byte[] audioTrak = java.util.Arrays.copyOfRange(moov, audioTrack.start, (int) (audioTrack.start
+                + audioTrack.size));
+        int offsetEntries = chunks.offsetEntriesPosition - audioTrack.start;
+        if (trim != null) {
+            chunks = new TrackChunks(java.util.Arrays.copyOfRange(chunks.inputOffsets, trim.firstChunk(),
+                    chunks.inputOffsets.length), java.util.Arrays.copyOfRange(chunks.lengths, trim.firstChunk(),
+                    chunks.lengths.length), trim.longOffsets(), chunks.offsetEntriesPosition);
+            audioTrak = trim.trak();
+            offsetEntries = trim.offsetEntries();
+            startMillis = trim.startMillis();
+        }
         long audioBytes = 0;
         long[] outputOffsets = new long[chunks.inputOffsets.length];
         for (int i = 0; i < chunks.inputOffsets.length; i++) {
             outputOffsets[i] = audioBytes;
             audioBytes = add(audioBytes, chunks.lengths[i]);
         }
-        long moovSize = 8;
+        long moovSize = add(8, audioTrak.length);
         for (Box child : children) {
-            if (!"trak".equals(child.type) || child.start == audioTrack.start) {
+            if (!"trak".equals(child.type)) {
                 moovSize = add(moovSize, child.size);
             }
         }
@@ -118,7 +144,8 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
             throw unsupported("Audio-only MP4 metadata is too large");
         }
         long payloadStart = add(add(ftyp.length, moovSize), 16);
-        byte[] audioMoov = buildMoov(moov, children, audioTrack, chunks, outputOffsets, payloadStart);
+        byte[] audioMoov = buildMoov(moov, children, audioTrack, audioTrak, offsetEntries, chunks.longOffsets,
+                outputOffsets, payloadStart, trim == null ? -1 : trackDuration(audioTrak));
         long resultSize = add(add(ftyp.length, audioMoov.length), add(16, audioBytes));
         if (resultSize <= 0) {
             throw unsupported("Invalid remuxed audio size");
@@ -136,12 +163,17 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
             absoluteOffsets[i] = add(payloadStart, outputOffsets[i]);
         }
         return new Mp4AudioOnlySource(source, outputHeader, chunks.inputOffsets,
-                absoluteOffsets, chunks.lengths, resultSize, settings);
+                absoluteOffsets, chunks.lengths, resultSize, startMillis, settings);
     }
 
     @Override
     public long length() {
         return length;
+    }
+
+    @Override
+    public long startMillis() {
+        return startMillis;
     }
 
     @Override
@@ -189,22 +221,40 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
         throw new IOException("Audio chunk unavailable");
     }
 
-    private static byte[] buildMoov(byte[] original, List<Box> children, Box audio,
-                                    TrackChunks chunks, long[] outputOffsets, long payloadStart)
-            throws IOException {
+    /**
+     * The moov of the audio-only MP4: the movie's own boxes and the audio track {@code audioTrak} (possibly cut) with
+     * its chunk offsets pointing into the new mdat.
+     *
+     * @param movieDuration the duration of a cut track for the movie header, or -1 to keep it
+     */
+    private static byte[] buildMoov(byte[] original, List<Box> children, Box audio, byte[] audioTrak,
+                                    int entryStart, boolean longOffsets, long[] outputOffsets, long payloadStart,
+                                    long movieDuration) throws IOException {
         ByteArrayOutputStream result = new ByteArrayOutputStream();
         result.write(new byte[8], 0, 8);
         for (Box child : children) {
             if ("trak".equals(child.type) && child.start != audio.start) {
                 continue;
             }
-            byte[] copied = new byte[(int) child.size];
-            System.arraycopy(original, child.start, copied, 0, copied.length);
+            byte[] copied;
             if (child.start == audio.start) {
-                int entryStart = chunks.offsetEntriesPosition - audio.start;
+                copied = audioTrak.clone();
+            } else {
+                copied = new byte[(int) child.size];
+                System.arraycopy(original, child.start, copied, 0, copied.length);
+                if ("mvhd".equals(child.type) && movieDuration >= 0) {
+                    boolean wide = copied[child.header] == 1;
+                    if (wide) {
+                        write64(copied, child.header + 24, movieDuration);
+                    } else {
+                        write32(copied, child.header + 16, Math.min(0xffffffffL, movieDuration));
+                    }
+                }
+            }
+            if (child.start == audio.start) {
                 for (int i = 0; i < outputOffsets.length; i++) {
                     long value = add(payloadStart, outputOffsets[i]);
-                    if (chunks.longOffsets) {
+                    if (longOffsets) {
                         write64(copied, entryStart + i * 8, value);
                     } else {
                         if (value > 0xffffffffL) {
@@ -220,6 +270,26 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
         write32(moov, 0, moov.length);
         writeType(moov, 4, "moov");
         return moov;
+    }
+
+    /** The timescale of the movie header, for the duration of a cut track header. */
+    private static long movieTimescale(byte[] moov, List<Box> children) throws IOException {
+        for (Box child : children) {
+            if ("mvhd".equals(child.type)) {
+                int content = child.start + child.header;
+                ensure(moov, content, 24);
+                return uint32(moov, content + (moov[content] == 1 ? 20 : 12));
+            }
+        }
+        throw unsupported("MP4 movie header missing");
+    }
+
+    /** The duration in the track header of a (cut) {@code trak}, in the movie's timescale. */
+    private static long trackDuration(byte[] trak) throws IOException {
+        Box root = box(trak, 0, trak.length, trak.length);
+        Box tkhd = requiredChild(trak, root, "tkhd");
+        int content = tkhd.start + tkhd.header;
+        return trak[content] == 1 ? int64(trak, content + 28) : uint32(trak, content + 20);
     }
 
     static boolean isAudioTrack(byte[] data, Box track) throws IOException {
