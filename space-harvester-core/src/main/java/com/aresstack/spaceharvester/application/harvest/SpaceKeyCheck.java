@@ -14,10 +14,11 @@ import java.util.regex.Pattern;
 public class SpaceKeyCheck {
 
     /**
-     * Globale Confluence-Spaces: Buchstaben und Ziffern (ältere Instanzen auch {@code _}); persönliche Spaces:
-     * {@code ~} und Benutzername. Länge wie Confluence höchstens 255.
+     * Globale Confluence-Spaces: Buchstaben und Ziffern (ältere Instanzen auch {@code _}); andere Quellen wie BSCW
+     * führen ihren einzigen Space unter der Quellen-ID, die auch {@code -} enthält; persönliche Spaces: {@code ~} und
+     * Benutzername. Länge wie Confluence höchstens 255.
      */
-    private static final Pattern SPACE_KEY = Pattern.compile("[A-Za-z0-9_]{1,255}|~[A-Za-z0-9._@+-]{1,254}");
+    private static final Pattern SPACE_KEY = Pattern.compile("[A-Za-z0-9_-]{1,255}|~[A-Za-z0-9._@+-]{1,254}");
 
     private final SourceQueries queries;
 

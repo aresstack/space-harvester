@@ -565,11 +565,24 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void refresh(String sourceId, String spaceKey, String pageId) {
         if (pageId == null) {
-            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey))) {
+            // Die Meldezeile der Quellen-Ansicht sieht man vom Baum aus nicht: der Ausgang kommt in die Statuszeile.
+            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey),
+                    new SourcesView.CatchUpReport() {
+                        @Override
+                        public void started(List<String> jobs) {
+                            notice(Texts.count(jobs.size(), "Space wird", "Spaces werden") + " nachgeholt",
+                                    Comic.MUTED);
+                            if (!jobs.isEmpty()) {
+                                showJob(jobs.get(0));
+                            }
+                        }
+
+                        @Override
+                        public void failed(String message) {
+                            notice(message, Comic.RED);
+                        }
+                    })) {
                 notice("Nachholen wird gestartet …", Comic.MUTED);
-            } else {
-                notice("Nachholen nicht gestartet: keine Spaces bekannt, oder die Quelle holt schon nach",
-                        Comic.ORANGE);
             }
             return;
         }
