@@ -105,6 +105,38 @@ class WhisperModelSetupTest {
     }
 
     @Test
+    void theModelChosenInTheTranscriptViewIsLoadedWithoutChangingTheSetting() throws Exception {
+        // Angelo 20.11.2026: je Whisper-Modell ein Original; fehlt das gewählte, kommt die bekannte Ja/Nein-Abfrage.
+        byte[] weights = {1, 2, 3};
+        byte[] json = {'{', '}'};
+        StringBuilder tree = new StringBuilder("[{\"type\":\"file\",\"lfs\":{\"oid\":\"")
+                .append(FakeHuggingFace.sha256(weights)).append("\",\"size\":3},\"path\":\"model.safetensors\"}");
+        FakeHuggingFace hub = new FakeHuggingFace()
+                .put("/api/models/openai/whisper-small/revision/main", "{\"sha\":\"c0ffee\"}")
+                .put("/openai/whisper-small/resolve/c0ffee/model.safetensors", weights);
+        for (String name : List.of("config.json", "tokenizer.json", "vocab.json")) {
+            tree.append(",{\"type\":\"file\",\"oid\":\"").append(FakeHuggingFace.gitOid(json))
+                    .append("\",\"size\":2,\"path\":\"").append(name).append("\"}");
+            hub.put("/openai/whisper-small/resolve/c0ffee/" + name, json);
+        }
+        hub.put("/api/models/openai/whisper-small/tree/c0ffee", tree.append("]").toString());
+        WhisperModelSetup setup = setup(hub);
+        answer = true;
+
+        setup.ensure(WhisperModel.SMALL, null, progress::add, stopped::add, () -> started++);
+
+        assertThat(asked).singleElement().asString().contains("Small");
+        assertThat(started).isEqualTo(1);
+        assertThat(stopped).isEmpty();
+        assertThat(models.resolve("whisper-small").resolve("model.safetensors")).exists();
+        assertThat(setup.status().model()).as("die Einstellung bleibt").isEqualTo(WhisperModel.TINY);
+
+        setup.ensure(WhisperModel.SMALL, null, progress::add, stopped::add, () -> started++);
+        assertThat(asked).as("jetzt da: keine Frage mehr").hasSize(1);
+        assertThat(started).isEqualTo(2);
+    }
+
+    @Test
     void aFailedDownloadIsReportedAndDoesNotStartTheAction() {
         WhisperModelSetup setup = setup(new FakeHuggingFace());
         answer = true;

@@ -329,6 +329,171 @@ class VideoPresentationsTest {
     }
 
     @Test
+    void aRunKeepsTheOriginalItStartedWithEvenWhenAnotherIsChosenMeanwhile() {
+        // Wählt Angelo während der Folienbeschreibung ein anderes Original, korrigiert der laufende Vorgang trotzdem
+        // das, mit dem er begonnen hat.
+        String owner = "TECHNICAL_CLIENT:space-harvester-app";
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.jobs.Jobs.class);
+        Map<com.aresstack.spaceharvester.application.jobs.JobType, Map<String, String>> parameters =
+                new java.util.EnumMap<>(com.aresstack.spaceharvester.application.jobs.JobType.class);
+        Map<com.aresstack.spaceharvester.application.jobs.JobType,
+                com.aresstack.spaceharvester.application.jobs.JobTask> tasks =
+                new java.util.EnumMap<>(com.aresstack.spaceharvester.application.jobs.JobType.class);
+        org.mockito.Mockito.when(jobs.submit(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyMap(),
+                org.mockito.ArgumentMatchers.any(com.aresstack.spaceharvester.application.jobs.JobTask.class)))
+                .thenAnswer(call -> {
+                    com.aresstack.spaceharvester.application.jobs.JobType type = call.getArgument(0);
+                    parameters.put(type, call.getArgument(5));
+                    tasks.put(type, call.getArgument(6));
+                    return status("job-" + type, type, owner, Map.of());
+                });
+        org.mockito.Mockito.when(jobs.submitAfter(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyMap(),
+                org.mockito.ArgumentMatchers.any(com.aresstack.spaceharvester.application.jobs.JobTask.class),
+                org.mockito.ArgumentMatchers.<List<String>>any())).thenAnswer(call -> {
+                    com.aresstack.spaceharvester.application.jobs.JobType type = call.getArgument(0);
+                    parameters.put(type, call.getArgument(5));
+                    tasks.put(type, call.getArgument(6));
+                    return status("job-" + type, type, owner, Map.of());
+                });
+        com.aresstack.spaceharvester.application.assets.Assets assets = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.assets.Assets.class);
+        com.aresstack.spaceharvester.application.snapshot.PageSnapshot snapshot = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.snapshot.PageSnapshot.class);
+        org.mockito.Mockito.when(snapshot.key()).thenReturn(new PageKey("wiki", "42"));
+        org.mockito.Mockito.when(snapshot.revision()).thenReturn("r1");
+        org.mockito.Mockito.when(snapshot.metadata()).thenReturn(new com.aresstack.spaceharvester.application.sources
+                .PageMetadata("42", "42", "Vortrag.mp4", "S", null, null, null, null, new java.util.TreeMap<>()));
+        com.aresstack.spaceharvester.application.marks.VideoMarks marks = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.marks.VideoMarks.class);
+        org.mockito.Mockito.when(marks.find(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(0L));
+        com.aresstack.spaceharvester.application.stepmodel.StepModel text =
+                new com.aresstack.spaceharvester.application.stepmodel.StepModel() {
+                    @Override
+                    public String version() {
+                        return "t";
+                    }
+
+                    @Override
+                    public boolean available() {
+                        return true;
+                    }
+
+                    @Override
+                    public String complete(String instructions, String input) {
+                        return "";
+                    }
+                };
+        VideoPresentations presentations = new VideoPresentations(jobs, (who, sourceId, pageId) -> snapshot, assets,
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.images.PageImageAnalysis.class),
+                marks, text, new PresentationStore(new InMemoryEnrichmentStore(), Clock.systemUTC()), key -> true,
+                java.nio.file.Path.of("out"));
+        org.mockito.Mockito.when(assets.describerInUse()).thenReturn(java.util.Optional.of(org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.assets.ImageDescriber.class)));
+        org.mockito.Mockito.when(assets.chosenVideoTranscript("wiki", "42", "r1")).thenReturn(java.util.Optional.of(
+                new com.aresstack.spaceharvester.application.assets.Assets.TranscriptOriginal("tiny", "t")));
+
+        presentations.startCorrection(
+                com.aresstack.spaceharvester.application.access.AccessContext.technicalClient("space-harvester-app"),
+                "wiki", "42", VideoMedia.NONE, VideoPresentations.Options.DEFAULT);
+
+        assertThat(parameters.values()).allSatisfy(values -> assertThat(values)
+                .containsEntry(VideoPresentations.WHISPER_PARAMETER, "tiny"));
+        // Inzwischen ist „Small“ gewählt; die Korrektur des Vorgangs liest trotzdem „Tiny“.
+        org.mockito.Mockito.when(assets.chosenVideoTranscript("wiki", "42", "r1")).thenReturn(java.util.Optional.of(
+                new com.aresstack.spaceharvester.application.assets.Assets.TranscriptOriginal("small", "s")));
+        org.mockito.Mockito.when(assets.videoTranscriptOriginals("wiki", "42", "r1")).thenReturn(List.of(
+                new com.aresstack.spaceharvester.application.assets.Assets.TranscriptOriginal("tiny", "t"),
+                new com.aresstack.spaceharvester.application.assets.Assets.TranscriptOriginal("small", "s")));
+        org.mockito.Mockito.when(assets.videoTranscript(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(java.util.Optional.empty());
+
+        tasks.get(com.aresstack.spaceharvester.application.jobs.JobType.TRANSCRIPT_CORRECTION).start(
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.jobs.JobContext.class));
+
+        org.mockito.Mockito.verify(assets).videoTranscript("wiki", "42", "r1", "tiny");
+        org.mockito.Mockito.verify(assets, org.mockito.Mockito.never()).videoTranscript("wiki", "42", "r1", "small");
+    }
+
+    @Test
+    void theChosenOriginalIsExtendedWithItsOwnWhisperModelAndANewOneUsesTheAppsModel() throws Exception {
+        // Angelo 20.11.2026: je Whisper-Modell ein Original; vorhandene werden wiederverwendet und nur verlängert.
+        com.aresstack.spaceharvester.application.assets.Assets assets = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.assets.Assets.class);
+        com.aresstack.spaceharvester.application.snapshot.PageSnapshot snapshot = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.snapshot.PageSnapshot.class);
+        org.mockito.Mockito.when(snapshot.revision()).thenReturn("r1");
+        org.mockito.Mockito.when(snapshot.metadata()).thenReturn(new com.aresstack.spaceharvester.application.sources
+                .PageMetadata("42", "42", "Vortrag.mp4", "S", null, null, null, null, new java.util.TreeMap<>()));
+        VideoPresentations presentations = new VideoPresentations(org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.jobs.Jobs.class), (who, sourceId, pageId) -> snapshot, assets,
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.images.PageImageAnalysis.class),
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.marks.VideoMarks.class),
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.stepmodel.StepModel.class),
+                new PresentationStore(new InMemoryEnrichmentStore(), Clock.systemUTC()), key -> true,
+                java.nio.file.Path.of("out"));
+        List<String> used = new java.util.ArrayList<>();
+        class Media implements VideoMedia {
+            private final String whisper;
+
+            Media(String whisper) {
+                this.whisper = whisper;
+            }
+
+            @Override
+            public String whisper() {
+                return whisper;
+            }
+
+            @Override
+            public VideoMedia withWhisper(String other) {
+                return new Media(other);
+            }
+
+            @Override
+            public String transcribe(String existing, java.util.function.Consumer<String> partial, Progress progress,
+                                     java.util.function.BooleanSupplier cancelled) {
+                used.add(whisper);
+                return (existing == null ? "" : existing) + "[00:00:05 – 00:00:09] weiter\n\n";
+            }
+
+            @Override
+            public void frames(List<Long> millis, java.util.function.BiConsumer<Long, byte[]> found,
+                               java.util.function.BooleanSupplier cancelled) {
+            }
+        }
+        com.aresstack.spaceharvester.application.jobs.JobContext context = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.jobs.JobContext.class);
+        com.aresstack.spaceharvester.application.access.AccessContext caller =
+                com.aresstack.spaceharvester.application.access.AccessContext.technicalClient("space-harvester-app");
+        String existing = "[00:00:00 – 00:00:05] Anfang\n\n";
+        org.mockito.Mockito.when(assets.chosenVideoTranscript("wiki", "42", "r1")).thenReturn(java.util.Optional.of(
+                new com.aresstack.spaceharvester.application.assets.Assets.TranscriptOriginal("small", "x")));
+        org.mockito.Mockito.when(assets.videoTranscript("wiki", "42", "r1", "small"))
+                .thenReturn(java.util.Optional.of(existing));
+
+        presentations.transcribe(caller, "wiki", "42", new Media("tiny"), context);
+
+        assertThat(used).containsExactly("small");
+        org.mockito.Mockito.verify(assets).putVideoTranscript("wiki", "42", "r1", "small", "Vortrag – Transkript.txt",
+                existing + "[00:00:05 – 00:00:09] weiter\n\n");
+
+        org.mockito.Mockito.when(assets.chosenVideoTranscript("wiki", "42", "r1")).thenReturn(java.util.Optional.empty());
+        presentations.transcribe(caller, "wiki", "42", new Media("tiny"), context);
+
+        assertThat(used).containsExactly("small", "tiny");
+        org.mockito.Mockito.verify(assets).putVideoTranscript("wiki", "42", "r1", "tiny", "Vortrag – Transkript.txt",
+                "[00:00:05 – 00:00:09] weiter\n\n");
+    }
+
+    @Test
     void aJobOfAnEndUserOrWithoutItsPageCannotBeRebuiltAndSaysWhy() {
         assertThat(VideoPresentations.caller("TECHNICAL_CLIENT:space-harvester-app"))
                 .hasValueSatisfying(caller -> assertThat(caller.jobOwner())

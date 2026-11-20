@@ -26,6 +26,19 @@ public interface VideoMedia {
     String transcribe(String existing, Consumer<String> partial, Progress progress, BooleanSupplier cancelled)
             throws Exception;
 
+    /**
+     * Das Whisper-Modell, mit dem die App ein neues Transkript erzeugt, etwa {@code tiny}; leer, wenn sie keines
+     * nennt. Gibt es schon ein Original, setzt der Core dessen Modell über {@link #withWhisper} fort.
+     */
+    default String whisper() {
+        return "";
+    }
+
+    /** Dieselben Medien, aber mit dem Whisper-Modell {@code whisper} (Kennung wie {@link #whisper()}). */
+    default VideoMedia withWhisper(String whisper) {
+        return this;
+    }
+
     /** Wie weit die Transkription ist, gemessen an der Zeit im Video. */
     interface Progress {
 

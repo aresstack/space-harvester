@@ -31,6 +31,8 @@ public final class VideoPresentationMedia implements VideoMedia {
     private final String mediaType;
     private final VideoSettings settings;
     private final TranscribeAudioUseCase transcription;
+    /** Das Whisper-Modell dieser Transkription (Angelo 20.11.2026: je Modell ein Original). */
+    private final com.aresstack.spaceharvester.app.transcription.WhisperModel whisper;
 
     /** Die Länge der Videodatei laut Quelle ({@code dav.contentLength}); {@code -1} ohne brauchbare Angabe. */
     public static long size(com.aresstack.spaceharvester.application.sources.PageMetadata metadata) {
@@ -64,6 +66,15 @@ public final class VideoPresentationMedia implements VideoMedia {
      */
     public VideoPresentationMedia(MediaByteRange remote, long size, String mediaType, VideoSettings settings,
                                   TranscribeAudioUseCase transcription) {
+        this(remote, size, mediaType, settings, transcription, WhisperModelLocation.selected());
+    }
+
+    /**
+     * @param whisper das Whisper-Modell für ein neues Transkript, etwa das in der Transkriptansicht gewählte
+     */
+    public VideoPresentationMedia(MediaByteRange remote, long size, String mediaType, VideoSettings settings,
+                                  TranscribeAudioUseCase transcription,
+                                  com.aresstack.spaceharvester.app.transcription.WhisperModel whisper) {
         this.remote = Objects.requireNonNull(remote, "remote");
         if (size < 1) {
             throw new IllegalArgumentException("Video ohne Länge");
@@ -72,6 +83,21 @@ public final class VideoPresentationMedia implements VideoMedia {
         this.mediaType = Objects.requireNonNull(mediaType, "mediaType");
         this.settings = Objects.requireNonNull(settings, "settings");
         this.transcription = Objects.requireNonNull(transcription, "transcription");
+        this.whisper = whisper == null ? WhisperModelLocation.selected() : whisper;
+    }
+
+    @Override
+    public String whisper() {
+        return whisper.id();
+    }
+
+    /** Mit dem Modell eines vorhandenen Originals; ein unbekanntes Modell lässt das eigene stehen. */
+    @Override
+    public VideoMedia withWhisper(String id) {
+        com.aresstack.spaceharvester.app.transcription.WhisperModel model =
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.of(id);
+        return model == null || model == whisper ? this
+                : new VideoPresentationMedia(remote, size, mediaType, settings, transcription, model);
     }
 
     @Override
@@ -102,7 +128,9 @@ public final class VideoPresentationMedia implements VideoMedia {
                 return existing == null ? text.toString() : existing;
             }
             transcription.execute(audio.address(), audio.startMillis(), Math.max(resume, audio.startMillis()),
-                    WhisperModelLocation.resolve(), cancelled, segment -> {
+                    WhisperModelLocation.find(whisper).orElseThrow(() ->
+                            new com.aresstack.spaceharvester.app.transcription.WhisperModelMissingException(whisper)),
+                    cancelled, segment -> {
                         synchronized (text) {
                             text.append(line(segment));
                             partial.accept(text.toString());

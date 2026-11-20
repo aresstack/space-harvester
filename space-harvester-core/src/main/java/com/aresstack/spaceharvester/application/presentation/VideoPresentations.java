@@ -78,6 +78,12 @@ public final class VideoPresentations {
     public static final String FORMAT_PARAMETER = "format";
     /** Angabe aller Aufträge eines Vorgangs: der Auftrag „PPTX erzeugen“, an dem die Datei hängt. */
     public static final String RUN_PARAMETER = "presentation";
+    /**
+     * Das Original (Whisper-Modell, {@code ""}: ein älteres ohne Modell), auf dem alle Schritte eines Vorgangs
+     * arbeiten; beim Start festgelegt, damit eine spätere Wahl in der Transkriptansicht den laufenden Vorgang nicht
+     * auf ein anderes Original umlenkt.
+     */
+    public static final String WHISPER_PARAMETER = "whisper";
 
     /** Kennung des Text-Schritts „Transkript korrigieren“ für die Modellversion. */
     public static final String CORRECTION_STEP = "transcript-correction";
@@ -307,12 +313,19 @@ public final class VideoPresentations {
                 ? outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title, options.format()))
                 : reserveName(options.directory().toAbsolutePath(), fileName(title, options.format()));
         String run = java.util.UUID.randomUUID().toString();
-        Map<String, String> parameters = Map.of(PAGE_PARAMETER, pageId, RUN_PARAMETER, run);
-        JobTask transcribing = JobTask.blocking(context -> transcribe(caller, sourceId, pageId, media, context));
+        // Das gewählte Original, ohne eines das Modell der App: dabei bleibt der Vorgang bis zur Datei.
+        String whisper = assets.chosenVideoTranscript(sourceId, pageId, snapshot.revision())
+                .map(Assets.TranscriptOriginal::whisper).orElse(media.whisper());
+        Map<String, String> parameters = Map.of(PAGE_PARAMETER, pageId, RUN_PARAMETER, run, WHISPER_PARAMETER,
+                whisper);
+        JobTask transcribing = JobTask.blocking(context -> transcribe(caller, sourceId, pageId, media, whisper,
+                context));
         JobTask describing = JobTask.blocking(context -> describeSlides(caller, sourceId, pageId, media, options,
                 context));
-        JobTask correcting = JobTask.blocking(context -> correct(caller, sourceId, pageId, options, context));
-        JobTask commenting = JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, options, context));
+        JobTask correcting = JobTask.blocking(context -> correct(caller, sourceId, pageId, whisper, options,
+                context));
+        JobTask commenting = JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, whisper, options,
+                context));
         JobTask writing = JobTask.blocking(context -> writeFile(caller, sourceId, pageId, file, options.format(),
                 context));
         // Die beiden ersten belegen sofort einen Platz: Scheitert ein späterer Schritt am Platz, werden die schon
@@ -406,14 +419,17 @@ public final class VideoPresentations {
         Format format = Format.parse(status.parameter(FORMAT_PARAMETER));
         Options options = options(format);
         MediaSource source = media;
+        // Aufträge von vor dieser Angabe kennen ihr Original nicht: sie nehmen das gewählte.
+        String whisper = status.parameter(WHISPER_PARAMETER);
         return switch (status.type()) {
             case VIDEO_TRANSCRIPT -> JobTask.blocking(context -> transcribe(caller, sourceId, pageId,
-                    source.open(sourceId, pageId), context));
+                    source.open(sourceId, pageId), whisper, context));
             case VIDEO_SLIDES -> JobTask.blocking(context -> describeSlides(caller, sourceId, pageId,
                     source.open(sourceId, pageId), options, context));
-            case TRANSCRIPT_CORRECTION -> JobTask.blocking(context -> correct(caller, sourceId, pageId, options,
+            case TRANSCRIPT_CORRECTION -> JobTask.blocking(context -> correct(caller, sourceId, pageId, whisper,
+                    options, context));
+            case SLIDE_NOTES -> JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, whisper, options,
                     context));
-            case SLIDE_NOTES -> JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, options, context));
             case PRESENTATION_EXPORT -> {
                 String file = status.parameter(FILE_PARAMETER);
                 if (file == null) {
@@ -470,18 +486,32 @@ public final class VideoPresentations {
 
     // --- 1. Transkript ziehen -------------------------------------------------------------------------------------
 
-    private void transcribe(AccessContext caller, String sourceId, String pageId, VideoMedia media,
+    void transcribe(AccessContext caller, String sourceId, String pageId, VideoMedia media,
                             JobContext context) throws Exception {
+        transcribe(caller, sourceId, pageId, media, null, context);
+    }
+
+    /**
+     * Zieht das Transkript in das Original {@code runWhisper}, auf dem der Vorgang arbeitet; {@code null}: das gewählte,
+     * ohne eines das Modell der App.
+     */
+    void transcribe(AccessContext caller, String sourceId, String pageId, VideoMedia media, String runWhisper,
+                    JobContext context) throws Exception {
         context.phase(COMPONENT, "Transkript");
         PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
         context.rootTitle(snapshot.metadata().title());
         String version = snapshot.revision();
         String name = transcriptName(snapshot.metadata().title());
-        String existing = assets.videoTranscript(sourceId, pageId, version).orElse(null);
+        // Das gewählte Original wird wiederverwendet und nur verlängert, mit seinem Whisper-Modell (ein älteres ohne
+        // Modell mit dem der App); ohne Original transkribiert die App mit ihrem Modell neu (Angelo 20.11.2026).
+        String whisper = runWhisper != null ? runWhisper : assets.chosenVideoTranscript(sourceId, pageId, version)
+                .map(Assets.TranscriptOriginal::whisper).orElse(media.whisper());
+        String existing = assets.videoTranscript(sourceId, pageId, version, whisper).orElse(null);
+        VideoMedia transcribing = whisper.isEmpty() ? media : media.withWhisper(whisper);
         TranscriptProgress progress = new TranscriptProgress(context);
-        String text = media.transcribe(existing, partial -> {
+        String text = transcribing.transcribe(existing, partial -> {
             if (extendsTranscript(partial, existing)) {
-                assets.putVideoTranscript(sourceId, pageId, version, name, partial);
+                assets.putVideoTranscript(sourceId, pageId, version, whisper, name, partial);
             }
         }, progress, context::cancelRequested);
         context.checkpoint();
@@ -491,7 +521,7 @@ public final class VideoPresentations {
         }
         // Das vorhandene Transkript wird nur verlängert, nie durch ein kürzeres ersetzt (Angelo 20.11.2026).
         if (!text.equals(existing) && extendsTranscript(text, existing)) {
-            assets.putVideoTranscript(sourceId, pageId, version, name, text);
+            assets.putVideoTranscript(sourceId, pageId, version, whisper, name, text);
         }
         progress.finish();
     }
@@ -722,7 +752,8 @@ public final class VideoPresentations {
 
     // --- 3. Transkript korrigieren --------------------------------------------------------------------------------
 
-    private void correct(AccessContext caller, String sourceId, String pageId, Options options, JobContext context) {
+    private void correct(AccessContext caller, String sourceId, String pageId, String runWhisper, Options options,
+                         JobContext context) {
         context.phase(COMPONENT, "Transkript korrigieren");
         PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
         context.rootTitle(snapshot.metadata().title());
@@ -733,7 +764,10 @@ public final class VideoPresentations {
             throw new JobFailedException("NO_TEXT_MODEL", "Für „Transkript korrigieren“ ist kein Text-Modell "
                     + "(Chat-Modell) eingestellt.");
         }
-        String transcript = assets.videoTranscript(sourceId, pageId, version).orElseThrow(() ->
+        // Korrigiert wird das Original des Vorgangs (Angelo 20.11.2026: Auswahl je Whisper-Modell).
+        Assets.TranscriptOriginal original = original(sourceId, pageId, version, runWhisper).orElseThrow(() ->
+                new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript."));
+        String transcript = assets.videoTranscript(sourceId, pageId, version, original.whisper()).orElseThrow(() ->
                 new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript."));
         List<TranscriptSections.Section> sections = TranscriptSections.parse(transcript);
         Map<Long, String> descriptions = slideDescriptions(snapshot);
@@ -743,7 +777,7 @@ public final class VideoPresentations {
                 .getBytes(StandardCharsets.UTF_8));
         // Die Korrektur liegt als Ergänzung neben dem Transkript, je Modell eine (Angelo, 20.11.2026).
         Optional<Assets.TranscriptCorrection> stored = assets.videoTranscriptCorrection(sourceId, pageId, version,
-                model);
+                original.whisper(), model);
         List<List<TranscriptSections.Section>> chunks = TranscriptSections.chunks(sections, CORRECTION_CHUNK_CHARS);
         context.discovered(chunks.size());
         if (stored.isPresent() && stored.get().complete() && stored.get().input().equals(input)) {
@@ -810,8 +844,9 @@ public final class VideoPresentations {
         // Gescheiterte Pakete bleiben unkorrigiert stehen; ein neuer Lauf fragt dann alles erneut.
         String label = "Korrektur " + modelName(textModel.version());
         assets.putVideoTranscriptCorrection(sourceId, pageId, version,
-                baseName(snapshot.metadata().title()) + " – Transkript (" + label + ").txt",
-                new Assets.TranscriptCorrection(null, label, model, input, failed.get() == 0),
+                baseName(snapshot.metadata().title()) + " – Transkript ("
+                        + (original.whisper().isEmpty() ? "" : "Whisper " + original.whisper() + ", ") + label + ").txt",
+                new Assets.TranscriptCorrection(null, label, model, input, failed.get() == 0, original.whisper()),
                 TranscriptSections.render(all));
         if (failed.get() > 0) {
             context.incomplete();
@@ -873,8 +908,8 @@ public final class VideoPresentations {
 
     // --- 4. Folienkommentare --------------------------------------------------------------------------------------
 
-    private void writeNotes(AccessContext caller, String sourceId, String pageId, Options options,
-                            JobContext context) {
+    private void writeNotes(AccessContext caller, String sourceId, String pageId, String runWhisper,
+                            Options options, JobContext context) {
         context.phase(COMPONENT, "Folienkommentare");
         PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
         context.rootTitle(snapshot.metadata().title());
@@ -883,7 +918,8 @@ public final class VideoPresentations {
         requireReleased(key);
         ImageDescriber vision = assets.describerInUse().orElseThrow(() -> new JobFailedException("NO_VISION_MODEL",
                 "Für „Folienkommentare“ ist kein Vision-Modell eingestellt."));
-        List<TranscriptSections.Section> sections = TranscriptSections.parse(transcriptFor(key, version));
+        List<TranscriptSections.Section> sections = TranscriptSections.parse(transcriptFor(key, version,
+                runWhisper));
         List<Long> marks = slideMarks(key, version);
         context.discovered(marks.size());
         String model = NOTES_VERSION + "|" + vision.id() + "|" + vision.modelVersion();
@@ -1060,13 +1096,27 @@ public final class VideoPresentations {
         return start >= 0 && end > start ? version.substring(start + 1, end) : version;
     }
 
-    /** Die Korrektur des eingestellten Text-Modells, sonst das abgelegte Transkript. */
-    private String transcriptFor(PageKey key, String version) {
+    /**
+     * Das Original {@code whisper} eines Vorgangs, {@code null}: das gewählte.
+     */
+    private Optional<Assets.TranscriptOriginal> original(String sourceId, String pageId, String version,
+                                                         String whisper) {
+        if (whisper == null) {
+            return assets.chosenVideoTranscript(sourceId, pageId, version);
+        }
+        return assets.videoTranscriptOriginals(sourceId, pageId, version).stream()
+                .filter(original -> original.whisper().equals(whisper)).findFirst();
+    }
+
+    /** Die Korrektur des eingestellten Text-Modells am Original des Vorgangs, sonst dieses Original. */
+    private String transcriptFor(PageKey key, String version, String runWhisper) {
         String model = CORRECTION_VERSION + "|" + textModel.version();
-        return assets.videoTranscriptCorrection(key.sourceId(), key.pageId(), version, model)
+        Assets.TranscriptOriginal original = original(key.sourceId(), key.pageId(), version, runWhisper)
+                .orElseThrow(() -> new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript."));
+        return assets.videoTranscriptCorrection(key.sourceId(), key.pageId(), version, original.whisper(), model)
                 .flatMap(correction -> assets.videoTranscriptText(key.sourceId(), key.pageId(), version,
                         correction.attachmentId()))
-                .or(() -> assets.videoTranscript(key.sourceId(), key.pageId(), version))
+                .or(() -> assets.videoTranscript(key.sourceId(), key.pageId(), version, original.whisper()))
                 .orElseThrow(() -> new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript."));
     }
 
