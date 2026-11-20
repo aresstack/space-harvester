@@ -295,9 +295,13 @@ public final class VideoTranscriptionPanel extends JPanel {
             return;
         }
         if (item.stored()) {
-            // Ein anderes Original beginnt mit seinem Original, nicht mit einer gleichnamigen Korrektur.
+            // Ein anderes Original beginnt mit seinem Original, nicht mit einer gleichnamigen Korrektur. Bis es geladen
+            // ist, gehört nichts mehr vom vorigen dazu: Mikrofon, Korrigieren und Löschen warten (Sanduhr).
             shownVersion = 0;
+            recognized.setLength(0);
+            resumeMillis = 0;
             storedLoading.setBusy(true);
+            updateActions();
             onOriginal.accept(item.whisper());
             return;
         }
@@ -436,6 +440,11 @@ public final class VideoTranscriptionPanel extends JPanel {
         updateActions();
     }
 
+    /** Für Tests: das Mikrofon. */
+    java.awt.Component microphone() {
+        return toggle;
+    }
+
     /** Für Tests: Korrigieren, Löschen, Kopieren. */
     java.util.List<javax.swing.JButton> transcriptActions() {
         return java.util.List.of(correct, delete, copy);
@@ -456,6 +465,7 @@ public final class VideoTranscriptionPanel extends JPanel {
     public void loadingStored(VideoTranscriptSource source, boolean loading) {
         if (source == videoSource) {
             storedLoading.setBusy(loading && worker == null);
+            updateActions();
         }
     }
 
@@ -501,8 +511,11 @@ public final class VideoTranscriptionPanel extends JPanel {
         if (source != videoSource) {
             return;
         }
-        if (whisper != null && worker == null && text != null && !text.isBlank() && !whisper.equals(whisper())) {
+        // Hat der Auftrag in ein Original geschrieben, gibt es das jetzt, auch wenn die Auswahl schon darauf steht.
+        if (whisper != null && text != null && !text.isBlank()) {
             markStored(whisper);
+        }
+        if (whisper != null && worker == null && text != null && !text.isBlank() && !whisper.equals(whisper())) {
             fillingOriginals = true;
             try {
                 for (int i = 0; i < originals.getItemCount(); i++) {
@@ -722,13 +735,15 @@ public final class VideoTranscriptionPanel extends JPanel {
         toggle.setToolTipText(tip);
         toggle.getAccessibleContext().setAccessibleName(tip);
         toggle.setEmphasized(running);
-        // Schreibt schon der Auftrag „Transkript ziehen“, startet das Mikrofon keinen zweiten Lauf daneben.
-        toggle.setEnabled(running || videoSource != null && !following);
-        boolean stored = videoSource != null && recognized.length() > 0 && !running && !following;
+        // Schreibt schon der Auftrag „Transkript ziehen“, startet das Mikrofon keinen zweiten Lauf daneben; lädt das
+        // gewählte Original noch, setzt es nichts vom vorigen fort.
+        boolean loading = storedLoading.isBusy();
+        toggle.setEnabled(running || videoSource != null && !following && !loading);
+        boolean stored = videoSource != null && recognized.length() > 0 && !running && !following && !loading;
         correct.setEnabled(stored);
         delete.setEnabled(stored);
         copy.setEnabled(recognized.length() > 0);
-        originals.setEnabled(videoSource != null && !running && !following);
+        originals.setEnabled(videoSource != null && !running && !following && !loading);
         // Während Whisper schreibt, zeigt die Ansicht das Original, das gerade entsteht.
         renderVersions();
     }

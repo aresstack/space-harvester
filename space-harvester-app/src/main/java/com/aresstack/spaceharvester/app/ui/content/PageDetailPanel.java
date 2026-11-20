@@ -3209,6 +3209,7 @@ public final class PageDetailPanel extends JPanel {
     private void chooseOriginal(VideoTranscriptSource transcriptSource, VideoFrameSource video, String whisper) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || video == null || video != videoFrames) {
+            videoTranscript.loadingStored(transcriptSource, false);
             return;
         }
         Background.run(() -> runtime.workspace().chooseVideoTranscript(video.sourceId(), video.pageId(), whisper),

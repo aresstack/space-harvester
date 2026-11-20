@@ -64,4 +64,46 @@ final class VideoTranscriptOriginalsTest {
             assertThat(panel.originalChoice().isEnabled()).as("während der Auftrag schreibt").isFalse();
         });
     }
+
+    @Test
+    void whileAnotherOriginalLoadsNothingOfThePreviousOneCanBeContinuedCorrectedOrDeleted() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            VideoTranscriptionPanel panel = new VideoTranscriptionPanel(null);
+            VideoTranscriptSource source = new VideoTranscriptSource(10, (offset, length) -> new byte[0]);
+            panel.setVideoSource(source);
+            panel.onOriginal(whisper -> { });
+            panel.showOriginals(source, List.of("tiny", "small"), "tiny");
+            panel.showStored(source, "[00:00:00 – 00:00:05] Zabak");
+            assertThat(panel.transcriptActions()).allSatisfy(button -> assertThat(button.isEnabled()).isTrue());
+
+            panel.originalChoice().setSelectedItem(new VideoTranscriptionPanel.Original("small", true));
+
+            assertThat(panel.storedLoadingShown()).isTrue();
+            assertThat(panel.transcriptActions()).as("Mikrofon, Korrigieren, Löschen warten auf das Original")
+                    .allSatisfy(button -> assertThat(button.isEnabled()).isFalse());
+            assertThat(panel.microphone().isEnabled()).as("setzt nichts vom vorigen Original fort").isFalse();
+            assertThat(panel.copyText()).as("vom vorigen Original bleibt nichts").isNull();
+
+            panel.showStored(source, "[00:00:00 – 00:00:05] Zahlbuch");
+
+            assertThat(panel.transcriptActions()).allSatisfy(button -> assertThat(button.isEnabled()).isTrue());
+            assertThat(panel.microphone().isEnabled()).isTrue();
+            assertThat(panel.copyText()).isEqualTo("[00:00:00 – 00:00:05] Zahlbuch");
+        });
+    }
+
+    @Test
+    void anOriginalAJobCreatesForTheChosenModelIsMarkedAsStored() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            VideoTranscriptionPanel panel = new VideoTranscriptionPanel(null);
+            VideoTranscriptSource source = new VideoTranscriptSource(10, (offset, length) -> new byte[0]);
+            panel.setVideoSource(source);
+            panel.showOriginals(source, List.of(), null);
+            String chosen = panel.whisper();
+
+            panel.followStored(source, chosen, "[00:00:00 – 00:00:05] Zahlbuch", false);
+
+            assertThat(((VideoTranscriptionPanel.Original) panel.originalChoice().getSelectedItem()).stored()).isTrue();
+        });
+    }
 }
