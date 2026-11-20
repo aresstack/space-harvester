@@ -230,6 +230,9 @@ public final class PageDetailPanel extends JPanel {
     private final JTextArea storage = Comic.code();
     private final AssetsModel assetsModel = new AssetsModel();
     private final JTable assets = Comic.table(new JTable(assetsModel));
+    /** Die Sanduhr über der Anhangsliste, solange sie lädt. */
+    private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay assetsBusy =
+            new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(Comic.scroll(assets));
     private final JLabel assetsHint = Comic.muted(" ");
     /** Unterreiter „Analyse“ der Seite: Analyseschritte und Beziehungen der Seite in einer Ansicht (BG2b). */
     private final AnalysisView analysisView;
@@ -473,7 +476,10 @@ public final class PageDetailPanel extends JPanel {
         JPanel attachmentList = new JPanel(new BorderLayout(0, 6));
         attachmentList.setOpaque(false);
         attachmentList.add(assetsHint, BorderLayout.NORTH);
-        attachmentList.add(Comic.scroll(assets), BorderLayout.CENTER);
+        // Solange die Liste lädt, dreht sich die Sanduhr der Suche darüber, ohne Esc in der Mitte.
+        assetsBusy.setHighlight(Comic.BLUE);
+        assetsBusy.setVeilColor(Comic.SURFACE);
+        attachmentList.add(assetsBusy, BorderLayout.CENTER);
         attachmentList.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.SOUTH);
         attachmentLayers.setLayout(new FillLayout());
         attachmentLayers.add(attachmentList, JLayeredPane.DEFAULT_LAYER);
@@ -730,6 +736,7 @@ public final class PageDetailPanel extends JPanel {
         acronymHint.setText(" ");
         closeAttachmentOverlay();
         assetsModel.set(null);
+        assetsBusy.setBusy(false);
         analysisView.steps(List.of(), null);
         analysisView.scope(null);
         properties.reset();
@@ -1212,6 +1219,7 @@ public final class PageDetailPanel extends JPanel {
         acronymHint.setText(" ");
         closeAttachmentOverlay();
         assetsModel.set(null);
+        assetsBusy.setBusy(false);
         title.setText("Seite " + pageId);
         path.setText(sourceId);
         state.setText(" ");
@@ -1322,6 +1330,7 @@ public final class PageDetailPanel extends JPanel {
                         imagesLoaded = false;
                         closeAttachmentOverlay();
                         assetsModel.set(null);
+                        assetsBusy.setBusy(false);
                         show(newer);
                         loadVisible();
                         loadPosition();
@@ -1964,6 +1973,11 @@ public final class PageDetailPanel extends JPanel {
         }
         assetsLoaded = true;
         assetsHint.setText("Anhänge werden live geladen …");
+        // Die Sanduhr nur, solange noch keine Liste zu sehen ist; ein Nachladen (etwa neue Standbilder) blendet die
+        // gezeigte Liste nicht ab.
+        if (!force || assetsModel.rows.isEmpty()) {
+            assetsBusy.setBusy(true);
+        }
         String source = sourceId;
         String id = pageId;
         // Eigene Gültigkeit statt request: Eine Neuberechnung der Analysen verwirft die Anhangsliste nicht.
@@ -1973,6 +1987,7 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             assetsModel.set(overview);
+            assetsBusy.setBusy(false);
             if (videoFrames != null && ATTACHMENTS.equals(selectedTab()) && context.runtime() != null) {
                 // Unter „Anhänge“ bekommen die Marken ihre Standbilder, im Hintergrund und der Reihe nach.
                 prefetch(context.runtime()).focus(attachmentsOfKind(
@@ -1986,6 +2001,7 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             assetsLoaded = false;
+            assetsBusy.setBusy(false);
             assetsHint.setText("Anhänge nicht geladen: " + com.aresstack.spaceharvester.app.ui.Problems
                     .describe(error).title());
         });
