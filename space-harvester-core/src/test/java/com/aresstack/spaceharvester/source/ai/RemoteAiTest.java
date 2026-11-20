@@ -367,6 +367,38 @@ class RemoteAiTest {
     }
 
     @Test
+    void imagePromptsDoNotThinkEitherAndATruncatedAnswerSaysWhy() {
+        // Folienkommentare und Folienbeschreibungen denken wie die Analyseschritte nicht nach (ai.step-thinking):
+        // gemma4 füllte sonst mit 10.000+ Zeichen Nachdenken je Folie fast die ganze Kontextlänge (Angelo 20.11.2026).
+        List<String> chats = new CopyOnWriteArrayList<>();
+        java.util.concurrent.atomic.AtomicReference<String> reason = new java.util.concurrent.atomic.AtomicReference<>(
+                "stop");
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"gemma4:12b","model":"gemma4:12b"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"%s"},"done":true,"done_reason":"%s",
+                     "prompt_eval_count":3593,"eval_count":4599}""".formatted(
+                    "stop".equals(reason.get()) ? "Vortragstext" : "", reason.get()));
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, null, null, null, null, null, Set.of())
+                .withVisionModel("gemma4:12b").withProvider(AiProvider.OLLAMA);
+
+        assertThat(remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png", "Schreibe den Vortragstext."))
+                .isEqualTo("Vortragstext");
+        assertThat(remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png")).isEqualTo("Vortragstext");
+        assertThat(chats).hasSize(2).allSatisfy(body -> assertThat(body).contains("\"think\":false"));
+
+        reason.set("length");
+        assertThatThrownBy(() -> remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png", "Notizen"))
+                .isInstanceOfSatisfying(AiServiceException.class, e -> assertThat(e.reason())
+                        .isEqualTo(AiServiceException.Reason.INVALID_RESPONSE))
+                .hasMessageContaining("3593 Token Prompt + 4599 Token Antwort")
+                .hasMessageContaining("context-tokens");
+    }
+
+    @Test
     void streamsTheOllamaChatLineByLine() throws Exception {
         // Ein Ollama-Server meldet die geladenen Modelle; hier läuft das Chat-Modell schon.
         server.createContext("/api/ps", exchange -> respond(exchange, """

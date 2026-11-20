@@ -299,11 +299,14 @@ public class Assets implements DocumentInventory {
     private final java.util.Set<String> backfilled = ConcurrentHashMap.newKeySet();
 
     /**
-     * Gleichzeitige Läufe des Bildbeschreibers; ein weiterer scheitert sofort mit {@code BUSY}. Dasselbe Bild für
+     * Gleichzeitige Läufe des Bildbeschreibers, so viele wie die Aufrufe eines Video→PPTX-Auftrags
+     * ({@code VideoPresentations.Options#DEFAULT}); ein weiterer scheitert sofort mit {@code BUSY}. Früher 2: Damit lief
+     * „Folien beschreiben“ mit nur zwei Anfragen, obwohl ein Ollama-Server mit {@code OLLAMA_NUM_PARALLEL=8} sechs
+     * Bildanfragen gleichzeitig beantwortet (gemessen 20.11.2026). Dasselbe Bild für
      * dasselbe Modell läuft nie zweimal gleichzeitig: weitere Aufrufer warten höchstens {@link #DESCRIBE_WAIT} auf den
      * laufenden.
      */
-    public static final int MAX_CONCURRENT_DESCRIPTIONS = 2;
+    public static final int MAX_CONCURRENT_DESCRIPTIONS = 4;
     private static final java.time.Duration DESCRIBE_WAIT = java.time.Duration.ofMinutes(2);
     private final Semaphore descriptions = new Semaphore(MAX_CONCURRENT_DESCRIPTIONS);
     private final Map<String, CompletableFuture<ImageDescription>> describing = new ConcurrentHashMap<>();

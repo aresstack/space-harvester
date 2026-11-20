@@ -899,6 +899,15 @@ public final class Workspace {
         return run;
     }
 
+    /**
+     * Wer nach einem Neustart die Videos für „In PPTX umwandeln“ liefert, damit Fortsetzen und „Nur Fehler“ auch dann
+     * im selben Eintrag laufen (ADR 0025).
+     */
+    public void presentationMedia(
+            com.aresstack.spaceharvester.application.presentation.VideoPresentations.MediaSource source) {
+        harvester.videoPresentations().mediaSource(source);
+    }
+
     /** Die Datei eines fertigen Auftrags „PPTX erzeugen“; leer, solange sie nicht geschrieben ist. */
     public java.util.Optional<java.nio.file.Path> presentationFile(String jobId) {
         JobStatus status = job(jobId);

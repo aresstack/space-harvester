@@ -55,10 +55,21 @@ final class OllamaChatAdapter implements ChatCompletionPort {
      * @param contextTokens Kontextlänge je Anfrage ({@code num_ctx})
      */
     OllamaChatAdapter(OllamaConnections connections, String model, int contextTokens) {
+        this(connections, model, contextTokens, null);
+    }
+
+    /**
+     * @param thinking {@code think} für Anfragen, die selbst kein {@code reasoningEffort} nennen (etwa die
+     *                 Bildbeschreibung des Enterprise AI Client); {@code null}: keine Vorgabe
+     */
+    OllamaChatAdapter(OllamaConnections connections, String model, int contextTokens, String thinking) {
         this.connections = Objects.requireNonNull(connections, "connections");
         this.model = model;
         this.contextTokens = contextTokens;
+        this.thinking = thinking;
     }
+
+    private final String thinking;
 
     @Override
     public ChatResponse complete(ChatRequest request) {
@@ -229,7 +240,7 @@ final class OllamaChatAdapter implements ChatCompletionPort {
                 }
             }
         }
-        String effort = options.reasoningEffort();
+        String effort = options.reasoningEffort() != null ? options.reasoningEffort() : thinking;
         if (effort != null) {
             String level = effort.strip().toLowerCase(Locale.ROOT);
             if (level.equals("none") || level.equals("minimal")) {

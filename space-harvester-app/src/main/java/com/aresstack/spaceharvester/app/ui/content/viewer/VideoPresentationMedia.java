@@ -32,6 +32,31 @@ public final class VideoPresentationMedia implements VideoMedia {
     private final VideoSettings settings;
     private final TranscribeAudioUseCase transcription;
 
+    /** Die Länge der Videodatei laut Quelle ({@code dav.contentLength}); {@code -1} ohne brauchbare Angabe. */
+    public static long size(com.aresstack.spaceharvester.application.sources.PageMetadata metadata) {
+        try {
+            return Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength", "-1"));
+        } catch (NumberFormatException unavailable) {
+            return -1;
+        }
+    }
+
+    /**
+     * Der Inhaltstyp des Videos: aus der Quelle (auch für Titel ohne Endung, etwa bei BSCW), sonst aus dem
+     * Dateinamen.
+     */
+    public static String mediaType(com.aresstack.spaceharvester.application.sources.PageMetadata metadata) {
+        String reported = metadata.attributes().get(
+                com.aresstack.spaceharvester.application.sources.PageMetadata.REMOTE_MEDIA_TYPE);
+        if (reported != null) {
+            return reported;
+        }
+        String file = metadata.title().toLowerCase(java.util.Locale.ROOT);
+        return file.endsWith(".webm") ? "video/webm"
+                : file.endsWith(".mov") ? "video/quicktime"
+                : file.endsWith(".mkv") ? "video/x-matroska" : "video/mp4";
+    }
+
     /**
      * @param remote    Bereichsabrufe des Videos
      * @param size      Länge der Datei in Bytes
