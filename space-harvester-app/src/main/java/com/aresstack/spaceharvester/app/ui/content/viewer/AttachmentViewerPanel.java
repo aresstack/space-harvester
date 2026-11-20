@@ -301,6 +301,7 @@ public final class AttachmentViewerPanel extends JPanel {
     public void previous() {
         if (pages != null && page > 0) {
             showPage(page - 1);
+            SwingUtilities.invokeLater(this::refreshHover);
         } else if (neighbours.hasPrevious()) {
             neighbours.previous();
         }
@@ -310,6 +311,7 @@ public final class AttachmentViewerPanel extends JPanel {
     public void next() {
         if (pages != null && page < pageCount - 1) {
             showPage(page + 1);
+            SwingUtilities.invokeLater(this::refreshHover);
         } else if (neighbours.hasNext()) {
             neighbours.next();
         }
@@ -473,7 +475,37 @@ public final class AttachmentViewerPanel extends JPanel {
         zoomFit.setVisible(showZoom);
     }
 
+    /**
+     * Blendet die Knöpfe nach der Maus ein, wo sie gerade steht, ohne auf eine Bewegung zu warten: nach dem Blättern
+     * und wenn ein neuer Viewer erscheint (beim Blättern zum nächsten Anhang), sonst verschwände der Pfeil unter der
+     * ruhenden Maus und ließe sich nicht mehrmals hintereinander klicken.
+     */
+    void refreshHover() {
+        if (closed || !layers.isShowing()) {
+            return;
+        }
+        java.awt.PointerInfo info = java.awt.MouseInfo.getPointerInfo();
+        if (info == null) {
+            return;
+        }
+        Point p = new Point(info.getLocation());
+        SwingUtilities.convertPointFromScreen(p, layers);
+        hover(p);
+    }
+
     private void installHover() {
+        // Erscheint der Viewer oder ändert er seine Größe, gilt die ruhende Maus sofort.
+        layers.addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) {
+                SwingUtilities.invokeLater(this::refreshHover);
+            }
+        });
+        layers.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                refreshHover();
+            }
+        });
         MouseAdapter tracker = new MouseAdapter() {
             @Override
             public void mouseMoved(MouseEvent e) {
