@@ -174,8 +174,15 @@ public class ReadingViews {
                     prefetchSlots.acquire();
                     try {
                         if (!gaveUp.get()) {
-                            // ADR 0030: was das Vorladen ablegt, schreibt als Hintergrund.
-                            ChangeTrigger.BACKGROUND.call(() -> view(caller, sourceId, pageId, false));
+                            try {
+                                // Mark the source unavailable before releasing a slot to another request.
+                                ChangeTrigger.BACKGROUND.call(() -> view(caller, sourceId, pageId, false));
+                            } catch (SourceAccessException e) {
+                                if (e.reason() != SourceAccessException.Reason.NOT_FOUND) {
+                                    gaveUp.set(true);
+                                }
+                                throw e;
+                            }
                         }
                     } catch (SourceAccessException e) {
                         // Aufgeben noch mit gehaltenem Platz, sonst fragt der nächste Abruf die Quelle doch noch.

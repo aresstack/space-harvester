@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import com.aresstack.spaceharvester.application.snapshot.LargeFiles;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -73,8 +74,13 @@ public class PageFreshness {
         }
     }
 
-    /** Frist für eine Prüfung (Einzelmetadaten und gegebenenfalls Inhalt). */
+    /** Frist für eine Prüfung (Einzelmetadaten und gegebenenfalls Inhalt); einstellbar über den Konstruktor. */
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * Frist für eine Datei über der Größengrenze des Caches, deren Textauszug die Prüfung erst aus dem ganzen Original
+     * gewinnt ({@code LargeFiles}); einstellbar über den Konstruktor.
+     */
+    public static final Duration DEFAULT_LARGE_FILE_TIMEOUT = Duration.ofMinutes(10);
 
     private static final ExecutorService CHECKS = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("page-freshness-", 0).factory());
@@ -83,6 +89,7 @@ public class PageFreshness {
     private final PageContentFetcher fetcher;
     private final Clock clock;
     private final Duration timeout;
+    private final Duration largeFileTimeout;
 
     /** @param fetcher Inhaltsabruf oder {@code null}, solange keiner angebunden ist */
     public PageFreshness(SourceQueries queries, PageContentFetcher fetcher, Clock clock) {
@@ -91,12 +98,26 @@ public class PageFreshness {
 
     /** @param timeout Frist für eine ganze Prüfung */
     public PageFreshness(SourceQueries queries, PageContentFetcher fetcher, Clock clock, Duration timeout) {
+        this(queries, fetcher, clock, timeout, DEFAULT_LARGE_FILE_TIMEOUT);
+    }
+
+    /**
+     * @param timeout          Frist für eine ganze Prüfung
+     * @param largeFileTimeout Frist, wenn die Kopfdaten im Cache eine Datei über der Größengrenze nennen, die nur als
+     *                         Textauszug abgelegt wird (das Original wird dafür ganz geladen)
+     */
+    public PageFreshness(SourceQueries queries, PageContentFetcher fetcher, Clock clock, Duration timeout,
+                         Duration largeFileTimeout) {
         this.queries = Objects.requireNonNull(queries, "queries");
         this.fetcher = fetcher;
         this.clock = Objects.requireNonNull(clock, "clock");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
         if (timeout.isNegative() || timeout.isZero()) {
             throw new IllegalArgumentException("timeout muss positiv sein");
+        }
+        this.largeFileTimeout = Objects.requireNonNull(largeFileTimeout, "largeFileTimeout");
+        if (largeFileTimeout.isNegative() || largeFileTimeout.isZero()) {
+            throw new IllegalArgumentException("largeFileTimeout muss positiv sein");
         }
     }
 
@@ -132,12 +153,16 @@ public class PageFreshness {
         // Unterbrechungen ignoriert; der abgebrochene Abruf endet dann mit den Zeitgrenzen der Quelle.
         Future<Refreshed> check = CHECKS.submit(() -> checkNow(sourceId, pageId, cachedHeader, cachedSnapshot,
                 permitted));
+        // Eine zu große Datei braucht für ihren Textauszug das ganze Original: dafür die eigene, längere Frist.
+        Duration deadline = cachedHeader.filter(header -> !fetcher.loadsWhole(header.metadata())).isPresent()
+                ? largeFileTimeout : timeout;
         try {
-            return check.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            return check.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             check.cancel(true);
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE,
-                    "Prüfung gegen die Quelle hat die Frist überschritten", null);
+                    "Prüfung gegen die Quelle hat die Frist überschritten (" + (deadline.toSeconds() >= 60 ? deadline.toMinutes() + " min" : deadline.toSeconds() + " s")
+                            + ")", null);
         } catch (InterruptedException e) {
             check.cancel(true);
             Thread.currentThread().interrupt();
@@ -170,9 +195,15 @@ public class PageFreshness {
             return new Refreshed(Outcome.GONE, null, null, clock.instant());
         }
         String version = live.page().version();
+        // Eine zu große Datei gilt nicht mehr als aktuell, sobald sie unter die Grenze passt; nur mit Kopfdaten auch
+        // nicht, solange ein Textauszug in Frage kommt (etwa abgelegt, bevor es ihn gab; ohne lesbaren Text lädt die
+        // Quelle dabei nichts).
         Optional<PageSnapshot> sameRevision = cachedSnapshot
                 .filter(snapshot -> snapshot.key().equals(key) && version != null
-                        && version.equals(snapshot.revision()));
+                        && version.equals(snapshot.revision()))
+                .filter(snapshot -> !LargeFiles.placeholder(snapshot.payload())
+                        || !fetcher.loadsWhole(live.page()) && (LargeFiles.textOnly(snapshot.payload())
+                        || !fetcher.triesText(live.page())));
         if (sameRevision.isPresent()) {
             boolean headerCurrent = cachedHeader
                     .filter(header -> header.metadataHash().equals(live.metadataHash())
@@ -184,10 +215,22 @@ public class PageFreshness {
                     : new Refreshed(Outcome.HEADER_CHANGED, new PageHeader(key, live.page(), live.metadataHash(),
                     live.attributesHash(), checkedAt), sameRevision.get(), checkedAt);
         }
-        PageSnapshot fresh = fetcher.fetch(sourceId, pageId);
+        PageSnapshot fresh = live.page().pageId().equals(pageId) ? fetcher.fetch(sourceId, live.page())
+                : fetcher.fetch(sourceId, pageId);
         if (!fresh.key().equals(key)) {
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.INVALID_RESPONSE,
                     "Die Quelle lieferte eine andere Seite", null);
+        }
+        // Wieder nur die Kopfdaten derselben Version (kein lesbarer Text): nichts Neues, nichts abzulegen.
+        Optional<PageSnapshot> unchanged = cachedSnapshot.filter(snapshot -> snapshot.key().equals(key)
+                && LargeFiles.placeholder(snapshot.payload()) && !LargeFiles.textOnly(snapshot.payload())
+                && LargeFiles.placeholder(fresh.payload()) && !LargeFiles.textOnly(fresh.payload())
+                && version != null && version.equals(snapshot.revision()));
+        if (unchanged.isPresent()) {
+            boolean headerCurrent = cachedHeader.filter(header -> header.metadataHash().equals(live.metadataHash())
+                    && header.attributesHash().equals(live.attributesHash())).isPresent();
+            return headerCurrent ? new Refreshed(Outcome.CURRENT, cachedHeader.get(), unchanged.get(), clock.instant())
+                    : new Refreshed(Outcome.HEADER_CHANGED, fresh.header(), unchanged.get(), clock.instant());
         }
         return new Refreshed(Outcome.CONTENT_CHANGED, fresh.header(), fresh, clock.instant());
     }

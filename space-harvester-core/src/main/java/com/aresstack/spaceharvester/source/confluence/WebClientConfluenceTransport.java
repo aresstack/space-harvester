@@ -9,6 +9,7 @@ import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.spaceharvester.application.jobs.RequestRoute;
 import com.aresstack.spaceharvester.source.network.ProxyCredentials;
 import com.aresstack.spaceharvester.source.network.RouteFailureListener;
+import com.aresstack.spaceharvester.source.network.RoutedHttpPort;
 import io.netty.channel.ChannelOption;
 import io.netty.handler.ssl.ApplicationProtocolConfig;
 import io.netty.handler.ssl.ClientAuth;
@@ -41,6 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLContext;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -74,7 +76,7 @@ import reactor.netty.transport.ProxyProvider;
  *
  * <p>Header werden nie geloggt. {@link #close()} gibt alle Pools und den Routen-Pool frei.
  */
-public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTransport, AutoCloseable {
+public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTransport, RoutedHttpPort {
 
     /** Name dieses Transports in Diagnoseereignissen ({@link RequestRoute}). */
     static final String TRANSPORT = "WebClient";
@@ -163,7 +165,25 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                 .toFuture();
     }
 
-    /** Ein Request mit Weiterleitungen auf demselben Host, wie {@code UrlConnectionConfluenceTransport}. */
+    /**
+     * Execute one HTTP method without redirects through the configured proxy, TLS and pool.
+     * Validate the target URI before adding source credentials.
+     */
+    @Override
+    public CompletionStage<RoutedHttpPort.Response> requestOnceAsync(String method, URI uri,
+            Map<String, String> headers, int maxBytes, Duration timeout) {
+        HttpMethod verb = HttpMethod.valueOf(method);
+        return Mono.defer(() -> closed.get()
+                        ? Mono.<ConfluenceHttpResponse>error(new IOException("Transport ist geschlossen"))
+                        : once(uri, headers, maxBytes, Identity.CLIENT, verb))
+                .map(response -> new RoutedHttpPort.Response(response.status(), response.body(), response.location()))
+                .timeout(timeout, Mono.defer(() -> Mono.error(new SocketTimeoutException(
+                        "Request timeout after " + timeout.toMillis() + " ms"))))
+                .onErrorMap(error -> !(error instanceof IOException), WebClientConfluenceTransport::ioFailure)
+                .toFuture();
+    }
+
+    /** Follow same-origin redirects and cookies for Confluence GET requests. */
     private Mono<ConfluenceHttpResponse> exchange(URI current, Map<String, String> headers, int maxBytes,
                                                   Identity identity, Map<String, String> cookies,
                                                   List<String> redirects, int hop) {
@@ -185,6 +205,11 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
 
     private Mono<ConfluenceHttpResponse> once(URI uri, Map<String, String> headers, int maxBytes,
                                               Identity identity) {
+        return once(uri, headers, maxBytes, identity, HttpMethod.GET);
+    }
+
+    private Mono<ConfluenceHttpResponse> once(URI uri, Map<String, String> headers, int maxBytes,
+                                              Identity identity, HttpMethod method) {
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         if (!"https".equals(scheme) && !"http".equals(scheme)) {
             return Mono.error(new IOException("nur http/https unterstützt: " + uri.getScheme()));
@@ -194,11 +219,11 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         }
         return Mono.fromCallable(() -> routes.routeFor(uri))
                 .subscribeOn(routeScheduler)
-                .flatMap(route -> send(uri, route, headers, maxBytes, identity));
+                .flatMap(route -> send(uri, route, headers, maxBytes, identity, method));
     }
 
     private Mono<ConfluenceHttpResponse> send(URI uri, HttpRoute route, Map<String, String> headers, int maxBytes,
-                                              Identity identity) {
+                                              Identity identity, HttpMethod method) {
         if (route == null) {
             return Mono.error(new IOException("keine Routenentscheidung für " + uri.getHost()));
         }
@@ -212,7 +237,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         } catch (IOException e) {
             return Mono.error(e);
         }
-        return client.get()
+        return client.method(method)
                 .uri(uri)
                 .headers(sent -> {
                     if (userAgent != null) {

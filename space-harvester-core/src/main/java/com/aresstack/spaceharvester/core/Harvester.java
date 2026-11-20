@@ -148,6 +148,7 @@ import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.Indexing;
 import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
@@ -174,6 +175,7 @@ import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileReadStates;
+import com.aresstack.spaceharvester.persistence.files.FileIndexMarks;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
@@ -202,6 +204,7 @@ import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.source.LargeFileTexts;
 import com.aresstack.spaceharvester.source.TikaDocumentStructure;
 import com.aresstack.spaceharvester.source.TikaDocumentText;
 import com.aresstack.spaceharvester.source.SourceAdapter;
@@ -341,6 +344,7 @@ public final class Harvester implements AutoCloseable {
     private final LucenePageCache pageCache;
     private final ChangeLog changeLog;
     private final SpaceSyncJobs syncs;
+    private final Indexing indexing;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
     /** Bestandsinventur nach {@code sync.inventory-interval}, nur aus der Konfiguration (ADR 0014/0015). */
@@ -352,6 +356,7 @@ public final class Harvester implements AutoCloseable {
     private final Assets assets;
     private final ConnectionBudget connections;
     private final PageImageAnalysis imageAnalysis;
+    private final com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations;
     private final Simplifications simplifications;
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
@@ -445,7 +450,7 @@ public final class Harvester implements AutoCloseable {
             boolean liveAi = manager != null && !builder.aiFixed;
             this.currentAi = () -> liveAi ? this.settings.ai() : builder.ai;
             Path cacheDirectory = builder.dataDirectory.resolve("cache");
-            LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"));
+            LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"), builder.maxPageBytes);
             opened.add(cache);
             this.pageCache = cache;
             LuceneJobStore jobStore = LuceneJobStore.open(cacheDirectory.resolve("jobs"));
@@ -634,11 +639,24 @@ public final class Harvester implements AutoCloseable {
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
             this.snapshots = new SourceSnapshots(catalog);
+            // Größere Dateien nimmt der Cache nicht an: gar nicht erst herunterladen, nur die Kopfdaten ablegen.
+            long maxPageBytes = builder.maxPageBytes;
+            snapshots.maxBytes(() -> maxPageBytes);
+            // Für sie den Textauszug statt des Originals, bis zu dieser Größe: Suche und Text-Ansicht brauchen nur ihn.
+            // Das Original kommt dafür auf die Platte und wird als Strom gelesen (ADR 0026), wie große Anhänge.
+            long maxTextFileBytes = builder.maxTextFileBytes;
+            snapshots.maxTextBytes(() -> maxTextFileBytes);
+            TikaDocumentStructure documentStructure = new TikaDocumentStructure(builder.extractionLimits.parallel(),
+                    ExtractionStore.DEFAULT_SECTION_CHARS);
+            LargeFileTexts largeFileTexts = new LargeFileTexts(documentStructure, () -> builder.extractionLimits,
+                    cacheDirectory.resolve("large-files"));
+            snapshots.largeFileText(largeFileTexts::text);
             // ADR 0027: jeder Inhaltsabruf bei der Quelle (Planer, Lesen, Abgleich, Export) meldet dem Bestand „lädt“.
             snapshots.loads(holdings);
             this.sources = new SourceQueries(catalog);
             this.spaceKeys = new SpaceKeyCheck(sources);
-            this.freshness = new PageFreshness(sources, snapshots, clock);
+            this.freshness = new PageFreshness(sources, snapshots, clock, builder.checkTimeout,
+                    builder.largeFileTimeout);
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting), enrichments, texts),
                     builder.maxTreeNodes, freshnessRule(builder), clock);
@@ -850,8 +868,13 @@ public final class Harvester implements AutoCloseable {
                     List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId)),
                     documentEnrichments);
             this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock,
-                    List.of(afterSync, run -> pruneChangeLog.run()), retentionRule(builder));
+                    List.of(afterSync, run -> pruneChangeLog.run(), run -> indexed(run)), retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
+            // Indexieren (Angelo 20.11.2026): markierte Teilbäume lädt jeder Abgleich vollständig; Bilder und Anhänge
+            // folgen als eigene Aufträge, sobald die Seiten da sind.
+            FileIndexMarks indexMarks = new FileIndexMarks(builder.dataDirectory);
+            syncs.indexMarks(indexMarks);
+            this.indexing = new Indexing(indexMarks, syncs, this::collectIndexedAssets);
             // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
             // ADR 0030, CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
             cache.contentDiffer(new TextContentDiffer(pageTexts));
@@ -899,8 +922,7 @@ public final class Harvester implements AutoCloseable {
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
-            assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(
-                    builder.extractionLimits.parallel(), ExtractionStore.DEFAULT_SECTION_CHARS),
+            assets.documentExtractions(new DocumentExtractions(documentStructure,
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
             assets.indexedDocuments(documentEnrichments);
             documentEnrichments.assets(assets);
@@ -911,7 +933,7 @@ public final class Harvester implements AutoCloseable {
             // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
             EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);
             this.packageImport = new ExportPackageImport(jobs, new ZipExportPackageReader(
-                    LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES, maxAssetBytes), baselineStore,
+                    builder.maxPageBytes, maxAssetBytes), baselineStore,
                     sourceId -> catalog.config(sourceId).isPresent(), assetStore, assets::adoptText,
                     new ReadingViewStore(enrichmentStore), importedAssets, List.of(afterSync), clock);
             // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
@@ -941,14 +963,31 @@ public final class Harvester implements AutoCloseable {
             this.statementChecks = new StatementChecks(new ChatStepModel(ChatStepModel.CHECK,
                     () -> liveAi ? this.settings.ai() : startAi,
                     () -> this.settings.check().model(), catalog, trustBundles, builder.userAgent),
-                    new StatementCheckStore(enrichmentStore, clock), withdrawn::mayProcess);
+                    new StatementCheckStore(enrichmentStore, clock), withdrawn::mayProcess,
+                    StatementChecks.pageAccess(access, page -> cache.find(page).map(PageSnapshot::spaceKey)));
             StatementChecks checked = this.statementChecks;
+            // „In PPTX umwandeln“ (Angelo 20.11.2026): fünf Aufträge je Video, Text-Modell = ai.chat-model, an den
+            // KI-Dienst nur Seiten mit KI-Freigabe; die Zwischenergebnisse fallen mit der Freigabe.
+            PageQueries presentationPages = this.pages;
+            com.aresstack.spaceharvester.application.presentation.PresentationStore presentationStore =
+                    new com.aresstack.spaceharvester.application.presentation.PresentationStore(enrichmentStore, clock);
+            this.videoPresentations = new com.aresstack.spaceharvester.application.presentation.VideoPresentations(
+                    jobs, (who, sourceId, pageId) -> presentationPages.page(who, sourceId, pageId, false).snapshot(),
+                    assets, imageAnalysis,
+                    com.aresstack.spaceharvester.application.marks.VideoMarks.slides(enrichmentStore, assets),
+                    new ChatStepModel(com.aresstack.spaceharvester.application.presentation.VideoPresentations
+                            .CORRECTION_STEP, () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog,
+                            trustBundles, builder.userAgent),
+                    presentationStore, withdrawn::mayProcess, builder.exportDirectory().resolve("presentations"));
+            com.aresstack.spaceharvester.application.presentation.VideoPresentations presentations =
+                    this.videoPresentations;
             java.util.concurrent.atomic.AtomicReference<StatementAnalysis> graphAnalysis =
                     new java.util.concurrent.atomic.AtomicReference<>();
             releaseRecomputation.withdrawal(pages -> {
                 pageImages.withdraw(pages, withdrawn::mayProcess);
                 simplified.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 checked.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                presentations.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 // ADR 0032, FL3: Aussagen der Vorstufe tragen Modelltext der Seite und fallen aus dem Graph
                 StatementAnalysis graph = graphAnalysis.get();
                 if (graph != null) {
@@ -1050,6 +1089,13 @@ public final class Harvester implements AutoCloseable {
                             .sorted(java.util.Comparator.comparingInt(String::length).thenComparing(
                                     java.util.Comparator.naturalOrder())).toList();
                 }
+
+                @Override
+                public SourceQueryExports.PageName name(String sourceId, String pageId) {
+                    return cache.findHeader(new PageKey(sourceId, pageId)).map(header -> new SourceQueryExports
+                            .PageName(header.metadata().title(), header.metadata().url() == null ? null
+                            : header.metadata().url().toString())).orElse(null);
+                }
             }, access, clock, OWNER);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
@@ -1083,7 +1129,8 @@ public final class Harvester implements AutoCloseable {
                     sourceId -> catalog.config(sourceId).isPresent(),
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
                     new FileReadStates(builder.assetDirectory()), clock);
-            this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads);
+            this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads, sourceQueryExports);
+            jobActions.presentations(videoPresentations);
             // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
             // mit derselben Lese- und Exportprüfung wie beim Start.
             jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action,
@@ -1457,6 +1504,30 @@ public final class Harvester implements AutoCloseable {
         return pageTexts.project(Objects.requireNonNull(snapshot, "snapshot"));
     }
 
+    /**
+     * Read a bounded remote media range after verifying page content permission.
+     * Never expose provider credentials or transport details to desktop clients.
+     */
+    public byte[] mediaRange(String sourceId, String pageId, long offset, int maximumBytes) {
+        return openMediaRange(sourceId, pageId).read(offset, maximumBytes);
+    }
+
+    /** Authorize the page once for a viewer session rather than for every media chunk. */
+    public com.aresstack.spaceharvester.application.sources.MediaByteRange openMediaRange(
+            String sourceId, String pageId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
+        HarvestSource source = catalog.find(sourceId)
+                .orElseThrow(() -> new com.aresstack.spaceharvester.application.sources.UnknownSourceException(sourceId));
+        com.aresstack.spaceharvester.application.sources.PageMetadata metadata = source.pageMetadata(pageId);
+        access.require(caller, ResourceScope.page(sourceId, metadata.partitionKey(), pageId), AccessKind.CONTENT);
+        return (offset, maximumBytes) -> {
+            if (offset < 0 || maximumBytes < 1 || maximumBytes > 262144) {
+                throw new IllegalArgumentException("Invalid media byte range");
+            }
+            return source.mediaRange(pageId, offset, maximumBytes);
+        };
+    }
+
     /** Native Seiten-Snapshots direkt von der Quelle, ohne Cache. */
     public SourceSnapshots snapshots() {
         return snapshots;
@@ -1724,6 +1795,14 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
+     * „In PPTX umwandeln“ (Angelo 20.11.2026): aus einem Video mit Folienmarken eine PowerPoint-Datei mit Vortragstext
+     * je Folie, als fünf Aufträge in der Auftragsliste.
+     */
+    public com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations() {
+        return videoPresentations;
+    }
+
+    /**
      * Aussagenanalyse einer Seite auf Knopfdruck (#499, ADR 0024): {@link StatementAnalysis#analyze} nur auf
      * ausdrückliche Anforderung, nie auf dem EDT; {@link StatementAnalysis#read} liest nur. Ohne
      * {@link Builder#statementAnalyzer} (Dienst) ist {@link StatementAnalysis#available()} {@code false}.
@@ -1840,9 +1919,33 @@ public final class Harvester implements AutoCloseable {
         return enrichments;
     }
 
+    /** Vorgabe für {@link Builder#maxTextFileBytes}: 200 MiB. */
+    public static final long DEFAULT_MAX_TEXT_FILE_BYTES = 200L * 1024 * 1024;
+
     /** Abgleich eines Space in den Cache als Auftrag; Status und Delta über {@link SpaceSyncJobs#status}. */
     public SpaceSyncJobs syncs() {
         return syncs;
+    }
+
+    /** Indexieren: markierte Teilbäume vollständig laden und aktuell halten, samt Bildern und Anhängen. */
+    public Indexing indexing() {
+        return indexing;
+    }
+
+    /** Bilder und Anhänge einer markierten Wurzel beschaffen; vor dem Aufbau der Beschaffung nichts. */
+    private void collectIndexedAssets(String sourceId, String spaceKey, String pageId) {
+        ExportAssetCollection collection = assetCollection;
+        if (collection != null) {
+            collection.collect(OWNER, new Selection.Root(sourceId, spaceKey, pageId));
+        }
+    }
+
+    /** Folgearbeit nach einem Abgleich: Bilder und Anhänge markierter Teilbäume ({@link Indexing}). */
+    private void indexed(SpaceSync.SyncRun run) {
+        Indexing current = this.indexing;
+        if (current != null) {
+            current.committed(run);
+        }
     }
 
     /**
@@ -1891,7 +1994,10 @@ public final class Harvester implements AutoCloseable {
     }
 
     /** Alle Aufträge dieses Harvesters. */
-    /** Wie viele Bilder- und Anhängeaufträge höchstens gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
+    /**
+     * Wie viele Downloads (Bilder, Anhänge, Exporte aus der Quelle) höchstens gleichzeitig vorbereiten
+     * ({@code jobs.parallel-preparations}).
+     */
     public int parallelPreparations() {
         return jobs.parallelPreparations();
     }
@@ -1901,14 +2007,17 @@ public final class Harvester implements AutoCloseable {
         jobs.parallelPreparations(value);
     }
 
-    /** Wie viele Bilder- und Anhängeaufträge höchstens gleichzeitig laden ({@code jobs.parallel-downloads}). */
+    /**
+     * Wie viele Downloads (Bilder, Anhänge, Exporte aus der Quelle) höchstens gleichzeitig laden
+     * ({@code jobs.parallel-downloads}).
+     */
     public int parallelDownloads() {
         return jobs.parallelDownloads();
     }
 
     /**
      * Ändert {@link #parallelDownloads()} sofort (0 bis {@value JobLimits#MAX_PARALLEL_DOWNLOADS}); bei 0 bereiten
-     * Bilder- und Anhängeaufträge nur vor und warten dann, bis wieder geladen werden darf.
+     * Downloads nur vor und warten dann, bis wieder geladen werden darf.
      */
     public void parallelDownloads(int value) {
         jobs.parallelDownloads(value);
@@ -2319,7 +2428,11 @@ public final class Harvester implements AutoCloseable {
         private AccessPolicy accessPolicy = new TrustedCaller();
         private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
         private Duration searchTimeout = Duration.ofSeconds(5);
+        private Duration checkTimeout = PageFreshness.DEFAULT_TIMEOUT;
+        private Duration largeFileTimeout = PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;
         private int maxTreeNodes = 50_000;
+        private int maxPageBytes = LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
+        private long maxTextFileBytes = DEFAULT_MAX_TEXT_FILE_BYTES;
         private boolean prefetchSearchHits = true;
         private boolean prefetchSearchHitsFixed;
         private int discoveryQueries = KeywordSearch.DEFAULT_MAX_QUERIES;
@@ -2551,6 +2664,33 @@ public final class Harvester implements AutoCloseable {
          * Größte einzelne Datei, die als Asset abgelegt wird; Standard {@code 0}, ohne Grenze wie im Server (Angelo
          * 11.11.2026). Dateien über {@link Assets#MAX_IN_MEMORY_BYTES} gibt es nur als Strom.
          */
+        /**
+         * Größte Datei bzw. Seite, die der Cache ablegt ({@code space-harvester.cache.max-page-size}); größere Dateien
+         * werden nicht heruntergeladen, nur ihre Kopfdaten abgelegt. Standard
+         * {@link LucenePageCache#DEFAULT_MAX_PAYLOAD_BYTES}.
+         */
+        public Builder maxPageBytes(long maxPageBytes) {
+            if (maxPageBytes <= 0 || maxPageBytes > Integer.MAX_VALUE - 8) {
+                throw new IllegalArgumentException("maxPageBytes muss zwischen 1 und " + (Integer.MAX_VALUE - 8)
+                        + " liegen");
+            }
+            this.maxPageBytes = (int) maxPageBytes;
+            return this;
+        }
+
+        /**
+         * Größte Datei über {@link #maxPageBytes}, deren Textauszug statt des Originals abgelegt wird
+         * ({@code space-harvester.cache.max-text-file-size}); {@code 0} nie. Die Datei wird dafür einmal ganz geladen.
+         * Standard {@link #DEFAULT_MAX_TEXT_FILE_BYTES}.
+         */
+        public Builder maxTextFileBytes(long maxTextFileBytes) {
+            if (maxTextFileBytes < 0) {
+                throw new IllegalArgumentException("maxTextFileBytes darf nicht negativ sein");
+            }
+            this.maxTextFileBytes = maxTextFileBytes;
+            return this;
+        }
+
         public Builder maxAssetBytes(long maxAssetBytes) {
             if (maxAssetBytes < 0) {
                 throw new IllegalArgumentException("maxAssetBytes darf nicht negativ sein");
@@ -2744,6 +2884,30 @@ public final class Harvester implements AutoCloseable {
 
         public Builder searchTimeout(Duration searchTimeout) {
             this.searchTimeout = Objects.requireNonNull(searchTimeout, "searchTimeout");
+            return this;
+        }
+
+        /**
+         * Frist einer Prüfung gegen die Quelle beim Öffnen und Beschaffen einer Seite
+         * ({@code space-harvester.cache.check-timeout}); Standard {@link PageFreshness#DEFAULT_TIMEOUT}.
+         */
+        public Builder checkTimeout(Duration checkTimeout) {
+            if (checkTimeout == null || checkTimeout.isNegative() || checkTimeout.isZero()) {
+                throw new IllegalArgumentException("checkTimeout muss positiv sein");
+            }
+            this.checkTimeout = checkTimeout;
+            return this;
+        }
+
+        /**
+         * Frist dieser Prüfung für eine Datei über der Größengrenze, deren Textauszug das ganze Original braucht
+         * ({@code space-harvester.cache.large-file-timeout}); Standard {@link PageFreshness#DEFAULT_LARGE_FILE_TIMEOUT}.
+         */
+        public Builder largeFileTimeout(Duration largeFileTimeout) {
+            if (largeFileTimeout == null || largeFileTimeout.isNegative() || largeFileTimeout.isZero()) {
+                throw new IllegalArgumentException("largeFileTimeout muss positiv sein");
+            }
+            this.largeFileTimeout = largeFileTimeout;
             return this;
         }
 

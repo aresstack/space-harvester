@@ -24,7 +24,10 @@ public final class KnowledgeDocumentTextProjector implements PageTextProjector {
 
     @Override
     public Optional<PageText> project(PageSnapshot snapshot) {
-        if (!NATIVE_FORMAT.equals(snapshot.payload().nativeFormat())) {
+        // Auch der Textauszug einer Datei über der Größengrenze des Caches (LargeFiles): derselbe Lesetext.
+        if (!NATIVE_FORMAT.equals(snapshot.payload().nativeFormat())
+                && !com.aresstack.spaceharvester.application.snapshot.LargeFiles.TEXT_FORMAT
+                .equals(snapshot.payload().nativeFormat())) {
             return Optional.empty();
         }
         String text = new String(snapshot.payload().bytes(), StandardCharsets.UTF_8);

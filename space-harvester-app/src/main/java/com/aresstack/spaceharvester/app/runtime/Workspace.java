@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
+import com.aresstack.spaceharvester.application.marks.VideoMarks;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.images.ImagePayload;
@@ -59,6 +60,7 @@ import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -309,7 +311,7 @@ public final class Workspace {
     }
 
     /**
-     * Das Fachglossar (#122 Stufe 2, Reiter „Fachglossar“ unter Begriffe) des Core mit den Rechten dieser App
+     * Das Fachglossar (#122 Stufe 2, Reiter „Fachglossar“ unter Analysen) des Core mit den Rechten dieser App
      * ({@code Harvester.glossary()}, {@code glossaryClassification()}); die Rückgabe bleibt {@code Optional}, damit der
      * Reiter ohne Unterbau „noch nicht verfügbar“ zeigen kann.
      */
@@ -402,6 +404,17 @@ public final class Workspace {
     }
 
     /** Seite mit nativer Payload ({@code …/pages/{pageId}}, {@code refresh=true} prüft gegen die Quelle). */
+    /** Read one bounded media range after the Core has verified resource access. */
+    public byte[] mediaRange(String sourceId, String pageId, long offset, int maximumBytes) {
+        return harvester.mediaRange(sourceId, pageId, offset, maximumBytes);
+    }
+
+    /** Authorize a single media-viewer session without exposing source credentials. */
+    public com.aresstack.spaceharvester.application.sources.MediaByteRange openMediaRange(
+            String sourceId, String pageId) {
+        return harvester.openMediaRange(sourceId, pageId);
+    }
+
     public DeliveredPage page(String sourceId, String pageId, boolean refresh) {
         return harvester.pages().page(caller, sourceId, pageId, refresh);
     }
@@ -416,6 +429,24 @@ public final class Workspace {
         } catch (AccessDeniedException | UnknownSourceException e) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * Das Original einer Datei über der Größengrenze des Caches zum Anzeigen, direkt aus der Quelle und ohne es
+     * abzulegen (Angelo, 20.11.2026: etwa ein Fotoprotokoll als PNG mit 22 MB).
+     */
+    public byte[] original(String sourceId, PageMetadata metadata) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        return harvester.snapshots().original(sourceId, metadata);
+    }
+
+    /**
+     * Lädt das Original einer Datei direkt aus der Quelle in die Datei {@code target}, ohne Größengrenze und ohne es
+     * abzulegen: „Speichern“ und „Öffnen“ im Viewer für Dateien über der Größengrenze (Angelo, 20.11.2026).
+     */
+    public void downloadOriginal(String sourceId, PageMetadata metadata, java.nio.file.Path target) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        harvester.snapshots().downloadOriginal(sourceId, metadata, target);
     }
 
     /**
@@ -654,6 +685,11 @@ public final class Workspace {
         return harvester.imageAnalysis().read(page.snapshot());
     }
 
+    /** Ob ein Vision-Modell eingestellt ist, das Bilder beschreiben kann. */
+    public boolean imagesAvailable() {
+        return harvester.imageAnalysis().available();
+    }
+
     /** Ob die Quelle für das Vision-Modell freigegeben ist; siehe {@code PageImageAnalysis#released}. */
     public boolean imagesReleased(String sourceId) {
         return harvester.imageAnalysis().released(sourceId);
@@ -677,6 +713,188 @@ public final class Workspace {
         PageImages images = harvester.imageAnalysis().describe(page.snapshot());
         harvester.enrichments().flush();
         return images;
+    }
+
+    /**
+     * Wie {@link #describeImages(String, String)}, {@code once} wie {@link #describeImagesOnce}; {@code progress}
+     * erfährt jedes Bild, sobald es beschrieben ist (im aufrufenden Thread).
+     */
+    public PageImages describeImages(String sourceId, String pageId, boolean once,
+                                     java.util.function.Consumer<ImagePayload.Entry> progress) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        PageImages images = once ? harvester.imageAnalysis().describeOnce(page.snapshot(), progress)
+                : harvester.imageAnalysis().describe(page.snapshot(), progress);
+        harvester.enrichments().flush();
+        return images;
+    }
+
+    /** Ob das Vision-Modell geladen ist und sofort antwortet (bei Ollama laut {@code /api/ps}). */
+    public boolean visionModelLoaded() {
+        return harvester.imageAnalysis().modelLoaded();
+    }
+
+    /** Lädt das Vision-Modell und wartet darauf, höchstens die eingestellte Ladefrist. */
+    public void loadVisionModel() {
+        harvester.imageAnalysis().loadModel();
+    }
+
+    /**
+     * Beschreibt nur das Bild an {@code index} der Bilderliste und gibt die Bilder der Seite zurück; die übrigen
+     * bleiben, wie sie waren. {@code once} wie {@link #describeImagesOnce}; mit {@code fresh} neu statt aus den
+     * gespeicherten Beschreibungen.
+     */
+    public PageImages describeImage(String sourceId, String pageId, int index, boolean once, boolean fresh) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        return harvester.imageAnalysis().describeOne(page.snapshot(), index, once, fresh);
+    }
+
+    /**
+     * Die Folien der gespeicherten Fassung eines Videos: die Marken, wie der Player sie gefunden hat, ohne
+     * Wiederholungen derselben Folie (sobald ihre Standbilder da sind); leer, solange er keine gefunden hat. Fragt die
+     * Quelle nicht.
+     */
+    public List<Long> videoMarks(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        return slides().find(new PageKey(sourceId, pageId), page.snapshot().revision());
+    }
+
+    /**
+     * Speichert die Marken, die der Player im Video gefunden hat; je Marke steht dann ein virtueller Anhang in der
+     * Anhangsliste der Seite. Braucht wie das Ablegen von Anhängen die sync-Freigabe.
+     */
+    public void saveVideoMarks(String sourceId, String pageId, List<Long> marks) {
+        DeliveredPage page = syncedPage(sourceId, pageId);
+        VideoMarks.in(harvester.enrichments().store()).save(new PageKey(sourceId, pageId), page.snapshot().revision(),
+                marks);
+    }
+
+    /** Setzt, woher die Werte für den Vergleich zweier Standbilder kommen ({@code space-harvester-app.video.*}). */
+    public void slideThresholds(java.util.function.Supplier<
+            com.aresstack.spaceharvester.application.marks.SlideFrames.Thresholds> thresholds) {
+        harvester.assets().slideThresholds(thresholds);
+    }
+
+    /** Die Folien der Videos: gespeicherte Marken ohne Wiederholungen derselben Folie. */
+    private VideoMarks slides() {
+        return VideoMarks.slides(harvester.enrichments().store(), harvester.assets());
+    }
+
+    /** Die Marken des Videos, deren virtueller Anhang noch kein Standbild hat. */
+    public List<Long> missingVideoFrames(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        String version = page.snapshot().revision();
+        List<Long> marks = slides().find(new PageKey(sourceId, pageId), version);
+        return harvester.assets().missingVideoFrames(sourceId, pageId, version, marks);
+    }
+
+    /**
+     * Eine Fassung des Transkripts eines Videos: das Original oder eine Korrektur, die als Ergänzung daneben liegt.
+     *
+     * @param label Anzeigename, {@code Original} oder etwa {@code Korrektur gemma4:12b}, unvollständige mit Zusatz
+     */
+    public record TranscriptVersion(String label, String text) {
+    }
+
+    /**
+     * Das gespeicherte Transkript des Videos dieser Seite mit seinen Korrekturen (Angelo, 20.11.2026): zuerst das
+     * Original, dann je Modell eine Korrektur; leer, solange kein Transkript erzeugt ist. Fragt die Quelle nicht.
+     */
+    public List<TranscriptVersion> videoTranscriptVersions(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        String version = page.snapshot().revision();
+        java.util.Optional<String> original = harvester.assets().videoTranscript(sourceId, pageId, version);
+        if (original.isEmpty()) {
+            return List.of();
+        }
+        List<TranscriptVersion> versions = new ArrayList<>();
+        versions.add(new TranscriptVersion("Original", original.get()));
+        for (Assets.TranscriptCorrection correction : harvester.assets().videoTranscriptCorrections(sourceId, pageId,
+                version)) {
+            harvester.assets().videoTranscriptText(sourceId, pageId, version, correction.attachmentId())
+                    .ifPresent(text -> versions.add(new TranscriptVersion(correction.label()
+                            + (correction.complete() ? "" : " (unvollständig)"), text)));
+        }
+        return List.copyOf(versions);
+    }
+
+    /**
+     * Die Folienkommentare einer Marke (Angelo, 20.11.2026): je Modell eine Fassung, wie sie an der virtuellen Marke
+     * liegen; leer ohne. Fragt die Quelle nicht.
+     */
+    public List<TranscriptVersion> videoSlideNotes(String sourceId, String pageId, long millis) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        String version = page.snapshot().revision();
+        List<TranscriptVersion> notes = new ArrayList<>();
+        for (Assets.SlideNote note : harvester.assets().videoSlideNotes(sourceId, pageId, version)) {
+            if (note.millis() == millis) {
+                harvester.assets().videoSlideNoteText(sourceId, pageId, version, note.attachmentId())
+                        .ifPresent(text -> notes.add(new TranscriptVersion(note.label(), text)));
+            }
+        }
+        return List.copyOf(notes);
+    }
+
+    /** Das gespeicherte Transkript des Videos dieser Seite; leer, solange keines erzeugt ist. Fragt die Quelle nicht. */
+    public java.util.Optional<String> videoTranscript(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        return harvester.assets().videoTranscript(sourceId, pageId, page.snapshot().revision());
+    }
+
+    /**
+     * Speichert das Transkript des Videos dieser Seite und ersetzt ein früheres; es steht dann als virtueller Anhang
+     * unter „Anhänge“. Braucht wie das Ablegen von Anhängen die sync-Freigabe.
+     */
+    public void storeVideoTranscript(String sourceId, String pageId, String fileName, String text) {
+        DeliveredPage page = syncedPage(sourceId, pageId);
+        harvester.assets().putVideoTranscript(sourceId, pageId, page.snapshot().revision(), fileName, text);
+    }
+
+    /** Legt das Standbild einer Marke ab; es füllt ihren virtuellen Anhang unter „Anhänge“. */
+    public void storeVideoFrame(String sourceId, String pageId, Assets.VideoFrame frame) {
+        DeliveredPage page = syncedPage(sourceId, pageId);
+        harvester.assets().putVideoFrame(sourceId, pageId, page.snapshot().revision(), frame);
+    }
+
+    /**
+     * Was „In PPTX umwandeln“ für das Video dieser Seite jetzt fehlt (Modell, KI-Freigabe, Folienmarken); leer, wenn
+     * es starten kann. Fragt weder Quelle noch Modell.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.presentation.PresentationUnavailableException
+            .Reason> videoPresentationUnavailable(String sourceId, String pageId) {
+        return harvester.videoPresentations().unavailable(caller, sourceId, pageId);
+    }
+
+    /**
+     * „In PPTX umwandeln“ (Angelo 20.11.2026): startet die fünf Aufträge für das Video dieser Seite; sie erscheinen
+     * einzeln unter „Aufträge“. Legt Transkript und Standbilder ab, braucht also wie diese die sync-Freigabe.
+     *
+     * @param media Whisper und Standbilder des geöffneten Videos
+     * @return die Aufträge in der Reihenfolge des Ablaufs; der letzte erzeugt die Datei
+     * @throws com.aresstack.spaceharvester.application.presentation.PresentationUnavailableException wenn etwas fehlt
+     */
+    public com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run startVideoPresentation(
+            String sourceId, String pageId,
+            com.aresstack.spaceharvester.application.presentation.VideoMedia media) {
+        syncedPage(sourceId, pageId);
+        com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run run =
+                harvester.videoPresentations().start(caller, sourceId, pageId, media,
+                        com.aresstack.spaceharvester.application.presentation.VideoPresentations.Options.DEFAULT);
+        run.all().forEach(job -> activities.remember(job.id()));
+        return run;
+    }
+
+    /** Die Datei eines fertigen Auftrags „PPTX erzeugen“; leer, solange sie nicht geschrieben ist. */
+    public java.util.Optional<java.nio.file.Path> presentationFile(String jobId) {
+        JobStatus status = job(jobId);
+        return harvester.videoPresentations().file(jobId, status.owner());
+    }
+
+    private DeliveredPage syncedPage(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        return page;
     }
 
     /**
@@ -798,7 +1016,24 @@ public final class Workspace {
      * @return Zahl der gelöschten Analysen (Seiten und Dokumente)
      */
     public int deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection selection) {
-        return harvester.knowledgeGraph().delete(caller, analysesOf(selection, resolveSelection(selection)));
+        return deleteStatementAnalyses(selection, false);
+    }
+
+    /**
+     * Wie {@link #deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection)}; mit
+     * {@code withChecks} danach auch die KI-Urteile aus „Aussagen prüfen“ derselben Seiten
+     * ({@code StatementChecks.delete}, „Alles löschen“, Angelo 17.11.2026). Synchron, also außerhalb des EDT.
+     *
+     * @return Zahl der gelöschten Analysen (Seiten und Dokumente)
+     */
+    public int deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                       boolean withChecks) {
+        java.util.function.Predicate<PageKey> pages = analysesOf(selection, resolveSelection(selection));
+        int deleted = harvester.knowledgeGraph().delete(caller, pages);
+        if (withChecks) {
+            harvester.statementChecks().delete(caller, pages);
+        }
+        return deleted;
     }
 
     /**
@@ -825,7 +1060,16 @@ public final class Workspace {
      * @return Zahl der gelöschten Analysen (Seite und Dokumente)
      */
     public int deleteStatementAnalysis(PageKey key) {
-        return harvester.knowledgeGraph().delete(caller, key::equals);
+        return deleteStatementAnalysis(key, false);
+    }
+
+    /** Wie {@link #deleteStatementAnalysis(PageKey)}; mit {@code withChecks} auch die KI-Urteile dieser Seite. */
+    public int deleteStatementAnalysis(PageKey key, boolean withChecks) {
+        int deleted = harvester.knowledgeGraph().delete(caller, key::equals);
+        if (withChecks) {
+            harvester.statementChecks().delete(caller, key::equals);
+        }
+        return deleted;
     }
 
     /** Meldet sich, nachdem Aussagen-Analysen gelöscht wurden ({@code KnowledgeGraph.subscribe}); kein Polling. */
@@ -1059,6 +1303,33 @@ public final class Workspace {
     }
 
     /**
+     * Indexieren (Angelo, 20.11.2026): markiert die Seite samt Unterseiten, ohne {@code pageId} den ganzen Space, und
+     * startet den Abgleich in der Betriebsart {@code mode}. Die markierten Seiten lädt er vollständig, Bilder und
+     * Anhänge folgen als eigene Aufträge; jede spätere Synchronisierung hält sie aktuell.
+     *
+     * @throws com.aresstack.spaceharvester.application.sync.SyncAlreadyRunningException wenn der Space gerade abgleicht;
+     *                                                                                   markiert ist er trotzdem
+     */
+    public JobStatus index(String sourceId, String spaceKey, String pageId, SyncMode mode) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        harvester.spaceKeys().requireExisting(sourceId, spaceKey);
+        JobStatus status = harvester.indexing().index(sourceId, spaceKey, pageId, Harvester.OWNER, mode);
+        activities.remember(status.id());
+        return status;
+    }
+
+    /** Hebt die Markierung genau dieser Wurzel auf; Geladenes bleibt und wird weiter aktuell gehalten. */
+    public void unindex(String sourceId, String spaceKey, String pageId) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        harvester.indexing().unindex(sourceId, spaceKey, pageId);
+    }
+
+    /** Ob genau diese Wurzel zum Indexieren markiert ist, ohne {@code pageId} der ganze Space; liest nur die Ablage. */
+    public boolean indexed(String sourceId, String spaceKey, String pageId) {
+        return harvester.indexing().marks().marked(sourceId, spaceKey, pageId);
+    }
+
+    /**
      * Katalogstand eines Space im Cache, ohne Quellenzugriff ({@code GET …/spaces/{key}/catalog}): erfasst oder nicht,
      * bekannte Seiten und Seiten mit Inhalt.
      */
@@ -1283,10 +1554,12 @@ public final class Workspace {
         outputs.forEach(root -> requireExport(root.sourceId(), root.spaceKey()));
         List<JobStatus> started = new ArrayList<>(2 * outputs.size());
         for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
-            // Aus dem Bestand nur, wenn dort auch Bilder und Anhänge der Seiten liegen; sonst holt der Export sie von der
-            // Quelle (gespeicherte, aktuelle Seiten liest auch er nur aus dem Cache) und legt sie im Bestand ab.
-            boolean stored = harvester.holdings().resolve(caller,
-                    com.aresstack.spaceharvester.application.holdings.Selection.of(root)).counts().stored() > 0
+            // Aus dem Bestand nur, wenn jede lesbare Seite aktuell dort liegt, samt Bildern und Anhängen; sonst indexiert
+            // der Export erst, was fehlt oder veraltet ist (Angelo, 20.11.2026: gespeicherte, aktuelle Seiten liest auch
+            // er nur aus dem Cache), und legt Bilder und Anhänge im Bestand ab.
+            com.aresstack.spaceharvester.application.holdings.HoldingCounts counts = harvester.holdings().resolve(caller,
+                    com.aresstack.spaceharvester.application.holdings.Selection.of(root)).counts();
+            boolean stored = counts.local() > 0 && counts.local() >= counts.pages() - counts.locked()
                     && harvester.assetCollection() != null
                     && harvester.assetCollection().inHoldings(Harvester.OWNER, root);
             JobStatus data = stored
@@ -1369,6 +1642,9 @@ public final class Workspace {
         return switch (status.type()) {
             case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
             case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
+            // Metadaten und Analytics: ein neuer Lauf im selben Eintrag, auch nach einem Neustart (Angelo 17.11.2026).
+            case METADATA_EXPORT, ANALYTICS_EXPORT -> harvester.jobActions().perform(jobId, Harvester.OWNER,
+                    JobAction.RESUME);
             default -> harvester.resumeExport(jobId);
         };
     }
@@ -1557,8 +1833,10 @@ public final class Workspace {
      * oder nicht mehr sichtbarer Auftrag gilt als unbekannt.
      */
     public List<JobEvent> events(String jobId) {
-        job(jobId);
-        return harvester.events(jobId);
+        JobStatus status = job(jobId);
+        // Läufe des Aufrufers (Aussagenanalyse, „In PPTX umwandeln“ …) gehören ihm, nicht dem Core.
+        return Harvester.OWNER.equals(status.owner()) ? harvester.events(jobId)
+                : harvester.jobs().events(jobId, status.owner());
     }
 
     /**
@@ -2033,13 +2311,49 @@ public final class Workspace {
     // ------------------------------------------------------------------ intern
 
     private PageAttachmentList visibleAttachments(String sourceId, String pageId, AccessKind kind) {
+        // Die Marken eines Videos stehen als virtuelle Anhänge mit in der Liste.
         if (access.permits(caller, ResourceScope.page(sourceId, null, pageId), kind)) {
-            return harvester.sources().attachments(sourceId, pageId);
+            return sourceAttachments(sourceId, pageId);
         }
         access.require(caller, ResourceScope.source(sourceId), kind);
-        PageAttachmentList list = harvester.sources().attachments(sourceId, pageId);
+        PageAttachmentList list = sourceAttachments(sourceId, pageId);
         access.requireConcealed(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), kind);
         return list;
+    }
+
+    /**
+     * Die Anhänge der Quelle samt den virtuellen Anhängen eines Videos: je gespeicherter Marke einer und das
+     * gespeicherte Transkript. Eine Quelle ohne Anhangslisten (etwa ein BSCW-Dokument) hat dann nur diese; ohne sie
+     * bleibt es bei {@code UNSUPPORTED}.
+     */
+    private PageAttachmentList sourceAttachments(String sourceId, String pageId) {
+        DeliveredPage page = null;
+        List<Long> marks = List.of();
+        boolean transcript = false;
+        try {
+            page = harvester.pages().page(caller, sourceId, pageId, false);
+            marks = slides().find(new PageKey(sourceId, pageId), page.snapshot().revision());
+            transcript = harvester.assets().hasVideoTranscript(sourceId, pageId, page.snapshot().revision());
+        } catch (RuntimeException notCached) {
+            // Eine Seite ohne gespeicherten Stand hat keine gespeicherten Marken und kein Transkript.
+        }
+        PageAttachmentList list;
+        try {
+            list = harvester.sources().attachments(sourceId, pageId);
+        } catch (com.aresstack.spaceharvester.application.sources.SourceAccessException e) {
+            if (marks.isEmpty() && !transcript
+                    || e.reason() != com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNSUPPORTED) {
+                throw e;
+            }
+            java.time.Instant now = java.time.Instant.now();
+            list = new PageAttachmentList(sourceId, page.header().metadata().partitionKey(),
+                    new com.aresstack.spaceharvester.application.sources.PageAttachments(pageId, List.of(), List.of(),
+                            "application/json", "video-marks", List.of(), now), now);
+        }
+        if (!marks.isEmpty()) {
+            list = harvester.assets().withVideoMarks(list, page.snapshot().revision(), marks);
+        }
+        return transcript ? harvester.assets().withVideoTranscript(list, page.snapshot().revision()) : list;
     }
 
     private void requireVisible(JobStatus status, AccessKind kind) {

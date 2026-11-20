@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
+
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Duration;
@@ -24,10 +27,28 @@ import java.util.List;
  *                                  Bildbeschreibung
  * @param chatMaxTokens             Ausgabelimit einer Antwort des Text-Modells in Tokens als Text
  *                                  ({@code chat-max-tokens}, gesendet als {@code max_tokens}) oder leer (Core: 8192)
+ * @param provider                  Art des Dienstes ({@code provider}); {@code null} heißt OpenAI-kompatibel. Bei
+ *                                  Ollama ist die Basisadresse der Server, etwa {@code http://localhost:11434}
+ * @param contextTokens             Kontextlänge je Anfrage an Ollama ({@code context-tokens}, {@code num_ctx}) als
+ *                                  Text oder leer (Core: 8192)
+ * @param loadTimeout               so viele Sekunden darf Ollama ein Modell laden ({@code load-timeout}) als Text
+ *                                  oder leer (Standard des Core)
+ * @param retries                   Wiederholungen einer fehlgeschlagenen Bildbeschreibung ({@code retries}) als Text
+ *                                  oder leer (Standard des Core)
+ * @param loadPollInterval          in diesem Abstand in Sekunden fragt die App Ollama, ob ein angestoßenes Modell läuft
+ *                                  ({@code load-poll-interval}), als Text oder leer (Standard des Core)
+ * @param stepThinking              Nachdenken bei Analyseschritten ({@code step-thinking}: none, low, medium, high)
+ *                                  oder leer (Standard des Core: aus)
  */
 public record AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
                       Duration timeout, List<String> externalProcessingSources, String rerankModel,
-                      String chunkTokens, String chunkOverlapSentences, String visionModel, String chatMaxTokens) {
+                      String chunkTokens, String chunkOverlapSentences, String visionModel, String chatMaxTokens,
+                      AiProvider provider, String contextTokens, String loadTimeout, String retries,
+                      String loadPollInterval, String stepThinking) {
+
+    /** Grenzen der Kontextlänge bei Ollama, wie im Core ({@code AiServiceSettings}). */
+    public static final int MIN_CONTEXT_TOKENS = 512;
+    public static final int MAX_CONTEXT_TOKENS = 1_048_576;
 
     /** Größtes Ausgabelimit, wie im Core ({@code AiServiceSettings.MAX_CHAT_MAX_TOKENS}). */
     public static final int MAX_CHAT_MAX_TOKENS = 1_000_000;
@@ -48,6 +69,30 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         chatMaxTokens = trim(chatMaxTokens);
         externalProcessingSources = externalProcessingSources == null ? List.of() : externalProcessingSources
                 .stream().map(AiDraft::trim).filter(id -> id != null).distinct().toList();
+        provider = provider == null ? AiProvider.OPENAI_COMPATIBLE : provider;
+        contextTokens = trim(contextTokens);
+        loadTimeout = trim(loadTimeout);
+        retries = trim(retries);
+        loadPollInterval = trim(loadPollInterval);
+        stepThinking = trim(stepThinking);
+    }
+
+    /** Ohne Vorgabe für das Nachdenken bei Analyseschritten. */
+    public AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
+                   Duration timeout, List<String> externalProcessingSources, String rerankModel, String chunkTokens,
+                   String chunkOverlapSentences, String visionModel, String chatMaxTokens, AiProvider provider,
+                   String contextTokens, String loadTimeout, String retries, String loadPollInterval) {
+        this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources, rerankModel,
+                chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, null);
+    }
+
+    /** Für einen OpenAI-kompatiblen Dienst. */
+    public AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
+                   Duration timeout, List<String> externalProcessingSources, String rerankModel, String chunkTokens,
+                   String chunkOverlapSentences, String visionModel, String chatMaxTokens) {
+        this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources, rerankModel,
+                chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, null, null, null, null, null);
     }
 
     /** Mit dem Ausgabelimit des Core. */
@@ -80,7 +125,14 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 settings.chunkTokens() == null ? null : String.valueOf(settings.chunkTokens()),
                 settings.chunkOverlapSentences() == null ? null : String.valueOf(settings.chunkOverlapSentences()),
                 settings.visionModel(),
-                settings.chatMaxTokens() == null ? null : String.valueOf(settings.chatMaxTokens()));
+                settings.chatMaxTokens() == null ? null : String.valueOf(settings.chatMaxTokens()),
+                settings.provider(),
+                settings.contextTokens() == null ? null : String.valueOf(settings.contextTokens()),
+                settings.loadTimeout() == null ? null : String.valueOf(settings.loadTimeout().toSeconds()),
+                settings.retries() == null ? null : String.valueOf(settings.retries()),
+                settings.loadPollInterval() == null ? null
+                        : String.valueOf(settings.loadPollInterval().toSeconds()),
+                settings.stepThinking());
     }
 
     /**
@@ -90,28 +142,68 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                               String rerankModel, String chunkTokens, String chunkOverlapSentences) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking);
     }
 
     /** Dieselben Eingaben mit anderem Vision-Modell. */
     public AiDraft withVisionModel(String visionModel) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking);
     }
 
     /** Dieselben Eingaben mit anderem Ausgabelimit des Text-Modells. */
     public AiDraft withChatMaxTokens(String chatMaxTokens) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking);
     }
 
     /** Dieselben Modelle mit anderem Dienst und anderen Freigaben (Reiter „KI-Dienst“). */
     public AiDraft withService(String baseUrl, List<String> externalProcessingSources) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking);
+    }
+
+    /** Dieselben Eingaben für eine andere Art von Dienst. */
+    public AiDraft withProvider(AiProvider provider) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking);
+    }
+
+    /** Dieselben Eingaben mit anderer Kontextlänge bei Ollama. */
+    public AiDraft withContextTokens(String contextTokens) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking);
+    }
+
+    /** Dieselben Eingaben mit anderer Ladefrist bei Ollama (Sekunden). */
+    public AiDraft withLoadTimeout(String loadTimeout) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking);
+    }
+
+    /** Dieselben Eingaben mit anderer Zahl an Wiederholungen. */
+    public AiDraft withRetries(String retries) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking);
+    }
+
+    /** Dieselben Eingaben mit anderem Abstand der Frage nach dem Laden (Sekunden). */
+    public AiDraft withLoadPollInterval(String loadPollInterval) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking);
+    }
+
+    /** Ob der Dienst ein Ollama-Server ist. */
+    public boolean ollama() {
+        return provider == AiProvider.OLLAMA;
     }
 
     /** Ob nichts eingetragen ist; dann wird der Block entfernt. */
@@ -119,7 +211,14 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         return baseUrl == null && chatModel == null && embeddingModel == null && embeddingDimensions == null
                 && timeout == null && externalProcessingSources.isEmpty() && rerankModel == null
                 && chunkTokens == null && chunkOverlapSentences == null && visionModel == null
-                && chatMaxTokens == null;
+                && chatMaxTokens == null && !ollama() && contextTokens == null && loadTimeout == null
+                && retries == null && loadPollInterval == null && stepThinking == null;
+    }
+
+    /** Das Nachdenken bei Analyseschritten, wenn gültig; sonst {@code null}. */
+    public String thinking() {
+        return stepThinking != null && stepThinking.toLowerCase(java.util.Locale.ROOT).matches("none|low|medium|high")
+                ? stepThinking.toLowerCase(java.util.Locale.ROOT) : null;
     }
 
     /** Was nicht passt; leer, wenn die Eingaben so in die Datei können. */
@@ -129,7 +228,8 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
             // Freigaben je Quelle dürfen ohne Dienst stehen: Sie wirken, sobald einer eingetragen ist.
             if (chatModel != null || embeddingModel != null || embeddingDimensions != null || rerankModel != null
                     || visionModel != null || chunkTokens != null || chunkOverlapSentences != null
-                    || chatMaxTokens != null) {
+                    || chatMaxTokens != null || ollama() || contextTokens != null || loadTimeout != null
+                    || retries != null || loadPollInterval != null) {
                 problems.add("Die Basisadresse des KI-Dienstes fehlt.");
             }
         } else if (looksLikeKey(baseUrl)) {
@@ -146,6 +246,25 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         }
         if (chunkOverlapSentences != null && overlap() == null) {
             problems.add("Die Überlappung ist eine ganze Zahl ab 0 oder bleibt leer.");
+        }
+        if (contextTokens != null && context() == null) {
+            problems.add("Die Kontextlänge ist eine ganze Zahl von " + MIN_CONTEXT_TOKENS + " bis "
+                    + MAX_CONTEXT_TOKENS + " oder bleibt leer.");
+        }
+        if (loadTimeout != null && loadDuration() == null) {
+            problems.add("Die Ladefrist ist eine ganze Zahl Sekunden von 1 bis "
+                    + AiServiceSettings.MAX_LOAD_TIMEOUT.toSeconds() + " oder bleibt leer.");
+        }
+        if (loadPollInterval != null && pollDuration() == null) {
+            problems.add("Der Abfrageabstand ist eine ganze Zahl Sekunden ab 1, höchstens die Ladefrist, oder bleibt "
+                    + "leer.");
+        }
+        if (retries != null && retryCount() == null) {
+            problems.add("Die Wiederholungen sind eine ganze Zahl von 0 bis " + AiServiceSettings.MAX_RETRIES
+                    + " oder bleiben leer.");
+        }
+        if (stepThinking != null && thinking() == null) {
+            problems.add("Das Nachdenken bei Analyseschritten ist none, low, medium oder high oder bleibt leer.");
         }
         if (chatMaxTokens != null && maxTokens() == null) {
             problems.add("Das Ausgabelimit ist eine ganze Zahl von 1 bis " + MAX_CHAT_MAX_TOKENS
@@ -196,6 +315,43 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         return value >= 1 && value <= MAX_CHAT_MAX_TOKENS ? value : null;
     }
 
+    /** Die Kontextlänge als Zahl oder {@code null}, wenn leer oder ungültig. */
+    public Integer context() {
+        if (contextTokens == null || !contextTokens.matches("\\d{1,7}")) {
+            return null;
+        }
+        int value = Integer.parseInt(contextTokens);
+        return value >= MIN_CONTEXT_TOKENS && value <= MAX_CONTEXT_TOKENS ? value : null;
+    }
+
+    /** Die Ladefrist als Dauer oder {@code null}, wenn leer oder ungültig. */
+    public Duration loadDuration() {
+        if (loadTimeout == null || !loadTimeout.matches("\\d{1,7}")) {
+            return null;
+        }
+        Duration value = Duration.ofSeconds(Long.parseLong(loadTimeout));
+        return value.isZero() || value.compareTo(AiServiceSettings.MAX_LOAD_TIMEOUT) > 0 ? null : value;
+    }
+
+    /** Der Abfrageabstand als Dauer oder {@code null}, wenn leer oder ungültig. */
+    public Duration pollDuration() {
+        if (loadPollInterval == null || !loadPollInterval.matches("\\d{1,7}")) {
+            return null;
+        }
+        Duration value = Duration.ofSeconds(Long.parseLong(loadPollInterval));
+        Duration limit = loadDuration() == null ? AiServiceSettings.DEFAULT_LOAD_TIMEOUT : loadDuration();
+        return value.isZero() || value.compareTo(limit) > 0 ? null : value;
+    }
+
+    /** Die Wiederholungen als Zahl oder {@code null}, wenn leer oder ungültig. */
+    public Integer retryCount() {
+        if (retries == null || !retries.matches("\\d{1,3}")) {
+            return null;
+        }
+        int value = Integer.parseInt(retries);
+        return value <= AiServiceSettings.MAX_RETRIES ? value : null;
+    }
+
     private static Integer number(String text) {
         return text == null || !text.matches("\\d{1,6}") ? null : Integer.parseInt(text);
     }
@@ -204,8 +360,23 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
     public String yaml(String indent) {
         StringBuilder yaml = new StringBuilder(indent).append("ai:\n");
         String inner = indent + "  ";
+        if (ollama()) {
+            append(yaml, inner, "provider", provider.key());
+        }
         append(yaml, inner, "base-url", baseUrl);
+        if (context() != null) {
+            yaml.append(inner).append("context-tokens: ").append(context()).append('\n');
+        }
+        if (loadDuration() != null) {
+            yaml.append(inner).append("load-timeout: ").append(loadDuration().toSeconds()).append("s\n");
+        }
+        if (pollDuration() != null) {
+            yaml.append(inner).append("load-poll-interval: ").append(pollDuration().toSeconds()).append("s\n");
+        }
         append(yaml, inner, "chat-model", chatModel);
+        if (thinking() != null) {
+            yaml.append(inner).append("step-thinking: ").append(thinking()).append('\n');
+        }
         if (maxTokens() != null) {
             yaml.append(inner).append("chat-max-tokens: ").append(maxTokens()).append('\n');
         }
@@ -215,6 +386,9 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         }
         append(yaml, inner, "rerank-model", rerankModel);
         append(yaml, inner, "vision-model", visionModel);
+        if (retryCount() != null) {
+            yaml.append(inner).append("retries: ").append(retryCount()).append('\n');
+        }
         if (tokens() != null) {
             yaml.append(inner).append("embedding-chunk-tokens: ").append(tokens()).append('\n');
         }

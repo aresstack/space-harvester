@@ -221,6 +221,10 @@ class WorkspaceTest {
             assertThat(workspace.deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection
                     .of(com.aresstack.spaceharvester.application.holdings.Selection.Root.source("handbuch"))))
                     .isZero();
+            // „Alles löschen“ nimmt die KI-Urteile derselben Seiten mit; ohne Analysen bleibt es bei null.
+            assertThat(workspace.deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection
+                    .of(com.aresstack.spaceharvester.application.holdings.Selection.Root.source("handbuch")), true))
+                    .isZero();
             assertThat(heard).hasValue(0);
         }
         assertThat(workspace.cachedPages("handbuch", space, null, 100).pages()).as("die Seiten bleiben").hasSize(2);

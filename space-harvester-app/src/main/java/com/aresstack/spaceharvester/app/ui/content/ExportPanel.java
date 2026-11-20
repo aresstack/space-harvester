@@ -161,24 +161,16 @@ public final class ExportPanel extends JPanel {
     static final String NOT_LOADED = "Noch nicht geladen";
     /** Ein berührter Space ohne Inventur: der Cache kennt dort nur einzeln geladene Seiten. */
     static final String INCOMPLETE = "lückenhaft, Space ohne Inventur";
-    static final String LOAD_SPACE = "Ganzen Space laden";
-    /** Für eine Quelle bzw. „Wissensquellen“: alle Spaces laden, je Space ein Auftrag. */
-    static final String LOAD_ALL = "Alle Spaces laden";
     static final String ALL_TITLE = "Alle Wissensquellen?";
-    /** Rückfrage nur bei „Wissensquellen“ (Architekt 17.11.2026), wie beim Aktualisieren im Explorer: Ja/Nein. */
-    static final String LOAD_ALL_QUESTION = "Wirklich alle Wissensquellen laden? Für jeden Space jeder Wissensquelle "
-            + "startet sofort ein eigener Auftrag.";
     static final String NO_SPACES = "keine Spaces bekannt";
     static final String NOTHING_YET = "noch nichts ausgegeben";
-    static final String REFRESH = "Aktualisieren";
-    static final String LOAD_SUBTREE = "Samt Unterseiten laden";
-    static final String LOAD_PAGE = "Nur diese Seite laden";
-    static final String COLLECT = "Bilder/Anhänge beschaffen";
-    static final String NOTHING_LOCAL = "Nichts lokal gespeichert";
-    static final String COLLECT_TIP = "Holt Bilder und, bei eingeschalteten Anhängen, Anhänge der lokal gespeicherten "
-            + "Seiten dieser Auswahl; was schon im Bestand liegt, wird nicht erneut abgerufen";
-    static final String NO_DATASET = "Noch nichts ausgegeben; die Format-Knöpfe geben die Auswahl aus dem Bestand "
-            + "aus, ohne die Quelle zu lesen.";
+    /*
+     * Die Karte „Stand“ mit „Samt Unterseiten laden“, „Nur diese Seite laden“ und „Bilder/Anhänge beschaffen“ ist weg
+     * (Angelo, 20.11.2026): Das ist Indexieren, im Kontextmenü des Baums; wie viel lokal liegt, zeigt dort das
+     * Bestandszeichen.
+     */
+    static final String NO_DATASET = "Noch nichts ausgegeben; ein Format-Knopf indexiert erst, was in der Auswahl "
+            + "fehlt oder veraltet ist, und erzeugt dann die Datei.";
     static final String NO_HOLDINGS = "Kein Bestand für diese Auswahl: ein Format-Knopf lädt erst die Seiten von der "
             + "Quelle und erzeugt dann die Datei.";
     static final String NOT_AVAILABLE = "kein Datenbestand vorhanden";
@@ -206,14 +198,6 @@ public final class ExportPanel extends JPanel {
     private final Feedback feedback = new Feedback();
     /** Die letzte Meldung der Platte in der Statuszeile; nur sie endet mit {@code feedback.clear()}. */
     private String feedbackStatus;
-    final Facts stand = new Facts();
-    private final ComposerButton load = Comic.button(LOAD_SPACE, "Startet den Download sofort; der Auftrag läuft "
-            + "unter Aufträge");
-    private final ComposerButton loadPage = Comic.button(LOAD_PAGE, "Nur diese Seite laden, ohne Unterseiten");
-    private final ComposerButton showJob = Comic.button("Auftrag anzeigen", "Den Auftrag unter Aufträge zeigen");
-    /** „Bilder/Anhänge beschaffen“ für die Auswahl ohne Export (ADR 0029, Schritt 7): nur die lokal gespeicherten Seiten. */
-    private final ComposerButton collect = Comic.button(COLLECT, COLLECT_TIP);
-    private final JComponent standPlate;
     private final Map<String, IconButton> formatButtons = new LinkedHashMap<>();
     /** Die Knöpfe der Exporte aus der Quelle ({@link #SOURCE_EXPORTS}). */
     private final Map<String, IconButton> sourceButtons = new LinkedHashMap<>();
@@ -290,15 +274,6 @@ public final class ExportPanel extends JPanel {
         setOpaque(false);
         output.setFont(Comic.regular(13f));
         output.setForeground(Comic.INK);
-        load.addActionListener(e -> load(true));
-        loadPage.addActionListener(e -> load(false));
-        collect.addActionListener(e -> collect());
-        showJob.addActionListener(e -> {
-            JobStatus job = shown.running() != null ? shown.running() : shown.newest();
-            if (job != null) {
-                context.navigator().showJob(job.id());
-            }
-        });
         openOutput.addActionListener(e -> {
             if (context.settings() != null) {
                 SettingsView.open(context.settings().outputDirectory(), feedback);
@@ -308,12 +283,6 @@ public final class ExportPanel extends JPanel {
             noticeList.setVisible(!noticeList.isVisible());
             renderNotices();
         });
-
-        JPanel standBody = new JPanel(new BorderLayout(0, 8));
-        standBody.setOpaque(false);
-        standBody.add(stand, BorderLayout.CENTER);
-        standBody.add(Comic.row(load, loadPage, collect, showJob), BorderLayout.SOUTH);
-        standPlate = Comic.plate("Stand", Comic.PETROL, standBody);
 
         JPanel formats = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
         formats.setOpaque(false);
@@ -369,7 +338,7 @@ public final class ExportPanel extends JPanel {
             }
         });
         add(feedback, BorderLayout.NORTH);
-        add(Comic.column(standPlate, outputPlate), BorderLayout.CENTER);
+        add(Comic.column(outputPlate), BorderLayout.CENTER);
         toggleNotices.setVisible(false);
         noticeList.setVisible(false);
         render(Data.NONE);
@@ -631,15 +600,6 @@ public final class ExportPanel extends JPanel {
                 .max(Comparator.comparing(JobStatus::createdAt)).orElse(null);
     }
 
-    /** „120 von 127 Seiten lokal“, bei lückenhafter Auflösung mit Hinweis; ohne bekannte Seiten „keine Seite bekannt“. */
-    static String holdingsText(PageSelection holdings) {
-        if (holdings.size() == 0) {
-            return holdings.complete() ? "keine Seite bekannt" : "keine Seite bekannt · " + INCOMPLETE;
-        }
-        return holdings.counts().stored() + " von " + Texts.count(holdings.size(), "Seite", "Seiten") + " lokal"
-                + (holdings.complete() ? "" : " · " + INCOMPLETE);
-    }
-
     /**
      * Die jüngste Ausgabe aus dem Bestand dieser Auswahl ({@code preferred}) hat Vorrang: der Core kann einen älteren,
      * unveränderten Auftrag wiederverwenden, dessen Datenbestand dann die Datei liefert, nicht der jüngste Download.
@@ -647,11 +607,6 @@ public final class ExportPanel extends JPanel {
     static JobStatus newest(List<JobStatus> jobs, Selection selection, String preferred) {
         return jobs.stream().filter(job -> job.id().equals(preferred) && selection.matches(job)
                 && job.state() == JobState.COMPLETED).findFirst().orElseGet(() -> newest(jobs, selection));
-    }
-
-    /** „1 Space noch nicht geladen“ bzw. „3 Spaces noch nicht geladen“. */
-    static String notLoadedText(int spaces) {
-        return Texts.count(spaces, "Space", "Spaces") + " noch nicht geladen";
     }
 
     /** Der jüngste erfolgreich beendete Download genau dieser Auswahl. */
@@ -745,7 +700,6 @@ public final class ExportPanel extends JPanel {
         shownRestQueries = data.restQueries();
         Selection current = data.selection();
         boolean none = current == null;
-        standPlate.setVisible(!none);
         outputPlate.setVisible(!none);
         if (none) {
             if (context.runtime() == null) {
@@ -756,7 +710,6 @@ public final class ExportPanel extends JPanel {
             repaint();
             return;
         }
-        renderStand(data);
         renderOutput(data);
         revalidate();
         repaint();
@@ -819,66 +772,6 @@ public final class ExportPanel extends JPanel {
         return p.discovered() == 0 ? "noch nichts gefunden" : p.processed() + " von " + p.discovered() + " Seiten";
     }
 
-    private void renderStand(Data data) {
-        Selection current = data.selection();
-        JobStatus newest = data.newest();
-        JobStatus running = data.running();
-        ExportDatasetInfo dataset = data.dataset();
-        boolean source = current.spaceKey() == null;
-        stand.reset();
-        if (running != null && source) {
-            long open = data.spaces().stream().filter(row -> row.running() != null).count();
-            stand.add("Aufträge", Texts.count((int) open, "Download", "Downloads") + " offen",
-                    Comic.tone(Texts.tone(running)));
-        } else if (running != null) {
-            stand.add("Auftrag", Texts.state(running) + " · " + progress(running), Comic.tone(Texts.tone(running)));
-        }
-        PageSelection holdings = data.holdings();
-        boolean stored = holdings != null && holdings.counts().stored() > 0;
-        if (holdings != null) {
-            boolean all = holdings.size() > 0 && holdings.counts().stored() >= holdings.size();
-            // Nie geladene Spaces kennt der Bestand nicht: sie fehlen in den Zahlen, die Zeile nennt sie und ist nie grün.
-            String missing = data.notLoaded() == 0 ? "" : " · " + notLoadedText(data.notLoaded());
-            stand.add("Bestand", holdingsText(holdings) + (current.page() ? " · samt Unterseiten" : "") + missing,
-                    holdings.size() == 0 && data.notLoaded() == 0 ? Comic.MUTED
-                            : all && holdings.complete() && data.notLoaded() == 0 ? Comic.GREEN : Comic.ORANGE);
-        }
-        if (newest == null) {
-            // Ohne Download in der Auftragsablage sagt der Bestand den Stand; nur ohne beides „Noch nicht geladen“.
-            if (!stored) {
-                stand.add("Stand", NOT_LOADED, Comic.MUTED);
-            }
-        } else {
-            stand.add("Stand vom", Texts.time(newest.finishedAt()));
-            stand.add("Seiten", dataset == null ? String.valueOf(newest.progress().written())
-                    : String.valueOf(dataset.pages()));
-            if (dataset != null) {
-                stand.add("Bilder", images(dataset.images()),
-                        dataset.images() == ExportDatasetInfo.Images.INCOMPLETE ? Comic.RED : Comic.INK);
-                if (dataset.media().total() > 0) {
-                    stand.add("Medien", media(dataset.media()),
-                            dataset.media().missing() + dataset.media().signInRequired() > 0 ? Comic.RED : Comic.INK);
-                }
-                stand.add("Vollständig", dataset.complete() ? "ja" : "nein",
-                        dataset.complete() ? Comic.GREEN : Comic.ORANGE);
-            } else {
-                stand.add("Datenbestand", "nicht mehr vorhanden", Comic.ORANGE);
-            }
-        }
-        boolean loaded = newest != null || stored;
-        load.setText(current.page() ? LOAD_SUBTREE : loaded ? REFRESH : source ? LOAD_ALL : LOAD_SPACE);
-        load.setToolTipText(current.page() ? "Lädt die Seite samt Unterseiten erneut; Vorhandenes nur bei Änderung"
-                : source ? (loaded ? "Lädt alle Spaces erneut, je Space ein Auftrag; Vorhandenes nur bei Änderung"
-                : "Lädt alle Spaces, je Space ein Auftrag")
-                : loaded ? "Lädt den ganzen Space erneut; Vorhandenes nur bei Änderung" : "Lädt den ganzen Space");
-        loadPage.setVisible(current.page());
-        load.setEnabled(running == null);
-        loadPage.setEnabled(running == null);
-        collect.setEnabled(stored);
-        collect.setToolTipText(stored ? COLLECT_TIP : COLLECT_TIP + " · " + NOTHING_LOCAL + ", erst laden");
-        showJob.setVisible(running != null || newest != null);
-    }
-
     private void renderOutput(Data data) {
         ExportDatasetInfo dataset = data.dataset();
         Path directory = context.settings() == null ? null : context.settings().outputDirectory();
@@ -912,7 +805,7 @@ public final class ExportPanel extends JPanel {
             noticeList.setVisible(false);
             return;
         }
-        // Die Zahlen stehen schon in „Stand“; hier nur, was die Ausgabe gerade einschränkt.
+        // Nur, was die Ausgabe gerade einschränkt.
         boolean limited = dataset.images() != ExportDatasetInfo.Images.COMPLETE
                 || dataset.media().missing() + dataset.media().signInRequired() > 0;
         cardImages.setVisible(limited);
@@ -958,89 +851,6 @@ public final class ExportPanel extends JPanel {
         files.setText(text.isEmpty() ? "Noch nichts exportiert; die Format-Knöpfe erzeugen die Datei."
                 : text.toString());
         files.setForeground(text.isEmpty() ? Comic.MUTED : Comic.INK);
-    }
-
-    /** Startet den Download der Auswahl sofort; der Auftrag läuft unter Aufträge, die Ansicht bleibt hier. */
-    private void load(boolean withChildren) {
-        Selection current = selection;
-        AppRuntime runtime = context.runtime();
-        if (current == null || runtime == null || current.spaceKey() == null && !confirmed(LOAD_ALL_QUESTION)) {
-            return;
-        }
-        if (current.spaceKey() == null) {
-            // Eine Quelle bzw. alle Quellen: je Space ein eigener Download, wie der Knopf in der Seitenleiste.
-            List<String> sources = current.global() ? runtime.workspace().sources().stream().map(HarvestSource::id)
-                    .toList() : List.of(current.sourceId());
-            feedback.working("Downloads werden gestartet …");
-            load.setEnabled(false);
-            for (String sourceId : sources) {
-                Downloads.start(context, sourceId, List.of(), result -> {
-                    feedback.working("Downloads gestartet, je Space ein Auftrag");
-                    context.navigator().followJobs();
-                    refresh();
-                }, error -> {
-                    feedback.problem(error);
-                    load.setEnabled(true);
-                });
-            }
-            return;
-        }
-        feedback.working("Download wird gestartet …");
-        load.setEnabled(false);
-        loadPage.setEnabled(false);
-        Consumer<Downloads.Started> started = result -> {
-            feedback.working(current.page() ? "Download der Seite" + (withChildren ? " samt Unterseiten" : "")
-                    + " gestartet" : "Download des Space gestartet");
-            context.navigator().followJobs();
-            refresh();
-        };
-        Consumer<Throwable> failed = error -> {
-            feedback.problem(error);
-            load.setEnabled(true);
-            loadPage.setEnabled(true);
-        };
-        if (current.page()) {
-            Downloads.startPage(context, current.sourceId(), current.spaceKey(), current.pageId(), withChildren,
-                    started, failed);
-        } else {
-            Downloads.start(context, current.sourceId(), List.of(current.spaceKey()), started, failed);
-        }
-    }
-
-    /**
-     * Bilder und Anhänge der Auswahl beschaffen, ohne Export ({@code Workspace.collectAssets}): die Aufträge laufen
-     * unter Aufträge; ein offener kommt beim zweiten Klick zurück, ein beendeter läuft im selben Eintrag erneut. Ohne
-     * lokal gespeicherte Seiten meldet die Statuszeile „Nichts lokal gespeichert“.
-     */
-    void collect() {
-        AppRuntime runtime = context.runtime();
-        Selection current = selection;
-        if (runtime == null || current == null || !confirmed("Wirklich Bilder und Anhänge für alle Spaces aller "
-                + "Wissensquellen beschaffen? Je Space startet sofort ein eigener Auftrag.")) {
-            return;
-        }
-        collect.setEnabled(false);
-        feedback.working("Bilder und Anhänge werden eingeplant …");
-        com.aresstack.spaceharvester.application.holdings.Selection roots = coreSelection(runtime, current);
-        Background.run(() -> runtime.workspace().collectAssets(roots), jobs -> {
-            collect.setEnabled(true);
-            if (!Objects.equals(current, selection)) {
-                return;
-            }
-            if (jobs.isEmpty()) {
-                feedback.info(NOTHING_LOCAL, "Erst laden; beschafft werden nur Bilder und Anhänge lokal gespeicherter Seiten");
-                return;
-            }
-            feedback.working(Texts.count(jobs.size(), "Auftrag", "Aufträge") + " eingeplant: "
-                    + jobs.stream().map(job -> Texts.type(job.type())).distinct()
-                            .collect(java.util.stream.Collectors.joining(", ")));
-            context.navigator().followJobs();
-        }, error -> {
-            collect.setEnabled(true);
-            if (Objects.equals(current, selection)) {
-                feedback.problem(error);
-            }
-        });
     }
 
     /**
@@ -1093,9 +903,13 @@ public final class ExportPanel extends JPanel {
                 + "Space entsteht eine eigene Datei im Ausgabeordner.";
     }
 
-    /** Ob die Format-Knöpfe für die gezeigte Auswahl erst laden müssten: weder Datenbestand noch Bestand. */
+    /**
+     * Ob die Format-Knöpfe für die gezeigte Auswahl erst indexieren: ohne Datenbestand, solange nicht jede lesbare Seite
+     * aktuell lokal liegt ({@code Workspace.exportFiles}).
+     */
     private boolean loadsFirst() {
-        return shownDataset == null && (shownHoldings == null || shownHoldings.counts().stored() == 0);
+        return shownDataset == null && (shownHoldings == null || shownHoldings.counts().local()
+                < shownHoldings.counts().pages() - shownHoldings.counts().locked());
     }
 
     /**

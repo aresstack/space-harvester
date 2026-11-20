@@ -73,6 +73,12 @@ public final class LucenePageCacheReader implements PageCacheReader {
     }
 
     @Override
+    public Optional<PageHeader> header(PageKey key) {
+        Objects.requireNonNull(key, "key");
+        return guarded(() -> cache.findHeader(key));
+    }
+
+    @Override
     public List<PageHeader> children(String sourceId, String spaceKey, String parentPageId, int limit) {
         int capped = Math.min(Math.max(limit, 1), LucenePageCache.MAX_PAGE_SIZE);
         return guarded(() -> (parentPageId == null

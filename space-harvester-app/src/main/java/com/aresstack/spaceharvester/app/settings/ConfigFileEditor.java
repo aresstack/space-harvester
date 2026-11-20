@@ -381,6 +381,64 @@ public final class ConfigFileEditor {
     }
 
     /**
+     * Der Entwurf {@code base} mit neuer größter Datei im Cache ({@code space-harvester.cache.max-page-size}); nur dieser
+     * Wert ändert sich. Geschrieben in MB, wenn er sich darin ausdrücken lässt.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withMaxPageSize(Path file, Draft base, long bytes) {
+        return withMaxPageSize(file, base, bytes, loader.read(file, base.text()).storage().maxTextFileBytes());
+    }
+
+    /**
+     * Die Grenzen großer Dateien zusammen: größte Datei im Cache, Grenze des Textauszugs und die Fristen der Prüfung
+     * gegen die Quelle ({@code space-harvester.cache.check-timeout}, {@code large-file-timeout}); nur diese Werte ändern
+     * sich.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withLargeFiles(Path file, Draft base, long bytes, long textBytes, java.time.Duration checkTimeout,
+                                java.time.Duration largeFileTimeout) {
+        Draft sizes = withMaxPageSize(file, base, bytes, textBytes);
+        String text = nested(sizes.text(), "cache", "check-timeout", indent -> indent + "check-timeout: "
+                + duration(checkTimeout) + "\n");
+        text = nested(text, "cache", "large-file-timeout", indent -> indent + "large-file-timeout: "
+                + duration(largeFileTimeout) + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.storage().checkTimeout().equals(checkTimeout)
+                || !settings.storage().largeFileTimeout().equals(largeFileTimeout)) {
+            throw new IllegalArgumentException("Die Fristen ließen sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester.cache von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Wie {@link #withMaxPageSize(Path, Draft, long)}, dazu die größte Datei für den Textauszug
+     * ({@code space-harvester.cache.max-text-file-size}, {@code 0} nie).
+     */
+    public Draft withMaxPageSize(Path file, Draft base, long bytes, long textBytes) {
+        String text = nested(base.text(), "cache", "max-page-size", indent -> indent + "max-page-size: " + size(bytes)
+                + "\n");
+        text = nested(text, "cache", "max-text-file-size", indent -> indent + "max-text-file-size: " + size(textBytes)
+                + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.storage().maxPageBytes() != bytes || settings.storage().maxTextFileBytes() != textBytes) {
+            throw new IllegalArgumentException("Die größte Datei im Cache ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.cache.max-page-size von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Eine Größe, wie sie {@code AppSettingsLoader} liest: in MB oder KB, wenn sie sich darin ausdrücken lässt. */
+    private static String size(long bytes) {
+        return bytes > 0 && bytes % (1L << 20) == 0 ? (bytes >> 20) + "MB"
+                : bytes > 0 && bytes % 1024 == 0 ? (bytes >> 10) + "KB" : String.valueOf(bytes);
+    }
+
+    /**
      * Der Entwurf {@code base} mit neuer Hintergrundfüllung für alle Quellen ({@code space-harvester.sync.background-fill},
      * {@code background-parallelism}, ADR 0016); nur diese beiden Werte ändern sich.
      *
@@ -760,6 +818,25 @@ public final class ConfigFileEditor {
         if (newProblem || settings.viewerBackground() != background) {
             throw new IllegalArgumentException("Der Hintergrund des Bildbetrachters ließ sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte " + ViewerBackground.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit den Werten für Videos ({@code space-harvester-app.video.*}, nur die App); nur dieser
+     * Block ändert sich, und nur abweichende Werte stehen darin. Lauter Defaults entfernen den Block.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withVideo(Path file, Draft base, VideoSettings video) {
+        String text = appValue(base.text(), "video", video.yaml());
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.video().equals(video)) {
+            throw new IllegalArgumentException("Die Werte für Videos ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte " + VideoSettings.KEY + " von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);

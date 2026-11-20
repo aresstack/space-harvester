@@ -611,7 +611,7 @@ public class KeywordSearch {
                 int index = taken.get(entry.getKey());
                 // Funde außerhalb der Seitenmenge zählen als genommen, damit der Cursor in der Rangfolge der Quelle
                 // weiterzählt; sie werden weder Kandidat noch geladen.
-                while (index < matches.size() && !query.admits(entry.getKey(), matches.get(index).pageId())) {
+                while (index < matches.size() && !query.admits(entry.getKey(), matches.get(index))) {
                     index++;
                 }
                 if (index < matches.size() && candidates.size() < limit) {
@@ -875,6 +875,9 @@ public class KeywordSearch {
 
     /** Der Volltextindex, mit Seitenmenge der Anfrage vor der Rangfolge gefiltert (ADR 0029), ohne wie bisher. */
     private List<PageTextIndex.Match> searchTexts(String text, Set<String> sourceIds, Query query, int wanted) {
+        if (!query.kinds().isEmpty()) {
+            return texts.search(text, sourceIds, query.spaces(), query.pages(), query.kinds(), wanted);
+        }
         return query.pages() == null ? texts.search(text, sourceIds, query.spaces(), wanted)
                 : texts.search(text, sourceIds, query.spaces(), query.pages(), wanted);
     }
@@ -909,7 +912,7 @@ public class KeywordSearch {
         boolean snippet = access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT);
         List<Hit> hits = new ArrayList<>();
         for (SourceSearchMatch match : fresh) {
-            if (!query.admits(sourceId, match.pageId())) {
+            if (!query.admits(sourceId, match)) {
                 continue;
             }
             hits.add(new Hit(sourceId, match.pageId(), null, match.title(), snippet ? match.snippet() : "",
@@ -1009,6 +1012,10 @@ public class KeywordSearch {
             throw e;
         }
         if (!query.spaces().permits(metadata.partitionKey())) {
+            return Optional.empty();
+        }
+        // Ein Fund der Quelle (nicht aus dem Index): die Kopfdaten entscheiden endgültig über die Art.
+        if (!candidate.indexed() && !query.admits(metadata)) {
             return Optional.empty();
         }
         ResourceScope page = ResourceScope.page(candidate.sourceId(), metadata.partitionKey(), metadata.pageId());
@@ -1123,6 +1130,11 @@ public class KeywordSearch {
         if (query.pages() != null) {
             // Nur mit Grenze, aus demselben Grund; eine andere Auswahl macht den Cursor ungültig (ADR 0029).
             canonical += "\u0000p" + query.pages().fingerprint();
+        }
+        if (!query.kinds().isEmpty()) {
+            // Nur mit Arten, aus demselben Grund; andere Arten machen den Cursor ungültig.
+            canonical += "\u0000k" + query.kinds().stream().map(Enum::name).sorted()
+                    .collect(java.util.stream.Collectors.joining("\u0001"));
         }
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
@@ -1240,11 +1252,15 @@ public class KeywordSearch {
      * @param pages     nur diese Seiten samt ihren Anhängen, etwa eine Seite samt Unterseiten aus der Auswahl im Baum
      *                  (ADR 0029), oder {@code null} ohne diese Grenze. Ein Fund der Quelle außerhalb der Menge fällt
      *                  weg und wird nicht geladen; Quellen ohne Seite in der Menge werden nicht gefragt.
+     * @param kinds     nur Dokumente dieser Arten ({@link DocumentKind}: Seiten, PDF, Word, …), leer für alle. Der
+     *                  Volltextindex entscheidet je Dokument nach Name und Medientyp; ein Fund der Quelle nach seinem
+     *                  Titel.
      */
     public record Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
-                        Set<String> excludedSpaceKeys, PageSet pages) {
+                        Set<String> excludedSpaceKeys, PageSet pages, Set<DocumentKind> kinds) {
 
         public Query {
+            kinds = kinds == null || kinds.isEmpty() ? Set.of() : Set.copyOf(kinds);
             if (text == null || text.isBlank()) {
                 throw new InvalidQueryException("Suchtext fehlt");
             }
@@ -1263,6 +1279,11 @@ public class KeywordSearch {
         }
 
         public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
+                     Set<String> excludedSpaceKeys, PageSet pages) {
+            this(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, Set.of());
+        }
+
+        public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
                      Set<String> excludedSpaceKeys) {
             this(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, null);
         }
@@ -1273,12 +1294,34 @@ public class KeywordSearch {
 
         /** Dieselbe Suche, begrenzt auf diese Seiten (ADR 0029); {@code null} hebt die Grenze auf. */
         public Query within(PageSet pages) {
-            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages);
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds);
+        }
+
+        /** Dieselbe Suche, nur Dokumente dieser Arten; leer hebt die Grenze auf. */
+        public Query ofKinds(Set<DocumentKind> kinds) {
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds);
         }
 
         /** Ob die Seite in der Grenze der Suche liegt; ohne Grenze jede. */
         boolean admits(String sourceId, String pageId) {
             return pages == null || pages.contains(sourceId, pageId);
+        }
+
+        /**
+         * Ob ein Fund der Quelle Kandidat bleibt: in der Grenze der Seiten und, mit Arten, nicht schon nach seinem
+         * Titel von einer anderen Art. Ein Titel ohne bekannte Endung bleibt Kandidat (und lädt), denn erst die
+         * Kopfdaten kennen den gemeldeten Medientyp; {@link #admits(String, PageMetadata)} entscheidet dann.
+         */
+        boolean admits(String sourceId, SourceSearchMatch match) {
+            return admits(sourceId, match.pageId()) && (kinds.isEmpty()
+                    || !DocumentKind.namedByExtension(match.title())
+                    || kinds.contains(DocumentKind.of(match.title(), null)));
+        }
+
+        /** Ob eine Seite nach ihren Kopfdaten (Titel und gemeldeter Medientyp, #964) von einer gewählten Art ist. */
+        boolean admits(PageMetadata metadata) {
+            return kinds.isEmpty() || kinds.contains(DocumentKind.of(metadata.title(),
+                    metadata.attributes().get(PageMetadata.REMOTE_MEDIA_TYPE)));
         }
 
         /** Ob die Quelle Seiten in der Grenze der Suche hat; ohne Grenze jede. */

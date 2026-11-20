@@ -210,7 +210,8 @@ public class PlanApplier {
     private PageSnapshot matching(PageKey key, PageMetadata expected, Reachability reachability) {
         PageSnapshot snapshot;
         try {
-            snapshot = fetcher.fetch(key.sourceId(), key.pageId());
+            snapshot = expected.pageId().equals(key.pageId()) ? fetcher.fetch(key.sourceId(), expected)
+                    : fetcher.fetch(key.sourceId(), key.pageId());
         } catch (SourceAccessException e) {
             reachability.failed(e.reason());
             return null;

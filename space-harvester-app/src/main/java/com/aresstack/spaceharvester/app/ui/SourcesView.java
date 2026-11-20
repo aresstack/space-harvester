@@ -724,7 +724,7 @@ public final class SourcesView implements View {
     private static SourceDraft with(SourceDraft d, String title, String baseUrl, String directory) {
         return new SourceDraft(d.id(), d.type(), title, baseUrl, directory, d.include(), d.authType(), d.username(),
                 d.secretVariable(), d.certificateType(), d.certificatePath(), d.certificatePasswordVariable(),
-                d.certificateAlias(), d.thumbprint(), d.trustBundle(), d.extraOptions());
+                d.certificateAlias(), d.thumbprint(), d.trustBundle(), d.extraOptions(), d.baseUrlType());
     }
 
     /**
@@ -1148,24 +1148,54 @@ public final class SourcesView implements View {
      * @return ob gestartet wurde; {@code false} ohne Spaces oder solange die ganze Quelle schon nachholt
      */
     boolean catchUp(String id, List<String> spaceKeys) {
+        return catchUp(id, spaceKeys, CatchUpReport.NONE);
+    }
+
+    /**
+     * Ausgang eines Nachholens für einen Aufrufer außerhalb dieser Ansicht, etwa die Kreispfeile im Baum: Deren Klick
+     * sieht die Meldezeile hier nicht (EDT).
+     */
+    interface CatchUpReport {
+
+        CatchUpReport NONE = new CatchUpReport() {
+            @Override
+            public void started(List<String> jobs) {
+            }
+
+            @Override
+            public void failed(String message) {
+            }
+        };
+
+        /** Alle Aufträge laufen. */
+        void started(List<String> jobs);
+
+        /** Mindestens ein Space startete nicht, oder das Nachholen scheiterte. */
+        void failed(String message);
+    }
+
+    /** Wie {@link #catchUp(String, List)}, meldet den Ausgang zusätzlich an {@code report}. */
+    boolean catchUp(String id, List<String> spaceKeys, CatchUpReport report) {
         AppRuntime runtime = context.runtime();
         List<String> keys = spaceKeys.isEmpty()
                 ? context.connection(id).spaces().stream().map(Partition::key).toList() : spaceKeys;
         if (runtime == null || keys.isEmpty()) {
             feedback.info("Keine Spaces bekannt", "Zuerst die Verbindung prüfen; danach holen die Kreispfeile je Space "
                     + "die Änderungen nach.");
+            report.failed("Nachholen nicht gestartet: keine Spaces bekannt; zuerst die Verbindung prüfen");
             return false;
         }
         boolean whole = spaceKeys.isEmpty();
         if (whole) {
             if (!catchingUp.add(id)) {
+                report.failed("Nachholen nicht gestartet: die Quelle holt schon nach");
                 return false;
             }
             cards.values().forEach(SourceCard::update);
         }
-        // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: nur katalogisieren).
+        // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: Cache synchronisieren).
         SyncMode mode = context.settings() != null ? context.settings().effectiveSync(id).mode()
-                : SyncMode.CATALOG_ONLY;
+                : com.aresstack.spaceharvester.application.configuration.SyncSettings.DEFAULT_MODE;
         feedback.working("Nachholen von " + Texts.count(keys.size(), "Space", "Spaces") + " wird gestartet …");
         Background.run(() -> {
             List<String> jobs = new ArrayList<>();
@@ -1179,6 +1209,14 @@ public final class SourcesView implements View {
             }
             return new CatchUpStarted(jobs, failed);
         }, started -> {
+            if (started.failed().isEmpty()) {
+                report.started(started.jobs());
+            } else {
+                report.failed(Texts.count(started.failed().size(), "Space", "Spaces") + " nicht nachgeholt: "
+                        + started.failed().entrySet().stream()
+                        .map(f -> f.getKey() + ": " + Problems.describe(f.getValue()).title())
+                        .collect(java.util.stream.Collectors.joining("; ")));
+            }
             if (!whole) {
                 // Einzelne Spaces: keine Karten-Sperre, keine Beobachtung; der Auftrag steht unter Aufträge.
                 if (started.failed().isEmpty()) {
@@ -1203,6 +1241,7 @@ public final class SourcesView implements View {
             watches.put(id, watch);
             watch.begin();
         }, error -> {
+            report.failed("Nachholen ließ sich nicht starten: " + Problems.describe(error).title());
             if (whole) {
                 finishCatchUp(id, error);
             } else {

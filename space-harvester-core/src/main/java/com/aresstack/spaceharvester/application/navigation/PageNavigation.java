@@ -44,6 +44,12 @@ public class PageNavigation {
     private final AccessGuard access;
     private final FindingCatalog findings;
 
+    /** Remember navigation paths independently of downloaded documents. */
+    private final Map<PageKey, SeenPage> browsedPages = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record SeenPage(PageNode page, String parentPageId) {
+    }
+
     /** @param cache nur, um den Space von Verweiszielen zu kennen; {@code null} ohne Cache */
     public PageNavigation(SourceCatalog catalog, PageCacheReader cache, AccessGuard access) {
         this(catalog, cache, access, FindingCatalog.NONE);
@@ -85,8 +91,22 @@ public class PageNavigation {
                     AccessKind.METADATA);
         }
         rememberOrder(sourceId, batch.partitionKey(), parentPageId, cursor, batch);
-        return new Children(sourceId, batch.partitionKey(), parentPageId, visible(caller, sourceId, batch.pages()),
-                batch.nextCursor());
+        List<PageNode> shown = visible(caller, sourceId, batch.pages());
+        rememberBrowsed(source, sourceId, parentPageId, shown);
+        return new Children(sourceId, batch.partitionKey(), parentPageId, shown, batch.nextCursor());
+    }
+
+    /**
+     * Preserve parent links learned from folder browsing even when no document was downloaded.
+     * This path is useful immediately after the content index has been cleared.
+     */
+    private void rememberBrowsed(HarvestSource source, String sourceId, String parentId, List<PageNode> pages) {
+        if (!source.navigationRootIsPage()) {
+            return;
+        }
+        for (PageNode page : pages) {
+            browsedPages.put(new PageKey(sourceId, page.pageId()), new SeenPage(page, parentId));
+        }
     }
 
     /** Höchstens so viele Knoten merkt sich die Navigation, deren Kinder die Quelle noch stapelweise liefert. */
@@ -189,8 +209,20 @@ public class PageNavigation {
                         page) -> positions.getOrDefault(page.pageId(), Integer.MAX_VALUE))
                         .thenComparing(page -> page.title().toLowerCase(java.util.Locale.ROOT))
                         .thenComparing(com.aresstack.spaceharvester.application.sources.PageMetadata::pageId))
-                .map(page -> new PageNode(page.pageId(), page.title(), page.partitionKey(),
-                        cache.hasChildren(sourceId, page.pageId()) ? Boolean.TRUE : null))
+                .map(page -> {
+                    PageNode.Kind kind = switch (page.attributes().getOrDefault(
+                            com.aresstack.spaceharvester.application.sources.PageMetadata.RESOURCE_KIND, "")) {
+                        case com.aresstack.spaceharvester.application.sources.PageMetadata.FOLDER_KIND ->
+                                PageNode.Kind.FOLDER;
+                        case com.aresstack.spaceharvester.application.sources.PageMetadata.FILE_KIND,
+                             com.aresstack.spaceharvester.application.sources.PageMetadata.LINK_KIND ->
+                                PageNode.Kind.FILE;
+                        default -> PageNode.Kind.PAGE;
+                    };
+                    Boolean children = kind == PageNode.Kind.FILE ? Boolean.FALSE
+                            : cache.hasChildren(sourceId, page.pageId()) ? Boolean.TRUE : null;
+                    return new PageNode(page.pageId(), page.title(), page.partitionKey(), children, kind);
+                })
                 .toList();
         return new Children(sourceId, partition, parentPageId, visible(caller, sourceId, nodes), null);
     }
@@ -202,11 +234,93 @@ public class PageNavigation {
      */
     public Position position(AccessContext caller, String sourceId, String pageId) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
-        HarvestSource.PagePosition position = source(sourceId).position(pageId);
+        HarvestSource source = source(sourceId);
+        HarvestSource.PagePosition position = source.position(pageId);
         access.requireConcealed(caller, ResourceScope.page(sourceId, position.partitionKey(), pageId),
                 AccessKind.METADATA);
+        List<PageNode> ancestors = position.ancestors();
+        List<PageNode> browsedPath = browsedAncestors(source, sourceId, pageId);
+        if (browsedPath.size() > ancestors.size()) {
+            ancestors = browsedPath;
+        }
+        List<PageNode> storedPath = cachedAncestors(source, sourceId, pageId);
+        if (storedPath.size() > ancestors.size()) {
+            ancestors = storedPath;
+        }
         return new Position(sourceId, position.partitionKey(), position.partitionName(),
-                visible(caller, sourceId, position.ancestors()), node(caller, position.page()));
+                visible(caller, sourceId, ancestors), node(caller, position.page()));
+    }
+
+    /** Build a path from the hierarchy already browsed, without needing a downloaded page or database. */
+    private List<PageNode> browsedAncestors(HarvestSource source, String sourceId, String pageId) {
+        if (!source.navigationRootIsPage()) {
+            return List.of();
+        }
+        List<PageNode> result = new java.util.ArrayList<>();
+        Set<String> visited = new java.util.HashSet<>();
+        String current = pageId;
+        while (visited.add(current) && visited.size() < 100) {
+            SeenPage seen = browsedPages.get(new PageKey(sourceId, current));
+            if (seen == null) {
+                return List.of();
+            }
+            String parent = seen.parentPageId();
+            if (parent == null) {
+                java.util.Collections.reverse(result);
+                return List.copyOf(result);
+            }
+            SeenPage ancestor = browsedPages.get(new PageKey(sourceId, parent));
+            if (ancestor == null) {
+                return List.of();
+            }
+            result.add(ancestor.page());
+            current = parent;
+        }
+        return List.of();
+    }
+
+    /**
+     * Restore BSCW folders from persisted metadata when WebDAV has no remembered parent chain.
+     * BSCW object URLs contain independent numeric IDs, not a hierarchical path. The final
+     * parent without its own parent is the technical root represented by the Space row.
+     */
+    private List<PageNode> cachedAncestors(HarvestSource source, String sourceId, String pageId) {
+        if (cache == null || !source.navigationRootIsPage()) {
+            return List.of();
+        }
+        List<PageNode> ancestors = new java.util.ArrayList<>();
+        Set<String> visited = new java.util.HashSet<>();
+        String current = pageId;
+        try {
+            while (visited.add(current) && visited.size() < 100) {
+                Optional<com.aresstack.spaceharvester.application.snapshot.PageHeader> currentHeader =
+                        cache.header(new PageKey(sourceId, current));
+                if (currentHeader.isEmpty()) {
+                    return List.of();
+                }
+                String parentId = currentHeader.get().metadata().parentPageId();
+                if (parentId == null || visited.contains(parentId)) {
+                    break;
+                }
+                Optional<com.aresstack.spaceharvester.application.snapshot.PageHeader> parentHeader =
+                        cache.header(new PageKey(sourceId, parentId));
+                if (parentHeader.isEmpty()) {
+                    return List.of();
+                }
+                com.aresstack.spaceharvester.application.sources.PageMetadata parent =
+                        parentHeader.get().metadata();
+                if (parent.parentPageId() == null) {
+                    break;
+                }
+                ancestors.add(new PageNode(parent.pageId(), parent.title(), parent.partitionKey(),
+                        Boolean.TRUE, PageNode.Kind.FOLDER));
+                current = parentId;
+            }
+        } catch (com.aresstack.spaceharvester.application.query.CacheUnavailableException unavailable) {
+            return List.of();
+        }
+        java.util.Collections.reverse(ancestors);
+        return List.copyOf(ancestors);
     }
 
     /**
@@ -305,7 +419,7 @@ public class PageNavigation {
     private static PageNode liveSpace(HarvestSource source, PageNode node) {
         try {
             return new PageNode(node.pageId(), node.title(), source.pageMetadata(node.pageId()).partitionKey(),
-                    node.hasChildren());
+                    node.hasChildren(), node.kind());
         } catch (SourceAccessException e) {
             return null;
         }
@@ -330,7 +444,7 @@ public class PageNavigation {
         try {
             return cache.page(new PageKey(sourceId, node.pageId()))
                     .map(page -> new PageNode(node.pageId(), node.title(), page.header().metadata().partitionKey(),
-                            node.hasChildren()))
+                            node.hasChildren(), node.kind()))
                     .orElse(node);
         } catch (RuntimeException e) {
             return node;
@@ -339,7 +453,7 @@ public class PageNavigation {
 
     private static PageNode node(AccessContext caller, PageNode node) {
         if (caller.kind() == AccessContext.PrincipalKind.END_USER && Boolean.TRUE.equals(node.hasChildren())) {
-            return new PageNode(node.pageId(), node.title(), node.partitionKey(), null);
+            return new PageNode(node.pageId(), node.title(), node.partitionKey(), null, node.kind());
         }
         return node;
     }

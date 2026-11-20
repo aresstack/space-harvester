@@ -55,12 +55,11 @@ class GlossaryTabScreenshotTest {
         PillTabs[] tabs = new PillTabs[1];
         SwingUtilities.invokeAndWait(() -> {
             tabs[0] = new PillTabs();
-            tabs[0].tab(TermsView.ACRONYMS, new javax.swing.JPanel()).tab(TermsView.IDENTIFIERS,
-                    new javax.swing.JPanel()).tab(TermsView.RELATIONS, new javax.swing.JPanel())
-                    .tab(TermsView.GLOSSARY, tab[0].component())
-                    .tab(TermsView.GRAPH, new javax.swing.JPanel())
+            tabs[0].tab("Begriffe", new javax.swing.JPanel()).tab("Aussagen", new javax.swing.JPanel())
+                    .tab("Fachglossar", tab[0].component())
+                    .tab("Graph", new javax.swing.JPanel())
                     .actions(tab[0].tools(), tab[0].addButton(), tab[0].detectButton());
-            tabs[0].select(TermsView.GLOSSARY);
+            tabs[0].select("Fachglossar");
             // Technik einblenden, damit das Technikwort nach Regel im Bild steht (Vorgabe: aus).
             tab[0].category(GlossaryDerivation.Category.TECHNISCH).setSelected(true);
             tab[0].load();
@@ -73,7 +72,7 @@ class GlossaryTabScreenshotTest {
                 javax.swing.JPanel surface = new javax.swing.JPanel(new java.awt.BorderLayout());
                 surface.setBackground(Comic.SURFACE);
                 surface.setBorder(javax.swing.BorderFactory.createEmptyBorder(12, 14, 12, 14));
-                surface.add(Comic.plate("Begriffe", Comic.PETROL, tabs[0]), java.awt.BorderLayout.CENTER);
+                surface.add(Comic.plate("Analysen", Comic.PETROL, tabs[0]), java.awt.BorderLayout.CENTER);
                 surface.setSize(width, 460);
                 Screenshots.write(surface, out.resolve("fachglossar-" + width + ".png"));
             });

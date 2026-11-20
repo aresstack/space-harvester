@@ -122,6 +122,31 @@ class StandingTabTest {
     }
 
     @Test
+    void otherViewsHangBehindTheStandWithTheirOwnToolsAndAreToldWhenTheyAreSeen() {
+        Fixture fixture = new Fixture(view());
+        List<Boolean> glossary = new ArrayList<>();
+        javax.swing.JButton add = new javax.swing.JButton("+");
+        fixture.tab.tab(StandingTab.GLOSSARY, new javax.swing.JPanel(), glossary::add, add);
+        StandingTab tab = fixture.shownTab();
+        assertThat(tab.tabs().names()).containsExactly(StandingTab.STATEMENTS, StandingTab.READING,
+                StandingTab.CONFLICTS, StandingTab.GLOSSARY);
+        assertThat(add.isVisible()).isFalse();
+        int reads = fixture.reads.get();
+        tab.tabs().select(StandingTab.GLOSSARY);
+        assertThat(glossary).last().isEqualTo(true);
+        assertThat(add.isVisible()).isTrue();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isFalse();
+        assertThat(tab.bearerButton().isVisible()).isFalse();
+        assertThat(tab.ownTabSelected()).isFalse();
+        tab.tabs().select(StandingTab.CONFLICTS);
+        assertThat(glossary).last().isEqualTo(false);
+        assertThat(add.isVisible()).isFalse();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isTrue();
+        assertThat(tab.ownTabSelected()).isTrue();
+        assertThat(fixture.reads.get()).isGreaterThanOrEqualTo(reads);
+    }
+
+    @Test
     void anEmptyListSaysWhyInItsArea() {
         StatusQuoView base = view();
         StandingTab none = new Fixture(new StatusQuoView(List.of(), List.of(), List.of(), Map.of(), Map.of(),
@@ -179,6 +204,19 @@ class StandingTabTest {
         fixture.deleted = 0;
         tab.deleteAnalysesButton().doClick();
         assertThat(fixture.status.get()).startsWith("Keine Aussagen-Analysen unter „DEV“");
+
+        // ▾ „Alles löschen“: eigene Rückfrage mit „wirklich“, danach Analysen und KI-Urteile, Meldung nennt beides.
+        List<String> asked = new ArrayList<>();
+        tab.confirmDeleteWith(question -> asked.add(question));
+        fixture.deleted = 2;
+        javax.swing.JMenuItem item = (javax.swing.JMenuItem) tab.moreDeleteMenu().getComponent(0);
+        assertThat(item.isEnabled()).isTrue();
+        item.doClick();
+        flush();
+        assertThat(asked).singleElement().asString().startsWith("Wirklich alles ").contains("KI-Urteile");
+        assertThat(fixture.everything).containsExactly(SPACE);
+        assertThat(fixture.status.get()).startsWith("2 Aussagen-Analysen gelöscht · KI-Urteile aus „Aussagen prüfen“ "
+                + "gelöscht");
 
         assertThat(StandingTab.deleteQuestion(ExportPanel.Selection.ALL))
                 .isEqualTo("Wirklich die Aussagen-Analysen aller Wissensquellen löschen? Die Seiten bleiben.");
@@ -717,6 +755,7 @@ class StandingTabTest {
     private static final class Fixture {
         StatusQuoView view;
         final List<ExportPanel.Selection> deletions = new ArrayList<>();
+        final List<ExportPanel.Selection> everything = new ArrayList<>();
         final AtomicReference<Runnable> analysesListener = new AtomicReference<>();
         int deleted;
         final AtomicInteger reads = new AtomicInteger();
@@ -803,6 +842,17 @@ class StandingTabTest {
                         }
                     }
                     return count;
+                }
+
+                @Override
+                public boolean canDeleteEverything() {
+                    return true;
+                }
+
+                @Override
+                public int deleteEverything(ExportPanel.Selection selection) {
+                    everything.add(selection);
+                    return deleteAnalyses(selection);
                 }
 
                 @Override

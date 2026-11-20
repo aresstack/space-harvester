@@ -140,7 +140,7 @@ class SourcesViewTest {
                 .filter(job -> job.type() == JobType.SYNC).toList();
         assertThat(syncs).hasSize(1);
         assertThat(syncs.get(0).parameters()).as("Betriebsart der Quelle, hier die Vorgabe")
-                .containsEntry("mode", "CATALOG_ONLY");
+                .containsEntry("mode", "SYNC_CACHE");
         await(arrow::isEnabled);
         assertThat(context.runtime().workspace().job(syncs.get(0).id()).state().terminal()).isTrue();
     }

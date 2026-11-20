@@ -30,6 +30,7 @@ import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiChatException;
 import com.aresstack.spaceharvester.ai.AiModel;
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
@@ -167,7 +168,52 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        ChatCompletionPort adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        AiChat direct = streaming(chatPort(settings.chatModel(), timeoutMillis()));
+        if (settings.provider() != AiProvider.OLLAMA) {
+            return direct;
+        }
+        // Ollama lädt ein Modell oft länger, als die Lesefrist einer Anfrage erlaubt: erst warten, bis es läuft
+        // ({@link #awaitModel}), dann fragen. Das Warten läuft abseits des Aufrufers. Die erste Anfrage nach einem
+        // Laden darf so lange dauern wie das Laden: Das erste Token nach einem frischen Laden kam einmal erst nach
+        // mehr als 30 s.
+        AiChat afterLoad = streaming(chatPort(settings.chatModel(),
+                (int) Math.min(Integer.MAX_VALUE, settings.loadTimeout().toMillis())));
+        return (request, listener) -> {
+            java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicBoolean loaded = new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicReference<AiChat.Task> running =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            MODEL_LOADERS.execute(() -> {
+                try {
+                    awaitModel(request.model(), () -> {
+                        loaded.set(true);
+                        listener.loading();
+                    }, cancelled::get);
+                } catch (AiServiceException failed) {
+                    listener.failed(new AiChatException(AiChatException.Kind.TRANSPORT, 0, failed.getMessage(), failed));
+                    return;
+                }
+                if (cancelled.get()) {
+                    listener.cancelled();
+                    return;
+                }
+                running.set((loaded.get() ? afterLoad : direct).stream(request, listener));
+                if (cancelled.get()) {
+                    running.get().cancel();
+                }
+            });
+            return () -> {
+                cancelled.set(true);
+                AiChat.Task task = running.get();
+                if (task != null) {
+                    task.cancel();
+                }
+            };
+        };
+    }
+
+    /** Der Chat über {@code adapter}: Nachrichten, Optionen und Rückmeldungen wie im Enterprise AI Client. */
+    private static AiChat streaming(ChatCompletionPort adapter) {
         return (request, listener) -> {
             List<ChatMessage> messages = new ArrayList<>();
             for (AiChat.Message message : request.messages()) {
@@ -235,7 +281,7 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        ChatCompletionPort adapter = chatPort(settings.chatModel(), timeoutMillis());
         // Die Antwort ist eine kurze JSON-Liste; die Obergrenze hält auch einen fehlerhaften Dienst kurz.
         ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_VARIANT_TOKENS).build();
         return (instructions, question) -> {
@@ -278,11 +324,18 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
-                (int) EXPANSION_TIMEOUT.toMillis()));
         int maxTokens = settings.chatMaxTokens();
-        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens).build();
+        // Nachdenken der Analyseschritte (ai.step-thinking, Standard aus): Bei Ollama geht es als think mit; ein
+        // OpenAI-kompatibler Dienst kennt „none“ oft nicht und bekommt dann keine Vorgabe.
+        String thinking = settings.stepThinking();
+        ChatOptions.Builder builder = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens);
+        if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {
+            builder.reasoningEffort(thinking);
+        }
+        ChatOptions options = builder.build();
         return (instructions, input) -> {
+            ChatCompletionPort adapter = chatPort(settings.chatModel(),
+                    awaitedTimeout(settings.chatModel(), (int) EXPANSION_TIMEOUT.toMillis()));
             try {
                 return complete(adapter.complete(new ChatRequest(
                         List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)), maxTokens, true);
@@ -309,8 +362,7 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
-                (int) LABEL_TIMEOUT.toMillis()));
+        ChatCompletionPort adapter = chatPort(settings.chatModel(), (int) LABEL_TIMEOUT.toMillis());
         AtomicBoolean failed = new AtomicBoolean();
         ChatCompletionPort port = new ChatCompletionPort() {
             @Override
@@ -350,7 +402,7 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        ChatCompletionPort adapter = chatPort(settings.chatModel(), timeoutMillis());
         String model = settings.chatModel();
         String endpoint = ChatNavigationLabeler.fingerprint(String.valueOf(settings.baseUrl()));
         ChatOptions options = ChatOptions.builder().model(model).build();
@@ -393,10 +445,119 @@ public final class RemoteAi {
      * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Vision-Modell
      */
     public String describeImage(byte[] image, String mediaType) {
+        return describeImage(image, mediaType, null);
+    }
+
+    /**
+     * Ob {@code model} geladen ist und sofort antwortet: bei Ollama laut {@code GET /api/ps}, wie AskAI „läuft“ zeigt;
+     * andere Dienste halten ihre Modelle selbst bereit.
+     *
+     * @throws AiServiceException wenn der Ollama-Server nicht erreichbar ist
+     */
+    public boolean modelLoaded(String model) {
+        if (settings.provider() != AiProvider.OLLAMA || model == null) {
+            return true;
+        }
+        Set<String> loaded = new OllamaModelCatalog(ollama(timeoutMillis())).loaded();
+        return loaded.contains(model) || !model.contains(":") && loaded.contains(model + ":latest");
+    }
+
+    /** Ob das Vision-Modell geladen ist ({@link #modelLoaded}). */
+    public boolean visionLoaded() {
+        return !settings.vision() || modelLoaded(settings.visionModel());
+    }
+
+    /**
+     * Wartet, bis {@code model} bei einem Ollama-Server läuft, bevor ein Prompt hinausgeht, wie AskAI: Läuft es nicht,
+     * meldet {@code onLoading} das einmal, das Laden wird einmal angestoßen ({@code POST /api/generate} läuft im
+     * Hintergrund weiter, auch wenn mehrere Aufrufer zugleich warten), und {@code GET /api/ps} wird im eingestellten
+     * Abstand ({@code load-poll-interval}) gefragt, bis es läuft, höchstens die Ladefrist ({@code load-timeout}).
+     * Für andere Dienste nichts.
+     *
+     * @param cancelled bricht das Warten ab (dann kehrt die Methode zurück, ohne zu werfen)
+     * @throws AiServiceException wenn das Laden scheitert oder die Ladefrist abläuft
+     */
+    public void awaitModel(String model, Runnable onLoading, java.util.function.BooleanSupplier cancelled) {
+        if (settings.provider() != AiProvider.OLLAMA || model == null || modelLoaded(model)) {
+            return;
+        }
+        onLoading.run();
+        String key = settings.ollamaServer() + "\n" + model;
+        java.util.concurrent.CompletableFuture<Void> request = MODEL_LOADS.compute(key, (ignored, running) ->
+                running != null && !running.isDone() ? running
+                        : java.util.concurrent.CompletableFuture.runAsync(() -> loadModel(model), MODEL_LOADERS));
+        long deadline = System.nanoTime() + settings.loadTimeout().toNanos();
+        while (!cancelled.getAsBoolean() && !modelLoaded(model)) {
+            if (request.isDone()) {
+                try {
+                    request.join();
+                } catch (java.util.concurrent.CompletionException failed) {
+                    throw failed.getCause() instanceof AiServiceException cause ? cause
+                            : new AiServiceException(AiServiceException.Reason.UNREACHABLE, "Modell nicht geladen");
+                }
+                // Geladen, auch wenn der Server es unter anderem Namen führt.
+                return;
+            }
+            if (System.nanoTime() - deadline > 0) {
+                throw new AiServiceException(AiServiceException.Reason.TIMEOUT,
+                        "Modell nicht innerhalb der Ladefrist geladen");
+            }
+            try {
+                Thread.sleep(settings.loadPollInterval().toMillis());
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    /**
+     * Der Anstoß zum Laden eines Modells eines Ollama-Servers: kehrt erst zurück, wenn der Server es geladen hat,
+     * höchstens nach der Ladefrist ({@code load-timeout}).
+     */
+    private void loadModel(String model) {
+        int millis = (int) Math.min(Integer.MAX_VALUE, settings.loadTimeout().toMillis());
+        new OllamaModelCatalog(ollama(millis)).load(model, settings.contextTokens());
+    }
+
+    /** Laufende Anstöße zum Laden je Server und Modell: jedes Modell wird nur einmal zugleich angestoßen. */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+            java.util.concurrent.CompletableFuture<Void>> MODEL_LOADS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** Die Threads, auf denen die Anstöße laufen; sie warten nur auf den Server. */
+    private static final java.util.concurrent.ExecutorService MODEL_LOADERS =
+            java.util.concurrent.Executors.newCachedThreadPool(work -> {
+                Thread thread = new Thread(work, "ai-model-load");
+                thread.setDaemon(true);
+                return thread;
+            });
+
+    /**
+     * Wie {@link #describeImage(byte[], String)} mit eigenem Prompt eines Beschreibbaren (etwa einer Marke eines
+     * Videos): Bild und Prompt gehen als eine Nachricht an das Vision-Modell. {@code null} ist der Prompt der
+     * Bildbeschreibung des Enterprise AI Client.
+     */
+    public String describeImage(byte[] image, String mediaType, String instruction) {
+        if (instruction != null) {
+            if (!settings.vision()) {
+                throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED,
+                        "KI-Dienst oder Vision-Modell fehlt");
+            }
+            ChatCompletionPort adapter = chatPort(settings.visionModel(),
+                    awaitedTimeout(settings.visionModel(), timeoutMillis()));
+            try {
+                return adapter.complete(new ChatRequest(List.of(ChatMessage.userWithImages(instruction,
+                        List.of(new com.aresstack.enterpriseai.astu.chat.ChatImage(mediaType, image)))),
+                        ChatOptions.builder().model(settings.visionModel()).build())).content();
+            } catch (ChatCompletionException e) {
+                throw chatFailure(e);
+            }
+        }
         if (!settings.vision()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Vision-Modell fehlt");
         }
-        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.visionModel()));
+        ChatCompletionPort adapter = chatPort(settings.visionModel(),
+                awaitedTimeout(settings.visionModel(), timeoutMillis()));
         String model = settings.visionModel();
         SourceImageAnalysisUseCase useCase = new SourceImageAnalysisUseCase(List::of, adapter, () -> null,
                 () -> model, NO_CACHE);
@@ -433,6 +594,10 @@ public final class RemoteAi {
     public List<AiModel> models() {
         if (!settings.configured()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "Kein KI-Dienst eingerichtet");
+        }
+        if (settings.provider() == AiProvider.OLLAMA) {
+            // Ollama meldet die Fähigkeiten seiner Modelle nur über die eigene Schnittstelle, nicht unter /v1/models.
+            return new OllamaModelCatalog(ollama(timeoutMillis())).models();
         }
         List<ModelDescriptor> descriptors = null;
         // Ein kurz nicht erreichbarer Dienst (Neustart, 5xx) wird mit wachsendem Abstand erneut gefragt; Ablehnung,
@@ -484,7 +649,7 @@ public final class RemoteAi {
 
     /** Verbindung zum Katalog der Enterprise-API: Route, TLS und Token wie die übrigen Aufrufe. */
     private KipitzModelCatalogConfig catalogConfig() {
-        KipitzModelCatalogConfig.Builder config = KipitzModelCatalogConfig.builder(settings.baseUrl())
+        KipitzModelCatalogConfig.Builder config = KipitzModelCatalogConfig.builder(settings.apiBaseUrl())
                 .routes(routes)
                 .userAgent(userAgent)
                 .connectTimeoutMillis(timeoutMillis())
@@ -499,18 +664,27 @@ public final class RemoteAi {
         return config.build();
     }
 
-    /** Verbindung zum Chat-Modell: Route, TLS, Token und Fristen wie {@link #catalogConfig()}. */
-    private OpenAiCompatibleChatConfig chatConfig() {
-        return chatConfig(settings.chatModel());
+    /**
+     * Der Chat mit {@code model}: bei Ollama über dessen eigene Schnittstelle mit der Kontextlänge
+     * ({@link OllamaChatAdapter}), sonst über den unveränderten {@code OpenAiCompatibleChatAdapter}.
+     */
+    private ChatCompletionPort chatPort(String model, int timeoutMillis) {
+        if (settings.provider() == AiProvider.OLLAMA) {
+            return new OllamaChatAdapter(ollama(timeoutMillis), model, settings.contextTokens());
+        }
+        return new OpenAiCompatibleChatAdapter(chatConfig(model, timeoutMillis));
     }
 
-    private OpenAiCompatibleChatConfig chatConfig(String model) {
-        return chatConfig(model, timeoutMillis());
+    /** Verbindungen zum Ollama-Server mit Route, TLS und Frist wie die übrigen Aufrufe. */
+    private OllamaConnections ollama(int timeoutMillis) {
+        return new OllamaConnections(settings.ollamaServer(), routes, tls, userAgent, timeoutMillis);
     }
+
+    /** Verbindung zum Chat-Modell: Route, TLS, Token und Fristen wie {@link #catalogConfig()}. */
 
     private OpenAiCompatibleChatConfig chatConfig(String model, int timeoutMillis) {
         OpenAiCompatibleChatConfig.Builder config = OpenAiCompatibleChatConfig
-                .builder(settings.baseUrl(), model)
+                .builder(settings.apiBaseUrl(), model)
                 .routes(routes)
                 .userAgent(userAgent)
                 .connectTimeoutMillis(timeoutMillis)
@@ -526,7 +700,7 @@ public final class RemoteAi {
 
     private OpenAiCompatibleEmbeddingAdapter adapter(String model, int dimension) {
         OpenAiCompatibleEmbeddingConfiguration.Builder config = OpenAiCompatibleEmbeddingConfiguration
-                .builder(settings.baseUrl().toString(), model, dimension)
+                .builder(settings.apiBaseUrl().toString(), model, dimension)
                 .routes(routes)
                 .userAgent(userAgent)
                 .connectTimeoutMillis(timeoutMillis())
@@ -536,6 +710,30 @@ public final class RemoteAi {
         }
         String key = settings.apiKey();
         return new OpenAiCompatibleEmbeddingAdapter(config.build(), () -> key == null ? null : key.toCharArray());
+    }
+
+    /**
+     * Die Lesefrist einer Anfrage an {@code model}, die nicht gestreamt wird (Bildbeschreibung, Textschritte): Bei
+     * Ollama wartet sie erst, bis das Modell läuft ({@link #awaitModel}), und darf dann so lange dauern wie das Laden
+     * ({@code load-timeout}): Ein lokaler Server bearbeitet Anfragen nacheinander, und das erste Token nach einem
+     * frischen Laden kam schon nach mehr als 30 s (Angelo 20.11.2026: „Folien beschreiben“ scheiterte an der ersten
+     * Folie). Andere Dienste: {@code normalMillis}.
+     *
+     * @throws AiServiceException {@code TIMEOUT}, wenn die Ladefrist abläuft
+     */
+    private int awaitedTimeout(String model, int normalMillis) {
+        if (settings.provider() != AiProvider.OLLAMA || model == null) {
+            return normalMillis;
+        }
+        try {
+            awaitModel(model, () -> { }, () -> false);
+        } catch (AiServiceException e) {
+            if (e.reason() == AiServiceException.Reason.TIMEOUT) {
+                throw e;
+            }
+            // Ohne Auskunft über laufende Modelle (etwa ein Vermittler ohne /api/ps) fragt die Anfrage selbst.
+        }
+        return (int) Math.max(normalMillis, Math.min(Integer.MAX_VALUE, settings.loadTimeout().toMillis()));
     }
 
     private int timeoutMillis() {

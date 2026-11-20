@@ -48,6 +48,18 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
     }
 
     @Override
+    public synchronized List<PageKey> pagesWith(String processorId) {
+        Objects.requireNonNull(processorId, "processorId");
+        List<PageKey> pages = new ArrayList<>();
+        results.forEach((key, found) -> {
+            if (found.containsKey(processorId)) {
+                pages.add(key);
+            }
+        });
+        return List.copyOf(pages);
+    }
+
+    @Override
     public synchronized List<Enrichment> find(DocumentKey document) {
         if (Objects.requireNonNull(document, "document").isPage()) {
             return find(document.page());

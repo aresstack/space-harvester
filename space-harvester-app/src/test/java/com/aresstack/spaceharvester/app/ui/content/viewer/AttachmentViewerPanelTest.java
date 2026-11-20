@@ -83,6 +83,112 @@ class AttachmentViewerPanelTest {
         assertThat(loader.loads).containsEntry("att-pdf", 1);
     }
 
+    /**
+     * Angelo 20.11.2026: Über der Größengrenze zeigt der Viewer statt der Vorschau den Grund, und „Öffnen“ lädt die
+     * Datei direkt auf die Platte und öffnet sie im Standardprogramm, ohne sie in den Speicher zu laden.
+     */
+    @Test
+    void withoutPreviewTheViewerStillOpensTheFileInAnotherProgram() throws Exception {
+        byte[] content = "großes Original".getBytes(StandardCharsets.UTF_8);
+        List<File> opened = new ArrayList<>();
+        List<String> loaded = new ArrayList<>();
+        ReaderAttachmentLoader loader = new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment attachment, java.util.function.Consumer<byte[]> done,
+                             java.util.function.Consumer<String> failed) {
+                loaded.add(attachment.fileName());
+                failed.accept("zu groß");
+            }
+
+            @Override
+            public boolean downloadsToFile() {
+                return true;
+            }
+
+            @Override
+            public void downloadTo(ReaderAttachment attachment, java.nio.file.Path target, Runnable done,
+                                   java.util.function.Consumer<String> failed) {
+                try {
+                    Files.write(target, content);
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+                done.run();
+            }
+        };
+        run(() -> {
+            AttachmentViewerPanel viewer = AttachmentViewerPanel.withoutPreview(
+                    new ReaderAttachment("fig", "Backup.fig", "application/octet-stream", 40_268_060L), loader,
+                    opened::add, Runnable::run, "Keine Vorschau: zu groß für den Cache");
+            assertThat(viewer.showsPicture()).isFalse();
+            assertThat(viewer.statusText()).contains("Backup.fig", "zu groß für den Cache");
+            viewer.openButtonForTest().doClick();
+            assertThat(loaded).as("nie in den Speicher").isEmpty();
+            viewer.close();
+        });
+        assertThat(opened).singleElement().satisfies(file -> {
+            assertThat(file.getName()).isEqualTo("Backup.fig");
+            assertThat(Files.readAllBytes(file.toPath())).isEqualTo(content);
+        });
+    }
+
+    /** Angelo 20.11.2026: Zoom und Ausschnitt bleiben beim Blättern und beim Wechsel aufs nächste Bild. */
+    @Test
+    void zoomAndSectionStayWhenTurningPagesAndSwitchingImages() throws Exception {
+        FakeLoader loader = new FakeLoader().file("att-pdf", pdf(2)).file("a", png()).file("b", png());
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("att-pdf", "Folien.pdf", "application/pdf", 3100), loader, null,
+                    Runnable::run);
+            viewer.setSize(700, 460);
+            viewer.doLayout();
+            assertThat(viewer.view()).as("eingepasst").isNull();
+            viewer.zoomIn();
+            viewer.zoomIn();
+            viewer.sharpenNow();
+            AttachmentViewerPanel.View zoomed = viewer.view();
+            int percent = viewer.zoomPercent();
+            viewer.next();
+            assertThat(viewer.page()).isEqualTo(1);
+            assertThat(viewer.view()).as("Zoom und Ausschnitt wie auf Seite 1").isEqualTo(zoomed);
+            viewer.close();
+
+            // Bilder: der Nachbar übernimmt Zoom und Ausschnitt des vorigen Viewers.
+            AttachmentViewerPanel[] shown = new AttachmentViewerPanel[1];
+            shown[0] = new AttachmentViewerPanel(new ReaderAttachment("a", "a.png", "image/png", 200), loader, null,
+                    Runnable::run);
+            shown[0].setSize(700, 460);
+            shown[0].doLayout();
+            shown[0].neighbours(new AttachmentViewerPanel.Neighbours() {
+                @Override
+                public boolean hasPrevious() {
+                    return false;
+                }
+
+                @Override
+                public boolean hasNext() {
+                    return true;
+                }
+
+                @Override
+                public void previous() {
+                }
+
+                @Override
+                public void next() {
+                    shown[0] = new AttachmentViewerPanel(new ReaderAttachment("b", "b.png", "image/png", 200),
+                            loader, null, Runnable::run);
+                }
+            });
+            shown[0].zoomIn();
+            AttachmentViewerPanel.View image = shown[0].view();
+            shown[0].next();
+            assertThat(shown[0].attachment().fileName()).isEqualTo("b.png");
+            assertThat(shown[0].view()).isEqualTo(image);
+            assertThat(percent).isPositive();
+        });
+    }
+
     @Test
     void anImageAndATextShowTheirContent() throws Exception {
         byte[] text = "Zeile 1\nÄnderung 2\n".getBytes(StandardCharsets.UTF_8);
@@ -160,28 +266,108 @@ class AttachmentViewerPanelTest {
             assertThat(viewer.showsPicture()).isFalse();
             assertThat(loader.loads).isEmpty();
             assertThat(viewer.saveButton().isEnabled()).isTrue();
+            // Symbolknöpfe ohne Text (Angelo, 19.11.2026); die Leiste lässt sich in die Werkzeugleiste mit der Lupe
+            // umsetzen und füllt dort die Zeile: Knöpfe links, „Typ · Größe“ rechts.
+            assertThat(viewer.saveButton().getText()).isNullOrEmpty();
+            assertThat(viewer.openButton().getText()).isNullOrEmpty();
+            assertThat(viewer.footer().getParent()).isSameAs(viewer);
+            assertThat(viewer.detachFooter().getParent()).isNull();
+            assertThat(viewer.footer().getClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL))
+                    .isEqualTo(Boolean.TRUE);
+            assertThat(((java.awt.BorderLayout) viewer.footer().getLayout())
+                    .getLayoutComponent(java.awt.BorderLayout.EAST)).isInstanceOfSatisfying(javax.swing.JLabel.class,
+                            label -> assertThat(label.getText()).isEqualTo(viewer.fileInfoText()));
             viewer.openButton().doClick();
         });
         assertThat(opened).singleElement().satisfies(file -> assertThat(file.getName()).isEqualTo("daten.bin"));
     }
 
     @Test
-    void anOfficeFileUsesThePreviewOfTheSourceOrSaysWhyThereIsNone() throws Exception {
-        FakeLoader withPreview = new FakeLoader().preview("att-xlsx", png());
+    void wordDocumentDisplaysItsTextWithoutRequiringAWebDavPreview() throws Exception {
+        byte[] original;
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument word = new org.apache.poi.xwpf.usermodel.XWPFDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            word.createParagraph().createRun().setText("HaVdB Architekturbericht");
+            word.write(output);
+            original = output.toByteArray();
+        }
+        FakeLoader loader = new FakeLoader().file("docx", original).withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("docx", "Bericht.docx", "application/octet-stream", original.length),
+                    loader, null, Runnable::run);
+            assertThat(viewer.isShowingText()).isTrue();
+            assertThat(viewer.textContent()).contains("HaVdB Architekturbericht");
+            assertThat(loader.loads).containsEntry("docx", 1);
+            assertThat(loader.previews).isEmpty();
+            viewer.close();
+        });
+    }
+
+    @Test
+    void excelShowsLocalSpreadsheetInsteadOfRequiringAnOnlinePreview() throws Exception {
+        byte[] bytes;
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook =
+                     new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            workbook.createSheet("Plan").createRow(0).createCell(0).setCellValue("HaVdB");
+            workbook.write(output);
+            bytes = output.toByteArray();
+        }
+        FakeLoader loader = new FakeLoader().file("att-xlsx", bytes).withoutPreviews();
         run(() -> {
             AttachmentViewerPanel office = new AttachmentViewerPanel(new ReaderAttachment("att-xlsx", "Planung.xlsx",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 84000), withPreview, null,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes.length), loader, null,
                     Runnable::run);
-            assertThat(office.fileInfoText()).isEqualTo("Excel · 82 KB");
-            assertThat(office.showsPicture()).isTrue();
-            assertThat(withPreview.loads).as("Vorschau ohne Original").isEmpty();
-            assertThat(withPreview.previews).containsExactly("att-xlsx");
+            assertThat(office.fileInfoText()).startsWith("Excel");
+            assertThat(office.isShowingSpreadsheet()).isTrue();
+            assertThat(loader.loads).containsEntry("att-xlsx", 1);
+            assertThat(loader.previews).isEmpty();
+            office.close();
+        });
+    }
 
-            // ohne Vorschauweg der Quelle (Standard des Laders): Hinweis, Speichern und Öffnen bleiben
+    @Test
+    void csvWithExcelMimeDisplaysARealTable() throws Exception {
+        byte[] bytes = "Name;Status\nHaVdB;Offen".getBytes(StandardCharsets.UTF_8);
+        FakeLoader loader = new FakeLoader().file("csv", bytes).withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel csv = new AttachmentViewerPanel(new ReaderAttachment("csv", "Plan.csv",
+                    "application/vnd.ms-excel", bytes.length), loader, null, Runnable::run);
+            assertThat(csv.isShowingSpreadsheet()).isTrue();
+            assertThat(loader.loads).containsEntry("csv", 1);
+            assertThat(loader.previews).isEmpty();
+            csv.close();
+        });
+    }
+
+    @Test
+    void wordWithoutFilenameExtensionUsesWordMimeForLocalPreview() throws Exception {
+        byte[] original;
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument word = new org.apache.poi.xwpf.usermodel.XWPFDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            word.createParagraph().createRun().setText("Architektur Steckbrief");
+            word.write(output);
+            original = output.toByteArray();
+        }
+        FakeLoader loader = new FakeLoader().file("word", original).withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(new ReaderAttachment(
+                    "word", "Entwurf Steckbrief AG Architektur",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", original.length),
+                    loader, null, Runnable::run);
+            assertThat(viewer.isShowingText()).isTrue();
+            assertThat(viewer.textContent()).contains("Architektur Steckbrief");
+            viewer.close();
+        });
+    }
+
+    @Test
+    void unavailableWordStillExplainsWhyItCannotBeShown() throws Exception {
+        run(() -> {
             AttachmentViewerPanel none = new AttachmentViewerPanel(new ReaderAttachment("att-doc", "Brief.docx",
                     "", -1), new FakeLoader().withoutPreviews(), null, Runnable::run);
-            assertThat(none.statusText()).contains(AttachmentViewerPanel.NO_PREVIEW_TEXT)
-                    .contains("Die Quelle bietet keine Vorschau an.");
+            assertThat(none.statusText()).contains("Word-Dokument nicht lesbar").contains("nicht gefunden");
         });
     }
 
@@ -212,7 +398,7 @@ class AttachmentViewerPanelTest {
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "a.docx"))
                 .isEqualTo(ReaderAttachmentKind.OFFICE);
         assertThat(ReaderAttachmentKind.of("application/octet-stream", "Folien.pptx"))
-                .isEqualTo(ReaderAttachmentKind.OFFICE);
+                .isEqualTo(ReaderAttachmentKind.PRESENTATION);
         assertThat(ReaderAttachmentKind.of("application/vnd.jgraph.mxfile", "a")).isEqualTo(ReaderAttachmentKind.OTHER);
         assertThat(new ReaderAttachment("k", "Brief.docx", "", -1).summary()).isEqualTo("Word");
         assertThat(AttachmentViewerPanel.safeFileName("a/b.txt")).isEqualTo("a_b.txt");

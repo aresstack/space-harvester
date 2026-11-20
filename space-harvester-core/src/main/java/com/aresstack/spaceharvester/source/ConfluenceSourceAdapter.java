@@ -113,6 +113,11 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
         return "Confluence";
     }
 
+    @Override
+    public boolean usesBaseUrl() {
+        return true;
+    }
+
     /**
      * Die Felder des Upstream-Typs ohne die, die der Adapter selbst setzt: Adresse ({@code base-url}), Titel,
      * Anmeldung ({@code auth}) und Zertifikat ({@code client-certificate}) stehen außerhalb von {@code options}.

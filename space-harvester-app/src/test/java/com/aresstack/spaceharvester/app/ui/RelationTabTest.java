@@ -95,7 +95,7 @@ class RelationTabTest {
                         || prefix != null && !relation.sortTerm().startsWith(prefix)) {
                     continue;
                 }
-                if (found.size() == TermsView.RELATION_LIMIT) {
+                if (found.size() == RelationTab.RELATION_LIMIT) {
                     return new TermRelations.RelationList(found, found.get(found.size() - 1).key());
                 }
                 found.add(relation);
@@ -124,7 +124,7 @@ class RelationTabTest {
             tab[0] = newTab(core);
             tab[0].load(null);
         });
-        TermsView.Directory directory = tab[0].directory();
+        TermDirectory directory = tab[0].directory();
         await("erste Seite", () -> directory.table().getRowCount() >= 200);
         // Jedes Scrollen ans Ende lädt nach: erst die restlichen 100 offenen, dann die 150 abgelehnten.
         await("alle Seiten", () -> {
@@ -156,7 +156,7 @@ class RelationTabTest {
             tab[0] = newTab(core);
             tab[0].load(null);
         });
-        TermsView.Directory directory = tab[0].directory();
+        TermDirectory directory = tab[0].directory();
         await("alle vier", () -> directory.table().getRowCount() == 4);
         SwingUtilities.invokeAndWait(() -> {
             // Ungerichtet steht das kleinere Ende vorn: „Zahlung ↔ Auszahlung“ heißt in der Liste Auszahlung, Zahlung.
@@ -174,7 +174,7 @@ class RelationTabTest {
             directory.letterButton("Z").doClick();
         });
         await("unter Z nichts", () -> directory.table().getRowCount() == 0);
-        SwingUtilities.invokeAndWait(() -> assertThat(directory.hint()).isEqualTo(TermsView.NO_MATCH));
+        SwingUtilities.invokeAndWait(() -> assertThat(directory.hint()).isEqualTo(TermDirectory.NO_MATCH));
         assertThat(core.calls).contains("null/null/B/-", "null/REJECTED/B/-", "null/null/Z/-");
     }
 
@@ -191,7 +191,7 @@ class RelationTabTest {
             tab[0].actions(core);
             tab[0].load(null);
         });
-        TermsView.Directory directory = tab[0].directory();
+        TermDirectory directory = tab[0].directory();
         await("beide Seiten", () -> {
             directory.loadMore();
             return directory.table().getRowCount() == 300;
@@ -225,7 +225,7 @@ class RelationTabTest {
                 new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"},
                 r -> List.of(r.fromTerm(), Relation.typeText(r.type()), r.toTerm(), Relation.statusText(r.status()),
                         Relation.originText(r.origin())),
-                List.of(), RelationType.ABBREVIATION, TermsView.NO_RELATIONS);
+                List.of(), RelationType.ABBREVIATION, RelationTab.NO_RELATIONS);
         tab.fetch(fetch);
         return tab;
     }

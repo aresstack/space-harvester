@@ -143,18 +143,20 @@ class MainWindowTest {
             assertThat(png).isNotEmptyFile();
         }
         // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen. Links die Suche
-        // und die Reiter der Seitenansicht, rechts Begriffe und Aufträge, dann Verwaltung und Einstellungen (Angelo,
+        // und die Reiter der Seitenansicht, rechts Aufträge, dann Verwaltung und Einstellungen (Angelo,
         // 13.11.2026); Inhalte hat keinen eigenen Knopf mehr.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
-                .containsSubsequence("Suche", "Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen",
-                        "Erweitert", "Export", "Chat", "Begriffe", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
+                .containsSubsequence("Suche", "Leseansicht", "Text", "Anhänge", "Analysen", "Info",
+                        "Export", "Chat", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
                 .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
                 .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");
         assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
-                .contains("Suche (Strg+1)", "Begriffe (Strg+3)", "Aufträge (Strg+4)",
-                        "Wissensquellen verwalten (Strg+5)", "Einstellungen (Strg+6)")
+                .contains("Suche (Strg+1)", "Aufträge (Strg+3)", "Wissensquellen verwalten (Strg+4)",
+                        "Einstellungen (Strg+5)")
+                .as("Begriffe stehen unter Analysen, kein eigener Bereich (BG2c)")
+                .noneMatch(tip -> tip != null && tip.startsWith("Begriffe (Strg+"))
                 .doesNotContain("Inhalte (Strg+2)");
         // Ein Reiter in der Leiste schaltet die Mitte auf Inhalte; in anderen Bereichen zeigt keiner der Reiter eine
         // Auswahl, zurück unter Inhalte ist der gewählte Reiter wieder dunkel.
@@ -168,7 +170,7 @@ class MainWindowTest {
         assertThat(window[0].current()).isEqualTo(AppContext.Section.CONTENT);
         assertThat(tabs).filteredOn(AbstractButton::isSelected)
                 .extracting(b -> b.getAccessibleContext().getAccessibleName()).containsExactly("Text");
-        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.TERMS));
+        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.ACTIVITIES));
         assertThat(tabs).noneMatch(AbstractButton::isSelected);
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.CONTENT));
         assertThat(tabs).filteredOn(AbstractButton::isSelected)
@@ -242,18 +244,19 @@ class MainWindowTest {
                 .as("Titelfilter findet die Seite").isEqualTo(1));
         SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], home.resolve("explorer.png")));
 
-        // Rechtsbündig am Space das Download-Symbol: ein Klick startet den Auftrag sofort, ohne Dialog.
+        // „Indexieren“ im Kontextmenü des Space: markiert ihn und startet den Abgleich sofort, ohne Dialog.
         List<String> jobsBefore = context.runtime().workspace().jobs().stream().map(JobStatus::id).toList();
         SwingUtilities.invokeAndWait(() -> {
             window[0].explorer().filter().setText("");
-            java.awt.Rectangle row = tree.getRowBounds(1);
-            java.awt.Point icon = new java.awt.Point(row.x + row.width - 10, row.y + row.height / 2);
-            for (java.awt.event.MouseListener listener : tree.getMouseListeners()) {
-                listener.mouseClicked(new MouseEvent(tree, MouseEvent.MOUSE_CLICKED, 0, 0, icon.x, icon.y, 1, false,
-                        MouseEvent.BUTTON1));
-            }
+            Explorer.Item spaceNode = ((Explorer.Node) tree.getPathForRow(1).getLastPathComponent()).item();
+            assertThat(spaceNode).isInstanceOf(Explorer.SpaceItem.class);
+            javax.swing.JPopupMenu menu = window[0].explorer().menu(spaceNode);
+            javax.swing.JMenuItem index = (javax.swing.JMenuItem) java.util.Arrays.stream(menu.getComponents())
+                    .filter(c -> c instanceof javax.swing.JMenuItem item && Explorer.INDEX.equals(item.getText()))
+                    .findFirst().orElseThrow();
+            index.doClick();
         });
-        // Der Export plant nach dem Veröffentlichen selbst einen Folgeauftrag ein (Bilder); gezählt wird, was der Klick
+        // Der Abgleich plant danach selbst Folgeaufträge ein (Anreicherung, Bilder); gezählt wird, was der Klick
         // startet.
         List<JobStatus> clicked = List.of();
         for (int i = 0; i < 100 && clicked.isEmpty(); i++) {
@@ -262,7 +265,7 @@ class MainWindowTest {
                     .filter(j -> !j.type().followUp()).toList();
         }
         assertThat(clicked).as("vom Klick gestartete Aufträge").singleElement()
-                .extracting(JobStatus::type).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.EXPORT);
+                .extracting(JobStatus::type).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.SYNC);
         SwingUtilities.invokeAndWait(() -> {
             window[0].showJob(job);
             window[0].showDiagnosis(job);
@@ -425,8 +428,8 @@ class MainWindowTest {
             assertThat(settings.drawer().isVisible()).isTrue();
             assertThat(window.explorer().component().isVisible()).isFalse();
             assertThat(settings.navRows()).extracting(SettingsNavRow::title).containsExactly(SettingsView.GENERAL,
-                    SettingsView.AI, SettingsView.MODELS, SettingsView.NETWORK, SettingsView.CACHE,
-                    SettingsView.SECURITY, SettingsView.DIAGNOSIS, SettingsView.LIBRARIES);
+                    SettingsView.AI, SettingsView.MODELS, SettingsView.WORDS, SettingsView.NETWORK, SettingsView.CACHE,
+                    SettingsView.VIDEO, SettingsView.SECURITY, SettingsView.DIAGNOSIS, SettingsView.LIBRARIES);
             layoutAll(surface);
             List<Integer> ys = new ArrayList<>();
             for (SettingsNavRow row : settings.navRows()) {
@@ -434,8 +437,8 @@ class MainWindowTest {
             }
             assertThat(ys).as("untereinander").isSorted().doesNotHaveDuplicates();
             // „Bibliotheken“ klebt am Boden des Drawers: unter dem Scrollbereich der Bereiche, über „Zurück“.
-            SettingsNavRow libraries = settings.navRows().get(7);
-            int librariesY = ys.get(7);
+            SettingsNavRow libraries = settings.navRows().get(9);
+            int librariesY = ys.get(9);
             int backY = SwingUtilities.convertPoint(settings.back.getParent(), settings.back.getLocation(),
                     settings.drawer()).y;
             assertThat(librariesY + libraries.getHeight()).isLessThanOrEqualTo(backY);
@@ -444,11 +447,11 @@ class MainWindowTest {
                     .as("scrollt nicht mit").isNull();
             assertThat(SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, settings.navRows().get(0)))
                     .isNotNull();
-            assertThat(librariesY).isGreaterThan(ys.get(6) + settings.navRows().get(6).getHeight());
+            assertThat(librariesY).isGreaterThan(ys.get(8) + settings.navRows().get(8).getHeight());
             assertThat(settings.selected()).isEqualTo(SettingsView.GENERAL);
 
             // Ein Klick auf „Netzwerk“ zeigt rechts nur diesen Bereich und markiert die Zeile.
-            SettingsNavRow network = settings.navRows().get(3);
+            SettingsNavRow network = settings.navRows().get(4);
             network.dispatchEvent(new MouseEvent(network, MouseEvent.MOUSE_PRESSED, 0, MouseEvent.BUTTON1_DOWN_MASK,
                     5, 5, 1, false, MouseEvent.BUTTON1));
             assertThat(settings.selected()).isEqualTo(SettingsView.NETWORK);

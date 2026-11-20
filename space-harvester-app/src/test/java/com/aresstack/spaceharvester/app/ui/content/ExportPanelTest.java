@@ -42,17 +42,6 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class ExportPanelTest {
 
-    @Test
-    void theHoldingsLineCountsLocalPagesAndNamesAGapInTheResolution() {
-        PageSet pages = PageSet.of(Map.of("wiki", List.of("1", "2", "3")));
-        assertThat(ExportPanel.holdingsText(new PageSelection(pages, new HoldingCounts(3, 2, 0, 0), List.of(), true)))
-                .isEqualTo("2 von 3 Seiten lokal");
-        assertThat(ExportPanel.holdingsText(new PageSelection(pages, new HoldingCounts(3, 3, 0, 0), List.of(), false)))
-                .isEqualTo("3 von 3 Seiten lokal · " + ExportPanel.INCOMPLETE);
-        assertThat(ExportPanel.holdingsText(new PageSelection(PageSet.EMPTY, HoldingCounts.ZERO, List.of(), true)))
-                .isEqualTo("keine Seite bekannt");
-    }
-
     @TempDir
     Path home;
 
@@ -383,10 +372,10 @@ class ExportPanelTest {
                 asked.add(question);
                 return !question.contains("Word");
             });
-            // Eine Quelle, deren Space nie geladen wurde: die Zeile „Bestand“ nennt ihn und ist nicht grün.
+            // Eine Quelle, deren Space nie geladen wurde.
             panel[0].selection(new ExportPanel.Selection("anhang", null, null, "Anhang"));
         });
-        await(() -> texts(panel[0].stand).contains("keine Seite bekannt · " + ExportPanel.notLoadedText(1)));
+        await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).contains(ExportPanel.NOTHING_YET));
         SwingUtilities.invokeAndWait(() -> {
             assertThat(panel[0].coreSelectionForTest().roots()).as("je Space der Quelle eine Wurzel, auch ohne Bestand")
                     .hasSize(1).allMatch(root -> root.sourceId().equals("anhang") && root.spaceKey() != null);
@@ -394,7 +383,6 @@ class ExportPanelTest {
         });
         await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).stream()
                 .filter(text -> text.equals(ExportPanel.NOTHING_YET)).count() == 2);
-        await(() -> texts(panel[0].stand).contains("keine Seite bekannt · " + ExportPanel.notLoadedText(2)));
         SwingUtilities.invokeAndWait(() -> {
             assertThat(panel[0].coreSelectionForTest().roots()).as("Analytics, Metadaten und Formate je Space")
                     .hasSize(2).extracting(root -> root.sourceId()).containsExactlyInAnyOrder("handbuch", "anhang");
@@ -415,9 +403,6 @@ class ExportPanelTest {
                 .extracting(JobStatus::sourceId).containsExactlyInAnyOrder("handbuch", "anhang");
         await(() -> panel[0].exportBlocked("pdf") == null);
         await(() -> texts(panel[0].spaces).stream().filter(text -> text.contains(".pdf")).count() == 2);
-        // Beide Spaces geladen: die Zeile „Bestand“ ohne Zusatz und grün.
-        await(() -> texts(panel[0].stand).contains("2 von 2 Seiten lokal"));
-        assertThat(texts(panel[0].stand)).noneMatch(text -> text.contains("noch nicht geladen"));
         assertThat(texts(panel[0].spaces)).as("je Space eine Zeile mit Quellentitel")
                 .anyMatch(text -> text.startsWith("Handbuch › ")).anyMatch(text -> text.startsWith("Anhang › "));
 

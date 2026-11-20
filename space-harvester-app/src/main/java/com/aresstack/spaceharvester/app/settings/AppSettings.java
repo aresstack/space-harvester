@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
@@ -65,6 +66,8 @@ import java.util.Set;
  *                        wie beim Dienst
  * @param viewerBackground Hintergrund des Bildbetrachters ({@code space-harvester-app.viewer.background}); ohne
  *                        Angabe {@link ViewerBackground#DEFAULT}, die Oberfläche der App; nur die App
+ * @param video           die Werte für Videos ({@code space-harvester-app.video.*}): Marken, Standbilder, Player;
+ *                        ohne Angabe {@link VideoSettings#DEFAULT}; nur die App
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
@@ -76,7 +79,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
                           EnrichmentSettings enrichment, AnalyticsSettings analytics,
                           SimplificationSettings simplification, StandingSettings standing,
-                          CheckSettings check, ViewerBackground viewerBackground) {
+                          CheckSettings check, ViewerBackground viewerBackground, VideoSettings video) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -105,6 +108,25 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         standing = standing == null ? StandingSettings.DEFAULT : standing;
         check = check == null ? CheckSettings.DEFAULT : check;
         viewerBackground = viewerBackground == null ? ViewerBackground.DEFAULT : viewerBackground;
+        video = video == null ? VideoSettings.DEFAULT : video;
+    }
+
+    /** Mit den Werten für Videos ohne Angabe ({@link VideoSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                       LocalFileSettings localFiles, Map<String, String> sourceKeePass,
+                       List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
+                       EnrichmentSettings enrichment, AnalyticsSettings analytics,
+                       SimplificationSettings simplification, StandingSettings standing,
+                       CheckSettings check, ViewerBackground viewerBackground) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check,
+                viewerBackground, VideoSettings.DEFAULT);
     }
 
     /** Mit dem Hintergrund des Bildbetrachters ohne Angabe ({@link ViewerBackground#DEFAULT}), für Aufrufer ohne Bedarf. */
@@ -287,7 +309,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video);
     }
 
     /** Dieselbe Konfiguration mit anderen Grenzen für Bilder- und Anhängeaufträge ({@link JobLimits#withParallel}). */
@@ -295,7 +317,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads), ai, outputDirectory, problems, disabledSources, tls,
                 cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass, inactiveRoots, terms,
-                consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
+                consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video);
     }
 
     /**
@@ -306,7 +328,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads).withConnections(connections), ai, outputDirectory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles,
-                sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
+                sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video);
     }
 
     /**
@@ -321,21 +343,21 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
                 other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms,
-                other.consoleOutput, other.enrichment, other.analytics, other.simplification, other.standing, other.check, other.viewerBackground);
+                other.consoleOutput, other.enrichment, other.analytics, other.simplification, other.standing, other.check, other.viewerBackground, other.video);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video);
     }
 
     /** Dieselbe Konfiguration mit anderer Terminal-Ausgabe; die Laufzeit braucht sie nicht. */
     public AppSettings withConsoleOutput(ConsoleOutput output) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
-                localFiles, sourceKeePass, inactiveRoots, terms, output, enrichment, analytics, simplification, standing, check, viewerBackground);
+                localFiles, sourceKeePass, inactiveRoots, terms, output, enrichment, analytics, simplification, standing, check, viewerBackground, video);
     }
 
     /** Dieselbe Konfiguration mit anderem Hintergrund des Bildbetrachters; die Laufzeit braucht ihn nicht. */
@@ -343,14 +365,22 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
                 localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification,
-                standing, check, background);
+                standing, check, background, video);
+    }
+
+    /** Dieselbe Konfiguration mit anderen Werten für Videos; der Player liest sie beim nächsten Öffnen. */
+    public AppSettings withVideo(VideoSettings video) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
+                outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
+                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification,
+                standing, check, viewerBackground, video);
     }
 
     /** Dieselbe Konfiguration mit anderem Export „Analytics“; die Laufzeit braucht ihn nicht. */
     public AppSettings withAnalytics(AnalyticsSettings analytics) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
-                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
+                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video);
     }
 
     /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */
@@ -411,10 +441,35 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param maxTreeNodes    größter Seitenbaum
      * @param pdfFont         TrueType-Schrift für PDF-Exporte oder {@code null}
      * @param extraction      Schutzgrenzen beim Lesen von Dokumenten ({@code assets.extraction.*}, ADR 0026)
+     * @param maxPageBytes    größte Datei bzw. Seite im Cache ({@code cache.max-page-size}); von größeren Dateien legt
+     *                        der Cache nur den Textauszug oder die Kopfdaten ab
+     * @param maxTextFileBytes größte Datei über {@code maxPageBytes}, deren Textauszug abgelegt wird
+     *                        ({@code cache.max-text-file-size}); {@code 0} nie, darüber nur die Kopfdaten
+     * @param checkTimeout    Frist einer Prüfung gegen die Quelle beim Öffnen und Beschaffen ({@code cache.check-timeout})
+     * @param largeFileTimeout dieselbe Frist für eine Datei, deren Textauszug das ganze Original braucht
+     *                        ({@code cache.large-file-timeout})
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
-                          Path pdfFont, ExtractionLimits extraction) {
+                          Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
+                          Duration checkTimeout, Duration largeFileTimeout) {
+
+        /** Vorgabe für {@link #checkTimeout}, wie im Core. */
+        public static final Duration DEFAULT_CHECK_TIMEOUT =
+                com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_TIMEOUT;
+        /** Vorgabe für {@link #largeFileTimeout}, wie im Core. */
+        public static final Duration DEFAULT_LARGE_FILE_TIMEOUT =
+                com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;
+
+        /** Vorgabe für {@link #maxTextFileBytes}, wie im Core. */
+        public static final long DEFAULT_MAX_TEXT_FILE_BYTES =
+                com.aresstack.spaceharvester.core.Harvester.DEFAULT_MAX_TEXT_FILE_BYTES;
+
+        /** Vorgabe für {@link #maxPageBytes}, wie der Cache des Core. */
+        public static final long DEFAULT_MAX_PAGE_BYTES =
+                com.aresstack.spaceharvester.persistence.lucene.LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
+        /** Größter einstellbarer Wert für {@link #maxPageBytes}; ein Eintrag im Cache ist ein Java-Array. */
+        public static final long MAX_PAGE_BYTES_LIMIT = Integer.MAX_VALUE - 8;
 
         public Storage {
             Objects.requireNonNull(dataDirectory, "dataDirectory");
@@ -422,6 +477,21 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             Objects.requireNonNull(assetDirectory, "assetDirectory");
             Objects.requireNonNull(searchTimeout, "searchTimeout");
             extraction = extraction == null ? ExtractionLimits.DEFAULTS : extraction;
+            maxPageBytes = maxPageBytes <= 0 ? DEFAULT_MAX_PAGE_BYTES : Math.min(maxPageBytes, MAX_PAGE_BYTES_LIMIT);
+            maxTextFileBytes = Math.max(0, maxTextFileBytes);
+            checkTimeout = checkTimeout == null || checkTimeout.isNegative() || checkTimeout.isZero()
+                    ? DEFAULT_CHECK_TIMEOUT : checkTimeout;
+            largeFileTimeout = largeFileTimeout == null || largeFileTimeout.isNegative() || largeFileTimeout.isZero()
+                    ? DEFAULT_LARGE_FILE_TIMEOUT : largeFileTimeout;
+        }
+
+        /** Mit den Vorgaben für die größte Datei im Cache und den Textauszug. */
+        public Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
+                       long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                       Path pdfFont, ExtractionLimits extraction) {
+            this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
+                    searchTimeout, maxTreeNodes, pdfFont, extraction, DEFAULT_MAX_PAGE_BYTES,
+                    DEFAULT_MAX_TEXT_FILE_BYTES, DEFAULT_CHECK_TIMEOUT, DEFAULT_LARGE_FILE_TIMEOUT);
         }
 
         /** Mit den Standardgrenzen der Extraktion. */
@@ -458,16 +528,38 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param timeout       {@code null} für den Standard des Core
      * @param chatMaxTokens Ausgabelimit einer Antwort des Chat-Modells in Tokens ({@code chat-max-tokens});
      *                      {@code null} für den Standard des Core (8192)
+     * @param provider      Art des Dienstes ({@code provider}): OpenAI-kompatibel oder Ollama (Basisadresse = Server)
+     * @param contextTokens Kontextlänge je Anfrage an Ollama ({@code context-tokens}); {@code null}: Standard des Core
+     * @param loadTimeout   so lange darf Ollama ein Modell laden ({@code load-timeout}); {@code null}: Standard des Core
+     * @param retries       Wiederholungen einer fehlgeschlagenen Bildbeschreibung ({@code retries}); {@code null}:
+     *                      Standard des Core
+     * @param loadPollInterval Abstand der Frage an Ollama, ob ein angestoßenes Modell läuft
+     *                      ({@code load-poll-interval}); {@code null}: Standard des Core
+     * @param stepThinking  Nachdenken bei Analyseschritten ({@code step-thinking}: none, low, medium, high);
+     *                      {@code null}: Standard des Core (aus)
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
                              Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
-                             Integer chatMaxTokens) {
+                             Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                             Duration loadTimeout, Integer retries, Duration loadPollInterval,
+                             String stepThinking) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
         public AiSettings {
             externalProcessingSources = List.copyOf(externalProcessingSources);
+            provider = provider == null ? AiProvider.OPENAI_COMPATIBLE : provider;
+        }
+
+        /** Für einen OpenAI-kompatiblen Dienst. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, null, null, null,
+                    null, null, null);
         }
 
         /** Mit dem Ausgabelimit des Core. */

@@ -97,6 +97,43 @@ class LucenePageTextIndexTest {
         }
     }
 
+    /** Die Arten (Seiten, PDF, …) filtern vor der Rangfolge nach Name und gemeldetem Medientyp. */
+    @Test
+    void filtersByDocumentKindFromNameAndReportedMediaType() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            index.put(entry("wiki", "1", "DEV", "Nachtlauf Seite", "Nachtlauf im Text."));
+            index.put(new PageTextIndex.Entry(new PageKey("files", "2"), "files", "Regeltermin.pptx",
+                    "Nachtlauf in Folien.", "sha256:2", "application/octet-stream"));
+            // Ohne Endung entscheidet der Medientyp der Quelle (#964).
+            index.put(new PageTextIndex.Entry(new PageKey("files", "3"), "files", "Protokoll", "Nachtlauf im PDF.",
+                    "sha256:3", "application/pdf"));
+            index.putAttachment(new PageTextIndex.AttachmentEntry(new PageKey("wiki", "4"), "DEV", "a1",
+                    "plan.docx", "Nachtlauf im Anhang.", "sha256:4"));
+            index.putAttachment(new PageTextIndex.AttachmentEntry(new PageKey("wiki", "5"), "DEV", "a2",
+                    "akte.zip", "Nachtlauf in der enthaltenen Datei.", "sha256:5", "p1", "tabelle.xlsx", 0));
+            Set<String> sources = Set.of("wiki", "files");
+
+            assertThat(index.search("Nachtlauf", sources, SearchSpaces.all(), null, Set.of(), 10))
+                    .extracting(PageTextIndex.Match::pageId).containsExactlyInAnyOrder("1", "2", "3", "4", "5");
+            assertThat(index.search("Nachtlauf", sources, SearchSpaces.all(), null,
+                    Set.of(com.aresstack.spaceharvester.application.query.DocumentKind.PAGE), 10))
+                    .extracting(PageTextIndex.Match::pageId).containsExactly("1");
+            assertThat(index.search("Nachtlauf", sources, SearchSpaces.all(), null,
+                    Set.of(com.aresstack.spaceharvester.application.query.DocumentKind.PDF,
+                            com.aresstack.spaceharvester.application.query.DocumentKind.PRESENTATION), 10))
+                    .extracting(PageTextIndex.Match::pageId).containsExactlyInAnyOrder("2", "3");
+            assertThat(index.search("Nachtlauf", sources, SearchSpaces.all(), null,
+                    Set.of(com.aresstack.spaceharvester.application.query.DocumentKind.WORD), 10))
+                    .extracting(PageTextIndex.Match::pageId).containsExactly("4");
+            // Eine enthaltene Datei zählt nach ihrem eigenen Namen, nicht nach dem Behälter.
+            assertThat(index.search("Nachtlauf", sources, SearchSpaces.all(), null,
+                    Set.of(com.aresstack.spaceharvester.application.query.DocumentKind.SPREADSHEET), 10))
+                    .extracting(PageTextIndex.Match::pageId).containsExactly("5");
+            assertThat(index.search("Nachtlauf", sources, SearchSpaces.all(), null,
+                    Set.of(com.aresstack.spaceharvester.application.query.DocumentKind.ARCHIVE), 10)).isEmpty();
+        }
+    }
+
     @Test
     void replacesRemovesAndSurvivesAReopen() {
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {

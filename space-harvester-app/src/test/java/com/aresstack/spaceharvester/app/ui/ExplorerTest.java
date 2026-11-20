@@ -32,6 +32,82 @@ class ExplorerTest {
     }
 
     @Test
+    void nodeKindControlsIconsWithoutInspectingTheSourceType() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: "
+                + home.resolve("data").toString().replace('\\', '/') + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            javax.swing.JTree tree = explorer.tree();
+            javax.swing.tree.TreeCellRenderer renderer = tree.getCellRenderer();
+
+            Explorer.PageItem directory = new Explorer.PageItem("source", "space", "folder", "Ordner",
+                    true, HarvestSource.PageNode.Kind.FOLDER);
+            java.awt.Component folderComponent = renderer.getTreeCellRendererComponent(tree,
+                    new Explorer.Node(directory), false, false, false, 0, false);
+            Class<?> folderIcon = ((javax.swing.JLabel) folderComponent).getIcon().getClass();
+
+            Explorer.PageItem page = new Explorer.PageItem("source", "space", "page", "Seite",
+                    true, HarvestSource.PageNode.Kind.PAGE);
+            java.awt.Component pageComponent = renderer.getTreeCellRendererComponent(tree,
+                    new Explorer.Node(page), false, false, false, 0, false);
+            Class<?> pageIcon = ((javax.swing.JLabel) pageComponent).getIcon().getClass();
+
+            Explorer.PageItem file = new Explorer.PageItem("source", "space", "file", "Datei",
+                    false, HarvestSource.PageNode.Kind.FILE);
+            java.awt.Component fileComponent = renderer.getTreeCellRendererComponent(tree,
+                    new Explorer.Node(file), false, false, true, 0, false);
+            Class<?> fileIcon = ((javax.swing.JLabel) fileComponent).getIcon().getClass();
+
+            assertThat(folderIcon).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.folder().getClass());
+            assertThat(pageIcon).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.page().getClass());
+            assertThat(fileIcon).isEqualTo(pageIcon);
+            assertThat(folderIcon).isNotEqualTo(pageIcon);
+        });
+    }
+
+    @Test
+    void confirmedFileReplacesAnUnknownCachedNodeWithoutAnExpandHandle() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: "
+                + home.resolve("data").toString().replace('\\', '/') + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            Explorer.Node root = (Explorer.Node) explorer.tree().getModel().getRoot();
+            Explorer.Node parent = new Explorer.Node(new Explorer.SpaceItem("source", "space", "Space"));
+            Explorer.Node cached = new Explorer.Node(new Explorer.PageItem("source", "space", "doc",
+                    "Dokument.pdf", null, HarvestSource.PageNode.Kind.PAGE));
+            cached.add(new Explorer.Node(new Explorer.Note("Noch nicht geladen")));
+            parent.add(cached);
+            root.add(parent);
+            ((javax.swing.tree.DefaultTreeModel) explorer.tree().getModel()).reload();
+
+            Explorer.Node confirmed = new Explorer.Node(new Explorer.PageItem("source", "space", "doc",
+                    "Dokument.pdf", false, HarvestSource.PageNode.Kind.FILE));
+            confirmed.loaded = true;
+            explorer.merge(parent, new Explorer.Batch(List.of(confirmed), null), true);
+
+            assertThat(cached.item()).isInstanceOf(Explorer.PageItem.class);
+            assertThat(((Explorer.PageItem) cached.item()).kind()).isEqualTo(HarvestSource.PageNode.Kind.FILE);
+            assertThat(cached.loaded).isTrue();
+            assertThat(cached.getChildCount()).isZero();
+            assertThat(explorer.tree().getModel().isLeaf(cached)).isTrue();
+        });
+    }
+
+    @Test
     void theTitleFilterAsksTheSourceForPagesNeverLoaded() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
         Files.writeString(files.resolve("wartungsfenster.md"), "# Wartungsfenster\n\nText.\n");
@@ -339,12 +415,12 @@ class ExplorerTest {
                         .isLessThanOrEqualTo(visible);
             }
             assertThat(tree.getPreferredSize().width).as("keine waagerechte Scrollleiste").isLessThanOrEqualTo(visible);
-            // Die lange Zeile: Label mit rechtem Rand für die drei Spalten, Titel breiter als der Platz davor.
+            // Die lange Zeile: Label mit rechtem Rand für die zwei Spalten, Titel breiter als der Platz davor.
             javax.swing.tree.TreePath path = tree.getSelectionPath();
             javax.swing.JLabel label = (javax.swing.JLabel) tree.getCellRenderer().getTreeCellRendererComponent(tree,
                     path.getLastPathComponent(), true, false, true, tree.getRowForPath(path), false);
             java.awt.Rectangle bounds = tree.getPathBounds(path);
-            assertThat(label.getInsets().right).isEqualTo(30 + 30 + 22);
+            assertThat(label.getInsets().right).isEqualTo(30 + 22);
             label.setSize(bounds.width, bounds.height);
             int available = bounds.width - label.getInsets().right - label.getIcon().getIconWidth()
                     - label.getIconTextGap();
@@ -435,30 +511,32 @@ class ExplorerTest {
             assertThat(selections.get(selections.size() - 1)).isNull();
         });
 
-        // Der Download-Knopf daneben lädt jede Quelle mit allen Spaces (je Space ein Auftrag, wie einzeln).
-        List<String> downloaded = new java.util.ArrayList<>();
+        // „Alles indexieren“ im Kontextmenü der Überschrift indexiert jede Quelle mit allen Spaces (je Space ein
+        // Auftrag, wie einzeln).
+        List<String> indexed = new java.util.ArrayList<>();
         context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
                 getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("download") && args[1] instanceof List<?> keys) {
-                        downloaded.add(args[0] + ":" + keys);
+                    if (method.getName().equals("index")) {
+                        indexed.add(args[0] + ":" + args[1] + ":" + args[2]);
                     }
                     return null;
                 }));
         List<Boolean> answers = new java.util.ArrayList<>(List.of(false, true));
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(explorer[0].downloadAllButton().getToolTipText()).isEqualTo(Explorer.DOWNLOAD_ALL_TIP);
-            // Erst die Rückfrage (Ja/Nein, „wirklich“): bei Nein passiert nichts, bei Ja lädt jede Quelle.
-            explorer[0].confirmDownloadAll(parent -> answers.remove(0));
-            explorer[0].downloadAllButton().doClick();
-            assertThat(downloaded).isEmpty();
-            explorer[0].downloadAllButton().doClick();
+            javax.swing.JMenuItem all = (javax.swing.JMenuItem) explorer[0].headMenu().getComponent(0);
+            assertThat(all.getText()).isEqualTo(Explorer.INDEX_ALL);
+            // Erst die Rückfrage (Ja/Nein, „wirklich“): bei Nein passiert nichts, bei Ja indexiert jede Quelle.
+            explorer[0].confirmIndexAll(parent -> answers.remove(0));
+            all.doClick();
+            assertThat(indexed).isEmpty();
+            all.doClick();
         });
         assertThat(answers).isEmpty();
-        assertThat(Explorer.DOWNLOAD_ALL_QUESTION).containsIgnoringCase("wirklich");
-        assertThat(downloaded).containsExactly("handbuch:[]");
+        assertThat(Explorer.INDEX_ALL_QUESTION).containsIgnoringCase("wirklich");
+        assertThat(indexed).containsExactly("handbuch:null:null");
     }
 
-    /** Die Hervorhebung des Sterns folgt der Maus über dem Stern, nicht über dem Download-Symbol (Angelo, 16.11.2026). */
+    /** Die Hervorhebung des Sterns folgt der Maus über dem Stern (Angelo, 16.11.2026). */
     @Test
     void theStarHighlightsOnlyUnderTheMouse() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
@@ -519,40 +597,34 @@ class ExplorerTest {
             javax.swing.tree.TreePath path = tree.getSelectionPath();
             int row = tree.getRowForPath(path);
             java.awt.Rectangle bounds = tree.getPathBounds(path);
-            // Spalten von rechts: Download (30), Stern (30), Bestandszeichen (22).
+            // Spalten von rechts: Stern (30), Bestandszeichen (22); das Download-Symbol ist weg (Angelo, 20.11.2026).
             int y = bounds.y + bounds.height / 2;
             move(tree, bounds.x + bounds.width - 15, y);
-            assertThat(explorer[0].hoverRow()).isEqualTo(row);
-            assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
-            assertThat(tree.getToolTipText()).isEqualTo(Explorer.DOWNLOAD_TIP);
-            move(tree, bounds.x + bounds.width - 45, y);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(row);
-            assertThat(explorer[0].hoverRow()).isEqualTo(-1);
             assertThat(tree.getToolTipText()).isEqualTo(Explorer.STAR_TIP);
             move(tree, bounds.x + 5, y);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
-            assertThat(explorer[0].hoverRow()).isEqualTo(-1);
             // Der Zustandspunkt links vom Stern: Kreispfeile unter der Maus, Klick holt die Seite samt Teilbaum nach.
-            move(tree, bounds.x + bounds.width - 60 - 11, y);
+            move(tree, bounds.x + bounds.width - 30 - 11, y);
             assertThat(explorer[0].hoverBadgeRow()).isEqualTo(row);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
             assertThat(tree.getToolTipText()).endsWith(Explorer.REFRESH_TIP);
-            click(tree, bounds.x + bounds.width - 60 - 11, y);
+            click(tree, bounds.x + bounds.width - 30 - 11, y);
             assertThat(refreshed).containsExactly("handbuch/" + space.spaceKey() + "/" + page.pageId());
-            // Die Wurzel der Quelle (Zeile 0) trägt dieselben Spalten: Zustandspunkt, Stern, Download.
+            // Die Wurzel der Quelle (Zeile 0) trägt dieselben Spalten: Zustandspunkt und Stern.
             java.awt.Rectangle top = tree.getRowBounds(0);
             assertThat(((Explorer.Node) tree.getPathForRow(0).getLastPathComponent()).item())
                     .isInstanceOf(Explorer.SourceItem.class);
             int ty = top.y + top.height / 2;
-            move(tree, top.x + top.width - 60 - 11, ty);
+            move(tree, top.x + top.width - 30 - 11, ty);
             assertThat(explorer[0].hoverBadgeRow()).isZero();
-            click(tree, top.x + top.width - 60 - 11, ty);
+            click(tree, top.x + top.width - 30 - 11, ty);
             assertThat(refreshed).hasSize(2);
             assertThat(refreshed.get(1)).isEqualTo("handbuch/null/null");
             // Der Stern an der Quelle merkt die ganze Quelle als Favorit (Angelo, 16.11.2026).
-            move(tree, top.x + top.width - 45, ty);
+            move(tree, top.x + top.width - 15, ty);
             assertThat(explorer[0].hoverStarRow()).isZero();
-            click(tree, top.x + top.width - 45, ty);
+            click(tree, top.x + top.width - 15, ty);
             assertThat(context.favorites().contains("handbuch", null, null)).isTrue();
             assertThat(context.favorites().all().get(0).isSource()).isTrue();
             assertThat(context.favorites().all().get(0).title()).isEqualTo("Handbuch");

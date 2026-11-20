@@ -42,8 +42,8 @@ import java.util.Map;
 
 /**
  * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste (Tooltip mit Namen,
- * Strg+1 … Strg+6): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
- * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Begriffe und Aufträge, dann abgetrennt
+ * Strg+1 … Strg+5): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
+ * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Aufträge, dann abgetrennt
  * Wissensquellen verwalten und Einstellungen, dann ✕ (Angelo, 13.11.2026: der Baum links wählt, die Reiter oben
  * entscheiden, wie die Mitte das Gewählte zeigt). Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
@@ -113,7 +113,6 @@ public final class MainWindow implements AppContext.Navigator {
     private final ActivitiesView activities;
     private final SearchView searchView;
     private final SettingsView settings;
-    private final TermsView terms;
 
     public MainWindow(AppContext context) {
         this.context = context;
@@ -124,16 +123,12 @@ public final class MainWindow implements AppContext.Navigator {
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
-        terms = new TermsView(context);
         settings.onLeave(() -> show(beforeSettings));
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
         // Links gewählt bestimmt rechts (Angelo, 13.11.2026): der Reiter „Export“ folgt der Auswahl im Explorer.
-        // Die Auswahl links bestimmt Inhalte und das Fachglossar unter Begriffe (ADR 0029).
-        explorer.onSelection(selection -> {
-            content.selection(selection);
-            terms.selection(selection);
-        });
+        // Die Auswahl links bestimmt die Inhalte, darunter Begriffe, Fachglossar und Graph unter Analysen (ADR 0029).
+        explorer.onSelection(content::selection);
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
@@ -153,7 +148,6 @@ public final class MainWindow implements AppContext.Navigator {
         views.put(AppContext.Section.CONTENT, content);
         views.put(AppContext.Section.ACTIVITIES, activities);
         views.put(AppContext.Section.SEARCH, searchView);
-        views.put(AppContext.Section.TERMS, terms);
         views.put(AppContext.Section.SETTINGS, settings);
         deck.setBackground(Comic.SURFACE);
         views.forEach((section, view) -> deck.add(view.component(), section.name()));
@@ -567,15 +561,54 @@ public final class MainWindow implements AppContext.Navigator {
         }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
     }
 
+    /** Indexieren aus dem Kontextmenü des Baums; das Ergebnis steht in der Statuszeile, der Auftrag unter Aufträge. */
+    @Override
+    public void index(String sourceId, String spaceKey, String pageId) {
+        notice("Indexieren wird gestartet …", Comic.MUTED);
+        Indexer.start(context, sourceId, spaceKey, pageId, started -> {
+            if (started.failed().isEmpty()) {
+                notice(started.jobs().isEmpty() ? "Kein Space zum Indexieren"
+                        : Texts.count(started.jobs().size(), "Space wird", "Spaces werden") + " indexiert",
+                        Comic.MUTED);
+            } else {
+                notice(String.join("; ", started.failed()), Comic.ORANGE);
+            }
+            if (!started.jobs().isEmpty()) {
+                showJob(started.jobs().get(0).id());
+            }
+        }, error -> notice("Indexieren ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
+    }
+
+    @Override
+    public void unindex(String sourceId, String spaceKey, String pageId) {
+        Indexer.stop(context, sourceId, spaceKey, pageId,
+                () -> notice("Nicht mehr indexiert; Geladenes bleibt und wird weiter aktuell gehalten", Comic.MUTED),
+                error -> notice("Markierung ließ sich nicht aufheben: " + Problems.describe(error).title(),
+                        Comic.RED));
+    }
+
     /** Kreispfeile im Baum: Quelle oder Space holen nach wie die Quellenkarte, eine Seite liest ihren Teilbaum neu. */
     @Override
     public void refresh(String sourceId, String spaceKey, String pageId) {
         if (pageId == null) {
-            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey))) {
+            // Die Meldezeile der Quellen-Ansicht sieht man vom Baum aus nicht: der Ausgang kommt in die Statuszeile.
+            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey),
+                    new SourcesView.CatchUpReport() {
+                        @Override
+                        public void started(List<String> jobs) {
+                            notice(Texts.count(jobs.size(), "Space wird", "Spaces werden") + " nachgeholt",
+                                    Comic.MUTED);
+                            if (!jobs.isEmpty()) {
+                                showJob(jobs.get(0));
+                            }
+                        }
+
+                        @Override
+                        public void failed(String message) {
+                            notice(message, Comic.RED);
+                        }
+                    })) {
                 notice("Nachholen wird gestartet …", Comic.MUTED);
-            } else {
-                notice("Nachholen nicht gestartet: keine Spaces bekannt, oder die Quelle holt schon nach",
-                        Comic.ORANGE);
             }
             return;
         }
@@ -704,7 +737,6 @@ public final class MainWindow implements AppContext.Navigator {
             case SOURCES -> database();
             // Inhalte hat keinen eigenen Knopf mehr; das Buch bleibt für Verweise (etwa „Inhalte öffnen“).
             case CONTENT -> ComposerIcons.openBook();
-            case TERMS -> ComposerIcons.marker();
             case ACTIVITIES -> stack();
             case SEARCH -> ComposerIcons.magnifier();
             case SETTINGS -> ComposerIcons.gear();

@@ -21,8 +21,7 @@ import java.util.Map;
  * @param beforeSearch      vor jeder Suchanfrage nachholen; Standard aus
  * @param withheldRetention wie lange gesperrte Rohdaten bleiben (ADR 0014)
  * @param catchUpOnStart    beim Start verpasste Änderungen nachholen; Standard aus
- * @param mode              was ein Lauf aus Zeitplan oder Nachholen beim Start tut; Standard
- *                          {@link SyncMode#CATALOG_ONLY}
+ * @param mode              was ein Lauf aus Zeitplan oder Nachholen beim Start tut; Standard {@link #DEFAULT_MODE}
  * @param inventoryInterval Abstand der regelmäßigen Bestandsinventur (nur Metadaten) oder {@code null} ohne
  * @param sources           abweichende Regeln je Quellen-ID; ohne Eintrag gilt alles hier global
  * @param backgroundFill    Hintergrundfüllung (ADR 0016): lädt in Leerlaufzeit Seiten des Katalogs ohne oder mit
@@ -57,6 +56,13 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
     /** Kleinster Abstand des Zeitplans, wie {@code Harvester.reconcile}. */
     public static final Duration MIN_INTERVAL = Duration.ofMinutes(1);
 
+    /**
+     * Standard-Betriebsart (Angelo 20.11.2026): {@link SyncMode#SYNC_CACHE}. Was schon lokal liegt, auch von Suche
+     * oder Hintergrund geladen, hält jeder Lauf aktuell; Unbekanntes kommt nur in den Katalog, außer unter einer
+     * Indexier-Markierung.
+     */
+    public static final SyncMode DEFAULT_MODE = SyncMode.SYNC_CACHE;
+
     /** Wie SpaceSync.DEFAULT_WITHHELD_RETENTION. */
     public static final Duration DEFAULT_WITHHELD_RETENTION = Duration.ofDays(30);
 
@@ -65,7 +71,7 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
      * Hintergrundfüllung an.
      */
     public static final SyncSettings DEFAULT = new SyncSettings(false, null, List.of(), false,
-            DEFAULT_WITHHELD_RETENTION, false, SyncMode.CATALOG_ONLY, null, Map.of());
+            DEFAULT_WITHHELD_RETENTION, false, DEFAULT_MODE, null, Map.of());
 
     /** Mit Hintergrundfüllung nach Standard (an, {@value #DEFAULT_BACKGROUND_PARALLELISM} zugleich). */
     public SyncSettings(boolean events, Duration interval, List<String> spaces, boolean beforeSearch,
@@ -78,7 +84,7 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
     public SyncSettings {
         spaces = spaces == null ? List.of() : List.copyOf(spaces);
         withheldRetention = withheldRetention == null ? DEFAULT_WITHHELD_RETENTION : withheldRetention;
-        mode = mode == null ? SyncMode.CATALOG_ONLY : mode;
+        mode = mode == null ? DEFAULT_MODE : mode;
         sources = sources == null ? Map.of() : Map.copyOf(sources);
     }
 

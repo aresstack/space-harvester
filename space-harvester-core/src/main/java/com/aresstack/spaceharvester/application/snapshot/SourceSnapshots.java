@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.snapshot;
 
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -25,9 +26,138 @@ public class SourceSnapshots implements PageContentFetcher {
 
     private final SourceCatalog catalog;
     private volatile PageLoads loads = PageLoads.NONE;
+    /** Größte Datei, die ganz geladen wird ({@link LargeFiles}); {@code <= 0} ohne Grenze. */
+    private volatile java.util.function.LongSupplier maxBytes = () -> 0;
+    /** Größte Datei, deren Textauszug für eine zu große Datei geladen wird; {@code <= 0} keiner. */
+    private volatile java.util.function.LongSupplier maxTextBytes = () -> 0;
+    /** Textauszug einer zu großen Datei aus ihrem Original ({@code LargeFileTexts}); ohne Aufruf keiner. */
+    private volatile LargeFileText texts = (source, metadata, maxBytes) -> java.util.Optional.empty();
+
+    /** Der Textauszug einer zu großen Datei, ohne ihr Original im Speicher zu halten. */
+    @FunctionalInterface
+    public interface LargeFileText {
+
+        /** @return der Text; leer ohne lesbaren Text */
+        java.util.Optional<String> text(HarvestSource source, PageMetadata metadata, long maxBytes);
+    }
+
+    /** Woher der Textauszug zu großer Dateien kommt. */
+    public void largeFileText(LargeFileText texts) {
+        this.texts = Objects.requireNonNull(texts, "texts");
+    }
 
     public SourceSnapshots(SourceCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
+    }
+
+    /**
+     * Dateien über dieser Größe lädt {@link #fetch(String, PageMetadata)} nicht herunter, sondern liefert nur ihre
+     * Kopfdaten ({@link LargeFiles}); gelesen bei jedem Abruf, {@code <= 0} ohne Grenze.
+     */
+    public void maxBytes(java.util.function.LongSupplier maxBytes) {
+        this.maxBytes = Objects.requireNonNull(maxBytes, "maxBytes");
+    }
+
+    /**
+     * Für Dateien über {@link #maxBytes}, aber nicht über dieser Größe holt {@link #fetch(String, PageMetadata)} den
+     * Textauszug der Quelle statt des Originals; gelesen bei jedem Abruf, {@code <= 0} nie.
+     */
+    public void maxTextBytes(java.util.function.LongSupplier maxTextBytes) {
+        this.maxTextBytes = Objects.requireNonNull(maxTextBytes, "maxTextBytes");
+    }
+
+    /**
+     * Lädt das Original einer Datei direkt aus der Quelle nach {@code target}, ohne Größengrenze und ohne es abzulegen:
+     * zum Speichern und zum Öffnen in einem anderen Programm, auch wenn die Datei zu groß für Cache und Anzeige ist.
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED}, wenn die Quelle das Original nicht als Datei liefern kann
+     */
+    public void downloadOriginal(String sourceId, PageMetadata metadata, java.nio.file.Path target) {
+        HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+        Runnable ended = started(new PageKey(sourceId, metadata.pageId()));
+        try {
+            if (source.downloadOriginal(metadata.pageId(), target, type -> true, 0).isEmpty()) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
+                        "Die Quelle liefert dieses Original nicht als Datei", null);
+            }
+        } finally {
+            quietly(ended);
+        }
+    }
+
+    /**
+     * Das Original einer Datei über {@link #maxBytes} zum Anzeigen, direkt aus der Quelle und ohne es abzulegen; über
+     * eine temporäre Datei, nicht größer als {@link #maxTextBytes}.
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED}, wenn die Quelle das Original nicht als Datei liefern kann,
+     *                               {@code INVALID_RESPONSE}, wenn die Datei größer ist als erlaubt
+     */
+    public byte[] original(String sourceId, PageMetadata metadata) {
+        HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+        long limit = maxTextBytes.getAsLong();
+        if (limit <= 0 || LargeFiles.size(metadata) > limit) {
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.INVALID_RESPONSE,
+                    "Datei größer als die Grenze zum Laden großer Dateien", null);
+        }
+        java.nio.file.Path file = null;
+        Runnable ended = started(new PageKey(sourceId, metadata.pageId()));
+        try {
+            file = java.nio.file.Files.createTempFile("space-harvester-original-", ".part");
+            if (source.downloadOriginal(metadata.pageId(), file, type -> true, limit).isEmpty()) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
+                        "Die Quelle liefert dieses Original nicht als Datei", null);
+            }
+            return java.nio.file.Files.readAllBytes(file);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        } finally {
+            quietly(ended);
+            if (file != null) {
+                try {
+                    java.nio.file.Files.deleteIfExists(file);
+                } catch (java.io.IOException ignored) {
+                    // Nur ein Rest im temporären Verzeichnis.
+                }
+            }
+        }
+    }
+
+    /**
+     * Wie {@link #fetch(String, String)}; eine Datei über {@link #maxBytes} lädt es nicht als Original, sondern als
+     * Textauszug, wenn sie lesbaren Text hat und nicht größer ist als {@link #maxTextBytes}, sonst gar nicht
+     * ({@link LargeFiles}).
+     */
+    @Override
+    public PageSnapshot fetch(String sourceId, PageMetadata expected) {
+        if (loadsWhole(expected)) {
+            return fetch(sourceId, expected.pageId());
+        }
+        HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+        long textLimit = maxTextBytes.getAsLong();
+        if (textLimit > 0 && LargeFiles.size(expected) <= textLimit) {
+            Runnable ended = started(new PageKey(sourceId, expected.pageId()));
+            try {
+                java.util.Optional<String> text = texts.text(source, expected, textLimit);
+                if (text.isPresent()) {
+                    return LargeFiles.textOnly(sourceId, expected,
+                            text.get().getBytes(java.nio.charset.StandardCharsets.UTF_8), java.time.Instant.now());
+                }
+            } finally {
+                quietly(ended);
+            }
+        }
+        return LargeFiles.placeholder(sourceId, expected, java.time.Instant.now());
+    }
+
+    @Override
+    public boolean loadsWhole(PageMetadata metadata) {
+        return !LargeFiles.tooLarge(metadata, maxBytes.getAsLong());
+    }
+
+    @Override
+    public boolean triesText(PageMetadata metadata) {
+        long textLimit = maxTextBytes.getAsLong();
+        return !loadsWhole(metadata) && textLimit > 0 && LargeFiles.size(metadata) <= textLimit;
     }
 
     /** Meldet Beginn und Ende jedes Abrufs (ADR 0027); ohne Aufruf {@link PageLoads#NONE}. */

@@ -102,6 +102,39 @@ class ChatPanelTest {
             assertThat(panel[0].bubbles()).isZero();
         });
         assertThat(store.load(spaceNode, earlier.id()).title()).isEqualTo("Zugriffsrechte");
+        // Der Composer wächst mit dem Text bis zu zwei Fünfteln der Höhe und schrumpft danach wieder.
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.JTextArea editor = (javax.swing.JTextArea) panel[0].editor();
+            javax.swing.JScrollPane scroll = (javax.swing.JScrollPane) editor.getParent().getParent();
+            panel[0].setSize(900, 700);
+            panel[0].setNormalEditorHeight(64);
+            assertThat(panel[0].resizeGrip().shown()).isFalse();
+            editor.setText("");
+            int small = scroll.getPreferredSize().height;
+            editor.setText("Erste Zeile\nZweite Zeile\nDritte Zeile\nVierte Zeile");
+            int grown = scroll.getPreferredSize().height;
+            editor.setText("Zeile\n".repeat(80));
+            int capped = scroll.getPreferredSize().height;
+            editor.setText("");
+            assertThat(grown).isGreaterThan(small);
+            assertThat(capped).isEqualTo(700 * 2 / 5);
+            assertThat(scroll.getPreferredSize().height).isEqualTo(small);
+            // Der Ziehgriff legt die Normalhöhe des leeren Editors fest; lange Texte wachsen trotzdem weiter.
+            panel[0].setNormalEditorHeight(150);
+            assertThat(scroll.getPreferredSize().height).isEqualTo(150);
+            editor.setText("Kurz");
+            assertThat(scroll.getPreferredSize().height).isEqualTo(150);
+            editor.setText("Zeile\n".repeat(80));
+            assertThat(scroll.getPreferredSize().height).isEqualTo(700 * 2 / 5);
+            editor.setText("");
+            assertThat(scroll.getPreferredSize().height).isEqualTo(150);
+            panel[0].setNormalEditorHeight(10);
+            assertThat(panel[0].normalEditorHeight()).isEqualTo(64);
+            panel[0].setNormalEditorHeight(5000);
+            assertThat(panel[0].normalEditorHeight()).isEqualTo(700 * 2 / 5);
+            panel[0].resizeGrip().setShown(true);
+            assertThat(panel[0].resizeGrip().shown()).isTrue();
+        });
     }
 
     @Test

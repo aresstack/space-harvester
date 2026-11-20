@@ -38,11 +38,18 @@ public class InventoryCollector {
     }
 
     public Inventory collect(String sourceId, String spaceKey) {
+        return collect(sourceId, spaceKey, () -> { });
+    }
+
+    /** Check cancellation before each new inventory page instead of blocking for an entire tree crawl. */
+    public Inventory collect(String sourceId, String spaceKey, Runnable checkpoint) {
+        Objects.requireNonNull(checkpoint, "checkpoint");
         Instant startedAt = clock.instant();
         Map<String, PageMetadataListing.Entry> pages = new LinkedHashMap<>();
         Set<String> cursors = new HashSet<>();
         String cursor = null;
         do {
+            checkpoint.run();
             PageMetadataListing listing;
             try {
                 listing = queries.pageMetadata(sourceId, spaceKey, cursor, batchSize);

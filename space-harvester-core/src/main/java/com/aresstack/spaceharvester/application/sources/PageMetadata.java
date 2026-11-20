@@ -24,6 +24,16 @@ import java.util.TreeMap;
 public record PageMetadata(String pageId, String resourceId, String title, String partitionKey, String parentPageId,
                            String version, Instant modifiedAt, URI url, SortedMap<String, String> attributes) {
 
+    /** Source-neutral metadata key for files that the original-content reader can display. */
+    public static final String RESOURCE_KIND = "resource.kind";
+    public static final String FILE_KIND = "file";
+    public static final String FOLDER_KIND = "folder";
+    public static final String LINK_KIND = "link";
+    /** The original media is remote; the stored payload intentionally contains no file bytes. */
+    public static final String REMOTE_MEDIA = "media.remote";
+    /** Media type of remote media, e.g. {@code video/mp4}, also when the file name has no extension. */
+    public static final String REMOTE_MEDIA_TYPE = "media.type";
+
     public PageMetadata {
         Objects.requireNonNull(pageId, "pageId");
         Objects.requireNonNull(resourceId, "resourceId");

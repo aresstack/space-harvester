@@ -50,6 +50,13 @@ dependencies {
     // KeePass koppeln und Einträge lesen/anlegen wie im Enterprise AI Client; nur die App, nie der Core
     implementation project(':enterprise-ai-keepass')
     implementation libs.snakeyaml
+    // Chat-Antworten als Markdown wie im Enterprise AI Client (app.ui.markdown, Kopie von exedra.ui.markdown): flexmark
+    // und mermaid-java in derselben Fassung wie document-export, keine neue Bibliothek
+    implementation libs.flexmark
+    implementation libs.flexmark.ext.tables
+    implementation libs.flexmark.ext.autolink
+    implementation libs.flexmark.ext.gfm.strikethrough
+    implementation libs.mermaid.java
     implementation libs.jsoup
     // Eingebautes trust-bundle 'windows': JVM-Truststore plus Windows Root/CA wie im Enterprise AI Client
     implementation libs.win.trust.java
@@ -58,6 +65,15 @@ dependencies {
     implementation libs.slf4j.api
     // Anhang-Viewer (#183): PDF-Seiten zeichnen wie im Enterprise AI Client; dieselbe Fassung wie im Core
     implementation libs.pdfbox
+    // Render PPTX and legacy PPT presentations locally in the reader.
+    implementation libs.poi.ooxml
+    // Embed VLC in Swing; keep libVLC native installation optional at runtime.
+    implementation 'uk.co.caprica:vlcj:4.8.2'
+    // Use the Java 21 Whisper inference library with the guarded 30-second decoder of 0.3.2.
+    implementation 'com.aresstack:directml-inference:0.3.2'
+    // Reuse the published Ask AI Java DSP/VAD pipeline, without Silero or an ONNX runtime.
+    implementation 'com.aresstack:directml-whisper-audio:0.3.2'
+    implementation "org.apache.poi:poi-scratchpad:${libs.versions.poi.get()}"
     // Protokoll auf Konsole und in <Benutzerordner>/.space-harvester/logs; Version aus der Boot-BOM wie beim Dienst.
     // Schon zum Übersetzen nötig: Der Filter der Terminal-Ausgabe (ConsoleThreshold) ist ein Logback-Filter.
     implementation platform(libs.spring.boot.dependencies)
@@ -112,6 +128,9 @@ tasks.named('bootJar') {
                 'Implementation-Title': 'Space Harvester Desktop', 'Implementation-Version': project.version
     }
 }
+
+// Include the pinned Whisper model in the executable Boot JAR, not as an extra ZIP.
+apply from: rootProject.file('gradle/whisper-model.gradle')
 
 tasks.named('jar') {
     enabled = false
@@ -198,8 +217,8 @@ def appJarCheck = tasks.register('appJarCheck') {
         def shots = new File(dir, 'screenshots')
         def log = run(['--config', config.absolutePath, '--screenshot', shots.absolutePath])
         def pngs = (shots.listFiles() ?: []).findAll { it.name.endsWith('.png') && it.length() > 0 }
-        if (pngs.size() != 8) {
-            throw new GradleException("Erwartet 8 Bildschirmfotos, gefunden ${pngs*.name}:\n${log}")
+        if (pngs.size() != 7) {
+            throw new GradleException("Erwartet 7 Bildschirmfotos, gefunden ${pngs*.name}:\n${log}")
         }
         if (log.contains('Exception')) {
             throw new GradleException("Ausnahme beim Rendern:\n${log}")

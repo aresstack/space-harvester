@@ -11,9 +11,12 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -74,6 +77,12 @@ class SourceQueryExportsTest {
         @Override
         public List<String> pages(AccessContext caller, Selection.Root root) {
             return pagesOfSpace.getOrDefault(root.spaceKey(), List.of());
+        }
+
+        @Override
+        public SourceQueryExports.PageName name(String sourceId, String pageId) {
+            return "2".equals(pageId) ? new SourceQueryExports.PageName("Kaputte Seite",
+                    "https://wiki.example/pages/2") : null;
         }
     }, new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), CLOCK, "desktop");
 
@@ -292,16 +301,138 @@ class SourceQueryExportsTest {
         assertThat(list(out)).isEmpty();
     }
 
+    private static final String HISTORY = "/rest/api/content/{id}/history?expand=lastUpdated,previousVersion,"
+            + "contributors.publishers.users";
+
+    private void stubHistory(String pageId, String author) {
+        wiki.stub(HISTORY.replace("{id}", pageId), "{\"createdBy\":{\"username\":\"" + author + "\"}}");
+    }
+
     @Test
-    void anUnreachableSourceFailsTheJobInsteadOfRecordingEveryPage() {
-        pagesOfSpace.put("DEV", List.of("1", "2"));
-        wiki.fail("/rest/api/content/1/history", SourceAccessException.Reason.UNAVAILABLE);
+    void aPageWhoseSourceDoesNotAnswerIsDeferredRetriedAtTheEndAndOnlyThenCountsAsFailed() throws Exception {
+        pagesOfSpace.put("DEV", List.of("1", "2", "3"));
+        stubHistory("1", "a");
+        stubHistory("3", "c");
+        // Seite 2 antwortet mit HTTP 500 (UNAVAILABLE), die Nachbarn antworten: kein Verbindungsabbruch.
+        wiki.fail("/rest/api/content/2/history", SourceAccessException.Reason.UNAVAILABLE);
 
         JobStatus done = run(exports.startMetadata(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")), out));
 
-        assertThat(done.state()).isEqualTo(JobState.FAILED);
-        assertThat(done.error().code()).isEqualTo("SOURCE_UNAVAILABLE");
-        assertThat(list(out)).isEmpty();
+        assertThat(done.state()).as("der Auftrag scheitert nicht an einer Seite").isEqualTo(JobState.COMPLETED);
+        assertThat(done.incomplete()).isTrue();
+        assertThat(done.progress().written()).isEqualTo(2);
+        assertThat(done.progress().failed()).isEqualTo(1);
+        // Seite 2 wurde nach den anderen noch einmal gefragt: zweimal history, dazwischen Seite 3.
+        List<String> histories = wiki.requests.stream().filter(path -> path.contains("/history")).toList();
+        assertThat(histories).containsExactly(HISTORY.replace("{id}", "1"), HISTORY.replace("{id}", "2"),
+                HISTORY.replace("{id}", "3"), HISTORY.replace("{id}", "2"));
+        assertThat(done.lifecycle().actions()).as("↻ Nur Fehler neu versuchen ist möglich")
+                .contains(JobAction.RETRY_FAILED);
+        Path file = out.resolve(SourceQueryExports.fileName(JobType.METADATA_EXPORT, "DEV", null, done.id()));
+        JsonNode doc = JsonMapper.builder().build().readTree(Files.readString(file));
+        assertThat(doc.get("pages")).hasSize(3);
+        assertThat(doc.get("pages").get(1).get("pageId").asString()).isEqualTo("2");
+        assertThat(doc.get("pages").get(1).get("history").get("kind").asString()).isEqualTo("UNAVAILABLE");
+        assertThat(doc.get("summary").get("failed").asInt()).isEqualTo(1);
+        assertThat(list(out)).as("die Teildatei ist nach dem Ende weg").hasSize(1);
+        // Die Meldungen nennen die Seite mit Titel, Adresse und Fehler je Abfrage; niemand muss die Datei öffnen.
+        List<JobEvent> events = jobs.events(done.id(), "desktop");
+        JobEvent page = events.stream().filter(event -> "PAGE_FAILED".equals(event.code())).findFirst().orElseThrow();
+        assertThat(page.message()).startsWith("Seite 2 „Kaputte Seite“ ohne Antwort:")
+                .contains("\nhistory: UNAVAILABLE").contains("\nversions: NOT_FOUND");
+        JobEvent all = events.stream().filter(event -> "PAGES_FAILED".equals(event.code())).findFirst().orElseThrow();
+        assertThat(all.message()).contains("1 von 3 Seiten ohne Antwort: Seite 2 „Kaputte Seite“");
+        assertThat(SourceQueryExports.httpStatus("Confluence antwortet mit HTTP 500 (nach 2 Wiederholungen)"))
+                .isEqualTo(500);
+        assertThat(SourceQueryExports.httpStatus("keine Antwort")).isNull();
+    }
+
+    @Test
+    void retryingTheFailuresOfAFinishedExportAsksOnlyThePagesWithoutDataAndReplacesTheFile() throws Exception {
+        pagesOfSpace.put("DEV", List.of("1", "2"));
+        stubHistory("1", "a");
+        wiki.fail("/rest/api/content/2/history", SourceAccessException.Reason.UNAVAILABLE);
+        JobStatus first = run(exports.startMetadata(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")), out));
+        assertThat(first.incomplete()).isTrue();
+        wiki.failures.clear();
+        stubHistory("2", "b");
+        wiki.requests.clear();
+
+        JobStatus again = jobs.status(exports.resume(first.id(), "desktop").id());
+
+        assertThat(again.id()).isEqualTo(first.id());
+        assertThat(again.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(again.incomplete()).isFalse();
+        assertThat(again.progress().written()).isEqualTo(2);
+        assertThat(wiki.requests).as("Seite 1 kommt aus der fertigen Datei").noneMatch(path -> path.contains("/1/"));
+        Path file = out.resolve(SourceQueryExports.fileName(JobType.METADATA_EXPORT, "DEV", null, first.id()));
+        JsonNode doc = JsonMapper.builder().build().readTree(Files.readString(file));
+        assertThat(doc.get("pages").get(0).get("history").get("data").get("createdBy").get("username").asString())
+                .isEqualTo("a");
+        assertThat(doc.get("pages").get(1).get("history").get("status").asString()).isEqualTo("ok");
+        assertThat(doc.get("summary").get("failed").asInt()).isZero();
+        assertThat(list(out)).hasSize(1);
+    }
+
+    @Test
+    void severalUnansweredPagesInARowPauseTheJobAndResumingContinuesFromThePartFile() throws Exception {
+        pagesOfSpace.put("DEV", List.of("1", "2", "3", "4", "5"));
+        stubHistory("1", "a");
+        wiki.fail("/rest/api/content/2/", SourceAccessException.Reason.UNAVAILABLE);
+        wiki.fail("/rest/api/content/3/", SourceAccessException.Reason.UNAVAILABLE);
+        wiki.fail("/rest/api/content/4/", SourceAccessException.Reason.UNAVAILABLE);
+
+        JobStatus paused = run(exports.startMetadata(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")), out));
+
+        assertThat(paused.state()).as("Verbindung weg: anhalten statt scheitern").isEqualTo(JobState.PAUSED);
+        assertThat(paused.pauseReason()).isEqualTo(PauseReason.CONNECTION_LOST);
+        assertThat(paused.lifecycle().actions()).contains(JobAction.RESUME);
+        assertThat(wiki.requests).noneMatch(path -> path.contains("/5/"));
+        assertThat(list(out)).as("nur die Teildatei").hasSize(1);
+        assertThat(list(out).get(0).getFileName().toString()).startsWith(".").endsWith(".part");
+
+        wiki.failures.clear();
+        stubHistory("2", "b");
+        stubHistory("3", "c");
+        stubHistory("4", "d");
+        stubHistory("5", "e");
+        wiki.requests.clear();
+        JobStatus done = jobs.status(exports.resume(paused.id(), "desktop").id());
+
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.progress().discovered()).isEqualTo(5);
+        assertThat(done.progress().written()).isEqualTo(5);
+        assertThat(wiki.requests).as("Seite 1 steht in der Teildatei").noneMatch(path -> path.contains("/1/"));
+        assertThat(list(out)).hasSize(1);
+        assertThat(list(out).get(0).getFileName().toString()).startsWith("confluence-metadaten-dev-");
+        Path file = out.resolve(SourceQueryExports.fileName(JobType.METADATA_EXPORT, "DEV", null, done.id()));
+        JsonNode doc = JsonMapper.builder().build().readTree(Files.readString(file));
+        assertThat(doc.get("pages")).extracting(page -> page.get("pageId").asString())
+                .containsExactly("1", "2", "3", "4", "5");
+    }
+
+    @Test
+    void anAnalyticsExportWhoseSourceIsGonePausesAndResumesFromScratchWithTheSameSettings() {
+        pagesOfSpace.put("DEV", List.of("1"));
+        wiki.fail(AnalyticsQueries.ROOT, SourceAccessException.Reason.UNAVAILABLE);
+        AnalyticsQueries custom = AnalyticsQueries.of(null, null, null, 90);
+
+        JobStatus paused = run(exports.startAnalytics(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")), out,
+                custom));
+
+        assertThat(paused.state()).isEqualTo(JobState.PAUSED);
+        assertThat(paused.pauseReason()).isEqualTo(PauseReason.CONNECTION_LOST);
+        assertThat(paused.parameter(SourceQueryExports.ANALYTICS_DAYS)).isEqualTo("90");
+        wiki.failures.clear();
+        String period = period(CLOCK.instant(), 90);
+        wiki.stub(AnalyticsQueries.ROOT + "space/details?spaceKey=DEV", "{\"name\":\"Dev\"}");
+        wiki.stub(contentViews(period, null), "{\"contentViews\":[{\"id\":1,\"views\":3}]}");
+
+        JobStatus done = jobs.status(exports.resume(paused.id(), "desktop").id());
+
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.incomplete()).isFalse();
+        assertThat(wiki.requests).anyMatch(path -> path.contains(period));
     }
 
     @Test

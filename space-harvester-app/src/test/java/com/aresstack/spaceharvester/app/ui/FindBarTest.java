@@ -59,6 +59,62 @@ class FindBarTest {
         });
     }
 
+    /** Datei-Aktionen der Vorschau (Angelo, 19.11.2026): direkt neben der Lupe, die Werkzeuge füllen die Zeile. */
+    /** Angelo (2026-11-20): „Holz“ muss die Pillen (Bezeichner) „Holzapfel-Hüttenrauch“ und „Holzmann-Kaiser“ finden. */
+    @Test
+    void pillsOfTheTermsViewAreFound() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JPanel page = new JPanel();
+            FindablePill first =
+                    new FindablePill("Holzapfel-Hüttenrauch", 26, 26,
+                            10);
+            FindablePill second =
+                    new FindablePill("Holzmann-Kaiser", 26, 26, 10);
+            FindablePill other =
+                    new FindablePill("Workshop", 26, 26, 10);
+            page.add(first);
+            page.add(second);
+            page.add(other);
+            FindBar bar = new FindBar(() -> page);
+
+            assertThat(bar.search("Holz")).isEqualTo(2);
+            assertThat(bar.counterText()).isEqualTo("1 / 2");
+            assertThat(first.getMark()).isEqualTo(ReaderFind.CURRENT_HIT);
+            assertThat(second.getMark()).isEqualTo(ReaderFind.HIT);
+            assertThat(other.getMark()).isNull();
+
+            bar.next();
+            assertThat(second.getMark()).isEqualTo(ReaderFind.CURRENT_HIT);
+
+            bar.clear();
+            assertThat(first.getMark()).isNull();
+            assertThat(second.getMark()).isNull();
+        });
+    }
+
+    @Test
+    void fillingToolsStartRightOfTheMagnifierAndReachTheRightEdge() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            FindBar bar = new FindBar(JPanel::new);
+            JPanel actions = new JPanel(new java.awt.BorderLayout());
+            actions.add(new javax.swing.JButton("S"), java.awt.BorderLayout.WEST);
+            actions.add(new javax.swing.JLabel("Word · 4,0 MB"), java.awt.BorderLayout.EAST);
+            actions.putClientProperty(View.TOOLS_FILL, Boolean.TRUE);
+            bar.tools(actions);
+            bar.setSize(800, 36);
+            bar.doLayout();
+            java.awt.Rectangle magnifier = bar.findButton().getBounds();
+            java.awt.Rectangle tools = bar.toolsArea().getBounds();
+            assertThat(tools.x).isGreaterThan(magnifier.x + magnifier.width - 1)
+                    .isLessThanOrEqualTo(magnifier.x + magnifier.width + 8);
+            assertThat(tools.x + tools.width).isEqualTo(800 - bar.getInsets().right);
+            // Zurück ohne Eigenschaft: wieder mittig.
+            actions.putClientProperty(View.TOOLS_FILL, Boolean.FALSE);
+            bar.doLayout();
+            assertThat(bar.toolsArea().getX()).isGreaterThan(tools.x);
+        });
+    }
+
     @Test
     void theMagnifierUnfoldsTheSearchOverTheToolsAndEscapeFoldsItAgain() throws Exception {
         SwingUtilities.invokeAndWait(() -> {

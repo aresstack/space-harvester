@@ -44,7 +44,7 @@ public final class AppContext {
     public enum Section {
         // Reihenfolge der Tastenkürzel Strg+1 …: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche
         // ist die Startansicht.
-        SEARCH("Suche"), CONTENT("Inhalte"), TERMS("Begriffe"), ACTIVITIES("Aufträge"), STATUS("Status"),
+        SEARCH("Suche"), CONTENT("Inhalte"), ACTIVITIES("Aufträge"), STATUS("Status"),
         SOURCES("Wissensquellen verwalten"), SETTINGS("Einstellungen");
 
         /** Rechts in der Icon-Leiste, abgetrennt von allem anderen. */
@@ -53,11 +53,11 @@ public final class AppContext {
         }
 
         /**
-         * Rechts in der Icon-Leiste, links vom Trenner der Verwaltung (Angelo, 13.11.2026): Begriffe und Aufträge
-         * stehen nicht mehr bei den Reitern der Mitte.
+         * Rechts in der Icon-Leiste, links vom Trenner der Verwaltung (Angelo, 13.11.2026): Aufträge stehen nicht bei
+         * den Reitern der Mitte. Den Bereich „Begriffe“ gibt es nicht mehr; seine Reiter stehen unter Analysen (BG2c).
          */
         public boolean trailing() {
-            return this == TERMS || this == ACTIVITIES;
+            return this == ACTIVITIES;
         }
 
         /**
@@ -161,6 +161,18 @@ public final class AppContext {
 
         /** Wie {@link #downloadPage(String, String, String)}, ohne {@code withChildren} nur die Seite selbst. */
         default void downloadPage(String sourceId, String spaceKey, String pageId, boolean withChildren) {
+        }
+
+        /**
+         * Indexieren (Angelo, 20.11.2026): markiert den Knoten und startet sofort den Abgleich, der ihn vollständig lädt;
+         * danach hält ihn jede Synchronisierung aktuell, auch neue Seiten. Ohne {@code spaceKey} jeder Space der
+         * Quelle, ohne {@code pageId} der ganze Space, sonst die Seite samt Unterseiten.
+         */
+        default void index(String sourceId, String spaceKey, String pageId) {
+        }
+
+        /** Hebt die Markierung genau dieses Knotens auf (Space bzw. Seite); Geladenes bleibt. */
+        default void unindex(String sourceId, String spaceKey, String pageId) {
         }
 
         /**
@@ -487,6 +499,44 @@ public final class AppContext {
     }
 
     private volatile ViewerBackground viewerWanted;
+
+    /**
+     * Speichert die Werte für Videos ({@code space-harvester-app.video.*}) in der Datei, ohne Neustart der Laufzeit:
+     * Player, Standbilder und Marken lesen sie beim nächsten Gebrauch aus den Einstellungen. Schnell aufeinanderfolgende
+     * Änderungen schreiben immer die jüngste zuletzt.
+     */
+    public void video(com.aresstack.spaceharvester.app.settings.VideoSettings video, Runnable done,
+                      Consumer<Throwable> failed) {
+        videoWanted = video;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                com.aresstack.spaceharvester.app.settings.VideoSettings wanted = videoWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withVideo(configFile, new ConfigFileEditor.Draft(text, null), wanted),
+                        !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withVideo(saved);
+            }
+            fire();
+            done.run();
+        }, error -> {
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private volatile com.aresstack.spaceharvester.app.settings.VideoSettings videoWanted;
+
+    /** Die Werte für Videos; ohne geladene Einstellungen die Defaults. */
+    public com.aresstack.spaceharvester.app.settings.VideoSettings video() {
+        AppSettings current = settings;
+        return current == null ? com.aresstack.spaceharvester.app.settings.VideoSettings.DEFAULT : current.video();
+    }
 
     /**
      * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab
@@ -817,6 +867,10 @@ public final class AppContext {
             boolean restarted = started.runtime() != previous;
             settings = started.settings();
             runtime = started.runtime();
+            if (runtime != null) {
+                // Der Vergleich der Standbilder im Core folgt den Werten für Videos, auch nach dem Speichern.
+                runtime.workspace().slideThresholds(() -> video().slideThresholds());
+            }
             startProblem = started.problem();
             reloads.decrementAndGet();
             if (restarted) {

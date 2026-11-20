@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationManag
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.testsupport.TestSymbolicLinks;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -30,7 +31,7 @@ class LocalFileGrantsTest {
     @BeforeEach
     void linkOutOfTheDirectory() throws IOException {
         Files.writeString(elsewhere.resolve("plan.md"), "Schichtplan", StandardCharsets.UTF_8);
-        Files.createSymbolicLink(directory.resolve("plan.md"), elsewhere.resolve("plan.md"));
+        TestSymbolicLinks.createOrSkipUnsupported(directory.resolve("plan.md"), elsewhere.resolve("plan.md"));
         Files.writeString(directory.resolve("start.md"), "Start", StandardCharsets.UTF_8);
     }
 
@@ -68,7 +69,7 @@ class LocalFileGrantsTest {
         ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
         KnowledgeSourceHarvestSource source = open(new LocalFilesSourceAdapter(
                 () -> manager.current().configuration().localFiles().grants()));
-        Files.createSymbolicLink(directory.resolve("later.md"), later.resolve("later.md"));
+        TestSymbolicLinks.createOrSkipUnsupported(directory.resolve("later.md"), later.resolve("later.md"));
 
         assertThat(manager.apply(HarvesterConfiguration.DEFAULT.withLocalFiles(
                 new LocalFileSettings(false, List.of(later)))).outcome())

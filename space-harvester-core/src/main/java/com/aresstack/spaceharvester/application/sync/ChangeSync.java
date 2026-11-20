@@ -49,6 +49,8 @@ public class ChangeSync {
     private final SyncBaselineStore store;
     private final Clock clock;
     private final int batchSize;
+    /** Was indexiert wird; jeder Lauf liest die Markierungen neu. */
+    private volatile IndexMarks marks = IndexMarks.NONE;
 
     public ChangeSync(SourceQueries queries, SyncBaselineStore store, Clock clock) {
         this(queries, store, clock, SourceQueries.MAX_PAGE_METADATA_LIMIT);
@@ -59,6 +61,11 @@ public class ChangeSync {
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.batchSize = batchSize;
+    }
+
+    /** Geänderte Seiten unter diesen Markierungen lädt jeder Lauf vollständig, auch unbekannte. */
+    public void indexMarks(IndexMarks marks) {
+        this.marks = Objects.requireNonNull(marks, "marks");
     }
 
     /** Ob die Quelle Änderungen gezielt meldet; sonst bleibt nur die Inventur. */
@@ -124,6 +131,15 @@ public class ChangeSync {
 
         Map<String, BaselineEntry> known = new HashMap<>(baseline == null ? Map.of() : baseline.pages());
         known.putAll(store.knownPages(sourceId, spaceKey));
+        // Indexieren: Vorfahren aus den gemeldeten Seiten, sonst aus Generation und Cache.
+        java.util.function.Predicate<String> indexed = IndexScope.of(marks.roots(sourceId, spaceKey), pageId -> {
+            PageMetadataListing.Entry listed = current.get(pageId);
+            if (listed != null) {
+                return listed.page().parentPageId();
+            }
+            BaselineEntry stored = known.get(pageId);
+            return stored == null ? null : stored.parentPageId();
+        });
         List<PageChange> changes = new ArrayList<>();
         current.forEach((pageId, entry) -> {
             BaselineEntry previous = known.get(pageId);
@@ -131,7 +147,8 @@ public class ChangeSync {
                 // Veraltet aus einem früheren Lauf ohne Inhalte: immer laden, auch wenn die Version schon bekannt ist.
                 changes.add(new PageChange(pageId, PageChange.Kind.CONTENT_CHANGED, previous, entry));
             } else {
-                changes.add(SyncPlanner.within(mode, SyncPlanner.classify(previous, entry)));
+                changes.add(SyncPlanner.within(indexed.test(pageId) ? SyncMode.FULL : mode,
+                        SyncPlanner.classify(previous, entry)));
             }
         });
         Map<String, RemovalCheck.Result> removals = new HashMap<>();

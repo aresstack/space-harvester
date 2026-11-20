@@ -44,8 +44,12 @@ public final class SettingsView implements View {
     static final String GENERAL = "Allgemein";
     static final String AI = "KI-Dienst";
     static final String MODELS = "Modelle";
+    /** Bereich „Wortlisten“: die Wörter für den Stand und die Glossarregeln, aus „Modelle“ herausgezogen. */
+    static final String WORDS = "Wortlisten";
     static final String NETWORK = "Netzwerk";
     static final String CACHE = "Cache";
+    /** Bereich „Video“: Marken, Standbilder und Player ({@code space-harvester-app.video.*}). */
+    static final String VIDEO = "Video";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -103,6 +107,8 @@ public final class SettingsView implements View {
     /** Platte „Dateizugriff“ unter Allgemein: freigegebene Ordner für Ordner-Quellen. */
     final FileAccessEditor fileAccess;
     final StandingWordsEditor standingWords;
+    /** Bereich „Video“: alle Werte für Videos. */
+    final VideoSettingsPanel video;
     final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
@@ -113,6 +119,8 @@ public final class SettingsView implements View {
     private final ComposerButton openFile = Comic.button("Datei öffnen", "Konfiguration im Standardeditor öffnen");
     private final ComposerButton openFolder = Comic.button("Ordner öffnen", "Ordner der Konfiguration öffnen");
     private final ComposerButton openData = Comic.button("Ordner öffnen", "Datenordner des lokalen Bestands im Dateimanager öffnen");
+    private final ComposerButton editPageSize = Comic.button(SettingDialogs.PAGE_SIZE_TITLE + " …",
+            "Größere Dateien lädt die App nicht herunter, sondern legt nur ihre Kopfdaten ab");
     final ComposerButton chooseOutput = Comic.button("Ausgabeordner ändern …",
             "Ordner, in den „Exportieren“ unter Aufträge die Dateien legt");
     final ComposerButton openOutput = Comic.button("Ausgabeordner öffnen", "Den Ausgabeordner anzeigen");
@@ -170,6 +178,7 @@ public final class SettingsView implements View {
         this.ai = new AiSettingsPanel(context);
         this.fileAccess = new FileAccessEditor(context);
         this.standingWords = new StandingWordsEditor(context);
+        this.video = new VideoSettingsPanel(context);
         this.glossaryRules = new GlossaryRulesEditor(context);
         this.keePass = new KeePassPairingPanel(context);
         this.releases = new PageReleasesPanel(context);
@@ -244,7 +253,9 @@ public final class SettingsView implements View {
         JPanel data = new JPanel(new BorderLayout(0, 8));
         data.setOpaque(false);
         data.add(storage, BorderLayout.CENTER);
-        data.add(Comic.row(openData), BorderLayout.SOUTH);
+        data.add(Comic.row(openData, editPageSize), BorderLayout.SOUTH);
+        editPageSize.addActionListener(e -> SettingDialogs.pageSize(root, context,
+                () -> feedback.success(SettingDialogs.PAGE_SIZE_TITLE + " übernommen")).open());
         JPanel outputPanel = new JPanel(new BorderLayout(0, 8));
         outputPanel.setOpaque(false);
         outputPanel.add(output, BorderLayout.CENTER);
@@ -276,15 +287,17 @@ public final class SettingsView implements View {
                 Comic.plate("Diagnose", Comic.DARK, diagnosis),
                 Comic.plate(CONSOLE_TITLE, Comic.DARK, consoleRows)));
         page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
-        // Die Wörter für den Stand gehören zur Aussagenanalyse, deren Vorstufe unter „Modelle“ steht (ADR 0032).
-        page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent()),
-                Comic.plate(null, Comic.PETROL, standingWords.component()),
+        page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
+        // Die Wortlisten stehen in einem eigenen Bereich: Wörter für den Stand (Aussagenanalyse, ADR 0032) und
+        // Glossarregeln.
+        page(WORDS, Comic.column(Comic.plate(null, Comic.PETROL, standingWords.component()),
                 Comic.plate(null, Comic.PETROL, glossaryRules.component())));
         page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
                 withButtons(network, proxy, tls)),
                 Comic.plate(SettingDialogs.RETRY_TITLE, Comic.PETROL, withButtons(retry, editRetry))));
         page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache, viewChangeLog))));
+        page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
@@ -310,6 +323,9 @@ public final class SettingsView implements View {
             standingWords.render();
             glossaryRules.render();
             keePass.render();
+            if (!VIDEO.equals(selected)) {
+                video.render();
+            }
             // Eingaben in den offenen Bereichen „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
             // neue Stand.
             if (!AI.equals(selected) && !MODELS.equals(selected)) {
@@ -583,6 +599,11 @@ public final class SettingsView implements View {
                     .add("Exporte", s.exportDirectory().toString())
                     .add("Anhänge", s.assetDirectory().toString())
                     .add("Größter Anhang", Texts.sizeLimit(s.maxAssetBytes()))
+                    .add(SettingDialogs.PAGE_SIZE_TITLE, Texts.bytes(s.maxPageBytes()))
+                    .add(SettingDialogs.TEXT_SIZE_TITLE, s.maxTextFileBytes() == 0 ? "nie"
+                            : "bis " + Texts.bytes(s.maxTextFileBytes()))
+                    .add(SettingDialogs.CHECK_TIMEOUT_TITLE, ConfigFileEditor.duration(s.checkTimeout())
+                            + ", große Dateien " + ConfigFileEditor.duration(s.largeFileTimeout()))
                     .add("Zeitgrenze der Suche", s.searchTimeout().toString().substring(2).toLowerCase(Locale.ROOT))
                     .add("Größter Seitenbaum", s.maxTreeNodes() + " Seiten")
                     .add("PDF-Schrift", s.pdfFont() == null ? "eingebaut" : s.pdfFont().toString());

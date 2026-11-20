@@ -46,7 +46,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint, betaview, outlook) und MediaWiki (#187).
      */
     public static final List<SourceAdapter> DEFAULT_ADAPTERS = List.of(new ConfluenceSourceAdapter(),
-            new LocalFilesSourceAdapter(), EacSourceAdapters.ftp(), EacSourceAdapters.jes(), EacSourceAdapters.ndv(),
+            new LocalFilesSourceAdapter(), new BscwSourceAdapter(), EacSourceAdapters.ftp(), EacSourceAdapters.jes(), EacSourceAdapters.ndv(),
             EacSourceAdapters.sharePoint(), EacSourceAdapters.betaView(),
             EacSourceAdapters.outlook(), MediaWikiSources.adapter());
 
@@ -286,8 +286,20 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     public List<SourceType> types() {
         return adapters.values().stream()
                 .map(adapter -> new SourceType(adapter.type(), adapter.displayName(), adapter.needsCredentials(),
-                        adapter.addressOption(), adapter.fields(), adapter.authModes(), adapter.tls()))
+                        adapter.addressOption(), adapter.fields(), adapter.authModes(), adapter.tls(), adapter.usesBaseUrl()))
                 .toList();
+    }
+
+    /** Resolve a diagnostic target through the source adapter, without inspecting source types. */
+    URI connectionTarget(SourceSettingsConfig config) {
+        SourceAdapter adapter = adapters.get(config.type());
+        return adapter == null ? config.baseUrl() : adapter.connectionTarget(config);
+    }
+
+    String connectionDescription(SourceSettingsConfig config, int partitions) {
+        SourceAdapter adapter = adapters.get(config.type());
+        return adapter == null ? (partitions == 1 ? "1 Space sichtbar" : partitions + " Spaces sichtbar")
+                : adapter.connectionDescription(partitions);
     }
 
     private Optional<Opened> active(String sourceId) {

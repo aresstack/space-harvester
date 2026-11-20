@@ -47,7 +47,7 @@ class SpaceKeyCheckTest {
         public PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit) {
             listed.add(partitionKey + ":" + limit);
             return switch (partitionKey) {
-                case "DEV", "~jane.doe" -> new PageMetadataBatch(List.of(), null);
+                case "DEV", "~jane.doe", "bscw-bund" -> new PageMetadataBatch(List.of(), null);
                 case "DOWN" -> throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE,
                         "Zeitüberschreitung", null);
                 case "LOCKED" -> throw new SourceAccessException(id(), SourceAccessException.Reason.ACCESS_DENIED,
@@ -80,6 +80,13 @@ class SpaceKeyCheckTest {
         assertThatCode(() -> check.requireExisting("wiki", "~jane.doe")).doesNotThrowAnyException();
 
         assertThat(listed).containsExactly("DEV:1", "~jane.doe:1");
+    }
+
+    @Test
+    void theSingleSpaceOfASourceNamedAfterItsHyphenatedIdPasses() {
+        assertThatCode(() -> check.requireExisting("wiki", "bscw-bund")).doesNotThrowAnyException();
+
+        assertThat(listed).containsExactly("bscw-bund:1");
     }
 
     @Test

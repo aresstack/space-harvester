@@ -126,6 +126,20 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     }
 
     /**
+     * Was indexiert wird ({@link IndexMarks}): Seiten darunter laden Abgleich und Änderungssuche vollständig, in jeder
+     * Betriebsart; ohne Cache-Speicher wirkungslos.
+     */
+    public void indexMarks(IndexMarks marks) {
+        Objects.requireNonNull(marks, "marks");
+        if (sync != null) {
+            sync.indexMarks(marks);
+        }
+        if (changeSync != null) {
+            changeSync.indexMarks(marks);
+        }
+    }
+
+    /**
      * Nach wie vielen Inhaltsabrufen nacheinander ohne Verbindung sich Abgleich und Einlesen selbst anhalten
      * ({@code jobs.retry.pause-after-failures}, ADR 0025); ohne Inhaltsabruf wirkungslos.
      */

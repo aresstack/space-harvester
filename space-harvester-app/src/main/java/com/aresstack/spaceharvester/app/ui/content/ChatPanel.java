@@ -4,6 +4,12 @@ import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubblePalette;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
+import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownBubble;
+import com.aresstack.spaceharvester.app.ui.markdown.CachingMermaidImageRenderer;
+import com.aresstack.spaceharvester.app.ui.markdown.DesktopLinkOpener;
+import com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView;
+import com.aresstack.spaceharvester.app.ui.markdown.MarkdownTheme;
+import com.aresstack.spaceharvester.app.ui.markdown.MermaidImageRenderer;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.control.PlaceholderTextArea;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
@@ -13,6 +19,7 @@ import com.aresstack.spaceharvester.app.chat.ChatRecord;
 import com.aresstack.spaceharvester.app.chat.ChatStore;
 import com.aresstack.spaceharvester.app.chat.ChatTurn;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.speech.Dictation;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.Background;
@@ -41,6 +48,9 @@ import javax.swing.JTextField;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
+import javax.swing.JLayeredPane;
+import javax.swing.JProgressBar;
+import javax.swing.Timer;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -51,6 +61,9 @@ import javax.swing.SwingUtilities;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
+import java.awt.Point;
+import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Graphics;
@@ -108,12 +121,21 @@ public final class ChatPanel extends JPanel {
     static final String DELETE_QUESTION = "Diesen Chat wirklich löschen?";
     static final String ASSISTANT = "Assistent";
     static final String ANSWERING = "Antwort wird geschrieben …";
+    /** Wie in AskAI: solange Ollama das Modell lädt, steht das in der Blase und in der Statuszeile. */
+    static final String MODEL_LOADING = "Modell wird geladen …";
     static final String SEARCHING = "Wissen wird gesucht …";
     static final String CANCELLED = "Abgebrochen";
     static final String DOWNLOAD_DONE = "abgeschlossen";
     static final String DOWNLOAD_FAILED = "fehlgeschlagen";
     static final String ATTACH = "Dateien anhängen";
-    static final String DICTATE = "Spracheingabe folgt";
+    static final String DICTATE = "Spracheingabe mit Whisper Tiny";
+    /** Wie im Enterprise AI Client: die Erkennung nach dem Stopp ist orange in der Statuszeile zu sehen. */
+    static final String RECOGNIZING_STATUS = "Erkenne Sprache …";
+    private static final int MIN_EDITOR_HEIGHT = 64;
+    private static final int MAX_NORMAL_EDITOR_HEIGHT = 400;
+    private static final String NORMAL_EDITOR_HEIGHT = "composer.normalHeight";
+    private static final java.util.prefs.Preferences PREFERENCES =
+            java.util.prefs.Preferences.userNodeForPackage(ChatPanel.class);
     static final String WEB = "Websuche folgt";
     static final String NO_MODEL = "Kein Chat-Modell";
     static final String MODEL_TIP = "Chat-Modell aus Einstellungen › KI";
@@ -164,7 +186,10 @@ public final class ChatPanel extends JPanel {
     private boolean settled;
     /** Ergebnisse der verfolgten Aufträge, gemeldet erst, wenn alle geendet haben. */
     private final List<JobStatus> jobOutcomes = new ArrayList<>();
-    private SpeechBubblePanel answering;
+    private AssistantMarkdownBubble answering;
+    /** Antworten rendert der Chat als Markdown wie der EAC (AssistantMarkdownBubble, MarkdownMessageView). */
+    private final DesktopLinkOpener linkOpener = DesktopLinkOpener.systemDefault();
+    private MermaidImageRenderer mermaid;
     /** Die Auftragskennungen des zuletzt hier gestarteten Downloads, bis der Auftrag endet. */
     private final Set<String> watchedJobs = new HashSet<>();
     private Subscription jobSubscription;
@@ -187,10 +212,29 @@ public final class ChatPanel extends JPanel {
     private final ComposerButton web = ComposerButton.iconButton(ChatIcons.globe(), WEB);
     private final ComposerButton attach = ComposerButton.iconButton(ComposerIcons.paperclip(), ATTACH);
     private final ComposerButton mic = ComposerButton.iconButton(ComposerIcons.microphone(), DICTATE);
+    private final ComposerButton discardButton = ComposerButton.iconButton(
+            ComposerIcons.close(), "Aufnahme verwerfen oder Erkennung abbrechen");
+    private final ComposerButton retryButton = new ComposerButton(
+            ComposerIcons.refresh(), "Erneut", false, "Letzte Aufnahme erneut erkennen");
+    private final JProgressBar levelBar = new JProgressBar(0, 100);
+    private final ComposerWaveformOverlay waveform = new ComposerWaveformOverlay();
+    private final Timer levelTimer = new Timer(100, event -> sampleDictationLevel());
+    private final Dictation dictation = new Dictation();
+    private DictationPhase dictationPhase = DictationPhase.IDLE;
+    private long recordingStartedMillis;
+
+    private enum DictationPhase { IDLE, RECORDING, RECOGNIZING }
     private final ComposerButton send = ComposerButton.primary(ComposerIcons.send(), SEND, Comic.BLUE,
             "Senden (Enter)");
     /** Die Statuszeile des Composers („Chat folgt“); leer unsichtbar. */
     private final JLabel status = Comic.muted(" ");
+    private final Color statusColor = status.getForeground();
+    /** Die Editor-Fläche; Größenänderungen werden ab hier neu ausgemessen (der Rollbereich ist eine Layout-Wurzel). */
+    private JComponent editorArea;
+    private int normalEditorHeight = Math.max(MIN_EDITOR_HEIGHT,
+            Math.min(MAX_NORMAL_EDITOR_HEIGHT, PREFERENCES.getInt(NORMAL_EDITOR_HEIGHT, MIN_EDITOR_HEIGHT)));
+    private final ComposerResizeGrip resizeGrip = new ComposerResizeGrip(() -> normalEditorHeight,
+            this::setNormalEditorHeight, () -> PREFERENCES.putInt(NORMAL_EDITOR_HEIGHT, normalEditorHeight));
     private final JPanel composer;
     private boolean editorFocused;
 
@@ -320,8 +364,10 @@ public final class ChatPanel extends JPanel {
                             getHeight() - top - 2, ARC, ARC);
                     g2.setColor(Color.WHITE);
                     g2.fill(shape);
-                    g2.setColor(editorFocused ? Comic.BLUE : Comic.LINE);
-                    g2.setStroke(new BasicStroke(editorFocused ? 1.6f : 1f));
+                    boolean dictating = dictationPhase != DictationPhase.IDLE;
+                    g2.setColor(dictating ? ResearchUiPalette.RECORDING_ORANGE
+                            : editorFocused ? Comic.BLUE : Comic.LINE);
+                    g2.setStroke(new BasicStroke(dictating || editorFocused ? 1.6f : 1f));
                     g2.draw(shape);
                 } finally {
                     g2.dispose();
@@ -361,12 +407,37 @@ public final class ChatPanel extends JPanel {
                 surface.repaint();
             }
         });
+        // Leer hat der Editor die gezogene Normalhöhe; mit langem Text wächst er bis zu zwei Fünfteln der Chat-Höhe
+        // und schrumpft nach dem Senden wieder auf die Normalhöhe.
         JScrollPane editorScroll = new JScrollPane(editor, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
-                JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+                JScrollPane.HORIZONTAL_SCROLLBAR_NEVER) {
+            @Override
+            public Dimension getPreferredSize() {
+                int content = editor.getPreferredSize().height;
+                int maximum = Math.max(normalEditorHeight, ChatPanel.this.getHeight() * 2 / 5);
+                return new Dimension(520, Math.max(normalEditorHeight, Math.min(content, maximum)));
+            }
+        };
         editorScroll.setOpaque(false);
         editorScroll.getViewport().setOpaque(false);
         editorScroll.setBorder(BorderFactory.createEmptyBorder());
-        editorScroll.setPreferredSize(new Dimension(520, 64));
+        com.aresstack.enterpriseai.ui.comic.control.ComicScrollBarUI.install(editorScroll.getVerticalScrollBar());
+        editor.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                resizeEditor();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                resizeEditor();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                resizeEditor();
+            }
+        });
 
         chips.setOpaque(false);
         chips.setVisible(false);
@@ -377,17 +448,31 @@ public final class ChatPanel extends JPanel {
         model.addActionListener(e -> showModelMenu());
         effort.addActionListener(e -> showEffortMenu());
         web.setEnabled(false);
-        mic.setEnabled(false);
+        mic.setAccent(ResearchUiPalette.RECORDING_ORANGE);
+        mic.addActionListener(e -> toggleDictation());
+        discardButton.addActionListener(e -> discardDictation());
+        retryButton.addActionListener(e -> retryDictation());
+        discardButton.setVisible(false);
+        retryButton.setVisible(false);
+        levelBar.setOpaque(false);
+        levelBar.setBorderPainted(false);
+        levelBar.setPreferredSize(new Dimension(64, 6));
+        levelBar.setMaximumSize(new Dimension(64, 6));
+        levelBar.setVisible(false);
         attach.addActionListener(e -> chooseAttachments());
         send.addActionListener(e -> send());
         JPanel west = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         west.setOpaque(false);
         west.add(model);
         west.add(effort);
+        west.add(discardButton);
+        west.add(retryButton);
         JPanel east = new JPanel();
         east.setOpaque(false);
         east.setLayout(new BoxLayout(east, BoxLayout.X_AXIS));
         east.add(Box.createHorizontalGlue());
+        east.add(levelBar);
+        east.add(Box.createHorizontalStrut(4));
         east.add(web);
         east.add(Box.createHorizontalStrut(4));
         east.add(attach);
@@ -402,14 +487,268 @@ public final class ChatPanel extends JPanel {
 
         JPanel body = new JPanel(new BorderLayout(0, 4));
         body.setOpaque(false);
-        body.setBorder(BorderFactory.createEmptyBorder(9, 11, 8, 8));
-        body.add(chips, BorderLayout.NORTH);
-        body.add(editorScroll, BorderLayout.CENTER);
+        body.setBorder(BorderFactory.createEmptyBorder(0, 11, 8, 8));
+        JPanel top = new JPanel(new BorderLayout(0, 0));
+        top.setOpaque(false);
+        JPanel gripRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
+        gripRow.setOpaque(false);
+        gripRow.add(resizeGrip);
+        top.add(gripRow, BorderLayout.NORTH);
+        top.add(chips, BorderLayout.CENTER);
+        body.add(top, BorderLayout.NORTH);
+        final JScrollPane scroll = editorScroll;
+        JLayeredPane editorLayers = new JLayeredPane() {
+            @Override
+            public void doLayout() {
+                for (Component child : getComponents()) {
+                    child.setBounds(0, 0, getWidth(), getHeight());
+                }
+            }
+
+            @Override
+            public Dimension getPreferredSize() {
+                return scroll.getPreferredSize();
+            }
+
+            @Override
+            public Dimension getMinimumSize() {
+                return scroll.getMinimumSize();
+            }
+        };
+        editorLayers.add(editorScroll, JLayeredPane.DEFAULT_LAYER);
+        editorArea = editorLayers;
+        editorLayers.add(waveform, JLayeredPane.PALETTE_LAYER);
+        body.add(editorLayers, BorderLayout.CENTER);
         body.add(footer, BorderLayout.SOUTH);
         status.setBorder(BorderFactory.createEmptyBorder(0, 12, 2, 0));
         surface.add(status, BorderLayout.NORTH);
         surface.add(body, BorderLayout.CENTER);
+        trackComposerHover(surface, surface);
         return surface;
+    }
+
+    /** Den Ziehgriff nur zeigen, solange die Maus in seiner Nähe an der oberen Linie des Composers steht. */
+    private void trackComposerHover(JComponent surface, Component component) {
+        java.awt.event.MouseAdapter hover = new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseMoved(java.awt.event.MouseEvent e) {
+                resizeGrip.setShown(nearGrip(SwingUtilities.convertPoint(e.getComponent(), e.getPoint(), resizeGrip)));
+            }
+
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent e) {
+                mouseMoved(e);
+            }
+
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent e) {
+                SwingUtilities.invokeLater(() -> {
+                    Point mouse = resizeGrip.getMousePosition(true);
+                    if (mouse == null) {
+                        // Einmal abfragen: Zwischen zwei Abfragen kann die Maus die Fläche verlassen haben.
+                        Point onSurface = surface.getMousePosition(true);
+                        mouse = onSurface == null ? null : SwingUtilities.convertPoint(surface, onSurface, resizeGrip);
+                    }
+                    resizeGrip.setShown(mouse != null && nearGrip(mouse));
+                });
+            }
+        };
+        component.addMouseListener(hover);
+        component.addMouseMotionListener(hover);
+        if (component instanceof java.awt.Container container) {
+            for (Component child : container.getComponents()) {
+                trackComposerHover(surface, child);
+            }
+        }
+    }
+
+    /** Ob ein Punkt (relativ zum Griff) in der Nähe des Griffs an der oberen Linie liegt. */
+    private boolean nearGrip(Point point) {
+        int margin = 8;
+        return point.x >= -margin && point.x <= resizeGrip.getWidth() + margin
+                && point.y >= -margin && point.y <= resizeGrip.getHeight() + margin;
+    }
+
+    /** Die Normalhöhe des leeren Editors setzen (Ziehgriff); lange Texte wachsen weiterhin darüber hinaus. */
+    void setNormalEditorHeight(int height) {
+        int maximum = Math.max(MIN_EDITOR_HEIGHT, getHeight() > 0 ? getHeight() * 2 / 5 : MAX_NORMAL_EDITOR_HEIGHT);
+        normalEditorHeight = Math.max(MIN_EDITOR_HEIGHT, Math.min(height, Math.min(maximum, MAX_NORMAL_EDITOR_HEIGHT)));
+        remeasureEditor();
+    }
+
+    int normalEditorHeight() {
+        return normalEditorHeight;
+    }
+
+    ComposerResizeGrip resizeGrip() {
+        return resizeGrip;
+    }
+
+    /** Den Composer nach einer Textänderung neu bemessen (nach dem laufenden Ereignis, wenn die Umbrüche feststehen). */
+    private void resizeEditor() {
+        SwingUtilities.invokeLater(this::remeasureEditor);
+    }
+
+    /**
+     * Den Editor neu ausmessen: ab der Editor-Fläche, damit Swing die gemerkte bevorzugte Größe aller
+     * Container bis zum Fenster verwirft (nur den Composer neu auszumessen behielt die alte Höhe).
+     */
+    private void remeasureEditor() {
+        if (editorArea != null) {
+            editorArea.revalidate();
+        }
+        composer.repaint();
+    }
+
+    /** Toggle the EAC dictation lifecycle without submitting the recognized draft. */
+    private void toggleDictation() {
+        if (dictationPhase == DictationPhase.RECORDING) {
+            dictationPhase = DictationPhase.RECOGNIZING;
+            stopDictationLevelMeter();
+            refreshDictationControls();
+            status.setText(RECOGNIZING_STATUS);
+            dictation.finish();
+            return;
+        }
+        if (dictationPhase == DictationPhase.RECOGNIZING) {
+            discardDictation();
+            return;
+        }
+        if (!dictation.isAvailable() || turn != null) {
+            return;
+        }
+        dictationPhase = DictationPhase.RECORDING;
+        startDictationLevelMeter();
+        refreshDictationControls();
+        dictation.start(dictationResult());
+    }
+
+    /** Discard the active recording or ignore a pending recognition callback. */
+    private void discardDictation() {
+        if (dictationPhase == DictationPhase.IDLE) {
+            return;
+        }
+        boolean wasRecording = dictationPhase == DictationPhase.RECORDING;
+        dictation.cancel();
+        dictationPhase = DictationPhase.IDLE;
+        stopDictationLevelMeter();
+        status.setText(wasRecording ? "Aufnahme verworfen" : "Spracherkennung abgebrochen");
+        refreshDictationControls();
+    }
+
+    /** Retry the original microphone capture after a recognition failure. */
+    private void retryDictation() {
+        if (dictationPhase != DictationPhase.IDLE || !dictation.canRetry() || turn != null) {
+            return;
+        }
+        dictationPhase = DictationPhase.RECOGNIZING;
+        status.setText(RECOGNIZING_STATUS);
+        refreshDictationControls();
+        dictation.retry(dictationResult());
+    }
+
+    /** Insert the transcript at the caret, preserving adjacent text and selection. */
+    private DictationControl.Result dictationResult() {
+        return new DictationControl.Result() {
+            /** Hinter dem zuletzt eingefügten Abschnitt geht es weiter; -1, solange noch nichts eingefügt ist. */
+            private int streamCaret = -1;
+
+            @Override
+            public void partial(String text) {
+                if (dictationPhase != DictationPhase.IDLE) {
+                    insertDictated(text);
+                }
+            }
+
+            @Override
+            public void recognized(String text) {
+                dictationPhase = DictationPhase.IDLE;
+                stopDictationLevelMeter();
+                if (streamCaret < 0 && text != null && !text.trim().isEmpty()) {
+                    insertDictated(text);
+                }
+                status.setText(streamCaret < 0 ? "Keine Sprache erkannt" : "Sprache erkannt – Text vor dem Senden prüfen");
+                if (streamCaret >= 0) {
+                    editor.requestFocusInWindow();
+                }
+                refreshDictationControls();
+            }
+
+            /** Fügt einen erkannten Abschnitt ein: zuerst am Cursor bzw. statt der Auswahl, dann hinter dem vorigen. */
+            private void insertDictated(String text) {
+                int start = streamCaret < 0 ? editor.getSelectionStart() : streamCaret;
+                int end = streamCaret < 0 ? editor.getSelectionEnd() : streamCaret;
+                DictationInsertion insertion = DictationInsertion.insert(editor.getText(), start, end, text);
+                editor.setText(insertion.text);
+                editor.setCaretPosition(insertion.caret);
+                streamCaret = insertion.caret;
+            }
+
+            @Override
+            public void failed(String message) {
+                dictationPhase = DictationPhase.IDLE;
+                stopDictationLevelMeter();
+                String reason = message == null || message.trim().isEmpty() ?
+                        "unbekannter Fehler" : message.trim();
+                status.setText("Spracherkennung fehlgeschlagen: " + reason);
+                refreshDictationControls();
+                if (isShowing()) {
+                    javax.swing.JOptionPane.showMessageDialog(ChatPanel.this,
+                            "Die Spracheingabe ist fehlgeschlagen.\n\n" + reason +
+                                    "\n\n" + dictation.description(),
+                            "Spracheingabe", javax.swing.JOptionPane.WARNING_MESSAGE);
+                }
+            }
+        };
+    }
+
+    /** Restore the reference composer's recording, discard and retry controls. */
+    private void refreshDictationControls() {
+        boolean active = dictationPhase != DictationPhase.IDLE;
+        mic.setEnabled(dictation.isAvailable() && (active || turn == null));
+        mic.setEmphasized(active);
+        mic.setIcon(dictationPhase == DictationPhase.RECORDING ? ComposerIcons.stop()
+                : dictationPhase == DictationPhase.RECOGNIZING ? ComposerIcons.close() : ComposerIcons.microphone());
+        status.setForeground(active ? ResearchUiPalette.RECORDING_ORANGE : statusColor);
+        mic.setToolTipText(dictationPhase == DictationPhase.RECORDING ?
+                "Aufnahme beenden und erkennen" :
+                dictationPhase == DictationPhase.RECOGNIZING ?
+                        "Spracherkennung abbrechen" : DICTATE + " (" + dictation.description() + ")");
+        discardButton.setVisible(active);
+        retryButton.setVisible(!active && dictation.canRetry());
+        levelBar.setVisible(active);
+        if (!active) {
+            levelBar.setValue(0);
+        }
+        composer.revalidate();
+        composer.repaint();
+    }
+
+    /** Start the original EAC 100-ms live waveform and decibel level feedback. */
+    private void startDictationLevelMeter() {
+        recordingStartedMillis = System.currentTimeMillis();
+        levelBar.setValue(0);
+        waveform.setActive(true);
+        levelTimer.restart();
+    }
+
+    private void stopDictationLevelMeter() {
+        levelTimer.stop();
+        waveform.setActive(false);
+        levelBar.setValue(0);
+    }
+
+    private void sampleDictationLevel() {
+        if (dictationPhase != DictationPhase.RECORDING) {
+            levelTimer.stop();
+            return;
+        }
+        int level = dictation.level();
+        levelBar.setValue(level);
+        waveform.pushLevel(level);
+        long seconds = Math.max(0, (System.currentTimeMillis() - recordingStartedMillis) / 1000L);
+        status.setText(String.format(java.util.Locale.ROOT, "● Aufnahme %d:%02d%s",
+                seconds / 60, seconds % 60, dictation.clipping() ? " – übersteuert" : ""));
     }
 
     // ------------------------------------------------------------------ Auswahl und Wissen
@@ -944,8 +1283,7 @@ public final class ChatPanel extends JPanel {
         composer.revalidate();
         composer.repaint();
         release();
-        answering = addBubble(BubbleSide.LEFT, bubbles.getAssistantBackground(), bubbles.getAssistantForeground(),
-                ASSISTANT, "…");
+        answering = addAnswer("…");
         ChatRecord target = chat;
         ChatNode targetNode = node;
         TurnListener listener = new TurnListener(target, targetNode, answering);
@@ -992,15 +1330,48 @@ public final class ChatPanel extends JPanel {
 
         private final ChatRecord started;
         private final ChatNode startedNode;
-        private final SpeechBubblePanel bubble;
+        private final AssistantMarkdownBubble bubble;
         private final StringBuilder text = new StringBuilder();
+        private final java.awt.event.ComponentListener follow;
         ChatTurn turn;
         boolean detached;
 
-        TurnListener(ChatRecord started, ChatNode startedNode, SpeechBubblePanel bubble) {
+        TurnListener(ChatRecord started, ChatNode startedNode, AssistantMarkdownBubble bubble) {
             this.started = started;
             this.startedNode = startedNode;
             this.bubble = bubble;
+            // Die Markdown-Ansicht rendert gedrosselt: erst wenn die Blase dadurch wächst, nach unten rollen (Codex-
+            // Befund zu #966), auch nach dem letzten Delta und beim Abschluss.
+            follow = new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent event) {
+                    if (!detached && ChatPanel.this.answering == TurnListener.this.bubble) {
+                        scrollDown();
+                    }
+                }
+            };
+            bubble.addComponentListener(follow);
+        }
+
+        /** Ersetzt den ganzen Text der Antwortblase (Platzhalter, Fehler, Abschluss) und beendet das Streaming. */
+        private void show(String markdown) {
+            MarkdownMessageView view = bubble.view();
+            if (view.isStreaming()) {
+                view.finishStreaming();
+            }
+            view.setMarkdown(markdown);
+            bubble.revalidate();
+            bubble.repaint();
+        }
+
+        @Override
+        public void loading() {
+            if (text.isEmpty()) {
+                bubble.view().setMarkdown(MODEL_LOADING);
+            }
+            if (!detached) {
+                status.setText(MODEL_LOADING);
+            }
         }
 
         @Override
@@ -1014,11 +1385,13 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void delta(String delta) {
+            MarkdownMessageView view = bubble.view();
             if (text.isEmpty()) {
-                bubble.setText(delta);
-            } else {
-                bubble.appendText(delta);
+                // Der Platzhalter „…“ weicht dem ersten Delta; danach wird nur angehängt (gedrosselt gerendert).
+                view.setMarkdown("");
+                view.startStreaming();
             }
+            view.appendMarkdownDelta(delta);
             text.append(delta);
             if (!detached) {
                 scrollDown();
@@ -1027,15 +1400,16 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void completed(String full) {
-            if (text.isEmpty()) {
-                bubble.setText(full);
+            show(text.isEmpty() ? full : text.toString());
+            if (!detached) {
+                scrollDown();
             }
             finish(ChatRecord.Message.assistant(full, false, System.currentTimeMillis()), " ");
         }
 
         @Override
         public void failed(String message) {
-            bubble.setText(message);
+            show(message);
             bubble.setHeaderColor(Comic.RED);
             // Eine gescheiterte Antwort wird nicht gespeichert (wie im EAC); die Frage bleibt im Chat.
             finish(null, message.lines().findFirst().orElse(" "));
@@ -1043,12 +1417,15 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void cancelled(String partial) {
-            bubble.setText(partial.isEmpty() ? CANCELLED : partial + "\n\n" + CANCELLED);
+            show(partial.isEmpty() ? CANCELLED : partial + "\n\n" + CANCELLED);
             finish(partial.isEmpty() ? null
                     : ChatRecord.Message.assistant(partial, true, System.currentTimeMillis()), CANCELLED);
         }
 
         private void finish(ChatRecord.Message answer, String note) {
+            // Nach dem letzten Layout-Durchgang den Mitroll-Hörer lösen, damit die Blase den Zug nicht festhält
+            // (Codex-Befund zu #967).
+            SwingUtilities.invokeLater(() -> bubble.removeComponentListener(follow));
             ChatRecord next = started;
             if (answer != null) {
                 next = store.load(startedNode, started.id());
@@ -1122,6 +1499,25 @@ public final class ChatPanel extends JPanel {
         return bubble;
     }
 
+    /** Eine Antwortblase mit Markdown-Körper wie im EAC ({@code ChatTranscriptPanel.createMarkdownBubble}). */
+    private AssistantMarkdownBubble addAnswer(String markdown) {
+        if (mermaid == null) {
+            mermaid = CachingMermaidImageRenderer.forChat();
+        }
+        MarkdownMessageView view = new MarkdownMessageView(MarkdownTheme.forBubble(bubbles.getAssistantBackground(),
+                bubbles.getAssistantForeground()), linkOpener, mermaid);
+        view.setMarkdown(markdown);
+        AssistantMarkdownBubble bubble = new AssistantMarkdownBubble(BubbleSide.LEFT, bubbles, ASSISTANT, view);
+        BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
+        row.setAlignmentX(LEFT_ALIGNMENT);
+        emptyNote.setVisible(false);
+        transcript.add(row);
+        transcript.revalidate();
+        transcript.repaint();
+        scrollDown();
+        return bubble;
+    }
+
     private void scrollDown() {
         SwingUtilities.invokeLater(() -> {
             javax.swing.JScrollBar bar = transcriptScroll.getVerticalScrollBar();
@@ -1154,8 +1550,7 @@ public final class ChatPanel extends JPanel {
                 addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du",
                         message.text());
             } else {
-                addBubble(BubbleSide.LEFT, bubbles.getAssistantBackground(), bubbles.getAssistantForeground(),
-                        ASSISTANT, message.cancelled() ? message.text() + "\n\n" + CANCELLED : message.text());
+                addAnswer(message.cancelled() ? message.text() + "\n\n" + CANCELLED : message.text());
             }
         }
         transcript.revalidate();

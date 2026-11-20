@@ -88,6 +88,15 @@ public final class InMemoryPageCache implements PageCacheReader {
     }
 
     @Override
+    public Optional<PageHeader> header(PageKey key) {
+        return spaces.entrySet().stream()
+                .filter(entry -> entry.getKey().startsWith(key.sourceId() + "\n"))
+                .map(entry -> entry.getValue().headers().get(key.pageId()))
+                .filter(java.util.Objects::nonNull)
+                .findFirst();
+    }
+
+    @Override
     public List<PageHeader> children(String sourceId, String spaceKey, String parentPageId, int limit) {
         return spaces.entrySet().stream()
                 .filter(entry -> entry.getKey().startsWith(sourceId + "\n"))

@@ -14,8 +14,17 @@ public enum AssetKind {
     VECTOR,
     /** Rasterbild (PNG, JPEG, GIF …). */
     IMAGE,
+    /** Eine Marke eines Videos: ein virtueller Anhang, dessen Standbild beschrieben wird. */
+    MARK,
+    /** Das Transkript eines Videos: ein virtueller Anhang mit dem erkannten Text, in der Ablage gespeichert. */
+    TRANSCRIPT,
     /** Alles andere, etwa PDF oder Office-Dokumente. */
     OTHER;
+
+    /** Medientyp der Marken eines Videos. */
+    public static final String MARK_MEDIA_TYPE = "application/vnd.aresstack.video-mark";
+    /** Medientyp des Transkripts eines Videos. */
+    public static final String TRANSCRIPT_MEDIA_TYPE = "text/vnd.aresstack.video-transcript";
 
     static final String DRAWIO_MEDIA_TYPE = "application/vnd.jgraph.mxfile";
     static final String DRAWIO_SUFFIX = ".drawio";
@@ -27,6 +36,12 @@ public enum AssetKind {
     public static AssetKind of(String mediaType, String title) {
         String type = mediaType == null ? "" : mediaType.toLowerCase(Locale.ROOT).split(";", 2)[0].trim();
         String name = title == null ? "" : title.toLowerCase(Locale.ROOT);
+        if (type.equals(MARK_MEDIA_TYPE)) {
+            return MARK;
+        }
+        if (type.equals(TRANSCRIPT_MEDIA_TYPE)) {
+            return TRANSCRIPT;
+        }
         if (type.equals(DRAWIO_MEDIA_TYPE) || name.endsWith(DRAWIO_SUFFIX)) {
             return DIAGRAM;
         }

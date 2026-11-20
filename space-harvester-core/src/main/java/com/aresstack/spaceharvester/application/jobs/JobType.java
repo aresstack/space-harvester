@@ -84,20 +84,59 @@ public enum JobType {
      * Umfangs gegen ihren Originalsatz; nur auf ausdrückliche Anforderung und nur Seiten mit KI-Freigabe, nie
      * Folgeauftrag einer Analyse. Ein neuer Lauf fragt nur, was in der Ablage des Prüfschritts fehlt.
      */
-    STATEMENT_CHECK;
+    STATEMENT_CHECK,
+    /**
+     * „Transkript ziehen“ für „In PPTX umwandeln“ (Angelo 20.11.2026): das abgelegte Transkript eines Videos, von der
+     * App lokal vervollständigt; läuft zugleich mit {@link #VIDEO_SLIDES}. Fortsetzen setzt hinter dem letzten
+     * erkannten Abschnitt fort.
+     */
+    VIDEO_TRANSCRIPT,
+    /**
+     * „Folien beschreiben“ für „In PPTX umwandeln“: fehlende Standbilder der Folienmarken ziehen und jede Folie mit
+     * dem Vision-Modell beschreiben, parallel; nur Seiten mit KI-Freigabe (ADR 0028). Fortsetzen fragt nur Folien
+     * ohne Beschreibung.
+     */
+    VIDEO_SLIDES,
+    /**
+     * „Transkript korrigieren“ für „In PPTX umwandeln“: das Text-Modell korrigiert Spracherkennungsfehler mit den
+     * Folienbeschreibungen als Hilfe, paketweise parallel; wartet auf {@link #VIDEO_TRANSCRIPT} und
+     * {@link #VIDEO_SLIDES}.
+     */
+    TRANSCRIPT_CORRECTION,
+    /**
+     * „Folienkommentare“ für „In PPTX umwandeln“: je Folie Standbild und Transkriptauszug einzeln an das
+     * Vision-Modell, das den Vortragstext schreibt, parallel; wartet auf {@link #TRANSCRIPT_CORRECTION}. Fortsetzen
+     * fragt nur Folien ohne Text.
+     */
+    SLIDE_NOTES,
+    /**
+     * „PPTX erzeugen“ für „In PPTX umwandeln“: die PowerPoint-Datei mit je Folie ihrem Standbild und dem Vortragstext
+     * als Notiz im Ausgabeordner; wartet auf {@link #SLIDE_NOTES}.
+     */
+    PRESENTATION_EXPORT;
+
+    /** Gehört zu „In PPTX umwandeln“ (Angelo 20.11.2026). */
+    public boolean presentation() {
+        return this == VIDEO_TRANSCRIPT || this == VIDEO_SLIDES || this == TRANSCRIPT_CORRECTION
+                || this == SLIDE_NOTES || this == PRESENTATION_EXPORT;
+    }
+
+    /**
+     * Lädt von der Quelle herunter: Bilder, Anhänge und die Exporte aus der Quelle (Confluence-Metadaten, Analytics;
+     * #944). Erst Vorbereitung (Seiten aus dem Bestand bestimmen, ohne Quelle), dann Download, mit je eigener Grenze
+     * ({@link JobStage}): Vorbereitung {@code jobs.parallel-preparations}, Download {@code jobs.parallel-downloads},
+     * in der App die Auswahl „Vorbereitung“ und „Downloads“ der Auftragsliste. Abgleiche und
+     * Seitenexporte zählen getrennt, aber nach derselben Einstellung „Vorbereitung“. Die Verbindungen je Download („Verbindungen“) teilen nur Bilder und
+     * Anhänge unter sich auf; ein Export aus der Quelle fragt mit einer Verbindung, Seite für Seite.
+     */
+    public boolean download() {
+        return this == ASSETS || this == ATTACHMENTS || this == METADATA_EXPORT || this == ANALYTICS_EXPORT;
+    }
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
      * alle Plätze.
      */
-    /**
-     * Lädt Dateien herunter (Bilder, Anhänge): erst Vorbereitung, dann Download, mit je eigener Grenze
-     * ({@link JobStage}); belegt keinen der Plätze für Abgleiche und Exporte.
-     */
-    public boolean download() {
-        return this == ASSETS || this == ATTACHMENTS;
-    }
-
     public boolean followUp() {
         return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS || this == GLOSSARY || this == REREAD
                 || this == UPDATE_SUMMARY;
@@ -109,9 +148,16 @@ public enum JobType {
      * Asset-Speicher ab und schreiben beim Anhalten das bisherige Manifest; ein neuer Lauf übernimmt geprüfte Seiten.
      * Anhänge ({@link #ATTACHMENTS}) ebenso. „Neu lesen“ ({@link #REREAD}) überspringt beim neuen Lauf, was schon neu
      * gelesen ist. „Zusammenfassen“ ({@link #UPDATE_SUMMARY}) legt erst am Ende ab und fragt beim neuen Lauf von vorn.
+     * Metadaten ({@link #METADATA_EXPORT}) legen jede abgefragte Seite sofort in einer Teildatei ab und fragen beim
+     * neuen Lauf nur Seiten ohne Daten; Analytics ({@link #ANALYTICS_EXPORT}) fragt von vorn (Angelo 17.11.2026).
      */
     public boolean resumable() {
         return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD
-                || this == UPDATE_SUMMARY;
+                || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT || presentation();
+    }
+
+    /** Export aus der Quelle per REST-Abfrage (Metadaten, Analytics): Gescheitertes fragt ein neuer Lauf erneut. */
+    public boolean sourceQuery() {
+        return this == METADATA_EXPORT || this == ANALYTICS_EXPORT;
     }
 }

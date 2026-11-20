@@ -29,6 +29,14 @@ public interface PageTextIndex {
     Optional<String> inputSha256(PageKey key);
 
     /**
+     * Der abgelegte Medientyp ({@link Entry#mediaType()}) der Seite; leer, wenn sie im Index fehlt oder der Eintrag
+     * vor dem Medientyp entstand (dann schreibt {@link PageTextIndexing} ihn beim nächsten Indizieren nach).
+     */
+    default Optional<String> mediaType(PageKey key) {
+        return Optional.empty();
+    }
+
+    /**
      * Der abgelegte Lesetext der Seite (#181, für den Rerank-Dienst), wenn sie im Index liegt. Entscheidet nicht über
      * Rechte; der Aufrufer prüft {@code content} vorher.
      */
@@ -133,6 +141,23 @@ public interface PageTextIndex {
                 .filter(match -> pages.contains(match.sourceId(), match.pageId())).toList();
     }
 
+    /**
+     * Wie {@link #search(String, Set, SearchSpaces, PageSet, int)}, nur Dokumente dieser Arten ({@link DocumentKind});
+     * leer für alle. Ein Index entscheidet je Dokument vor der Rangfolge: Seite oder Anhang nach Dateiname und
+     * Medientyp, enthaltene Datei nach ihrem Anzeigenamen. Diese Vorgabe für Indizes ohne Medientyp filtert nach, nur
+     * nach den Namen der Treffer.
+     *
+     * @param kinds nur diese Arten oder leer für alle
+     */
+    default List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet pages,
+                               Set<DocumentKind> kinds, int limit) {
+        List<Match> matches = search(text, sourceIds, spaces, pages, limit);
+        if (kinds.isEmpty()) {
+            return matches;
+        }
+        return matches.stream().filter(match -> kinds.contains(match.kind())).toList();
+    }
+
     /** Macht Änderungen dauerhaft. */
     void flush();
 
@@ -142,7 +167,7 @@ public interface PageTextIndex {
      * @param spaceKey    Space bzw. Partition der Seite; ein anderer als bisher gilt auch für die Anhänge der Seite
      * @param inputSha256 Stand des Eintrags: Eingabe-Hash der Projektion samt Titel und Space
      */
-    record Entry(PageKey key, String spaceKey, String title, String text, String inputSha256) {
+    record Entry(PageKey key, String spaceKey, String title, String text, String inputSha256, String mediaType) {
 
         public Entry {
             Objects.requireNonNull(key, "key");
@@ -150,6 +175,17 @@ public interface PageTextIndex {
             title = title == null ? "" : title;
             Objects.requireNonNull(text, "text");
             Objects.requireNonNull(inputSha256, "inputSha256");
+            mediaType = mediaType == null ? "" : mediaType;
+        }
+
+        /** Ohne Medientyp: die Art des Dokuments ({@link DocumentKind}) ergibt sich aus dem Titel. */
+        public Entry(PageKey key, String spaceKey, String title, String text, String inputSha256) {
+            this(key, spaceKey, title, text, inputSha256, "");
+        }
+
+        /** Die Art des Dokuments aus Titel und Medientyp. */
+        public DocumentKind kind() {
+            return DocumentKind.of(title, mediaType);
         }
     }
 
@@ -165,9 +201,11 @@ public interface PageTextIndex {
      * @param partId      Teilkennung ({@code PartId#value()}) der enthaltenen Datei, leer für das Dokument selbst
      * @param partTitle   Anzeigename der enthaltenen Datei, leer für das Dokument selbst oder ohne Namen
      * @param section     Nummer des Abschnitts im Dokument ab 0
+     * @param mediaType   Medientyp des Anhangs, wie die Quelle ihn meldet, leer ohne; für eine enthaltene Datei
+     *                    entscheidet ihr Anzeigename
      */
     record AttachmentEntry(PageKey page, String spaceKey, String attachmentId, String title, String text,
-                           String inputSha256, String partId, String partTitle, int section) {
+                           String inputSha256, String partId, String partTitle, int section, String mediaType) {
 
         public AttachmentEntry {
             Objects.requireNonNull(page, "page");
@@ -181,12 +219,33 @@ public interface PageTextIndex {
             if (section < 0) {
                 throw new IllegalArgumentException("Abschnitt ab 0");
             }
+            mediaType = mediaType == null ? "" : mediaType;
+        }
+
+        /** Ohne Medientyp: die Art des Dokuments ergibt sich aus dem Dateinamen. */
+        public AttachmentEntry(PageKey page, String spaceKey, String attachmentId, String title, String text,
+                               String inputSha256, String partId, String partTitle, int section) {
+            this(page, spaceKey, attachmentId, title, text, inputSha256, partId, partTitle, section, "");
         }
 
         /** Das Dokument selbst in einem Eintrag. */
         public AttachmentEntry(PageKey page, String spaceKey, String attachmentId, String title, String text,
                                String inputSha256) {
             this(page, spaceKey, attachmentId, title, text, inputSha256, "", "", 0);
+        }
+
+        /** Das Dokument selbst in einem Eintrag, mit dem Medientyp der Quelle. */
+        public AttachmentEntry(PageKey page, String spaceKey, String attachmentId, String title, String text,
+                               String inputSha256, String mediaType) {
+            this(page, spaceKey, attachmentId, title, text, inputSha256, "", "", 0, mediaType);
+        }
+
+        /**
+         * Die Art des Dokuments: bei einer enthaltenen Datei aus ihrem Anzeigenamen, sonst aus Dateiname und
+         * Medientyp des Anhangs.
+         */
+        public DocumentKind kind() {
+            return partId.isEmpty() ? DocumentKind.of(title, mediaType) : DocumentKind.of(partTitle, null);
         }
 
         @Override
@@ -243,6 +302,17 @@ public interface PageTextIndex {
         /** Ob der Treffer im Text eines Anhangs liegt. */
         public boolean inAttachment() {
             return attachmentId != null;
+        }
+
+        /**
+         * Die Art des gefundenen Dokuments nach seinem Namen: enthaltene Datei, Anhang oder Seite; ohne den Medientyp,
+         * den nur der Index kennt.
+         */
+        public DocumentKind kind() {
+            if (partId != null) {
+                return DocumentKind.of(partTitle, null);
+            }
+            return DocumentKind.of(attachmentId != null ? attachmentTitle : title, null);
         }
     }
 }

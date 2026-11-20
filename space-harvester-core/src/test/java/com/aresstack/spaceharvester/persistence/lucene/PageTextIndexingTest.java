@@ -42,6 +42,25 @@ class PageTextIndexingTest {
         }
     }
 
+    /** Einträge aus der Zeit vor dem Artenfilter tragen keinen Medientyp; das nächste Indizieren schreibt ihn nach. */
+    @Test
+    void anEntryWithoutMediaTypeIsRewrittenOnceWithTheMediaTypeOfThePayload() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector()), index);
+            PageSnapshot snapshot = TestSnapshots.page("wiki", "9", "DEV", null, "1", TestSnapshots.json(
+                    "{\"body\":{\"storage\":{\"value\":\"<p>Nachtlauf</p>\"}}}"));
+            assertThat(texts.index(snapshot)).isTrue();
+            String state = index.inputSha256(snapshot.key()).orElseThrow();
+            // Wie ein alter Eintrag: gleicher Stand, ohne Medientyp.
+            index.put(new PageTextIndex.Entry(snapshot.key(), "DEV", snapshot.metadata().title(), "Nachtlauf", state));
+            assertThat(index.mediaType(snapshot.key())).isEmpty();
+
+            assertThat(texts.index(snapshot)).as("einmal nachgeschrieben").isTrue();
+            assertThat(index.mediaType(snapshot.key())).contains(snapshot.payload().mediaType());
+            assertThat(texts.index(snapshot)).as("danach unverändert").isFalse();
+        }
+    }
+
     @Test
     void aCachedPageMissingFromTheIndexIsIndexedBeforeItsVersionCounts() {
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {

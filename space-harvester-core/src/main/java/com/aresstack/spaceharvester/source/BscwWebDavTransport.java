@@ -1,0 +1,225 @@
+package com.aresstack.spaceharvester.source;
+
+import com.aresstack.enterpriseai.adyton.SecretMaterial;
+import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
+import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
+import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
+import com.aresstack.enterpriseai.astu.security.SecretRef;
+import com.aresstack.spaceharvester.source.network.ProxyCredentials;
+import com.aresstack.spaceharvester.source.network.RoutedWebDavHttp;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import javax.net.ssl.X509TrustManager;
+
+/** Read BSCW WebDAV through the same routed Reactor Netty stack as Confluence. */
+final class BscwWebDavTransport {
+
+    private static final int MAX_METADATA_BYTES = 16 * 1024 * 1024;
+
+    private final URI root;
+    private final ConfiguredSecrets secrets;
+    private final SecretRef secretRef;
+    private final String userAgent;
+    private final int maxFileBytes;
+    private final RoutedWebDavHttp http;
+
+    BscwWebDavTransport(URI root, String sourceId, ConfiguredSecrets secrets, HttpRoutePort routes,
+                        ProxyCredentials proxyCredentials, String userAgent, int maxFileBytes,
+                        X509TrustManager trustManager) {
+        this.root = root;
+        this.secrets = secrets;
+        this.secretRef = ConfiguredSecrets.refFor(sourceId);
+        this.userAgent = userAgent;
+        this.maxFileBytes = maxFileBytes;
+        this.http = new RoutedWebDavHttp(routes, proxyCredentials, trustManager,
+                Math.max(MAX_METADATA_BYTES, maxFileBytes));
+    }
+
+    byte[] properties(URI resource, int depth) throws KnowledgeSourceException {
+        return request(resource, "PROPFIND", depth, MAX_METADATA_BYTES, 207);
+    }
+
+    /** Read a bounded part of an original file; never follow authentication redirects. */
+    byte[] downloadRange(URI resource, long offset, int count) throws KnowledgeSourceException {
+        if (offset < 0 || count < 1 || count > 262144 || offset > Long.MAX_VALUE - count) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Invalid BSCW byte range");
+        }
+        String range = "bytes=" + offset + "-" + (offset + count - 1);
+        RoutedWebDavHttp.Result response = exchange(resource, "GET", -1, count, range);
+        if (response.status() != 206) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED,
+                    "BSCW unterstützt für dieses Video keine HTTP-Range-Abfragen (HTTP "
+                            + response.status() + ")");
+        }
+        return response.body();
+    }
+
+    /**
+     * Read the part of an original file from {@code offset}, at most {@code count} bytes (one chunk of a download to
+     * disk); the last chunk may be shorter. If BSCW ignores the range on the first chunk, its answer is the whole file,
+     * within the usual file allowance ({@link Chunk#whole()}). Never follow authentication redirects.
+     *
+     * @throws KnowledgeSourceException {@code UNSUPPORTED} if BSCW ignores the range after the first chunk
+     */
+    Chunk downloadChunk(URI resource, long offset, int count) throws KnowledgeSourceException {
+        if (offset < 0 || count < 1 || count > maxFileBytes || offset > Long.MAX_VALUE - count) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Invalid BSCW byte range");
+        }
+        RoutedWebDavHttp.Result response = exchange(resource, "GET", -1, offset == 0 ? maxFileBytes : count,
+                "bytes=" + offset + "-" + (offset + count - 1));
+        if (response.status() == 416) {
+            return new Chunk(new byte[0], false);
+        }
+        if (response.status() == 200 && offset == 0) {
+            return new Chunk(response.body(), true);
+        }
+        if (response.status() != 206 || response.body().length > count) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED,
+                    "BSCW unterstützt für diese Datei keine HTTP-Range-Abfragen (HTTP " + response.status() + ")");
+        }
+        return new Chunk(response.body(), false);
+    }
+
+    /** One answer of {@link #downloadChunk}: a part, or with {@code whole} the complete file. */
+    record Chunk(byte[] bytes, boolean whole) {
+    }
+
+    byte[] download(URI resource) throws KnowledgeSourceException {
+        return downloadResource(resource).bytes();
+    }
+
+    /**
+     * Treat a WebDAV redirect as a link resource, not as a failed file download.
+     * Never follow a redirect with source credentials.
+     */
+    Download downloadResource(URI resource) throws KnowledgeSourceException {
+        RoutedWebDavHttp.Result response = exchange(resource, "GET", -1, maxFileBytes);
+        if (response.status() == 200) {
+            return new Download(response.body(), null);
+        }
+        if (response.status() == 301 || response.status() == 302 || response.status() == 303
+                || response.status() == 307 || response.status() == 308) {
+            URI destination = redirectTarget(checked(resource), response.location());
+            return new Download(destination.toASCIIString().getBytes(StandardCharsets.UTF_8), destination);
+        }
+        throw status(response.status());
+    }
+
+    record Download(byte[] bytes, URI linkedTarget) {
+        boolean isLink() {
+            return linkedTarget != null;
+        }
+    }
+
+    private static URI redirectTarget(URI source, String location) throws KnowledgeSourceException {
+        try {
+            if (location == null || location.isBlank() || location.length() > 8192) {
+                throw new IllegalArgumentException("Missing or oversized Location header");
+            }
+            URI target = source.resolve(URI.create(location)).normalize();
+            String scheme = target.getScheme();
+            if (target.getHost() == null || target.getRawUserInfo() != null
+                    || (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme))) {
+                throw new IllegalArgumentException("Redirect target must be an HTTP(S) URL without credentials");
+            }
+            return target;
+        } catch (IllegalArgumentException invalid) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW WebDAV redirect has no safe target");
+        }
+    }
+
+    /** Reject off-origin links and unexpected DAV paths before using credentials. */
+    URI checked(URI resource) throws KnowledgeSourceException {
+        if (resource == null || !root.getScheme().equalsIgnoreCase(resource.getScheme())
+                || !root.getHost().equalsIgnoreCase(resource.getHost())
+                || root.getPort() != resource.getPort() || resource.getRawUserInfo() != null
+                || resource.getRawQuery() != null || resource.getRawFragment() != null
+                || !resource.normalize().getRawPath().startsWith("/sec/bscw.cgi/")) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "WebDAV resource is outside the BSCW server");
+        }
+        return resource.normalize();
+    }
+
+    URI resolve(String href) throws KnowledgeSourceException {
+        try {
+            return checked(root.resolve(href));
+        } catch (IllegalArgumentException e) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Invalid WebDAV href");
+        }
+    }
+
+    private byte[] request(URI resource, String method, int depth, int limit, int expected)
+            throws KnowledgeSourceException {
+        RoutedWebDavHttp.Result response = exchange(resource, method, depth, limit);
+        if (response.status() != expected) {
+            throw status(response.status());
+        }
+        return response.body();
+    }
+
+    private RoutedWebDavHttp.Result exchange(URI resource, String method, int depth, int limit)
+            throws KnowledgeSourceException {
+        return exchange(resource, method, depth, limit, null);
+    }
+
+    private RoutedWebDavHttp.Result exchange(URI resource, String method, int depth, int limit, String range)
+            throws KnowledgeSourceException {
+        URI target = checked(resource);
+        try (SecretMaterial secret = secrets.resolve(secretRef)) {
+            if (!secret.hasPrincipal()) {
+                throw new KnowledgeSourceException(Kind.ACCESS_DENIED, "BSCW username missing");
+            }
+            char[] password = secret.copySecret();
+            Map<String, String> headers = new LinkedHashMap<>();
+            try {
+                headers.put("Authorization", basic(secret.principal(), password));
+            } finally {
+                Arrays.fill(password, '\0');
+            }
+            if (userAgent != null) {
+                headers.put("User-Agent", userAgent);
+            }
+            if (depth >= 0) {
+                headers.put("Depth", Integer.toString(depth));
+            }
+            if (range != null) {
+                headers.put("Range", range);
+            }
+            RoutedWebDavHttp.Result response = range == null
+                    ? http.exchange(target, method, headers)
+                    : http.exchange(target, method, headers, limit);
+            if (response.body().length > limit) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW WebDAV response too large");
+            }
+            return response;
+        } catch (SecretUnavailableException e) {
+            throw new KnowledgeSourceException(Kind.ACCESS_DENIED, "BSCW credentials unavailable");
+        } catch (RoutedWebDavHttp.RouteUnavailableException e) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "BSCW WebDAV route-unavailable: " + e.getMessage());
+        } catch (RuntimeException e) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE,
+                    "BSCW WebDAV request failed (" + e.getClass().getSimpleName() + ")", e);
+        }
+    }
+
+    private static String basic(String username, char[] password) {
+        byte[] bytes = (username + ":" + new String(password)).getBytes(StandardCharsets.UTF_8);
+        try {
+            return "Basic " + Base64.getEncoder().encodeToString(bytes);
+        } finally {
+            Arrays.fill(bytes, (byte) 0);
+        }
+    }
+
+    private static KnowledgeSourceException status(int status) {
+        Kind kind = status == 401 || status == 403 ? Kind.ACCESS_DENIED
+                : status == 407 || status == 429 || status >= 500 ? Kind.UNAVAILABLE
+                : status == 404 ? Kind.NOT_FOUND : Kind.INVALID_RESPONSE;
+        return new KnowledgeSourceException(kind, "BSCW WebDAV HTTP " + status);
+    }
+}

@@ -95,6 +95,10 @@ public final class ChatTurn {
 
         /** Mit dem bis dahin empfangenen Text. */
         void cancelled(String partial);
+
+        /** Das Modell wird geladen; die Antwort kommt, sobald es läuft. */
+        default void loading() {
+        }
     }
 
     /** Der Zugriff auf das Änderungsprotokoll, für Tests austauschbar. */
@@ -251,6 +255,11 @@ public final class ChatTurn {
             public void failed(AiChatException error) {
                 String message = describe(error);
                 finish(() -> listener.failed(message));
+            }
+
+            @Override
+            public void loading() {
+                onUi(listener::loading);
             }
 
             @Override

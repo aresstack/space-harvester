@@ -117,6 +117,10 @@ public final class ReaderImageStore {
             if (bytes == null || bytes.length == 0) {
                 return new Loaded(null, null, bytes == null ? null : "Bild: leere Antwort (0 Bytes)");
             }
+            if (looksLikeHtml(bytes)) {
+                return new Loaded(null, null,
+                        "Der Abruf lieferte HTML statt Bilddaten; prüfe die Anmeldung oder Proxy-Antwort.");
+            }
             boolean svg = isSvg(bytes);
             int[] size = svg ? null : dimensions(bytes);
             if (size != null && (long) size[0] * size[1] > MAX_PIXELS) {
@@ -149,6 +153,14 @@ public final class ReaderImageStore {
         boolean isAnimatedGif() {
             return bytes != null && isGif(bytes) && ReaderImageStore.isAnimatedGif(bytes);
         }
+    }
+
+    /** Identify an HTML login or proxy response without exposing its content. */
+    private static boolean looksLikeHtml(byte[] bytes) {
+        String prefix = new String(bytes, 0, Math.min(bytes.length, 256), StandardCharsets.UTF_8)
+                .trim().toLowerCase(java.util.Locale.ROOT);
+        return prefix.startsWith("<!doctype html") || prefix.startsWith("<html")
+                || prefix.startsWith("<head") || prefix.startsWith("<body");
     }
 
     private static boolean isGif(byte[] data) {

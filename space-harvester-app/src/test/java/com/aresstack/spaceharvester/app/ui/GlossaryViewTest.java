@@ -59,12 +59,12 @@ class GlossaryViewTest {
         Workspace workspace = context.runtime().workspace();
         assertThat(workspace.glossary()).isPresent();
 
-        TermsView[] view = new TermsView[1];
+        GlossaryTab[] view = new GlossaryTab[1];
         SwingUtilities.invokeAndWait(() -> {
-            view[0] = new TermsView(context);
-            view[0].tabs().select(TermsView.GLOSSARY);
+            view[0] = new GlossaryTab(context, () -> context.runtime().workspace().glossary());
+            view[0].load();
         });
-        GlossaryTab tab = view[0].glossary();
+        GlossaryTab tab = view[0];
         await("leer geladen", () -> GlossaryTab.EMPTY.equals(tab.directory().hint()));
         SwingUtilities.invokeAndWait(() -> {
             assertThat(tab.addButton().isEnabled()).isTrue();

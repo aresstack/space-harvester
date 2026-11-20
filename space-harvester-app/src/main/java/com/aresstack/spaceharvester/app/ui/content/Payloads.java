@@ -30,8 +30,12 @@ final class Payloads {
         return type.startsWith("application/json") || type.contains("+json");
     }
 
-    /** Eingerücktes JSON, sonst der Text der Payload (UTF-8), höchstens {@link #MAX_DISPLAY_CHARS} Zeichen. */
+    /** Render source text only; never decode arbitrary binary data into a Swing text component. */
     static String display(NativePayload payload) {
+        if (!isText(payload)) {
+            return "Binärinhalt (" + payload.mediaType() + ", " + payload.length()
+                    + " Bytes). Die Originaldatei kann in der Leseansicht geöffnet oder gespeichert werden.";
+        }
         String text = null;
         if (isJson(payload)) {
             try {
@@ -46,6 +50,15 @@ final class Payloads {
         return text.length() > MAX_DISPLAY_CHARS
                 ? text.substring(0, MAX_DISPLAY_CHARS) + "\n… gekürzt angezeigt; „Speichern unter …“ speichert vollständig"
                 : text;
+    }
+
+    /** Keep binary payload bytes out of diagnostic text fields and text decoders. */
+    static boolean isText(NativePayload payload) {
+        String type = payload.mediaType().toLowerCase(Locale.ROOT);
+        return type.startsWith("text/") || isJson(payload) || type.contains("+xml")
+                || type.equals("application/xml") || type.equals("application/javascript")
+                || type.equals("application/x-yaml") || type.equals("application/yaml")
+                || type.equals("application/sql");
     }
 
     /** {@code body.storage.value} einer Confluence-Payload. */

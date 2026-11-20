@@ -10,13 +10,22 @@ import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Facts;
 import com.aresstack.spaceharvester.app.ui.Feedback;
+import com.aresstack.spaceharvester.app.ui.GlossaryTab;
 import com.aresstack.spaceharvester.app.ui.PillTabs;
 import com.aresstack.spaceharvester.app.ui.Problems;
+import com.aresstack.spaceharvester.app.ui.TermGraphView;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
 import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderFileOpener;
+import com.aresstack.spaceharvester.app.ui.content.viewer.VideoFrameGrabber;
+import com.aresstack.spaceharvester.app.ui.content.viewer.VideoViewerPanel;
+import com.aresstack.spaceharvester.app.ui.content.viewer.VideoTranscriptSource;
+import com.aresstack.spaceharvester.app.ui.content.viewer.VideoTranscriptionPanel;
+import com.aresstack.spaceharvester.app.transcription.TranscribeAudioUseCase;
+import com.aresstack.spaceharvester.app.transcription.VlcPcmAudioDecoder;
+import com.aresstack.spaceharvester.app.transcription.WhisperSpeechTranscriber;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
@@ -102,13 +111,18 @@ public final class PageDetailPanel extends JPanel {
     static final String STATEMENTS_PLACEHOLDER = "Noch keine Aussagen – Analyse folgt";
     private static final String GRAPH = "Graph";
     static final String GRAPH_PLACEHOLDER = "Noch kein Wissensgraph – Analyse folgt";
-    private static final String ADVANCED = "Erweitert";
+    /** Eigenschaften und Technik der Seite; „Eigenschaften“ ist sein erster Unterreiter (Angelo, 19.11.2026). */
+    private static final String ADVANCED = "Info";
     /** Reiter „Stand“ (ADR 0032, FL6): was in der Auswahl links gilt, geplant, unklar oder überholt ist. */
     static final String STAND = "Stand";
     /** Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links, auch ohne gezeigte Seite. */
     static final String EXPORT = "Export";
     static final String CHAT = "Chat";
-    private static final String ANALYSIS = "Analyse";
+    /**
+     * Unterreiter „Beziehungen“ unter „Analysen“ (vorher „Analyse“ unter „Info“, Angelo 20.11.2026): Analyseschritte
+     * und Beziehungen der Begriffe der Seite, ohne Seite die der Auswahl.
+     */
+    static final String RELATIONS = "Beziehungen";
     private static final String RAW = "Originaldaten";
     private static final String TECHNICAL = "Technische Angaben";
     private static final String EMPTY = "empty";
@@ -119,7 +133,6 @@ public final class PageDetailPanel extends JPanel {
     /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
     private static final String SOURCE_CARD = "source";
     private static final String SOURCE_TEXT_CARD = "source-text";
-    private static final String SOURCE_PROPERTIES_CARD = "source-properties";
     /** Technik-Reiter ohne Seite: dieselben drei Unterreiter, unter „Analyse“ nur die Beziehungen der Auswahl. */
     private static final String WIDE_ADVANCED_CARD = "wide-advanced";
     static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
@@ -148,6 +161,11 @@ public final class PageDetailPanel extends JPanel {
     static final String OVERVIEW_TERMS = "Begriffe der Auswahl";
     /** Ob die Begriffe der Auswahl gerade zu sehen sind (Analysen ohne Seite, Reiter „Begriffe“). */
     private boolean overviewTermsShown;
+    /** Fachglossar und Graph der Auswahl, hinten in der Reiterzeile von Analysen ohne Seite (BG2c). */
+    private final GlossaryTab overviewGlossary;
+    private final TermGraphView overviewGraph;
+    /** Schlüssel der Statuszeile für das Fachglossar der Auswahl. */
+    static final String OVERVIEW_GLOSSARY = "Fachglossar der Auswahl";
     /** Anmeldungen beim Bestand der Auswahl (ADR 0027): ändert er sich, zählen die Begriffe neu. */
     private final List<com.aresstack.spaceharvester.application.observe.Subscription> overviewHoldings =
             new ArrayList<>();
@@ -157,6 +175,11 @@ public final class PageDetailPanel extends JPanel {
             new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, STAND, StandingTab.HELP);
     /** Wohin nach dem Laden gesprungen wird (aus „Stand“); {@code null} ohne. */
     private StandingTab.Target pendingJump;
+    /** Hilfe zu Fachglossar und Graph der Auswahl, je nur auf ihrem Reiter zu sehen. */
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton glossaryHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, StandingTab.GLOSSARY, GlossaryTab.HELP);
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton graphHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, StandingTab.GRAPH, TermGraphView.HELP);
     private final JLabel empty = Comic.muted(EMPTY_PAGE);
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
@@ -190,7 +213,19 @@ public final class PageDetailPanel extends JPanel {
         }
     };
     /** Reiter „Text“: der Lesetext mit dem Navigationsbanner der Dokumentnavigation darüber (Kopie aus dem EAC). */
+    private static final String TEXT_READER_CARD = "reader";
+    private static final String TEXT_VIDEO_TRANSCRIPT_CARD = "video-transcript";
+    /** Im Reiter „Text“ statt des Lesetexts: das Original einer Datei ohne Textauszug (Bild, …) im Viewer. */
+    private static final String TEXT_ORIGINAL_CARD = "original";
+    /** Hinweis im Reiter „Text“ zu einer leeren Datei. */
+    static final String EMPTY_FILE = "Diese Datei ist leer: Die Quelle meldet 0 Bytes. Es gibt nichts anzuzeigen.";
+    private final java.awt.CardLayout textCardLayout = new java.awt.CardLayout();
+    private final JPanel textContents = new JPanel(textCardLayout);
+    private final VideoTranscriptionPanel videoTranscript = new VideoTranscriptionPanel(
+            new TranscribeAudioUseCase(new VlcPcmAudioDecoder(), new WhisperSpeechTranscriber()));
     private final NavigableDocumentPage readerPage;
+    /** Die Sanduhr über dem Text, solange die Seite lädt (wie bei den Anhängen, ohne Esc). */
+    private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay textBusy;
     private final JLabel acronymHint = Comic.muted(" ");
     private final JLabel acronymDetail = Comic.muted(" ");
     private final ComposerButton recomputeReader = Comic.button("Analyse neu berechnen",
@@ -201,6 +236,9 @@ public final class PageDetailPanel extends JPanel {
     private final JTextArea storage = Comic.code();
     private final AssetsModel assetsModel = new AssetsModel();
     private final JTable assets = Comic.table(new JTable(assetsModel));
+    /** Die Sanduhr über der Anhangsliste, solange sie lädt. */
+    private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay assetsBusy =
+            new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(Comic.scroll(assets));
     private final JLabel assetsHint = Comic.muted(" ");
     /** Unterreiter „Analyse“ der Seite: Analyseschritte und Beziehungen der Seite in einer Ansicht (BG2b). */
     private final AnalysisView analysisView;
@@ -287,7 +325,42 @@ public final class PageDetailPanel extends JPanel {
     private com.aresstack.spaceharvester.application.observe.Subscription releaseSubscription =
             com.aresstack.spaceharvester.application.observe.Subscription.NONE;
     private AppRuntime releaseRuntime;
+    private static final String ORIGINAL_PAGE_CARD = "original-page";
+    private static final String ORIGINAL_FILE_CARD = "original-file";
     private final ReadingPane readingPane = new ReadingPane();
+    private final java.awt.CardLayout originalCards = new java.awt.CardLayout();
+    private final JPanel originalContent = new JPanel(originalCards);
+    private final JPanel fileContent = new JPanel(new BorderLayout());
+    private AttachmentViewerPanel originalFileViewer;
+    /** Ob im Reiter „Text“ die Transkription eines Videos steht. */
+    private boolean videoTranscriptShown;
+    /** Das gezeigte Original, für den Viewer im Reiter „Text“; {@code null} ohne. */
+    private ReaderAttachment originalAttachment;
+    /** Lädt dieses Original höchstens einmal, für beide Viewer. */
+    private ReaderAttachmentLoader originalLoader;
+    /** Der Viewer im Reiter „Text“ für eine Datei ohne Textauszug. */
+    private AttachmentViewerPanel textOriginalViewer;
+    private final JPanel textOriginal = new JPanel(new BorderLayout());
+    /** Die Zeile mit dem Akronym-Hinweis über dem Lesetext; über dem Transkript eines Videos ausgeblendet. */
+    private final JPanel acronymBar = new JPanel(new BorderLayout(8, 0));
+    /** Ob die gezeigte Datei leer ist (die Quelle meldet 0 Bytes). */
+    private boolean emptyFileShown;
+    /**
+     * Die Werkzeuge dieser Ansicht in der Leiste mit der Lupe ({@code ContentView.tools()}), je nach Reiter: im Chat
+     * die Schnellaktionen (mittig), in der Leseansicht einer Datei „Speichern“/„Öffnen“ samt „Typ · Größe“, im Text
+     * eines Videos der Transkript-Knopf (Angelo, 19.11.2026: eine Leiste, die je nach Ansicht wechselt).
+     */
+    private final JPanel footTools = new JPanel(new BorderLayout());
+    private VideoViewerPanel originalVideoViewer;
+    /** Das gezeigte MP4-Video für seine Standbilder in „Analysen › Bilder“; {@code null} ohne Video. */
+    private VideoFrameSource videoFrames;
+
+    /** Woher die Standbilder eines Videos kommen: dieselben Bereichsabrufe wie der Player, zu dieser Seite. */
+    private record VideoFrameSource(String sourceId, String pageId,
+            com.aresstack.spaceharvester.app.ui.content.viewer.MediaStreamBridge.ChunkSource reader, long size,
+            String mediaType) {
+    }
+    private boolean originalLinkShown;
     /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
     static final String READING_HELP = "Die Leseansicht zeigt die Seite, wie die Quelle sie darstellt. Liegt sie im "
             + "Cache, erscheint sie sofort; die Prüfung bei der Quelle läuft im Hintergrund.\n\n"
@@ -375,9 +448,13 @@ public final class PageDetailPanel extends JPanel {
                 : context.runtime().workspace());
         this.export = new ExportPanel(context);
         this.chat = new ChatPanel(context);
+        footTools.setOpaque(false);
         this.standing = new StandingTab(context::runtime);
         this.analysisView = new AnalysisView(context, true);
         this.wideAnalysis = new AnalysisView(context, false);
+        this.overviewGlossary = new GlossaryTab(context, () -> context.runtime() == null
+                ? java.util.Optional.empty() : context.runtime().workspace().glossary());
+        this.overviewGraph = new TermGraphView(context);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
         title.setFont(Comic.semiBold(15f));
@@ -395,14 +472,20 @@ public final class PageDetailPanel extends JPanel {
 
         JPanel readerPanel = new JPanel(new BorderLayout(0, 6));
         readerPanel.setOpaque(false);
-        JPanel acronymBar = new JPanel(new BorderLayout(8, 0));
         acronymBar.setOpaque(false);
         acronymBar.add(acronymHint, BorderLayout.CENTER);
         acronymBar.add(Comic.row(recomputeReader), BorderLayout.EAST);
         readerPanel.add(acronymBar, BorderLayout.NORTH);
         // Der Banner liegt als eigene Ebene über dem Lesetext und nimmt ihm keine Breite.
         readerPage = new NavigableDocumentPage(Comic.scroll(reader), reader, READER_PADDING_TOP);
-        readerPanel.add(readerPage, BorderLayout.CENTER);
+        textBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(readerPage);
+        textBusy.setHighlight(Comic.BLUE);
+        textBusy.setVeilColor(Comic.SURFACE);
+        textContents.add(textBusy, TEXT_READER_CARD);
+        textContents.add(videoTranscript, TEXT_VIDEO_TRANSCRIPT_CARD);
+        textOriginal.setOpaque(false);
+        textContents.add(textOriginal, TEXT_ORIGINAL_CARD);
+        readerPanel.add(textContents, BorderLayout.CENTER);
         // Ein Themenabschnitt beginnt mit einem Absatz: unter „Absätze“ steht derselbe Absatz gewählt bereit.
         readerPage.onJump(section -> {
             if (section.passageId() != null) {
@@ -414,7 +497,10 @@ public final class PageDetailPanel extends JPanel {
         JPanel attachmentList = new JPanel(new BorderLayout(0, 6));
         attachmentList.setOpaque(false);
         attachmentList.add(assetsHint, BorderLayout.NORTH);
-        attachmentList.add(Comic.scroll(assets), BorderLayout.CENTER);
+        // Solange die Liste lädt, dreht sich die Sanduhr der Suche darüber, ohne Esc in der Mitte.
+        assetsBusy.setHighlight(Comic.BLUE);
+        assetsBusy.setVeilColor(Comic.SURFACE);
+        attachmentList.add(assetsBusy, BorderLayout.CENTER);
         attachmentList.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.SOUTH);
         attachmentLayers.setLayout(new FillLayout());
         attachmentLayers.add(attachmentList, JLayeredPane.DEFAULT_LAYER);
@@ -434,20 +520,20 @@ public final class PageDetailPanel extends JPanel {
         PillTabs rawTabs = new PillTabs()
                 .tab("Payload", Comic.scroll(raw))
                 .tab("Storage-Format", Comic.scroll(storage));
-        advancedTabs.tab(TECHNICAL, Comic.scroll(padded(technical)))
-                .tab(ANALYSIS, analysisView)
+        advancedTabs.tab(PROPERTIES, Comic.scroll(padded(properties)))
+                .tab(TECHNICAL, Comic.scroll(padded(technical)))
                 .tab(RAW, rawTabs);
-        // Die Aktionen stehen rechts in der Zeile der Unterreiter, nicht als eigene Knopfzeilen darüber und darunter;
-        // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Analyse“ gewählt ist (BG2b).
-        advancedTabs.actions(analysisView.proposeButton(), analysisView.createButton(), refresh, saveRaw, recompute);
-        advancedTabs.onSelect(name -> showAdvanced());
-        // Ohne Seite: dieselben Unterreiter; „Technische Angaben“ und „Originaldaten“ bleiben dort leer.
-        wideAdvanced.tab(TECHNICAL, new JPanel())
-                .tab(ANALYSIS, wideAnalysis)
-                .tab(RAW, new JPanel())
-                .actions(wideAnalysis.proposeButton(), wideAnalysis.createButton());
-        wideAdvanced.select(ANALYSIS);
-        wideAdvanced.onSelect(name -> showAdvanced());
+        // Die Aktionen stehen rechts in der Zeile der Unterreiter, nicht als eigene Knopfzeilen darüber und darunter.
+        advancedTabs.actions(refresh, saveRaw, recompute);
+        advancedTabs.select(PROPERTIES);
+        advancedTabs.onSelect(name -> { });
+        // Ohne Seite: dieselben Unterreiter; „Eigenschaften“ zeigt die der Quelle (oder aller Quellen),
+        // „Technische Angaben“ und „Originaldaten“ bleiben dort leer.
+        wideAdvanced.tab(PROPERTIES, sourceProperties)
+                .tab(TECHNICAL, new JPanel())
+                .tab(RAW, new JPanel());
+        wideAdvanced.select(PROPERTIES);
+        wideAdvanced.onSelect(name -> showDeck());
         JPanel advanced = new JPanel(new BorderLayout(0, 8));
         advanced.setOpaque(false);
         advanced.add(advancedTabs, BorderLayout.CENTER);
@@ -463,10 +549,16 @@ public final class PageDetailPanel extends JPanel {
                 .tab(REFERENCES, references)
                 .tab(IMAGES, images)
                 .tab(STATEMENTS, statements)
-                .tab(GRAPH, graph);
-        tabs.tab(READING, readingPane)
+                .tab(GRAPH, graph)
+                .tab(RELATIONS, analysisView)
+                // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Beziehungen“ gewählt ist (BG2b).
+                .actions(analysisView.proposeButton(), analysisView.createButton());
+        originalContent.setOpaque(false);
+        fileContent.setOpaque(false);
+        originalContent.add(readingPane, ORIGINAL_PAGE_CARD);
+        originalContent.add(fileContent, ORIGINAL_FILE_CARD);
+        tabs.tab(READING, originalContent)
                 .tab(READ, readerPanel)
-                .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ANALYSES, analysisTabs)
                 .tab(ADVANCED, advanced)
@@ -480,10 +572,9 @@ public final class PageDetailPanel extends JPanel {
         java.util.Map<String, Icon> icons = new java.util.LinkedHashMap<>();
         icons.put(READING, PageTabIcons.reading());
         icons.put(READ, PageTabIcons.text());
-        icons.put(PROPERTIES, PageTabIcons.properties());
         icons.put(ATTACHMENTS, PageTabIcons.attachments());
         icons.put(ANALYSES, PageTabIcons.analyses());
-        icons.put(ADVANCED, PageTabIcons.advanced());
+        icons.put(ADVANCED, PageTabIcons.properties());
         icons.put(EXPORT, PageTabIcons.export());
         icons.put(CHAT, ChatIcons.chat());
         tabIcons = tabs.iconBar(icons);
@@ -494,6 +585,7 @@ public final class PageDetailPanel extends JPanel {
             showTabStatus();
         });
         analysisTabs.onSelect(name -> {
+            showRelations();
             if (ANALYSES.equals(tabs.selected())) {
                 loadVisible();
                 showTabStatus();
@@ -529,6 +621,10 @@ public final class PageDetailPanel extends JPanel {
         graphView.onDeleted(statementsView::reload);
         knowledgeGraphTab(graphView);
         images.onDescribe(() -> describeImages(false));
+        images.onDescribeOne(this::describeImage);
+        // Erzeugte Transkripte bleiben: gespeichert als virtueller Anhang, beim nächsten Öffnen wieder gezeigt.
+        videoTranscript.onTranscript(this::storeTranscript);
+        images.onOpen(this::openImage);
         images.onDescribeOnce(() -> describeImages(true));
         images.onRelease(this::releaseSourceAndDescribe);
 
@@ -593,7 +689,7 @@ public final class PageDetailPanel extends JPanel {
         // Begriffe vorn in der Reiterzeile des Stands, wie auf der Seite; keine zweite Reiterebene (AT 17.11.2026).
         standing.terms(overviewTerms, visible -> {
             overviewTermsShown = visible;
-            standingHelp.setVisible(standingShown() && !visible);
+            showOverviewHelp();
             if (visible) {
                 loadOverviewTerms();
                 if (overviewRecount) {
@@ -604,11 +700,30 @@ public final class PageDetailPanel extends JPanel {
         });
         overviewTerms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
         overviewTerms.onStatus(text -> tabStatus(OVERVIEW_TERMS, text));
+        // Fachglossar und Graph hinten in derselben Reiterzeile (BG2c, aus dem früheren Bereich „Begriffe“): dieselben
+        // Ansichten, ihre Werkzeuge oben rechts nur auf ihrem Reiter, beide nach der Auswahl links.
+        standing.tab(StandingTab.GLOSSARY, overviewGlossary.component(), visible -> {
+            showOverviewHelp();
+            if (visible) {
+                overviewGlossary.shown();
+            }
+        }, overviewGlossary.tools(), overviewGlossary.addButton(), overviewGlossary.detectButton());
+        overviewGlossary.onStatus(text -> tabStatus(OVERVIEW_GLOSSARY, text));
+        standing.tab(StandingTab.GRAPH, overviewGraph.component(), visible -> {
+            showOverviewHelp();
+            if (visible) {
+                overviewGraph.shown();
+            }
+        }, overviewGraph.tools());
+        // Ohne Seite: die Beziehungen der Auswahl als Reiter beim Stand, mit ihren beiden Aktionen.
+        standing.tab(RELATIONS, wideAnalysis, wideAnalysis::shown, wideAnalysis.proposeButton(),
+                wideAnalysis.createButton());
+        glossaryHelp.setVisible(false);
+        graphHelp.setVisible(false);
         deck.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
         deck.add(sourceChanges, SOURCE_TEXT_CARD);
-        deck.add(sourceProperties, SOURCE_PROPERTIES_CARD);
         add(deck, BorderLayout.CENTER);
         clear();
     }
@@ -633,6 +748,7 @@ public final class PageDetailPanel extends JPanel {
         referencesLoaded = false;
         imagesLoaded = false;
         readingPane.clear(" ");
+        closeOriginalFile();
         breadcrumbs.clear();
         positionShown.accept(null);
         references.message(" ");
@@ -641,6 +757,7 @@ public final class PageDetailPanel extends JPanel {
         acronymHint.setText(" ");
         closeAttachmentOverlay();
         assetsModel.set(null);
+        assetsBusy.setBusy(false);
         analysisView.steps(List.of(), null);
         analysisView.scope(null);
         properties.reset();
@@ -734,13 +851,14 @@ public final class PageDetailPanel extends JPanel {
         // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
         sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected));
         sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected));
-        sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && PROPERTIES.equals(selected));
+        sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && ADVANCED.equals(selected) && wide
+                && PROPERTIES.equals(wideAdvanced.selected()));
         readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
         // Analysen ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): der Stand der Auswahl links, mit den
         // Unterreitern „Aussagen“, „Zuerst lesen“, „Mögliche Widersprüche“ (Angelo 17.11.2026, kein eigenes Symbol).
         boolean standingShown = standingShown();
         standing.shown(standingShown);
-        standingHelp.setVisible(standingShown && !StandingTab.TERMS.equals(standing.tabs().selected()));
+        showOverviewHelp();
         // Im Reiter Chat steht mittig der Chat statt der Seitenüberschrift, rechts Neuer Chat und Chat löschen.
         boolean chatTab = CHAT.equals(selected);
         title.setVisible(!chatTab);
@@ -748,18 +866,18 @@ public final class PageDetailPanel extends JPanel {
         chat.headerActions().setVisible(chatTab);
         // Die Schnellaktionen in der unteren Leiste gehören nur zum Chat.
         chat.quickActions().setVisible(chatTab);
+        updateFootTools(selected);
         heading.revalidate();
         heading.repaint();
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
             // Quellenseite: „Leseansicht“ die KI-Zusammenfassung, „Text“ die Updates; die übrigen Reiter noch leer.
-            page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD
-                    : PROPERTIES.equals(selected) ? SOURCE_PROPERTIES_CARD : EMPTY;
+            page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD : EMPTY;
         }
         boolean wideAdvancedShown = ADVANCED.equals(selected) && wide;
         cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD
                 : standingShown ? STAND_CARD : wideAdvancedShown ? WIDE_ADVANCED_CARD : page);
-        showAdvanced();
+        showRelations();
     }
 
     /**
@@ -841,6 +959,9 @@ public final class PageDetailPanel extends JPanel {
         tabStatus(OVERVIEW_TERMS, " ");
         AppRuntime runtime = context.runtime();
         watchOverviewHoldings(runtime, selection);
+        overviewGlossary.selection(selection);
+        overviewGraph.pages(selection == null || runtime == null || selection.global() ? null
+                : () -> runtime.workspace().resolveSelection(selection.toCore(runtime)).pages());
         wideAnalysis.scope(selection == null || runtime == null ? null : new AnalysisView.Scope() {
             @Override
             public PageSet pages() {
@@ -911,19 +1032,23 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Der Unterreiter „Analyse“ des Technik-Reiters liest nur, solange er zu sehen ist; seine beiden Aktionen stehen
-     * nur dann in der Reiterzeile.
+     * Der Unterreiter „Beziehungen“ unter „Analysen“ liest nur, solange er zu sehen ist; seine beiden Aktionen stehen
+     * nur dann in der Reiterzeile. Ohne Seite steht er beim Stand und erfährt dort, ob er zu sehen ist.
      */
-    private void showAdvanced() {
-        boolean advancedShown = ADVANCED.equals(tabs.selected());
-        boolean pageAnalysis = advancedShown && !wide && ANALYSIS.equals(advancedTabs.selected());
-        boolean wideShown = advancedShown && wide && ANALYSIS.equals(wideAdvanced.selected());
-        analysisView.proposeButton().setVisible(ANALYSIS.equals(advancedTabs.selected()));
-        analysisView.createButton().setVisible(ANALYSIS.equals(advancedTabs.selected()));
-        wideAnalysis.proposeButton().setVisible(ANALYSIS.equals(wideAdvanced.selected()));
-        wideAnalysis.createButton().setVisible(ANALYSIS.equals(wideAdvanced.selected()));
-        analysisView.shown(pageAnalysis);
-        wideAnalysis.shown(wideShown);
+    private void showRelations() {
+        boolean selected = RELATIONS.equals(analysisTabs.selected());
+        analysisView.proposeButton().setVisible(selected);
+        analysisView.createButton().setVisible(selected);
+        analysisView.shown(ANALYSES.equals(tabs.selected()) && !wide && selected);
+    }
+
+    /** Die ?-Hilfe zum gewählten Reiter von Analysen ohne Seite: Stand, Fachglossar oder Graph, sonst keine. */
+    private void showOverviewHelp() {
+        boolean shown = standingShown();
+        String selected = standing.tabs().selected();
+        standingHelp.setVisible(shown && standing.ownTabSelected());
+        glossaryHelp.setVisible(shown && StandingTab.GLOSSARY.equals(selected));
+        graphHelp.setVisible(shown && StandingTab.GRAPH.equals(selected));
     }
 
     private void loadOverviewTerms() {
@@ -956,6 +1081,15 @@ public final class PageDetailPanel extends JPanel {
     /** Die Begriffe der Auswahl im Reiter „Begriffe“ unter Analysen ohne Seite. */
     TermsTab overviewTerms() {
         return overviewTerms;
+    }
+
+    /** Fachglossar und Graph der Auswahl unter Analysen ohne Seite. */
+    GlossaryTab overviewGlossary() {
+        return overviewGlossary;
+    }
+
+    TermGraphView overviewGraph() {
+        return overviewGraph;
     }
 
 
@@ -1092,7 +1226,8 @@ public final class PageDetailPanel extends JPanel {
         this.referencesLoaded = false;
         this.imagesLoaded = false;
         this.page = null;
-        readingPane.clear(" ");
+        closeOriginalFile();
+        readingPane.loading();
         breadcrumbs.clear();
         positionShown.accept(null);
         references.message(" ");
@@ -1100,12 +1235,16 @@ public final class PageDetailPanel extends JPanel {
         update.dismiss();
         showCard(PAGE);
         showReader(null, false);
+        // Bis die Seite da ist, dreht sich auch über dem Text die Sanduhr.
+        textBusy.setBusy(true);
         statementsView.pending(new PageKey(sourceId, pageId));
         graphView.page(null);
         acronymHint.setText(" ");
         closeAttachmentOverlay();
         assetsModel.set(null);
+        assetsBusy.setBusy(false);
         title.setText("Seite " + pageId);
+        titleFromTree(runtime, sourceId, pageId, current);
         path.setText(sourceId);
         state.setText(" ");
         renderDetails();
@@ -1149,6 +1288,9 @@ public final class PageDetailPanel extends JPanel {
             if (current != request) {
                 return;
             }
+            closeOriginalFile();
+            readingPane.clear(" ");
+            textBusy.setBusy(false);
             feedback.problem(error, Problems.Step.PAGE);
             statementsView.unavailable();
             page = null;
@@ -1156,9 +1298,33 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
+    /**
+     * Den Namen aus dem Seitenbaum, solange die Seite lädt oder ihr Laden scheitert: sonst stünde dort die interne ID,
+     * bei BSCW eine lange Base64-Adresse. Die geladene Seite setzt ihren Titel selbst.
+     */
+    private void titleFromTree(AppRuntime runtime, String source, String id, int current) {
+        Background.run(() -> runtime.workspace().position(source, id), position -> {
+            if (current != request || page != null || position == null || position.page() == null) {
+                return;
+            }
+            String name = position.page().title();
+            if (name != null && !name.isBlank()) {
+                title.setText(name);
+            }
+            breadcrumbs.show(position);
+        }, error -> {
+            // Ohne Seitenbaum bleibt die ID.
+        });
+    }
+
     /** Alles, was {@link #show} zu einer ausgelieferten Seite braucht; außerhalb des EDT. */
     private Loaded loaded(AppRuntime runtime, String source, String id, DeliveredPage delivered, Font font,
                           boolean checked, PassageLookup passage, boolean unchecked) {
+        // Avoid preparing an AI text document before showing a native image.
+        if (isNativePreview(delivered.snapshot())) {
+            return new Loaded(delivered, List.of(), null, Payloads.display(delivered.snapshot().payload()),
+                    null, checked, passage, unchecked);
+        }
         List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
         PageText text = runtime.workspace().pageText(delivered.snapshot());
         ReaderDocument document = document(source, id, enrichments, text, font);
@@ -1182,7 +1348,7 @@ public final class PageDetailPanel extends JPanel {
         String shownVersion = shown.header().metadata().version();
         Background.run(() -> {
             DeliveredPage checked = runtime.workspace().page(source, id, false);
-            boolean newer = checked.live() || !java.util.Objects.equals(checked.snapshot().revision(), shownRevision);
+            boolean newer = SourceRevision.hasUpdate(shownRevision, checked.snapshot().revision());
             if (!newer) {
                 return new Checked(checked, null);
             }
@@ -1208,6 +1374,7 @@ public final class PageDetailPanel extends JPanel {
                         imagesLoaded = false;
                         closeAttachmentOverlay();
                         assetsModel.set(null);
+                        assetsBusy.setBusy(false);
                         show(newer);
                         loadVisible();
                         loadPosition();
@@ -1304,6 +1471,8 @@ public final class PageDetailPanel extends JPanel {
         }
 
         showReader(loaded.reader(), page.live());
+        showOriginalContent(viewable(metadata, snapshot.metadata()), snapshot.payload());
+        showTextOriginal(loaded.reader());
         raw.setText(loaded.display());
         raw.setCaretPosition(0);
         storage.setText(loaded.storage() == null ? "Diese Payload hat kein body.storage." : loaded.storage());
@@ -1347,8 +1516,563 @@ public final class PageDetailPanel extends JPanel {
         browse.setEnabled(metadata.url() != null && Desktop.isDesktopSupported());
     }
 
+    /**
+     * Show the unmodified source file in the original-view tab.
+     * Keep extracted text and its analyses in the separate text and analysis tabs.
+     */
+    /** Natives Format eines entfernten Videos ohne Dateiinhalt (BSCW). */
+    private static final String REMOTE_MEDIA_FORMAT = "remote-media-metadata";
+
+    /**
+     * Die Kopfdaten für die Original-Ansicht: Fehlen dem Kopf Attribute (etwa die Art der Ressource), ergänzt sie der
+     * Snapshot; was der Kopf hat, gilt.
+     */
+    static PageMetadata viewable(PageMetadata header, PageMetadata snapshot) {
+        if (snapshot == null || header.attributes().keySet().containsAll(snapshot.attributes().keySet())
+                && (header.url() != null || snapshot.url() == null)) {
+            return header;
+        }
+        java.util.SortedMap<String, String> attributes = new java.util.TreeMap<>(snapshot.attributes());
+        attributes.putAll(header.attributes());
+        return new PageMetadata(header.pageId(), header.resourceId(), header.title(), header.partitionKey(),
+                header.parentPageId(), header.version(), header.modifiedAt(),
+                header.url() != null ? header.url() : snapshot.url(), attributes);
+    }
+
+    void showOriginalContent(PageMetadata metadata, NativePayload payload) {
+        closeOriginalFile();
+        if (PageMetadata.LINK_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
+            readingPane.clear(" ");
+            showOriginalLink(payload);
+            return;
+        }
+        // Entfernte Videos und zu große Dateien erkennt die Ansicht auch an der Payload: Kopfdaten aus einem älteren
+        // Stand tragen die Art der Ressource nicht immer, sonst bliebe die Ansicht leer.
+        if ("true".equals(metadata.attributes().get(PageMetadata.REMOTE_MEDIA))
+                || REMOTE_MEDIA_FORMAT.equals(payload.nativeFormat())) {
+            showOriginalVideo(metadata);
+            return;
+        }
+        if (com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(payload)) {
+            readingPane.clear(" ");
+            if (!showLargeOriginal(metadata)) {
+                showLargeFile(metadata,
+                        com.aresstack.spaceharvester.application.snapshot.LargeFiles.textOnly(payload));
+            }
+            return;
+        }
+        if (!PageMetadata.FILE_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
+            return;
+        }
+        readingPane.clear(" ");
+        long fileSize = payload.length();
+        if (fileSize <= 0) {
+            try {
+                fileSize = Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength",
+                        metadata.attributes().getOrDefault("fileSize", "-1")));
+            } catch (NumberFormatException ignored) {
+                fileSize = -1L;
+            }
+        }
+        if (payload.length() == 0 && fileSize == 0) {
+            // Auch in der Quelle leer (etwa eine leere Vorlage in BSCW): keine Vorschau, aber Speichern und Öffnen.
+            emptyFileShown = true;
+            ReaderAttachmentLoader empty = (file, done, failed) -> done.accept(new byte[0]);
+            originalFileViewer = AttachmentViewerPanel.withoutPreview(new ReaderAttachment(metadata.pageId(),
+                    metadata.title(), originalMediaType(payload), 0), empty, fileOpener, attachmentRenderer,
+                    EMPTY_FILE);
+            originalFileViewer.detachFooter();
+            fileContent.add(originalFileViewer, BorderLayout.CENTER);
+            originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+            fileContent.revalidate();
+            fileContent.repaint();
+            updateFootTools(tabs.selected());
+            return;
+        }
+        ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
+                originalMediaType(payload), fileSize);
+        final String source = sourceId;
+        final String id = metadata.pageId();
+        // A zero-byte BSCW snapshot may come from an older cached metadata-only revision.
+        // Recheck it once against the source instead of trusting an empty cache as the original.
+        final boolean originalAvailable = payload.length() > 0
+                || (fileSize == 0 && !metadata.attributes().containsKey("bscw.path"));
+        ReaderAttachmentLoader loader = new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment file, Consumer<byte[]> done, Consumer<String> failed) {
+                if (originalAvailable) {
+                    Background.run(payload::bytes, done, error -> failed.accept(reason(error)));
+                    return;
+                }
+                AppRuntime runtime = context.runtime();
+                if (runtime == null) {
+                    failed.accept("Die Quelle ist nicht mehr verbunden.");
+                    return;
+                }
+                // Refresh an older empty metadata shell directly from the owning BSCW page.
+                Background.run(() -> runtime.workspace().page(source, id, true).snapshot().payload().bytes(), done,
+                        error -> failed.accept(reason(error)));
+            }
+
+            /** Ohne Inhalt im Cache holen Speichern und Öffnen das Original direkt aus der Quelle auf die Platte. */
+            @Override
+            public boolean downloadsToFile() {
+                return !originalAvailable && context.runtime() != null;
+            }
+
+            @Override
+            public void downloadTo(ReaderAttachment file, java.nio.file.Path target, Runnable done,
+                                   Consumer<String> failed) {
+                AppRuntime runtime = context.runtime();
+                if (runtime == null) {
+                    failed.accept("Die Quelle ist nicht mehr verbunden.");
+                    return;
+                }
+                Background.run(() -> {
+                    runtime.workspace().downloadOriginal(source, metadata, target);
+                    return Boolean.TRUE;
+                }, ignored -> done.run(), error -> failed.accept(reason(error)));
+            }
+        };
+        originalAttachment = attachment;
+        originalLoader = once(loader);
+        originalFileViewer = new AttachmentViewerPanel(attachment, originalLoader, fileOpener, attachmentRenderer);
+        // Speichern, Öffnen und „Typ · Größe“ stehen unten in der Leiste mit der Lupe, nicht in der Vorschau.
+        originalFileViewer.detachFooter();
+        fileContent.add(originalFileViewer, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+        updateFootTools(tabs.selected());
+    }
+
+    /**
+     * Der Reiter „Text“ einer Datei ohne Textauszug (Angelo, 20.11.2026): statt „keine Lesevorschau“ das Original im
+     * Viewer, aus demselben, nur einmal geladenen Original wie in der Leseansicht; zu einer leeren Datei ein Hinweis.
+     */
+    private void showTextOriginal(ReaderDocument document) {
+        if (emptyFileShown) {
+            reader.setText(EMPTY_FILE);
+            return;
+        }
+        if (videoTranscriptShown || originalAttachment == null || document != null && document.text() != null) {
+            return;
+        }
+        textOriginalViewer = new AttachmentViewerPanel(originalAttachment, originalLoader, fileOpener,
+                attachmentRenderer);
+        textOriginal.add(textOriginalViewer, BorderLayout.CENTER);
+        textCardLayout.show(textContents, TEXT_ORIGINAL_CARD);
+        textOriginal.revalidate();
+        textOriginal.repaint();
+    }
+
+    /** Lädt das Original höchstens einmal; wer während des Ladens fragt, bekommt dasselbe Ergebnis (EDT). */
+    private static ReaderAttachmentLoader once(ReaderAttachmentLoader loader) {
+        return new ReaderAttachmentLoader() {
+            private byte[] bytes;
+            private List<Consumer<byte[]>> waiting;
+            private List<Consumer<String>> failing;
+
+            @Override
+            public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                if (bytes != null) {
+                    done.accept(bytes);
+                    return;
+                }
+                if (waiting != null) {
+                    waiting.add(done);
+                    failing.add(failed);
+                    return;
+                }
+                waiting = new ArrayList<>(List.of(done));
+                failing = new ArrayList<>(List.of(failed));
+                loader.load(attachment, loaded -> {
+                    bytes = loaded;
+                    List<Consumer<byte[]>> all = waiting;
+                    waiting = null;
+                    failing = null;
+                    all.forEach(each -> each.accept(loaded));
+                }, reason -> {
+                    List<Consumer<String>> all = failing;
+                    waiting = null;
+                    failing = null;
+                    all.forEach(each -> each.accept(reason));
+                });
+            }
+
+            @Override
+            public void preview(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                loader.preview(attachment, done, failed);
+            }
+
+            @Override
+            public boolean downloadsToFile() {
+                return loader.downloadsToFile();
+            }
+
+            @Override
+            public void downloadTo(ReaderAttachment attachment, java.nio.file.Path target, Runnable done,
+                                   Consumer<String> failed) {
+                if (bytes != null) {
+                    ReaderAttachmentLoader.super.downloadTo(attachment, target, done, failed);
+                } else {
+                    loader.downloadTo(attachment, target, done, failed);
+                }
+            }
+        };
+    }
+
+    /** Keep remote video content out of the native snapshot; stream it after a deliberate play action. */
+    private void showOriginalVideo(PageMetadata metadata) {
+        readingPane.clear(" ");
+        long size = -1;
+        try {
+            size = Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength", "-1"));
+        } catch (NumberFormatException unavailable) {
+            // Keep the player disabled if the source has not reported a usable size.
+        }
+        final String source = sourceId;
+        final String id = metadata.pageId();
+        String file = metadata.title().toLowerCase(java.util.Locale.ROOT);
+        // Der Typ kommt aus der Quelle (auch für Titel ohne Endung, etwa bei BSCW), sonst aus dem Dateinamen.
+        String reported = metadata.attributes().get(PageMetadata.REMOTE_MEDIA_TYPE);
+        String mediaType = reported != null ? reported
+                : file.endsWith(".webm") ? "video/webm"
+                : file.endsWith(".mov") ? "video/quicktime"
+                : file.endsWith(".mkv") ? "video/x-matroska" : "video/mp4";
+        final java.util.concurrent.atomic.AtomicReference<
+                com.aresstack.spaceharvester.application.sources.MediaByteRange> media =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        com.aresstack.spaceharvester.application.sources.MediaByteRange ranges = (offset, count) -> {
+            AppRuntime runtime = context.runtime();
+            if (runtime == null) {
+                throw new IllegalStateException("Die Quelle ist nicht mehr verbunden.");
+            }
+            com.aresstack.spaceharvester.application.sources.MediaByteRange reader = media.get();
+            if (reader == null) {
+                synchronized (media) {
+                    reader = media.get();
+                    if (reader == null) {
+                        reader = runtime.workspace().openMediaRange(source, id);
+                        media.set(reader);
+                    }
+                }
+            }
+            return reader.read(offset, count);
+        };
+        originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, ranges::read, context.video());
+        if (size > 0 && "video/mp4".equals(mediaType)) {
+            VideoFrameSource frames = new VideoFrameSource(source, id, ranges::read, size, mediaType);
+            videoFrames = frames;
+            // Die Marken des Players sind die einzige Quelle der Folien; gespeichert erscheinen sie als Anhänge.
+            originalVideoViewer.onSlides(changes -> slidesFound(frames, changes));
+            showVideoMarks(originalVideoViewer, frames);
+            // „In PPTX umwandeln“ neben „Herunterladen“ (Angelo 20.11.2026): fünf Aufträge unter „Aufträge“.
+            long videoSize = size;
+            String videoType = mediaType;
+            originalVideoViewer.onConvert(() -> convertToPresentation(frames, ranges, videoSize, videoType));
+            VideoTranscriptSource transcriptSource = new VideoTranscriptSource(size, ranges, context.video());
+            videoTranscript.setVideoSource(transcriptSource);
+            showStoredTranscript(transcriptSource, frames);
+            textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
+            // Das Transkript füllt den Reiter; die Akronymzeile gehört zum Lesetext.
+            acronymBar.setVisible(false);
+            videoTranscriptShown = true;
+        }
+        fileContent.add(originalVideoViewer, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+        updateFootTools(tabs.selected());
+    }
+
+    /**
+     * Present a redirect target as a source-neutral link document.
+     * Open the target only after an explicit user action; never reuse source credentials.
+     */
+    /**
+     * Eine Datei über der Grenze „Größte Datei im Cache“, die der Viewer zeigen kann (Bild, PDF, Office, Text) und die
+     * nicht größer ist als „Große Dateien ganz laden bis“: Der Viewer lädt ihr Original direkt aus der Quelle, ohne es
+     * abzulegen (Angelo, 20.11.2026).
+     *
+     * @return ob der Viewer steht; sonst zeigt {@link #showLargeFile} die Karte
+     */
+    private boolean showLargeOriginal(PageMetadata metadata) {
+        String type = com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(metadata);
+        long size = com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
+        long limit = context.settings() == null
+                ? com.aresstack.spaceharvester.app.settings.AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES
+                : context.settings().storage().maxTextFileBytes();
+        AppRuntime runtime = context.runtime();
+        if (type == null || runtime == null || limit <= 0 || size > limit) {
+            return false;
+        }
+        ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(), type, size);
+        String source = sourceId;
+        ReaderAttachmentLoader loader = new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment file, Consumer<byte[]> done, Consumer<String> failed) {
+                Background.run(() -> runtime.workspace().original(source, metadata), done,
+                        error -> failed.accept(reason(error)));
+            }
+
+            @Override
+            public boolean downloadsToFile() {
+                return true;
+            }
+
+            @Override
+            public void downloadTo(ReaderAttachment file, java.nio.file.Path target, Runnable done,
+                                   Consumer<String> failed) {
+                Background.run(() -> {
+                    runtime.workspace().downloadOriginal(source, metadata, target);
+                    return Boolean.TRUE;
+                }, ignored -> done.run(), error -> failed.accept(reason(error)));
+            }
+        };
+        originalAttachment = attachment;
+        originalLoader = once(loader);
+        originalFileViewer = new AttachmentViewerPanel(attachment, originalLoader, fileOpener, attachmentRenderer);
+        originalFileViewer.detachFooter();
+        fileContent.add(originalFileViewer, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+        updateFootTools(tabs.selected());
+        return true;
+    }
+
+    /**
+     * Eine Datei über der Grenze „Größte Datei im Cache“ (Angelo, 20.11.2026): Die App hat sie nicht heruntergeladen;
+     * die Karte nennt Größe und Grenze und öffnet die Datei in der Quelle. Mit {@code textOnly} liegt ihr Textauszug
+     * im Cache: Text-Ansicht und Suche haben ihn.
+     */
+    private void showLargeFile(PageMetadata metadata, boolean textOnly) {
+        long size = com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
+        long limit = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES
+                : context.settings().storage().maxPageBytes();
+        String reason = "Keine Vorschau: zu groß für den Cache (Grenze " + Texts.bytes(limit) + ")."
+                + (textOnly ? "\nDer Textauszug steht im Reiter „Text“, die Suche findet die Datei darüber."
+                : "\nAbgelegt sind nur ihre Kopfdaten (kein lesbarer Text oder größer als die Grenze zum Laden).")
+                + "\nGrenzen unter Einstellungen › Daten › „Größte Datei im Cache“.";
+        AppRuntime runtime = context.runtime();
+        String type = com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(metadata);
+        ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
+                type == null ? "application/octet-stream" : type, size);
+        String source = sourceId;
+        // Speichern und Öffnen laden das Original direkt aus der Quelle auf die Platte, ohne Größengrenze.
+        ReaderAttachmentLoader loader = new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment file, Consumer<byte[]> done, Consumer<String> failed) {
+                failed.accept("Zu groß, um sie ganz in den Speicher zu laden.");
+            }
+
+            @Override
+            public boolean downloadsToFile() {
+                return runtime != null;
+            }
+
+            @Override
+            public void downloadTo(ReaderAttachment file, java.nio.file.Path target, Runnable done,
+                                   Consumer<String> failed) {
+                Background.run(() -> {
+                    runtime.workspace().downloadOriginal(source, metadata, target);
+                    return Boolean.TRUE;
+                }, ignored -> done.run(), error -> failed.accept(reason(error)));
+            }
+        };
+        originalFileViewer = AttachmentViewerPanel.withoutPreview(attachment, loader, fileOpener, attachmentRenderer,
+                reason);
+        originalFileViewer.detachFooter();
+        fileContent.add(originalFileViewer, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+        updateFootTools(tabs.selected());
+    }
+
+    /** Eine Karte statt des Originals: Hinweis und „In der Quelle öffnen“. */
+    private void showFileCard(PageMetadata metadata, String text) {
+        JPanel card = new JPanel(new BorderLayout(0, 12));
+        card.setOpaque(false);
+        javax.swing.JTextArea explanation = new javax.swing.JTextArea(text);
+        explanation.setEditable(false);
+        explanation.setOpaque(false);
+        explanation.setLineWrap(true);
+        explanation.setWrapStyleWord(true);
+        card.add(explanation, BorderLayout.NORTH);
+        javax.swing.JButton open = new javax.swing.JButton("In der Quelle öffnen");
+        java.net.URI target = metadata.url();
+        boolean supported = target != null && ("http".equalsIgnoreCase(target.getScheme())
+                || "https".equalsIgnoreCase(target.getScheme())) && target.getHost() != null
+                && target.getRawUserInfo() == null;
+        open.setEnabled(supported);
+        if (supported) {
+            open.addActionListener(event -> {
+                try {
+                    if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                        Desktop.getDesktop().browse(target);
+                    } else {
+                        feedback.warning("Browser nicht verfügbar", "Adresse: " + target);
+                    }
+                } catch (IOException | RuntimeException failed) {
+                    feedback.warning("Datei konnte nicht geöffnet werden", "Adresse: " + target);
+                }
+            });
+        }
+        card.add(Comic.row(open), BorderLayout.SOUTH);
+        fileContent.add(card, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+    }
+
+    private void showOriginalLink(NativePayload payload) {
+        String destination = new String(payload.bytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+        JPanel link = new JPanel(new BorderLayout(0, 12));
+        link.setOpaque(false);
+        JLabel explanation = new JLabel("Diese Ressource ist ein Verweis auf eine andere Adresse.");
+        link.add(explanation, BorderLayout.NORTH);
+        javax.swing.JTextArea address = new javax.swing.JTextArea(destination);
+        address.setEditable(false);
+        address.setLineWrap(true);
+        address.setWrapStyleWord(true);
+        link.add(address, BorderLayout.CENTER);
+        javax.swing.JButton open = new javax.swing.JButton("Verweis im Browser öffnen");
+        try {
+            java.net.URI target = java.net.URI.create(destination);
+            boolean supported = ("http".equalsIgnoreCase(target.getScheme())
+                    || "https".equalsIgnoreCase(target.getScheme()))
+                    && target.getHost() != null && target.getRawUserInfo() == null;
+            open.setEnabled(supported);
+            if (supported) {
+                open.addActionListener(event -> {
+                    try {
+                        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                            Desktop.getDesktop().browse(target);
+                        } else {
+                            feedback.warning("Browser nicht verfügbar", "Den Verweis aus der Anzeige kopieren.");
+                        }
+                    } catch (IOException | RuntimeException failed) {
+                        feedback.warning("Verweis konnte nicht geöffnet werden",
+                                "Den Verweis aus der Anzeige kopieren.");
+                    }
+                });
+            }
+        } catch (IllegalArgumentException invalid) {
+            open.setEnabled(false);
+        }
+        link.add(open, BorderLayout.SOUTH);
+        fileContent.add(link, BorderLayout.CENTER);
+        originalLinkShown = true;
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+    }
+
+    /** Identify original images before running any optional text-analysis preparation. */
+    private static boolean isNativePreview(PageSnapshot snapshot) {
+        String kind = snapshot.metadata().attributes().get(PageMetadata.RESOURCE_KIND);
+        String largeType = com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(snapshot.payload())
+                ? com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(snapshot.metadata()) : null;
+        return PageMetadata.LINK_KIND.equals(kind)
+                || "true".equals(snapshot.metadata().attributes().get(PageMetadata.REMOTE_MEDIA))
+                || PageMetadata.FILE_KIND.equals(kind)
+                && (originalMediaType(snapshot.payload()).startsWith("image/")
+                || largeType != null && largeType.startsWith("image/"));
+    }
+
+    /** Trust the actual file signature when WebDAV metadata or the name is misleading. */
+    private static String originalMediaType(NativePayload payload) {
+        if (payload.startsWith(new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a})) {
+            return "image/png";
+        }
+        if (payload.startsWith(new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff})) {
+            return "image/jpeg";
+        }
+        if (payload.startsWith(new byte[] {'G', 'I', 'F', '8'})) {
+            return "image/gif";
+        }
+        if (payload.startsWith(new byte[] {'%', 'P', 'D', 'F', '-'})) {
+            return "application/pdf";
+        }
+        return payload.mediaType();
+    }
+
+    /** Return the original-document viewer for UI regression tests. */
+    AttachmentViewerPanel originalViewer() {
+        return originalFileViewer;
+    }
+
+    /** Return whether a source-neutral external-link document is shown. */
+    boolean originalLinkShown() {
+        return originalLinkShown;
+    }
+
+    /** Expose the pending page indicator for navigation regression tests. */
+    boolean originalLoadingShown() {
+        return readingPane.loadingShown();
+    }
+
+    /** Release the previous document viewer before a page switch or source switch. */
+    private void closeOriginalFile() {
+        videoTranscript.setVideoSource(null);
+        textCardLayout.show(textContents, TEXT_READER_CARD);
+        acronymBar.setVisible(true);
+        if (originalFileViewer != null) {
+            originalFileViewer.close();
+            originalFileViewer = null;
+        }
+        if (textOriginalViewer != null) {
+            textOriginal.remove(textOriginalViewer);
+            textOriginalViewer.close();
+            textOriginalViewer = null;
+        }
+        originalAttachment = null;
+        originalLoader = null;
+        emptyFileShown = false;
+        if (originalVideoViewer != null) {
+            originalVideoViewer.close();
+            originalVideoViewer = null;
+        }
+        originalLinkShown = false;
+        videoTranscriptShown = false;
+        videoFrames = null;
+        fileContent.removeAll();
+        originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
+        updateFootTools(tabs.selected());
+    }
+
+    /** Die Werkzeuge der Leiste mit der Lupe für diese Ansicht ({@link #footTools}). */
+    public JComponent footTools() {
+        return footTools;
+    }
+
+    /** Setzt in {@link #footTools}, was zum Reiter {@code selected} gehört; nichts, wenn er keine Werkzeuge hat. */
+    private void updateFootTools(String selected) {
+        // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
+        JComponent shown = CHAT.equals(selected) ? chat.quickActions()
+                : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
+                : READ.equals(selected) && videoTranscriptShown ? videoTranscript.action()
+                : null;
+        if (footTools.getComponentCount() == (shown == null ? 0 : 1)
+                && (shown == null || footTools.getComponent(0) == shown)) {
+            return;
+        }
+        footTools.removeAll();
+        if (shown != null) {
+            footTools.add(shown, BorderLayout.CENTER);
+        }
+        // Chat-Chips mittig; Datei-Aktionen und Transkript-Knopf direkt neben der Lupe über die ganze Zeile.
+        footTools.putClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL,
+                shown != null && shown != chat.quickActions());
+        footTools.revalidate();
+        footTools.repaint();
+    }
+
     /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */
     private void showReader(ReaderDocument document, boolean live) {
+        textBusy.setBusy(false);
         // Neu berechnet bei gleichem Text: die Navigation gilt weiter; sonst gehörte sie zum vorigen Text.
         boolean sameText = shown != null && document != null && shown.text() != null && document.text() != null
                 && shown.text().text().equals(document.text().text());
@@ -1491,7 +2215,7 @@ public final class PageDetailPanel extends JPanel {
         if (ATTACHMENTS.equals(visible)) {
             loadAssets(false);
         }
-        if (READING.equals(visible)) {
+        if (READING.equals(visible) && originalFileViewer == null && originalVideoViewer == null && !originalLinkShown) {
             loadReading();
         }
         if (REFERENCES.equals(visible)) {
@@ -1599,6 +2323,11 @@ public final class PageDetailPanel extends JPanel {
         }
         assetsLoaded = true;
         assetsHint.setText("Anhänge werden live geladen …");
+        // Die Sanduhr nur, solange noch keine Liste zu sehen ist; ein Nachladen (etwa neue Standbilder) blendet die
+        // gezeigte Liste nicht ab.
+        if (!force || assetsModel.rows.isEmpty()) {
+            assetsBusy.setBusy(true);
+        }
         String source = sourceId;
         String id = pageId;
         // Eigene Gültigkeit statt request: Eine Neuberechnung der Analysen verwirft die Anhangsliste nicht.
@@ -1608,6 +2337,12 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             assetsModel.set(overview);
+            assetsBusy.setBusy(false);
+            if (videoFrames != null && ATTACHMENTS.equals(selectedTab()) && context.runtime() != null) {
+                // Unter „Anhänge“ bekommen die Marken ihre Standbilder, im Hintergrund und der Reihe nach.
+                prefetch(context.runtime()).focus(attachmentsOfKind(
+                        com.aresstack.spaceharvester.application.assets.AssetKind.MARK), null);
+            }
             assetsHint.setText(Texts.count(overview.entries().size(), "Anhang", "Anhänge")
                     + (overview.listComplete() ? "" : " (Liste unvollständig)") + " · live, "
                     + Texts.time(overview.retrievedAt()));
@@ -1616,8 +2351,13 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             assetsLoaded = false;
+            assetsBusy.setBusy(false);
+            // Mit Ursache ins Protokoll: „Unerwarteter Fehler“ allein sagt nicht, was schiefging.
+            LOG.log(System.Logger.Level.WARNING, "Anhänge von " + source + " nicht geladen", error);
+            String detail = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             assetsHint.setText("Anhänge nicht geladen: " + com.aresstack.spaceharvester.app.ui.Problems
-                    .describe(error).title());
+                    .describe(error).title() + " (" + detail + "); der nächste Wechsel auf „Anhänge“ versucht es "
+                    + "erneut.");
         });
     }
 
@@ -1649,7 +2389,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private void loadReading() {
         AppRuntime runtime = context.runtime();
-        if (runtime == null || page == null || readingLoaded) {
+        if (runtime == null || page == null || readingLoaded || originalFileViewer != null || originalLinkShown) {
             return;
         }
         readingLoaded = true;
@@ -2007,8 +2747,7 @@ public final class PageDetailPanel extends JPanel {
                 runtime.workspace().images(shown)), found -> {
             if (shown == page) {
                 images.describing(false);
-                images.released(found.released());
-                images.show(found.state(), found.reason(), found.warnings(), found.images());
+                showImages(found);
             }
         }, error -> {
             if (shown == page) {
@@ -2021,27 +2760,198 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * „Bilder beschreiben“: nur auf Abruf, im Hintergrund, mit dem Vision-Modell des Core. Mit {@code once} auch für
-     * eine nicht freigegebene Quelle, aber nur diese Seite und ohne gespeicherte Freigabe.
+     * eine nicht freigegebene Quelle, aber nur diese Seite und ohne gespeicherte Freigabe. Stehen die Bilder schon in
+     * der Liste, Bild für Bild: jede Beschreibung erscheint, sobald sie fertig ist; schon beschriebene bleiben (bei
+     * veralteten Beschreibungen kommen unveränderte Bilder aus dem Speicher der Beschreibungen).
      */
     private void describeImages(boolean once) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || page == null) {
             return;
         }
+        ImageRows before = shownImages;
+        List<ImagesTab.Image> rows = images.rows();
+        if (before == null || rows.isEmpty()) {
+            describeAllImages(runtime, once);
+            return;
+        }
+        boolean stale = before.state() == PassagesTab.State.STALE;
+        List<Integer> todo = new ArrayList<>();
+        for (int index = 0; index < rows.size(); index++) {
+            ImagesTab.Status status = rows.get(index).status();
+            boolean finished = status == ImagesTab.Status.SKIPPED || status == ImagesTab.Status.DESCRIBED && !stale;
+            if (!finished && !images.running(index)) {
+                todo.add(index);
+            }
+        }
+        if (todo.isEmpty()) {
+            feedback.success("Alle Bilder dieser Seite sind schon beschrieben");
+            return;
+        }
+        String source = sourceId;
+        String id = pageId;
+        DeliveredPage shown = page;
+        images.describing(true);
+        feedback.working("Bilder werden beschrieben … 0 von " + todo.size());
+        int[] done = {0};
+        Background.run(() -> {
+            loadVisionModel(runtime, shown);
+            ImageRows last = null;
+            for (int index : todo) {
+                if (shown != page) {
+                    break;
+                }
+                int at = index;
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (shown == page) {
+                        images.running(at, true);
+                    }
+                });
+                ImageRows found = imageRows(runtime, source, id,
+                        runtime.workspace().describeImage(source, id, at, once, false));
+                Icon icon = at < found.bytes().size() ? preview(found.bytes().get(at)) : null;
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (shown == page) {
+                        done[0]++;
+                        imageDescribed(at, found, icon);
+                        feedback.working("Bilder werden beschrieben … " + done[0] + " von " + todo.size());
+                    }
+                });
+                last = found;
+            }
+            return last;
+        }, found -> {
+            images.describing(false);
+            if (shown != page || found == null) {
+                return;
+            }
+            showImages(found);
+            feedback.success("Bilder beschrieben: " + found.described() + " von " + found.images().size());
+        }, error -> {
+            images.describing(false);
+            if (shown != page) {
+                return;
+            }
+            if (shownImages != null) {
+                showImages(shownImages);
+            }
+            feedback.problem(error, Problems.Step.PAGE);
+        });
+    }
+
+    /**
+     * Beschreibt nur das Bild einer Zeile, etwa nach einem Fehler; mit {@code fresh} neu („Neu beschreiben“). Die
+     * Zeile zeigt „Wird beschrieben …“, bis das Ergebnis da ist.
+     */
+    private void describeImage(int index, boolean fresh) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null || images.running(index)) {
+            return;
+        }
+        String source = sourceId;
+        String id = pageId;
+        DeliveredPage shown = page;
+        images.running(index, true);
+        Background.run(() -> {
+            loadVisionModel(runtime, shown);
+            ImageRows found = imageRows(runtime, source, id,
+                    runtime.workspace().describeImage(source, id, index, false, fresh));
+            Icon icon = index < found.bytes().size() ? preview(found.bytes().get(index)) : null;
+            return new DescribedRow(found, icon);
+        }, described -> {
+            if (shown != page) {
+                return;
+            }
+            shownImages = described.rows();
+            imageDescribed(index, described.rows(), described.icon());
+        }, error -> {
+            if (shown != page) {
+                return;
+            }
+            images.running(index, false);
+            feedback.problem(error, Problems.Step.PAGE);
+        });
+    }
+
+    /**
+     * Außerhalb des EDT: Läuft das Vision-Modell noch nicht (bei Ollama laut {@code /api/ps}), zeigt der Reiter
+     * „Vision-Modell wird geladen …“, bis es geladen ist, höchstens die eingestellte Ladefrist. Scheitert das Laden,
+     * meldet der Lauf den Fehler einmal statt je Bild.
+     */
+    private void loadVisionModel(AppRuntime runtime, DeliveredPage shown) {
+        if (runtime.workspace().visionModelLoaded()) {
+            return;
+        }
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            if (shown == page) {
+                images.modelLoading(true);
+                feedback.working(ImagesTab.MODEL_LOADING);
+            }
+        });
+        try {
+            runtime.workspace().loadVisionModel();
+        } finally {
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                if (shown == page) {
+                    images.modelLoading(false);
+                }
+            });
+        }
+    }
+
+    /** Die Bilder nach einer Einzelbeschreibung und die Vorschau des eben beschriebenen. */
+    private record DescribedRow(ImageRows rows, Icon icon) {
+    }
+
+    /** Zeigt ein eben beschriebenes Bild in seiner Zeile und im offenen Viewer. */
+    private void imageDescribed(int index, ImageRows found, Icon icon) {
+        if (index >= found.images().size()) {
+            images.running(index, false);
+            return;
+        }
+        ImagesTab.Image image = found.images().get(index);
+        images.update(index, image, icon);
+        liveImages.put(index, image);
+        liveBytes.put(index, found.bytes().get(index));
+        imageUpdated.accept(index);
+    }
+
+    /** Wie {@link #describeImages}, ohne Liste: alle Bilder in einem Lauf des Core, gestreamt. */
+    private void describeAllImages(AppRuntime runtime, boolean once) {
         String source = sourceId;
         String id = pageId;
         DeliveredPage shown = page;
         images.describing(true);
         feedback.working("Bilder werden beschrieben …");
-        Background.run(() -> imageRows(runtime, source, id, once ? runtime.workspace().describeImagesOnce(source, id)
-                : runtime.workspace().describeImages(source, id)), found -> {
+        int[] done = {0};
+        Background.run(() -> imageRows(runtime, source, id, runtime.workspace().describeImages(source, id, once,
+                entry -> {
+                    // Gestreamt: jede fertige Beschreibung erscheint sofort in ihrer Zeile und im offenen Viewer.
+                    ImagesTab.Image image = imageOf(entry);
+                    Icon icon = entry.sha256() == null ? null
+                            : preview(() -> runtime.workspace().storedImage(source, entry));
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        if (shown != page) {
+                            return;
+                        }
+                        done[0]++;
+                        images.update(entry.index(), image, icon);
+                        if (shownImages != null && entry.index() < shownImages.images().size()) {
+                            liveImages.put(entry.index(), image);
+                            if (entry.sha256() != null) {
+                                liveBytes.put(entry.index(), () -> runtime.workspace().storedImage(source, entry));
+                            }
+                            imageUpdated.accept(entry.index());
+                        }
+                        feedback.working("Bilder werden beschrieben … " + done[0]);
+                    });
+                })), found -> {
             // Der Reiter gehört allen Seiten: auch nach einem Seitenwechsel wieder freigeben.
             images.describing(false);
             if (shown != page) {
                 return;
             }
-            images.released(found.released());
-            images.show(found.state(), found.reason(), found.warnings(), found.images());
+            showImages(found);
             feedback.success(found.images().isEmpty() ? "Keine Bilder auf dieser Seite"
                     : "Bilder beschrieben: " + found.described() + " von " + found.images().size());
         }, error -> {
@@ -2051,6 +2961,261 @@ public final class PageDetailPanel extends JPanel {
             }
             feedback.problem(error, Problems.Step.PAGE);
         });
+    }
+
+    /**
+     * Beim Öffnen eines Videos: gespeicherte Marken zeigt der Player sofort; sonst sucht er sie im Video
+     * ({@link #slidesFound} speichert sie dann).
+     */
+    private void showVideoMarks(VideoViewerPanel viewer, VideoFrameSource video) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().videoMarks(video.sourceId(), video.pageId()), marks -> {
+            if (viewer != originalVideoViewer) {
+                return;
+            }
+            if (marks.isEmpty()) {
+                viewer.findSlides();
+            } else {
+                viewer.showMarks(marks);
+            }
+        }, error -> {
+            if (viewer == originalVideoViewer) {
+                viewer.findSlides();
+            }
+        });
+    }
+
+    /**
+     * Der Player hat die Marken des Videos gefunden: gespeichert erscheinen sie als virtuelle Anhänge (benannt nach
+     * ihrer Position), deren Standbilder „Anhänge“ zieht. Ohne Marken gibt es keine virtuellen Anhänge.
+     */
+    private void slidesFound(VideoFrameSource video, List<Long> changes) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || video != videoFrames || changes.isEmpty()) {
+            return;
+        }
+        // Wie viele Marken ein Video höchstens bekommt, hat die Erkennung schon begrenzt (die stärksten Wechsel).
+        List<Long> marks = changes;
+        Background.run(() -> {
+            runtime.workspace().saveVideoMarks(video.sourceId(), video.pageId(), marks);
+            return marks.size();
+        }, saved -> attachmentsChanged(video), error -> {
+            if (video == videoFrames) {
+                feedback.problem(error, Problems.Step.PAGE);
+            }
+        });
+    }
+
+    /**
+     * „In PPTX umwandeln“: startet die Aufträge Transkript ziehen, Folien beschreiben, Transkript korrigieren,
+     * Folienkommentare und PPTX erzeugen; sie stehen einzeln unter „Aufträge“. Die Statusmeldung „gestartet“ ersetzt
+     * sich durch das Ergebnis, sobald der letzte Auftrag endet.
+     */
+    private void convertToPresentation(VideoFrameSource video,
+                                       com.aresstack.spaceharvester.application.sources.MediaByteRange ranges,
+                                       long size, String mediaType) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || video != videoFrames) {
+            return;
+        }
+        com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia media =
+                new com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia(ranges, size, mediaType,
+                        context.video(), new TranscribeAudioUseCase(new VlcPcmAudioDecoder(),
+                                new WhisperSpeechTranscriber()));
+        feedback.working("„In PPTX umwandeln“ wird gestartet …");
+        Background.run(() -> runtime.workspace().startVideoPresentation(video.sourceId(), video.pageId(), media),
+                run -> {
+                    if (video == videoFrames) {
+                        feedback.working("„In PPTX umwandeln“ läuft: fünf Aufträge unter „Aufträge“, die Datei kommt "
+                                + "in den Ausgabeordner.");
+                    }
+                    watchPresentation(runtime, video, run.file().id());
+                }, error -> {
+                    if (video != videoFrames) {
+                        return;
+                    }
+                    if (error instanceof com.aresstack.spaceharvester.application.presentation
+                            .PresentationUnavailableException unavailable) {
+                        feedback.warning("„In PPTX umwandeln“ kann nicht starten", unavailable.getMessage());
+                    } else {
+                        feedback.problem(error, Problems.Step.PAGE);
+                    }
+                });
+    }
+
+    /**
+     * Wartet per Beobachter (ADR 0027) auf das Ende des Auftrags „PPTX erzeugen“ und meldet die Datei; liest nach dem
+     * Anmelden einmal den Stand, damit ein schon beendeter Auftrag nicht verpasst wird.
+     */
+    private void watchPresentation(AppRuntime runtime, VideoFrameSource video, String fileJob) {
+        java.util.concurrent.atomic.AtomicReference<com.aresstack.spaceharvester.application.observe.Subscription>
+                watch = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean ended = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.function.Consumer<com.aresstack.spaceharvester.application.jobs.JobStatus> handle = status -> {
+            if (!fileJob.equals(status.id()) || !status.state().terminal()
+                    || status.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED
+                    || !ended.compareAndSet(false, true)) {
+                return;
+            }
+            java.util.Optional<java.nio.file.Path> file = status.state()
+                    == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED
+                    ? runtime.workspace().presentationFile(fileJob) : java.util.Optional.empty();
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                com.aresstack.spaceharvester.application.observe.Subscription subscription = watch.getAndSet(null);
+                if (subscription != null) {
+                    subscription.close();
+                }
+                if (video != videoFrames) {
+                    return;
+                }
+                if (file.isPresent()) {
+                    feedback.info("PPTX erzeugt: " + file.get().getFileName()
+                            + (status.incomplete() ? " (unvollständig, siehe „Aufträge“)" : ""),
+                            file.get().toString());
+                } else {
+                    feedback.warning("„In PPTX umwandeln“ ist nicht fertig geworden",
+                            "Die Aufträge unter „Aufträge“ zeigen, welcher Schritt fehlt; Fortsetzen macht dort weiter.");
+                }
+            });
+        };
+        watch.set(runtime.workspace().subscribeJobs(handle::accept));
+        Background.run(() -> runtime.workspace().job(fileJob), handle, error -> {
+            // Unbekannt (etwa gelöscht): nichts zu melden.
+        });
+    }
+
+    /** Lädt das gespeicherte Transkript des geöffneten Videos in den Reiter „Text“, statt es neu zu erzeugen. */
+    private void showStoredTranscript(VideoTranscriptSource transcriptSource, VideoFrameSource video) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || video == null) {
+            return;
+        }
+        // Das gespeicherte Transkript kommt verzögert wie die Anhänge: bis dahin die Sanduhr.
+        videoTranscript.loadingStored(transcriptSource, true);
+        // Mit den Korrekturen, die als Ergänzung daneben liegen: unten in der Mitte zum Umschalten.
+        Background.run(() -> runtime.workspace().videoTranscriptVersions(video.sourceId(), video.pageId()),
+                versions -> {
+                    videoTranscript.loadingStored(transcriptSource, false);
+                    if (!versions.isEmpty()) {
+                        videoTranscript.showStored(transcriptSource, versions.get(0).text());
+                        videoTranscript.showVersions(transcriptSource, versions.stream()
+                                .map(version -> new com.aresstack.spaceharvester.app.ui.content.viewer
+                                        .VideoTranscriptionPanel.Version(version.label(), version.text()))
+                                .toList());
+                    }
+                }, error -> videoTranscript.loadingStored(transcriptSource, false));
+    }
+
+    /**
+     * Speichert das bisher erkannte Transkript des gezeigten Videos als virtuellen Anhang; die Liste unter „Anhänge“
+     * zeigt es danach.
+     */
+    private void storeTranscript(String text) {
+        AppRuntime runtime = context.runtime();
+        VideoFrameSource video = videoFrames;
+        if (runtime == null || video == null || text.isBlank()) {
+            return;
+        }
+        String name = transcriptName(page == null ? null : page.header().metadata().title());
+        Background.run(() -> {
+            runtime.workspace().storeVideoTranscript(video.sourceId(), video.pageId(), name, text);
+            return null;
+        }, saved -> attachmentsChanged(video), error -> {
+            if (video == videoFrames) {
+                feedback.problem(error, Problems.Step.PAGE);
+            }
+        });
+    }
+
+    /** Der Dateiname des Transkripts nach dem Video, etwa {@code Vortrag – Transkript.txt}. */
+    static String transcriptName(String videoTitle) {
+        String base = videoTitle == null || videoTitle.isBlank() ? "Video" : videoTitle.strip();
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) {
+            base = base.substring(0, dot);
+        }
+        return base + " – Transkript.txt";
+    }
+
+    /** Lädt die Anhänge der gezeigten Seite im Hintergrund vor; für welche Seite. */
+    private AttachmentPrefetch prefetch;
+    private String prefetchPage;
+
+    /**
+     * Der Vorlader der gezeigten Seite: lädt Anhänge und legt sie ab, Marken eines Videos bekommen dabei ihr
+     * Standbild aus einem offenen Player. Ein neuer für jede Seite.
+     */
+    private AttachmentPrefetch prefetch(AppRuntime runtime) {
+        String key = sourceId + "\n" + pageId;
+        if (prefetch != null && key.equals(prefetchPage)) {
+            return prefetch;
+        }
+        if (prefetch != null) {
+            prefetch.close();
+        }
+        String source = sourceId;
+        String id = pageId;
+        VideoFrameSource video = videoFrames;
+        prefetchPage = key;
+        prefetch = new AttachmentPrefetch(new AttachmentPrefetch.Source() {
+            private VideoFrameGrabber.Session session;
+
+            @Override
+            public byte[] load(String attachment) throws Exception {
+                if (video != null && com.aresstack.spaceharvester.application.assets.Assets.videoMark(attachment)) {
+                    long millis = com.aresstack.spaceharvester.application.assets.Assets.markMillis(attachment);
+                    if (runtime.workspace().missingVideoFrames(source, id).contains(millis)) {
+                        if (session == null) {
+                            session = VideoFrameGrabber.Session.open(video.reader(), video.size(), video.mediaType(),
+                                    () -> video != videoFrames, context.video());
+                        }
+                        com.aresstack.spaceharvester.application.assets.Assets.VideoFrame frame = session.frame(millis);
+                        if (frame != null) {
+                            runtime.workspace().storeVideoFrame(source, id, frame);
+                        }
+                    }
+                }
+                return runtime.workspace().assetContent(source, id, attachment).content();
+            }
+
+            @Override
+            public void idle() {
+                if (session != null) {
+                    session.close();
+                    session = null;
+                }
+            }
+        }, PageDetailPanel::reason, () -> attachmentsChanged(video),
+                context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_CACHED),
+                context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_BATCH));
+        return prefetch;
+    }
+
+    /** Die Anhänge derselben Art in der Reihenfolge der Liste. */
+    private List<String> attachmentsOfKind(com.aresstack.spaceharvester.application.assets.AssetKind kind) {
+        return assetsModel.rows.stream().filter(entry -> entry.kind() == kind)
+                .map(entry -> entry.attachment().attachmentId()).toList();
+    }
+
+    /**
+     * Die Folien des gezeigten Videos haben sich unter „Anhänge“ geändert: Liste, Bilder und die Marken im Player
+     * gelten neu (ein neues Standbild kann eine Marke als Wiederholung derselben Folie entfallen lassen).
+     */
+    private void attachmentsChanged(VideoFrameSource video) {
+        if (video != videoFrames) {
+            return;
+        }
+        if (originalVideoViewer != null) {
+            showVideoMarks(originalVideoViewer, video);
+        }
+        imagesLoaded = false;
+        assetsLoaded = false;
+        if (ATTACHMENTS.equals(selectedTab())) {
+            loadAssets(true);
+        }
     }
 
     /**
@@ -2104,7 +3269,7 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
-    /** Die Bilder für den Reiter; Vorschauen nur aus der Ablage, außerhalb des EDT. */
+    /** Die Bilder für den Reiter: erst die Rahmen ohne Vorschau; die Bytes holt jeder aus der Ablage nach. */
     private static ImageRows imageRows(AppRuntime runtime, String sourceId, String pageId, PageImages found) {
         List<ImagesTab.Image> rows = new ArrayList<>();
         java.util.Map<String, String> versions;
@@ -2114,17 +3279,17 @@ public final class PageDetailPanel extends JPanel {
         } catch (IllegalArgumentException e) {
             versions = java.util.Map.of();
         }
+        List<java.util.function.Supplier<java.util.Optional<byte[]>>> bytes = new ArrayList<>();
         for (ImagePayload.Entry entry : found.images()) {
             String version = entry.assetId() == null ? null : versions.get(entry.assetId());
-            Icon preview = preview(() -> runtime.workspace().storedImage(sourceId, entry, version));
-            String name = entry.title().isBlank() ? entry.filename().isBlank() ? "Bild " + (entry.index() + 1)
-                    : entry.filename() : entry.title();
-            rows.add(new ImagesTab.Image(name, ImagesTab.Status.valueOf(entry.status().name()), entry.description(),
-                    entry.reason(), preview));
+            bytes.add(() -> entry.sha256() == null ? java.util.Optional.empty()
+                    : runtime.workspace().storedImage(sourceId, entry, version));
+            rows.add(imageOf(entry));
         }
         return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), found.warnings(),
                 // Freigegeben ist die Quelle oder die Seite selbst (Liste freigegebener Seiten, ADR 0028).
-                List.copyOf(rows), found.describedCount(), runtime.workspace().imagesReleased(sourceId, pageId));
+                List.copyOf(rows), found.describedCount(), runtime.workspace().imagesReleased(sourceId, pageId),
+                List.copyOf(bytes));
     }
 
     /**
@@ -2161,8 +3326,149 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    /** @param bytes je Bild seine abgelegten Bytes, im Hintergrund zu lesen */
     private record ImageRows(PassagesTab.State state, String reason, List<String> warnings,
-                             List<ImagesTab.Image> images, int described, boolean released) {
+                             List<ImagesTab.Image> images, int described, boolean released,
+                             List<java.util.function.Supplier<java.util.Optional<byte[]>>> bytes) {
+    }
+
+    /** Eine Zeile des Reiters aus einem Eintrag des Core, noch ohne Vorschau. */
+    private static ImagesTab.Image imageOf(ImagePayload.Entry entry) {
+        String name = entry.title().isBlank() ? entry.filename().isBlank() ? "Bild " + (entry.index() + 1)
+                : entry.filename() : entry.title();
+        return new ImagesTab.Image(name, ImagesTab.Status.valueOf(entry.status().name()), entry.description(),
+                entry.reason(), null);
+    }
+
+    /** Die gezeigten Bilder, für den großen Viewer. */
+    private ImageRows shownImages;
+    /** Während eines Laufs fertig beschriebene Bilder je Zeile, bis die Liste neu gezeigt wird. */
+    private final java.util.Map<Integer, ImagesTab.Image> liveImages = new java.util.HashMap<>();
+    /** Die abgelegten Bytes dieser fertig beschriebenen Bilder. */
+    private final java.util.Map<Integer, java.util.function.Supplier<java.util.Optional<byte[]>>> liveBytes =
+            new java.util.HashMap<>();
+    /** Meldet dem offenen Viewer, dass ein Bild eben beschrieben wurde. */
+    private java.util.function.IntConsumer imageUpdated = index -> { };
+    /** Zählt jedes Zeigen, damit ein später fertiger Lauf keine fremden Rahmen füllt. */
+    private int imageFill;
+
+    /**
+     * Zeigt die Bilder: sofort die Rahmen mit Name und Stand, dann füllt ein Hintergrundlauf die Rahmen der Reihe nach
+     * mit den Vorschauen aus der Ablage, ohne den EDT zu blockieren.
+     */
+    private void showImages(ImageRows found) {
+        images.released(found.released());
+        images.show(found.state(), found.reason(), found.warnings(), found.images());
+        shownImages = found;
+        liveImages.clear();
+        liveBytes.clear();
+        int fill = ++imageFill;
+        Background.run(() -> {
+            for (int index = 0; index < found.bytes().size() && fill == imageFill; index++) {
+                Icon icon = preview(found.bytes().get(index));
+                int at = index;
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (fill == imageFill) {
+                        images.preview(at, icon);
+                    }
+                });
+            }
+            return null;
+        }, done -> { }, error -> { });
+    }
+
+    /**
+     * Öffnet ein Bild aus „Analysen › Bilder“ groß, mit seiner Beschreibung darunter; die Pfeile blättern zu den
+     * übrigen Bildern der Seite. So lässt sich jede Beschreibung am Bild prüfen.
+     */
+    private void openImage(int index) {
+        ImageRows found = shownImages;
+        if (found == null || index < 0 || index >= found.images().size()) {
+            return;
+        }
+        JPanel body = new JPanel(new BorderLayout(0, 8));
+        body.setOpaque(false);
+        javax.swing.JTextArea text = new javax.swing.JTextArea(4, 60);
+        text.setEditable(false);
+        text.setLineWrap(true);
+        text.setWrapStyleWord(true);
+        text.setFont(Comic.regular(13f));
+        JLabel heading = Comic.text(" ");
+        heading.setFont(Comic.semiBold(13f));
+        JPanel south = new JPanel(new BorderLayout(0, 4));
+        south.setOpaque(false);
+        south.add(heading, BorderLayout.NORTH);
+        south.add(Comic.scroll(text), BorderLayout.CENTER);
+        body.add(south, BorderLayout.SOUTH);
+        java.util.function.IntConsumer[] show = new java.util.function.IntConsumer[1];
+        AttachmentViewerPanel[] viewer = new AttachmentViewerPanel[1];
+        int[] showing = {index};
+        show[0] = at -> {
+            showing[0] = at;
+            ImagesTab.Image image = liveImages.getOrDefault(at, found.images().get(at));
+            if (viewer[0] != null) {
+                body.remove(viewer[0]);
+                viewer[0].close();
+            }
+            ReaderAttachment picture = new ReaderAttachment("image-" + at, image.name(), "image/png", -1);
+            viewer[0] = new AttachmentViewerPanel(picture, new ReaderAttachmentLoader() {
+                @Override
+                public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                    // Auf dem EDT gewählt: ein eben beschriebenes Bild liegt inzwischen ab.
+                    java.util.function.Supplier<java.util.Optional<byte[]>> bytes =
+                            liveBytes.getOrDefault(at, found.bytes().get(at));
+                    Background.run(() -> bytes.get().orElseThrow(() -> new IllegalStateException(
+                            "Das Bild ist noch nicht abgelegt.")), done, error -> failed.accept(reason(error)));
+                }
+            }, fileOpener, attachmentRenderer);
+            viewer[0].neighbours(new AttachmentViewerPanel.Neighbours() {
+                @Override
+                public boolean hasPrevious() {
+                    return at > 0;
+                }
+
+                @Override
+                public boolean hasNext() {
+                    return at < found.images().size() - 1;
+                }
+
+                @Override
+                public void previous() {
+                    show[0].accept(at - 1);
+                }
+
+                @Override
+                public void next() {
+                    show[0].accept(at + 1);
+                }
+            });
+            body.add(viewer[0], BorderLayout.CENTER);
+            heading.setText(image.name() + " · " + ImagesTab.statusText(image));
+            text.setText(image.description() == null ? "" : image.description());
+            text.setCaretPosition(0);
+            body.revalidate();
+            body.repaint();
+            viewer[0].requestFocusInWindow();
+        };
+        show[0].accept(index);
+        // Wird das gezeigte Bild gerade beschrieben, erscheint seine Beschreibung sofort im Viewer.
+        imageUpdated = at -> {
+            if (at == showing[0]) {
+                ImagesTab.Image image = liveImages.get(at);
+                heading.setText(image.name() + " · " + ImagesTab.statusText(image));
+                text.setText(image.description() == null ? "" : image.description());
+                text.setCaretPosition(0);
+            }
+        };
+        try {
+            com.aresstack.spaceharvester.app.ui.Dialogs.viewSized(this, "Bilder der Seite", body, "analysis.images",
+                    0.8);
+        } finally {
+            imageUpdated = at -> { };
+            if (viewer[0] != null) {
+                viewer[0].close();
+            }
+        }
     }
 
     private void harvestAssets() {
@@ -2245,8 +3551,12 @@ public final class PageDetailPanel extends JPanel {
      * der Viewer über die Vorschau der Quelle, die nur Quellen mit {@code ATTACHMENT_PREVIEWS} anbieten.
      */
     void openAttachment() {
+        openAttachment(assets.getSelectedRow());
+    }
+
+    /** Öffnet den Anhang dieser Zeile; die Pfeile des Viewers blättern zu den Anhängen derselben Art. */
+    private void openAttachment(int row) {
         AppRuntime runtime = context.runtime();
-        int row = assets.getSelectedRow();
         if (runtime == null || page == null || row < 0 || row >= assetsModel.rows.size()) {
             return;
         }
@@ -2254,27 +3564,98 @@ public final class PageDetailPanel extends JPanel {
         com.aresstack.spaceharvester.application.sources.PageAttachment file = entry.attachment();
         String mediaType = file.mediaType() != null && !file.mediaType().isBlank() ? file.mediaType()
                 : entry.stored() == null ? null : entry.stored().mediaType();
-        ReaderAttachment attachment = new ReaderAttachment(file.attachmentId(), file.title(), mediaType,
+        // Eine Marke zeigt ihr Standbild, ein Transkript seinen Text.
+        String shownType = switch (entry.kind()) {
+            case MARK -> "image/png";
+            case TRANSCRIPT -> "text/plain";
+            default -> mediaType;
+        };
+        ReaderAttachment attachment = new ReaderAttachment(file.attachmentId(), file.title(), shownType,
                 file.fileSize() == null ? -1 : file.fileSize());
         String source = sourceId;
         boolean previews = runtime.workspace().attachmentPreviews(source);
-        showAttachmentOverlay(new AttachmentViewerPanel(attachment,
-                attachmentLoader(runtime, source, pageId, previews), fileOpener, attachmentRenderer),
-                attachment.fileName());
+        // Der gezeigte zuerst, dann die übrigen derselben Art nach Abstand: Blättern soll nicht warten.
+        AttachmentPrefetch loader = prefetch(runtime);
+        loader.focus(attachmentsOfKind(entry.kind()), file.attachmentId());
+        AttachmentViewerPanel viewer = new AttachmentViewerPanel(attachment,
+                attachmentLoader(runtime, source, pageId, previews, loader), fileOpener, attachmentRenderer);
+        viewer.neighbours(neighbours(file.attachmentId(), entry.kind()));
+        if (entry.kind() == com.aresstack.spaceharvester.application.assets.AssetKind.MARK) {
+            // Unter dem Standbild die Folienkommentare, die an der Marke liegen, je Modell eine Fassung.
+            JPanel marked = new JPanel(new BorderLayout(0, 8));
+            marked.setOpaque(false);
+            marked.add(viewer, BorderLayout.CENTER);
+            SlideNotesPanel notes = new SlideNotesPanel();
+            marked.add(notes, BorderLayout.SOUTH);
+            long millis = com.aresstack.spaceharvester.application.assets.Assets.markMillis(file.attachmentId());
+            String id = pageId;
+            Background.run(() -> runtime.workspace().videoSlideNotes(source, id, millis), found -> notes.show(
+                    found.stream().map(note -> new SlideNotesPanel.Version(note.label(), note.text())).toList()),
+                    error -> { });
+            showAttachmentOverlay(marked, attachment.fileName());
+        } else {
+            showAttachmentOverlay(viewer, attachment.fileName());
+        }
+        assets.getSelectionModel().setSelectionInterval(row, row);
+    }
+
+    /** Die Nachbarn eines Anhangs derselben Art in der Liste, für die Pfeile des Viewers. */
+    private AttachmentViewerPanel.Neighbours neighbours(String attachmentId,
+                                                        com.aresstack.spaceharvester.application.assets.AssetKind kind) {
+        return new AttachmentViewerPanel.Neighbours() {
+            @Override
+            public boolean hasPrevious() {
+                return neighbour(-1) >= 0;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return neighbour(1) >= 0;
+            }
+
+            @Override
+            public void previous() {
+                openAttachment(neighbour(-1));
+            }
+
+            @Override
+            public void next() {
+                openAttachment(neighbour(1));
+            }
+
+            /** Die Zeile des nächsten Anhangs derselben Art in Richtung {@code step}, sonst -1. */
+            private int neighbour(int step) {
+                List<PageAssets.Entry> rows = assetsModel.rows;
+                int at = -1;
+                for (int i = 0; i < rows.size(); i++) {
+                    if (rows.get(i).attachment().attachmentId().equals(attachmentId)) {
+                        at = i;
+                    }
+                }
+                for (int i = at + step; at >= 0 && i >= 0 && i < rows.size(); i += step) {
+                    if (rows.get(i).kind() == kind) {
+                        return i;
+                    }
+                }
+                return -1;
+            }
+        };
     }
 
     /** Grund im Anhang-Viewer, solange die Quelle einen Einmalcode verlangt; danach lädt die Seite neu. */
     static final String SIGN_IN_PENDING = "Für diesen Anhang ist eine zusätzliche Anmeldung (Einmalcode) "
             + "erforderlich.";
 
-    /** Holt Originaldatei und Vorschau über den Workspace, abseits des EDT; Fehler als lesbarer Grund. */
+    /**
+     * Holt die Originaldatei über den Vorlader (aus dem Speicher oder mit Vorrang geladen und abgelegt), die Vorschau
+     * über den Workspace, abseits des EDT; Fehler als lesbarer Grund.
+     */
     private static ReaderAttachmentLoader attachmentLoader(AppRuntime runtime, String source, String id,
-                                                           boolean previews) {
+                                                           boolean previews, AttachmentPrefetch prefetch) {
         return new ReaderAttachmentLoader() {
             @Override
             public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
-                Background.run(() -> runtime.workspace().assetContent(source, id, attachment.key()).content(), done,
-                        error -> failed.accept(reason(error)));
+                prefetch.load(attachment.key(), done, failed);
             }
 
             @Override
@@ -2642,7 +4023,7 @@ public final class PageDetailPanel extends JPanel {
      */
     JComponent headerActions() {
         return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp,
-                standingHelp, chat.headerActions(), star, more);
+                standingHelp, glossaryHelp, graphHelp, chat.headerActions(), star, more);
     }
 
     /** Zurück und Vor für die Statuszeile des Hauptfensters. */
@@ -2721,13 +4102,17 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Wählt einen Reiter über seinen Namen; ein Unterreiter von „Analysen“ (z. B. „Absätze“) wählt zuerst den
-     * Unterreiter und dann den Hauptreiter „Analysen“.
+     * Wählt einen Reiter über seinen Namen; ein Unterreiter von „Analysen“ (z. B. „Absätze“) oder „Info“ (z. B.
+     * „Eigenschaften“) wählt zuerst den Unterreiter und dann den Hauptreiter.
      */
     void selectTab(String name) {
         if (analysisTabs.button(name) != null) {
             analysisTabs.select(name);
             tabs.select(ANALYSES);
+        } else if (advancedTabs.button(name) != null) {
+            advancedTabs.select(name);
+            wideAdvanced.select(name);
+            tabs.select(ADVANCED);
         } else {
             tabs.select(name);
         }
@@ -2737,7 +4122,11 @@ public final class PageDetailPanel extends JPanel {
     String selectedTab() {
         String main = tabs.selected();
         if (ANALYSES.equals(main) && wide) {
-            return StandingTab.TERMS.equals(standing.tabs().selected()) ? OVERVIEW_TERMS : STAND;
+            return switch (java.util.Objects.requireNonNullElse(standing.tabs().selected(), "")) {
+                case StandingTab.TERMS -> OVERVIEW_TERMS;
+                case StandingTab.GLOSSARY -> OVERVIEW_GLOSSARY;
+                default -> STAND;
+            };
         }
         return ANALYSES.equals(main) ? analysisTabs.selected() : main;
     }
@@ -2887,6 +4276,8 @@ public final class PageDetailPanel extends JPanel {
                     case DIAGRAM -> "draw.io-Diagramm";
                     case VECTOR -> "SVG";
                     case IMAGE -> "Bild";
+                    case MARK -> "Marke";
+                    case TRANSCRIPT -> "Transkript";
                     case OTHER -> "Datei";
                 };
                 case 2 -> entry.attachment().fileSize() == null ? "–" : Texts.bytes(entry.attachment().fileSize());
