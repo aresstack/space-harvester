@@ -184,12 +184,6 @@ public class ReadingViews {
                                 throw e;
                             }
                         }
-                    } catch (SourceAccessException e) {
-                        // Aufgeben noch mit gehaltenem Platz, sonst fragt der nächste Abruf die Quelle doch noch.
-                        if (e.reason() != SourceAccessException.Reason.NOT_FOUND) {
-                            gaveUp.set(true);
-                        }
-                        throw e;
                     } finally {
                         prefetchSlots.release();
                     }
