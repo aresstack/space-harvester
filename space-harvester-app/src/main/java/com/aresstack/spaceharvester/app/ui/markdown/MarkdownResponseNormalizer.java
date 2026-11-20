@@ -57,6 +57,11 @@ final class MarkdownResponseNormalizer {
         }
 
         int lastIndex = lastNonBlank(lines);
+        if (closesEarly(lines, firstIndex, lastIndex, marker)) {
+            // Space Harvester (Codex-Befund zu #966): Der Behälter schließt vor dem Ende, danach folgen Text oder
+            // weitere Blöcke; das ist kein einzelner umschließender Zaun, die Antwort bleibt, wie sie ist.
+            return raw;
+        }
         boolean closed = lastIndex > firstIndex && isBareClose(lines[lastIndex], marker);
         if (closed) {
             return join(lines, firstIndex + 1, lastIndex);
@@ -65,6 +70,26 @@ final class MarkdownResponseNormalizer {
             return raw; // kein echter einzelner umschließender Zaun — Antwort unverändert lassen
         }
         return join(lines, firstIndex + 1, lines.length); // Streaming: die noch offene Behälterzeile fällt
+    }
+
+    /**
+     * Ob der Behälter schon vor der letzten Zeile schließt: ein schließender Zaun auf oberster Ebene zwischen Öffnung
+     * und Ende. Innere Blöcke mit Sprache zählen als geöffnet, bis ihr eigener Zaun sie schließt.
+     */
+    private static boolean closesEarly(String[] lines, int firstIndex, int lastIndex, String marker) {
+        int depth = 0;
+        for (int i = firstIndex + 1; i < lastIndex; i++) {
+            Matcher inner = OPEN_FENCE.matcher(lines[i]);
+            if (inner.matches() && inner.group(2).length() > 0) {
+                depth++;
+            } else if (isBareClose(lines[i], marker)) {
+                if (depth == 0) {
+                    return true;
+                }
+                depth--;
+            }
+        }
+        return false;
     }
 
     private static int firstNonBlank(String[] lines) {
@@ -85,8 +110,19 @@ final class MarkdownResponseNormalizer {
         return -1;
     }
 
-    /** Ein schließender Zaun hat dasselbe Zeichen, ist mindestens so lang und trägt keine Sprache. */
+    /**
+     * Ein schließender Zaun hat dasselbe Zeichen, ist mindestens so lang, trägt keine Sprache und ist höchstens drei
+     * Leerzeichen eingerückt (wie der öffnende); tiefer eingerückte Zäune gehören zu verschachteltem Inhalt
+     * (Codex-Befund zu #967).
+     */
     private static boolean isBareClose(String line, String openMarker) {
+        int indent = 0;
+        while (indent < line.length() && line.charAt(indent) == ' ') {
+            indent++;
+        }
+        if (indent > 3) {
+            return false;
+        }
         String trimmed = line.trim();
         char markerChar = openMarker.charAt(0);
         int minLength = openMarker.length();

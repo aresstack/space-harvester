@@ -225,6 +225,22 @@ public final class MermaidDiagramPanel extends JPanel {
         DiagramCanvas() {
             setOpaque(false);
             setPreferredSize(new Dimension(600, 140));
+            // Space Harvester (Codex-Befund zu #966): Ändert sich die Breite nach dem Rendern, die Höhe neu messen,
+            // sonst schneidet ein breiteres Fenster das Diagramm unten ab.
+            addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent event) {
+                    if (image == null) {
+                        return;
+                    }
+                    int before = getPreferredSize().height;
+                    updatePreferredSize();
+                    if (getPreferredSize().height != before) {
+                        revalidate();
+                        repaint();
+                    }
+                }
+            });
             setToolTipText("Klicken, um das Diagramm vergrößert zu öffnen");
             addMouseListener(new MouseAdapter() {
                 @Override

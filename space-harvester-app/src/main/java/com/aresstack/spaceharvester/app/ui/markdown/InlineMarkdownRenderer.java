@@ -120,10 +120,18 @@ final class InlineMarkdownRenderer {
             renderStandaloneLink(address, "mailto:" + address, document, inherited);
             return;
         }
-        if (node instanceof com.vladsch.flexmark.ast.LinkRef && !((com.vladsch.flexmark.ast.LinkRef) node).isDefined()) {
-            // Space Harvester: Quellenmarken wie „[3]“ ohne Linkdefinition bleiben mit Klammern stehen; sonst verlöre
-            // der Chat die Nummer der Quelle zur bloßen Zahl.
-            append(document, node.getChars().toString(), inherited);
+        if (node instanceof com.vladsch.flexmark.ast.LinkRef) {
+            com.vladsch.flexmark.ast.LinkRef ref = (com.vladsch.flexmark.ast.LinkRef) node;
+            com.vladsch.flexmark.ast.Reference target = ref.isDefined() && ref.getDocument() != null
+                    ? ref.getReferenceNode(ref.getDocument()) : null;
+            if (target == null) {
+                // Space Harvester: Quellenmarken wie „[3]“ ohne Linkdefinition bleiben mit Klammern stehen; sonst
+                // verlöre der Chat die Nummer der Quelle zur bloßen Zahl.
+                append(document, node.getChars().toString(), inherited);
+            } else {
+                // „[Text][ref]“ mit Definition ist ein Link wie ein Inline-Link (wie MarkdownDocxRenderer.reference).
+                renderLink(ref, target.getUrl().toString(), document, inherited);
+            }
             return;
         }
         if (node.hasChildren()) {
