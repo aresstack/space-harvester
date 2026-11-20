@@ -577,19 +577,31 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      *                      ({@code load-poll-interval}); {@code null}: Standard des Core
      * @param stepThinking  Nachdenken bei Analyseschritten ({@code step-thinking}: none, low, medium, high);
      *                      {@code null}: Standard des Core (aus)
+     * @param parallel      gleichzeitige Anfragen an den KI-Dienst ({@code parallel}); {@code null}: Standard des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
                              Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
                              Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
                              Duration loadTimeout, Integer retries, Duration loadPollInterval,
-                             String stepThinking) {
+                             String stepThinking, Integer parallel) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
         public AiSettings {
             externalProcessingSources = List.copyOf(externalProcessingSources);
             provider = provider == null ? AiProvider.OPENAI_COMPATIBLE : provider;
+        }
+
+        /** Ohne Vorgabe für gleichzeitige Anfragen. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                          Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, null);
         }
 
         /** Für einen OpenAI-kompatiblen Dienst. */

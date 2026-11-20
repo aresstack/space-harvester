@@ -905,8 +905,7 @@ public final class Workspace {
         syncedPage(sourceId, pageId);
         com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run run =
                 harvester.videoPresentations().start(caller, sourceId, pageId, media,
-                        com.aresstack.spaceharvester.application.presentation.VideoPresentations.Options.DEFAULT
-                                .withFormat(format).withDirectory(directory));
+                        harvester.videoPresentations().options(format).withDirectory(directory));
         run.all().forEach(job -> activities.remember(job.id()));
         return run;
     }

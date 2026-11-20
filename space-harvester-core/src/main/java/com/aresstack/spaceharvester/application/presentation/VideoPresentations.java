@@ -157,7 +157,7 @@ public final class VideoPresentations {
      */
     public record Options(int parallel, Format format, Path directory) {
 
-        /** Vier Aufrufe zugleich in jeder Phase (die Bildbeschreibung nimmt ebenso viele an), PowerPoint. */
+        /** Vier Aufrufe zugleich in jeder Phase, PowerPoint; ein Vorgang nimmt die Einstellung ({@link #options}). */
         public static final Options DEFAULT = new Options(4);
 
         public Options(int parallel) {
@@ -230,6 +230,15 @@ public final class VideoPresentations {
         this.store = Objects.requireNonNull(store, "store");
         this.released = Objects.requireNonNull(released, "released");
         this.outputDirectory = Objects.requireNonNull(outputDirectory, "outputDirectory");
+    }
+
+    /**
+     * Die Einstellungen eines neuen Vorgangs: so viele Aufrufe zugleich, wie für den KI-Dienst eingestellt
+     * ({@code ai.parallel}, über {@link ImageDescriber#parallel()}), höchstens {@code 32}.
+     */
+    public Options options(Format format) {
+        int parallel = assets.describerInUse().map(ImageDescriber::parallel).orElse(Options.DEFAULT.parallel());
+        return new Options(Math.max(1, Math.min(32, parallel)), format);
     }
 
     /**
@@ -371,7 +380,7 @@ public final class VideoPresentations {
                         "die Anmeldung des Auftraggebers ist nach dem Neustart nicht mehr da; „In PPTX umwandeln“ neu "
                                 + "starten, es fragt nur, was fehlt"));
         Format format = Format.parse(status.parameter(FORMAT_PARAMETER));
-        Options options = Options.DEFAULT.withFormat(format);
+        Options options = options(format);
         MediaSource source = media;
         return switch (status.type()) {
             case VIDEO_TRANSCRIPT -> JobTask.blocking(context -> transcribe(caller, sourceId, pageId,
@@ -583,7 +592,8 @@ public final class VideoPresentations {
         }
         AtomicLong failed = new AtomicLong(withoutFrame);
         // Nie mehr zugleich, als die Bildbeschreibung annimmt: Ein weiterer Aufruf käme sofort als „belegt“ zurück.
-        int parallel = Math.min(options.parallel(), Assets.MAX_CONCURRENT_DESCRIPTIONS);
+        int parallel = Math.min(options.parallel(),
+                assets.describerInUse().map(ImageDescriber::parallel).orElse(Assets.MAX_CONCURRENT_DESCRIPTIONS));
         Map<Integer, ImagePayload.Entry> retry = new java.util.concurrent.ConcurrentHashMap<>();
         inParallel(open, parallel, context, index -> {
             ImagePayload.Entry entry = describeSlide(snapshot, pageId, slideMarks, index, context);

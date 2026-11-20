@@ -299,16 +299,18 @@ public class Assets implements DocumentInventory {
     private final java.util.Set<String> backfilled = ConcurrentHashMap.newKeySet();
 
     /**
-     * Gleichzeitige Läufe des Bildbeschreibers, so viele wie die Aufrufe eines Video→PPTX-Auftrags
-     * ({@code VideoPresentations.Options#DEFAULT}); ein weiterer scheitert sofort mit {@code BUSY}. Früher 2: Damit lief
-     * „Folien beschreiben“ mit nur zwei Anfragen, obwohl ein Ollama-Server mit {@code OLLAMA_NUM_PARALLEL=8} sechs
-     * Bildanfragen gleichzeitig beantwortet (gemessen 20.11.2026). Dasselbe Bild für
-     * dasselbe Modell läuft nie zweimal gleichzeitig: weitere Aufrufer warten höchstens {@link #DESCRIBE_WAIT} auf den
-     * laufenden.
+     * Gleichzeitige Läufe des Bildbeschreibers ohne eigene Einstellung; sonst so viele, wie der Beschreiber nennt
+     * ({@link ImageDescriber#parallel()}, {@code ai.parallel}). Ein weiterer scheitert sofort mit {@code BUSY}. Früher
+     * fest 2: Damit lief „Folien beschreiben“ mit nur zwei Anfragen, obwohl ein Ollama-Server mit
+     * {@code OLLAMA_NUM_PARALLEL=8} sechs Bildanfragen gleichzeitig beantwortet (gemessen 20.11.2026). Dasselbe Bild
+     * für dasselbe Modell läuft nie zweimal gleichzeitig: weitere Aufrufer warten höchstens {@link #DESCRIBE_WAIT} auf
+     * den laufenden.
      */
     public static final int MAX_CONCURRENT_DESCRIPTIONS = 4;
     private static final java.time.Duration DESCRIBE_WAIT = java.time.Duration.ofMinutes(2);
-    private final Semaphore descriptions = new Semaphore(MAX_CONCURRENT_DESCRIPTIONS);
+    /** Laufende Beschreibungen; die Grenze kommt bei jedem Aufruf aus der Einstellung. */
+    private final java.util.concurrent.atomic.AtomicInteger describingNow =
+            new java.util.concurrent.atomic.AtomicInteger();
     private final Map<String, CompletableFuture<ImageDescription>> describing = new ConcurrentHashMap<>();
 
     /** Alle Anhänge der Seite mit Art, Diagrammbezug und dem abgelegten Stand; lädt nichts herunter. */
@@ -2718,8 +2720,21 @@ public class Assets implements DocumentInventory {
         }
     }
 
+    /** Belegt einen Platz, solange weniger als {@code limit} Beschreibungen laufen. */
+    private boolean enterDescription(int limit) {
+        while (true) {
+            int now = describingNow.get();
+            if (now >= limit) {
+                return false;
+            }
+            if (describingNow.compareAndSet(now, now + 1)) {
+                return true;
+            }
+        }
+    }
+
     private ImageDescription generateGated(ImageDescriber model, AssetContent content, String instruction) {
-        if (!descriptions.tryAcquire()) {
+        if (!enterDescription(Math.max(1, model.parallel()))) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.BUSY,
                     "Zu viele gleichzeitige Bildbeschreibungen", null);
         }
@@ -2732,7 +2747,7 @@ public class Assets implements DocumentInventory {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Beschreibung fehlgeschlagen",
                     e);
         } finally {
-            descriptions.release();
+            describingNow.decrementAndGet();
         }
         if (text == null || text.isBlank()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Leere Beschreibung", null);

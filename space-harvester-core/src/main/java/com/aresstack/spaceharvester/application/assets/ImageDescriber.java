@@ -48,6 +48,14 @@ public interface ImageDescriber {
         return 0;
     }
 
+    /**
+     * So viele Beschreibungen gehen höchstens zugleich an das Modell, wie eingestellt ({@code ai.parallel}). Ohne
+     * eigene Umsetzung {@link Assets#MAX_CONCURRENT_DESCRIPTIONS}.
+     */
+    default int parallel() {
+        return Assets.MAX_CONCURRENT_DESCRIPTIONS;
+    }
+
     default boolean available() {
         return true;
     }

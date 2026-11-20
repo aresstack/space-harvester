@@ -1122,7 +1122,7 @@ public final class AppSettingsLoader {
                 seconds(optionalDuration(get(ai, "load-timeout"), "space-harvester.ai.load-timeout", problems)),
                 text(get(ai, "retries"), problems),
                 seconds(optionalDuration(get(ai, "load-poll-interval"), "space-harvester.ai.load-poll-interval",
-                        problems)), text(get(ai, "step-thinking"), problems));
+                        problems)), text(get(ai, "step-thinking"), problems), text(get(ai, "parallel"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1132,7 +1132,7 @@ public final class AppSettingsLoader {
                 draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
                 draft.tokens(), draft.overlap(), draft.visionModel(), draft.maxTokens(), draft.provider(),
                 draft.context(), draft.loadDuration(), draft.retryCount(),
-                draft.pollDuration(), draft.thinking());
+                draft.pollDuration(), draft.thinking(), draft.parallelCount());
     }
 
     /** Eine Dauer als Sekunden, wie das Feld der Einstellungen sie zeigt; {@code null} bleibt. */

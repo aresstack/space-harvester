@@ -88,6 +88,12 @@ public final class VisionImageDescriber implements ImageDescriber {
     }
 
     @Override
+    public int parallel() {
+        AiServiceSettings current = settings.get();
+        return current == null ? AiServiceSettings.DEFAULT_PARALLEL : current.parallel();
+    }
+
+    @Override
     public String describe(byte[] image, String mediaType, String instruction) {
         AiServiceSettings current = settings.get();
         if (current == null || !current.vision()) {

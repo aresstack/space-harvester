@@ -822,9 +822,19 @@ class AssetsTest {
 
     @Test
     void tooManyDifferentDescriptionsAtOnceAreRefusedNotQueued() throws Exception {
+        refusesBeyond(Assets.MAX_CONCURRENT_DESCRIPTIONS);
+    }
+
+    @Test
+    void theNumberOfDescriptionsAtOnceFollowsTheSetting() throws Exception {
+        // ai.parallel (Angelo 20.11.2026): so viele zugleich, wie eingestellt, keine feste Zahl.
+        describer.parallel = 2;
+        refusesBeyond(2);
+    }
+
+    private void refusesBeyond(int running) throws Exception {
         describer.gate = new CountDownLatch(1);
         Assets assets = assets(1000, describer);
-        int running = Assets.MAX_CONCURRENT_DESCRIPTIONS;
         List<PageAttachment> images = new ArrayList<>();
         for (int i = 0; i <= running; i++) {
             source.file("att" + i, "1", "bild-" + i);
@@ -863,10 +873,16 @@ class AssetsTest {
         /** Hält jeden Lauf an, bis der Test ihn freigibt; {@code null} lässt sofort durch. */
         volatile CountDownLatch gate;
         volatile CountDownLatch started = new CountDownLatch(1);
+        volatile int parallel = Assets.MAX_CONCURRENT_DESCRIPTIONS;
 
         @Override
         public String id() {
             return "test";
+        }
+
+        @Override
+        public int parallel() {
+            return parallel;
         }
 
         @Override
