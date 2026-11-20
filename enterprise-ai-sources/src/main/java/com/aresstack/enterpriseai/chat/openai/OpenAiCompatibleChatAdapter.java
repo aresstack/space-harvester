@@ -5,6 +5,7 @@ import com.aresstack.enterpriseai.chat.api.ChatCompletionPort;
 import com.aresstack.enterpriseai.chat.api.ChatErrorKind;
 import com.aresstack.enterpriseai.chat.api.ChatStreamListener;
 import com.aresstack.enterpriseai.chat.api.ChatTask;
+import com.aresstack.enterpriseai.astu.chat.ChatFinishReason;
 import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
 import com.aresstack.enterpriseai.astu.chat.ChatResponse;
@@ -22,6 +23,8 @@ import java.nio.charset.Charset;
 import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Einziger produktiver {@link ChatCompletionPort}: die interne GPT-/OpenAI-kompatible Enterprise-API
@@ -38,6 +41,7 @@ import java.util.concurrent.RejectedExecutionException;
  */
 public final class OpenAiCompatibleChatAdapter implements ChatCompletionPort {
 
+    private static final Logger LOG = Logger.getLogger(OpenAiCompatibleChatAdapter.class.getName());
     private static final Charset UTF_8 = Charset.forName("UTF-8");
     private static final String JSON_UTF_8 = "application/json; charset=utf-8";
 
@@ -81,7 +85,9 @@ public final class OpenAiCompatibleChatAdapter implements ChatCompletionPort {
             if (status < 200 || status >= 300) {
                 throw OpenAiErrors.forStatus(status, readError(connection), token);
             }
-            return parser.parseCompletion(readAll(connection.getInputStream()));
+            ChatResponse response = parser.parseCompletion(readAll(connection.getInputStream()));
+            logEnd(request.options().maxTokens(), response);
+            return response;
         } catch (ChatCompletionException e) {
             throw OpenAiErrors.redacted(e, token);
         } catch (IOException e) {
@@ -98,7 +104,7 @@ public final class OpenAiCompatibleChatAdapter implements ChatCompletionPort {
         if (listener == null) {
             throw new IllegalArgumentException("listener must not be null");
         }
-        final StreamTask task = new StreamTask(listener);
+        final StreamTask task = new StreamTask(listener, request.options().maxTokens());
         final byte[] body;
         try {
             body = writer.write(request, true).getBytes(UTF_8);
@@ -237,6 +243,34 @@ public final class OpenAiCompatibleChatAdapter implements ChatCompletionPort {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    /**
+     * Diagnosezeile je abgeschlossener Anfrage (Issue #223), ohne Antworttext und ohne Zugangsdaten: Abschlussgrund,
+     * Modell des Dienstes, gesendetes Ausgabelimit und, soweit gemeldet, die Tokenzahlen. Ein erreichtes Limit oder
+     * ein Inhaltsfilter steht als INFO im Protokoll, alles andere als FINE.
+     */
+    static void logEnd(Integer maxTokens, ChatResponse response) {
+        ChatFinishReason reason = response.finishReason();
+        Level level = reason == ChatFinishReason.LENGTH || reason == ChatFinishReason.CONTENT_FILTER
+                ? Level.INFO : Level.FINE;
+        if (LOG.isLoggable(level)) {
+            LOG.log(level, endLine(maxTokens, response));
+        }
+    }
+
+    static String endLine(Integer maxTokens, ChatResponse response) {
+        ChatUsage usage = response.usage();
+        StringBuilder line = new StringBuilder("Chat-Antwort beendet: finish_reason=").append(response.finishReason())
+                .append(", model=").append(response.model() == null ? "nicht gemeldet" : response.model())
+                .append(", max_tokens=").append(maxTokens == null ? "nicht gesendet" : String.valueOf(maxTokens));
+        if (usage != null && usage.isReported()) {
+            line.append(", prompt_tokens=").append(usage.promptTokens())
+                    .append(", completion_tokens=").append(usage.completionTokens());
+        } else {
+            line.append(", usage nicht gemeldet");
+        }
+        return line.toString();
+    }
+
     private HttpURLConnection open(String accept, String token) throws IOException {
         // Route, TLS-Vertrauen und User-Agent kommen je Anfrage aus der Konfiguration; nichts davon ist
         // prozessweit gesetzt (kein ProxySelector, keine Standard-SSLSocketFactory).
@@ -324,13 +358,15 @@ public final class OpenAiCompatibleChatAdapter implements ChatCompletionPort {
     private static final class StreamTask implements ChatTask {
 
         private final ChatStreamListener listener;
+        private final Integer maxTokens;
         private boolean finished;
         private volatile boolean cancelRequested;
         private boolean cancelled;
         private HttpURLConnection connection;
 
-        StreamTask(ChatStreamListener listener) {
+        StreamTask(ChatStreamListener listener, Integer maxTokens) {
             this.listener = listener;
+            this.maxTokens = maxTokens;
         }
 
         @Override
@@ -382,6 +418,7 @@ public final class OpenAiCompatibleChatAdapter implements ChatCompletionPort {
         }
 
         void complete(ChatResponse response) {
+            logEnd(maxTokens, response);
             finish(response, null);
         }
 

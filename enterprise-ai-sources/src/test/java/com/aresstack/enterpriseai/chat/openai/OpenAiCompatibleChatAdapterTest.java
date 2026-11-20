@@ -8,6 +8,7 @@ import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatOptions;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
 import com.aresstack.enterpriseai.astu.chat.ChatResponse;
+import com.aresstack.enterpriseai.astu.chat.ChatUsage;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.google.gson.JsonObject;
@@ -191,6 +192,19 @@ public class OpenAiCompatibleChatAdapterTest {
         assertEquals(ChatErrorKind.INVALID_REQUEST, listener.error.kind());
         assertTrue(task.isDone());
         assertEquals("nothing reaches the server", 0, server.requestCount());
+    }
+
+    /** Issue #223: die Diagnosezeile nennt Abschlussgrund, Modell, Limit und Tokenzahlen, nie den Antworttext. */
+    @Test
+    public void endLineNamesFinishReasonLimitAndUsageButNeverTheText() {
+        ChatResponse cut = new ChatResponse(ChatMessage.assistant("geheimer Antworttext"), ChatFinishReason.LENGTH,
+                ChatUsage.of(12, 8192, 8204), "openai/gpt-oss-120b");
+        assertEquals("Chat-Antwort beendet: finish_reason=LENGTH, model=openai/gpt-oss-120b, max_tokens=8192, "
+                + "prompt_tokens=12, completion_tokens=8192", OpenAiCompatibleChatAdapter.endLine(8192, cut));
+        ChatResponse streamed = new ChatResponse(ChatMessage.assistant("geheim"), ChatFinishReason.STOP,
+                ChatUsage.notReported(), null);
+        assertEquals("fehlende usage ist nicht 0", "Chat-Antwort beendet: finish_reason=STOP, model=nicht gemeldet, "
+                + "max_tokens=nicht gesendet, usage nicht gemeldet", OpenAiCompatibleChatAdapter.endLine(null, streamed));
     }
 
     @Test
