@@ -1671,6 +1671,21 @@ public final class PageDetailPanel extends JPanel {
             public void preview(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
                 loader.preview(attachment, done, failed);
             }
+
+            @Override
+            public boolean downloadsToFile() {
+                return loader.downloadsToFile();
+            }
+
+            @Override
+            public void downloadTo(ReaderAttachment attachment, java.nio.file.Path target, Runnable done,
+                                   Consumer<String> failed) {
+                if (bytes != null) {
+                    ReaderAttachmentLoader.super.downloadTo(attachment, target, done, failed);
+                } else {
+                    loader.downloadTo(attachment, target, done, failed);
+                }
+            }
         };
     }
 
@@ -1759,8 +1774,27 @@ public final class PageDetailPanel extends JPanel {
         }
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(), type, size);
         String source = sourceId;
-        ReaderAttachmentLoader loader = (file, done, failed) -> Background.run(
-                () -> runtime.workspace().original(source, metadata), done, error -> failed.accept(reason(error)));
+        ReaderAttachmentLoader loader = new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment file, Consumer<byte[]> done, Consumer<String> failed) {
+                Background.run(() -> runtime.workspace().original(source, metadata), done,
+                        error -> failed.accept(reason(error)));
+            }
+
+            @Override
+            public boolean downloadsToFile() {
+                return true;
+            }
+
+            @Override
+            public void downloadTo(ReaderAttachment file, java.nio.file.Path target, Runnable done,
+                                   Consumer<String> failed) {
+                Background.run(() -> {
+                    runtime.workspace().downloadOriginal(source, metadata, target);
+                    return Boolean.TRUE;
+                }, ignored -> done.run(), error -> failed.accept(reason(error)));
+            }
+        };
         originalAttachment = attachment;
         originalLoader = once(loader);
         originalFileViewer = new AttachmentViewerPanel(attachment, originalLoader, fileOpener, attachmentRenderer);
@@ -1782,13 +1816,44 @@ public final class PageDetailPanel extends JPanel {
         long size = com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
         long limit = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES
                 : context.settings().storage().maxPageBytes();
-        showFileCard(metadata, "Zu groß für den Cache: "
-                + (size < 0 ? "Größe unbekannt" : Texts.bytes(size)) + ", die Grenze liegt bei " + Texts.bytes(limit)
-                + (textOnly ? ". Abgelegt ist nur ihr Textauszug: Er steht in der Text-Ansicht, und die Suche findet "
-                + "die Datei darüber." : ". Abgelegt sind nur ihre Kopfdaten, weil sie keinen lesbaren Text hat oder "
-                + "größer ist als die Grenze für den Textauszug.")
-                + " Das Original öffnest du in der Quelle; oder erhöhe die Grenzen unter Einstellungen › Daten › "
-                + "„Größte Datei im Cache“, dann lädt das nächste Öffnen es.");
+        String reason = "Keine Vorschau: zu groß für den Cache (Grenze " + Texts.bytes(limit) + ")."
+                + (textOnly ? "\nDer Textauszug steht im Reiter „Text“, die Suche findet die Datei darüber."
+                : "\nAbgelegt sind nur ihre Kopfdaten (kein lesbarer Text oder größer als die Grenze zum Laden).")
+                + "\nGrenzen unter Einstellungen › Daten › „Größte Datei im Cache“.";
+        AppRuntime runtime = context.runtime();
+        String type = com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(metadata);
+        ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
+                type == null ? "application/octet-stream" : type, size);
+        String source = sourceId;
+        // Speichern und Öffnen laden das Original direkt aus der Quelle auf die Platte, ohne Größengrenze.
+        ReaderAttachmentLoader loader = new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment file, Consumer<byte[]> done, Consumer<String> failed) {
+                failed.accept("Zu groß, um sie ganz in den Speicher zu laden.");
+            }
+
+            @Override
+            public boolean downloadsToFile() {
+                return runtime != null;
+            }
+
+            @Override
+            public void downloadTo(ReaderAttachment file, java.nio.file.Path target, Runnable done,
+                                   Consumer<String> failed) {
+                Background.run(() -> {
+                    runtime.workspace().downloadOriginal(source, metadata, target);
+                    return Boolean.TRUE;
+                }, ignored -> done.run(), error -> failed.accept(reason(error)));
+            }
+        };
+        originalFileViewer = AttachmentViewerPanel.withoutPreview(attachment, loader, fileOpener, attachmentRenderer,
+                reason);
+        originalFileViewer.detachFooter();
+        fileContent.add(originalFileViewer, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+        updateFootTools(tabs.selected());
     }
 
     /** Eine Karte statt des Originals: Hinweis und „In der Quelle öffnen“. */

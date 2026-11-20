@@ -160,7 +160,24 @@ public final class AttachmentViewerPanel extends JPanel {
      */
     public AttachmentViewerPanel(ReaderAttachment attachment, ReaderAttachmentLoader loader, ReaderFileOpener opener,
                                  Executor renderer) {
+        this(attachment, loader, opener, renderer, null);
+    }
+
+    /**
+     * Ohne Vorschau (Angelo, 20.11.2026): Name, Typ, Größe und {@code reason} statt des Inhalts, etwa für eine Datei
+     * über der Größengrenze; „Speichern“ und „Öffnen“ im Standardprogramm bleiben, über
+     * {@link ReaderAttachmentLoader#downloadTo} direkt auf die Platte, wenn der Lader das kann.
+     */
+    public static AttachmentViewerPanel withoutPreview(ReaderAttachment attachment, ReaderAttachmentLoader loader,
+                                                       ReaderFileOpener opener, Executor renderer, String reason) {
+        return new AttachmentViewerPanel(attachment, loader, opener, renderer,
+                reason == null || reason.isBlank() ? NO_PREVIEW_TEXT : reason);
+    }
+
+    private AttachmentViewerPanel(ReaderAttachment attachment, ReaderAttachmentLoader loader, ReaderFileOpener opener,
+                                  Executor renderer, String noPreview) {
         super(new BorderLayout(0, 4));
+        this.noPreview = noPreview;
         if (attachment == null || loader == null) {
             throw new IllegalArgumentException("attachment and loader must not be null");
         }
@@ -477,6 +494,11 @@ public final class AttachmentViewerPanel extends JPanel {
         return info.getText();
     }
 
+    /** Für Tests: der Knopf „Öffnen“ der Leiste. */
+    javax.swing.AbstractButton openButtonForTest() {
+        return openButton;
+    }
+
     /** Der Text über dem Bild (Laden oder Fehlschlag mit Grund). */
     public String statusText() {
         return spinner.isBusy() ? spinner.text() : busy.getText();
@@ -763,6 +785,9 @@ public final class AttachmentViewerPanel extends JPanel {
 
     // ------------------------------------------------------------------ Anhang laden und zeigen
 
+    /** Ohne Vorschau: der Grund statt des Inhalts ({@link #withoutPreview}); sonst {@code null}. */
+    private final String noPreview;
+
     /** Lädt und zeigt den Anhang je nach Typ. */
     private void loadAttachment() {
         loadGeneration++;
@@ -771,6 +796,10 @@ public final class AttachmentViewerPanel extends JPanel {
         canvas.setStaticImage(null);
         loading(LOADING_ATTACHMENT_TEXT);
         updateInfo();
+        if (noPreview != null) {
+            showUnavailable(noPreview);
+            return;
+        }
         switch (attachment.kind()) {
             case OTHER:
                 showUnavailable(NO_PREVIEW_TEXT);
@@ -1183,6 +1212,10 @@ public final class AttachmentViewerPanel extends JPanel {
     }
 
     private void saveAttachment() {
+        if (original == null && attachmentLoader.downloadsToFile()) {
+            saveToFile();
+            return;
+        }
         requestOriginal(bytes -> {
             JFileChooser chooser = new JFileChooser();
             chooser.setDialogTitle("Anhang speichern");
@@ -1198,7 +1231,61 @@ public final class AttachmentViewerPanel extends JPanel {
                 "Download-Fehler", JOptionPane.ERROR_MESSAGE));
     }
 
+    /** Speichern einer großen Datei: direkt aus der Quelle in die gewählte Datei, ohne Umweg über den Speicher. */
+    private void saveToFile() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Anhang speichern");
+        chooser.setSelectedFile(new File(safeFileName(attachment.fileName())));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        File target = chooser.getSelectedFile();
+        loading("Wird gespeichert …");
+        attachmentLoader.downloadTo(attachment, target.toPath(), () -> {
+            loadAttachment();
+            JOptionPane.showMessageDialog(this, FILE_SAVED_PREFIX + target.getName(), "Download",
+                    JOptionPane.INFORMATION_MESSAGE);
+        }, reason -> {
+            loadAttachment();
+            JOptionPane.showMessageDialog(this, SAVE_FAILED_PREFIX + reasonText(reason), "Download-Fehler",
+                    JOptionPane.ERROR_MESSAGE);
+        });
+    }
+
+    /** Öffnen einer großen Datei: direkt aus der Quelle in einen eigenen temporären Ordner, dann im Standardprogramm. */
+    private void openFromFile() {
+        File copy;
+        try {
+            File folder = Files.createTempDirectory("space-harvester-anhang").toFile();
+            folder.deleteOnExit();
+            copy = new File(folder, safeFileName(attachment.fileName()));
+            copy.deleteOnExit();
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, OPEN_FAILED_PREFIX + e.getMessage(), "Öffnen",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        loading("Wird geladen …");
+        attachmentLoader.downloadTo(attachment, copy.toPath(), () -> {
+            loadAttachment();
+            try {
+                fileOpener.open(copy);
+            } catch (IOException | RuntimeException e) {
+                JOptionPane.showMessageDialog(this, OPEN_FAILED_PREFIX + reasonText(e.getMessage()), "Öffnen",
+                        JOptionPane.ERROR_MESSAGE);
+            }
+        }, reason -> {
+            loadAttachment();
+            JOptionPane.showMessageDialog(this, OPEN_FAILED_PREFIX + reasonText(reason), "Öffnen",
+                    JOptionPane.ERROR_MESSAGE);
+        });
+    }
+
     private void openAttachment() {
+        if (original == null && attachmentLoader.downloadsToFile()) {
+            openFromFile();
+            return;
+        }
         requestOriginal(bytes -> {
             String problem = openOriginal();
             if (problem != null) {

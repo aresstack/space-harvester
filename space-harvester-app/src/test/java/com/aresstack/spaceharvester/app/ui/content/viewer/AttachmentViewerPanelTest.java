@@ -83,6 +83,55 @@ class AttachmentViewerPanelTest {
         assertThat(loader.loads).containsEntry("att-pdf", 1);
     }
 
+    /**
+     * Angelo 20.11.2026: Über der Größengrenze zeigt der Viewer statt der Vorschau den Grund, und „Öffnen“ lädt die
+     * Datei direkt auf die Platte und öffnet sie im Standardprogramm, ohne sie in den Speicher zu laden.
+     */
+    @Test
+    void withoutPreviewTheViewerStillOpensTheFileInAnotherProgram() throws Exception {
+        byte[] content = "großes Original".getBytes(StandardCharsets.UTF_8);
+        List<File> opened = new ArrayList<>();
+        List<String> loaded = new ArrayList<>();
+        ReaderAttachmentLoader loader = new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment attachment, java.util.function.Consumer<byte[]> done,
+                             java.util.function.Consumer<String> failed) {
+                loaded.add(attachment.fileName());
+                failed.accept("zu groß");
+            }
+
+            @Override
+            public boolean downloadsToFile() {
+                return true;
+            }
+
+            @Override
+            public void downloadTo(ReaderAttachment attachment, java.nio.file.Path target, Runnable done,
+                                   java.util.function.Consumer<String> failed) {
+                try {
+                    Files.write(target, content);
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+                done.run();
+            }
+        };
+        run(() -> {
+            AttachmentViewerPanel viewer = AttachmentViewerPanel.withoutPreview(
+                    new ReaderAttachment("fig", "Backup.fig", "application/octet-stream", 40_268_060L), loader,
+                    opened::add, Runnable::run, "Keine Vorschau: zu groß für den Cache");
+            assertThat(viewer.showsPicture()).isFalse();
+            assertThat(viewer.statusText()).contains("Backup.fig", "zu groß für den Cache");
+            viewer.openButtonForTest().doClick();
+            assertThat(loaded).as("nie in den Speicher").isEmpty();
+            viewer.close();
+        });
+        assertThat(opened).singleElement().satisfies(file -> {
+            assertThat(file.getName()).isEqualTo("Backup.fig");
+            assertThat(Files.readAllBytes(file.toPath())).isEqualTo(content);
+        });
+    }
+
     /** Angelo 20.11.2026: Zoom und Ausschnitt bleiben beim Blättern und beim Wechsel aufs nächste Bild. */
     @Test
     void zoomAndSectionStayWhenTurningPagesAndSwitchingImages() throws Exception {

@@ -67,6 +67,25 @@ public class SourceSnapshots implements PageContentFetcher {
     }
 
     /**
+     * Lädt das Original einer Datei direkt aus der Quelle nach {@code target}, ohne Größengrenze und ohne es abzulegen:
+     * zum Speichern und zum Öffnen in einem anderen Programm, auch wenn die Datei zu groß für Cache und Anzeige ist.
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED}, wenn die Quelle das Original nicht als Datei liefern kann
+     */
+    public void downloadOriginal(String sourceId, PageMetadata metadata, java.nio.file.Path target) {
+        HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+        Runnable ended = started(new PageKey(sourceId, metadata.pageId()));
+        try {
+            if (source.downloadOriginal(metadata.pageId(), target, type -> true, 0).isEmpty()) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
+                        "Die Quelle liefert dieses Original nicht als Datei", null);
+            }
+        } finally {
+            quietly(ended);
+        }
+    }
+
+    /**
      * Das Original einer Datei über {@link #maxBytes} zum Anzeigen, direkt aus der Quelle und ohne es abzulegen; über
      * eine temporäre Datei, nicht größer als {@link #maxTextBytes}.
      *

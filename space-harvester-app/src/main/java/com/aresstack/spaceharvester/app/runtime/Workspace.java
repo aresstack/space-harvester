@@ -441,6 +441,15 @@ public final class Workspace {
     }
 
     /**
+     * Lädt das Original einer Datei direkt aus der Quelle in die Datei {@code target}, ohne Größengrenze und ohne es
+     * abzulegen: „Speichern“ und „Öffnen“ im Viewer für Dateien über der Größengrenze (Angelo, 20.11.2026).
+     */
+    public void downloadOriginal(String sourceId, PageMetadata metadata, java.nio.file.Path target) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        harvester.snapshots().downloadOriginal(sourceId, metadata, target);
+    }
+
+    /**
      * Lese-Ansicht einer Seite ({@code …/pages/{pageId}/reading-view}, #176): gerendertes HTML der Quelle mit den
      * Bildern, die sie zeigt; Rechte und Version prüft der Core.
      */
