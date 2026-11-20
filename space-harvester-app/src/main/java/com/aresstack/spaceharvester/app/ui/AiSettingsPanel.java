@@ -91,6 +91,15 @@ final class AiSettingsPanel {
     static final String RETRIES_HINT = "So oft wird ein Bild erneut beschrieben, wenn das Modell scheitert; leer: "
             + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_RETRIES;
     /**
+     * Gleichzeitige Anfragen an den KI-Dienst ({@code parallel}, Angelo 20.11.2026: „Warum verwendet er nur eine
+     * Verbindung zum KI-Server?“); leer: Standard des Core.
+     */
+    final JTextField parallel = Comic.field(4);
+    static final String PARALLEL_LABEL = "Gleichzeitige Anfragen";
+    static final String PARALLEL_HINT = "So viele Anfragen schickt ein Auftrag zugleich an den KI-Dienst "
+            + "(Bildbeschreibungen, „In PPTX umwandeln“); bei Ollama höchstens OLLAMA_NUM_PARALLEL; leer: "
+            + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_PARALLEL;
+    /**
      * Nachdenken des Chat-Modells bei Analyseschritten ({@code step-thinking}, Angelo 20.11.2026): Ein Modell mit
      * Nachdenk-Modus schreibt sonst vor jeder Antwort Tausende Token, und „Transkript korrigieren“ kommt nicht voran.
      */
@@ -371,6 +380,7 @@ final class AiSettingsPanel {
         modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
                 "Beschreibt die Bilder einer Seite (Leseansicht › Bilder); leer: keine Bildbeschreibung");
         modelRows.add(RETRIES_LABEL, retries, RETRIES_HINT);
+        modelRows.add(PARALLEL_LABEL, parallel, PARALLEL_HINT);
         THINKING_NAMES.forEach(stepThinking::addItem);
         modelRows.add(THINKING_LABEL, stepThinking, THINKING_HINT);
         {
@@ -499,6 +509,7 @@ final class AiSettingsPanel {
         contextTokens.setText(current.contextTokens() == null ? "" : current.contextTokens());
         loadTimeout.setText(current.loadTimeout() == null ? "" : current.loadTimeout());
         retries.setText(current.retries() == null ? "" : current.retries());
+        parallel.setText(current.parallel() == null ? "" : current.parallel());
         int thinking = current.thinking() == null ? 0 : THINKING_KEYS.indexOf(current.thinking());
         stepThinking.setSelectedIndex(Math.max(0, thinking));
         loadPollInterval.setText(current.loadPollInterval() == null ? "" : current.loadPollInterval());
@@ -791,7 +802,8 @@ final class AiSettingsPanel {
                 visionModel.getText(), chatMaxTokens.getText(), chosenProvider(),
                 ollamaChosen() ? contextTokens.getText() : null, ollamaChosen() ? loadTimeout.getText() : null,
                 retries.getText(), ollamaChosen() ? loadPollInterval.getText() : null,
-                stepThinking.getSelectedIndex() <= 0 ? null : THINKING_KEYS.get(stepThinking.getSelectedIndex()));
+                stepThinking.getSelectedIndex() <= 0 ? null : THINKING_KEYS.get(stepThinking.getSelectedIndex()),
+                parallel.getText());
     }
 
     /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */
@@ -1291,7 +1303,7 @@ final class AiSettingsPanel {
                 blankToNull(draft.chatModel()), blankToNull(draft.embeddingModel()), draft.dimensions(),
                 draft.timeout(), null, Set.of()).withProvider(draft.provider()).withContextTokens(draft.context())
                 .withLoadTimeout(draft.loadDuration()).withRetries(draft.retryCount())
-                .withLoadPollInterval(draft.pollDuration());
+                .withLoadPollInterval(draft.pollDuration()).withParallel(draft.parallelCount());
     }
 
     static final String CHAT_MAX_TOKENS_LABEL = "Ausgabelimit";

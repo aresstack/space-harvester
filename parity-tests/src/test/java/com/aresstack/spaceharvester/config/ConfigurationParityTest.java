@@ -61,6 +61,8 @@ class ConfigurationParityTest {
                 embedding-dimensions: 1536
                 rerank-model: rerank-model
                 vision-model: vision-model
+                step-thinking: low
+                parallel: 6
                 external-processing-sources:
                   - confluence
               cache:
@@ -169,6 +171,8 @@ class ConfigurationParityTest {
         assertThat(appAi.embeddingDimensions()).isEqualTo(ai.embeddingDimensions());
         assertThat(appAi.rerankModel()).isEqualTo(ai.rerankModel());
         assertThat(appAi.visionModel()).isEqualTo(ai.visionModel());
+        assertThat(appAi.stepThinking()).isEqualTo(ai.stepThinking()).isEqualTo("low");
+        assertThat(appAi.parallel()).isEqualTo(ai.parallel()).isEqualTo(6);
         assertThat(appAi.externalProcessingSources()).containsExactlyInAnyOrderElementsOf(
                 ai.externalProcessingSources());
         assertThat(appAi.externalProcessingSources()).isEqualTo(List.of("confluence"));

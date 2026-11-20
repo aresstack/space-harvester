@@ -13,6 +13,26 @@ import org.junit.jupiter.api.Test;
 class AiServiceSettingsTest {
 
     @Test
+    void theNumberOfRequestsAtOnceIsASettingWithFourAsDefault() {
+        Properties properties = new Properties();
+        properties.setProperty("space-harvester.ai.base-url", "http://localhost:11434");
+        assertThat(AiServiceSettings.fromProperties(properties).parallel()).isEqualTo(4);
+
+        properties.setProperty("space-harvester.ai.parallel", "8");
+        AiServiceSettings eight = AiServiceSettings.fromProperties(properties);
+        assertThat(eight.parallel()).isEqualTo(8);
+        assertThat(eight.withVisionModel("gemma4:12b").withRetries(3).parallel()).isEqualTo(8);
+        assertThat(eight.withParallel(null).parallel()).isEqualTo(AiServiceSettings.DEFAULT_PARALLEL);
+
+        assertThatThrownBy(() -> eight.withParallel(0)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("space-harvester.ai.parallel");
+        assertThatThrownBy(() -> eight.withParallel(33)).isInstanceOf(IllegalArgumentException.class);
+        properties.setProperty("space-harvester.ai.parallel", "viele");
+        assertThatThrownBy(() -> AiServiceSettings.fromProperties(properties))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("keine Zahl");
+    }
+
+    @Test
     void readsPropertiesWithOrWithoutPrefix() {
         Properties properties = new Properties();
         properties.setProperty("space-harvester.ai.base-url", "https://ki.example.org/v1");

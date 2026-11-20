@@ -986,6 +986,25 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theRequestsAtOnceGoIntoTheAiBlockAndBackIntoTheDraft() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("http://localhost:11434", "gemma4:12b", null, null, null, java.util.List.of(), null,
+                null, null, "gemma4:12b").withProvider(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA)
+                .withParallel("6");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("parallel: 6");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().parallel()).isEqualTo(6);
+        assertThat(AiDraft.of(settings.ai()).parallelCount()).isEqualTo(6);
+        assertThat(ai.withParallel("0").problems()).anyMatch(p -> p.contains("gleichzeitigen Anfragen"));
+        assertThat(ai.withParallel("33").problems()).anyMatch(p -> p.contains("gleichzeitigen Anfragen"));
+        assertThat(ai.withParallel(null).problems()).isEmpty();
+    }
+
+    @Test
     void theVisionModelGoesIntoTheAiBlockAndSurvivesOtherModelChanges() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sources: []\n");
