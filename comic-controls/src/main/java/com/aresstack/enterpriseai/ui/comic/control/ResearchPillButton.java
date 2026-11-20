@@ -30,6 +30,7 @@ public class ResearchPillButton extends JButton {
     private Color hoverBorder;
     private Color pressedBorder;
     private String widthReference;
+    private Color mark;
 
     public ResearchPillButton(String text, int fixedHeight, int radius, int paddingH) {
         super(text);
@@ -68,6 +69,20 @@ public class ResearchPillButton extends JButton {
     }
 
     /**
+     * Highlights the pill as a find hit (all hits light, the current one stronger); {@code null} removes the mark.
+     * The mark replaces the fill of the normal and hover state, a pressed pill keeps its own fill.
+     */
+    public void setMark(Color mark) {
+        this.mark = mark;
+        repaint();
+    }
+
+    /** The current find mark or {@code null}. */
+    public Color getMark() {
+        return mark;
+    }
+
+    /**
      * Size the button to at least the width this reference text needs, so pills with different labels
      * line up with the same width ({@code null} = only as wide as the own text, the default).
      */
@@ -83,13 +98,15 @@ public class ResearchPillButton extends JButton {
         try {
             boolean pressed = getModel().isArmed() && getModel().isPressed();
             boolean hovered = getModel().isRollover();
-            Color fill = pressed ? pressedFill : hovered ? hoverFill : normalFill;
+            Color fill = pressed ? pressedFill : mark != null ? mark : hovered ? hoverFill : normalFill;
             ResearchUiPainter.fillRound(g2, 0, 0, getWidth(), getHeight(), radius, fill);
             Color border = pressed ? pressedBorder : hovered ? hoverBorder : normalBorder;
             if (border != null) {
                 ResearchUiPainter.strokeRound(g2, 0, 0, getWidth(), getHeight(), radius, border);
             }
-            g2.setColor(pressed ? pressedForeground : hovered ? hoverForeground : normalForeground);
+            // Ein markierter Treffer behält dunkle Schrift auf hellem Gelb, auch unter der Maus.
+            g2.setColor(pressed ? pressedForeground : mark != null ? normalForeground
+                    : hovered ? hoverForeground : normalForeground);
             g2.setFont(getFont());
             FontMetrics metrics = g2.getFontMetrics();
             int textY = (getHeight() - metrics.getHeight()) / 2 + metrics.getAscent();

@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton;
+
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JTable;
@@ -103,6 +105,11 @@ final class ReaderFind {
                 }
             }
         }
+        for (Hit hit : hits) {
+            if (hit.pill != null) {
+                hit.pill.setMark(null);
+            }
+        }
         for (Map.Entry<JLabel, LabelLook> entry : markedLabels.entrySet()) {
             entry.getValue().restore(entry.getKey());
         }
@@ -136,7 +143,7 @@ final class ReaderFind {
     /** Die Komponente des Treffers {@code index} (für Tests). */
     Component hitComponent(int index) {
         Hit hit = hits.get(index);
-        return hit.text != null ? hit.text : hit.label != null ? hit.label : hit.table;
+        return hit.text != null ? hit.text : hit.label != null ? hit.label : hit.pill != null ? hit.pill : hit.table;
     }
 
     // ------------------------------------------------------------------ intern
@@ -167,6 +174,11 @@ final class ReaderFind {
         }
         if (component instanceof JLabel) {
             collectLabel((JLabel) component, needle);
+            return;
+        }
+        if (component instanceof ResearchPillButton) {
+            // Die Pillen der Begriffsansicht (Akronyme, Bezeichner) sind Knöpfe mit eigenem Text.
+            collectPill((ResearchPillButton) component, needle);
             return;
         }
         if (component instanceof Container) {
@@ -285,6 +297,13 @@ final class ReaderFind {
         }
     }
 
+    private void collectPill(ResearchPillButton pill, String needle) {
+        String text = pill.getText();
+        if (text != null && text.toLowerCase(Locale.ROOT).contains(needle)) {
+            hits.add(Hit.pill(pill, text));
+        }
+    }
+
     private static boolean contains(Object value, String needle) {
         return value != null && String.valueOf(value).toLowerCase(Locale.ROOT).contains(needle);
     }
@@ -298,6 +317,8 @@ final class ReaderFind {
                 markText(hit, color);
             } else if (hit.label != null) {
                 markLabel(hit.label, color);
+            } else if (hit.pill != null) {
+                hit.pill.setMark(color);
             }
         }
         for (JTable table : markedTables) {
@@ -372,6 +393,9 @@ final class ReaderFind {
                 component = hit.table;
                 area = hit.table.getCellRect(hit.cell.row, hit.cell.column, true);
             }
+        } else if (hit.pill != null) {
+            component = hit.pill;
+            area = new Rectangle(0, 0, hit.pill.getWidth(), hit.pill.getHeight());
         } else {
             component = hit.label;
             area = new Rectangle(0, 0, hit.label.getWidth(), hit.label.getHeight());
@@ -415,35 +439,42 @@ final class ReaderFind {
         final JTable table;
         final Cell cell;
         final JLabel label;
+        final ResearchPillButton pill;
         final String found;
         /** Dokument und Länge zur Zeit der Suche, um veraltete Stellen zu erkennen. */
         Document document;
         int length;
         Object tag;
 
-        private Hit(JTextComponent text, int start, int end, JTable table, Cell cell, JLabel label, String found) {
+        private Hit(JTextComponent text, int start, int end, JTable table, Cell cell, JLabel label,
+                    ResearchPillButton pill, String found) {
             this.text = text;
             this.start = start;
             this.end = end;
             this.table = table;
             this.cell = cell;
             this.label = label;
+            this.pill = pill;
             this.found = found;
         }
 
         static Hit text(JTextComponent text, int start, int end, String found, Document document, int length) {
-            Hit hit = new Hit(text, start, end, null, null, null, found);
+            Hit hit = new Hit(text, start, end, null, null, null, null, found);
             hit.document = document;
             hit.length = length;
             return hit;
         }
 
         static Hit cell(JTable table, Cell cell, String found) {
-            return new Hit(null, 0, 0, table, cell, null, found);
+            return new Hit(null, 0, 0, table, cell, null, null, found);
         }
 
         static Hit label(JLabel label, String found) {
-            return new Hit(null, 0, 0, null, null, label, found);
+            return new Hit(null, 0, 0, null, null, label, null, found);
+        }
+
+        static Hit pill(ResearchPillButton pill, String found) {
+            return new Hit(null, 0, 0, null, null, null, pill, found);
         }
     }
 
