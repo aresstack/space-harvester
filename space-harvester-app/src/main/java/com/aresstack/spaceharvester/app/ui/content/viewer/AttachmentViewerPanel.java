@@ -93,7 +93,11 @@ public final class AttachmentViewerPanel extends JPanel {
 
     private final Canvas canvas = new Canvas();
     private final JLayeredPane layers = new JLayeredPane();
+    /** Eine Meldung statt des Inhalts, etwa warum er sich nicht zeigen lässt. */
     private final JLabel busy = new JLabel(LOADING_ATTACHMENT_TEXT, SwingConstants.CENTER);
+    /** Solange geladen wird: die Sanduhr der Suche, ohne Esc, mit dem Ladetext darunter. */
+    private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay spinner =
+            new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(transparent());
     private final JLabel info = new JLabel(" ", SwingConstants.CENTER);
     private final JTextArea textArea = new JTextArea();
     private final JScrollPane textPane;
@@ -191,6 +195,9 @@ public final class AttachmentViewerPanel extends JPanel {
         layers.setLayout(null);
         layers.add(canvas, JLayeredPane.DEFAULT_LAYER);
         layers.add(busy, JLayeredPane.MODAL_LAYER);
+        spinner.setHighlight(com.aresstack.spaceharvester.app.ui.Comic.BLUE);
+        spinner.setCaptionColor(new Color(255, 255, 255, 210));
+        layers.add(spinner, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 1));
         for (JComponent button : new JComponent[] {previous, next, download, zoomOut, zoomIn, zoomFit}) {
             layers.add(button, JLayeredPane.PALETTE_LAYER);
         }
@@ -203,6 +210,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 int h = layers.getHeight();
                 canvas.setBounds(0, 0, w, h);
                 busy.setBounds(0, 0, w, h);
+                spinner.setBounds(0, 0, w, h);
                 int inset = 8; // die Textansicht eines Anhangs blättert nicht
                 textPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
                 spreadsheetPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
@@ -412,7 +420,39 @@ public final class AttachmentViewerPanel extends JPanel {
 
     /** Der Text über dem Bild (Laden oder Fehlschlag mit Grund). */
     public String statusText() {
-        return busy.getText();
+        return spinner.isBusy() ? spinner.text() : busy.getText();
+    }
+
+    /** Ob gerade die Sanduhr zu sehen ist (für Tests). */
+    public boolean loadingShown() {
+        return spinner.isBusy();
+    }
+
+    /** Zeigt die Sanduhr mit {@code text} darunter, solange der Inhalt lädt. */
+    private void loading(String text) {
+        busy.setVisible(false);
+        spinner.setVeilColor(canvas.getBackground());
+        spinner.setText(text);
+        spinner.setBusy(true);
+    }
+
+    /** Der Inhalt steht: keine Sanduhr, keine Meldung. */
+    private void loaded() {
+        spinner.setBusy(false);
+        busy.setVisible(false);
+    }
+
+    /** Statt des Inhalts eine Meldung. */
+    private void message(String text) {
+        spinner.setBusy(false);
+        busy.setText(text);
+        busy.setVisible(true);
+    }
+
+    private static JComponent transparent() {
+        javax.swing.JPanel nothing = new javax.swing.JPanel();
+        nothing.setOpaque(false);
+        return nothing;
     }
 
     // ------------------------------------------------------------------ intern
@@ -650,14 +690,14 @@ public final class AttachmentViewerPanel extends JPanel {
         showingText = false;
         spreadsheetPane.setVisible(false);
         canvas.setStaticImage(null);
-        busy.setVisible(true);
+        loading(LOADING_ATTACHMENT_TEXT);
         updateInfo();
         switch (attachment.kind()) {
             case OTHER:
                 showUnavailable(NO_PREVIEW_TEXT);
                 return;
             case SPREADSHEET:
-                busy.setText("Tabelle wird geladen …");
+                loading("Tabelle wird geladen …");
                 requestOriginal(bytes -> decodeAside(() -> {
                     try {
                         return SpreadsheetPreviewData.read(attachment.fileName(), attachment.mediaType(), bytes);
@@ -668,13 +708,13 @@ public final class AttachmentViewerPanel extends JPanel {
                         "Tabelle nicht lesbar: " + reasonText(reason)));
                 return;
             case PRESENTATION:
-                busy.setText("PowerPoint wird geladen …");
+                loading("PowerPoint wird geladen …");
                 requestOriginal(this::openPresentation, reason -> showUnavailable(
                         "PowerPoint nicht geladen: " + reasonText(reason)));
                 return;
             case OFFICE:
                 if (WordDocumentPreview.supports(attachment.fileName(), attachment.mediaType())) {
-                    busy.setText("Word-Vorschau wird geladen …");
+                    loading("Word-Vorschau wird geladen …");
                     requestOriginal(bytes -> decodeAside(
                             () -> {
                                 try {
@@ -687,12 +727,12 @@ public final class AttachmentViewerPanel extends JPanel {
                     return;
                 }
                 // Use the source-generated preview for remaining Office formats.
-                busy.setText(LOADING_PREVIEW_TEXT);
+                loading(LOADING_PREVIEW_TEXT);
                 attachmentLoader.preview(attachment, bytes -> show(bytes, true),
                         reason -> showUnavailable(NO_PREVIEW_TEXT + "\n" + (reason == null ? "" : reason)));
                 return;
             default:
-                busy.setText(LOADING_ATTACHMENT_TEXT);
+                loading(LOADING_ATTACHMENT_TEXT);
                 requestOriginal(bytes -> show(bytes, false), reason -> showUnavailable(
                         ReaderImageStore.Loaded.FAILED_TEXT.replace("Bild", "Anhang") + ":\n"
                                 + (reason == null ? ReaderImageStore.Loaded.NO_REASON : reason)));
@@ -725,7 +765,9 @@ public final class AttachmentViewerPanel extends JPanel {
      */
     private <T> void decodeAside(java.util.function.Supplier<T> work, Consumer<T> apply) {
         final int generation = loadGeneration;
-        busy.setVisible(true);
+        if (!spinner.isBusy()) {
+            loading(spinner.text());
+        }
         renderer.execute(() -> {
             T result;
             try {
@@ -752,7 +794,7 @@ public final class AttachmentViewerPanel extends JPanel {
             showUnavailable(loaded.failure());
             return;
         }
-        busy.setVisible(false);
+        loaded();
         if (loaded.isAnimatedGif()) {
             canvas.setAnimatedImage(loaded.bytes(), loaded.image());
         } else {
@@ -765,7 +807,7 @@ public final class AttachmentViewerPanel extends JPanel {
         spreadsheetPane.removeAll();
         spreadsheetPane.add(new SpreadsheetPreviewPanel(data), BorderLayout.CENTER);
         spreadsheetPane.setVisible(true);
-        busy.setVisible(false);
+        loaded();
         showingText = false;
         textPane.setVisible(false);
         spreadsheetPane.revalidate();
@@ -776,7 +818,7 @@ public final class AttachmentViewerPanel extends JPanel {
     private void showText(String text) {
         spreadsheetPane.setVisible(false);
         showingText = true;
-        busy.setVisible(false);
+        loaded();
         textArea.setText(text);
         textArea.setCaretPosition(0);
         textPane.setVisible(true);
@@ -797,7 +839,6 @@ public final class AttachmentViewerPanel extends JPanel {
         showingText = false;
         spreadsheetPane.setVisible(false);
         canvas.setStaticImage(null);
-        busy.setVisible(true);
         StringBuilder html = new StringBuilder("<html><div style='text-align:center;width:560px'><b>")
                 .append(escape(attachment.fileName())).append("</b><br>").append(escape(attachment.summary()));
         for (String line : String.valueOf(reason).split("\n")) {
@@ -807,14 +848,13 @@ public final class AttachmentViewerPanel extends JPanel {
         }
         html.append("<br><br>").append(escape("Mit „" + SAVE_TEXT + "“ oder „" + OPEN_TEXT
                 + "“ unten links bekommst du die Originaldatei.")).append("</div></html>");
-        busy.setText(html.toString());
+        message(html.toString());
         updateInfo();
     }
 
     /** Öffnet das PDF auf dem Zeichen-Thread und zeigt Seite 1. */
     private void openPdf(final byte[] bytes) {
-        busy.setText("PDF wird geöffnet …");
-        busy.setVisible(true);
+        loading("PDF wird geöffnet …");
         renderer.execute(() -> {
             PdfPages opened = null;
             String failure = null;
@@ -850,8 +890,7 @@ public final class AttachmentViewerPanel extends JPanel {
 
     /** Open and render presentations through the same paginated view as PDFs. */
     private void openPresentation(final byte[] bytes) {
-        busy.setText("Präsentation wird geöffnet …");
-        busy.setVisible(true);
+        loading("Präsentation wird geöffnet …");
         renderer.execute(() -> {
             RenderedPages opened = null;
             String failure = null;
@@ -893,8 +932,9 @@ public final class AttachmentViewerPanel extends JPanel {
         page = Math.max(0, Math.min(target, pageCount - 1));
         renderScale = PDF_BASE_SCALE;
         sharpen.stop();
-        busy.setText("Seite " + (page + 1) + " wird gezeichnet …");
-        busy.setVisible(canvas.staticImage == null);
+        if (canvas.staticImage == null) {
+            loading("Seite " + (page + 1) + " wird gezeichnet …");
+        }
         hover(pointer);
         render(page, PDF_BASE_SCALE, true);
     }
@@ -922,11 +962,10 @@ public final class AttachmentViewerPanel extends JPanel {
                     return; // inzwischen geblättert, gezoomt oder geschlossen
                 }
                 if (drawn == null) {
-                    busy.setText(reason);
-                    busy.setVisible(true);
+                    message(reason);
                     return;
                 }
-                busy.setVisible(false);
+                loaded();
                 if (fresh) {
                     canvas.setStaticImage(drawn);
                 } else {

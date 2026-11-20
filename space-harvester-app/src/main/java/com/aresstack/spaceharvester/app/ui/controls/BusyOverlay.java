@@ -226,6 +226,11 @@ public final class BusyOverlay extends JPanel {
         return stop.isVisible();
     }
 
+    /** Farbe des Texts unter dem Ring, etwa hell auf dunklem Grund; ohne Angabe die der Oberfläche. */
+    public void setCaptionColor(Color color) {
+        caption.setForeground(color);
+    }
+
     /** Farbe der Punkte; ohne Angabe die Akzentfarbe der Oberfläche. */
     public void setHighlight(Color highlight) {
         this.highlight = highlight;
