@@ -55,6 +55,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         return thread;
     });
     private final String fileName;
+    private final String mediaType;
     private final long fileSize;
     private final MediaStreamBridge.ChunkSource reader;
 
@@ -111,6 +112,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
         this.progress = new Timer(settings.number(VideoSettings.Value.PROGRESS_MILLIS), event -> updateProgress());
         this.fileName = fileName;
+        this.mediaType = mediaType;
         this.fileSize = size;
         this.reader = reader;
         setOpaque(true);
@@ -685,7 +687,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
      * marks, e.g. for one virtual attachment per slide. Other formats simply show no marks.
      */
     public void findSlides() {
-        boolean mp4 = fileName != null && fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4");
+        boolean mp4 = "video/mp4".equalsIgnoreCase(mediaType)
+                || fileName != null && fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4");
         if (slideDetection != null || closed || !mp4 || fileSize < 16) {
             return;
         }
