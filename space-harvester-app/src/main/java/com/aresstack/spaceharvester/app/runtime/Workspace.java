@@ -711,6 +711,17 @@ public final class Workspace {
     }
 
     /**
+     * Beschreibt nur das Bild an {@code index} der Bilderliste und gibt die Bilder der Seite zurück; die übrigen
+     * bleiben, wie sie waren. {@code once} wie {@link #describeImagesOnce}; mit {@code fresh} neu statt aus den
+     * gespeicherten Beschreibungen.
+     */
+    public PageImages describeImage(String sourceId, String pageId, int index, boolean once, boolean fresh) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        return harvester.imageAnalysis().describeOne(page.snapshot(), index, once, fresh);
+    }
+
+    /**
      * Die gespeicherten Marken der gespeicherten Fassung eines Videos, wie der Player sie gefunden hat; leer, solange
      * er keine gefunden hat. Fragt die Quelle nicht.
      */

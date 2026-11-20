@@ -181,8 +181,9 @@ public class PageImageAnalysis {
                 versions.putIfAbsent(item.id(), item.version());
             }
         }
+        prepare(model);
         for (int index = 0; index < items.size(); index++) {
-            ImagePayload.Entry entry = describe(index, key, items.get(index), releasedOnce);
+            ImagePayload.Entry entry = describe(index, key, items.get(index), releasedOnce, false);
             entries.add(entry);
             progress.accept(entry);
         }
@@ -312,7 +313,129 @@ public class PageImageAnalysis {
         return entries;
     }
 
-    private ImagePayload.Entry describe(int index, PageKey key, Describable item, boolean releasedOnce) {
+    /** Wartet, bis das Modell bereit ist (ein lokaler Dienst lädt es erst); Fehler melden dann die Bilder selbst. */
+    private static void prepare(ImageDescriber model) {
+        try {
+            model.prepare();
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Vision-Modell nicht vorbereitet ({0})", e.getClass().getName());
+        }
+    }
+
+    /** So oft wird ein fehlgeschlagenes Bild versucht, mit wachsendem Abstand. */
+    static final int ATTEMPTS = 3;
+    static final long RETRY_MILLIS = 2_000;
+
+    /**
+     * Beschreibt genau ein Bild der Seite ({@code index} wie in der Liste) und legt es im Ergebnis {@code images} ab;
+     * die übrigen Einträge bleiben, wie sie waren (noch nicht beschriebene ohne Text). Mit {@code fresh} neu
+     * beschrieben statt aus dem Speicher der Beschreibungen.
+     *
+     * @throws ImageDescriptionException {@code NOT_CONFIGURED} ohne Vision-Modell, {@code NOT_RELEASED} ohne Freigabe
+     */
+    public PageImages describeOne(PageSnapshot snapshot, int index, boolean releasedOnce, boolean fresh) {
+        PageKey key = snapshot.key();
+        ImageDescriber model = assets.describerInUse().orElseThrow(() -> new ImageDescriptionException(
+                ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
+        if (!releasedOnce && !mayDescribe(model, key)) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
+                    "Quelle nicht für den KI-Dienst freigegeben", null);
+        }
+        Input input = input(snapshot);
+        if (input.sha256() == null) {
+            return PageImages.missing(PageImages.NO_TEXT);
+        }
+        List<String> warnings = new ArrayList<>();
+        List<Describable> items = describables(snapshot, warnings);
+        if (index < 0 || index >= items.size()) {
+            return read(snapshot);
+        }
+        prepare(model);
+        // Erst das Bild beschreiben (dauert), dann unter der Sperre mit dem gespeicherten Ergebnis zusammenführen:
+        // Laufen mehrere Einzelbeschreibungen zugleich, geht keine verloren.
+        ImagePayload.Entry described = describe(index, key, items.get(index), releasedOnce, fresh);
+        synchronized (merging) {
+            // Was schon beschrieben ist, bleibt; der Rest steht ohne Text da.
+            List<ImagePayload.Entry> stored = new ArrayList<>();
+            enrichments.store().find(key).stream()
+                    .filter(found -> ImagePayload.PROCESSOR.equals(found.processorId())).findFirst()
+                    .ifPresent(found -> {
+                        try {
+                            stored.addAll(ImagePayload.parse(found.payloadJson()));
+                        } catch (IllegalArgumentException e) {
+                            // unlesbar: alles gilt als noch nicht beschrieben
+                        }
+                    });
+            Map<String, ImagePayload.Entry> byId = new LinkedHashMap<>();
+            stored.forEach(entry -> byId.putIfAbsent(entry.assetId(), entry));
+            List<ImagePayload.Entry> entries = new ArrayList<>(items.size());
+            Map<String, String> versions = new LinkedHashMap<>();
+            for (int at = 0; at < items.size(); at++) {
+                Describable item = items.get(at);
+                if (item.id() != null && item.version() != null) {
+                    versions.putIfAbsent(item.id(), item.version());
+                }
+                ImagePayload.Entry known = known(item, at, byId, stored);
+                if (at == index) {
+                    entries.add(described);
+                } else if (known != null) {
+                    entries.add(new ImagePayload.Entry(at, known.assetId(), known.sha256(), known.filename(),
+                            known.title(), known.mediaType(), known.status(), known.reason(), known.description(),
+                            known.describer(), known.model(), known.describedAt()));
+                } else {
+                    entries.add(ImagePayload.Entry.without(at, item.id(), null, item.filename(), item.title(),
+                            item.mediaType(), ImageStatus.PENDING, null));
+                }
+            }
+            Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, ImageProcessor.version(model),
+                    input.sha256(), snapshot.revision(), Enrichment.Status.OK, ImagePayload.write(entries, versions),
+                    warnings, null, clock.instant());
+            enrichments.store().save(result);
+        }
+        enrichments.flush();
+        if (!releasedOnce && !mayDescribe(model, key)) {
+            withdraw(List.of(snapshot), page -> mayDescribe(model, page));
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
+                    "Freigabe während der Beschreibung entzogen", null);
+        }
+        Input after = input(snapshot);
+        return PageImages.read(key, after.views(), after.sha256());
+    }
+
+    /** Hält das Zusammenführen einzelner Beschreibungen mit dem gespeicherten Ergebnis an. */
+    private final Object merging = new Object();
+
+    /** Der gespeicherte Eintrag zu einem Bild: nach seiner Kennung, sonst an derselben Stelle mit demselben Namen. */
+    private static ImagePayload.Entry known(Describable item, int index, Map<String, ImagePayload.Entry> byId,
+                                            List<ImagePayload.Entry> stored) {
+        ImagePayload.Entry known = item.id() == null ? null : byId.get(item.id());
+        if (known == null && index < stored.size()
+                && Objects.equals(stored.get(index).filename(), item.filename())) {
+            known = stored.get(index);
+        }
+        return known;
+    }
+
+    private ImagePayload.Entry describe(int index, PageKey key, Describable item, boolean releasedOnce,
+                                        boolean fresh) {
+        ImagePayload.Entry entry = null;
+        for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
+            entry = describeOnce(index, key, item, releasedOnce, fresh);
+            if (entry.status() != ImageStatus.FAILED || !"model-failed".equals(entry.reason())) {
+                return entry;
+            }
+            try {
+                Thread.sleep(RETRY_MILLIS << attempt);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return entry;
+            }
+        }
+        return entry;
+    }
+
+    private ImagePayload.Entry describeOnce(int index, PageKey key, Describable item, boolean releasedOnce,
+                                            boolean fresh) {
         String filename = item.filename();
         String title = item.title();
         if (!item.ready()) {
@@ -325,7 +448,7 @@ public class PageImageAnalysis {
                     ImageStatus.SKIPPED, skip);
         }
         try {
-            Assets.DescribedImage described = assets.describe(key, item, releasedOnce);
+            Assets.DescribedImage described = assets.describe(key, item, releasedOnce, fresh);
             return new ImagePayload.Entry(index, described.asset().attachmentId(), described.asset().sha256(),
                     filename, title, described.asset().mediaType(), ImageStatus.DESCRIBED, null,
                     described.description().text(), described.description().describer(),

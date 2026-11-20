@@ -2286,11 +2286,23 @@ public class Assets implements DocumentInventory {
      * @throws ImageDescriptionException wie {@link #describeViewImage}
      */
     public DescribedImage describe(PageKey page, Describable item, boolean releasedOnce) {
+        return describe(page, item, releasedOnce, false);
+    }
+
+    /**
+     * Wie {@link #describe(PageKey, Describable, boolean)}; mit {@code fresh} am Speicher der Beschreibungen vorbei neu
+     * beschrieben („Neu beschreiben“), die neue ersetzt die alte.
+     */
+    public DescribedImage describe(PageKey page, Describable item, boolean releasedOnce, boolean fresh) {
         ImageDescriber model = releasedOnce ? describer() : describer(page);
         AssetContent content = item.content();
         if (content.asset().kind() != AssetKind.IMAGE) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_AN_IMAGE, "Kein Rasterbild",
                     null);
+        }
+        if (fresh) {
+            ImageDescription description = generate(model, content, item.instruction());
+            return new DescribedImage(content.asset(), description, true);
         }
         return describe(model, content, item.instruction());
     }

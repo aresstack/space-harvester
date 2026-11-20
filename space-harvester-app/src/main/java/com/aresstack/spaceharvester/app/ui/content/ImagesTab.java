@@ -70,9 +70,21 @@ final class ImagesTab extends JPanel {
     private boolean released = true;
     /** Die Rahmen der Vorschauen in der Reihenfolge der Bilder; gefüllt werden sie nach dem Zeigen. */
     private final List<JLabel> previews = new ArrayList<>();
-    /** Stand und Beschreibung je Zeile, damit eine fertige Beschreibung sofort erscheint. */
-    private final List<JLabel> statuses = new ArrayList<>();
+    /** Stand mit Knopf und Beschreibung je Zeile, damit eine fertige Beschreibung sofort erscheint. */
+    private final List<JPanel> cells = new ArrayList<>();
     private final List<JTextArea> descriptions = new ArrayList<>();
+    /** Die gezeigten Bilder je Zeile, mit dem Stand nach jedem eben beschriebenen Bild. */
+    private final List<Image> rows = new ArrayList<>();
+    /** Zeilen, deren Bild gerade beschrieben wird. */
+    private final java.util.Set<Integer> running = new java.util.HashSet<>();
+    /** Ob einzelne Bilder beschrieben werden dürfen (Vision-Modell da, Quelle oder Seite freigegeben). */
+    private boolean single;
+    private boolean stale;
+    private java.util.function.BiConsumer<Integer, Boolean> onDescribeOne = (index, fresh) -> { };
+    static final String DESCRIBE_ONE = "Beschreiben";
+    static final String RETRY = "Erneut versuchen";
+    static final String REDESCRIBE = "Neu beschreiben: ersetzt die Beschreibung dieses Bildes";
+    static final String RUNNING = "Wird beschrieben …";
     private java.util.function.IntConsumer onOpen = index -> { };
     static final String PREVIEW_LOADING = "Lädt …";
     static final String NO_PREVIEW = "Keine Vorschau";
@@ -106,6 +118,32 @@ final class ImagesTab extends JPanel {
         onDescribe = Objects.requireNonNull(listener, "listener");
     }
 
+    /**
+     * {@code listener} beschreibt nur das Bild dieser Zeile, etwa nach einem Fehler; mit {@code fresh} neu statt aus
+     * den gespeicherten Beschreibungen („Neu beschreiben“).
+     */
+    void onDescribeOne(java.util.function.BiConsumer<Integer, Boolean> listener) {
+        onDescribeOne = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Zeigt in der Zeile „Wird beschrieben …“ statt ihres Knopfes, bis {@link #update} das Ergebnis bringt. */
+    void running(int index, boolean on) {
+        if (index < 0 || index >= cells.size()) {
+            return;
+        }
+        if (on) {
+            running.add(index);
+        } else {
+            running.remove(index);
+        }
+        fill(index);
+    }
+
+    /** Die Zeile wird gerade beschrieben. */
+    boolean running(int index) {
+        return running.contains(index);
+    }
+
     /** {@code listener} öffnet das Bild dieser Zeile groß, etwa um seine Beschreibung zu prüfen. */
     void onOpen(java.util.function.IntConsumer listener) {
         onOpen = Objects.requireNonNull(listener, "listener");
@@ -116,17 +154,66 @@ final class ImagesTab extends JPanel {
      * Beschreibung und, wenn vorhanden, die Vorschau.
      */
     void update(int index, Image image, Icon icon) {
-        if (index < 0 || index >= statuses.size()) {
+        if (index < 0 || index >= cells.size()) {
             return;
         }
-        statuses.get(index).setText(statusText(image));
-        descriptions.get(index).setText(image.description() == null ? "" : image.description());
-        descriptions.get(index).setForeground(Comic.INK);
+        rows.set(index, image);
+        running.remove(index);
+        fill(index);
+        JTextArea description = descriptions.get(index);
+        description.setText(image.description() == null ? "" : image.description());
+        description.setForeground(Comic.INK);
         if (icon != null) {
             preview(index, icon);
         }
-        list.revalidate();
-        list.repaint();
+        // Die Zeile wächst mit dem Text: neu auslegen bis hinauf zur Bildlaufleiste.
+        description.invalidate();
+        revalidate();
+        repaint();
+    }
+
+    /** Die Bilder, wie sie gerade in den Zeilen stehen. */
+    List<Image> rows() {
+        return List.copyOf(rows);
+    }
+
+    /** Stand und Knopf einer Zeile nach ihrem Bild: Beschreiben, Erneut versuchen oder Neu beschreiben (Symbol). */
+    private void fill(int index) {
+        JPanel cell = cells.get(index);
+        Image image = rows.get(index);
+        cell.removeAll();
+        if (running.contains(index)) {
+            cell.add(Comic.muted(RUNNING));
+        } else if (!single) {
+            cell.add(Comic.muted(statusText(image) + (stale ? " · Veraltet" : "")));
+        } else {
+            switch (image.status()) {
+                case DESCRIBED -> {
+                    if (stale) {
+                        cell.add(Comic.muted("Veraltet"));
+                    }
+                    com.aresstack.spaceharvester.app.ui.IconButton again = new com.aresstack.spaceharvester.app.ui
+                            .IconButton(com.aresstack.spaceharvester.app.ui.Glyph.REFRESH, REDESCRIBE).compact();
+                    again.addActionListener(e -> onDescribeOne.accept(index, true));
+                    cell.add(again);
+                }
+                case PENDING -> cell.add(action(DESCRIBE_ONE, "Lässt nur dieses Bild vom Vision-Modell beschreiben",
+                        index));
+                case FAILED -> {
+                    cell.add(Comic.muted(statusText(image)));
+                    cell.add(action(RETRY, "Versucht die Beschreibung dieses Bildes noch einmal", index));
+                }
+                case SKIPPED -> cell.add(Comic.muted(statusText(image)));
+            }
+        }
+        cell.revalidate();
+        cell.repaint();
+    }
+
+    private javax.swing.JButton action(String text, String tooltip, int index) {
+        javax.swing.JButton button = Comic.button(text, tooltip);
+        button.addActionListener(e -> onDescribeOne.accept(index, false));
+        return button;
     }
 
     /** Füllt den Rahmen der Vorschau eines Bildes; {@code null}: es gibt keine. */
@@ -200,6 +287,7 @@ final class ImagesTab extends JPanel {
     void show(PassagesTab.State current, String reason, List<String> warnings, List<Image> images) {
         boolean unreleased = "source-not-released".equals(reason) || !released;
         describe.setVisible(!"vision-model-missing".equals(reason) && !unreleased);
+        single = describe.isVisible();
         notReleased.setVisible(unreleased);
         Color tone = switch (current) {
             case CURRENT -> Comic.GREEN;
@@ -210,11 +298,13 @@ final class ImagesTab extends JPanel {
         head.status(stateText(current), tone);
         list.removeAll();
         previews.clear();
-        statuses.clear();
+        cells.clear();
         descriptions.clear();
+        rows.clear();
+        running.clear();
         lines.clear();
         copyLines.clear();
-        boolean stale = current == PassagesTab.State.STALE;
+        stale = current == PassagesTab.State.STALE;
         // Die Bilder stehen immer da, auch noch nicht beschriebene (dann ohne Text).
         List<Image> shown = images;
         for (int i = 0; i < shown.size(); i++) {
@@ -254,8 +344,11 @@ final class ImagesTab extends JPanel {
         previews.add(preview);
         JLabel name = Comic.text(image.name());
         name.setFont(Comic.semiBold(13f));
-        JLabel status = Comic.muted(statusText(image) + (stale ? " · Veraltet" : ""));
-        statuses.add(status);
+        JPanel status = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 6, 0));
+        status.setOpaque(false);
+        cells.add(status);
+        rows.add(image);
+        fill(index);
         JPanel head = new JPanel(new BorderLayout(8, 0));
         head.setOpaque(false);
         head.add(name, BorderLayout.WEST);
@@ -292,6 +385,16 @@ final class ImagesTab extends JPanel {
         preview.addMouseListener(open);
         name.addMouseListener(open);
         return row;
+    }
+
+    /** Lösen „Beschreiben“, „Erneut versuchen“ oder „Neu beschreiben“ einer Zeile aus (für Tests). */
+    void clickDescribeOne(int index) {
+        for (java.awt.Component component : cells.get(index).getComponents()) {
+            if (component instanceof javax.swing.AbstractButton button) {
+                button.doClick();
+                return;
+            }
+        }
     }
 
     /** „Beschrieben“, „Wartet auf Beschreibung“, „Fehlgeschlagen: …“, „Übersprungen: …“ */

@@ -590,6 +590,7 @@ public final class PageDetailPanel extends JPanel {
         graphView.onDeleted(statementsView::reload);
         knowledgeGraphTab(graphView);
         images.onDescribe(() -> describeImages(false));
+        images.onDescribeOne(this::describeImage);
         images.onOpen(this::openImage);
         images.onDescribeOnce(() -> describeImages(true));
         images.onRelease(this::releaseSourceAndDescribe);
@@ -2383,13 +2384,136 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * „Bilder beschreiben“: nur auf Abruf, im Hintergrund, mit dem Vision-Modell des Core. Mit {@code once} auch für
-     * eine nicht freigegebene Quelle, aber nur diese Seite und ohne gespeicherte Freigabe.
+     * eine nicht freigegebene Quelle, aber nur diese Seite und ohne gespeicherte Freigabe. Stehen die Bilder schon in
+     * der Liste, Bild für Bild: jede Beschreibung erscheint, sobald sie fertig ist; schon beschriebene bleiben (bei
+     * veralteten Beschreibungen kommen unveränderte Bilder aus dem Speicher der Beschreibungen).
      */
     private void describeImages(boolean once) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || page == null) {
             return;
         }
+        ImageRows before = shownImages;
+        List<ImagesTab.Image> rows = images.rows();
+        if (before == null || rows.isEmpty()) {
+            describeAllImages(runtime, once);
+            return;
+        }
+        boolean stale = before.state() == PassagesTab.State.STALE;
+        List<Integer> todo = new ArrayList<>();
+        for (int index = 0; index < rows.size(); index++) {
+            ImagesTab.Status status = rows.get(index).status();
+            boolean finished = status == ImagesTab.Status.SKIPPED || status == ImagesTab.Status.DESCRIBED && !stale;
+            if (!finished && !images.running(index)) {
+                todo.add(index);
+            }
+        }
+        if (todo.isEmpty()) {
+            feedback.success("Alle Bilder dieser Seite sind schon beschrieben");
+            return;
+        }
+        String source = sourceId;
+        String id = pageId;
+        DeliveredPage shown = page;
+        images.describing(true);
+        feedback.working("Bilder werden beschrieben … 0 von " + todo.size());
+        int[] done = {0};
+        Background.run(() -> {
+            ImageRows last = null;
+            for (int index : todo) {
+                if (shown != page) {
+                    break;
+                }
+                int at = index;
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (shown == page) {
+                        images.running(at, true);
+                    }
+                });
+                ImageRows found = imageRows(runtime, source, id,
+                        runtime.workspace().describeImage(source, id, at, once, false));
+                Icon icon = at < found.bytes().size() ? preview(found.bytes().get(at)) : null;
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (shown == page) {
+                        done[0]++;
+                        imageDescribed(at, found, icon);
+                        feedback.working("Bilder werden beschrieben … " + done[0] + " von " + todo.size());
+                    }
+                });
+                last = found;
+            }
+            return last;
+        }, found -> {
+            images.describing(false);
+            if (shown != page || found == null) {
+                return;
+            }
+            showImages(found);
+            feedback.success("Bilder beschrieben: " + found.described() + " von " + found.images().size());
+        }, error -> {
+            images.describing(false);
+            if (shown != page) {
+                return;
+            }
+            if (shownImages != null) {
+                showImages(shownImages);
+            }
+            feedback.problem(error, Problems.Step.PAGE);
+        });
+    }
+
+    /**
+     * Beschreibt nur das Bild einer Zeile, etwa nach einem Fehler; mit {@code fresh} neu („Neu beschreiben“). Die
+     * Zeile zeigt „Wird beschrieben …“, bis das Ergebnis da ist.
+     */
+    private void describeImage(int index, boolean fresh) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null || images.running(index)) {
+            return;
+        }
+        String source = sourceId;
+        String id = pageId;
+        DeliveredPage shown = page;
+        images.running(index, true);
+        Background.run(() -> {
+            ImageRows found = imageRows(runtime, source, id,
+                    runtime.workspace().describeImage(source, id, index, false, fresh));
+            Icon icon = index < found.bytes().size() ? preview(found.bytes().get(index)) : null;
+            return new DescribedRow(found, icon);
+        }, described -> {
+            if (shown != page) {
+                return;
+            }
+            shownImages = described.rows();
+            imageDescribed(index, described.rows(), described.icon());
+        }, error -> {
+            if (shown != page) {
+                return;
+            }
+            images.running(index, false);
+            feedback.problem(error, Problems.Step.PAGE);
+        });
+    }
+
+    /** Die Bilder nach einer Einzelbeschreibung und die Vorschau des eben beschriebenen. */
+    private record DescribedRow(ImageRows rows, Icon icon) {
+    }
+
+    /** Zeigt ein eben beschriebenes Bild in seiner Zeile und im offenen Viewer. */
+    private void imageDescribed(int index, ImageRows found, Icon icon) {
+        if (index >= found.images().size()) {
+            images.running(index, false);
+            return;
+        }
+        ImagesTab.Image image = found.images().get(index);
+        images.update(index, image, icon);
+        liveImages.put(index, image);
+        liveBytes.put(index, found.bytes().get(index));
+        imageUpdated.accept(index);
+    }
+
+    /** Wie {@link #describeImages}, ohne Liste: alle Bilder in einem Lauf des Core, gestreamt. */
+    private void describeAllImages(AppRuntime runtime, boolean once) {
         String source = sourceId;
         String id = pageId;
         DeliveredPage shown = page;

@@ -28,6 +28,13 @@ public interface ImageDescriber {
      * Ob gerade ein Modell eingestellt ist (ADR 0021): Ein Beschreiber, der der Konfiguration zur Laufzeit folgt, gibt
      * es auch ohne Modell; dann beschreibt er nichts, und {@link #modelVersion()} hat keine Bedeutung.
      */
+    /**
+     * Bereitet das Modell vor einem Lauf vor und wartet darauf, etwa bis ein lokaler Dienst es geladen hat; sonst
+     * liefen die ersten Bilder in die Frist. Ohne eigene Umsetzung nichts.
+     */
+    default void prepare() {
+    }
+
     default boolean available() {
         return true;
     }

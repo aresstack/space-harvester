@@ -395,6 +395,42 @@ public final class RemoteAi {
         return describeImage(image, mediaType, null);
     }
 
+    /** So lange darf Ollama zum Laden eines Modells brauchen. */
+    static final int MODEL_LOAD_TIMEOUT_MILLIS = 10 * 60 * 1000;
+
+    /**
+     * Lädt das Vision-Modell eines Ollama-Servers vorab und wartet darauf ({@code POST /api/generate} ohne Prompt, mit
+     * derselben Kontextlänge wie jede Anfrage, wie in AskAI): Das Laden dauert oft länger als die Frist einer Anfrage.
+     * Für andere Dienste nichts. Fehler bleiben hier; die Beschreibungen melden sie dann selbst.
+     */
+    public void prepareVision() {
+        if (settings.provider() != AiProvider.OLLAMA || !settings.vision()) {
+            return;
+        }
+        try {
+            java.net.HttpURLConnection connection = ollama(MODEL_LOAD_TIMEOUT_MILLIS).open("/api/generate");
+            try {
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json");
+                String body = "{\"model\":" + tools.jackson.databind.json.JsonMapper.builder().build()
+                        .writeValueAsString(settings.visionModel()) + ",\"keep_alive\":\"15m\",\"options\":"
+                        + "{\"num_ctx\":" + settings.contextTokens() + "}}";
+                try (java.io.OutputStream out = connection.getOutputStream()) {
+                    out.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                connection.getResponseCode();
+                try (java.io.InputStream in = connection.getInputStream()) {
+                    in.readAllBytes();
+                }
+            } finally {
+                connection.disconnect();
+            }
+        } catch (java.io.IOException | RuntimeException e) {
+            // Nicht geladen: die Beschreibungen versuchen es selbst und melden den Fehler.
+        }
+    }
+
     /**
      * Wie {@link #describeImage(byte[], String)} mit eigenem Prompt eines Beschreibbaren (etwa einer Marke eines
      * Videos): Bild und Prompt gehen als eine Nachricht an das Vision-Modell. {@code null} ist der Prompt der

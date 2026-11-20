@@ -65,6 +65,14 @@ public final class VisionImageDescriber implements ImageDescriber {
     }
 
     @Override
+    public void prepare() {
+        AiServiceSettings current = settings.get();
+        if (current != null && current.vision()) {
+            RemoteAi.of(current, catalog, trustBundles, userAgent).prepareVision();
+        }
+    }
+
+    @Override
     public String describe(byte[] image, String mediaType, String instruction) {
         AiServiceSettings current = settings.get();
         if (current == null || !current.vision()) {
