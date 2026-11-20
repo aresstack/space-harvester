@@ -2038,6 +2038,7 @@ public final class PageDetailPanel extends JPanel {
         originalLinkShown = false;
         videoTranscriptShown = false;
         videoFrames = null;
+        stopTranscriptWatch();
         fileContent.removeAll();
         originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
         updateFootTools(tabs.selected());
@@ -3093,6 +3094,7 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || video == null) {
             return;
         }
+        watchTranscript(runtime, transcriptSource, video);
         // Das gespeicherte Transkript kommt verzögert wie die Anhänge: bis dahin die Sanduhr.
         videoTranscript.loadingStored(transcriptSource, true);
         // Mit den Korrekturen, die als Ergänzung daneben liegen: unten in der Mitte zum Umschalten.
@@ -3107,6 +3109,40 @@ public final class PageDetailPanel extends JPanel {
                                 .toList());
                     }
                 }, error -> videoTranscript.loadingStored(transcriptSource, false));
+    }
+
+    /** Meldungen der Aufträge „Transkript ziehen“ für das gezeigte Video; {@code null} ohne Video. */
+    private com.aresstack.spaceharvester.application.observe.Subscription transcriptWatch;
+
+    /**
+     * Lässt den Reiter „Text“ mitwachsen, während „Transkript ziehen“ für dieses Video im Hintergrund läuft (Angelo
+     * 20.11.2026): Jede Meldung des Auftrags aus dem Core (ADR 0027, kein Abfragen in Abständen) liest das abgelegte
+     * Transkript neu; die Ansicht hängt nur das Neue an.
+     */
+    private void watchTranscript(AppRuntime runtime, VideoTranscriptSource transcriptSource, VideoFrameSource video) {
+        stopTranscriptWatch();
+        transcriptWatch = runtime.workspace().subscribeJobs(status -> {
+            if (status.type() != com.aresstack.spaceharvester.application.jobs.JobType.VIDEO_TRANSCRIPT
+                    || !video.sourceId().equals(status.sourceId()) || !video.pageId().equals(status.parameters()
+                    .get(com.aresstack.spaceharvester.application.presentation.VideoPresentations.PAGE_PARAMETER))) {
+                return;
+            }
+            boolean running = !status.state().terminal();
+            Background.run(() -> runtime.workspace().videoTranscript(video.sourceId(), video.pageId()), stored -> {
+                if (video == videoFrames) {
+                    videoTranscript.followStored(transcriptSource, stored.orElse(null), running);
+                }
+            }, error -> {
+                // Nicht lesbar (etwa Seite inzwischen gesperrt): die Ansicht bleibt, wie sie ist.
+            });
+        });
+    }
+
+    private void stopTranscriptWatch() {
+        if (transcriptWatch != null) {
+            transcriptWatch.close();
+            transcriptWatch = null;
+        }
     }
 
     /**

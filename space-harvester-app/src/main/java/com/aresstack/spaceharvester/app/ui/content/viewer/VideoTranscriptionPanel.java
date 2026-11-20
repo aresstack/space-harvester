@@ -136,6 +136,7 @@ public final class VideoTranscriptionPanel extends JPanel {
             videoSource.close();
         }
         videoSource = source;
+        following = false;
         storedLoading.setBusy(false);
         resumeMillis = 0;
         recognized.setLength(0);
@@ -165,6 +166,11 @@ public final class VideoTranscriptionPanel extends JPanel {
             buttons.add((ComposerButton) component);
         }
         return buttons;
+    }
+
+    /** Für Tests: wo die Schreibmarke im Transkript steht. */
+    int transcriptCaret() {
+        return transcript.getCaretPosition();
     }
 
     /** Für Tests: der gezeigte Text. */
@@ -233,6 +239,55 @@ public final class VideoTranscriptionPanel extends JPanel {
         status.setText(STORED_STATUS);
         updateActions();
     }
+
+    /** Statuszeile, während der Auftrag „Transkript ziehen“ das Transkript im Hintergrund verlängert. */
+    static final String FOLLOWING_STATUS = "Wird im Auftrag „Transkript ziehen“ erzeugt (siehe „Aufträge“) …";
+
+    /**
+     * Zeigt das gespeicherte Transkript nach einer Änderung durch einen Auftrag im Hintergrund (Angelo 20.11.2026: die
+     * offene Ansicht wächst mit). Verlängert es den gezeigten Text, wird nur das Neue angehängt; die Ansicht springt
+     * nicht. Nichts, solange die Ansicht selbst transkribiert oder eine Korrektur zeigt.
+     *
+     * @param running ob der Auftrag noch läuft
+     */
+    public void followStored(VideoTranscriptSource source, String text, boolean running) {
+        if (source != videoSource) {
+            return;
+        }
+        following = running;
+        if (worker != null || text == null || text.isBlank() || shownVersion != 0) {
+            updateActions();
+            return;
+        }
+        loadingStored(source, false);
+        String shown = recognized.toString();
+        if (shown.isEmpty()) {
+            showStored(source, text);
+        } else if (!text.equals(shown)) {
+            if (text.startsWith(shown)) {
+                String added = text.substring(shown.length());
+                recognized.append(added);
+                transcript.append(added);
+            } else {
+                int caret = transcript.getCaretPosition();
+                recognized.setLength(0);
+                recognized.append(text);
+                transcript.setText(text);
+                transcript.setCaretPosition(Math.min(caret, transcript.getDocument().getLength()));
+            }
+            resumeMillis = resumePoint(recognized.toString());
+        }
+        if (!versions.isEmpty()) {
+            java.util.List<Version> updated = new java.util.ArrayList<>(versions);
+            updated.set(0, new Version(versions.get(0).label(), recognized.toString()));
+            versions = java.util.List.copyOf(updated);
+        }
+        status.setText(running ? FOLLOWING_STATUS : STORED_STATUS);
+        updateActions();
+    }
+
+    /** Ob ein Auftrag im Hintergrund das Transkript gerade verlängert. */
+    private boolean following;
 
     /**
      * Wo ein Transkript fortgesetzt wird: am Ende seines letzten Abschnitts. Kennt der Text nur Anfänge (ältere
@@ -392,7 +447,8 @@ public final class VideoTranscriptionPanel extends JPanel {
         toggle.setToolTipText(tip);
         toggle.getAccessibleContext().setAccessibleName(tip);
         toggle.setEmphasized(running);
-        toggle.setEnabled(running || videoSource != null);
+        // Schreibt schon der Auftrag „Transkript ziehen“, startet das Mikrofon keinen zweiten Lauf daneben.
+        toggle.setEnabled(running || videoSource != null && !following);
         // Während Whisper schreibt, zeigt die Ansicht das Original, das gerade entsteht.
         renderVersions();
     }
