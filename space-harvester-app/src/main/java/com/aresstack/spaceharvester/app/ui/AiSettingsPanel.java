@@ -268,6 +268,12 @@ final class AiSettingsPanel {
     final ComposerButton parserInstall = Comic.button(ParserModelSetup.INSTALL,
             "Lädt das freigegebene deutsche MaltParser-Modell aus dem GitHub-Release, prüft die Prüfsumme und "
                     + "entpackt es ins Datenverzeichnis");
+    /** Auswahl des Whisper-Modells; eine Änderung wird sofort gespeichert und gilt beim nächsten Gebrauch. */
+    final JComboBox<String> whisperChoice = Comic.combo();
+    final ComposerButton whisperInstall = Comic.button(WhisperModelSetup.INSTALL,
+            "Lädt das gewählte Whisper-Modell von Hugging Face in den Benutzerordner und prüft die Prüfsummen");
+    /** Während {@link #render} die Auswahl setzt, ist das keine Eingabe des Benutzers. */
+    private boolean showingWhisper;
     private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
     List<AiModel> loaded = List.of();
@@ -371,6 +377,34 @@ final class AiSettingsPanel {
             modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
                             + "bleibt");
+            for (com.aresstack.spaceharvester.app.transcription.WhisperModel each
+                    : com.aresstack.spaceharvester.app.transcription.WhisperModel.values()) {
+                whisperChoice.addItem(each.described());
+            }
+            modelRows.add(WhisperModelSetup.LABEL, Comic.row(whisperChoice, whisperInstall),
+                    "Für Spracheingabe und Video-Transkripte, läuft lokal; größere Modelle erkennen genauer und "
+                            + "rechnen länger. Wird nur nach Rückfrage oder auf Klick einmal von Hugging Face geladen");
+            whisperChoice.addActionListener(e -> {
+                int index = whisperChoice.getSelectedIndex();
+                if (showingWhisper || index < 0 || context.settings() == null) {
+                    return;
+                }
+                com.aresstack.spaceharvester.app.transcription.WhisperModel chosen =
+                        com.aresstack.spaceharvester.app.transcription.WhisperModel.values()[index];
+                if (chosen != context.whisper()) {
+                    context.whisper(chosen, () -> modelsFeedback.success(WhisperModelSetup.LABEL + ": "
+                            + chosen.label()), modelsFeedback::problem);
+                }
+            });
+            whisperInstall.addActionListener(e -> {
+                WhisperModelSetup setup = context.whisperModel();
+                if (setup.status().state() == WhisperModelSetup.State.INSTALLING) {
+                    setup.cancel();
+                } else {
+                    setup.install();
+                }
+            });
+            context.whisperModel().listen(this::whisperModel);
             parserStatus.setEditable(false);
             parserStatus.setFocusable(false);
             modelRows.add(ParserModelSetup.LABEL, Comic.fieldWithButton(parserStatus, parserInstall),
@@ -1491,6 +1525,29 @@ final class AiSettingsPanel {
             modelsFeedback.working(LABEL_PARSER + status.message());
         } else if (status.message() != null && status.failed()) {
             modelsFeedback.warning("Parsermodell nicht installiert", status.message());
+        } else if (status.message() != null) {
+            modelsFeedback.success(status.message());
+        }
+    }
+
+    /** Zeigt Auswahl und Stand des Whisper-Modells; Fortschritt und Fehler im Statusbereich der Modelle. */
+    void whisperModel(WhisperModelSetup.Status status) {
+        boolean installing = status.state() == WhisperModelSetup.State.INSTALLING;
+        showingWhisper = true;
+        try {
+            whisperChoice.setSelectedIndex(context.whisper().ordinal());
+        } finally {
+            showingWhisper = false;
+        }
+        // Während eines Downloads bleibt die Auswahl stehen, damit klar ist, welches Modell lädt.
+        whisperChoice.setEnabled(!installing);
+        whisperInstall.setText(installing ? WhisperModelSetup.CANCEL : WhisperModelSetup.INSTALL);
+        whisperInstall.setVisible(status.state() != WhisperModelSetup.State.INSTALLED);
+        if (installing) {
+            modelsFeedback.working(WhisperModelSetup.LABEL + " „" + status.model().label() + "“: "
+                    + status.message());
+        } else if (status.message() != null && status.failed()) {
+            modelsFeedback.warning("Whisper-Modell nicht geladen", status.message());
         } else if (status.message() != null) {
             modelsFeedback.success(status.message());
         }

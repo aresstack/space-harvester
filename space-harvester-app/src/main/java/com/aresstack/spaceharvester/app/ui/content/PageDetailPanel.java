@@ -624,6 +624,7 @@ public final class PageDetailPanel extends JPanel {
         images.onDescribeOne(this::describeImage);
         // Erzeugte Transkripte bleiben: gespeichert als virtueller Anhang, beim nächsten Öffnen wieder gezeigt.
         videoTranscript.onTranscript(this::storeTranscript);
+        videoTranscript.modelGate((progress, then) -> context.whisperModel().ensure(this, progress, progress, then));
         images.onOpen(this::openImage);
         images.onDescribeOnce(() -> describeImages(true));
         images.onRelease(this::releaseSourceAndDescribe);
@@ -3020,6 +3021,18 @@ public final class PageDetailPanel extends JPanel {
                                        long size, String mediaType) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || video != videoFrames) {
+            return;
+        }
+        // „Transkript ziehen“ braucht das eingestellte Whisper-Modell: fehlt es, erst fragen und laden.
+        context.whisperModel().ensure(this, feedback::working,
+                reason -> feedback.warning("„In PPTX umwandeln“ nicht gestartet", reason),
+                () -> startPresentation(runtime, video, ranges, size, mediaType));
+    }
+
+    private void startPresentation(AppRuntime runtime, VideoFrameSource video,
+                                   com.aresstack.spaceharvester.application.sources.MediaByteRange ranges,
+                                   long size, String mediaType) {
+        if (video != videoFrames) {
             return;
         }
         com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia media =

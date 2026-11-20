@@ -93,7 +93,7 @@ public final class WhisperSpeechTranscriber implements SpeechTranscriber {
 
     private static void requireModel(Path modelDirectory) throws IOException {
         if (!isModelAvailable(modelDirectory)) {
-            throw new IOException("Whisper-Tiny-Modell fehlt: config.json, model.safetensors, "
+            throw new IOException("Whisper-Modell unvollständig: config.json, model.safetensors, "
                     + "tokenizer.json oder vocab.json");
         }
     }

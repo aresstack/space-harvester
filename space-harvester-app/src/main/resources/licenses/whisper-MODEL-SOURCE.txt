@@ -1,8 +1,8 @@
-﻿Model: openai/whisper-tiny (multilingual)
-Source: https://huggingface.co/openai/whisper-tiny
-Pinned model revision: 169d4a4341b33bc18d8881c4b69c2e104e1cc0af
+Models: openai/whisper-tiny (default), -base, -small, -medium, -large-v3-turbo, -large-v3 (multilingual)
+Source: https://huggingface.co/openai
+Pinned revision of the default model: 169d4a4341b33bc18d8881c4b69c2e104e1cc0af
 Hugging Face model repository license: Apache-2.0
 OpenAI Whisper original code and model weights: MIT
 Original notice: Copyright (c) 2022 OpenAI
-Model files are unmodified copies. The build verifies SHA-256 for each file.
-No model download occurs while Space Harvester is running.
+Space Harvester ships no model files. The chosen model is downloaded unmodified from Hugging Face
+into the user profile after the user confirms, and every file is verified against its checksum.

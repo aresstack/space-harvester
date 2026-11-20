@@ -252,30 +252,10 @@ PCM-Daten nach Abschluss, Abbruch oder Fehler. Die Oberfläche zeigt grobe
 30-Sekunden-Segmente mit Zeitmarken, noch keine wortgenaue Zeitzuordnung.
 Die Vorschau wird **nicht** automatisch in den Suchindex aufgenommen.
 
-**Ein einziges ausführbares JAR:** Das Gradle-Task `prepareWhisperModel`
-beschafft **nur beim Build** vier Whisper-Tiny-Dateien aus der festgelegten
-Hugging-Face-Revision
-`169d4a4341b33bc18d8881c4b69c2e104e1cc0af`.
-SHA-256 wird für jede Datei geprüft; ein vorhandener geprüfter Gradle-Cache
-oder eine lokale Quelle kann wiederverwendet werden. Der App-Build bettet die
-Dateien unter `BOOT-INF/classes/models/whisper-tiny/` in das **bestehende
-ausführbare Spring-Boot-JAR** ein. MIT-, Apache-2.0- und Herkunftshinweise
-liegen im JAR unter `BOOT-INF/classes/licenses/`.
-`verifyWhisperJar` prüft deren Vollständigkeit bei jedem `build`.
-Auch `processResources` enthält die verifizierten Modelldateien, damit direkte
-IntelliJ-/Gradle-Starts dieselben Classpath-Ressourcen sehen. Für nicht an Gradle
-delegierte IntelliJ-Starts kann `WhisperModelLocation` alternativ die bereits
-unter `space-harvester-app/build/embedded-whisper-model` vorbereiteten Dateien
-nach SHA-256-Prüfung direkt verwenden. Dabei erfolgt kein Laufzeitdownload.
-
-Beim ersten Klick entpackt `WhisperModelLocation` die Modellgewichte aus dem
-JAR in einen versionsgebundenen lokalen Cache unter
-`%USERPROFILE%\\.space-harvester\\models` (erneut mit SHA-256-Prüfung).
-Whisper benötigt diese Dateipfade; **ein Modelldownload zur Laufzeit ist
-nicht nötig**. Ein separates ZIP, ein Modellinstallationsdialog oder eine
-zweite Datei für den Anwender sind nicht erforderlich. Für lokale Tests kann
-`-Dspaceharvester.whisper.model=<Modellverzeichnis>` den eingebetteten
-Modellpfad übersteuern.
+**Modell:** Das Whisper-Modell liegt nicht im JAR. Das unter **Einstellungen › Modelle** gewählte Modell (Vorgabe
+Tiny) wird nach Rückfrage einmal von Hugging Face nach `%USERPROFILE%\\.space-harvester\\models` geladen und
+geprüft, siehe [Whisper-Modell](DESKTOP_APP.md#whisper-modell). Für lokale Tests kann
+`-Dspaceharvester.whisper.model=<Modellverzeichnis>` den Modellpfad übersteuern.
 
 Bei sehr langen Aufnahmen kann die Indexierung der Audio-Chunks und die
 Audio-Dekodierung einige Zeit dauern. Der erste Prototyp transkribiert nur

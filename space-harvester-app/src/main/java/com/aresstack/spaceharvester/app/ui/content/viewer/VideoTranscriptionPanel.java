@@ -62,6 +62,20 @@ public final class VideoTranscriptionPanel extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay storedLoading =
             new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(new JScrollPane(transcript));
     private VideoTranscriptSource videoSource;
+    private ModelGate modelGate = (progress, then) -> then.run();
+
+    /** Stellt vor einer Transkription das Whisper-Modell bereit, nötigenfalls nach Rückfrage von Hugging Face. */
+    public interface ModelGate {
+        /**
+         * @param progress bekommt Fortschritt oder den Grund, warum nicht geladen wurde
+         * @param then     läuft, sobald das Modell da ist
+         */
+        void open(java.util.function.Consumer<String> progress, Runnable then);
+    }
+
+    public void modelGate(ModelGate gate) {
+        modelGate = java.util.Objects.requireNonNull(gate, "gate");
+    }
     private SwingWorker<Void, TranscriptSegment> worker;
     /** Was Whisper bisher erkannt hat, ohne Fehlermeldungen: so wird es gespeichert. */
     private final StringBuilder recognized = new StringBuilder();
@@ -122,7 +136,13 @@ public final class VideoTranscriptionPanel extends JPanel {
 
         toggle.addActionListener(event -> {
             if (worker == null) {
-                startTranscription();
+                VideoTranscriptSource wanted = videoSource;
+                // Fehlt das eingestellte Modell, fragt die App erst und lädt es; danach beginnt die Transkription.
+                modelGate.open(status::setText, () -> {
+                    if (wanted == videoSource) {
+                        startTranscription();
+                    }
+                });
             } else {
                 cancelTranscription();
             }
@@ -340,7 +360,7 @@ public final class VideoTranscriptionPanel extends JPanel {
             transcript.setText("");
             recognized.setLength(0);
         }
-        status.setText("Whisper-Modell wird aus dem Anwendungs-JAR bereitgestellt …");
+        status.setText("Whisper wird vorbereitet …");
         worker = new SwingWorker<Void, TranscriptSegment>() {
             @Override
             protected Void doInBackground() throws Exception {

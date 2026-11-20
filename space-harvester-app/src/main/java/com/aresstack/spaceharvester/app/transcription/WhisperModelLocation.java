@@ -1,175 +1,88 @@
 package com.aresstack.spaceharvester.app.transcription;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.function.Function;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
- * Extract the model shipped inside the executable JAR into a verified, versioned local cache.
- * Never retrieve model files over the network at runtime.
+ * Wo das eingestellte Whisper-Modell auf diesem Rechner liegt. Kein Modell steckt im Programm; das unter
+ * Einstellungen › Modelle gewählte ({@link #select}) wird nach Rückfrage einmal von Hugging Face nach
+ * {@code ~/.space-harvester/models/whisper-<Modell>} geladen ({@link WhisperModelInstaller}). Fehlt es, meldet
+ * {@link #resolve} das, statt selbst zu laden.
  *
- * <p>Another Hugging Face Whisper checkpoint (for example {@code openai/whisper-base}) can be installed
- * manually: copy {@code config.json}, {@code model.safetensors}, {@code tokenizer.json} and
- * {@code vocab.json} (optionally {@code generation_config.json}) into
- * {@code ~/.space-harvester/models/whisper}. The system property {@value #PROPERTY} names any other
- * directory and takes precedence; without either, the embedded Whisper Tiny model is used.
+ * <p>Vorrang haben wie bisher: die Systemeigenschaft {@value #PROPERTY} mit einem beliebigen Modellordner und ein von
+ * Hand nach {@code ~/.space-harvester/models/whisper} kopierter Checkpoint ({@code config.json},
+ * {@code model.safetensors}, {@code tokenizer.json}, {@code vocab.json}, optional {@code generation_config.json}).
  */
 public final class WhisperModelLocation {
 
-    private static final String REVISION = "169d4a4341b33bc18d8881c4b69c2e104e1cc0af";
-    private static final String MODEL_RESOURCE = "/models/whisper-tiny/";
     static final String PROPERTY = "spaceharvester.whisper.model";
     static final String INSTALLED_FOLDER = "whisper";
-    private static final java.util.logging.Logger LOG =
-            java.util.logging.Logger.getLogger(WhisperModelLocation.class.getName());
-    private static final Map<String, String> MODEL_HASHES = modelHashes();
+    /** Ordner, in den frühere Fassungen das mitgelieferte Tiny-Modell entpackt haben; gilt weiter als geladen. */
+    static final String LEGACY_TINY_FOLDER = "whisper-tiny-" + WhisperModel.TINY.revision();
+
+    private static volatile WhisperModel selected = WhisperModel.DEFAULT;
 
     private WhisperModelLocation() {
     }
 
-    public static Path resolve() throws IOException {
-        String overridden = System.getProperty(PROPERTY);
-        if (overridden != null && !overridden.trim().isEmpty()) {
-            return Paths.get(overridden.trim()).toAbsolutePath();
-        }
-        Path models = Paths.get(System.getProperty("user.home", "."), ".space-harvester", "models");
-        Path installed = resolveInstalledModel(models);
-        if (installed != null) {
-            LOG.info("Whisper: manuell installiertes Modell " + installed);
-            return installed;
-        }
-        Path destination = models.resolve("whisper-tiny-" + REVISION);
-        if (isDevelopmentClasspath() && !isEmbeddedModelAvailable()) {
-            Path prepared = resolveDevelopmentModel(Paths.get("").toAbsolutePath(), MODEL_HASHES);
-            if (prepared != null) {
-                return prepared;
-            }
-        }
-        return extract(destination, name -> WhisperModelLocation.class.getResourceAsStream(
-                MODEL_RESOURCE + name), MODEL_HASHES);
+    /** Das unter Einstellungen › Modelle gewählte Modell; gilt beim nächsten Gebrauch. */
+    public static void select(WhisperModel model) {
+        selected = model == null ? WhisperModel.DEFAULT : model;
     }
 
-    /** Return the manually installed model under {@code models/whisper}, or {@code null} if it is incomplete. */
-    static Path resolveInstalledModel(Path modelsDirectory) {
-        Path directory = modelsDirectory.resolve(INSTALLED_FOLDER);
-        return WhisperSpeechTranscriber.isModelAvailable(directory)
-                ? directory.toAbsolutePath().normalize() : null;
+    public static WhisperModel selected() {
+        return selected;
     }
 
-    private static boolean isDevelopmentClasspath() {
-        java.net.URL classResource = WhisperModelLocation.class.getResource("WhisperModelLocation.class");
-        return classResource != null && "file".equals(classResource.getProtocol());
-    }
-
-    private static boolean isEmbeddedModelAvailable() {
-        return WhisperModelLocation.class.getResource(MODEL_RESOURCE + "config.json") != null;
+    /** Der Ordner aller Modelle im Benutzerordner. */
+    public static Path modelsDirectory() {
+        return Paths.get(System.getProperty("user.home", "."), ".space-harvester", "models");
     }
 
     /**
-     * Reuse an already verified Gradle-staged model for direct IntelliJ launches.
-     * Never download a model at runtime or trust unverified local model files.
+     * Der Ordner des eingestellten Modells.
+     *
+     * @throws WhisperModelMissingException wenn es noch nicht geladen ist
      */
-    static Path resolveDevelopmentModel(Path workingDirectory, Map<String, String> hashes)
-            throws IOException {
-        Path[] candidates = {
-                workingDirectory.resolve("build/embedded-whisper-model"),
-                workingDirectory.resolve("space-harvester-app/build/embedded-whisper-model")
-        };
-        for (Path directory : candidates) {
-            boolean valid = true;
-            for (Map.Entry<String, String> entry : hashes.entrySet()) {
-                if (!matches(directory.resolve(entry.getKey()), entry.getValue())) {
-                    valid = false;
-                    break;
-                }
-            }
-            if (valid) {
-                return directory.toAbsolutePath().normalize();
-            }
-        }
-        return null;
+    public static Path resolve() throws WhisperModelMissingException {
+        WhisperModel model = selected;
+        return find(model).orElseThrow(() -> new WhisperModelMissingException(model));
     }
 
-    static synchronized Path extract(Path destination, Function<String, InputStream> resources,
-                                     Map<String, String> expectedHashes) throws IOException {
-        Files.createDirectories(destination);
-        for (Map.Entry<String, String> item : expectedHashes.entrySet()) {
-            Path target = destination.resolve(item.getKey());
-            if (matches(target, item.getValue())) {
-                continue;
-            }
-            Path temporary = Files.createTempFile(destination, "whisper-", ".part");
-            try {
-                try (InputStream input = resources.apply(item.getKey())) {
-                    if (input == null) {
-                        throw new IOException("Whisper model is not embedded: " + item.getKey()
-                                + ". Use the complete Space Harvester desktop JAR.");
-                    }
-                    Files.copy(input, temporary, StandardCopyOption.REPLACE_EXISTING);
-                }
-                if (Thread.currentThread().isInterrupted()) {
-                    throw new java.io.InterruptedIOException("Whisper model extraction interrupted");
-                }
-                if (!matches(temporary, item.getValue())) {
-                    throw new IOException("Bundled Whisper model failed SHA-256: " + item.getKey());
-                }
-                moveVerified(temporary, target);
-            } finally {
-                Files.deleteIfExists(temporary);
-            }
-        }
-        return destination;
+    /** Der Ordner, aus dem {@code model} gelesen würde; leer, solange es nicht geladen ist. */
+    public static Optional<Path> find(WhisperModel model) {
+        Optional<Path> overridden = overridden();
+        return overridden.isPresent() ? overridden : find(modelsDirectory(), model);
     }
 
-    private static void moveVerified(Path from, Path destination) throws IOException {
-        try {
-            Files.move(from, destination, StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException unsupported) {
-            Files.move(from, destination, StandardCopyOption.REPLACE_EXISTING);
-        }
+    /** Der mit {@value #PROPERTY} vorgegebene Modellordner; er gilt für jedes Modell und wird nie nachgeladen. */
+    static Optional<Path> overridden() {
+        String overridden = System.getProperty(PROPERTY);
+        return overridden == null || overridden.isBlank() ? Optional.empty()
+                : Optional.of(Paths.get(overridden.strip()).toAbsolutePath());
     }
 
-    private static boolean matches(Path file, String expected) throws IOException {
-        if (!Files.isRegularFile(file)) {
-            return false;
+    static Optional<Path> find(Path models, WhisperModel model) {
+        Objects.requireNonNull(model, "model");
+        Path manual = models.resolve(INSTALLED_FOLDER);
+        if (WhisperSpeechTranscriber.isModelAvailable(manual)) {
+            return Optional.of(manual.toAbsolutePath().normalize());
         }
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (InputStream input = Files.newInputStream(file)) {
-                byte[] buffer = new byte[65536];
-                int bytesRead;
-                while ((bytesRead = input.read(buffer)) != -1) {
-                    digest.update(buffer, 0, bytesRead);
-                }
-            }
-            StringBuilder value = new StringBuilder(64);
-            for (byte b : digest.digest()) {
-                value.append(Character.forDigit((b >>> 4) & 0x0f, 16));
-                value.append(Character.forDigit(b & 0x0f, 16));
-            }
-            return expected.equals(value.toString());
-        } catch (NoSuchAlgorithmException failure) {
-            throw new IOException("SHA-256 is unavailable", failure);
+        Path loaded = directory(models, model);
+        if (WhisperSpeechTranscriber.isModelAvailable(loaded)) {
+            return Optional.of(loaded.toAbsolutePath().normalize());
         }
+        Path legacy = models.resolve(LEGACY_TINY_FOLDER);
+        if (model == WhisperModel.TINY && WhisperSpeechTranscriber.isModelAvailable(legacy)) {
+            return Optional.of(legacy.toAbsolutePath().normalize());
+        }
+        return Optional.empty();
     }
 
-    private static Map<String, String> modelHashes() {
-        Map<String, String> hashes = new LinkedHashMap<>();
-        hashes.put("config.json", "ffdccec4f3211f4c63310f2b7098f309fe70f3952cedc5e4d11e43f5b2379b98");
-        hashes.put("model.safetensors", "7ebd0e69e78190ffe1438491fa05cc1f5c1aa3a4c4db3bc1723adbb551ea2395");
-        hashes.put("tokenizer.json", "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566");
-        hashes.put("vocab.json", "8f680bba319e01a653d2e8a5dbc17a9157179e0576e6ce74ce0c06356c6e24f9");
-        return Collections.unmodifiableMap(hashes);
+    /** Wohin {@code model} geladen wird. */
+    static Path directory(Path models, WhisperModel model) {
+        return models.resolve("whisper-" + model.id());
     }
 }

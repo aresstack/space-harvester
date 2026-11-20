@@ -842,6 +842,29 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Der Entwurf {@code base} mit dem Whisper-Modell ({@code space-harvester-app.whisper.model}, nur die App); nur
+     * dieser Wert ändert sich. Die Vorgabe (Tiny) entfernt den Block {@code whisper}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withWhisperModel(Path file, Draft base,
+                                  com.aresstack.spaceharvester.app.transcription.WhisperModel model) {
+        String value = model == com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT ? null
+                : "whisper:\n  model: " + model.id();
+        String text = appValue(base.text(), "whisper", value);
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || settings.whisperModel() != model) {
+            throw new IllegalArgumentException("Das Whisper-Modell ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte "
+                    + com.aresstack.spaceharvester.app.transcription.WhisperModel.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
     /** Eine Wartezeit wie {@link #duration}, Bruchteile einer Sekunde in Millisekunden (500ms). */
     public static String delay(java.time.Duration delay) {
         return delay.toMillis() % 1000 == 0 ? duration(delay) : delay.toMillis() + "ms";

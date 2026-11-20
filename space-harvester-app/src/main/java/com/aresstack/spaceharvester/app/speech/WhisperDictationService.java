@@ -36,6 +36,7 @@ final class WhisperDictationService {
 
     private AskAiWhisperPipeline audioPipeline;
     private WhisperTranscriber transcriber;
+    private java.nio.file.Path loadedModel;
 
     /**
      * Start transcribing the growing recording; {@code decodeAvailable()} decodes completed windows
@@ -64,8 +65,11 @@ final class WhisperDictationService {
     }
 
     private void load() throws IOException {
-        if (transcriber == null) {
-            transcriber = new WhisperTranscriber(WhisperModelLocation.resolve());
+        // Ein anderes Modell unter Einstellungen › Modelle gilt ab der nächsten Aufnahme.
+        java.nio.file.Path model = WhisperModelLocation.resolve();
+        if (transcriber == null || !model.equals(loadedModel)) {
+            transcriber = new WhisperTranscriber(model);
+            loadedModel = model;
         }
         if (audioPipeline == null) {
             audioPipeline = WhisperPipelines.create();

@@ -17,7 +17,7 @@ import java.util.logging.Logger;
 
 /**
  * Handle chat dictation using the original Enterprise AI Client recording and callback workflow.
- * Replace only the speech recognition backend with the bundled Whisper Tiny checkpoint.
+ * Replace only the speech recognition backend with the Whisper checkpoint chosen in the settings.
  *
  * <p>While recording, a background worker decodes every completed 30-second window and reports it
  * through {@link Result#partial}; after stop only the remaining audio is decoded. Recording never
@@ -36,7 +36,7 @@ public final class Dictation implements DictationControl {
         return thread;
     });
     private final WhisperDictationService service = new WhisperDictationService();
-    private final String description = "Whisper Tiny + Ask AI DSP/VAD (lokal, CPU)";
+    private final String description = "Whisper + Ask AI DSP/VAD (lokal, CPU)";
     private JavaSoundRecorder recorder;
     private Result pending;
     /** The live transcription of the current recording; only touched on the worker thread. */

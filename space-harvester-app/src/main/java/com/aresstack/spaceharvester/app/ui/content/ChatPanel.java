@@ -128,7 +128,7 @@ public final class ChatPanel extends JPanel {
     static final String DOWNLOAD_DONE = "abgeschlossen";
     static final String DOWNLOAD_FAILED = "fehlgeschlagen";
     static final String ATTACH = "Dateien anhängen";
-    static final String DICTATE = "Spracheingabe mit Whisper Tiny";
+    static final String DICTATE = "Spracheingabe mit Whisper";
     /** Wie im Enterprise AI Client: die Erkennung nach dem Stopp ist orange in der Statuszeile zu sehen. */
     static final String RECOGNIZING_STATUS = "Erkenne Sprache …";
     private static final int MIN_EDITOR_HEIGHT = 64;
@@ -617,10 +617,17 @@ public final class ChatPanel extends JPanel {
         if (!dictation.isAvailable() || turn != null) {
             return;
         }
-        dictationPhase = DictationPhase.RECORDING;
-        startDictationLevelMeter();
-        refreshDictationControls();
-        dictation.start(dictationResult());
+        DictationPhase idle = dictationPhase;
+        // Fehlt das eingestellte Whisper-Modell, fragt die App erst und lädt es; danach beginnt die Aufnahme.
+        context.whisperModel().ensure(this, status::setText, status::setText, () -> {
+            if (dictationPhase != idle || !dictation.isAvailable() || turn != null) {
+                return;
+            }
+            dictationPhase = DictationPhase.RECORDING;
+            startDictationLevelMeter();
+            refreshDictationControls();
+            dictation.start(dictationResult());
+        });
     }
 
     /** Discard the active recording or ignore a pending recognition callback. */

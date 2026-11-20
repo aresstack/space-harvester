@@ -1,7 +1,8 @@
 # Chat dictation: audio DSP and bounded microphone capture
 
-The Chat tab reuses the local Whisper Tiny model already bundled in the desktop JAR.
-It does not download models at runtime. The recorder and inference pipeline run on
+The Chat tab uses the local Whisper model chosen under Einstellungen › Modelle (default Tiny).
+The model is not bundled; it is downloaded once from Hugging Face after the user confirms
+(see DESKTOP_APP.md, "Whisper-Modell"). The recorder and inference pipeline run on
 the client, without sending audio to an external service.
 
 ## Signal path
@@ -21,7 +22,7 @@ the client, without sending audio to an external service.
    Ask AI PCM16 processing and deterministic Java VAD. Its default profile uses
    DC removal, an **80 Hz Butterworth high-pass**, a 7.2 kHz low-pass,
    noise gate, compressor and limiter. VAD skips long speech pauses before
-   Whisper Tiny decodes the remaining speech.
+   Whisper decodes the remaining speech.
 5. Insert recognized text at the caret in the chat editor. Do not send the
    message automatically. Keep the previous microphone meter, cancel/retry
    buttons, and transcript insertion semantics.

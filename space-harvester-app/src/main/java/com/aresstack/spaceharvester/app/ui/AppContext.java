@@ -1023,6 +1023,72 @@ public final class AppContext {
         return parserModel;
     }
 
+    private WhisperModelSetup whisperModel;
+
+    /**
+     * Das Whisper-Modell für Spracheingabe und Transkripte, gemeinsam für Einstellungen, Chat und Videos. Es liegt
+     * nicht im Programm, sondern wird nach Rückfrage von Hugging Face nach {@code ~/.space-harvester/models} geladen,
+     * über Proxy und TLS der App.
+     */
+    public synchronized WhisperModelSetup whisperModel() {
+        if (whisperModel == null) {
+            whisperModel = new WhisperModelSetup(() -> {
+                AppSettings current = settings();
+                if (current == null) {
+                    return java.util.Optional.empty();
+                }
+                return java.util.Optional.of(new com.aresstack.spaceharvester.app.transcription.WhisperModelInstaller(
+                        com.aresstack.spaceharvester.app.transcription.WhisperModelLocation.modelsDirectory(),
+                        new com.aresstack.spaceharvester.app.hf.HuggingFaceClient(
+                                new com.aresstack.spaceharvester.app.nlp.HttpModelDownload(
+                                        AppRuntime.proxy(current.proxy(), secrets()), current.tls(),
+                                        "space-harvester-app/" + version()))));
+            }, this::whisper);
+            // Die Einstellungen laden erst nach dem Fenster: danach (und nach jeder Änderung) neu prüfen.
+            WhisperModelSetup setup = whisperModel;
+            onChange(context -> setup.refresh());
+        }
+        return whisperModel;
+    }
+
+    /** Das eingestellte Whisper-Modell; ohne geladene Einstellungen Tiny. */
+    public com.aresstack.spaceharvester.app.transcription.WhisperModel whisper() {
+        AppSettings current = settings;
+        return current == null ? com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT
+                : current.whisperModel();
+    }
+
+    /**
+     * Speichert das Whisper-Modell ({@code space-harvester-app.whisper.model}) in der Datei, ohne Neustart der
+     * Laufzeit: Spracheingabe und Transkripte nehmen es beim nächsten Gebrauch.
+     */
+    public void whisper(com.aresstack.spaceharvester.app.transcription.WhisperModel model, Runnable done,
+                        Consumer<Throwable> failed) {
+        whisperWanted = model;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                com.aresstack.spaceharvester.app.transcription.WhisperModel wanted = whisperWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withWhisperModel(configFile,
+                        new ConfigFileEditor.Draft(text, null), wanted), !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withWhisperModel(saved);
+            }
+            fire();
+            done.run();
+        }, error -> {
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private volatile com.aresstack.spaceharvester.app.transcription.WhisperModel whisperWanted;
+
     /** Beendet die Laufzeit (beim Schließen des Fensters); schließt Lucene-Indizes und gibt ihre Sperren frei. */
     public void shutdown() {
         if (runtime != null) {
@@ -1032,6 +1098,8 @@ public final class AppContext {
     }
 
     private void fire() {
+        // Spracheingabe und Transkripte lesen das eingestellte Modell beim nächsten Gebrauch.
+        com.aresstack.spaceharvester.app.transcription.WhisperModelLocation.select(whisper());
         Runnable notify = () -> new ArrayList<>(listeners).forEach(listener -> listener.accept(this));
         if (SwingUtilities.isEventDispatchThread()) {
             notify.run();
