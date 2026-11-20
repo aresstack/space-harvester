@@ -1771,7 +1771,8 @@ public final class PageDetailPanel extends JPanel {
             // „In PPTX umwandeln“ neben „Herunterladen“ (Angelo 20.11.2026): fünf Aufträge unter „Aufträge“.
             long videoSize = size;
             String videoType = mediaType;
-            originalVideoViewer.onConvert(() -> convertToPresentation(frames, ranges, videoSize, videoType));
+            originalVideoViewer.onConvert(pdf -> convertToPresentation(frames, ranges, videoSize, videoType,
+                    pdf ? com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.PDF : com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.PPTX));
             VideoTranscriptSource transcriptSource = new VideoTranscriptSource(size, ranges, context.video());
             videoTranscript.setVideoSource(transcriptSource);
             showStoredTranscript(transcriptSource, frames);
@@ -3018,42 +3019,45 @@ public final class PageDetailPanel extends JPanel {
      */
     private void convertToPresentation(VideoFrameSource video,
                                        com.aresstack.spaceharvester.application.sources.MediaByteRange ranges,
-                                       long size, String mediaType) {
+                                       long size, String mediaType, com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format format) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || video != videoFrames) {
             return;
         }
+        String name = "„In " + format.label() + " umwandeln“";
         // „Transkript ziehen“ braucht das eingestellte Whisper-Modell: fehlt es, erst fragen und laden.
         context.whisperModel().ensure(this, feedback::working,
-                reason -> feedback.warning("„In PPTX umwandeln“ nicht gestartet", reason),
-                () -> startPresentation(runtime, video, ranges, size, mediaType));
+                reason -> feedback.warning(name + " nicht gestartet", reason),
+                () -> startPresentation(runtime, video, ranges, size, mediaType, format));
     }
 
     private void startPresentation(AppRuntime runtime, VideoFrameSource video,
                                    com.aresstack.spaceharvester.application.sources.MediaByteRange ranges,
-                                   long size, String mediaType) {
+                                   long size, String mediaType, com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format format) {
         if (video != videoFrames) {
             return;
         }
+        String name = "„In " + format.label() + " umwandeln“";
         com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia media =
                 new com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia(ranges, size, mediaType,
                         context.video(), new TranscribeAudioUseCase(new VlcPcmAudioDecoder(),
                                 new WhisperSpeechTranscriber()));
-        feedback.working("„In PPTX umwandeln“ wird gestartet …");
-        Background.run(() -> runtime.workspace().startVideoPresentation(video.sourceId(), video.pageId(), media),
+        feedback.working(name + " wird gestartet …");
+        Background.run(() -> runtime.workspace().startVideoPresentation(video.sourceId(), video.pageId(), media,
+                        format),
                 run -> {
                     if (video == videoFrames) {
-                        feedback.working("„In PPTX umwandeln“ läuft: fünf Aufträge unter „Aufträge“, die Datei kommt "
+                        feedback.working(name + " läuft: fünf Aufträge unter „Aufträge“, die Datei kommt "
                                 + "in den Ausgabeordner.");
                     }
-                    watchPresentation(runtime, video, run.file().id());
+                    watchPresentation(runtime, video, run.file().id(), format);
                 }, error -> {
                     if (video != videoFrames) {
                         return;
                     }
                     if (error instanceof com.aresstack.spaceharvester.application.presentation
                             .PresentationUnavailableException unavailable) {
-                        feedback.warning("„In PPTX umwandeln“ kann nicht starten", unavailable.getMessage());
+                        feedback.warning(name + " kann nicht starten", unavailable.getMessage());
                     } else {
                         feedback.problem(error, Problems.Step.PAGE);
                     }
@@ -3064,7 +3068,8 @@ public final class PageDetailPanel extends JPanel {
      * Wartet per Beobachter (ADR 0027) auf das Ende des Auftrags „PPTX erzeugen“ und meldet die Datei; liest nach dem
      * Anmelden einmal den Stand, damit ein schon beendeter Auftrag nicht verpasst wird.
      */
-    private void watchPresentation(AppRuntime runtime, VideoFrameSource video, String fileJob) {
+    private void watchPresentation(AppRuntime runtime, VideoFrameSource video, String fileJob,
+                                   com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format format) {
         java.util.concurrent.atomic.AtomicReference<com.aresstack.spaceharvester.application.observe.Subscription>
                 watch = new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.atomic.AtomicBoolean ended = new java.util.concurrent.atomic.AtomicBoolean();
@@ -3086,11 +3091,11 @@ public final class PageDetailPanel extends JPanel {
                     return;
                 }
                 if (file.isPresent()) {
-                    feedback.info("PPTX erzeugt: " + file.get().getFileName()
+                    feedback.info(format.label() + " erzeugt: " + file.get().getFileName()
                             + (status.incomplete() ? " (unvollständig, siehe „Aufträge“)" : ""),
                             file.get().toString());
                 } else {
-                    feedback.warning("„In PPTX umwandeln“ ist nicht fertig geworden",
+                    feedback.warning("„In " + format.label() + " umwandeln“ ist nicht fertig geworden",
                             "Die Aufträge unter „Aufträge“ zeigen, welcher Schritt fehlt; Fortsetzen macht dort weiter.");
                 }
             });

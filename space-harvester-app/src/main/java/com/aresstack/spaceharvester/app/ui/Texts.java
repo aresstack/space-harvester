@@ -152,6 +152,19 @@ public final class Texts {
         };
     }
 
+    /**
+     * Wie {@link #type(JobType)}, für „PPTX erzeugen“ mit dem Format des Auftrags: Schreibt er ein PDF
+     * ({@code VideoPresentations.FORMAT_PARAMETER}), heißt er „PDF erzeugen“.
+     */
+    public static String type(JobStatus status) {
+        if (status.type() == JobType.PRESENTATION_EXPORT) {
+            return com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.parse(
+                    status.parameters().get(com.aresstack.spaceharvester.application.presentation.VideoPresentations
+                            .FORMAT_PARAMETER)).label() + " erzeugen";
+        }
+        return type(status.type());
+    }
+
     public static String cacheState(CacheState state) {
         return switch (state) {
             case CONFIRMED -> "Bestätigt";

@@ -66,6 +66,14 @@ class VideoPresentationsTest {
         assertThat(VideoPresentations.fileName("Vortrag Kubernetes.mp4")).isEqualTo("Vortrag Kubernetes.pptx");
         assertThat(VideoPresentations.fileName("a/b:c")).isEqualTo("a_b_c.pptx");
         assertThat(VideoPresentations.fileName(null)).isEqualTo("Video.pptx");
+        assertThat(VideoPresentations.fileName("Vortrag Kubernetes.mp4", VideoPresentations.Format.PDF))
+                .isEqualTo("Vortrag Kubernetes.pdf");
+        assertThat(VideoPresentations.Format.parse("pdf")).isEqualTo(VideoPresentations.Format.PDF);
+        assertThat(VideoPresentations.Format.parse(null)).as("Aufträge ohne Angabe sind PPTX")
+                .isEqualTo(VideoPresentations.Format.PPTX);
+        assertThat(VideoPresentations.Options.DEFAULT.format()).isEqualTo(VideoPresentations.Format.PPTX);
+        assertThat(VideoPresentations.Options.DEFAULT.withFormat(VideoPresentations.Format.PDF).parallel())
+                .isEqualTo(VideoPresentations.Options.DEFAULT.parallel());
         assertThat(VideoPresentations.transcriptName("Vortrag.mp4")).isEqualTo("Vortrag – Transkript.txt");
     }
 

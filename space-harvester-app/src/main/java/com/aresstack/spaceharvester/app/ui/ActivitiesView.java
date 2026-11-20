@@ -683,7 +683,7 @@ public final class ActivitiesView implements View {
             return;
         }
         JobStatus status = current.get();
-        title.setText(Texts.type(status.type()) + " " + where(status));
+        title.setText(Texts.type(status) + " " + where(status));
         JobProgress p = status.progress();
         Counters counters = Counters.of(status.type());
         boolean waiting = waitingForSignIn(status.id());
@@ -721,7 +721,7 @@ public final class ActivitiesView implements View {
         } else if (detail instanceof ExportDetail export) {
             renderExport(export);
         } else if (!status.state().terminal()) {
-            feedback.working(Texts.type(status.type()) + " läuft …");
+            feedback.working(Texts.type(status) + " läuft …");
         } else {
             renderTerminal(status, true);
         }
@@ -816,7 +816,7 @@ public final class ActivitiesView implements View {
         switch (status.state()) {
             case COMPLETED -> {
                 if (plain) {
-                    feedback.success(Texts.type(status.type()) + " fertig");
+                    feedback.success(Texts.type(status) + " fertig");
                 }
             }
             case CANCELLED -> feedback.warning("Abgebrochen", "Teilergebnisse bleiben unbestätigt.");
@@ -1165,13 +1165,13 @@ public final class ActivitiesView implements View {
         }
         switch (action) {
             case CANCEL -> {
-                if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(job.type()) + " von "
+                if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(job) + " von "
                         + job.partitionKey() + " wirklich abbrechen? Bereits Gelesenes bleibt unbestätigt.")) {
                     return;
                 }
             }
             case DELETE -> {
-                if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job.type()) + " von " + job.partitionKey()
+                if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job) + " von " + job.partitionKey()
                         + " wirklich löschen?" + (job.state().terminal() ? "" : " Er wird dafür abgebrochen.")
                         + " Der Auftrag und seine Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT)) {
                     return;
@@ -1950,7 +1950,7 @@ public final class ActivitiesView implements View {
         public Object getValueAt(int row, int column) {
             JobStatus status = rows.get(row);
             return switch (column) {
-                case 0 -> Texts.type(status.type());
+                case 0 -> Texts.type(status);
                 case 1 -> where(status);
                 case 2 -> status;
                 case 3 -> progressText(status);

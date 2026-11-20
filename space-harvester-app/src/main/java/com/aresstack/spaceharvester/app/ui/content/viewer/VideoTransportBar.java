@@ -33,8 +33,14 @@ final class VideoTransportBar extends JPanel {
     private final JButton previousSlide = iconButton("Vorige Folie", ComposerIcons.chevronLeft());
     private final JButton nextSlide = iconButton("Nächste Folie", ComposerIcons.chevronRight());
     private final JButton download = iconButton("Herunterladen", ComposerIcons.download());
-    /** „In PPTX umwandeln“ (Angelo 20.11.2026): wie „Herunterladen“, sichtbar erst mit {@link #convertible}. */
-    private final JButton convert = iconButton("In PPTX umwandeln", ComposerIcons.export());
+    static final String CONVERT_PPTX = "In PPTX umwandeln";
+    static final String CONVERT_PDF = "In PDF umwandeln";
+    /**
+     * „In PPTX umwandeln“ und daneben „In PDF umwandeln“ (Angelo 20.11.2026): nur das farbige Dateisymbol, der Name
+     * steht im Tooltip; sichtbar, sobald der Player weiß, wer die Aufträge startet.
+     */
+    private final JButton convert = iconButton(CONVERT_PPTX, FileFormatIcon.powerPoint());
+    private final JButton convertPdf = iconButton(CONVERT_PDF, FileFormatIcon.pdf());
     private final JButton cancelDownload = iconButton("Download abbrechen", ComposerIcons.stop());
     private final JButton fullScreen = iconButton("Vollbild", new VideoFullScreenIcon(false));
     private final JButton audioOnly = iconButton("Nur Audio", new VideoAudioModeIcon(false));
@@ -65,10 +71,11 @@ final class VideoTransportBar extends JPanel {
         download.setText("Herunterladen");
         download.setHorizontalTextPosition(SwingConstants.RIGHT);
         download.setIconTextGap(7);
-        convert.setText("In PPTX umwandeln");
-        convert.setHorizontalTextPosition(SwingConstants.RIGHT);
-        convert.setIconTextGap(7);
-        convert.setVisible(false);
+        for (JButton format : new JButton[] {convert, convertPdf}) {
+            // Das Symbol ist höher als die Strichsymbole: weniger Rand, damit die Knöpfe gleich hoch bleiben.
+            format.setBorder(BorderFactory.createEmptyBorder(5, 9, 5, 9));
+            format.setVisible(false);
+        }
         cancelDownload.setText("Abbrechen");
         cancelDownload.setHorizontalTextPosition(SwingConstants.RIGHT);
         cancelDownload.setIconTextGap(7);
@@ -79,6 +86,7 @@ final class VideoTransportBar extends JPanel {
         transfers.add(audioOnly);
         transfers.add(download);
         transfers.add(convert);
+        transfers.add(convertPdf);
         transfers.add(cancelDownload);
         transfers.add(fullScreen);
         buttons.add(playback, BorderLayout.WEST);
@@ -139,6 +147,10 @@ final class VideoTransportBar extends JPanel {
 
     JButton convert() {
         return convert;
+    }
+
+    JButton convertPdf() {
+        return convertPdf;
     }
 
     JButton cancelDownload() {
