@@ -39,7 +39,7 @@ public final class VideoFrameGrabber {
     /** So weit darf die Position von VLC beim gelieferten Bild vor der angesprungenen Stelle liegen. */
     private static final long EARLY_TOLERANCE_MILLIS = 500;
     /** So weit darf die Position von VLC beim gelieferten Bild nach der angesprungenen Stelle liegen. */
-    private static final long POSITION_TOLERANCE_MILLIS = 1500;
+    static final long POSITION_TOLERANCE_MILLIS = 1500;
     /** Liefert VLC nach dem ersten neuen Bild weiter Bilder, gilt nach dieser Zeit das jüngste. */
     private static final long SETTLE_LIMIT_MILLIS = 3000;
 
