@@ -205,6 +205,8 @@ public final class VideoPresentations {
     private final Path outputDirectory;
     /** Die Arbeit der Aufträge seit dem Start der App, damit „Nur Fehler“ auch nach ihrem Ende im selben Eintrag läuft. */
     private final Map<String, JobTask> tasks = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Dateien, die ein Vorgang seit dem Start der App im Ausgabeordner belegt hat (siehe {@link #reserveName}). */
+    private final java.util.Set<Path> reservedFiles = new java.util.HashSet<>();
 
     /**
      * @param slides          die Folien der Videos ({@link VideoMarks#slides})
@@ -269,7 +271,7 @@ public final class VideoPresentations {
         String title = snapshot.metadata().title();
         Path file = options.directory() == null
                 ? outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title, options.format()))
-                : freeName(options.directory().toAbsolutePath(), fileName(title, options.format()));
+                : reserveName(options.directory().toAbsolutePath(), fileName(title, options.format()));
         String run = java.util.UUID.randomUUID().toString();
         Map<String, String> parameters = Map.of(PAGE_PARAMETER, pageId, RUN_PARAMETER, run);
         JobTask transcribing = JobTask.blocking(context -> transcribe(caller, sourceId, pageId, media, context));
@@ -1021,13 +1023,29 @@ public final class VideoPresentations {
     }
 
     /** Ein Ordner je Seite, damit gleichnamige Videos verschiedener Seiten sich nicht überschreiben. */
+    /**
+     * Wie {@link #freeName}, aber auch nicht der Name eines Vorgangs, der seine Datei noch nicht geschrieben hat:
+     * zwei gleich benannte Videos, die gleichzeitig laufen, bekommen verschiedene Dateien.
+     */
+    private Path reserveName(Path directory, String name) {
+        synchronized (reservedFiles) {
+            Path file = freeName(directory, name, candidate -> reservedFiles.contains(candidate.normalize()));
+            reservedFiles.add(file.normalize());
+            return file;
+        }
+    }
+
     /** {@code name} in {@code directory}, oder wie ein Browser {@code Name (2).pptx}, wenn die Datei schon da ist. */
     static Path freeName(Path directory, String name) {
+        return freeName(directory, name, candidate -> false);
+    }
+
+    static Path freeName(Path directory, String name, Predicate<Path> taken) {
         Path file = directory.resolve(name);
         int dot = name.lastIndexOf('.');
         String stem = dot > 0 ? name.substring(0, dot) : name;
         String extension = dot > 0 ? name.substring(dot) : "";
-        for (int n = 2; Files.exists(file) && n < 1000; n++) {
+        for (int n = 2; (Files.exists(file) || taken.test(file)) && n < 1000; n++) {
             file = directory.resolve(stem + " (" + n + ")" + extension);
         }
         return file;

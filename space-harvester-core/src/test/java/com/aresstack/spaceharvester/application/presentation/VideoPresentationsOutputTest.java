@@ -22,6 +22,14 @@ class VideoPresentationsOutputTest {
     }
 
     @Test
+    void aNameAnotherRunHoldsIsSkippedToo(@TempDir Path downloads) {
+        Path reserved = downloads.resolve("Vortrag.pptx");
+
+        assertThat(VideoPresentations.freeName(downloads, "Vortrag.pptx", reserved::equals))
+                .isEqualTo(downloads.resolve("Vortrag (2).pptx"));
+    }
+
+    @Test
     void optionsCarryTheDirectoryThroughFormatChanges() {
         Path downloads = Path.of("Downloads").toAbsolutePath();
 
