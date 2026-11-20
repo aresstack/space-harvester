@@ -87,7 +87,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private long seekRequestedAtNanos;
     private double requestedSeekShare;
     /**
-     * Ein Sprung im angehaltenen oder noch nicht gestarteten Video: Es spielt stumm, bis VLC diese Zeit meldet, und
+     * Ein Sprung im angehaltenen oder noch nicht gestarteten Video: Es spielt, bis VLC diese Zeit meldet, und
      * hält dann an; {@code -1} ohne. Ein neuer Sprung ersetzt den laufenden.
      */
     private volatile long stillAtMillis = -1;
@@ -451,6 +451,18 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                 SwingUtilities.invokeLater(() -> playbackPaused());
             }
 
+            /**
+             * Die App schaltet nie stumm und hat keinen Stummschalter. Eine frühere Fassung schaltete beim Springen im
+             * angehaltenen Video stumm, und das blieb im Player hängen; meldet VLC „stumm“, ist der Ton deshalb sofort
+             * wieder an.
+             */
+            @Override
+            public void muted(MediaPlayer mediaPlayer, boolean muted) {
+                if (muted) {
+                    mediaPlayer.submit(() -> mediaPlayer.audio().setMute(false));
+                }
+            }
+
             @Override
             public void timeChanged(MediaPlayer mediaPlayer, long time) {
                 if (stillReached(time)) {
@@ -488,9 +500,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             message.setText(audioOnly ? "Audio wird gestartet …" : "Video wird gestartet …");
             boolean accepted = true;
             if (stillAtMillis >= 0) {
-                // Abspielen während eines Sprungs: weiterspielen statt anhalten, mit dem Ton wie vorher.
+                // Abspielen während eines Sprungs: weiterspielen statt anhalten.
                 stillAtMillis = -1;
-                player.mediaPlayer().audio().setMute(false);
             }
             if (started) {
                 player.mediaPlayer().controls().play();
@@ -599,19 +610,13 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             return;
         }
         stillAtMillis = -1;
-        mediaPlayer.submit(() -> {
-            mediaPlayer.controls().setPause(true);
-            // Die App hat keinen eigenen Stummschalter: nach dem Sprung ist der Ton immer wieder an. Den Zustand
-            // vorher zu lesen ging schief, denn ohne Audioausgabe meldet VLC „stumm“ und blieb dann stumm.
-            mediaPlayer.audio().setMute(false);
-        });
+        mediaPlayer.submit(() -> mediaPlayer.controls().setPause(true));
     }
 
-    /** Merkt einen Sprung im angehaltenen Video vor: stumm bis kurz nach {@code target}, dann anhalten. */
+    /** Merkt einen Sprung im angehaltenen Video vor: spielen bis kurz nach {@code target}, dann anhalten. */
     private void holdStillAt(long target) {
         stillSinceNanos = System.nanoTime();
         stillAtMillis = target + settings.get(VideoSettings.Value.STILL_AFTER_SEEK_MILLIS);
-        player.mediaPlayer().audio().setMute(true);
     }
 
     /**
@@ -647,9 +652,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             return;
         }
         if (stillAtMillis >= 0 && !switchingMedia) {
-            // Spielt nur für das Bild nach einem Sprung; die Bedienung bleibt angehalten. Erst jetzt gibt es eine
-            // Audioausgabe, die sich stumm schalten lässt.
-            player.mediaPlayer().audio().setMute(true);
+            // Spielt nur für das Bild nach einem Sprung; die Bedienung bleibt angehalten.
             started = true;
             startRequestedAtNanos = 0;
             return;
@@ -657,8 +660,6 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (switchingMedia) {
             resumePlaybackAfterSwitch();
         }
-        // Normales Abspielen hat immer Ton; ein Sprung im angehaltenen Video schaltet ihn nur kurz ab.
-        player.mediaPlayer().audio().setMute(false);
         started = true;
         actuallyPlaying = true;
         startRequestedAtNanos = 0;
@@ -787,12 +788,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (closed || switchingMedia) {
             return;
         }
-        if (stillAtMillis >= 0) {
-            stillAtMillis = -1;
-            if (player != null) {
-                player.mediaPlayer().audio().setMute(false);
-            }
-        }
+        stillAtMillis = -1;
         actuallyPlaying = false;
         started = false;
         startRequestedAtNanos = 0;
@@ -845,7 +841,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             long duration = player.mediaPlayer().status().length();
             long current = player.mediaPlayer().status().time();
             // Sicherung des Sprungs im angehaltenen Video: verpasst das Ereignis die neue Stelle oder erreicht VLC sie
-            // nicht, hält es trotzdem an, statt unsichtbar stumm weiterzuspielen und weiter zu laden.
+            // nicht, hält es trotzdem an, statt unbemerkt weiterzuspielen und weiter zu laden.
             if (stillAtMillis >= 0 && (stillReached(current) || System.nanoTime() - stillSinceNanos
                     > TimeUnit.MILLISECONDS.toNanos(settings.get(VideoSettings.Value.SEEK_FEEDBACK_MILLIS)))) {
                 finishStill(player.mediaPlayer());
