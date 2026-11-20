@@ -144,6 +144,11 @@ public final class Texts {
             case ANALYTICS_EXPORT -> "Analytics";
             case UPDATE_SUMMARY -> "Zusammenfassen";
             case STATEMENT_CHECK -> "Aussagen prüfen";
+            case VIDEO_TRANSCRIPT -> "Transkript ziehen";
+            case VIDEO_SLIDES -> "Folien beschreiben";
+            case TRANSCRIPT_CORRECTION -> "Transkript korrigieren";
+            case SLIDE_NOTES -> "Folienkommentare";
+            case PRESENTATION_EXPORT -> "PPTX erzeugen";
         };
     }
 

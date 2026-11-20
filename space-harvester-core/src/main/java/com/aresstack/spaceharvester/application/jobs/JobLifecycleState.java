@@ -59,7 +59,9 @@ public sealed interface JobLifecycleState {
         boolean forceable = download || files || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
         // Metadaten und Analytics fragen Gescheitertes beim neuen Lauf erneut, erzwingen aber nichts: sie fragen
         // ohnehin immer die Quelle (Angelo 17.11.2026).
-        boolean query = status.type().sourceQuery();
+        boolean query = status.type().sourceQuery()
+                // „In PPTX umwandeln“: ein neuer Lauf im selben Eintrag fragt nur, was fehlt oder scheiterte.
+                || status.type().presentation();
         // Gescheitertes gezielt nachladen geht, sobald etwas gescheitert ist, in jedem Zustand (Angelo 11.11.2026).
         boolean failures = (forceable || query) && status.progress().failed() > 0;
         // Eine Ausgabe aus dem Bestand und ihre Bilder und Anhänge fragen die Quelle nie (ADR 0029).

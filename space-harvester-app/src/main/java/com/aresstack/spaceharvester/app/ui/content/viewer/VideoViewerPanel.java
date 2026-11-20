@@ -139,6 +139,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.stop().addActionListener(event -> stop());
         transport.download().addActionListener(event -> chooseDownload());
         transport.cancelDownload().addActionListener(event -> cancelDownload());
+        transport.convert().addActionListener(event -> onConvert.run());
         transport.fullScreen().addActionListener(event -> fullScreen.toggle());
         transport.audioOnly().addActionListener(event -> toggleAudioOnly());
         transport.previousSlide().addActionListener(event -> jumpToSlide(false));
@@ -760,6 +761,25 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (!started && durationMillis > 0) {
             transport.seekBar().update(0, durationMillis);
         }
+    }
+
+    /** „In PPTX umwandeln“: wer die Aufträge startet; ohne ihn bleibt der Knopf verborgen. */
+    private Runnable onConvert = () -> { };
+
+    /**
+     * Zeigt neben „Herunterladen“ den Knopf „In PPTX umwandeln“ (Angelo 20.11.2026); {@code listener} läuft auf dem
+     * EDT, wenn er gedrückt wird.
+     */
+    public void onConvert(Runnable listener) {
+        onConvert = java.util.Objects.requireNonNull(listener, "listener");
+        transport.convert().setVisible(true);
+        transport.revalidate();
+        transport.repaint();
+    }
+
+    /** Der Knopf „In PPTX umwandeln“ (für Tests). */
+    javax.swing.JButton convertButton() {
+        return transport.convert();
     }
 
     /** Whoever wants the slide changes once they are found, e.g. for one virtual attachment per slide. */

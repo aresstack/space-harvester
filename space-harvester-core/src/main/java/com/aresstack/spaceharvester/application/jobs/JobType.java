@@ -84,7 +84,42 @@ public enum JobType {
      * Umfangs gegen ihren Originalsatz; nur auf ausdrückliche Anforderung und nur Seiten mit KI-Freigabe, nie
      * Folgeauftrag einer Analyse. Ein neuer Lauf fragt nur, was in der Ablage des Prüfschritts fehlt.
      */
-    STATEMENT_CHECK;
+    STATEMENT_CHECK,
+    /**
+     * „Transkript ziehen“ für „In PPTX umwandeln“ (Angelo 20.11.2026): das abgelegte Transkript eines Videos, von der
+     * App lokal vervollständigt; läuft zugleich mit {@link #VIDEO_SLIDES}. Fortsetzen setzt hinter dem letzten
+     * erkannten Abschnitt fort.
+     */
+    VIDEO_TRANSCRIPT,
+    /**
+     * „Folien beschreiben“ für „In PPTX umwandeln“: fehlende Standbilder der Folienmarken ziehen und jede Folie mit
+     * dem Vision-Modell beschreiben, parallel; nur Seiten mit KI-Freigabe (ADR 0028). Fortsetzen fragt nur Folien
+     * ohne Beschreibung.
+     */
+    VIDEO_SLIDES,
+    /**
+     * „Transkript korrigieren“ für „In PPTX umwandeln“: das Text-Modell korrigiert Spracherkennungsfehler mit den
+     * Folienbeschreibungen als Hilfe, paketweise parallel; wartet auf {@link #VIDEO_TRANSCRIPT} und
+     * {@link #VIDEO_SLIDES}.
+     */
+    TRANSCRIPT_CORRECTION,
+    /**
+     * „Folienkommentare“ für „In PPTX umwandeln“: je Folie Standbild und Transkriptauszug einzeln an das
+     * Vision-Modell, das den Vortragstext schreibt, parallel; wartet auf {@link #TRANSCRIPT_CORRECTION}. Fortsetzen
+     * fragt nur Folien ohne Text.
+     */
+    SLIDE_NOTES,
+    /**
+     * „PPTX erzeugen“ für „In PPTX umwandeln“: die PowerPoint-Datei mit je Folie ihrem Standbild und dem Vortragstext
+     * als Notiz im Ausgabeordner; wartet auf {@link #SLIDE_NOTES}.
+     */
+    PRESENTATION_EXPORT;
+
+    /** Gehört zu „In PPTX umwandeln“ (Angelo 20.11.2026). */
+    public boolean presentation() {
+        return this == VIDEO_TRANSCRIPT || this == VIDEO_SLIDES || this == TRANSCRIPT_CORRECTION
+                || this == SLIDE_NOTES || this == PRESENTATION_EXPORT;
+    }
 
     /**
      * Lädt von der Quelle herunter: Bilder, Anhänge und die Exporte aus der Quelle (Confluence-Metadaten, Analytics;
@@ -118,7 +153,7 @@ public enum JobType {
      */
     public boolean resumable() {
         return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD
-                || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT;
+                || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT || presentation();
     }
 
     /** Export aus der Quelle per REST-Abfrage (Metadaten, Analytics): Gescheitertes fragt ein neuer Lauf erneut. */

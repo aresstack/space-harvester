@@ -355,6 +355,7 @@ public final class Harvester implements AutoCloseable {
     private final Assets assets;
     private final ConnectionBudget connections;
     private final PageImageAnalysis imageAnalysis;
+    private final com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations;
     private final Simplifications simplifications;
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
@@ -952,12 +953,28 @@ public final class Harvester implements AutoCloseable {
                     new StatementCheckStore(enrichmentStore, clock), withdrawn::mayProcess,
                     StatementChecks.pageAccess(access, page -> cache.find(page).map(PageSnapshot::spaceKey)));
             StatementChecks checked = this.statementChecks;
+            // „In PPTX umwandeln“ (Angelo 20.11.2026): fünf Aufträge je Video, Text-Modell = ai.chat-model, an den
+            // KI-Dienst nur Seiten mit KI-Freigabe; die Zwischenergebnisse fallen mit der Freigabe.
+            PageQueries presentationPages = this.pages;
+            com.aresstack.spaceharvester.application.presentation.PresentationStore presentationStore =
+                    new com.aresstack.spaceharvester.application.presentation.PresentationStore(enrichmentStore, clock);
+            this.videoPresentations = new com.aresstack.spaceharvester.application.presentation.VideoPresentations(
+                    jobs, (who, sourceId, pageId) -> presentationPages.page(who, sourceId, pageId, false).snapshot(),
+                    assets, imageAnalysis,
+                    com.aresstack.spaceharvester.application.marks.VideoMarks.slides(enrichmentStore, assets),
+                    new ChatStepModel(com.aresstack.spaceharvester.application.presentation.VideoPresentations
+                            .CORRECTION_STEP, () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog,
+                            trustBundles, builder.userAgent),
+                    presentationStore, withdrawn::mayProcess, builder.exportDirectory().resolve("presentations"));
+            com.aresstack.spaceharvester.application.presentation.VideoPresentations presentations =
+                    this.videoPresentations;
             java.util.concurrent.atomic.AtomicReference<StatementAnalysis> graphAnalysis =
                     new java.util.concurrent.atomic.AtomicReference<>();
             releaseRecomputation.withdrawal(pages -> {
                 pageImages.withdraw(pages, withdrawn::mayProcess);
                 simplified.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 checked.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                presentations.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 // ADR 0032, FL3: Aussagen der Vorstufe tragen Modelltext der Seite und fallen aus dem Graph
                 StatementAnalysis graph = graphAnalysis.get();
                 if (graph != null) {
@@ -1100,6 +1117,7 @@ public final class Harvester implements AutoCloseable {
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
                     new FileReadStates(builder.assetDirectory()), clock);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads, sourceQueryExports);
+            jobActions.presentations(videoPresentations);
             // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
             // mit derselben Lese- und Exportprüfung wie beim Start.
             jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action,
@@ -1761,6 +1779,14 @@ public final class Harvester implements AutoCloseable {
      */
     public PageImageAnalysis imageAnalysis() {
         return imageAnalysis;
+    }
+
+    /**
+     * „In PPTX umwandeln“ (Angelo 20.11.2026): aus einem Video mit Folienmarken eine PowerPoint-Datei mit Vortragstext
+     * je Folie, als fünf Aufträge in der Auftragsliste.
+     */
+    public com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations() {
+        return videoPresentations;
     }
 
     /**

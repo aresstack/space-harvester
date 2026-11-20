@@ -67,6 +67,13 @@ public class Enrichments {
      */
     public static final String STATEMENT_CHECKS = "statement-checks";
 
+    /**
+     * Vorbehaltene Prozessor-ID: unter ihr legt „In PPTX umwandeln“ das korrigierte Transkript und den Vortragstext je
+     * Folie eines Videos ab ({@code PresentationStore}). Wie {@link #STATEMENT_CHECKS} kein Prozessor, nie in
+     * {@link #view}, mit der Seite entfernt; der Entzug der KI-Freigabe entfernt sie ebenfalls.
+     */
+    public static final String VIDEO_PRESENTATION = "video-presentation";
+
     /** So viele erzwungene Neuberechnungen warten höchstens zugleich im Hintergrund; der übrige Platz bleibt frei. */
     public static final int FORCED_IN_BACKGROUND = 50;
 
@@ -390,7 +397,8 @@ public class Enrichments {
             if (READING_VIEW.equals(enrichment.processorId()) || IMPORTED_ASSETS.equals(enrichment.processorId())
                     || VIDEO_MARKS.equals(enrichment.processorId())
                     || SIMPLIFICATIONS.equals(enrichment.processorId())
-                    || STATEMENT_CHECKS.equals(enrichment.processorId())) {
+                    || STATEMENT_CHECKS.equals(enrichment.processorId())
+                    || VIDEO_PRESENTATION.equals(enrichment.processorId())) {
                 // Rechte für eingebundene Inhalte prüft nur die Lese-Ansicht selbst; mitgebrachte Bilder gehören zum
                 // Export.
                 continue;
