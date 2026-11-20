@@ -1322,12 +1322,14 @@ public final class PageDetailPanel extends JPanel {
     private Loaded loaded(AppRuntime runtime, String source, String id, DeliveredPage delivered, Font font,
                           boolean checked, PassageLookup passage, boolean unchecked) {
         // Avoid preparing an AI text document before showing a native image.
-        if (isNativePreview(delivered.snapshot())) {
+        // Ein Video mit Transkript hat Text (Angelo 20.11.2026): seine Analysen zeigen wie bei jeder Textseite.
+        PageText text = !isNativePreview(delivered.snapshot()) || remoteMedia(delivered.snapshot())
+                ? runtime.workspace().pageText(delivered.snapshot()) : null;
+        if (isNativePreview(delivered.snapshot()) && text == null) {
             return new Loaded(delivered, List.of(), null, Payloads.display(delivered.snapshot().payload()),
                     null, checked, passage, unchecked);
         }
         List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
-        PageText text = runtime.workspace().pageText(delivered.snapshot());
         ReaderDocument document = document(source, id, enrichments, text, font);
         relations(runtime, document, source, delivered.header().metadata().partitionKey());
         navigation(runtime, document, source, id);
@@ -1765,6 +1767,9 @@ public final class PageDetailPanel extends JPanel {
                     pdf ? com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.PDF : com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.PPTX));
             VideoTranscriptSource transcriptSource = new VideoTranscriptSource(size, ranges, context.video());
             videoTranscript.setVideoSource(transcriptSource);
+            // Angelo 20.11.2026: Korrigieren wie vor „In PPTX umwandeln“, Löschen samt Korrekturen und Analysen.
+            videoTranscript.onCorrect(() -> correctTranscript(frames, ranges, videoSize, videoType));
+            videoTranscript.onDelete(() -> deleteTranscript(transcriptSource, frames));
             showStoredTranscript(transcriptSource, frames);
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
             // Das Transkript füllt den Reiter; die Akronymzeile gehört zum Lesetext.
@@ -1960,6 +1965,12 @@ public final class PageDetailPanel extends JPanel {
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
         fileContent.revalidate();
         fileContent.repaint();
+    }
+
+    /** Ob die Seite ein entferntes Video ist (BSCW); sein Text ist das Transkript. */
+    private static boolean remoteMedia(PageSnapshot snapshot) {
+        return "true".equals(snapshot.metadata().attributes().get(PageMetadata.REMOTE_MEDIA))
+                || REMOTE_MEDIA_FORMAT.equals(snapshot.payload().nativeFormat());
     }
 
     /** Identify original images before running any optional text-analysis preparation. */
@@ -3099,6 +3110,111 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
+    /**
+     * „Korrigieren“ in der Transkriptansicht (Angelo 20.11.2026): Transkript, Standbilder, Folien beschreiben und
+     * Transkript korrigieren als Aufträge wie vor „In PPTX umwandeln“, ohne Datei. Die Ansicht zeigt die neue Korrektur,
+     * sobald der Auftrag fertig ist; die Analysen rechnen danach über sie.
+     */
+    private void correctTranscript(VideoFrameSource video,
+                                   com.aresstack.spaceharvester.application.sources.MediaByteRange ranges,
+                                   long size, String mediaType) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || video == null || video != videoFrames) {
+            return;
+        }
+        String name = "„Transkript korrigieren“";
+        context.whisperModel().ensure(this, feedback::working,
+                reason -> feedback.warning(name + " nicht gestartet", reason), () -> {
+                    if (video != videoFrames) {
+                        return;
+                    }
+                    com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia media =
+                            new com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia(ranges,
+                                    size, mediaType, context.video(), new TranscribeAudioUseCase(
+                                            new VlcPcmAudioDecoder(), new WhisperSpeechTranscriber()));
+                    feedback.working(name + " wird gestartet …");
+                    Background.run(() -> runtime.workspace().startVideoCorrection(video.sourceId(), video.pageId(),
+                            media), run -> {
+                        if (video == videoFrames) {
+                            feedback.working(name + " läuft: drei Aufträge unter „Aufträge“; danach rechnen die "
+                                    + "Analysen über die Korrektur.");
+                        }
+                    }, error -> {
+                        if (video != videoFrames) {
+                            return;
+                        }
+                        if (error instanceof com.aresstack.spaceharvester.application.presentation
+                                .PresentationUnavailableException unavailable) {
+                            feedback.warning(name + " kann nicht starten", unavailable.getMessage());
+                        } else {
+                            feedback.problem(error, Problems.Step.PAGE);
+                        }
+                    });
+                });
+    }
+
+    /** Fragt nach und löscht dann Transkript, Korrekturen und die Analysen dazu (Angelo 20.11.2026). */
+    private void deleteTranscript(VideoTranscriptSource transcriptSource, VideoFrameSource video) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || video == null || video != videoFrames
+                || !com.aresstack.spaceharvester.app.ui.Dialogs.confirm(this, "Transkript löschen?",
+                TRANSCRIPT_DELETE_QUESTION)) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().deleteVideoTranscript(video.sourceId(), video.pageId()),
+                deleted -> {
+                    if (video != videoFrames) {
+                        return;
+                    }
+                    videoTranscript.cleared(transcriptSource);
+                    attachmentsChanged(video);
+                }, error -> {
+                    if (video == videoFrames) {
+                        feedback.problem(error, Problems.Step.PAGE);
+                    }
+                });
+    }
+
+    /** Die Rückfrage vor dem Löschen des Transkripts. */
+    static final String TRANSCRIPT_DELETE_QUESTION = "Wirklich das Transkript samt allen Korrekturen löschen? Die "
+            + "Analysen dazu fallen mit weg.";
+
+    /**
+     * Liest Analysen und Lesetext der gezeigten Seite neu, nachdem der Core sie zum Transkript neu gerechnet hat; ein
+     * Laden einer anderen Seite verwirft das Ergebnis.
+     */
+    private void reloadAnalyses(PageKey key) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null || !page.snapshot().key().equals(key)) {
+            return;
+        }
+        int current = request;
+        DeliveredPage before = page;
+        Font font = reader.getFont();
+        Background.run(() -> {
+            DeliveredPage cached = runtime.workspace().page(key.sourceId(), key.pageId(), false);
+            List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
+            PageText text = runtime.workspace().pageText(cached.snapshot());
+            ReaderDocument document = text == null ? null : document(key.sourceId(), key.pageId(), updated, text,
+                    font);
+            if (document != null) {
+                relations(runtime, document, key.sourceId(), cached.header().metadata().partitionKey());
+                navigation(runtime, document, key.sourceId(), key.pageId());
+            }
+            return new Recomputed(new Enrichments.Run(text != null, 0, 0, 0), updated, document);
+        }, result -> {
+            if (current != request || page != before) {
+                return;
+            }
+            views = result.views();
+            analysisView.steps(views, this::stepResult);
+            showReader(result.reader(), page.live());
+            statementsView.page(page.snapshot(), result.reader() == null ? null : result.reader().text());
+        }, error -> {
+            // Nicht lesbar: die Ansicht bleibt beim vorigen Stand.
+        });
+    }
+
     /** Lädt das gespeicherte Transkript des geöffneten Videos in den Reiter „Text“, statt es neu zu erzeugen. */
     private void showStoredTranscript(VideoTranscriptSource transcriptSource, VideoFrameSource video) {
         AppRuntime runtime = context.runtime();
@@ -3120,6 +3236,31 @@ public final class PageDetailPanel extends JPanel {
                                 .toList());
                     }
                 }, error -> videoTranscript.loadingStored(transcriptSource, false));
+    }
+
+    /** Meldungen der neu gerechneten Analysen zum Transkript des gezeigten Videos; {@code null} ohne Video. */
+    private com.aresstack.spaceharvester.application.observe.Subscription analysesWatch;
+
+    /** Ist „Transkript korrigieren“ für das gezeigte Video fertig, zeigt die Ansicht die Fassungen neu. */
+    private void correctionEnded(AppRuntime runtime, VideoTranscriptSource transcriptSource, VideoFrameSource video,
+                                 com.aresstack.spaceharvester.application.jobs.JobStatus status) {
+        if (status.type() != com.aresstack.spaceharvester.application.jobs.JobType.TRANSCRIPT_CORRECTION
+                || status.state() != com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED
+                || !video.sourceId().equals(status.sourceId()) || !video.pageId().equals(status.parameters()
+                .get(com.aresstack.spaceharvester.application.presentation.VideoPresentations.PAGE_PARAMETER))) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().videoTranscriptVersions(video.sourceId(), video.pageId()),
+                versions -> {
+                    if (video == videoFrames && !versions.isEmpty()) {
+                        videoTranscript.showVersions(transcriptSource, versions.stream()
+                                .map(version -> new com.aresstack.spaceharvester.app.ui.content.viewer
+                                        .VideoTranscriptionPanel.Version(version.label(), version.text()))
+                                .toList());
+                    }
+                }, error -> {
+                    // Nicht lesbar: die Fassungen bleiben, wie sie sind.
+                });
     }
 
     /** Meldungen der Aufträge „Transkript ziehen“ für das gezeigte Video; {@code null} ohne Video. */
@@ -3153,7 +3294,20 @@ public final class PageDetailPanel extends JPanel {
                 // Nicht lesbar (etwa Seite inzwischen gesperrt): die Ansicht bleibt, wie sie ist.
             });
         };
-        transcriptWatch = runtime.workspace().subscribeJobs(handle::accept);
+        transcriptWatch = runtime.workspace().subscribeJobs(status -> {
+            handle.accept(status);
+            correctionEnded(runtime, transcriptSource, video, status);
+        });
+        PageKey shownKey = new PageKey(video.sourceId(), video.pageId());
+        analysesWatch = runtime.workspace().subscribeTranscriptAnalyses(key -> {
+            if (shownKey.equals(key)) {
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (video == videoFrames) {
+                        reloadAnalyses(key);
+                    }
+                });
+            }
+        });
         // Erst anmelden, dann den Stand lesen: Läuft der Auftrag schon, folgt die Ansicht sofort (ADR 0027).
         Background.run(() -> runtime.workspace().jobs(), jobs -> jobs.stream()
                 .filter(job -> !job.state().terminal()).forEach(handle), error -> {
@@ -3165,6 +3319,10 @@ public final class PageDetailPanel extends JPanel {
         if (transcriptWatch != null) {
             transcriptWatch.close();
             transcriptWatch = null;
+        }
+        if (analysesWatch != null) {
+            analysesWatch.close();
+            analysesWatch = null;
         }
     }
 

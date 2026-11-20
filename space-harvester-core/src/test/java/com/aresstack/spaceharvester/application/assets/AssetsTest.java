@@ -105,6 +105,86 @@ class AssetsTest {
                         "Vortrag – Transkript (Korrektur a).txt", "Vortrag – Transkript (Korrektur b).txt");
     }
 
+    /**
+     * Angelo 20.11.2026: Die Analysen einer Videoseite lesen die zuletzt abgelegte Korrektur, ohne Korrektur das
+     * Transkript; jede Ablage meldet sich beim Hörer.
+     */
+    @Test
+    void analysesReadTheLatestCorrectionAndEveryStoreIsReported() {
+        Instant[] now = {NOW};
+        Clock ticking = new Clock() {
+            @Override
+            public java.time.ZoneId getZone() {
+                return ZoneOffset.UTC;
+            }
+
+            @Override
+            public Clock withZone(java.time.ZoneId zone) {
+                return this;
+            }
+
+            @Override
+            public Instant instant() {
+                return now[0];
+            }
+        };
+        Assets assets = new Assets(new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return Optional.of(source);
+            }
+        }, new FileSystemAssetStore(directory), 1000, ticking, null, null, null, LargeFileGate.defaults());
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> reported = new java.util.ArrayList<>();
+        assets.transcriptChanges(reported::add);
+
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).as("ohne Transkript").isEmpty();
+        assets.putVideoTranscript("wiki", "101", "v1", "T.txt", "[00:00:00] Original");
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).contains("[00:00:00] Original");
+        now[0] = NOW.plusSeconds(10);
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "B.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur b", "m|b", "sha:1", true), "[00:00:00] B");
+        now[0] = NOW.plusSeconds(20);
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "A.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:2", true), "[00:00:00] A");
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).as("die jüngste, nicht nach Name")
+                .contains("[00:00:00] A");
+        now[0] = NOW.plusSeconds(30);
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "B.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur b", "m|b", "sha:3", true), "[00:00:00] B2");
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).contains("[00:00:00] B2");
+        assertThat(reported).hasSize(4)
+                .allMatch(key -> key.equals(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki",
+                        "101")));
+    }
+
+    /** Angelo 20.11.2026: Löschen nimmt Transkript und alle Korrekturen; andere Fassungen bleiben. */
+    @Test
+    void deletingTheTranscriptRemovesAllCorrections() {
+        Assets assets = assets(1000);
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> reported = new java.util.ArrayList<>();
+        assets.putVideoTranscript("wiki", "101", "v1", "T.txt", "[00:00:00] Original");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "A.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:1", true), "[00:00:00] A");
+        assets.putVideoTranscript("wiki", "101", "v2", "T.txt", "[00:00:00] Andere Fassung");
+        assets.transcriptChanges(reported::add);
+
+        assertThat(assets.deleteVideoTranscript("wiki", "101", "v1")).isTrue();
+
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).isEmpty();
+        assertThat(assets.videoTranscriptCorrections("wiki", "101", "v1")).isEmpty();
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).isEmpty();
+        assertThat(assets.withVideoTranscript(list(), "v1").attachments().attachments()).isEmpty();
+        assertThat(assets.videoTranscript("wiki", "101", "v2")).contains("[00:00:00] Andere Fassung");
+        assertThat(reported).hasSize(1);
+        assertThat(assets.deleteVideoTranscript("wiki", "101", "v1")).as("nichts mehr da").isFalse();
+        assertThat(reported).hasSize(1);
+    }
+
     /** Angelo 20.11.2026: Folienkommentare liegen an der virtuellen Marke, je Modell einer, versioniert. */
     @Test
     void slideNotesLieAtTheirMarkOnePerModel() {

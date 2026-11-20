@@ -354,6 +354,7 @@ public final class Harvester implements AutoCloseable {
     private final DocumentRereads rereads;
     private final JobActions jobActions;
     private final Assets assets;
+    private final com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses transcriptAnalyses;
     private final ConnectionBudget connections;
     private final PageImageAnalysis imageAnalysis;
     private final com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations;
@@ -571,7 +572,11 @@ public final class Harvester implements AutoCloseable {
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
+                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector(),
+                    // Angelo 20.11.2026: Videoseiten ohne Text lesen ihr Transkript, die letzte Korrektur zuerst; die
+                    // Ablage entsteht erst weiter unten.
+                    new com.aresstack.spaceharvester.application.presentation.VideoTranscriptTextProjector(
+                            this::assets)));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
             this.pageTexts = projector;
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
@@ -925,6 +930,12 @@ public final class Harvester implements AutoCloseable {
             assets.documentExtractions(new DocumentExtractions(documentStructure,
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
             assets.indexedDocuments(documentEnrichments);
+            // Angelo 20.11.2026: Neues Transkript oder neue Korrektur → Analysen neu, gelöschtes → Analysen weg.
+            com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses transcriptAnalyses =
+                    new com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses(enrichments,
+                            cache::find);
+            opened.add(transcriptAnalyses);
+            this.transcriptAnalyses = transcriptAnalyses;
             documentEnrichments.assets(assets);
             // ADR 0028: Bilder einer Seite auf der Liste freigegebener Seiten gehen auch aus einer gesperrten Quelle an
             // das Vision-Modell.
@@ -1020,6 +1031,14 @@ public final class Harvester implements AutoCloseable {
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
+            // gemerkten Eingabe-Hash, die Analysen rechnen neu.
+            KnowledgeGraph transcriptGraph = this.knowledgeGraph;
+            com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses analyses = this.transcriptAnalyses;
+            this.assets.transcriptChanges(key -> {
+                transcriptGraph.forgetInput(key);
+                analyses.changed(key);
+            });
             // ADR 0032, FL6: Stand und Status-quo-Sicht aus gespeicherten Aussagen; Entscheidungen als Nutzerdaten.
             // ADR 0032, FL5b: Teilzahlen der Begriffsableitung je Aufrufer für den Glossar-Reiter.
             this.glossaryOverview = new com.aresstack.spaceharvester.application.glossary.GlossaryOverview(
@@ -1773,6 +1792,11 @@ public final class Harvester implements AutoCloseable {
 
     public Assets assets() {
         return assets;
+    }
+
+    /** Hält die Analysen von Videoseiten beim Transkript und seiner letzten Korrektur (Angelo 20.11.2026). */
+    public com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses transcriptAnalyses() {
+        return transcriptAnalyses;
     }
 
     /** Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3): Modellaufruf und Ablage je Satz, nur für freigegebene Seiten. */

@@ -39,4 +39,31 @@ final class VideoTranscriptVersionsTest {
             assertThat(panel.versionButtons()).as("ohne Korrektur keine Leiste").isEmpty();
         });
     }
+
+    @Test
+    void aShownCorrectionStaysChosenAndShowsItsNewTextWhenTheVersionsChange() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            VideoTranscriptionPanel panel = new VideoTranscriptionPanel(null);
+            VideoTranscriptSource source = new VideoTranscriptSource(10, (offset, length) -> new byte[0]);
+            panel.setVideoSource(source);
+            panel.showStored(source, "[00:00:00 – 00:00:05] Zabak");
+            panel.showVersions(source, List.of(
+                    new VideoTranscriptionPanel.Version("Original", "[00:00:00 – 00:00:05] Zabak"),
+                    new VideoTranscriptionPanel.Version("Korrektur a", "[00:00:00 – 00:00:05] ZahlBuch")));
+            panel.versionButtons().get(1).doClick();
+
+            panel.showVersions(source, List.of(
+                    new VideoTranscriptionPanel.Version("Original", "[00:00:00 – 00:00:05] Zabak"),
+                    new VideoTranscriptionPanel.Version("Korrektur a", "[00:00:00 – 00:00:05] Zahlbuch neu"),
+                    new VideoTranscriptionPanel.Version("Korrektur b", "[00:00:00 – 00:00:05] Anders")));
+            assertThat(panel.versionButtons().get(1).isEmphasized()).isTrue();
+            assertThat(panel.shownText()).isEqualTo("[00:00:00 – 00:00:05] Zahlbuch neu");
+
+            panel.showVersions(source, List.of(
+                    new VideoTranscriptionPanel.Version("Original", "[00:00:00 – 00:00:05] Zabak"),
+                    new VideoTranscriptionPanel.Version("Korrektur b", "[00:00:00 – 00:00:05] Anders")));
+            assertThat(panel.versionButtons().get(0).isEmphasized()).as("weg: das Original").isTrue();
+            assertThat(panel.shownText()).isEqualTo("[00:00:00 – 00:00:05] Zabak");
+        });
+    }
 }

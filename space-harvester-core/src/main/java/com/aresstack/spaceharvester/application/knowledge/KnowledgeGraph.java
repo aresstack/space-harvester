@@ -416,6 +416,14 @@ public class KnowledgeGraph {
         return listeners.add(Objects.requireNonNull(listener, "listener"));
     }
 
+    /**
+     * Vergisst den gemerkten Eingabe-Hash einer Seite, deren Text sich ohne neue Payload geändert hat, etwa das
+     * Transkript eines Videos.
+     */
+    public void forgetInput(PageKey key) {
+        inputs.remove(key);
+    }
+
     /** Vergisst gemerkte Eingabe-Hashes, etwa nach einem Neuaufbau des Caches. */
     public void forgetInputs() {
         inputs.clear();

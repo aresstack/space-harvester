@@ -186,12 +186,16 @@ public final class VideoPresentations {
         }
     }
 
-    /** Die fünf Aufträge eines Vorgangs. */
+    /**
+     * Die Aufträge eines Vorgangs; bei der Korrektur allein ({@link #startCorrection}) ohne {@code notes} und
+     * {@code file} ({@code null}).
+     */
     public record Run(JobStatus transcript, JobStatus slides, JobStatus correction, JobStatus notes, JobStatus file) {
 
         /** Alle in der Reihenfolge des Ablaufs. */
         public List<JobStatus> all() {
-            return List.of(transcript, slides, correction, notes, file);
+            return java.util.stream.Stream.of(transcript, slides, correction, notes, file).filter(Objects::nonNull)
+                    .toList();
         }
     }
 
@@ -271,6 +275,23 @@ public final class VideoPresentations {
      * @throws PresentationUnavailableException wenn etwas fehlt ({@link #unavailable})
      */
     public Run start(AccessContext caller, String sourceId, String pageId, VideoMedia media, Options options) {
+        return submit(caller, sourceId, pageId, media, options, true);
+    }
+
+    /**
+     * „Korrigieren“ in der Transkriptansicht (Angelo 20.11.2026): dieselbe Korrektursitzung wie vor „In PPTX
+     * umwandeln“, mit allen Bildern (Transkript, Standbilder, Folien beschreiben, Transkript korrigieren), aber ohne
+     * Folienkommentare und Datei. Die Analysen der Seite rechnen danach über die neue Korrektur.
+     *
+     * @throws PresentationUnavailableException wenn etwas fehlt ({@link #unavailable})
+     */
+    public Run startCorrection(AccessContext caller, String sourceId, String pageId, VideoMedia media,
+                               Options options) {
+        return submit(caller, sourceId, pageId, media, options, false);
+    }
+
+    private Run submit(AccessContext caller, String sourceId, String pageId, VideoMedia media, Options options,
+                       boolean presentation) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(media, "media");
         Objects.requireNonNull(options, "options");
@@ -282,7 +303,7 @@ public final class VideoPresentations {
         String space = snapshot.metadata().partitionKey();
         String owner = caller.jobOwner();
         String title = snapshot.metadata().title();
-        Path file = options.directory() == null
+        Path file = !presentation ? null : options.directory() == null
                 ? outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title, options.format()))
                 : reserveName(options.directory().toAbsolutePath(), fileName(title, options.format()));
         String run = java.util.UUID.randomUUID().toString();
@@ -304,6 +325,9 @@ public final class VideoPresentations {
                     parameters, describing), describing, submitted);
             JobStatus correction = remember(jobs.submitAfter(JobType.TRANSCRIPT_CORRECTION, sourceId, space, pageId,
                     owner, parameters, correcting, List.of(transcript.id(), described.id())), correcting, submitted);
+            if (!presentation) {
+                return new Run(transcript, described, correction, null, null);
+            }
             JobStatus notes = remember(jobs.submitAfter(JobType.SLIDE_NOTES, sourceId, space, pageId, owner,
                     parameters, commenting, correction.id()), commenting, submitted);
             Map<String, String> fileParameters = new HashMap<>(parameters);

@@ -851,6 +851,30 @@ public final class Workspace {
         harvester.assets().putVideoTranscript(sourceId, pageId, page.snapshot().revision(), fileName, text);
     }
 
+    /**
+     * Löscht das Transkript des Videos dieser Seite samt allen Korrekturen (Angelo 20.11.2026) und mit ihnen die
+     * Analysen der Seite, auch die Aussagen-Analyse. Braucht wie das Ablegen die sync-Freigabe.
+     *
+     * @return ob ein Transkript da war
+     */
+    public boolean deleteVideoTranscript(String sourceId, String pageId) {
+        DeliveredPage page = syncedPage(sourceId, pageId);
+        boolean deleted = harvester.assets().deleteVideoTranscript(sourceId, pageId, page.snapshot().revision());
+        if (deleted) {
+            harvester.transcriptAnalyses().update(page.snapshot().key());
+            harvester.knowledgeGraph().delete(caller, page.snapshot().key()::equals);
+        }
+        return deleted;
+    }
+
+    /**
+     * Meldet sich, nachdem die Analysen einer Videoseite zu ihrem Transkript neu gerechnet oder entfernt wurden
+     * (ADR 0027, kein Polling); gerufen außerhalb des EDT.
+     */
+    public Subscription subscribeTranscriptAnalyses(java.util.function.Consumer<PageKey> listener) {
+        return harvester.transcriptAnalyses().subscribe(listener);
+    }
+
     /** Legt das Standbild einer Marke ab; es füllt ihren virtuellen Anhang unter „Anhänge“. */
     public void storeVideoFrame(String sourceId, String pageId, Assets.VideoFrame frame) {
         DeliveredPage page = syncedPage(sourceId, pageId);
@@ -906,6 +930,25 @@ public final class Workspace {
         com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run run =
                 harvester.videoPresentations().start(caller, sourceId, pageId, media,
                         harvester.videoPresentations().options(format).withDirectory(directory));
+        run.all().forEach(job -> activities.remember(job.id()));
+        return run;
+    }
+
+    /**
+     * „Korrigieren“ in der Transkriptansicht (Angelo 20.11.2026): Transkript, Standbilder, Folien beschreiben und
+     * Transkript korrigieren wie vor „In PPTX umwandeln“, ohne Folienkommentare und Datei; die Aufträge erscheinen
+     * einzeln unter „Aufträge“, die Analysen rechnen danach über die neue Korrektur.
+     *
+     * @throws com.aresstack.spaceharvester.application.presentation.PresentationUnavailableException wenn etwas fehlt
+     */
+    public com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run startVideoCorrection(
+            String sourceId, String pageId,
+            com.aresstack.spaceharvester.application.presentation.VideoMedia media) {
+        syncedPage(sourceId, pageId);
+        com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run run =
+                harvester.videoPresentations().startCorrection(caller, sourceId, pageId, media,
+                        harvester.videoPresentations().options(
+                                com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.PPTX));
         run.all().forEach(job -> activities.remember(job.id()));
         return run;
     }
