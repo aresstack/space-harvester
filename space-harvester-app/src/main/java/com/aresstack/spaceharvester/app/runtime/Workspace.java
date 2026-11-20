@@ -732,13 +732,13 @@ public final class Workspace {
     }
 
     /**
-     * Die gespeicherten Marken der gespeicherten Fassung eines Videos, wie der Player sie gefunden hat; leer, solange
-     * er keine gefunden hat. Fragt die Quelle nicht.
+     * Die Folien der gespeicherten Fassung eines Videos: die Marken, wie der Player sie gefunden hat, ohne
+     * Wiederholungen derselben Folie (sobald ihre Standbilder da sind); leer, solange er keine gefunden hat. Fragt die
+     * Quelle nicht.
      */
     public List<Long> videoMarks(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
-        return VideoMarks.in(harvester.enrichments().store()).find(new PageKey(sourceId, pageId),
-                page.snapshot().revision());
+        return slides().find(new PageKey(sourceId, pageId), page.snapshot().revision());
     }
 
     /**
@@ -751,11 +751,16 @@ public final class Workspace {
                 marks);
     }
 
+    /** Die Folien der Videos: gespeicherte Marken ohne Wiederholungen derselben Folie. */
+    private VideoMarks slides() {
+        return VideoMarks.slides(harvester.enrichments().store(), harvester.assets());
+    }
+
     /** Die Marken des Videos, deren virtueller Anhang noch kein Standbild hat. */
     public List<Long> missingVideoFrames(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         String version = page.snapshot().revision();
-        List<Long> marks = VideoMarks.in(harvester.enrichments().store()).find(new PageKey(sourceId, pageId), version);
+        List<Long> marks = slides().find(new PageKey(sourceId, pageId), version);
         return harvester.assets().missingVideoFrames(sourceId, pageId, version, marks);
     }
 
@@ -2173,8 +2178,7 @@ public final class Workspace {
         List<Long> marks = List.of();
         try {
             page = harvester.pages().page(caller, sourceId, pageId, false);
-            marks = VideoMarks.in(harvester.enrichments().store()).find(new PageKey(sourceId, pageId),
-                    page.snapshot().revision());
+            marks = slides().find(new PageKey(sourceId, pageId), page.snapshot().revision());
         } catch (RuntimeException notCached) {
             // Eine Seite ohne gespeicherten Stand hat keine gespeicherten Marken.
         }

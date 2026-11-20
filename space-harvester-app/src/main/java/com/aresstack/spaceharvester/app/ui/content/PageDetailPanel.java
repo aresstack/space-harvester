@@ -2692,10 +2692,16 @@ public final class PageDetailPanel extends JPanel {
                 .map(entry -> entry.attachment().attachmentId()).toList();
     }
 
-    /** Die Folien des gezeigten Videos haben sich unter „Anhänge“ geändert: Liste und Bilder gelten neu. */
+    /**
+     * Die Folien des gezeigten Videos haben sich unter „Anhänge“ geändert: Liste, Bilder und die Marken im Player
+     * gelten neu (ein neues Standbild kann eine Marke als Wiederholung derselben Folie entfallen lassen).
+     */
     private void attachmentsChanged(VideoFrameSource video) {
         if (video != videoFrames) {
             return;
+        }
+        if (originalVideoViewer != null) {
+            showVideoMarks(originalVideoViewer, video);
         }
         imagesLoaded = false;
         assetsLoaded = false;

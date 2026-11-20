@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.assets;
 
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
+import com.aresstack.spaceharvester.application.marks.SlideFrames;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.signin.SignInPendingException;
@@ -985,6 +986,54 @@ public class Assets implements DocumentInventory {
                 attachments, source.responses(), source.mediaType(), source.nativeFormat(), source.warnings(),
                 source.retrievedAt()), list.retrievedAt());
     }
+
+    /**
+     * Die Marken ohne Wiederholungen derselben Folie: Zeigt das Standbild einer Marke dieselbe Folie wie das der
+     * vorigen ({@link SlideFrames#same}), etwa weil nur der Mauszeiger wanderte, fällt sie weg. Marken ohne gezogenes
+     * Standbild bleiben, bis es da ist.
+     */
+    public List<Long> distinctSlides(String sourceId, String pageId, String version, List<Long> marks) {
+        List<Long> slides = new java.util.ArrayList<>(marks.size());
+        SlideFrames.Grid previous = null;
+        for (long millis : marks) {
+            SlideFrames.Grid grid = store.find(sourceId, markId(pageId, millis), frameVersion(version))
+                    .map(this::slideGrid).orElse(null);
+            if (grid != null && previous != null && SlideFrames.same(previous, grid)) {
+                continue;
+            }
+            slides.add(millis);
+            previous = grid;
+        }
+        return List.copyOf(slides);
+    }
+
+    /** Das Raster eines Standbilds, je Bild einmal berechnet; unlesbar {@code null}. */
+    private SlideFrames.Grid slideGrid(Asset frame) {
+        synchronized (slideGrids) {
+            SlideFrames.Grid known = slideGrids.get(frame.sha256());
+            if (known != null) {
+                return known;
+            }
+        }
+        SlideFrames.Grid grid;
+        try {
+            grid = SlideFrames.grid(read(frame).content());
+        } catch (java.io.IOException | RuntimeException e) {
+            return null;
+        }
+        synchronized (slideGrids) {
+            slideGrids.put(frame.sha256(), grid);
+        }
+        return grid;
+    }
+
+    /** Die Raster der zuletzt verglichenen Standbilder, so viele, wie ein Video Marken haben kann. */
+    private final Map<String, SlideFrames.Grid> slideGrids = new java.util.LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, SlideFrames.Grid> eldest) {
+            return size() > com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES;
+        }
+    };
 
     /** Die Marken, deren Standbild in dieser Fassung noch nicht gezogen ist. */
     public List<Long> missingVideoFrames(String sourceId, String pageId, String version, List<Long> marks) {

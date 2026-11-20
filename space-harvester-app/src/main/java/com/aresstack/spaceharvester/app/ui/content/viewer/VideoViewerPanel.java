@@ -65,6 +65,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private SwingWorker<SlideIndex, Void> slideDetection;
 
     /** The slide changes and the length of a video, read from its MP4 index. */
+    /** The marks on the timeline; the same marks again change nothing. */
+    private java.util.List<Long> shownMarks = java.util.List.of();
+
     private record SlideIndex(java.util.List<Long> changes, long durationMillis) {
     }
     private volatile boolean switchingMedia;
@@ -592,7 +595,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
      * read again, only the movie header for the length that places the marks.
      */
     public void showMarks(java.util.List<Long> changes) {
-        if (closed || changes.isEmpty()) {
+        if (closed || changes.isEmpty() || changes.equals(shownMarks)) {
             return;
         }
         slideDetection = new SwingWorker<SlideIndex, Void>() {
@@ -621,6 +624,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     /** The marks on the timeline; with a known length they are placed before anything is played. */
     private void marks(java.util.List<Long> changes, long durationMillis) {
+        shownMarks = java.util.List.copyOf(changes);
         transport.slides(changes);
         if (!started && durationMillis > 0) {
             transport.seekBar().update(0, durationMillis);

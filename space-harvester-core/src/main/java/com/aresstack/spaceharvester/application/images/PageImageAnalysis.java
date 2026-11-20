@@ -219,7 +219,7 @@ public class PageImageAnalysis {
         }
         PageKey key = snapshot.key();
         Optional<String> frames = assets.videoMarksInput(key.sourceId(), key.pageId(), snapshot.revision(),
-                VideoMarks.in(enrichments.store()).find(key, snapshot.revision()));
+                VideoMarks.slides(enrichments.store(), assets).find(key, snapshot.revision()));
         if (frames.isEmpty()) {
             return new Input(null, enrichments.view(snapshot));
         }
@@ -291,7 +291,7 @@ public class PageImageAnalysis {
     private List<ImagePayload.Entry> listed(PageSnapshot snapshot) {
         PageKey key = snapshot.key();
         List<ImagePayload.Entry> entries = new ArrayList<>();
-        for (long millis : VideoMarks.in(enrichments.store()).find(key, snapshot.revision())) {
+        for (long millis : VideoMarks.slides(enrichments.store(), assets).find(key, snapshot.revision())) {
             String sha = assets.videoFrameAsset(key.sourceId(), key.pageId(), snapshot.revision(), millis)
                     .map(com.aresstack.spaceharvester.application.assets.Asset::sha256).orElse(null);
             entries.add(ImagePayload.Entry.without(entries.size(), Assets.markAttachmentId(key.pageId(), millis), sha,
@@ -488,7 +488,7 @@ public class PageImageAnalysis {
     private List<Describable> describables(PageSnapshot snapshot, List<String> warnings) {
         PageKey key = snapshot.key();
         List<Describable> items = new ArrayList<>();
-        for (long millis : VideoMarks.in(enrichments.store()).find(key, snapshot.revision())) {
+        for (long millis : VideoMarks.slides(enrichments.store(), assets).find(key, snapshot.revision())) {
             // Auch Marken ohne Standbild: Sie stehen ohne Beschreibung in der Liste.
             items.add(new VideoMark(millis, Assets.markAttachmentId(key.pageId(), millis), snapshot.revision(),
                     assets.videoFrame(key.sourceId(), key.pageId(), snapshot.revision(), millis).orElse(null)));

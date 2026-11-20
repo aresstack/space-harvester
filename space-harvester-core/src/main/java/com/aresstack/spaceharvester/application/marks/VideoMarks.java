@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.marks;
 
+import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 
@@ -21,5 +22,25 @@ public interface VideoMarks {
     /** Die Marken in der Anreicherungsablage, wie die Lese-Ansicht einer Seite. */
     static VideoMarks in(EnrichmentStore store) {
         return new StoredVideoMarks(store);
+    }
+
+    /**
+     * Die Folien des Videos: die gespeicherten Marken ohne Wiederholungen derselben Folie
+     * ({@link Assets#distinctSlides}). Player, Anhänge und Bildanalyse lesen nur diese; gespeichert wird wie
+     * {@link #in}.
+     */
+    static VideoMarks slides(EnrichmentStore store, Assets assets) {
+        VideoMarks stored = in(store);
+        return new VideoMarks() {
+            @Override
+            public List<Long> find(PageKey page, String version) {
+                return assets.distinctSlides(page.sourceId(), page.pageId(), version, stored.find(page, version));
+            }
+
+            @Override
+            public void save(PageKey page, String version, List<Long> marks) {
+                stored.save(page, version, marks);
+            }
+        };
     }
 }
