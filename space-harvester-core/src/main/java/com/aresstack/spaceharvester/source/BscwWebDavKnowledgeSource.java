@@ -37,6 +37,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Optional;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -64,7 +65,7 @@ import org.xml.sax.SAXException;
 final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
         ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource,
         ResourceNodeKindSource, SourceMediaRange, KnownTitleLookup,
-        VirtualNavigationRootSource {
+        VirtualNavigationRootSource, OriginalFileSource {
 
     static final String STORED_FORMAT = "file";
     private static final String FOLDER_FORMAT = "bscw-folder";
@@ -98,11 +99,73 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
 
     BscwWebDavKnowledgeSource(SourceAddress sourceId, URI root, BscwWebDavTransport transport, int maxDepth,
                               DocumentText extractor) {
+        this(sourceId, root, transport, maxDepth, extractor, DEFAULT_CHUNK_BYTES);
+    }
+
+    /** @param chunkBytes so viele Bytes holt ein Download auf die Platte je Abruf ({@code options.chunkMegabytes}) */
+    BscwWebDavKnowledgeSource(SourceAddress sourceId, URI root, BscwWebDavTransport transport, int maxDepth,
+                              DocumentText extractor, int chunkBytes) {
         this.sourceId = sourceId;
         this.root = normalize(root);
         this.transport = transport;
         this.maxDepth = maxDepth;
         this.extractor = extractor;
+        this.chunkBytes = chunkBytes;
+    }
+
+    /** Vorgabe für {@code options.chunkMegabytes}: 8 MiB je Abruf. */
+    static final int DEFAULT_CHUNK_BYTES = 8 * 1024 * 1024;
+    private final int chunkBytes;
+
+    /**
+     * Das Original in Stücken per HTTP-Range auf die Platte (Angelo, 20.11.2026), damit auch eine Datei über der Grenze
+     * {@code maxFileMegabytes} und weit über dem Speicher ankommt; ignoriert BSCW die Range, einmal ganz, sofern sie
+     * dafür klein genug ist. Ordner, Videos und unerwünschte Typen lädt es nicht.
+     */
+    @Override
+    public Optional<String> downloadOriginal(String localId, java.nio.file.Path target,
+                                             java.util.function.Predicate<String> wanted, long maxBytes)
+            throws KnowledgeSourceException {
+        KnowledgeResource resource = resourceMetadata(localId);
+        if (isFolder(resource) || streamableMedia(resource.title(), resource.contentType())
+                || !wanted.test(resource.contentType())) {
+            return Optional.empty();
+        }
+        long size;
+        try {
+            size = Long.parseLong(resource.metadata().asMap().getOrDefault(KnowledgeMetadata.FILE_SIZE, "-1"));
+        } catch (NumberFormatException unknown) {
+            size = -1;
+        }
+        if (maxBytes > 0 && size > maxBytes) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Datei größer als die Grenze für den Textauszug");
+        }
+        URI uri = uriOf(localId);
+        try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(target)) {
+            long offset = 0;
+            while (size < 0 || offset < size) {
+                int count = (int) (size < 0 ? chunkBytes : Math.min(chunkBytes, size - offset));
+                BscwWebDavTransport.Chunk answer = transport.downloadChunk(uri, offset, count);
+                byte[] chunk = answer.bytes();
+                out.write(chunk);
+                if (answer.whole()) {
+                    // BSCW ignorierte die Range: die ganze Datei in einer Antwort.
+                    break;
+                }
+                offset += chunk.length;
+                if (maxBytes > 0 && offset > maxBytes) {
+                    throw new KnowledgeSourceException(Kind.INVALID_RESPONSE,
+                            "Datei größer als die Grenze für den Textauszug");
+                }
+                if (chunk.length < count) {
+                    break;
+                }
+            }
+        } catch (java.io.IOException e) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Original nicht auf die Platte geschrieben ("
+                    + e.getClass().getSimpleName() + ")", e);
+        }
+        return Optional.of(resource.contentType());
     }
 
     @Override

@@ -16,6 +16,8 @@ public final class BscwSourceAdapter implements SourceAdapter {
     private static final int MAX_DEPTH = 50;
     private static final int DEFAULT_FILE_MEGABYTES = 64;
     private static final int MAX_FILE_MEGABYTES = 64;
+    /** Vorgabe und Höchstwert für {@code options.chunkMegabytes} (Download großer Originale auf die Platte). */
+    private static final int DEFAULT_CHUNK_MEGABYTES = BscwWebDavKnowledgeSource.DEFAULT_CHUNK_BYTES / (1024 * 1024);
 
     @Override
     public String type() {
@@ -97,7 +99,7 @@ public final class BscwSourceAdapter implements SourceAdapter {
             problems.add("options.title ist nicht erlaubt; verwende title");
         }
         for (String option : config.options().keySet()) {
-            if (!List.of("rootUrl", "maxDepth", "maxFileMegabytes").contains(option)) {
+            if (!List.of("rootUrl", "maxDepth", "maxFileMegabytes", "chunkMegabytes").contains(option)) {
                 problems.add("Unbekannte BSCW-Option: " + option);
             }
         }
@@ -113,6 +115,7 @@ public final class BscwSourceAdapter implements SourceAdapter {
         }
         validateNumber(config, problems, "maxDepth", DEFAULT_DEPTH, MAX_DEPTH);
         validateNumber(config, problems, "maxFileMegabytes", DEFAULT_FILE_MEGABYTES, MAX_FILE_MEGABYTES);
+        validateNumber(config, problems, "chunkMegabytes", DEFAULT_CHUNK_MEGABYTES, MAX_FILE_MEGABYTES);
         return problems;
     }
 
@@ -131,8 +134,10 @@ public final class BscwSourceAdapter implements SourceAdapter {
         BscwWebDavTransport transport = new BscwWebDavTransport(root, config.id(), context.secrets(),
                 context.routes(), context.proxyCredentials(), context.userAgent(), maxBytes,
                 context.trustBundles().defaultTrust());
+        // Ein Stück je Abruf passt immer in die Antwortgrenze des Transports (maxFileMegabytes).
+        int chunk = Math.min(number(config, "chunkMegabytes", DEFAULT_CHUNK_MEGABYTES) * 1024 * 1024, maxBytes);
         BscwWebDavKnowledgeSource port = new BscwWebDavKnowledgeSource(SourceAddress.of(config.id()), root,
-                transport, depth, TikaDocumentText.shared());
+                transport, depth, TikaDocumentText.shared(), chunk);
         return new OpenedSource(port, null);
     }
 

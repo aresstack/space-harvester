@@ -34,6 +34,8 @@ class LargeFilesTest {
 
     private int downloads;
     private int extracts;
+    /** So lange braucht jeder Abruf der Quelle. */
+    private volatile long slowMillis;
     private final HarvestSource source = new HarvestSource() {
         @Override
         public String id() {
@@ -66,18 +68,27 @@ class LargeFilesTest {
         }
 
         @Override
-        public Optional<StoredPage> storedText(String pageId) {
-            if (!pageId.equals("pdf")) {
+        public Optional<String> downloadOriginal(String pageId, java.nio.file.Path target,
+                                                 java.util.function.Predicate<String> wanted, long maxBytes) {
+            // Die Figma-Datei hat keinen lesbaren Text: nichts laden. Das „PDF“ ist hier eine Textdatei.
+            String type = pageId.equals("pdf") ? "text/plain" : "application/octet-stream";
+            if (!wanted.test(type)) {
                 return Optional.empty();
             }
             extracts++;
-            return Optional.of(new StoredPage(PDF, "Haushaltsplan Datenhaus".getBytes(StandardCharsets.UTF_8),
-                    "text/markdown", "knowledge-document", Instant.parse("2026-11-20T10:00:00Z")));
+            pause();
+            try {
+                java.nio.file.Files.writeString(target, "Haushaltsplan Datenhaus", StandardCharsets.UTF_8);
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            return Optional.of(type);
         }
 
         @Override
         public StoredPage storedPage(String pageId) {
             downloads++;
+            pause();
             return new StoredPage(pageMetadata(pageId), new byte[] {1, 2, 3}, "application/octet-stream", "stored",
                     Instant.parse("2026-11-20T10:00:00Z"));
         }
@@ -97,9 +108,47 @@ class LargeFilesTest {
     private final AtomicLong textLimit = new AtomicLong(200L << 20);
     private final SourceSnapshots snapshots = new SourceSnapshots(catalog);
 
-    {
+    @org.junit.jupiter.api.io.TempDir
+    java.nio.file.Path temporary;
+
+    @org.junit.jupiter.api.BeforeEach
+    void wire() {
         snapshots.maxBytes(limit::get);
         snapshots.maxTextBytes(textLimit::get);
+        // Der echte Weg: Original auf die Platte, Extraktion als Strom (ADR 0026), Datei danach gelöscht.
+        snapshots.largeFileText(new com.aresstack.spaceharvester.source.LargeFileTexts(
+                new com.aresstack.spaceharvester.source.TikaDocumentStructure(),
+                () -> com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS,
+                temporary.resolve("large-files"))::text);
+    }
+
+    private void pause() {
+        try {
+            Thread.sleep(slowMillis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Test
+    void aLargeFileGetsItsOwnLongerDeadlineForTheTextExtract() {
+        slowMillis = 400;
+        PageFreshness freshness = new PageFreshness(new SourceQueries(catalog, FakeSource.CLOCK), snapshots,
+                FakeSource.CLOCK, java.time.Duration.ofMillis(100), java.time.Duration.ofSeconds(20));
+        PageSnapshot header = LargeFiles.placeholder("bscw", PDF, Instant.parse("2026-11-20T10:00:00Z"));
+
+        PageFreshness.Refreshed pdf = freshness.check("bscw", "pdf", Optional.of(header.header()), Optional.empty());
+        assertThat(LargeFiles.textOnly(pdf.snapshot().payload())).isTrue();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> freshness.check("bscw", "note",
+                        Optional.of(snapshotOf(NOTE).header()), Optional.empty()))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceAccessException.class)
+                .hasMessageContaining("Frist");
+    }
+
+    private static PageSnapshot snapshotOf(PageMetadata metadata) {
+        return PageSnapshot.of("bscw", metadata, new com.aresstack.spaceharvester.application.snapshot.NativePayload(
+                new byte[] {1}, "application/octet-stream", "stored"), Instant.parse("2026-11-20T10:00:00Z"));
     }
 
     private static PageMetadata file(String pageId, long size) {
@@ -131,8 +180,11 @@ class LargeFilesTest {
         assertThat(pdf.revision()).isEqualTo("v1");
         assertThat(new com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector().project(pdf))
                 .hasValueSatisfying(text -> assertThat(text.text()).isEqualTo("Haushaltsplan Datenhaus"));
-        assertThat(downloads).as("nie das Original").isZero();
+        assertThat(downloads).as("nie das Original im Speicher").isZero();
         assertThat(extracts).isEqualTo(1);
+        assertThat(temporary.resolve("large-files")).as("temporäres Original gelöscht").isEmptyDirectory();
+        assertThat(LargeFiles.textOnly(snapshots.fetch("bscw", FIG).payload())).as("Figma ohne Text").isFalse();
+        assertThat(extracts).as("Figma gar nicht geladen").isEqualTo(1);
 
         textLimit.set(10L << 20);
         assertThat(LargeFiles.textOnly(snapshots.fetch("bscw", PDF).payload()))

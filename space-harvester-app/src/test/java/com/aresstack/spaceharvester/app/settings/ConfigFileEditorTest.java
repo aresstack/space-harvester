@@ -888,6 +888,13 @@ class ConfigFileEditorTest {
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.storage().maxPageBytes()).isEqualTo(100L << 20);
+        editor.save(file, editor.withLargeFiles(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                100L << 20, 0, java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(15)));
+        AppSettings timed = loader.load(file);
+        assertThat(timed.problems()).isEmpty();
+        assertThat(timed.storage().maxTextFileBytes()).as("Textauszug abgeschaltet").isZero();
+        assertThat(timed.storage().checkTimeout()).isEqualTo(java.time.Duration.ofMinutes(1));
+        assertThat(timed.storage().largeFileTimeout()).isEqualTo(java.time.Duration.ofMinutes(15));
         Files.writeString(file, "space-harvester:\n  cache:\n    max-page-size: 4GB\n");
         assertThat(loader.load(file).problems()).anyMatch(problem -> problem.contains("max-page-size"));
     }

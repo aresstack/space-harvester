@@ -65,6 +65,9 @@ final class BscwWebDavSourceTest {
     private AtomicInteger downloads;
     private AtomicInteger propfinds;
     private java.util.concurrent.atomic.AtomicBoolean denyNested;
+    /** Ob der Server für readme.txt HTTP-Range beantwortet. */
+    private final java.util.concurrent.atomic.AtomicBoolean rangesForText =
+            new java.util.concurrent.atomic.AtomicBoolean(true);
     private String root;
 
     @TempDir
@@ -583,6 +586,40 @@ final class BscwWebDavSourceTest {
         }
     }
 
+    /**
+     * Angelo 20.11.2026: Das Original einer großen Datei kommt für den Textauszug in Stücken per HTTP-Range auf die
+     * Platte; ignoriert BSCW die Range, einmal ganz. Dateien ohne lesbaren Text lädt es gar nicht.
+     */
+    @Test
+    void largeOriginalsAreDownloadedToDiskInChunks() throws Exception {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("bscw-test", "reader", "secret");
+        BscwWebDavTransport transport = new BscwWebDavTransport(URI.create(root), "bscw-test", secrets,
+                destination -> HttpRoute.direct("test"), ProxyCredentials.none(), "test-agent", 1024, null);
+        BscwWebDavKnowledgeSource port = new BscwWebDavKnowledgeSource(
+                com.aresstack.enterpriseai.astu.knowledge.SourceAddress.of("bscw-test"), URI.create(root), transport, 20,
+                TikaDocumentText.shared(), 5);
+        String localId = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                root.replace("/146377797", "/666").getBytes(StandardCharsets.UTF_8));
+        Path target = data.resolve("readme.part");
+
+        assertThat(port.downloadOriginal(localId, target, type -> false, 0)).as("ungewollter Typ").isEmpty();
+        assertThat(downloads).hasValue(0);
+
+        assertThat(port.downloadOriginal(localId, target, LocalFilesTextProjector::readable, 0))
+                .hasValue("text/plain");
+        assertThat(java.nio.file.Files.readAllBytes(target)).isEqualTo(TEXT_CONTENT);
+        assertThat(downloads).as("je 5 Bytes ein Abruf").hasValue((TEXT_CONTENT.length + 4) / 5);
+
+        rangesForText.set(false);
+        downloads.set(0);
+        java.nio.file.Files.delete(target);
+        assertThat(port.downloadOriginal(localId, target, LocalFilesTextProjector::readable, 0))
+                .hasValue("text/plain");
+        assertThat(java.nio.file.Files.readAllBytes(target)).as("ohne Range einmal ganz").isEqualTo(TEXT_CONTENT);
+        assertThat(downloads).hasValue(1);
+    }
+
     @Test
     void unavailableProxyRouteHasARecognizableErrorWithoutSendingCredentials() throws Exception {
         ConfiguredSecrets secrets = new ConfiguredSecrets();
@@ -682,6 +719,15 @@ final class BscwWebDavSourceTest {
                     return;
                 }
                 if ("/sec/bscw.cgi/666".equals(path)) {
+                    String range = exchange.getRequestHeaders().getFirst("Range");
+                    java.util.regex.Matcher bytes = range == null ? null
+                            : java.util.regex.Pattern.compile("bytes=(\\d+)-(\\d+)").matcher(range);
+                    if (bytes != null && bytes.matches() && rangesForText.get()) {
+                        int from = Integer.parseInt(bytes.group(1));
+                        int to = Math.min(Integer.parseInt(bytes.group(2)), TEXT_CONTENT.length - 1);
+                        respond(exchange, 206, java.util.Arrays.copyOfRange(TEXT_CONTENT, from, to + 1), "text/plain");
+                        return;
+                    }
                     respond(exchange, 200, TEXT_CONTENT, "text/plain");
                     return;
                 }

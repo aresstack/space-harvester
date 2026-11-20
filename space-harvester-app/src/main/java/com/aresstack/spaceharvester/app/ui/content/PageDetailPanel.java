@@ -1228,6 +1228,7 @@ public final class PageDetailPanel extends JPanel {
         assetsModel.set(null);
         assetsBusy.setBusy(false);
         title.setText("Seite " + pageId);
+        titleFromTree(runtime, sourceId, pageId, current);
         path.setText(sourceId);
         state.setText(" ");
         renderDetails();
@@ -1278,6 +1279,25 @@ public final class PageDetailPanel extends JPanel {
             statementsView.unavailable();
             page = null;
             acronymHint.setText(" ");
+        });
+    }
+
+    /**
+     * Den Namen aus dem Seitenbaum, solange die Seite lädt oder ihr Laden scheitert: sonst stünde dort die interne ID,
+     * bei BSCW eine lange Base64-Adresse. Die geladene Seite setzt ihren Titel selbst.
+     */
+    private void titleFromTree(AppRuntime runtime, String source, String id, int current) {
+        Background.run(() -> runtime.workspace().position(source, id), position -> {
+            if (current != request || page != null || position == null || position.page() == null) {
+                return;
+            }
+            String name = position.page().title();
+            if (name != null && !name.isBlank()) {
+                title.setText(name);
+            }
+            breadcrumbs.show(position);
+        }, error -> {
+            // Ohne Seitenbaum bleibt die ID.
         });
     }
 

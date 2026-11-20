@@ -220,7 +220,12 @@ public final class AppSettingsLoader {
                 maxAsset, largeAsset, maxLargeAssets, searchTimeout, maxTreeNodes, pdfFont,
                 extraction(map(get(map(get(root, "assets")), "extraction")), problems), maxPage,
                 size(get(map(get(root, "cache")), "max-text-file-size"), AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES,
-                        "space-harvester.cache.max-text-file-size", problems));
+                        "space-harvester.cache.max-text-file-size", problems),
+                duration(get(map(get(root, "cache")), "check-timeout"), AppSettings.Storage.DEFAULT_CHECK_TIMEOUT,
+                        "space-harvester.cache.check-timeout", problems),
+                duration(get(map(get(root, "cache")), "large-file-timeout"),
+                        AppSettings.Storage.DEFAULT_LARGE_FILE_TIMEOUT, "space-harvester.cache.large-file-timeout",
+                        problems));
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "

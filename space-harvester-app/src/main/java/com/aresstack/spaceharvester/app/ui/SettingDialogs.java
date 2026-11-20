@@ -626,6 +626,23 @@ final class SettingDialogs {
 
     static final String PAGE_SIZE_TITLE = "Größte Datei im Cache";
     static final String TEXT_SIZE_TITLE = "Textauszug größerer Dateien";
+    static final String CHECK_TIMEOUT_TITLE = "Frist der Prüfung gegen die Quelle";
+    static final String LARGE_TIMEOUT_TITLE = "Frist für große Dateien";
+
+    /** Eine Frist wie 30s, 2m oder 1h; sonst {@code null}. */
+    static java.time.Duration timeout(String text) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,6})\\s*(s|m|h)?")
+                .matcher(text == null ? "" : text.strip().toLowerCase(java.util.Locale.ROOT));
+        if (!m.matches() || Long.parseLong(m.group(1)) == 0) {
+            return null;
+        }
+        long amount = Long.parseLong(m.group(1));
+        return switch (m.group(2) == null ? "s" : m.group(2)) {
+            case "m" -> java.time.Duration.ofMinutes(amount);
+            case "h" -> java.time.Duration.ofHours(amount);
+            default -> java.time.Duration.ofSeconds(amount);
+        };
+    }
 
     /** Eine Größe wie 20MB, 512KB oder Bytes ohne Einheit; sonst {@code -1}. */
     static long pageSize(String text) {
@@ -663,10 +680,24 @@ final class SettingDialogs {
         rows.add(PAGE_SIZE_TITLE, size, "Das Original größerer Dateien legt die App nicht ab; die Lese-Ansicht öffnet "
                 + "es in der Quelle. Eine Größe wie 20MB oder 100MB, höchstens 2047MB; Vorgabe "
                 + Texts.bytes(AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES));
+        AppSettings.Storage storage = context.settings() != null ? context.settings().storage() : null;
+        java.time.Duration currentCheck = storage != null ? storage.checkTimeout()
+                : AppSettings.Storage.DEFAULT_CHECK_TIMEOUT;
+        java.time.Duration currentLarge = storage != null ? storage.largeFileTimeout()
+                : AppSettings.Storage.DEFAULT_LARGE_FILE_TIMEOUT;
+        JTextField check = Comic.field(10);
+        check.setText(ConfigFileEditor.duration(currentCheck));
+        JTextField large = Comic.field(10);
+        large.setText(ConfigFileEditor.duration(currentLarge));
         rows.add(TEXT_SIZE_TITLE, textSize, "Bis zu dieser Größe lädt die App größere Dateien mit lesbarem Text (PDF, "
                 + "Office, Text) einmal ganz und legt nur ihren Textauszug ab: Suche und Text-Ansicht finden sie. "
                 + "Darüber und ohne lesbaren Text (Archive, Figma, Videos) nur die Kopfdaten. 0 nie; Vorgabe "
                 + Texts.bytes(AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES));
+        rows.add(CHECK_TIMEOUT_TITLE, check, "So lange wartet das Öffnen oder Beschaffen einer Seite auf die Quelle, "
+                + "z. B. 30s oder 2m; Vorgabe " + ConfigFileEditor.duration(AppSettings.Storage.DEFAULT_CHECK_TIMEOUT));
+        rows.add(LARGE_TIMEOUT_TITLE, large, "Dieselbe Frist für eine Datei über der Grenze, deren Textauszug das "
+                + "ganze Original braucht, z. B. 10m; Vorgabe "
+                + ConfigFileEditor.duration(AppSettings.Storage.DEFAULT_LARGE_FILE_TIMEOUT));
         JPanel body = new JPanel(new BorderLayout(0, 10));
         body.setOpaque(false);
         body.add(wrapped("Gilt für alle Quellen. Große Dateien belegen den Cache und laden lange; ihr Text ist für die "
@@ -682,15 +713,21 @@ final class SettingDialogs {
             if (pageSize(textSize.getText()) < 0) {
                 problems.add("Der Textauszug gilt bis zu einer Größe wie 200MB; 0 heißt nie.");
             }
+            if (timeout(check.getText()) == null || timeout(large.getText()) == null) {
+                problems.add("Die Fristen sind Dauern wie 30s, 2m oder 1h, größer als 0.");
+            }
             return problems;
         }, () -> {
             ConfigFileEditor editor = new ConfigFileEditor(context.loader());
             String text = Files.isRegularFile(context.configFile())
                     ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
-            ConfigFileEditor.Draft written = editor.withMaxPageSize(context.configFile(),
-                    new ConfigFileEditor.Draft(text, null), pageSize(size.getText()), pageSize(textSize.getText()));
+            ConfigFileEditor.Draft written = editor.withLargeFiles(context.configFile(),
+                    new ConfigFileEditor.Draft(text, null), pageSize(size.getText()), pageSize(textSize.getText()),
+                    timeout(check.getText()), timeout(large.getText()));
             editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
-        }, () -> pageSize(size.getText()) == current && pageSize(textSize.getText()) == currentText, context, saved);
+        }, () -> pageSize(size.getText()) == current && pageSize(textSize.getText()) == currentText
+                && currentCheck.equals(timeout(check.getText())) && currentLarge.equals(timeout(large.getText())),
+                context, saved);
         return shell;
     }
 

@@ -116,13 +116,17 @@ public interface HarvestSource {
     }
 
     /**
-     * Der Textauszug einer Datei statt ihres Originals, für Dateien über der Größengrenze des Caches ({@code LargeFiles}):
-     * Lesetext als UTF-8 in der Payload, Kopfdaten aus derselben Antwort. Leer, wenn die Datei keinen lesbaren Text hat
-     * (Archive, Bilder, Medien, Unbekanntes); das entscheidet die Quelle vor dem Herunterladen. Standard: leer.
+     * Lädt das Original einer Datei nach {@code target} statt in den Speicher, für den Textauszug von Dateien über der
+     * Größengrenze des Caches ({@code LargeFiles}). Den Medientyp liest die Quelle vor dem Herunterladen aus ihren
+     * Kopfdaten; erfüllt er {@code wanted} nicht (Archive, Bilder, Medien, Unbekanntes), lädt sie nichts.
+     * Standard: kann es nicht, leer.
      *
+     * @param maxBytes größte Datei, die geladen wird
+     * @return der Medientyp des geladenen Originals; leer, wenn nichts geladen wurde
      * @throws SourceAccessException wie {@link #storedPage(String)}
      */
-    default Optional<StoredPage> storedText(String pageId) {
+    default Optional<String> downloadOriginal(String pageId, java.nio.file.Path target,
+                                              java.util.function.Predicate<String> wanted, long maxBytes) {
         return Optional.empty();
     }
 

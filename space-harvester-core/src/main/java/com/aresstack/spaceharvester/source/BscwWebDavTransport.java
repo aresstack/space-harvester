@@ -59,6 +59,36 @@ final class BscwWebDavTransport {
         return response.body();
     }
 
+    /**
+     * Read the part of an original file from {@code offset}, at most {@code count} bytes (one chunk of a download to
+     * disk); the last chunk may be shorter. If BSCW ignores the range on the first chunk, its answer is the whole file,
+     * within the usual file allowance ({@link Chunk#whole()}). Never follow authentication redirects.
+     *
+     * @throws KnowledgeSourceException {@code UNSUPPORTED} if BSCW ignores the range after the first chunk
+     */
+    Chunk downloadChunk(URI resource, long offset, int count) throws KnowledgeSourceException {
+        if (offset < 0 || count < 1 || count > maxFileBytes || offset > Long.MAX_VALUE - count) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Invalid BSCW byte range");
+        }
+        RoutedWebDavHttp.Result response = exchange(resource, "GET", -1, offset == 0 ? maxFileBytes : count,
+                "bytes=" + offset + "-" + (offset + count - 1));
+        if (response.status() == 416) {
+            return new Chunk(new byte[0], false);
+        }
+        if (response.status() == 200 && offset == 0) {
+            return new Chunk(response.body(), true);
+        }
+        if (response.status() != 206 || response.body().length > count) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED,
+                    "BSCW unterstützt für diese Datei keine HTTP-Range-Abfragen (HTTP " + response.status() + ")");
+        }
+        return new Chunk(response.body(), false);
+    }
+
+    /** One answer of {@link #downloadChunk}: a part, or with {@code whole} the complete file. */
+    record Chunk(byte[] bytes, boolean whole) {
+    }
+
     byte[] download(URI resource) throws KnowledgeSourceException {
         return downloadResource(resource).bytes();
     }

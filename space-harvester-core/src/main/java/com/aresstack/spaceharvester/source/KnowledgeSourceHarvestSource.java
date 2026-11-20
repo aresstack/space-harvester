@@ -903,36 +903,18 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return storedPage(content);
     }
 
-    /**
-     * Der Lesetext des Adapters ({@code load}) statt des Originals, nur für Dokumente mit lesbarem Text
-     * ({@link LocalFilesTextProjector#readable}); der Typ kommt vor dem Herunterladen aus den Kopfdaten der Quelle.
-     */
+    /** Über den Adapter, wenn er Originale als Datei liefern kann ({@link OriginalFileSource}). */
     @Override
-    public Optional<StoredPage> storedText(String pageId) {
-        KnowledgeResource resource;
-        try {
-            resource = resource(pageId);
-        } catch (KnowledgeSourceException e) {
-            if (e.kind() == KnowledgeSourceException.Kind.UNSUPPORTED) {
-                return Optional.empty();
-            }
-            throw accessFailure(e);
-        }
-        if (!LocalFilesTextProjector.readable(resource.contentType())) {
+    public Optional<String> downloadOriginal(String pageId, java.nio.file.Path target,
+                                             java.util.function.Predicate<String> wanted, long maxBytes) {
+        if (!(port instanceof OriginalFileSource files)) {
             return Optional.empty();
         }
-        KnowledgeDocument document;
         try {
-            document = port.load(resource.id());
+            return files.downloadOriginal(pageId, target, wanted, maxBytes);
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
-        if (document.text().isBlank()) {
-            return Optional.empty();
-        }
-        return Optional.of(new StoredPage(withSpace(document.resource()),
-                document.text().getBytes(StandardCharsets.UTF_8), KnowledgeDocumentTextProjector.MEDIA_TYPE,
-                KnowledgeDocumentTextProjector.NATIVE_FORMAT, Instant.now()));
     }
 
     @Override

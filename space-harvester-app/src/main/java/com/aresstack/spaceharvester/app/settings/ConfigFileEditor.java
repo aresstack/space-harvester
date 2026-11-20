@@ -391,6 +391,30 @@ public final class ConfigFileEditor {
     }
 
     /**
+     * Die Grenzen großer Dateien zusammen: größte Datei im Cache, Grenze des Textauszugs und die Fristen der Prüfung
+     * gegen die Quelle ({@code space-harvester.cache.check-timeout}, {@code large-file-timeout}); nur diese Werte ändern
+     * sich.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withLargeFiles(Path file, Draft base, long bytes, long textBytes, java.time.Duration checkTimeout,
+                                java.time.Duration largeFileTimeout) {
+        Draft sizes = withMaxPageSize(file, base, bytes, textBytes);
+        String text = nested(sizes.text(), "cache", "check-timeout", indent -> indent + "check-timeout: "
+                + duration(checkTimeout) + "\n");
+        text = nested(text, "cache", "large-file-timeout", indent -> indent + "large-file-timeout: "
+                + duration(largeFileTimeout) + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.storage().checkTimeout().equals(checkTimeout)
+                || !settings.storage().largeFileTimeout().equals(largeFileTimeout)) {
+            throw new IllegalArgumentException("Die Fristen ließen sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester.cache von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
      * Wie {@link #withMaxPageSize(Path, Draft, long)}, dazu die größte Datei für den Textauszug
      * ({@code space-harvester.cache.max-text-file-size}, {@code 0} nie).
      */

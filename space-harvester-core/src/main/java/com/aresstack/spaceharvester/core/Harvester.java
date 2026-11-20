@@ -204,6 +204,7 @@ import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.source.LargeFileTexts;
 import com.aresstack.spaceharvester.source.TikaDocumentStructure;
 import com.aresstack.spaceharvester.source.TikaDocumentText;
 import com.aresstack.spaceharvester.source.SourceAdapter;
@@ -642,13 +643,20 @@ public final class Harvester implements AutoCloseable {
             long maxPageBytes = builder.maxPageBytes;
             snapshots.maxBytes(() -> maxPageBytes);
             // Für sie den Textauszug statt des Originals, bis zu dieser Größe: Suche und Text-Ansicht brauchen nur ihn.
+            // Das Original kommt dafür auf die Platte und wird als Strom gelesen (ADR 0026), wie große Anhänge.
             long maxTextFileBytes = builder.maxTextFileBytes;
             snapshots.maxTextBytes(() -> maxTextFileBytes);
+            TikaDocumentStructure documentStructure = new TikaDocumentStructure(builder.extractionLimits.parallel(),
+                    ExtractionStore.DEFAULT_SECTION_CHARS);
+            LargeFileTexts largeFileTexts = new LargeFileTexts(documentStructure, () -> builder.extractionLimits,
+                    cacheDirectory.resolve("large-files"));
+            snapshots.largeFileText(largeFileTexts::text);
             // ADR 0027: jeder Inhaltsabruf bei der Quelle (Planer, Lesen, Abgleich, Export) meldet dem Bestand „lädt“.
             snapshots.loads(holdings);
             this.sources = new SourceQueries(catalog);
             this.spaceKeys = new SpaceKeyCheck(sources);
-            this.freshness = new PageFreshness(sources, snapshots, clock);
+            this.freshness = new PageFreshness(sources, snapshots, clock, builder.checkTimeout,
+                    builder.largeFileTimeout);
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting), enrichments, texts),
                     builder.maxTreeNodes, freshnessRule(builder), clock);
@@ -914,8 +922,7 @@ public final class Harvester implements AutoCloseable {
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
-            assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(
-                    builder.extractionLimits.parallel(), ExtractionStore.DEFAULT_SECTION_CHARS),
+            assets.documentExtractions(new DocumentExtractions(documentStructure,
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
             assets.indexedDocuments(documentEnrichments);
             documentEnrichments.assets(assets);
@@ -2421,6 +2428,8 @@ public final class Harvester implements AutoCloseable {
         private AccessPolicy accessPolicy = new TrustedCaller();
         private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
         private Duration searchTimeout = Duration.ofSeconds(5);
+        private Duration checkTimeout = PageFreshness.DEFAULT_TIMEOUT;
+        private Duration largeFileTimeout = PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;
         private int maxTreeNodes = 50_000;
         private int maxPageBytes = LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
         private long maxTextFileBytes = DEFAULT_MAX_TEXT_FILE_BYTES;
@@ -2875,6 +2884,30 @@ public final class Harvester implements AutoCloseable {
 
         public Builder searchTimeout(Duration searchTimeout) {
             this.searchTimeout = Objects.requireNonNull(searchTimeout, "searchTimeout");
+            return this;
+        }
+
+        /**
+         * Frist einer Prüfung gegen die Quelle beim Öffnen und Beschaffen einer Seite
+         * ({@code space-harvester.cache.check-timeout}); Standard {@link PageFreshness#DEFAULT_TIMEOUT}.
+         */
+        public Builder checkTimeout(Duration checkTimeout) {
+            if (checkTimeout == null || checkTimeout.isNegative() || checkTimeout.isZero()) {
+                throw new IllegalArgumentException("checkTimeout muss positiv sein");
+            }
+            this.checkTimeout = checkTimeout;
+            return this;
+        }
+
+        /**
+         * Frist dieser Prüfung für eine Datei über der Größengrenze, deren Textauszug das ganze Original braucht
+         * ({@code space-harvester.cache.large-file-timeout}); Standard {@link PageFreshness#DEFAULT_LARGE_FILE_TIMEOUT}.
+         */
+        public Builder largeFileTimeout(Duration largeFileTimeout) {
+            if (largeFileTimeout == null || largeFileTimeout.isNegative() || largeFileTimeout.isZero()) {
+                throw new IllegalArgumentException("largeFileTimeout muss positiv sein");
+            }
+            this.largeFileTimeout = largeFileTimeout;
             return this;
         }
 

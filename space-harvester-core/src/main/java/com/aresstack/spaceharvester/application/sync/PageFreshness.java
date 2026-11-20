@@ -74,8 +74,13 @@ public class PageFreshness {
         }
     }
 
-    /** Frist für eine Prüfung (Einzelmetadaten und gegebenenfalls Inhalt). */
+    /** Frist für eine Prüfung (Einzelmetadaten und gegebenenfalls Inhalt); einstellbar über den Konstruktor. */
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * Frist für eine Datei über der Größengrenze des Caches, deren Textauszug die Prüfung erst aus dem ganzen Original
+     * gewinnt ({@code LargeFiles}); einstellbar über den Konstruktor.
+     */
+    public static final Duration DEFAULT_LARGE_FILE_TIMEOUT = Duration.ofMinutes(10);
 
     private static final ExecutorService CHECKS = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("page-freshness-", 0).factory());
@@ -84,6 +89,7 @@ public class PageFreshness {
     private final PageContentFetcher fetcher;
     private final Clock clock;
     private final Duration timeout;
+    private final Duration largeFileTimeout;
 
     /** @param fetcher Inhaltsabruf oder {@code null}, solange keiner angebunden ist */
     public PageFreshness(SourceQueries queries, PageContentFetcher fetcher, Clock clock) {
@@ -92,12 +98,26 @@ public class PageFreshness {
 
     /** @param timeout Frist für eine ganze Prüfung */
     public PageFreshness(SourceQueries queries, PageContentFetcher fetcher, Clock clock, Duration timeout) {
+        this(queries, fetcher, clock, timeout, DEFAULT_LARGE_FILE_TIMEOUT);
+    }
+
+    /**
+     * @param timeout          Frist für eine ganze Prüfung
+     * @param largeFileTimeout Frist, wenn die Kopfdaten im Cache eine Datei über der Größengrenze nennen, die nur als
+     *                         Textauszug abgelegt wird (das Original wird dafür ganz geladen)
+     */
+    public PageFreshness(SourceQueries queries, PageContentFetcher fetcher, Clock clock, Duration timeout,
+                         Duration largeFileTimeout) {
         this.queries = Objects.requireNonNull(queries, "queries");
         this.fetcher = fetcher;
         this.clock = Objects.requireNonNull(clock, "clock");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
         if (timeout.isNegative() || timeout.isZero()) {
             throw new IllegalArgumentException("timeout muss positiv sein");
+        }
+        this.largeFileTimeout = Objects.requireNonNull(largeFileTimeout, "largeFileTimeout");
+        if (largeFileTimeout.isNegative() || largeFileTimeout.isZero()) {
+            throw new IllegalArgumentException("largeFileTimeout muss positiv sein");
         }
     }
 
@@ -133,12 +153,16 @@ public class PageFreshness {
         // Unterbrechungen ignoriert; der abgebrochene Abruf endet dann mit den Zeitgrenzen der Quelle.
         Future<Refreshed> check = CHECKS.submit(() -> checkNow(sourceId, pageId, cachedHeader, cachedSnapshot,
                 permitted));
+        // Eine zu große Datei braucht für ihren Textauszug das ganze Original: dafür die eigene, längere Frist.
+        Duration deadline = cachedHeader.filter(header -> !fetcher.loadsWhole(header.metadata())).isPresent()
+                ? largeFileTimeout : timeout;
         try {
-            return check.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            return check.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             check.cancel(true);
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE,
-                    "Prüfung gegen die Quelle hat die Frist überschritten", null);
+                    "Prüfung gegen die Quelle hat die Frist überschritten (" + (deadline.toSeconds() >= 60 ? deadline.toMinutes() + " min" : deadline.toSeconds() + " s")
+                            + ")", null);
         } catch (InterruptedException e) {
             check.cancel(true);
             Thread.currentThread().interrupt();

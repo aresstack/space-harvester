@@ -30,6 +30,21 @@ public class SourceSnapshots implements PageContentFetcher {
     private volatile java.util.function.LongSupplier maxBytes = () -> 0;
     /** Größte Datei, deren Textauszug für eine zu große Datei geladen wird; {@code <= 0} keiner. */
     private volatile java.util.function.LongSupplier maxTextBytes = () -> 0;
+    /** Textauszug einer zu großen Datei aus ihrem Original ({@code LargeFileTexts}); ohne Aufruf keiner. */
+    private volatile LargeFileText texts = (source, metadata, maxBytes) -> java.util.Optional.empty();
+
+    /** Der Textauszug einer zu großen Datei, ohne ihr Original im Speicher zu halten. */
+    @FunctionalInterface
+    public interface LargeFileText {
+
+        /** @return der Text; leer ohne lesbaren Text */
+        java.util.Optional<String> text(HarvestSource source, PageMetadata metadata, long maxBytes);
+    }
+
+    /** Woher der Textauszug zu großer Dateien kommt. */
+    public void largeFileText(LargeFileText texts) {
+        this.texts = Objects.requireNonNull(texts, "texts");
+    }
 
     public SourceSnapshots(SourceCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
@@ -66,11 +81,10 @@ public class SourceSnapshots implements PageContentFetcher {
         if (textLimit > 0 && LargeFiles.size(expected) <= textLimit) {
             Runnable ended = started(new PageKey(sourceId, expected.pageId()));
             try {
-                java.util.Optional<StoredPage> text = source.storedText(expected.pageId());
+                java.util.Optional<String> text = texts.text(source, expected, textLimit);
                 if (text.isPresent()) {
-                    PageSnapshot snapshot = snapshot(source, expected.pageId(), text.get());
-                    return LargeFiles.textOnly(sourceId, snapshot.metadata(), text.get().payload(),
-                            snapshot.retrievedAt());
+                    return LargeFiles.textOnly(sourceId, expected,
+                            text.get().getBytes(java.nio.charset.StandardCharsets.UTF_8), java.time.Instant.now());
                 }
             } finally {
                 quietly(ended);

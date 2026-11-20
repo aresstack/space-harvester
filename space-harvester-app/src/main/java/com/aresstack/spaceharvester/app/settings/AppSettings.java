@@ -445,10 +445,21 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      *                        der Cache nur den Textauszug oder die Kopfdaten ab
      * @param maxTextFileBytes größte Datei über {@code maxPageBytes}, deren Textauszug abgelegt wird
      *                        ({@code cache.max-text-file-size}); {@code 0} nie, darüber nur die Kopfdaten
+     * @param checkTimeout    Frist einer Prüfung gegen die Quelle beim Öffnen und Beschaffen ({@code cache.check-timeout})
+     * @param largeFileTimeout dieselbe Frist für eine Datei, deren Textauszug das ganze Original braucht
+     *                        ({@code cache.large-file-timeout})
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
-                          Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes) {
+                          Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
+                          Duration checkTimeout, Duration largeFileTimeout) {
+
+        /** Vorgabe für {@link #checkTimeout}, wie im Core. */
+        public static final Duration DEFAULT_CHECK_TIMEOUT =
+                com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_TIMEOUT;
+        /** Vorgabe für {@link #largeFileTimeout}, wie im Core. */
+        public static final Duration DEFAULT_LARGE_FILE_TIMEOUT =
+                com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;
 
         /** Vorgabe für {@link #maxTextFileBytes}, wie im Core. */
         public static final long DEFAULT_MAX_TEXT_FILE_BYTES =
@@ -468,6 +479,10 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             extraction = extraction == null ? ExtractionLimits.DEFAULTS : extraction;
             maxPageBytes = maxPageBytes <= 0 ? DEFAULT_MAX_PAGE_BYTES : Math.min(maxPageBytes, MAX_PAGE_BYTES_LIMIT);
             maxTextFileBytes = Math.max(0, maxTextFileBytes);
+            checkTimeout = checkTimeout == null || checkTimeout.isNegative() || checkTimeout.isZero()
+                    ? DEFAULT_CHECK_TIMEOUT : checkTimeout;
+            largeFileTimeout = largeFileTimeout == null || largeFileTimeout.isNegative() || largeFileTimeout.isZero()
+                    ? DEFAULT_LARGE_FILE_TIMEOUT : largeFileTimeout;
         }
 
         /** Mit den Vorgaben für die größte Datei im Cache und den Textauszug. */
@@ -476,7 +491,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                        Path pdfFont, ExtractionLimits extraction) {
             this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
                     searchTimeout, maxTreeNodes, pdfFont, extraction, DEFAULT_MAX_PAGE_BYTES,
-                    DEFAULT_MAX_TEXT_FILE_BYTES);
+                    DEFAULT_MAX_TEXT_FILE_BYTES, DEFAULT_CHECK_TIMEOUT, DEFAULT_LARGE_FILE_TIMEOUT);
         }
 
         /** Mit den Standardgrenzen der Extraktion. */
