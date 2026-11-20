@@ -536,8 +536,9 @@ public final class ChatPanel extends JPanel {
                 SwingUtilities.invokeLater(() -> {
                     Point mouse = resizeGrip.getMousePosition(true);
                     if (mouse == null) {
-                        mouse = surface.getMousePosition(true) == null ? null
-                                : SwingUtilities.convertPoint(surface, surface.getMousePosition(true), resizeGrip);
+                        // Einmal abfragen: Zwischen zwei Abfragen kann die Maus die Fläche verlassen haben.
+                        Point onSurface = surface.getMousePosition(true);
+                        mouse = onSurface == null ? null : SwingUtilities.convertPoint(surface, onSurface, resizeGrip);
                     }
                     resizeGrip.setShown(mouse != null && nearGrip(mouse));
                 });
