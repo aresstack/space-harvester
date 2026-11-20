@@ -46,6 +46,13 @@ public final class VideoTranscriptionPanel extends JPanel {
     private final JLabel status = new JLabel("Transkription noch nicht gestartet.");
     private VideoTranscriptSource videoSource;
     private SwingWorker<Void, TranscriptSegment> worker;
+    /** Was Whisper bisher erkannt hat, ohne Fehlermeldungen: so wird es gespeichert. */
+    private final StringBuilder recognized = new StringBuilder();
+    /** Bekommt das bisher erkannte Transkript nach jedem neuen Abschnitt und am Ende, um es zu speichern. */
+    private java.util.function.Consumer<String> onTranscript = text -> { };
+    /** Statuszeile über einem gespeicherten Transkript. */
+    public static final String STORED_STATUS = "Gespeichertes Transkript (auch unter Anhänge) · das Mikrofon "
+            + "erzeugt es neu.";
 
     public VideoTranscriptionPanel(TranscribeAudioUseCase transcription) {
         super(new BorderLayout(0, 12));
@@ -87,12 +94,30 @@ public final class VideoTranscriptionPanel extends JPanel {
         updateActions();
     }
 
+    /** {@code listener} bekommt das bisher erkannte Transkript nach jedem neuen Abschnitt und am Ende (auf dem EDT). */
+    public void onTranscript(java.util.function.Consumer<String> listener) {
+        onTranscript = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Zeigt ein gespeichertes Transkript des gezeigten Videos, solange keines erzeugt wird. */
+    public void showStored(VideoTranscriptSource source, String text) {
+        if (source != videoSource || worker != null || text == null || text.isBlank()) {
+            return;
+        }
+        recognized.setLength(0);
+        recognized.append(text);
+        transcript.setText(text);
+        transcript.setCaretPosition(0);
+        status.setText(STORED_STATUS);
+    }
+
     private void startTranscription() {
         if (worker != null || videoSource == null) {
             return;
         }
         VideoTranscriptSource requestedSource = videoSource;
         transcript.setText("");
+        recognized.setLength(0);
         status.setText("Whisper-Modell wird aus dem Anwendungs-JAR bereitgestellt …");
         worker = new SwingWorker<Void, TranscriptSegment>() {
             @Override
@@ -147,8 +172,12 @@ public final class VideoTranscriptionPanel extends JPanel {
                     return;
                 }
                 for (TranscriptSegment segment : segments) {
-                    transcript.append("[" + segment.timeLabel() + "] " + segment.text() + "\n\n");
+                    String line = "[" + segment.timeLabel() + "] " + segment.text() + "\n\n";
+                    transcript.append(line);
+                    recognized.append(line);
                 }
+                // Jeder Abschnitt wird sofort gespeichert: nichts geht beim Seitenwechsel verloren.
+                onTranscript.accept(recognized.toString());
             }
 
             @Override
@@ -160,7 +189,8 @@ public final class VideoTranscriptionPanel extends JPanel {
                 updateActions();
                 try {
                     get();
-                    status.setText("Transkription abgeschlossen (noch nicht im Suchindex).");
+                    status.setText("Transkription abgeschlossen und unter Anhänge gespeichert (noch nicht im "
+                            + "Suchindex).");
                     if (transcript.getText().isEmpty()) {
                         transcript.setText("(Keine Sprache erkannt)");
                     }

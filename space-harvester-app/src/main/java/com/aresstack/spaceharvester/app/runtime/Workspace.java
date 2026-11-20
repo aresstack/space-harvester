@@ -770,6 +770,21 @@ public final class Workspace {
         return harvester.assets().missingVideoFrames(sourceId, pageId, version, marks);
     }
 
+    /** Das gespeicherte Transkript des Videos dieser Seite; leer, solange keines erzeugt ist. Fragt die Quelle nicht. */
+    public java.util.Optional<String> videoTranscript(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        return harvester.assets().videoTranscript(sourceId, pageId, page.snapshot().revision());
+    }
+
+    /**
+     * Speichert das Transkript des Videos dieser Seite und ersetzt ein früheres; es steht dann als virtueller Anhang
+     * unter „Anhänge“. Braucht wie das Ablegen von Anhängen die sync-Freigabe.
+     */
+    public void storeVideoTranscript(String sourceId, String pageId, String fileName, String text) {
+        DeliveredPage page = syncedPage(sourceId, pageId);
+        harvester.assets().putVideoTranscript(sourceId, pageId, page.snapshot().revision(), fileName, text);
+    }
+
     /** Legt das Standbild einer Marke ab; es füllt ihren virtuellen Anhang unter „Anhänge“. */
     public void storeVideoFrame(String sourceId, String pageId, Assets.VideoFrame frame) {
         DeliveredPage page = syncedPage(sourceId, pageId);
@@ -2176,23 +2191,26 @@ public final class Workspace {
     }
 
     /**
-     * Die Anhänge der Quelle samt einem virtuellen Anhang je gespeicherter Marke eines Videos. Eine Quelle ohne
-     * Anhangslisten (etwa ein BSCW-Dokument) hat dann nur die Marken; ohne Marken bleibt es bei {@code UNSUPPORTED}.
+     * Die Anhänge der Quelle samt den virtuellen Anhängen eines Videos: je gespeicherter Marke einer und das
+     * gespeicherte Transkript. Eine Quelle ohne Anhangslisten (etwa ein BSCW-Dokument) hat dann nur diese; ohne sie
+     * bleibt es bei {@code UNSUPPORTED}.
      */
     private PageAttachmentList sourceAttachments(String sourceId, String pageId) {
         DeliveredPage page = null;
         List<Long> marks = List.of();
+        boolean transcript = false;
         try {
             page = harvester.pages().page(caller, sourceId, pageId, false);
             marks = slides().find(new PageKey(sourceId, pageId), page.snapshot().revision());
+            transcript = harvester.assets().hasVideoTranscript(sourceId, pageId, page.snapshot().revision());
         } catch (RuntimeException notCached) {
-            // Eine Seite ohne gespeicherten Stand hat keine gespeicherten Marken.
+            // Eine Seite ohne gespeicherten Stand hat keine gespeicherten Marken und kein Transkript.
         }
         PageAttachmentList list;
         try {
             list = harvester.sources().attachments(sourceId, pageId);
         } catch (com.aresstack.spaceharvester.application.sources.SourceAccessException e) {
-            if (marks.isEmpty()
+            if (marks.isEmpty() && !transcript
                     || e.reason() != com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNSUPPORTED) {
                 throw e;
             }
@@ -2201,7 +2219,10 @@ public final class Workspace {
                     new com.aresstack.spaceharvester.application.sources.PageAttachments(pageId, List.of(), List.of(),
                             "application/json", "video-marks", List.of(), now), now);
         }
-        return marks.isEmpty() ? list : harvester.assets().withVideoMarks(list, page.snapshot().revision(), marks);
+        if (!marks.isEmpty()) {
+            list = harvester.assets().withVideoMarks(list, page.snapshot().revision(), marks);
+        }
+        return transcript ? harvester.assets().withVideoTranscript(list, page.snapshot().revision()) : list;
     }
 
     private void requireVisible(JobStatus status, AccessKind kind) {

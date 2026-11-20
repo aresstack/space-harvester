@@ -1072,6 +1072,62 @@ public class Assets implements DocumentInventory {
                 : Optional.empty();
     }
 
+    /** Präfix des virtuellen Anhangs, der das Transkript eines Videos zeigt, und seiner Ablage. */
+    public static final String VIDEO_TRANSCRIPT = "video-transcript-";
+
+    /**
+     * Legt das Transkript eines Videos dieser Fassung ab (Text in UTF-8) und ersetzt ein früheres; es erscheint als
+     * virtueller Anhang ({@link #withVideoTranscript}) und wird beim Öffnen des Videos wieder gezeigt
+     * ({@link #videoTranscript}). Das Recht auf die Seite prüft der Aufrufer.
+     *
+     * @param fileName Dateiname des Anhangs, etwa {@code Vortrag – Transkript.txt}
+     */
+    public void putVideoTranscript(String sourceId, String pageId, String version, String fileName, String text) {
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        store.put(new Asset(sourceId, pageId, transcriptId(pageId), frameVersion(version), fileName, "text/plain",
+                AssetKind.TRANSCRIPT, bytes.length, sha256(bytes), clock.instant()), bytes);
+    }
+
+    /** Das abgelegte Transkript des Videos dieser Fassung; leer, solange keines erzeugt ist. */
+    public Optional<String> videoTranscript(String sourceId, String pageId, String version) {
+        return store.find(sourceId, transcriptId(pageId), frameVersion(version)).map(this::read)
+                .map(content -> new String(content.content(), java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Die Anhangsliste einer Seite samt dem Transkript ihres Videos als virtuellem Anhang
+     * ({@link AssetKind#TRANSCRIPT}); ohne abgelegtes Transkript unverändert.
+     */
+    public PageAttachmentList withVideoTranscript(PageAttachmentList list, String version) {
+        String pageId = list.attachments().pageId();
+        String id = transcriptId(pageId);
+        Optional<Asset> stored = store.find(list.sourceId(), id, frameVersion(version));
+        if (stored.isEmpty()) {
+            return list;
+        }
+        List<PageAttachment> attachments = new java.util.ArrayList<>(list.attachments().attachments());
+        attachments.add(new PageAttachment(id, id, stored.get().title(), AssetKind.TRANSCRIPT_MEDIA_TYPE,
+                stored.get().size(), frameVersion(version), stored.get().retrievedAt(), null));
+        PageAttachments source = list.attachments();
+        return new PageAttachmentList(list.sourceId(), list.spaceKey(), new PageAttachments(source.pageId(),
+                attachments, source.responses(), source.mediaType(), source.nativeFormat(), source.warnings(),
+                source.retrievedAt()), list.retrievedAt());
+    }
+
+    /** Ob die Seite dieser Fassung ein abgelegtes Transkript hat. */
+    public boolean hasVideoTranscript(String sourceId, String pageId, String version) {
+        return store.find(sourceId, transcriptId(pageId), frameVersion(version)).isPresent();
+    }
+
+    /** Ob ein Anhang das Transkript eines Videos ist; es liegt nur in der Ablage, nie bei der Quelle. */
+    public static boolean transcriptAttachment(String attachmentId) {
+        return attachmentId != null && attachmentId.startsWith(VIDEO_TRANSCRIPT);
+    }
+
+    private static String transcriptId(String pageId) {
+        return VIDEO_TRANSCRIPT + framePage(pageId);
+    }
+
     /** Ob ein Anhang eine Marke eines Videos ist; sie liegt nur in der Ablage, nie bei der Quelle. */
     public static boolean videoMark(String attachmentId) {
         return attachmentId != null && attachmentId.startsWith(VIDEO_MARK);
@@ -2547,6 +2603,11 @@ public class Assets implements DocumentInventory {
             // Eine Marke ohne Standbild: Es entsteht unter „Anhänge“, die Quelle kennt es nicht.
             throw new SourceAccessException(source.id(), SourceAccessException.Reason.NOT_FOUND,
                     "Standbild der Marke noch nicht gezogen", null);
+        }
+        if (transcriptAttachment(attachment.attachmentId())) {
+            // Das Transkript entsteht in der App; die Quelle kennt es nicht.
+            throw new SourceAccessException(source.id(), SourceAccessException.Reason.NOT_FOUND,
+                    "Transkript nicht abgelegt", null);
         }
         // Große Dateien zusätzlich unter der gemeinsamen Schranke, bis Typerkennung, Hash und Ablegen fertig sind.
         try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {

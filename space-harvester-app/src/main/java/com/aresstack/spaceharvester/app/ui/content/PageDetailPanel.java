@@ -591,6 +591,8 @@ public final class PageDetailPanel extends JPanel {
         knowledgeGraphTab(graphView);
         images.onDescribe(() -> describeImages(false));
         images.onDescribeOne(this::describeImage);
+        // Erzeugte Transkripte bleiben: gespeichert als virtueller Anhang, beim nächsten Öffnen wieder gezeigt.
+        videoTranscript.onTranscript(this::storeTranscript);
         images.onOpen(this::openImage);
         images.onDescribeOnce(() -> describeImages(true));
         images.onRelease(this::releaseSourceAndDescribe);
@@ -1560,7 +1562,9 @@ public final class PageDetailPanel extends JPanel {
             // Die Marken des Players sind die einzige Quelle der Folien; gespeichert erscheinen sie als Anhänge.
             originalVideoViewer.onSlides(changes -> slidesFound(frames, changes));
             showVideoMarks(originalVideoViewer, frames);
-            videoTranscript.setVideoSource(new VideoTranscriptSource(size, ranges));
+            VideoTranscriptSource transcriptSource = new VideoTranscriptSource(size, ranges);
+            videoTranscript.setVideoSource(transcriptSource);
+            showStoredTranscript(transcriptSource, frames);
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
             videoTranscriptShown = true;
         }
@@ -2633,6 +2637,47 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
+    /** Lädt das gespeicherte Transkript des geöffneten Videos in den Reiter „Text“, statt es neu zu erzeugen. */
+    private void showStoredTranscript(VideoTranscriptSource transcriptSource, VideoFrameSource video) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || video == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().videoTranscript(video.sourceId(), video.pageId()),
+                stored -> stored.ifPresent(text -> videoTranscript.showStored(transcriptSource, text)), error -> { });
+    }
+
+    /**
+     * Speichert das bisher erkannte Transkript des gezeigten Videos als virtuellen Anhang; die Liste unter „Anhänge“
+     * zeigt es danach.
+     */
+    private void storeTranscript(String text) {
+        AppRuntime runtime = context.runtime();
+        VideoFrameSource video = videoFrames;
+        if (runtime == null || video == null || text.isBlank()) {
+            return;
+        }
+        String name = transcriptName(page == null ? null : page.header().metadata().title());
+        Background.run(() -> {
+            runtime.workspace().storeVideoTranscript(video.sourceId(), video.pageId(), name, text);
+            return null;
+        }, saved -> attachmentsChanged(video), error -> {
+            if (video == videoFrames) {
+                feedback.problem(error, Problems.Step.PAGE);
+            }
+        });
+    }
+
+    /** Der Dateiname des Transkripts nach dem Video, etwa {@code Vortrag – Transkript.txt}. */
+    static String transcriptName(String videoTitle) {
+        String base = videoTitle == null || videoTitle.isBlank() ? "Video" : videoTitle.strip();
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) {
+            base = base.substring(0, dot);
+        }
+        return base + " – Transkript.txt";
+    }
+
     /** Lädt die Anhänge der gezeigten Seite im Hintergrund vor; für welche Seite. */
     private AttachmentPrefetch prefetch;
     private String prefetchPage;
@@ -3057,10 +3102,14 @@ public final class PageDetailPanel extends JPanel {
         com.aresstack.spaceharvester.application.sources.PageAttachment file = entry.attachment();
         String mediaType = file.mediaType() != null && !file.mediaType().isBlank() ? file.mediaType()
                 : entry.stored() == null ? null : entry.stored().mediaType();
-        // Eine Marke zeigt ihr Standbild.
-        boolean mark = entry.kind() == com.aresstack.spaceharvester.application.assets.AssetKind.MARK;
-        ReaderAttachment attachment = new ReaderAttachment(file.attachmentId(), file.title(),
-                mark ? "image/png" : mediaType, file.fileSize() == null ? -1 : file.fileSize());
+        // Eine Marke zeigt ihr Standbild, ein Transkript seinen Text.
+        String shownType = switch (entry.kind()) {
+            case MARK -> "image/png";
+            case TRANSCRIPT -> "text/plain";
+            default -> mediaType;
+        };
+        ReaderAttachment attachment = new ReaderAttachment(file.attachmentId(), file.title(), shownType,
+                file.fileSize() == null ? -1 : file.fileSize());
         String source = sourceId;
         boolean previews = runtime.workspace().attachmentPreviews(source);
         // Der gezeigte zuerst, dann die übrigen derselben Art nach Abstand: Blättern soll nicht warten.
@@ -3751,6 +3800,7 @@ public final class PageDetailPanel extends JPanel {
                     case VECTOR -> "SVG";
                     case IMAGE -> "Bild";
                     case MARK -> "Marke";
+                    case TRANSCRIPT -> "Transkript";
                     case OTHER -> "Datei";
                 };
                 case 2 -> entry.attachment().fileSize() == null ? "–" : Texts.bytes(entry.attachment().fileSize());
