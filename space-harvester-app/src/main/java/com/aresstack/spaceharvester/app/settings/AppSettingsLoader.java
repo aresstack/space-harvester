@@ -218,7 +218,9 @@ public final class AppSettingsLoader {
         AppSettings.Storage storage = new AppSettings.Storage(data,
                 exports == null ? data.resolve("exports") : exports, assets == null ? data.resolve("assets") : assets,
                 maxAsset, largeAsset, maxLargeAssets, searchTimeout, maxTreeNodes, pdfFont,
-                extraction(map(get(map(get(root, "assets")), "extraction")), problems), maxPage);
+                extraction(map(get(map(get(root, "assets")), "extraction")), problems), maxPage,
+                size(get(map(get(root, "cache")), "max-text-file-size"), AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES,
+                        "space-harvester.cache.max-text-file-size", problems));
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "

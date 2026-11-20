@@ -28,6 +28,8 @@ public class SourceSnapshots implements PageContentFetcher {
     private volatile PageLoads loads = PageLoads.NONE;
     /** Größte Datei, die ganz geladen wird ({@link LargeFiles}); {@code <= 0} ohne Grenze. */
     private volatile java.util.function.LongSupplier maxBytes = () -> 0;
+    /** Größte Datei, deren Textauszug für eine zu große Datei geladen wird; {@code <= 0} keiner. */
+    private volatile java.util.function.LongSupplier maxTextBytes = () -> 0;
 
     public SourceSnapshots(SourceCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
@@ -41,13 +43,40 @@ public class SourceSnapshots implements PageContentFetcher {
         this.maxBytes = Objects.requireNonNull(maxBytes, "maxBytes");
     }
 
+    /**
+     * Für Dateien über {@link #maxBytes}, aber nicht über dieser Größe holt {@link #fetch(String, PageMetadata)} den
+     * Textauszug der Quelle statt des Originals; gelesen bei jedem Abruf, {@code <= 0} nie.
+     */
+    public void maxTextBytes(java.util.function.LongSupplier maxTextBytes) {
+        this.maxTextBytes = Objects.requireNonNull(maxTextBytes, "maxTextBytes");
+    }
+
+    /**
+     * Wie {@link #fetch(String, String)}; eine Datei über {@link #maxBytes} lädt es nicht als Original, sondern als
+     * Textauszug, wenn sie lesbaren Text hat und nicht größer ist als {@link #maxTextBytes}, sonst gar nicht
+     * ({@link LargeFiles}).
+     */
     @Override
     public PageSnapshot fetch(String sourceId, PageMetadata expected) {
-        if (!loadsWhole(expected)) {
-            catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
-            return LargeFiles.placeholder(sourceId, expected, java.time.Instant.now());
+        if (loadsWhole(expected)) {
+            return fetch(sourceId, expected.pageId());
         }
-        return fetch(sourceId, expected.pageId());
+        HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+        long textLimit = maxTextBytes.getAsLong();
+        if (textLimit > 0 && LargeFiles.size(expected) <= textLimit) {
+            Runnable ended = started(new PageKey(sourceId, expected.pageId()));
+            try {
+                java.util.Optional<StoredPage> text = source.storedText(expected.pageId());
+                if (text.isPresent()) {
+                    PageSnapshot snapshot = snapshot(source, expected.pageId(), text.get());
+                    return LargeFiles.textOnly(sourceId, snapshot.metadata(), text.get().payload(),
+                            snapshot.retrievedAt());
+                }
+            } finally {
+                quietly(ended);
+            }
+        }
+        return LargeFiles.placeholder(sourceId, expected, java.time.Instant.now());
     }
 
     @Override

@@ -641,6 +641,9 @@ public final class Harvester implements AutoCloseable {
             // Größere Dateien nimmt der Cache nicht an: gar nicht erst herunterladen, nur die Kopfdaten ablegen.
             long maxPageBytes = builder.maxPageBytes;
             snapshots.maxBytes(() -> maxPageBytes);
+            // Für sie den Textauszug statt des Originals, bis zu dieser Größe: Suche und Text-Ansicht brauchen nur ihn.
+            long maxTextFileBytes = builder.maxTextFileBytes;
+            snapshots.maxTextBytes(() -> maxTextFileBytes);
             // ADR 0027: jeder Inhaltsabruf bei der Quelle (Planer, Lesen, Abgleich, Export) meldet dem Bestand „lädt“.
             snapshots.loads(holdings);
             this.sources = new SourceQueries(catalog);
@@ -1909,6 +1912,9 @@ public final class Harvester implements AutoCloseable {
         return enrichments;
     }
 
+    /** Vorgabe für {@link Builder#maxTextFileBytes}: 200 MiB. */
+    public static final long DEFAULT_MAX_TEXT_FILE_BYTES = 200L * 1024 * 1024;
+
     /** Abgleich eines Space in den Cache als Auftrag; Status und Delta über {@link SpaceSyncJobs#status}. */
     public SpaceSyncJobs syncs() {
         return syncs;
@@ -2417,6 +2423,7 @@ public final class Harvester implements AutoCloseable {
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
         private int maxPageBytes = LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
+        private long maxTextFileBytes = DEFAULT_MAX_TEXT_FILE_BYTES;
         private boolean prefetchSearchHits = true;
         private boolean prefetchSearchHitsFixed;
         private int discoveryQueries = KeywordSearch.DEFAULT_MAX_QUERIES;
@@ -2659,6 +2666,19 @@ public final class Harvester implements AutoCloseable {
                         + " liegen");
             }
             this.maxPageBytes = (int) maxPageBytes;
+            return this;
+        }
+
+        /**
+         * Größte Datei über {@link #maxPageBytes}, deren Textauszug statt des Originals abgelegt wird
+         * ({@code space-harvester.cache.max-text-file-size}); {@code 0} nie. Die Datei wird dafür einmal ganz geladen.
+         * Standard {@link #DEFAULT_MAX_TEXT_FILE_BYTES}.
+         */
+        public Builder maxTextFileBytes(long maxTextFileBytes) {
+            if (maxTextFileBytes < 0) {
+                throw new IllegalArgumentException("maxTextFileBytes darf nicht negativ sein");
+            }
+            this.maxTextFileBytes = maxTextFileBytes;
             return this;
         }
 

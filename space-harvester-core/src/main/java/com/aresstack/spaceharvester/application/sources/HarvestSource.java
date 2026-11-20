@@ -116,6 +116,17 @@ public interface HarvestSource {
     }
 
     /**
+     * Der Textauszug einer Datei statt ihres Originals, für Dateien über der Größengrenze des Caches ({@code LargeFiles}):
+     * Lesetext als UTF-8 in der Payload, Kopfdaten aus derselben Antwort. Leer, wenn die Datei keinen lesbaren Text hat
+     * (Archive, Bilder, Medien, Unbekanntes); das entscheidet die Quelle vor dem Herunterladen. Standard: leer.
+     *
+     * @throws SourceAccessException wie {@link #storedPage(String)}
+     */
+    default Optional<StoredPage> storedText(String pageId) {
+        return Optional.empty();
+    }
+
+    /**
      * Read only the requested byte range of a remotely stored media file.
      * The caller must authorize access to this resource before reading.
      */

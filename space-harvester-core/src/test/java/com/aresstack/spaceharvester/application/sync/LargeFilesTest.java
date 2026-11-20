@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -29,8 +30,10 @@ class LargeFilesTest {
 
     private static final PageMetadata FIG = file("fig", 40_268_060);
     private static final PageMetadata NOTE = file("note", 1_000);
+    private static final PageMetadata PDF = file("pdf", 30_000_000);
 
     private int downloads;
+    private int extracts;
     private final HarvestSource source = new HarvestSource() {
         @Override
         public String id() {
@@ -59,7 +62,17 @@ class LargeFilesTest {
 
         @Override
         public PageMetadata pageMetadata(String pageId) {
-            return pageId.equals("fig") ? FIG : NOTE;
+            return pageId.equals("fig") ? FIG : pageId.equals("pdf") ? PDF : NOTE;
+        }
+
+        @Override
+        public Optional<StoredPage> storedText(String pageId) {
+            if (!pageId.equals("pdf")) {
+                return Optional.empty();
+            }
+            extracts++;
+            return Optional.of(new StoredPage(PDF, "Haushaltsplan Datenhaus".getBytes(StandardCharsets.UTF_8),
+                    "text/markdown", "knowledge-document", Instant.parse("2026-11-20T10:00:00Z")));
         }
 
         @Override
@@ -81,10 +94,12 @@ class LargeFilesTest {
         }
     };
     private final AtomicLong limit = new AtomicLong(20L << 20);
+    private final AtomicLong textLimit = new AtomicLong(200L << 20);
     private final SourceSnapshots snapshots = new SourceSnapshots(catalog);
 
     {
         snapshots.maxBytes(limit::get);
+        snapshots.maxTextBytes(textLimit::get);
     }
 
     private static PageMetadata file(String pageId, long size) {
@@ -105,6 +120,24 @@ class LargeFilesTest {
         assertThat(big.key()).isEqualTo(new PageKey("bscw", "fig"));
         assertThat(LargeFiles.placeholder(small.payload())).isFalse();
         assertThat(downloads).as("nur die kleine Datei geladen").isEqualTo(1);
+    }
+
+    @Test
+    void aLargeDocumentWithTextKeepsOnlyItsTextExtractWhichTheSearchProjects() {
+        PageSnapshot pdf = snapshots.fetch("bscw", PDF);
+
+        assertThat(LargeFiles.textOnly(pdf.payload())).isTrue();
+        assertThat(LargeFiles.placeholder(pdf.payload())).as("das Original fehlt").isTrue();
+        assertThat(pdf.revision()).isEqualTo("v1");
+        assertThat(new com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector().project(pdf))
+                .hasValueSatisfying(text -> assertThat(text.text()).isEqualTo("Haushaltsplan Datenhaus"));
+        assertThat(downloads).as("nie das Original").isZero();
+        assertThat(extracts).isEqualTo(1);
+
+        textLimit.set(10L << 20);
+        assertThat(LargeFiles.textOnly(snapshots.fetch("bscw", PDF).payload()))
+                .as("über der Grenze für den Textauszug nur die Kopfdaten").isFalse();
+        assertThat(extracts).isEqualTo(1);
     }
 
     @Test

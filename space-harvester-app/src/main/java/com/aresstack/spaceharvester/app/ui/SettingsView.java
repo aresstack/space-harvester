@@ -600,6 +600,8 @@ public final class SettingsView implements View {
                     .add("Anhänge", s.assetDirectory().toString())
                     .add("Größter Anhang", Texts.sizeLimit(s.maxAssetBytes()))
                     .add(SettingDialogs.PAGE_SIZE_TITLE, Texts.bytes(s.maxPageBytes()))
+                    .add(SettingDialogs.TEXT_SIZE_TITLE, s.maxTextFileBytes() == 0 ? "nie"
+                            : "bis " + Texts.bytes(s.maxTextFileBytes()))
                     .add("Zeitgrenze der Suche", s.searchTimeout().toString().substring(2).toLowerCase(Locale.ROOT))
                     .add("Größter Seitenbaum", s.maxTreeNodes() + " Seiten")
                     .add("PDF-Schrift", s.pdfFont() == null ? "eingebaut" : s.pdfFont().toString());

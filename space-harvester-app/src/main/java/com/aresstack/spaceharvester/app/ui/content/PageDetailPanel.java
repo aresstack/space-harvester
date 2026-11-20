@@ -1499,7 +1499,7 @@ public final class PageDetailPanel extends JPanel {
         }
         if (com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(payload)) {
             readingPane.clear(" ");
-            showLargeFile(metadata);
+            showLargeFile(metadata, com.aresstack.spaceharvester.application.snapshot.LargeFiles.textOnly(payload));
             return;
         }
         readingPane.clear(" ");
@@ -1612,9 +1612,10 @@ public final class PageDetailPanel extends JPanel {
      */
     /**
      * Eine Datei über der Grenze „Größte Datei im Cache“ (Angelo, 20.11.2026): Die App hat sie nicht heruntergeladen;
-     * die Karte nennt Größe und Grenze und öffnet die Datei in der Quelle.
+     * die Karte nennt Größe und Grenze und öffnet die Datei in der Quelle. Mit {@code textOnly} liegt ihr Textauszug
+     * im Cache: Text-Ansicht und Suche haben ihn.
      */
-    private void showLargeFile(PageMetadata metadata) {
+    private void showLargeFile(PageMetadata metadata, boolean textOnly) {
         long size = com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
         long limit = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES
                 : context.settings().storage().maxPageBytes();
@@ -1622,8 +1623,11 @@ public final class PageDetailPanel extends JPanel {
         card.setOpaque(false);
         javax.swing.JTextArea explanation = new javax.swing.JTextArea("Zu groß für den Cache: "
                 + (size < 0 ? "Größe unbekannt" : Texts.bytes(size)) + ", die Grenze liegt bei " + Texts.bytes(limit)
-                + ". Die App lädt solche Dateien nicht herunter. Öffne sie in der Quelle, oder erhöhe die Grenze "
-                + "unter Einstellungen › Daten › „Größte Datei im Cache“; danach lädt das nächste Öffnen sie.");
+                + (textOnly ? ". Abgelegt ist nur ihr Textauszug: Er steht in der Text-Ansicht, und die Suche findet "
+                + "die Datei darüber." : ". Abgelegt sind nur ihre Kopfdaten, weil sie keinen lesbaren Text hat oder "
+                + "größer ist als die Grenze für den Textauszug.")
+                + " Das Original öffnest du in der Quelle; oder erhöhe die Grenzen unter Einstellungen › Daten › "
+                + "„Größte Datei im Cache“, dann lädt das nächste Öffnen es.");
         explanation.setEditable(false);
         explanation.setOpaque(false);
         explanation.setLineWrap(true);

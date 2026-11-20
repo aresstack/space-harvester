@@ -387,17 +387,31 @@ public final class ConfigFileEditor {
      * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
      */
     public Draft withMaxPageSize(Path file, Draft base, long bytes) {
-        String value = bytes % (1L << 20) == 0 ? (bytes >> 20) + "MB" : bytes % 1024 == 0 ? (bytes >> 10) + "KB"
-                : String.valueOf(bytes);
-        String text = nested(base.text(), "cache", "max-page-size", indent -> indent + "max-page-size: " + value
+        return withMaxPageSize(file, base, bytes, loader.read(file, base.text()).storage().maxTextFileBytes());
+    }
+
+    /**
+     * Wie {@link #withMaxPageSize(Path, Draft, long)}, dazu die größte Datei für den Textauszug
+     * ({@code space-harvester.cache.max-text-file-size}, {@code 0} nie).
+     */
+    public Draft withMaxPageSize(Path file, Draft base, long bytes, long textBytes) {
+        String text = nested(base.text(), "cache", "max-page-size", indent -> indent + "max-page-size: " + size(bytes)
+                + "\n");
+        text = nested(text, "cache", "max-text-file-size", indent -> indent + "max-text-file-size: " + size(textBytes)
                 + "\n");
         AppSettings settings = loader.read(file, text);
-        if (settings.storage().maxPageBytes() != bytes) {
+        if (settings.storage().maxPageBytes() != bytes || settings.storage().maxTextFileBytes() != textBytes) {
             throw new IllegalArgumentException("Die größte Datei im Cache ließ sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.cache.max-page-size von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
+    }
+
+    /** Eine Größe, wie sie {@code AppSettingsLoader} liest: in MB oder KB, wenn sie sich darin ausdrücken lässt. */
+    private static String size(long bytes) {
+        return bytes > 0 && bytes % (1L << 20) == 0 ? (bytes >> 20) + "MB"
+                : bytes > 0 && bytes % 1024 == 0 ? (bytes >> 10) + "KB" : String.valueOf(bytes);
     }
 
     /**
