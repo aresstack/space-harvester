@@ -67,6 +67,43 @@ public class SourceSnapshots implements PageContentFetcher {
     }
 
     /**
+     * Das Original einer Datei über {@link #maxBytes} zum Anzeigen, direkt aus der Quelle und ohne es abzulegen; über
+     * eine temporäre Datei, nicht größer als {@link #maxTextBytes}.
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED}, wenn die Quelle das Original nicht als Datei liefern kann,
+     *                               {@code INVALID_RESPONSE}, wenn die Datei größer ist als erlaubt
+     */
+    public byte[] original(String sourceId, PageMetadata metadata) {
+        HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+        long limit = maxTextBytes.getAsLong();
+        if (limit <= 0 || LargeFiles.size(metadata) > limit) {
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.INVALID_RESPONSE,
+                    "Datei größer als die Grenze zum Laden großer Dateien", null);
+        }
+        java.nio.file.Path file = null;
+        Runnable ended = started(new PageKey(sourceId, metadata.pageId()));
+        try {
+            file = java.nio.file.Files.createTempFile("space-harvester-original-", ".part");
+            if (source.downloadOriginal(metadata.pageId(), file, type -> true, limit).isEmpty()) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
+                        "Die Quelle liefert dieses Original nicht als Datei", null);
+            }
+            return java.nio.file.Files.readAllBytes(file);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        } finally {
+            quietly(ended);
+            if (file != null) {
+                try {
+                    java.nio.file.Files.deleteIfExists(file);
+                } catch (java.io.IOException ignored) {
+                    // Nur ein Rest im temporären Verzeichnis.
+                }
+            }
+        }
+    }
+
+    /**
      * Wie {@link #fetch(String, String)}; eine Datei über {@link #maxBytes} lädt es nicht als Original, sondern als
      * Textauszug, wenn sie lesbaren Text hat und nicht größer ist als {@link #maxTextBytes}, sonst gar nicht
      * ({@link LargeFiles}).

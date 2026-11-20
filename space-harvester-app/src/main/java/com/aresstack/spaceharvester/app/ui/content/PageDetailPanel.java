@@ -1538,7 +1538,10 @@ public final class PageDetailPanel extends JPanel {
         }
         if (com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(payload)) {
             readingPane.clear(" ");
-            showLargeFile(metadata, com.aresstack.spaceharvester.application.snapshot.LargeFiles.textOnly(payload));
+            if (!showLargeOriginal(metadata)) {
+                showLargeFile(metadata,
+                        com.aresstack.spaceharvester.application.snapshot.LargeFiles.textOnly(payload));
+            }
             return;
         }
         if (!PageMetadata.FILE_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
@@ -1653,6 +1656,37 @@ public final class PageDetailPanel extends JPanel {
      * Open the target only after an explicit user action; never reuse source credentials.
      */
     /**
+     * Eine Datei über der Grenze „Größte Datei im Cache“, die der Viewer zeigen kann (Bild, PDF, Office, Text) und die
+     * nicht größer ist als „Große Dateien ganz laden bis“: Der Viewer lädt ihr Original direkt aus der Quelle, ohne es
+     * abzulegen (Angelo, 20.11.2026).
+     *
+     * @return ob der Viewer steht; sonst zeigt {@link #showLargeFile} die Karte
+     */
+    private boolean showLargeOriginal(PageMetadata metadata) {
+        String type = com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(metadata);
+        long size = com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
+        long limit = context.settings() == null
+                ? com.aresstack.spaceharvester.app.settings.AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES
+                : context.settings().storage().maxTextFileBytes();
+        AppRuntime runtime = context.runtime();
+        if (type == null || runtime == null || limit <= 0 || size > limit) {
+            return false;
+        }
+        ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(), type, size);
+        String source = sourceId;
+        ReaderAttachmentLoader loader = (file, done, failed) -> Background.run(
+                () -> runtime.workspace().original(source, metadata), done, error -> failed.accept(reason(error)));
+        originalFileViewer = new AttachmentViewerPanel(attachment, loader, fileOpener, attachmentRenderer);
+        originalFileViewer.detachFooter();
+        fileContent.add(originalFileViewer, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+        updateFootTools(tabs.selected());
+        return true;
+    }
+
+    /**
      * Eine Datei über der Grenze „Größte Datei im Cache“ (Angelo, 20.11.2026): Die App hat sie nicht heruntergeladen;
      * die Karte nennt Größe und Grenze und öffnet die Datei in der Quelle. Mit {@code textOnly} liegt ihr Textauszug
      * im Cache: Text-Ansicht und Suche haben ihn.
@@ -1747,10 +1781,13 @@ public final class PageDetailPanel extends JPanel {
     /** Identify original images before running any optional text-analysis preparation. */
     private static boolean isNativePreview(PageSnapshot snapshot) {
         String kind = snapshot.metadata().attributes().get(PageMetadata.RESOURCE_KIND);
+        String largeType = com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(snapshot.payload())
+                ? com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(snapshot.metadata()) : null;
         return PageMetadata.LINK_KIND.equals(kind)
                 || "true".equals(snapshot.metadata().attributes().get(PageMetadata.REMOTE_MEDIA))
                 || PageMetadata.FILE_KIND.equals(kind)
-                && originalMediaType(snapshot.payload()).startsWith("image/");
+                && (originalMediaType(snapshot.payload()).startsWith("image/")
+                || largeType != null && largeType.startsWith("image/"));
     }
 
     /** Trust the actual file signature when WebDAV metadata or the name is misleading. */

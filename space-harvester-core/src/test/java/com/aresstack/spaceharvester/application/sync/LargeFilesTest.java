@@ -146,6 +146,18 @@ class LargeFilesTest {
     }
 
     @Test
+    void theViewerGetsTheOriginalOfALargeFileFromTheSourceWithoutStoringIt() {
+        assertThat(new String(snapshots.original("bscw", PDF), StandardCharsets.UTF_8))
+                .isEqualTo("Haushaltsplan Datenhaus");
+        assertThat(temporary.resolve("large-files")).doesNotExist();
+        assertThat(LargeFiles.viewableType(file("x", 1))).as("ohne bekannte Endung").isNull();
+
+        textLimit.set(10L << 20);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> snapshots.original("bscw", PDF))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceAccessException.class);
+    }
+
+    @Test
     void aLargeFileGetsItsOwnLongerDeadlineForTheTextExtract() {
         slowMillis = 400;
         PageFreshness freshness = new PageFreshness(new SourceQueries(catalog, FakeSource.CLOCK), snapshots,

@@ -60,6 +60,7 @@ import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -428,6 +429,15 @@ public final class Workspace {
         } catch (AccessDeniedException | UnknownSourceException e) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * Das Original einer Datei über der Größengrenze des Caches zum Anzeigen, direkt aus der Quelle und ohne es
+     * abzulegen (Angelo, 20.11.2026: etwa ein Fotoprotokoll als PNG mit 22 MB).
+     */
+    public byte[] original(String sourceId, PageMetadata metadata) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        return harvester.snapshots().original(sourceId, metadata);
     }
 
     /**

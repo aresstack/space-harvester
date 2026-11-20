@@ -625,7 +625,7 @@ final class SettingDialogs {
     }
 
     static final String PAGE_SIZE_TITLE = "Größte Datei im Cache";
-    static final String TEXT_SIZE_TITLE = "Textauszug größerer Dateien";
+    static final String TEXT_SIZE_TITLE = "Große Dateien ganz laden bis";
     static final String CHECK_TIMEOUT_TITLE = "Frist der Prüfung gegen die Quelle";
     static final String LARGE_TIMEOUT_TITLE = "Frist für große Dateien";
 
@@ -689,9 +689,10 @@ final class SettingDialogs {
         check.setText(ConfigFileEditor.duration(currentCheck));
         JTextField large = Comic.field(10);
         large.setText(ConfigFileEditor.duration(currentLarge));
-        rows.add(TEXT_SIZE_TITLE, textSize, "Bis zu dieser Größe lädt die App größere Dateien mit lesbarem Text (PDF, "
-                + "Office, Text) einmal ganz und legt nur ihren Textauszug ab: Suche und Text-Ansicht finden sie. "
-                + "Darüber und ohne lesbaren Text (Archive, Figma, Videos) nur die Kopfdaten. 0 nie; Vorgabe "
+        rows.add(TEXT_SIZE_TITLE, textSize, "Bis zu dieser Größe lädt die App größere Dateien ganz: mit lesbarem Text "
+                + "(PDF, Office, Text) einmal für den Textauszug, den Suche und Text-Ansicht nutzen, und zum Anzeigen "
+                + "von Bildern, PDF und Office direkt aus der Quelle, ohne sie abzulegen. Darüber und für Archive, "
+                + "Figma oder Videos nur die Kopfdaten. 0 nie; Vorgabe "
                 + Texts.bytes(AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES));
         rows.add(CHECK_TIMEOUT_TITLE, check, "So lange wartet das Öffnen oder Beschaffen einer Seite auf die Quelle, "
                 + "z. B. 30s oder 2m; Vorgabe " + ConfigFileEditor.duration(AppSettings.Storage.DEFAULT_CHECK_TIMEOUT));

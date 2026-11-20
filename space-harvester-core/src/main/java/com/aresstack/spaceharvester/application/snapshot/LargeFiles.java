@@ -67,6 +67,33 @@ public final class LargeFiles {
         return payload != null && (FORMAT.equals(payload.nativeFormat()) || TEXT_FORMAT.equals(payload.nativeFormat()));
     }
 
+    /**
+     * Der Medientyp einer Datei, die der Viewer zeigen kann (Bilder, PDF, Office, Text), aus ihrem Namen; sonst
+     * {@code null}. Solche Dateien lädt die Ansicht über der Größengrenze bei Bedarf direkt aus der Quelle.
+     */
+    public static String viewableType(PageMetadata metadata) {
+        String name = metadata.title().toLowerCase(java.util.Locale.ROOT);
+        int dot = name.lastIndexOf('.');
+        String extension = dot < 0 ? "" : name.substring(dot + 1);
+        return switch (extension) {
+            case "png" -> "image/png";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "gif" -> "image/gif";
+            case "bmp" -> "image/bmp";
+            case "webp" -> "image/webp";
+            case "tif", "tiff" -> "image/tiff";
+            case "pdf" -> "application/pdf";
+            case "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            case "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            case "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+            case "doc" -> "application/msword";
+            case "xls" -> "application/vnd.ms-excel";
+            case "csv" -> "text/csv";
+            case "txt", "md", "log" -> "text/plain";
+            default -> null;
+        };
+    }
+
     /** Ob der Snapshot den Textauszug einer zu großen Datei trägt. */
     public static boolean textOnly(NativePayload payload) {
         return payload != null && TEXT_FORMAT.equals(payload.nativeFormat());
