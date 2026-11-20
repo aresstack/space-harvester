@@ -216,6 +216,67 @@ class EnrichmentsTest {
     }
 
     @Test
+    void aBackgroundResultFollowsATextThatChangedWithoutANewPayloadAndNothingIsStoredForADeletedText()
+            throws Exception {
+        // Wie das Transkript eines Videos: Der Text ändert sich, während die Berechnung läuft; die Payload nicht.
+        java.util.concurrent.atomic.AtomicReference<String> current = new java.util.concurrent.atomic.AtomicReference<>(
+                "alt");
+        PageTextProjector projector = snapshot -> Optional.ofNullable(current.get())
+                .map(text -> new PageText("test/v1", text, List.of()));
+        CountDownLatch release = new CountDownLatch(1);
+        Remote remote = new Remote(key -> true, release);
+        ExecutorService background = Enrichments.background(10);
+        try {
+            Enrichments enrichments = new Enrichments(projector, List.of(remote), store, CLOCK, background);
+            PageSnapshot page = text("wiki", "101", "1", "egal");
+            enrichments.refresh(page);
+            current.set("neu");
+            enrichments.refresh(page);
+            release.countDown();
+            background.shutdown();
+            assertThat(background.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(store.find(page.key())).singleElement().satisfies(result -> assertThat(result.inputSha256())
+                    .isEqualTo(new PageText("test/v1", "neu", List.of()).inputSha256()));
+            assertThat(remote.calls.get()).as("einmal alt, einmal neu").isEqualTo(2);
+        } finally {
+            background.shutdownNow();
+        }
+        store.remove(text("wiki", "101", "1", "egal").key(), "remote");
+        CountDownLatch again = new CountDownLatch(1);
+        Remote later = new Remote(key -> true, again);
+        ExecutorService second = Enrichments.background(10);
+        try {
+            current.set("da");
+            Enrichments enrichments = new Enrichments(projector, List.of(later), store, CLOCK, second);
+            PageSnapshot page = text("wiki", "101", "1", "egal");
+            enrichments.refresh(page);
+            current.set(null);
+            assertThat(enrichments.forget(page.key())).isZero();
+            again.countDown();
+            second.shutdown();
+            assertThat(second.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(store.find(page.key())).as("der Text ist weg: nichts gespeichert").isEmpty();
+        } finally {
+            second.shutdownNow();
+        }
+    }
+
+    @Test
+    void forgettingTheTextKeepsResultsThisClassDoesNotComputeForThePage() {
+        Remote images = new Remote(key -> false, new CountDownLatch(0));
+        Enrichments enrichments = enrichments(new OutlineProcessor(), images);
+        PageSnapshot page = text("wiki", "101", "1", "Text");
+        enrichments.refresh(page);
+        store.save(new Enrichment(page.key(), "remote", "1", "x", "1", Enrichment.Status.OK, "{}", List.of(), null,
+                CLOCK.instant()));
+
+        assertThat(enrichments.forget(page.key())).isEqualTo(1);
+
+        assertThat(store.find(page.key())).extracting(Enrichment::processorId).containsExactly("remote");
+    }
+
+    @Test
     void aFullBackgroundDropsWorkWithoutFailingTheCaller() {
         ExecutorService closed = Enrichments.background(1);
         closed.shutdown();

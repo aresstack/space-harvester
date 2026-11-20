@@ -435,7 +435,8 @@ public class Enrichments {
 
     /**
      * Entfernt die gespeicherten Ergebnisse aller Prozessoren dieser Klasse für eine Seite, deren Text weggefallen ist,
-     * etwa nach dem Löschen eines Video-Transkripts; Ergebnisse anderer (Bildanalyse, Folien) bleiben.
+     * etwa nach dem Löschen eines Video-Transkripts. Nur was diese Klasse für die Seite aus dem Text rechnet
+     * ({@link EnrichmentProcessor#appliesTo}); unabhängig abgelegte Ergebnisse (Bildanalyse, Folien) bleiben.
      *
      * @return wie viele Prozessoren ein Ergebnis hatten
      */
@@ -446,7 +447,7 @@ public class Enrichments {
         }
         int removed = 0;
         for (EnrichmentProcessor processor : processors.values()) {
-            if (stored.contains(processor.id())) {
+            if (stored.contains(processor.id()) && processor.appliesTo(key)) {
                 store.remove(key, processor.id());
                 removed++;
             }
@@ -539,6 +540,9 @@ public class Enrichments {
         schedule(processor, snapshot, text, input, false);
     }
 
+    /** Wie oft eine Hintergrundberechnung einem Text folgt, der sich während des Rechnens ändert. */
+    private static final int TEXT_CHANGE_ATTEMPTS = 3;
+
     /**
      * Reiht eine Berechnung im Hintergrund ein. Ob der Prozessor die Seite noch bearbeitet, prüft erst die Ausführung:
      * Wird eine Freigabe entzogen, während die Berechnung wartet, geht nichts mehr an den Dienst (ADR 0015).
@@ -561,18 +565,36 @@ public class Enrichments {
         try {
             background.execute(() -> {
                 try {
-                    if (!processor.appliesTo(snapshot.key())) {
+                    // Der Text kann sich ändern, während die Berechnung wartet oder läuft, ohne neue Payload (etwa
+                    // ein neues Transkript eines Videos): Gerechnet und gespeichert wird nur der aktuelle; ist er
+                    // weggefallen, nichts.
+                    PageText current = text;
+                    String currentInput = input;
+                    for (int attempt = 0; attempt < TEXT_CHANGE_ATTEMPTS; attempt++) {
+                        if (!processor.appliesTo(snapshot.key())) {
+                            return;
+                        }
+                        Enrichment previous = store.find(snapshot.key()).stream()
+                                .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
+                                .orElse(null);
+                        if (!force && previous != null && previous.freshness(currentInput, processor.version())
+                                == Enrichment.Freshness.CURRENT) {
+                            return;
+                        }
+                        Enrichment result = compute(processor, snapshot, current, currentInput);
+                        Optional<PageText> now = projection(snapshot);
+                        if (now.isEmpty()) {
+                            return;
+                        }
+                        if (!now.get().inputSha256().equals(currentInput)) {
+                            current = now.get();
+                            currentInput = current.inputSha256();
+                            continue;
+                        }
+                        if (saveWhileApplies(processor, result)) {
+                            store.flush();
+                        }
                         return;
-                    }
-                    Enrichment previous = store.find(snapshot.key()).stream()
-                            .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
-                            .orElse(null);
-                    if (!force && previous != null
-                            && previous.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT) {
-                        return;
-                    }
-                    if (saveWhileApplies(processor, compute(processor, snapshot, text, input))) {
-                        store.flush();
                     }
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.WARNING, "Hintergrundberechnung {0} scheiterte ({1})",

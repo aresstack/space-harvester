@@ -193,14 +193,30 @@ public final class VideoTranscriptionPanel extends JPanel {
 
     /**
      * Die Fassungen des gezeigten Videos zum Umschalten unten in der Mitte: zuerst das Original, dann die Korrekturen;
-     * mit weniger als zwei keine Leiste.
+     * mit weniger als zwei keine Leiste. Eine gezeigte Korrektur bleibt gewählt und zeigt ihren neuen Text; gibt es sie
+     * nicht mehr, zeigt die Ansicht das Original.
      */
     public void showVersions(VideoTranscriptSource source, java.util.List<Version> shown) {
         if (source != videoSource) {
             return;
         }
+        int before = shownVersion;
+        String label = before > 0 && before < versions.size() ? versions.get(before).label() : null;
         versions = java.util.List.copyOf(shown);
         shownVersion = 0;
+        for (int i = 1; label != null && i < versions.size(); i++) {
+            if (versions.get(i).label().equals(label)) {
+                shownVersion = i;
+            }
+        }
+        if (before > 0 && worker == null && !versions.isEmpty()) {
+            String text = versions.get(shownVersion).text();
+            if (!text.equals(transcript.getText())) {
+                int caret = transcript.getCaretPosition();
+                transcript.setText(text);
+                transcript.setCaretPosition(Math.min(caret, transcript.getDocument().getLength()));
+            }
+        }
         renderVersions();
     }
 

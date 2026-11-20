@@ -936,7 +936,6 @@ public final class Harvester implements AutoCloseable {
                             cache::find);
             opened.add(transcriptAnalyses);
             this.transcriptAnalyses = transcriptAnalyses;
-            assets.transcriptChanges(transcriptAnalyses::changed);
             documentEnrichments.assets(assets);
             // ADR 0028: Bilder einer Seite auf der Liste freigegebener Seiten gehen auch aus einer gesperrten Quelle an
             // das Vision-Modell.
@@ -1032,6 +1031,14 @@ public final class Harvester implements AutoCloseable {
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
+            // gemerkten Eingabe-Hash, die Analysen rechnen neu.
+            KnowledgeGraph transcriptGraph = this.knowledgeGraph;
+            com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses analyses = this.transcriptAnalyses;
+            this.assets.transcriptChanges(key -> {
+                transcriptGraph.forgetInput(key);
+                analyses.changed(key);
+            });
             // ADR 0032, FL6: Stand und Status-quo-Sicht aus gespeicherten Aussagen; Entscheidungen als Nutzerdaten.
             // ADR 0032, FL5b: Teilzahlen der Begriffsableitung je Aufrufer für den Glossar-Reiter.
             this.glossaryOverview = new com.aresstack.spaceharvester.application.glossary.GlossaryOverview(
