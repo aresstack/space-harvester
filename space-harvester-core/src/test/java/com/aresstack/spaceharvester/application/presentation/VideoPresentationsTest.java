@@ -216,4 +216,87 @@ class VideoPresentationsTest {
     private static JobContext context() {
         return org.mockito.Mockito.mock(JobContext.class);
     }
+
+    @Test
+    void aJobFromBeforeARestartRunsAgainInTheSameEntry() {
+        // Angelo 20.11.2026: „Warum kann ich den Job nach einem Neustart der App nicht fortsetzen oder Fehlerhaftes
+        // wiederholen lassen?“ – die Arbeit entsteht aus den Angaben des Auftrags neu.
+        String owner = "TECHNICAL_CLIENT:space-harvester-app";
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.jobs.Jobs.class);
+        for (com.aresstack.spaceharvester.application.jobs.JobType type : List.of(
+                com.aresstack.spaceharvester.application.jobs.JobType.VIDEO_TRANSCRIPT,
+                com.aresstack.spaceharvester.application.jobs.JobType.VIDEO_SLIDES,
+                com.aresstack.spaceharvester.application.jobs.JobType.TRANSCRIPT_CORRECTION,
+                com.aresstack.spaceharvester.application.jobs.JobType.SLIDE_NOTES,
+                com.aresstack.spaceharvester.application.jobs.JobType.PRESENTATION_EXPORT)) {
+            String id = "job-" + type;
+            com.aresstack.spaceharvester.application.jobs.JobStatus status = status(id, type, owner,
+                    Map.of(VideoPresentations.PAGE_PARAMETER, "42", VideoPresentations.FILE_PARAMETER, "/tmp/v.pdf",
+                            VideoPresentations.FORMAT_PARAMETER, "pdf"));
+            org.mockito.Mockito.when(jobs.resumable(id, owner)).thenReturn(false);
+            org.mockito.Mockito.when(jobs.status(id, owner)).thenReturn(status);
+            org.mockito.Mockito.when(jobs.rerun(org.mockito.ArgumentMatchers.eq(id),
+                    org.mockito.ArgumentMatchers.eq(owner), org.mockito.ArgumentMatchers.any())).thenReturn(status);
+        }
+        VideoPresentations presentations = presentations(jobs);
+
+        for (com.aresstack.spaceharvester.application.jobs.JobType type : List.of(
+                com.aresstack.spaceharvester.application.jobs.JobType.VIDEO_TRANSCRIPT,
+                com.aresstack.spaceharvester.application.jobs.JobType.VIDEO_SLIDES,
+                com.aresstack.spaceharvester.application.jobs.JobType.TRANSCRIPT_CORRECTION,
+                com.aresstack.spaceharvester.application.jobs.JobType.SLIDE_NOTES,
+                com.aresstack.spaceharvester.application.jobs.JobType.PRESENTATION_EXPORT)) {
+            presentations.resume("job-" + type, owner);
+            org.mockito.Mockito.verify(jobs).rerun(org.mockito.ArgumentMatchers.eq("job-" + type),
+                    org.mockito.ArgumentMatchers.eq(owner), org.mockito.ArgumentMatchers.notNull());
+        }
+    }
+
+    @Test
+    void aJobOfAnEndUserOrWithoutItsPageCannotBeRebuiltAndSaysWhy() {
+        assertThat(VideoPresentations.caller("TECHNICAL_CLIENT:space-harvester-app"))
+                .hasValueSatisfying(caller -> assertThat(caller.jobOwner())
+                        .isEqualTo("TECHNICAL_CLIENT:space-harvester-app"));
+        assertThat(VideoPresentations.caller("END_USER:anna@space-harvester-app")).isEmpty();
+        assertThat(VideoPresentations.caller("TECHNICAL_CLIENT:")).isEmpty();
+        assertThat(VideoPresentations.caller(null)).isEmpty();
+
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.jobs.Jobs.class);
+        VideoPresentations presentations = presentations(jobs);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> presentations.rebuild(status("a",
+                        com.aresstack.spaceharvester.application.jobs.JobType.SLIDE_NOTES, "END_USER:anna@app",
+                        Map.of(VideoPresentations.PAGE_PARAMETER, "42"))))
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobNotResumableException.class)
+                .hasMessageContaining("Anmeldung");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> presentations.rebuild(status("b",
+                        com.aresstack.spaceharvester.application.jobs.JobType.PRESENTATION_EXPORT,
+                        "TECHNICAL_CLIENT:app", Map.of(VideoPresentations.PAGE_PARAMETER, "42"))))
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobNotResumableException.class)
+                .hasMessageContaining("Datei");
+    }
+
+    private static com.aresstack.spaceharvester.application.jobs.JobStatus status(String id,
+            com.aresstack.spaceharvester.application.jobs.JobType type, String owner, Map<String, String> parameters) {
+        com.aresstack.spaceharvester.application.jobs.JobStatus status = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.jobs.JobStatus.class);
+        org.mockito.Mockito.when(status.id()).thenReturn(id);
+        org.mockito.Mockito.when(status.type()).thenReturn(type);
+        org.mockito.Mockito.when(status.sourceId()).thenReturn("wiki");
+        org.mockito.Mockito.when(status.owner()).thenReturn(owner);
+        org.mockito.Mockito.when(status.parameter(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(call -> parameters.get(call.<String>getArgument(0)));
+        return status;
+    }
+
+    private static VideoPresentations presentations(com.aresstack.spaceharvester.application.jobs.Jobs jobs) {
+        return new VideoPresentations(jobs, (who, sourceId, pageId) -> null,
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.assets.Assets.class),
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.images.PageImageAnalysis.class),
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.marks.VideoMarks.class),
+                com.aresstack.spaceharvester.application.stepmodel.StepModel.NONE,
+                new PresentationStore(new InMemoryEnrichmentStore(), Clock.systemUTC()), key -> true,
+                java.nio.file.Path.of("out"));
+    }
 }

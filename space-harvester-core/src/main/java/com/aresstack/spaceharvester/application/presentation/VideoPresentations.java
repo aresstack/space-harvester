@@ -190,7 +190,10 @@ public final class VideoPresentations {
     private final PresentationStore store;
     private final Predicate<PageKey> released;
     private final Path outputDirectory;
-    /** Die Arbeit der Aufträge seit dem Start der App, damit „Nur Fehler“ auch nach ihrem Ende im selben Eintrag läuft. */
+    /**
+     * Die Arbeit der Aufträge, damit „Nur Fehler“ auch nach ihrem Ende im selben Eintrag läuft; nach einem Neustart
+     * aus den Angaben des Auftrags wiederhergestellt ({@link #rebuild}).
+     */
     private final Map<String, JobTask> tasks = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
@@ -305,20 +308,86 @@ public final class VideoPresentations {
      * Setzt einen Auftrag des Vorgangs im selben Eintrag fort (ADR 0025): angehalten, abgebrochen oder gescheitert wie
      * jeder Auftrag, fertig mit Fehlern („Nur Fehler neu versuchen“) mit derselben Arbeit; sie fragt nur, was fehlt.
      *
-     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException für einen Auftrag aus der Zeit
-     *                                                                                vor dem letzten Neustart
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wenn sich die Arbeit nach einem
+     *                                                                                Neustart nicht wiederherstellen
+     *                                                                                lässt (ohne Seite, Datei oder
+     *                                                                                mit Endnutzer-Anmeldung)
      */
     public JobStatus resume(String jobId, String owner) {
         if (jobs.resumable(jobId, owner)) {
             return jobs.resume(jobId, owner);
         }
-        JobTask task = tasks.get(jobId);
-        if (task == null) {
-            throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
-                    "der Auftrag stammt aus der Zeit vor dem letzten Neustart; „In PPTX umwandeln“ neu starten, es "
-                            + "fragt ebenfalls nur, was fehlt");
-        }
+        // Nach einem Neustart der App kennt sie die Arbeit nicht mehr: aus den Angaben des Auftrags neu bauen, wie
+        // die Aufträge des Core (Angelo 20.11.2026). Jeder Schritt fragt nur, was fehlt.
+        JobTask task = tasks.computeIfAbsent(jobId, id -> rebuild(jobs.status(id, owner)));
         return jobs.rerun(jobId, owner, task);
+    }
+
+    /**
+     * Wer die Videos eines Vorgangs nach einem Neustart liefert; die App setzt das beim Start. Ohne zählt nur
+     * Abgelegtes ({@link VideoMedia#NONE}).
+     */
+    @FunctionalInterface
+    public interface MediaSource {
+        VideoMedia open(String sourceId, String pageId) throws Exception;
+    }
+
+    private volatile MediaSource media = (sourceId, pageId) -> VideoMedia.NONE;
+
+    /** Setzt, wer nach einem Neustart die Videos liefert ({@link #resume}). */
+    public void mediaSource(MediaSource source) {
+        this.media = Objects.requireNonNull(source, "source");
+    }
+
+    /** Die Arbeit eines Auftrags aus seinen Angaben, für Aufträge aus der Zeit vor dem letzten Neustart. */
+    JobTask rebuild(JobStatus status) {
+        String jobId = status.id();
+        String sourceId = status.sourceId();
+        String pageId = status.parameter(PAGE_PARAMETER);
+        if (pageId == null) {
+            throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                    "der Auftrag kennt sein Video nicht mehr; „In PPTX umwandeln“ neu starten, es fragt nur, was fehlt");
+        }
+        AccessContext caller = caller(status.owner()).orElseThrow(() ->
+                new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                        "die Anmeldung des Auftraggebers ist nach dem Neustart nicht mehr da; „In PPTX umwandeln“ neu "
+                                + "starten, es fragt nur, was fehlt"));
+        Format format = Format.parse(status.parameter(FORMAT_PARAMETER));
+        Options options = Options.DEFAULT.withFormat(format);
+        MediaSource source = media;
+        return switch (status.type()) {
+            case VIDEO_TRANSCRIPT -> JobTask.blocking(context -> transcribe(caller, sourceId, pageId,
+                    source.open(sourceId, pageId), context));
+            case VIDEO_SLIDES -> JobTask.blocking(context -> describeSlides(caller, sourceId, pageId,
+                    source.open(sourceId, pageId), options, context));
+            case TRANSCRIPT_CORRECTION -> JobTask.blocking(context -> correct(caller, sourceId, pageId, options,
+                    context));
+            case SLIDE_NOTES -> JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, options, context));
+            case PRESENTATION_EXPORT -> {
+                String file = status.parameter(FILE_PARAMETER);
+                if (file == null) {
+                    throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                            "der Auftrag kennt seine Datei nicht mehr; „In PPTX umwandeln“ neu starten");
+                }
+                Path target = Path.of(file);
+                yield JobTask.blocking(context -> writeFile(caller, sourceId, pageId, target, format, context));
+            }
+            default -> throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                    "kein Auftrag von „In PPTX umwandeln“");
+        };
+    }
+
+    /**
+     * Der Aufrufer zu einem Auftraggeber ({@link AccessContext#jobOwner()}): ein technischer Client lässt sich aus
+     * seiner Kennung wiederherstellen, ein Endnutzer nicht (seine Anmeldung lebt nur in der Sitzung).
+     */
+    static Optional<AccessContext> caller(String owner) {
+        String prefix = AccessContext.PrincipalKind.TECHNICAL_CLIENT.name() + ":";
+        if (owner == null || !owner.startsWith(prefix) || owner.length() == prefix.length()) {
+            return Optional.empty();
+        }
+        AccessContext caller = AccessContext.technicalClient(owner.substring(prefix.length()));
+        return caller.jobOwner().equals(owner) ? Optional.of(caller) : Optional.empty();
     }
 
     /**

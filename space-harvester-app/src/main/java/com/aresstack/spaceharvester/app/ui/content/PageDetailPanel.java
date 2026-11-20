@@ -1726,21 +1726,11 @@ public final class PageDetailPanel extends JPanel {
     /** Keep remote video content out of the native snapshot; stream it after a deliberate play action. */
     private void showOriginalVideo(PageMetadata metadata) {
         readingPane.clear(" ");
-        long size = -1;
-        try {
-            size = Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength", "-1"));
-        } catch (NumberFormatException unavailable) {
-            // Keep the player disabled if the source has not reported a usable size.
-        }
+        // Without a usable size from the source the player stays disabled.
+        long size = com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia.size(metadata);
         final String source = sourceId;
         final String id = metadata.pageId();
-        String file = metadata.title().toLowerCase(java.util.Locale.ROOT);
-        // Der Typ kommt aus der Quelle (auch für Titel ohne Endung, etwa bei BSCW), sonst aus dem Dateinamen.
-        String reported = metadata.attributes().get(PageMetadata.REMOTE_MEDIA_TYPE);
-        String mediaType = reported != null ? reported
-                : file.endsWith(".webm") ? "video/webm"
-                : file.endsWith(".mov") ? "video/quicktime"
-                : file.endsWith(".mkv") ? "video/x-matroska" : "video/mp4";
+        String mediaType = com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia.mediaType(metadata);
         final java.util.concurrent.atomic.AtomicReference<
                 com.aresstack.spaceharvester.application.sources.MediaByteRange> media =
                 new java.util.concurrent.atomic.AtomicReference<>();

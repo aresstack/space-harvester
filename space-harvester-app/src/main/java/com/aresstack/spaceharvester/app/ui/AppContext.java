@@ -530,6 +530,27 @@ public final class AppContext {
         });
     }
 
+    /**
+     * Whisper und Standbilder eines Videos für einen Auftrag von „In PPTX umwandeln“, der nach einem Neustart
+     * fortgesetzt wird; dieselben Angaben wie beim Start aus dem Player.
+     */
+    private com.aresstack.spaceharvester.application.presentation.VideoMedia presentationMedia(String sourceId,
+                                                                                          String pageId) {
+        AppRuntime current = runtime;
+        if (current == null) {
+            throw new IllegalStateException("Die Quellen sind nicht verbunden.");
+        }
+        com.aresstack.spaceharvester.application.sources.PageMetadata metadata =
+                current.workspace().page(sourceId, pageId, false).header().metadata();
+        return new com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia(
+                current.workspace().openMediaRange(sourceId, pageId),
+                com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia.size(metadata),
+                com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia.mediaType(metadata), video(),
+                new com.aresstack.spaceharvester.app.transcription.TranscribeAudioUseCase(
+                        new com.aresstack.spaceharvester.app.transcription.VlcPcmAudioDecoder(),
+                        new com.aresstack.spaceharvester.app.transcription.WhisperSpeechTranscriber()));
+    }
+
     private volatile com.aresstack.spaceharvester.app.settings.VideoSettings videoWanted;
 
     /** Die Werte für Videos; ohne geladene Einstellungen die Defaults. */
@@ -870,6 +891,8 @@ public final class AppContext {
             if (runtime != null) {
                 // Der Vergleich der Standbilder im Core folgt den Werten für Videos, auch nach dem Speichern.
                 runtime.workspace().slideThresholds(() -> video().slideThresholds());
+                // „In PPTX umwandeln“ nach einem Neustart fortsetzen: das Video kommt wie beim Start aus der Quelle.
+                runtime.workspace().presentationMedia(this::presentationMedia);
             }
             startProblem = started.problem();
             reloads.decrementAndGet();
