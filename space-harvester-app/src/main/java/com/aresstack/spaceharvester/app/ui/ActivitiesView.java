@@ -830,16 +830,37 @@ public final class ActivitiesView implements View {
     static final String OUTPUT_LABEL = "Ausgabeordner";
 
     /**
-     * Wohin ein Auftrag schreibt (Angelo 20.11.2026): „PPTX erzeugen“ in den Ordner seiner Datei, ein Download in den
-     * Ausgabeordner der Einstellungen; andere Aufträge schreiben keine Dateien ({@code null}).
+     * Wohin ein Auftrag schreibt (Angelo 20.11.2026): „PPTX erzeugen“ in den Ordner seiner Datei, „Datei erzeugen“,
+     * Metadaten- und Analytics-Export in den Ordner, den sie beim Start bekamen, ein Download in den Ausgabeordner der
+     * Einstellungen; andere Aufträge schreiben keine Dateien ({@code null}).
      */
     static java.nio.file.Path outputDirectory(JobStatus status, java.nio.file.Path exportDirectory) {
-        if (status.type() == JobType.PRESENTATION_EXPORT) {
-            String file = status.parameters().get(
-                    com.aresstack.spaceharvester.application.presentation.VideoPresentations.FILE_PARAMETER);
-            return file == null ? null : java.nio.file.Path.of(file).toAbsolutePath().getParent();
+        return switch (status.type()) {
+            case PRESENTATION_EXPORT -> {
+                String file = status.parameters().get(
+                        com.aresstack.spaceharvester.application.presentation.VideoPresentations.FILE_PARAMETER);
+                yield file == null ? null : java.nio.file.Path.of(file).toAbsolutePath().getParent();
+            }
+            case CONVERSION -> parameterDirectory(status,
+                    com.aresstack.spaceharvester.application.export.ExportConversions.DIRECTORY, exportDirectory);
+            case METADATA_EXPORT, ANALYTICS_EXPORT -> parameterDirectory(status,
+                    com.aresstack.spaceharvester.application.metadata.SourceQueryExports.DIRECTORY, exportDirectory);
+            case EXPORT -> exportDirectory;
+            default -> null;
+        };
+    }
+
+    private static java.nio.file.Path parameterDirectory(JobStatus status, String parameter,
+                                                         java.nio.file.Path fallback) {
+        String directory = status.parameters().get(parameter);
+        if (directory == null || directory.isBlank()) {
+            return fallback;
         }
-        return status.type() == JobType.EXPORT ? exportDirectory : null;
+        try {
+            return java.nio.file.Path.of(directory).toAbsolutePath();
+        } catch (java.nio.file.InvalidPathException e) {
+            return fallback;
+        }
     }
 
     /** Quelle / Space eines Auftrags, bei einem Seiten-Download dazu „ab“ seiner Startseite. */

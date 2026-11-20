@@ -9,6 +9,7 @@ import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatOptions;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
 import com.aresstack.enterpriseai.astu.chat.ChatResponse;
+import com.aresstack.enterpriseai.astu.chat.ChatUsage;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelCategory;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelDescriptor;
 import com.aresstack.enterpriseai.chat.api.ChatCompletionException;
@@ -543,12 +544,11 @@ public final class RemoteAi {
                 throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED,
                         "KI-Dienst oder Vision-Modell fehlt");
             }
-            ChatCompletionPort adapter = chatPort(settings.visionModel(),
-                    awaitedTimeout(settings.visionModel(), timeoutMillis()));
+            ChatCompletionPort adapter = visionPort(awaitedTimeout(settings.visionModel(), timeoutMillis()));
             try {
-                return adapter.complete(new ChatRequest(List.of(ChatMessage.userWithImages(instruction,
+                return visionAnswer(adapter.complete(new ChatRequest(List.of(ChatMessage.userWithImages(instruction,
                         List.of(new com.aresstack.enterpriseai.astu.chat.ChatImage(mediaType, image)))),
-                        ChatOptions.builder().model(settings.visionModel()).build())).content();
+                        visionOptions())), settings.contextTokens());
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
             }
@@ -556,8 +556,7 @@ public final class RemoteAi {
         if (!settings.vision()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Vision-Modell fehlt");
         }
-        ChatCompletionPort adapter = chatPort(settings.visionModel(),
-                awaitedTimeout(settings.visionModel(), timeoutMillis()));
+        ChatCompletionPort adapter = visionPort(awaitedTimeout(settings.visionModel(), timeoutMillis()));
         String model = settings.visionModel();
         SourceImageAnalysisUseCase useCase = new SourceImageAnalysisUseCase(List::of, adapter, () -> null,
                 () -> model, NO_CACHE);
@@ -662,6 +661,49 @@ public final class RemoteAi {
             config.sslSocketFactory(tls);
         }
         return config.build();
+    }
+
+    /**
+     * Der Text einer Bild-Antwort. Hat das Modell am Limit aufgehört ({@code done_reason = length}), etwa weil
+     * Nachdenken und Prompt die Kontextlänge füllten, ist das kein Ergebnis: Die Meldung nennt die Token, damit der
+     * Auftrag den echten Grund zeigt statt „leer“.
+     *
+     * @throws AiServiceException {@code INVALID_RESPONSE} bei {@code done_reason = length}
+     */
+    static String visionAnswer(ChatResponse response, int contextTokens) {
+        if (response.finishReason() == ChatFinishReason.LENGTH) {
+            ChatUsage usage = response.usage();
+            String tokens = usage != null && usage.isReported()
+                    ? usage.promptTokens() + " Token Prompt + " + usage.completionTokens() + " Token Antwort, " : "";
+            throw new AiServiceException(AiServiceException.Reason.INVALID_RESPONSE, "Vision-Modell: Antwort am Limit "
+                    + "abgeschnitten (" + tokens + "Kontextlänge " + contextTokens + "; " + AiServiceSettings.PREFIX
+                    + AiServiceSettings.CONTEXT_TOKENS + " erhöhen)");
+        }
+        return response.content();
+    }
+
+    /** Optionen eines eigenen Bild-Prompts: Nachdenken wie {@link #termCompletions()} ({@code ai.step-thinking}). */
+    private ChatOptions visionOptions() {
+        String thinking = settings.stepThinking();
+        ChatOptions.Builder builder = ChatOptions.builder().model(settings.visionModel());
+        if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {
+            builder.reasoningEffort(thinking);
+        }
+        return builder.build();
+    }
+
+    /**
+     * Die Verbindung zum Vision-Modell für Bildbeschreibungen und Folienkommentare: Bei Ollama mit demselben Nachdenken
+     * wie die Analyseschritte ({@code ai.step-thinking}, Standard aus, wie {@link #termCompletions()}). Ein denkendes
+     * Modell (gemma4) schrieb sonst je Folie Tausende Zeichen Nachdenken, bis die Antwort ausblieb (Angelo 20.11.2026:
+     * Folie 00:05:00 scheiterte in „Folien beschreiben“ und „Folienkommentare“).
+     */
+    private ChatCompletionPort visionPort(int timeoutMillis) {
+        if (settings.provider() == AiProvider.OLLAMA) {
+            return new OllamaChatAdapter(ollama(timeoutMillis), settings.visionModel(), settings.contextTokens(),
+                    settings.stepThinking());
+        }
+        return chatPort(settings.visionModel(), timeoutMillis);
     }
 
     /**

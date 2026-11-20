@@ -1726,21 +1726,11 @@ public final class PageDetailPanel extends JPanel {
     /** Keep remote video content out of the native snapshot; stream it after a deliberate play action. */
     private void showOriginalVideo(PageMetadata metadata) {
         readingPane.clear(" ");
-        long size = -1;
-        try {
-            size = Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength", "-1"));
-        } catch (NumberFormatException unavailable) {
-            // Keep the player disabled if the source has not reported a usable size.
-        }
+        // Without a usable size from the source the player stays disabled.
+        long size = com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia.size(metadata);
         final String source = sourceId;
         final String id = metadata.pageId();
-        String file = metadata.title().toLowerCase(java.util.Locale.ROOT);
-        // Der Typ kommt aus der Quelle (auch für Titel ohne Endung, etwa bei BSCW), sonst aus dem Dateinamen.
-        String reported = metadata.attributes().get(PageMetadata.REMOTE_MEDIA_TYPE);
-        String mediaType = reported != null ? reported
-                : file.endsWith(".webm") ? "video/webm"
-                : file.endsWith(".mov") ? "video/quicktime"
-                : file.endsWith(".mkv") ? "video/x-matroska" : "video/mp4";
+        String mediaType = com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia.mediaType(metadata);
         final java.util.concurrent.atomic.AtomicReference<
                 com.aresstack.spaceharvester.application.sources.MediaByteRange> media =
                 new java.util.concurrent.atomic.AtomicReference<>();
@@ -3043,8 +3033,11 @@ public final class PageDetailPanel extends JPanel {
                         context.video(), new TranscribeAudioUseCase(new VlcPcmAudioDecoder(),
                                 new WhisperSpeechTranscriber()));
         feedback.working(name + " wird gestartet …");
+        java.nio.file.Path directory = context.settings() == null
+                ? com.aresstack.spaceharvester.app.settings.AppSettings.defaultOutputDirectory()
+                : context.settings().outputDirectory();
         Background.run(() -> runtime.workspace().startVideoPresentation(video.sourceId(), video.pageId(), media,
-                        format),
+                        format, directory),
                 run -> {
                     if (video == videoFrames) {
                         feedback.working(name + " läuft: fünf Aufträge unter „Aufträge“, die Datei kommt "
@@ -3567,8 +3560,7 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         PageAssets.Entry entry = assetsModel.rows.get(row);
-        JFileChooser chooser = new JFileChooser();
-        chooser.setSelectedFile(new File(safeName(entry.attachment().title())));
+        JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(safeName(entry.attachment().title()));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
@@ -3812,9 +3804,8 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         NativePayload payload = page.snapshot().payload();
-        JFileChooser chooser = new JFileChooser();
-        chooser.setSelectedFile(new File(safeName(page.header().metadata().title())
-                + (Payloads.isJson(payload) ? ".json" : ".bin")));
+        JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(safeName(page.header().metadata().title())
+                + (Payloads.isJson(payload) ? ".json" : ".bin"));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }

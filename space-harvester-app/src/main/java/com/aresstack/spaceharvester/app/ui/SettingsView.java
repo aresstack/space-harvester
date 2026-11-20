@@ -129,9 +129,9 @@ public final class SettingsView implements View {
                     "Den Ausgabeordner anzeigen"));
     final javax.swing.JButton resetOutput = outputFolder.addButton(
             com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("Zurück auf Downloads",
-                    "Wieder den Ordner Downloads verwenden"));
-    static final String OUTPUT_HINT = "Dateien, die du unter Aufträge aus einem Download exportierst; ohne "
-            + "technische Zwischendateien";
+                    "Wieder den Downloads-Ordner des Benutzers verwenden"));
+    static final String OUTPUT_HINT = "Alle Exporte: Dateien aus dem Export-Reiter, Metadaten und Analytics, PPTX "
+            + "und PDF aus Videos; „Speichern unter“ beginnt hier";
     private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
     /**
      * Platte „Terminal-Ausgabe“ unter Allgemein (Angelo 12.11.2026): welche Meldungen im Terminal erscheinen,

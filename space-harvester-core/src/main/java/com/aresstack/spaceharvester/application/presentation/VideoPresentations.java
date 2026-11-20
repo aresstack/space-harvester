@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.presentation;
 
+import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.Asset;
 import com.aresstack.spaceharvester.application.assets.Assets;
@@ -149,13 +150,22 @@ public final class VideoPresentations {
      * @param parallel so viele Modellaufrufe laufen je Auftrag zugleich, mindestens 1
      * @param format   das Format der Datei
      */
-    public record Options(int parallel, Format format) {
+    /**
+     * @param directory Ausgabeordner der Datei (Angelo 20.11.2026: der eingestellte, Vorgabe Downloads); die Datei
+     *                  heißt dort wie das Video, ein schon vorhandener Name bekommt „ (2)“. {@code null}: unter dem
+     *                  Ordner des Konstruktors je Seite.
+     */
+    public record Options(int parallel, Format format, Path directory) {
 
-        /** Vier Aufrufe zugleich, PowerPoint. */
+        /** Vier Aufrufe zugleich in jeder Phase (die Bildbeschreibung nimmt ebenso viele an), PowerPoint. */
         public static final Options DEFAULT = new Options(4);
 
         public Options(int parallel) {
             this(parallel, Format.PPTX);
+        }
+
+        public Options(int parallel, Format format) {
+            this(parallel, format, null);
         }
 
         public Options {
@@ -167,7 +177,12 @@ public final class VideoPresentations {
 
         /** Dieselben Einstellungen mit anderem Dateiformat. */
         public Options withFormat(Format format) {
-            return new Options(parallel, format);
+            return new Options(parallel, format, directory);
+        }
+
+        /** Dieselben Einstellungen mit anderem Ausgabeordner. */
+        public Options withDirectory(Path directory) {
+            return new Options(parallel, format, directory);
         }
     }
 
@@ -189,8 +204,13 @@ public final class VideoPresentations {
     private final PresentationStore store;
     private final Predicate<PageKey> released;
     private final Path outputDirectory;
-    /** Die Arbeit der Aufträge seit dem Start der App, damit „Nur Fehler“ auch nach ihrem Ende im selben Eintrag läuft. */
+    /**
+     * Die Arbeit der Aufträge, damit „Nur Fehler“ auch nach ihrem Ende im selben Eintrag läuft; nach einem Neustart
+     * aus den Angaben des Auftrags wiederhergestellt ({@link #rebuild}).
+     */
     private final Map<String, JobTask> tasks = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Dateien, die ein Vorgang seit dem Start der App im Ausgabeordner belegt hat (siehe {@link #reserveName}). */
+    private final java.util.Set<Path> reservedFiles = new java.util.HashSet<>();
 
     /**
      * @param slides          die Folien der Videos ({@link VideoMarks#slides})
@@ -253,7 +273,9 @@ public final class VideoPresentations {
         String space = snapshot.metadata().partitionKey();
         String owner = caller.jobOwner();
         String title = snapshot.metadata().title();
-        Path file = outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title, options.format()));
+        Path file = options.directory() == null
+                ? outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title, options.format()))
+                : reserveName(options.directory().toAbsolutePath(), fileName(title, options.format()));
         String run = java.util.UUID.randomUUID().toString();
         Map<String, String> parameters = Map.of(PAGE_PARAMETER, pageId, RUN_PARAMETER, run);
         JobTask transcribing = JobTask.blocking(context -> transcribe(caller, sourceId, pageId, media, context));
@@ -304,20 +326,86 @@ public final class VideoPresentations {
      * Setzt einen Auftrag des Vorgangs im selben Eintrag fort (ADR 0025): angehalten, abgebrochen oder gescheitert wie
      * jeder Auftrag, fertig mit Fehlern („Nur Fehler neu versuchen“) mit derselben Arbeit; sie fragt nur, was fehlt.
      *
-     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException für einen Auftrag aus der Zeit
-     *                                                                                vor dem letzten Neustart
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wenn sich die Arbeit nach einem
+     *                                                                                Neustart nicht wiederherstellen
+     *                                                                                lässt (ohne Seite, Datei oder
+     *                                                                                mit Endnutzer-Anmeldung)
      */
     public JobStatus resume(String jobId, String owner) {
         if (jobs.resumable(jobId, owner)) {
             return jobs.resume(jobId, owner);
         }
-        JobTask task = tasks.get(jobId);
-        if (task == null) {
-            throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
-                    "der Auftrag stammt aus der Zeit vor dem letzten Neustart; „In PPTX umwandeln“ neu starten, es "
-                            + "fragt ebenfalls nur, was fehlt");
-        }
+        // Nach einem Neustart der App kennt sie die Arbeit nicht mehr: aus den Angaben des Auftrags neu bauen, wie
+        // die Aufträge des Core (Angelo 20.11.2026). Jeder Schritt fragt nur, was fehlt.
+        JobTask task = tasks.computeIfAbsent(jobId, id -> rebuild(jobs.status(id, owner)));
         return jobs.rerun(jobId, owner, task);
+    }
+
+    /**
+     * Wer die Videos eines Vorgangs nach einem Neustart liefert; die App setzt das beim Start. Ohne zählt nur
+     * Abgelegtes ({@link VideoMedia#NONE}).
+     */
+    @FunctionalInterface
+    public interface MediaSource {
+        VideoMedia open(String sourceId, String pageId) throws Exception;
+    }
+
+    private volatile MediaSource media = (sourceId, pageId) -> VideoMedia.NONE;
+
+    /** Setzt, wer nach einem Neustart die Videos liefert ({@link #resume}). */
+    public void mediaSource(MediaSource source) {
+        this.media = Objects.requireNonNull(source, "source");
+    }
+
+    /** Die Arbeit eines Auftrags aus seinen Angaben, für Aufträge aus der Zeit vor dem letzten Neustart. */
+    JobTask rebuild(JobStatus status) {
+        String jobId = status.id();
+        String sourceId = status.sourceId();
+        String pageId = status.parameter(PAGE_PARAMETER);
+        if (pageId == null) {
+            throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                    "der Auftrag kennt sein Video nicht mehr; „In PPTX umwandeln“ neu starten, es fragt nur, was fehlt");
+        }
+        AccessContext caller = caller(status.owner()).orElseThrow(() ->
+                new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                        "die Anmeldung des Auftraggebers ist nach dem Neustart nicht mehr da; „In PPTX umwandeln“ neu "
+                                + "starten, es fragt nur, was fehlt"));
+        Format format = Format.parse(status.parameter(FORMAT_PARAMETER));
+        Options options = Options.DEFAULT.withFormat(format);
+        MediaSource source = media;
+        return switch (status.type()) {
+            case VIDEO_TRANSCRIPT -> JobTask.blocking(context -> transcribe(caller, sourceId, pageId,
+                    source.open(sourceId, pageId), context));
+            case VIDEO_SLIDES -> JobTask.blocking(context -> describeSlides(caller, sourceId, pageId,
+                    source.open(sourceId, pageId), options, context));
+            case TRANSCRIPT_CORRECTION -> JobTask.blocking(context -> correct(caller, sourceId, pageId, options,
+                    context));
+            case SLIDE_NOTES -> JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, options, context));
+            case PRESENTATION_EXPORT -> {
+                String file = status.parameter(FILE_PARAMETER);
+                if (file == null) {
+                    throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                            "der Auftrag kennt seine Datei nicht mehr; „In PPTX umwandeln“ neu starten");
+                }
+                Path target = Path.of(file);
+                yield JobTask.blocking(context -> writeFile(caller, sourceId, pageId, target, format, context));
+            }
+            default -> throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                    "kein Auftrag von „In PPTX umwandeln“");
+        };
+    }
+
+    /**
+     * Der Aufrufer zu einem Auftraggeber ({@link AccessContext#jobOwner()}): ein technischer Client lässt sich aus
+     * seiner Kennung wiederherstellen, ein Endnutzer nicht (seine Anmeldung lebt nur in der Sitzung).
+     */
+    static Optional<AccessContext> caller(String owner) {
+        String prefix = AccessContext.PrincipalKind.TECHNICAL_CLIENT.name() + ":";
+        if (owner == null || !owner.startsWith(prefix) || owner.length() == prefix.length()) {
+            return Optional.empty();
+        }
+        AccessContext caller = AccessContext.technicalClient(owner.substring(prefix.length()));
+        return caller.jobOwner().equals(owner) ? Optional.of(caller) : Optional.empty();
     }
 
     /**
@@ -635,33 +723,53 @@ public final class VideoPresentations {
         for (int i = 0; i < chunks.size(); i++) {
             indices.add(i);
         }
+        Map<Integer, String> reasons = new java.util.concurrent.ConcurrentHashMap<>();
+        Consumer<Integer> attempt = index -> {
+            Outcome<List<TranscriptSections.Section>> outcome = call(retries(), context, key, () -> {
+                String answer = textModel.complete(CORRECTION_INSTRUCTIONS,
+                        correctionInput(chunks.get(index), descriptions, marks));
+                if (answer == null || answer.isBlank()) {
+                    return Outcome.failed("das Text-Modell hat leer geantwortet");
+                }
+                List<TranscriptSections.Section> result = acceptCorrection(chunks.get(index), answer);
+                return result == null ? Outcome.failed("die Antwort hatte nicht dieselben Abschnitte und Zeitmarken")
+                        : Outcome.of(result);
+            });
+            if (outcome.value() != null) {
+                synchronized (corrected) {
+                    corrected.set(index, outcome.value());
+                }
+                reasons.remove(index);
+            } else {
+                reasons.put(index, outcome.reason());
+            }
+        };
         inParallel(indices, options.parallel(), context, index -> {
-            List<TranscriptSections.Section> chunk = chunks.get(index);
-            List<TranscriptSections.Section> result = null;
-            for (int attempt = 0; attempt <= retries() && result == null && !context.cancelRequested()
-                    && released.test(key); attempt++) {
-                try {
-                    String answer = textModel.complete(CORRECTION_INSTRUCTIONS,
-                            correctionInput(chunk, descriptions, marks));
-                    result = acceptCorrection(chunk, answer);
-                } catch (RuntimeException e) {
-                    LOG.log(System.Logger.Level.DEBUG, "Korrektur eines Transkriptpakets gescheitert ({0})",
-                            e.getClass().getName());
-                }
+            attempt.accept(index);
+            if (!reasons.containsKey(index)) {
+                context.processed(1);
+                context.written(1);
             }
-            synchronized (corrected) {
-                if (result != null) {
-                    corrected.set(index, result);
-                }
-            }
+        });
+        // Nachzügler einzeln, wie bei „Folien beschreiben“: allein bekommt jedes Paket das Modell für sich.
+        List<Integer> late = reasons.keySet().stream().sorted().toList();
+        inParallel(late, 1, context, attempt);
+        for (int index : late) {
             context.processed(1);
-            if (result != null) {
+            String reason = reasons.get(index);
+            if (reason == null) {
                 context.written(1);
             } else {
                 context.failed(1);
                 failed.incrementAndGet();
+                List<TranscriptSections.Section> chunk = chunks.get(index);
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, "CORRECTION_FAILED",
+                        "Transkriptpaket " + (index + 1) + " von " + chunks.size() + " ("
+                                + TranscriptSections.clock(chunk.get(0).startMillis()) + "–"
+                                + TranscriptSections.clock(chunk.get(chunk.size() - 1).endMillis())
+                                + ") nicht korrigiert: " + reason));
             }
-        });
+        }
         requireReleased(key);
         List<TranscriptSections.Section> all = new ArrayList<>();
         corrected.forEach(all::addAll);
@@ -785,36 +893,50 @@ public final class VideoPresentations {
             frames.put(i, frame.get());
         }
         AtomicLong failed = new AtomicLong(missingFrames);
-        inParallel(open, options.parallel(), context, index -> {
+        Map<Integer, String> reasons = new java.util.concurrent.ConcurrentHashMap<>();
+        Consumer<Integer> attempt = index -> {
             long millis = marks.get(index);
             String[] parts = inputs.get(index).split("\u0000", 2);
             String instruction = NOTES_INSTRUCTIONS + "\n\nGesagt:\n"
                     + (parts[0].isBlank() ? "(Während dieser Folie wurde nichts gesagt.)" : parts[0]);
-            String text = null;
-            for (int attempt = 0; attempt <= vision.retries() && text == null && !context.cancelRequested()
-                    && released.test(key); attempt++) {
-                try {
-                    String answer = vision.describe(frames.get(index).content(), "image/png", instruction);
-                    text = answer == null || answer.isBlank() ? null : answer.strip();
-                } catch (RuntimeException e) {
-                    LOG.log(System.Logger.Level.DEBUG, "Folienkommentar gescheitert ({0})", e.getClass().getName());
-                }
-            }
-            if (text != null && released.test(key)) {
+            byte[] png = frames.get(index).content();
+            Outcome<String> outcome = call(vision.retries(), context, key, () -> {
+                String answer = vision.describe(png, "image/png", instruction);
+                return answer == null || answer.isBlank() ? Outcome.failed("das Vision-Modell hat leer geantwortet")
+                        : Outcome.of(answer.strip());
+            });
+            if (outcome.value() != null && released.test(key)) {
                 assets.putVideoSlideNote(sourceId, pageId, version,
-                        new Assets.SlideNote(millis, null, label, model, parts[1]), text);
+                        new Assets.SlideNote(millis, null, label, model, parts[1]), outcome.value());
+                reasons.remove(index);
+            } else {
+                reasons.put(index, outcome.value() != null ? "die Seite ist nicht mehr für den KI-Dienst freigegeben"
+                        : outcome.reason() + " (" + imageFacts(png) + ", Prompt " + instruction.length()
+                        + " Zeichen)");
             }
+        };
+        inParallel(open, options.parallel(), context, index -> {
+            attempt.accept(index);
+            if (!reasons.containsKey(index)) {
+                context.processed(1);
+                context.written(1);
+            }
+        });
+        // Nachzügler einzeln, wie bei „Folien beschreiben“ (Angelo 20.11.2026: Folie 00:05:00 scheiterte zweimal).
+        List<Integer> late = reasons.keySet().stream().sorted().toList();
+        inParallel(late, 1, context, attempt);
+        for (int index : late) {
             context.processed(1);
-            if (text != null) {
+            String reason = reasons.get(index);
+            if (reason == null) {
                 context.written(1);
             } else {
                 context.failed(1);
                 failed.incrementAndGet();
                 context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, "SLIDE_NOTE_MISSING",
-                        "Kein Vortragstext für Folie " + TranscriptSections.clock(millis)
-                                + ": das Vision-Modell hat nicht oder leer geantwortet"));
+                        "Kein Vortragstext für Folie " + TranscriptSections.clock(marks.get(index)) + ": " + reason));
             }
-        });
+        }
         requireReleased(key);
         if (failed.get() > 0) {
             context.incomplete();
@@ -933,6 +1055,85 @@ public final class VideoPresentations {
         }
     }
 
+    /** Ergebnis eines Modellaufrufs samt Versuchen: der Wert oder warum keiner kam. */
+    record Outcome<T>(T value, String reason) {
+
+        static <T> Outcome<T> of(T value) {
+            return new Outcome<>(value, null);
+        }
+
+        static <T> Outcome<T> failed(String reason) {
+            return new Outcome<>(null, reason);
+        }
+    }
+
+    /**
+     * Ruft das Modell bis zu {@code retries + 1} Mal, bis {@code once} einen Wert liefert. Ohne Wert der Grund des
+     * letzten Versuchs samt Zahl der Versuche und Dauer; Ausnahmen werden zu ihrem Grund ({@link #callFailure}).
+     */
+    private <T> Outcome<T> call(int retries, JobContext context, PageKey key,
+                                java.util.function.Supplier<Outcome<T>> once) {
+        return call(retries, context, () -> released.test(key), once);
+    }
+
+    /** Wie oben; {@code allowed} prüft vor jedem Versuch die KI-Freigabe. */
+    static <T> Outcome<T> call(int retries, JobContext context, java.util.function.BooleanSupplier allowed,
+                               java.util.function.Supplier<Outcome<T>> once) {
+        long started = System.nanoTime();
+        String reason = "abgebrochen";
+        int attempts = 0;
+        for (int attempt = 0; attempt <= retries && !context.cancelRequested() && allowed.getAsBoolean(); attempt++) {
+            attempts++;
+            try {
+                Outcome<T> outcome = once.get();
+                if (outcome.value() != null) {
+                    return outcome;
+                }
+                reason = outcome.reason();
+            } catch (RuntimeException e) {
+                reason = callFailure(e);
+                LOG.log(System.Logger.Level.DEBUG, "Modellaufruf gescheitert ({0})", e.getClass().getName());
+            }
+        }
+        if (attempts == 0) {
+            return Outcome.failed(context.cancelRequested() ? "abgebrochen"
+                    : "die Seite ist nicht für den KI-Dienst freigegeben");
+        }
+        long seconds = java.util.concurrent.TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - started);
+        return Outcome.failed(reason + "; " + attempts + (attempts == 1 ? " Versuch, " : " Versuche, ") + seconds
+                + " s");
+    }
+
+    /** Warum ein Modellaufruf scheiterte, in Worten; nennt nie Text, Antwort oder Schlüssel. */
+    static String callFailure(Throwable e) {
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (cause instanceof AiServiceException failure) {
+                return switch (failure.reason()) {
+                    case TIMEOUT -> "keine Antwort innerhalb der Frist (" + failure.getMessage() + ")";
+                    case UNREACHABLE -> "der KI-Dienst war nicht erreichbar (" + failure.getMessage() + ")";
+                    case UNAUTHORIZED -> "der KI-Dienst lehnt den Zugang ab";
+                    case NOT_CONFIGURED -> "kein Modell eingestellt";
+                    case INVALID_RESPONSE -> "unbrauchbare Antwort (" + failure.getMessage() + ")";
+                };
+            }
+        }
+        return "Fehler " + e.getClass().getSimpleName();
+    }
+
+    /** Größe und Maße eines PNG-Standbilds für die Meldung; ein leeres oder fremdes Bild sagt das. */
+    static String imageFacts(byte[] png) {
+        if (png == null || png.length == 0) {
+            return "Standbild leer";
+        }
+        String size = png.length >= 1024 ? (png.length / 1024) + " KiB" : png.length + " Bytes";
+        if (png.length >= 24 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G') {
+            int width = java.nio.ByteBuffer.wrap(png, 16, 4).getInt();
+            int height = java.nio.ByteBuffer.wrap(png, 20, 4).getInt();
+            return "Standbild " + width + "×" + height + ", " + size;
+        }
+        return "Standbild kein PNG, " + size;
+    }
+
     private int retries() {
         return assets.describerInUse().map(ImageDescriber::retries).orElse(1);
     }
@@ -1005,6 +1206,34 @@ public final class VideoPresentations {
     }
 
     /** Ein Ordner je Seite, damit gleichnamige Videos verschiedener Seiten sich nicht überschreiben. */
+    /**
+     * Wie {@link #freeName}, aber auch nicht der Name eines Vorgangs, der seine Datei noch nicht geschrieben hat:
+     * zwei gleich benannte Videos, die gleichzeitig laufen, bekommen verschiedene Dateien.
+     */
+    private Path reserveName(Path directory, String name) {
+        synchronized (reservedFiles) {
+            Path file = freeName(directory, name, candidate -> reservedFiles.contains(candidate.normalize()));
+            reservedFiles.add(file.normalize());
+            return file;
+        }
+    }
+
+    /** {@code name} in {@code directory}, oder wie ein Browser {@code Name (2).pptx}, wenn die Datei schon da ist. */
+    static Path freeName(Path directory, String name) {
+        return freeName(directory, name, candidate -> false);
+    }
+
+    static Path freeName(Path directory, String name, Predicate<Path> taken) {
+        Path file = directory.resolve(name);
+        int dot = name.lastIndexOf('.');
+        String stem = dot > 0 ? name.substring(0, dot) : name;
+        String extension = dot > 0 ? name.substring(dot) : "";
+        for (int n = 2; (Files.exists(file) || taken.test(file)) && n < 1000; n++) {
+            file = directory.resolve(stem + " (" + n + ")" + extension);
+        }
+        return file;
+    }
+
     private static String pageFolder(PageKey key) {
         return Assets.sha256((key.sourceId() + "\n" + key.pageId()).getBytes(StandardCharsets.UTF_8))
                 .substring("sha256:".length(), "sha256:".length() + 12);
