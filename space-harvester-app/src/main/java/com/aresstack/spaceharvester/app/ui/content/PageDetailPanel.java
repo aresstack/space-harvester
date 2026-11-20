@@ -3580,7 +3580,22 @@ public final class PageDetailPanel extends JPanel {
         AttachmentViewerPanel viewer = new AttachmentViewerPanel(attachment,
                 attachmentLoader(runtime, source, pageId, previews, loader), fileOpener, attachmentRenderer);
         viewer.neighbours(neighbours(file.attachmentId(), entry.kind()));
-        showAttachmentOverlay(viewer, attachment.fileName());
+        if (entry.kind() == com.aresstack.spaceharvester.application.assets.AssetKind.MARK) {
+            // Unter dem Standbild die Folienkommentare, die an der Marke liegen, je Modell eine Fassung.
+            JPanel marked = new JPanel(new BorderLayout(0, 8));
+            marked.setOpaque(false);
+            marked.add(viewer, BorderLayout.CENTER);
+            SlideNotesPanel notes = new SlideNotesPanel();
+            marked.add(notes, BorderLayout.SOUTH);
+            long millis = com.aresstack.spaceharvester.application.assets.Assets.markMillis(file.attachmentId());
+            String id = pageId;
+            Background.run(() -> runtime.workspace().videoSlideNotes(source, id, millis), found -> notes.show(
+                    found.stream().map(note -> new SlideNotesPanel.Version(note.label(), note.text())).toList()),
+                    error -> { });
+            showAttachmentOverlay(marked, attachment.fileName());
+        } else {
+            showAttachmentOverlay(viewer, attachment.fileName());
+        }
         assets.getSelectionModel().setSelectionInterval(row, row);
     }
 

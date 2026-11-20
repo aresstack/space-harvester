@@ -664,8 +664,15 @@ public final class VideoPresentations {
         List<TranscriptSections.Section> sections = TranscriptSections.parse(transcriptFor(key, version));
         List<Long> marks = slideMarks(key, version);
         context.discovered(marks.size());
-        Map<Long, PresentationStore.Result> stored = store.notes(key, version);
         String model = NOTES_VERSION + "|" + vision.id() + "|" + vision.modelVersion();
+        // Die Kommentare liegen an den virtuellen Marken, je Modell einer (Angelo, 20.11.2026).
+        Map<Long, Assets.SlideNote> stored = new HashMap<>();
+        for (Assets.SlideNote note : assets.videoSlideNotes(sourceId, pageId, version)) {
+            if (note.model().equals(model)) {
+                stored.put(note.millis(), note);
+            }
+        }
+        String label = "Kommentar " + vision.modelVersion();
         List<Integer> open = new ArrayList<>();
         Map<Integer, String> inputs = new HashMap<>();
         Map<Integer, Assets.AssetContent> frames = new HashMap<>();
@@ -682,7 +689,7 @@ public final class VideoPresentations {
             String excerpt = excerpt(sections, millis, i + 1 < marks.size() ? marks.get(i + 1) : Long.MAX_VALUE);
             String input = Assets.sha256((model + "\n" + frame.get().asset().sha256() + "\n" + excerpt)
                     .getBytes(StandardCharsets.UTF_8));
-            PresentationStore.Result note = stored.get(millis);
+            Assets.SlideNote note = stored.get(millis);
             if (note != null && note.input().equals(input)) {
                 context.processed(1);
                 context.written(1);
@@ -691,7 +698,7 @@ public final class VideoPresentations {
             if (note != null) {
                 // Veraltet (anderes Standbild, Transkript oder Modell): fällt weg, damit die Datei ihn nie zeigt,
                 // auch wenn der neue Text scheitert.
-                store.removeNote(key, version, millis);
+                assets.removeVideoSlideNote(sourceId, pageId, version, millis, model);
             }
             open.add(i);
             inputs.put(i, excerpt + "\u0000" + input);
@@ -714,7 +721,8 @@ public final class VideoPresentations {
                 }
             }
             if (text != null && released.test(key)) {
-                store.saveNote(key, version, millis, new PresentationStore.Result(text, model, parts[1]));
+                assets.putVideoSlideNote(sourceId, pageId, version,
+                        new Assets.SlideNote(millis, null, label, model, parts[1]), text);
             }
             context.processed(1);
             if (text != null) {
@@ -750,7 +758,17 @@ public final class VideoPresentations {
         String version = snapshot.revision();
         List<Long> marks = slideMarks(key, version);
         context.discovered(marks.size());
-        Map<Long, PresentationStore.Result> notes = store.notes(key, version);
+        // Je Folie der Kommentar des eingestellten Vision-Modells, sonst der zuletzt abgelegte eines anderen.
+        String noteModel = assets.describerInUse().map(vision -> NOTES_VERSION + "|" + vision.id() + "|"
+                + vision.modelVersion()).orElse(null);
+        Map<Long, String> notes = new HashMap<>();
+        for (Assets.SlideNote note : assets.videoSlideNotes(sourceId, pageId, version)) {
+            if (notes.containsKey(note.millis()) && !note.model().equals(noteModel)) {
+                continue;
+            }
+            assets.videoSlideNoteText(sourceId, pageId, version, note.attachmentId())
+                    .ifPresent(text -> notes.put(note.millis(), text));
+        }
         List<PptxExportWriter.Slide> content = new ArrayList<>();
         boolean incomplete = false;
         for (long millis : marks) {
@@ -762,10 +780,9 @@ public final class VideoPresentations {
                 incomplete = true;
                 continue;
             }
-            PresentationStore.Result note = notes.get(millis);
+            String note = notes.get(millis);
             incomplete |= note == null;
-            content.add(new PptxExportWriter.Slide(frame.get().content(), Assets.markTitle(millis),
-                    note == null ? null : note.text()));
+            content.add(new PptxExportWriter.Slide(frame.get().content(), Assets.markTitle(millis), note));
             context.written(1);
         }
         if (content.isEmpty()) {

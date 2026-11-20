@@ -819,6 +819,23 @@ public final class Workspace {
         return List.copyOf(versions);
     }
 
+    /**
+     * Die Folienkommentare einer Marke (Angelo, 20.11.2026): je Modell eine Fassung, wie sie an der virtuellen Marke
+     * liegen; leer ohne. Fragt die Quelle nicht.
+     */
+    public List<TranscriptVersion> videoSlideNotes(String sourceId, String pageId, long millis) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        String version = page.snapshot().revision();
+        List<TranscriptVersion> notes = new ArrayList<>();
+        for (Assets.SlideNote note : harvester.assets().videoSlideNotes(sourceId, pageId, version)) {
+            if (note.millis() == millis) {
+                harvester.assets().videoSlideNoteText(sourceId, pageId, version, note.attachmentId())
+                        .ifPresent(text -> notes.add(new TranscriptVersion(note.label(), text)));
+            }
+        }
+        return List.copyOf(notes);
+    }
+
     /** Das gespeicherte Transkript des Videos dieser Seite; leer, solange keines erzeugt ist. Fragt die Quelle nicht. */
     public java.util.Optional<String> videoTranscript(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);

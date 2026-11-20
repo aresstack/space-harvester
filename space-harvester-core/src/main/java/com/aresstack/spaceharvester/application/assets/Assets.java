@@ -987,6 +987,128 @@ public class Assets implements DocumentInventory {
                 source.retrievedAt()), list.retrievedAt());
     }
 
+    /** Präfix der Folienkommentare an den Marken eines Videos und ihres Verzeichnisses in der Ablage. */
+    public static final String VIDEO_NOTE = "video-note-";
+
+    /**
+     * Ein Folienkommentar (Vortragstext) einer Marke (Angelo, 20.11.2026): an der virtuellen Marke abgelegt, je Modell
+     * einer, wie die Korrekturen am Transkript; die Marke und ihr Standbild bleiben unverändert.
+     *
+     * @param millis       Position der Marke im Video
+     * @param attachmentId Kennung in der Ablage
+     * @param label        Anzeigename, etwa {@code Kommentar gemma4:12b}
+     * @param model        Verfahren und Modell; je Modell und Marke ersetzt ein neuer den alten
+     * @param input        Fingerabdruck der Eingabe (Standbild, Transkriptauszug, Modell)
+     */
+    public record SlideNote(long millis, String attachmentId, String label, String model, String input) {
+    }
+
+    private final Object slideNotes = new Object();
+
+    /** Legt den Folienkommentar einer Marke ab und ersetzt den früheren desselben Modells. */
+    public void putVideoSlideNote(String sourceId, String pageId, String version, SlideNote note, String text) {
+        String id = noteId(pageId, note.millis(), note.model());
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        synchronized (slideNotes) {
+            store.put(new Asset(sourceId, pageId, id, frameVersion(version),
+                    frameName(note.millis()).replace(".png", "") + " – " + note.label() + ".txt", "text/plain",
+                    AssetKind.TRANSCRIPT, bytes.length, sha256(bytes), clock.instant()), bytes);
+            java.util.Properties index = noteIndex(sourceId, pageId, version);
+            index.setProperty(id + ".millis", String.valueOf(note.millis()));
+            index.setProperty(id + ".label", note.label());
+            index.setProperty(id + ".model", note.model());
+            index.setProperty(id + ".input", note.input());
+            writeNoteIndex(sourceId, pageId, version, index);
+        }
+    }
+
+    /** Nimmt den Folienkommentar einer Marke dieses Modells aus dem Verzeichnis, etwa wenn er veraltet ist. */
+    public void removeVideoSlideNote(String sourceId, String pageId, String version, long millis, String model) {
+        String id = noteId(pageId, millis, model);
+        synchronized (slideNotes) {
+            java.util.Properties index = noteIndex(sourceId, pageId, version);
+            if (index.remove(id + ".model") != null) {
+                index.remove(id + ".millis");
+                index.remove(id + ".label");
+                index.remove(id + ".input");
+                writeNoteIndex(sourceId, pageId, version, index);
+            }
+        }
+    }
+
+    /** Alle Folienkommentare des Videos dieser Fassung, nach Position und Anzeigename. */
+    public List<SlideNote> videoSlideNotes(String sourceId, String pageId, String version) {
+        java.util.Properties index = noteIndex(sourceId, pageId, version);
+        List<SlideNote> found = new java.util.ArrayList<>();
+        for (String key : index.stringPropertyNames()) {
+            if (!key.endsWith(".model")) {
+                continue;
+            }
+            String id = key.substring(0, key.length() - ".model".length());
+            try {
+                found.add(new SlideNote(Long.parseLong(index.getProperty(id + ".millis")), id,
+                        index.getProperty(id + ".label", id), index.getProperty(key),
+                        index.getProperty(id + ".input", "")));
+            } catch (NumberFormatException damaged) {
+                // Ein beschädigter Eintrag fehlt; der nächste Lauf schreibt ihn neu.
+            }
+        }
+        found.sort(java.util.Comparator.comparingLong(SlideNote::millis).thenComparing(SlideNote::label));
+        return List.copyOf(found);
+    }
+
+    /** Der Folienkommentar dieser Marke und dieses Modells; leer ohne. */
+    public Optional<SlideNote> videoSlideNote(String sourceId, String pageId, String version, long millis,
+                                              String model) {
+        String id = noteId(pageId, millis, model);
+        return videoSlideNotes(sourceId, pageId, version).stream().filter(note -> note.attachmentId().equals(id))
+                .findFirst();
+    }
+
+    /** Der Text eines Folienkommentars dieser Fassung. */
+    public Optional<String> videoSlideNoteText(String sourceId, String pageId, String version, String attachmentId) {
+        if (attachmentId == null || !attachmentId.startsWith(VIDEO_NOTE)
+                || attachmentId.equals(noteIndexId(pageId))) {
+            return Optional.empty();
+        }
+        return store.find(sourceId, attachmentId, frameVersion(version)).map(this::read)
+                .map(content -> new String(content.content(), java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private java.util.Properties noteIndex(String sourceId, String pageId, String version) {
+        java.util.Properties index = new java.util.Properties();
+        store.find(sourceId, noteIndexId(pageId), frameVersion(version)).map(this::read).ifPresent(content -> {
+            try {
+                index.load(new java.io.StringReader(new String(content.content(),
+                        java.nio.charset.StandardCharsets.UTF_8)));
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        });
+        return index;
+    }
+
+    private void writeNoteIndex(String sourceId, String pageId, String version, java.util.Properties index) {
+        java.io.StringWriter written = new java.io.StringWriter();
+        try {
+            index.store(written, null);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        byte[] bytes = written.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        store.put(new Asset(sourceId, pageId, noteIndexId(pageId), frameVersion(version), "Folienkommentare.properties",
+                "text/plain", AssetKind.TRANSCRIPT, bytes.length, sha256(bytes), clock.instant()), bytes);
+    }
+
+    private static String noteIndexId(String pageId) {
+        return VIDEO_NOTE + "index-" + framePage(pageId);
+    }
+
+    private static String noteId(String pageId, long millis, String model) {
+        return VIDEO_NOTE + framePage(pageId) + "-" + millis + "-" + sha256(model.getBytes(
+                java.nio.charset.StandardCharsets.UTF_8)).substring("sha256:".length(), "sha256:".length() + 12);
+    }
+
     /**
      * Die Marken ohne Wiederholungen derselben Folie: Zeigt das Standbild einer Marke dieselbe Folie wie das der
      * vorigen ({@link SlideFrames#same}), etwa weil nur der Mauszeiger wanderte, fällt sie weg. Marken ohne gezogenes

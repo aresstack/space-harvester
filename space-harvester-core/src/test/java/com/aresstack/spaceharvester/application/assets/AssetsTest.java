@@ -105,6 +105,34 @@ class AssetsTest {
                         "Vortrag – Transkript (Korrektur a).txt", "Vortrag – Transkript (Korrektur b).txt");
     }
 
+    /** Angelo 20.11.2026: Folienkommentare liegen an der virtuellen Marke, je Modell einer, versioniert. */
+    @Test
+    void slideNotesLieAtTheirMarkOnePerModel() {
+        Assets assets = assets(1000);
+        assets.putVideoSlideNote("wiki", "101", "v1", new Assets.SlideNote(12_000, null, "Kommentar a", "n|a", "sha:1"),
+                "Folie eins, Modell a");
+        assets.putVideoSlideNote("wiki", "101", "v1", new Assets.SlideNote(12_000, null, "Kommentar b", "n|b", "sha:2"),
+                "Folie eins, Modell b");
+        assets.putVideoSlideNote("wiki", "101", "v1", new Assets.SlideNote(30_000, null, "Kommentar a", "n|a", "sha:3"),
+                "Folie zwei");
+        assets.putVideoSlideNote("wiki", "101", "v1", new Assets.SlideNote(12_000, null, "Kommentar a", "n|a", "sha:4"),
+                "Folie eins, Modell a, neu");
+
+        List<Assets.SlideNote> notes = assets.videoSlideNotes("wiki", "101", "v1");
+        assertThat(notes).extracting(Assets.SlideNote::millis, Assets.SlideNote::label).containsExactly(
+                org.assertj.core.groups.Tuple.tuple(12_000L, "Kommentar a"),
+                org.assertj.core.groups.Tuple.tuple(12_000L, "Kommentar b"),
+                org.assertj.core.groups.Tuple.tuple(30_000L, "Kommentar a"));
+        assertThat(assets.videoSlideNote("wiki", "101", "v1", 12_000, "n|a")).map(Assets.SlideNote::input)
+                .contains("sha:4");
+        assertThat(assets.videoSlideNoteText("wiki", "101", "v1", notes.get(0).attachmentId()))
+                .contains("Folie eins, Modell a, neu");
+
+        assets.removeVideoSlideNote("wiki", "101", "v1", 12_000, "n|b");
+        assertThat(assets.videoSlideNotes("wiki", "101", "v1")).hasSize(2);
+        assertThat(assets.videoSlideNotes("wiki", "101", "v2")).as("andere Fassung").isEmpty();
+    }
+
     @Test
     void aSignatureInTheContentOverridesAWrongMediaTypeOfTheSource() {
         FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
