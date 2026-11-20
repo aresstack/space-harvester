@@ -45,6 +45,12 @@ final class AudioChunkPrefetcher {
     private final long[] groupStart;
     private final int[] groupLength;
     private final Map<Integer, CompletableFuture<byte[]>> fetched = new ConcurrentHashMap<>();
+    /**
+     * Die Requests, die gerade gelesen werden, mit der Zahl ihrer Leser: Die Brücke liest mit mehreren Abrufen an
+     * verschiedenen Stellen zugleich; keiner darf wegräumen, was ein anderer noch braucht.
+     */
+    private final java.util.concurrent.ConcurrentSkipListMap<Integer, Integer> reading =
+            new java.util.concurrent.ConcurrentSkipListMap<>();
 
     AudioChunkPrefetcher(MediaStreamBridge.ChunkSource remote, long[] offsets, int[] lengths, int maximumRequest) {
         this.remote = remote;
@@ -84,8 +90,22 @@ final class AudioChunkPrefetcher {
         if (group < 0) {
             return Mp4AudioOnlySource.fetch(remote, offsets[chunk] + inside, count);
         }
-        CompletableFuture<byte[]> whole = request(group);
-        prefetchAfter(group);
+        reading.merge(group, 1, Integer::sum);
+        byte[] data;
+        try {
+            CompletableFuture<byte[]> whole = request(group);
+            prefetchAfter(group);
+            data = read(group, whole);
+        } finally {
+            reading.computeIfPresent(group, (key, readers) -> readers > 1 ? readers - 1 : null);
+        }
+        byte[] slice = new byte[count];
+        long start = offsets[chunk] - groupStart[group] + inside;
+        System.arraycopy(data, (int) start, slice, 0, count);
+        return slice;
+    }
+
+    private byte[] read(int group, CompletableFuture<byte[]> whole) throws IOException {
         byte[] data;
         try {
             data = whole.get();
@@ -102,10 +122,7 @@ final class AudioChunkPrefetcher {
             }
             throw new IOException("Audio chunk unavailable", cause);
         }
-        byte[] slice = new byte[count];
-        long start = offsets[chunk] - groupStart[group] + inside;
-        System.arraycopy(data, (int) start, slice, 0, count);
-        return slice;
+        return data;
     }
 
     /** Remote requests needed for all audio (for tests). */
@@ -129,8 +146,12 @@ final class AudioChunkPrefetcher {
     }
 
     private void prefetchAfter(int group) {
-        // Keep the current and the previous request (a short step back); forget the rest of a seek's leftovers.
-        fetched.keySet().removeIf(index -> index < group - 1 || index > group + AHEAD_GROUPS);
+        // Keep everything from just before the earliest reader to the lookahead of the latest one (a short step back
+        // stays); forget the rest of a seek's leftovers. Evicting by this reader alone threw away what the others
+        // were about to read, and over a slow source every request was fetched again and again.
+        int low = Math.min(group, reading.isEmpty() ? group : reading.firstKey());
+        int high = Math.max(group, reading.isEmpty() ? group : reading.lastKey());
+        fetched.keySet().removeIf(index -> index < low - 1 || index > high + AHEAD_GROUPS);
         long ahead = 0;
         for (int next = group + 1; next < groupStart.length && next <= group + AHEAD_GROUPS; next++) {
             ahead += groupLength[next];

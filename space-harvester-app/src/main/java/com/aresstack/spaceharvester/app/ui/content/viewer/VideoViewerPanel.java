@@ -93,6 +93,10 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private volatile long stillAtMillis = -1;
     /** Ob der Ton vor dem Sprung stumm war, um ihn danach so wiederherzustellen. */
     private volatile boolean mutedBeforeStill;
+    /** Seit wann der laufende Sprung spielt; nach der Frist für einen Sprung hält das Video in jedem Fall an. */
+    private volatile long stillSinceNanos;
+    /** Die Länge des Videos aus seinem MP4-Index; mit ihr bleiben die Marken auch nach Stopp oder Fehler sichtbar. */
+    private long indexDurationMillis;
 
     public VideoViewerPanel(String fileName, long size, String mediaType,
                             MediaStreamBridge.ChunkSource reader) {
@@ -451,16 +455,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
             @Override
             public void timeChanged(MediaPlayer mediaPlayer, long time) {
-                long still = stillAtMillis;
-                // Nur Zeiten von der neuen Stelle zählen; direkt nach dem Sprung meldet VLC noch die alte.
-                if (still >= 0 && time >= still
-                        && time <= still + settings.get(VideoSettings.Value.LATE_TOLERANCE_MILLIS)) {
-                    stillAtMillis = -1;
-                    boolean muted = mutedBeforeStill;
-                    mediaPlayer.submit(() -> {
-                        mediaPlayer.controls().setPause(true);
-                        mediaPlayer.audio().setMute(muted);
-                    });
+                if (stillReached(time)) {
+                    finishStill(mediaPlayer);
                 }
             }
 
@@ -590,11 +586,34 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         }
     }
 
+    /** Ob VLC eine Zeit von der neuen Stelle meldet; direkt nach dem Sprung meldet es noch die alte. */
+    private boolean stillReached(long time) {
+        long still = stillAtMillis;
+        return still >= 0 && time >= still && time <= still + settings.get(VideoSettings.Value.LATE_TOLERANCE_MILLIS);
+    }
+
+    /**
+     * Beendet einen Sprung im angehaltenen Video: anhalten, Ton wie vorher. Nie im Ereignis-Thread von VLC aufrufen
+     * lassen, darum über {@code submit}.
+     */
+    private void finishStill(MediaPlayer mediaPlayer) {
+        if (stillAtMillis < 0) {
+            return;
+        }
+        stillAtMillis = -1;
+        boolean muted = mutedBeforeStill;
+        mediaPlayer.submit(() -> {
+            mediaPlayer.controls().setPause(true);
+            mediaPlayer.audio().setMute(muted);
+        });
+    }
+
     /** Merkt einen Sprung im angehaltenen Video vor: stumm bis kurz nach {@code target}, dann anhalten. */
     private void holdStillAt(long target) {
         if (stillAtMillis < 0) {
             mutedBeforeStill = player.mediaPlayer().audio().isMute();
         }
+        stillSinceNanos = System.nanoTime();
         stillAtMillis = target + settings.get(VideoSettings.Value.STILL_AFTER_SEEK_MILLIS);
         player.mediaPlayer().audio().setMute(true);
     }
@@ -720,6 +739,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     /** The marks on the timeline; with a known length they are placed before anything is played. */
     private void marks(java.util.List<Long> changes, long durationMillis) {
         shownMarks = java.util.List.copyOf(changes);
+        if (durationMillis > 0) {
+            indexDurationMillis = durationMillis;
+        }
         transport.slides(changes);
         if (!started && durationMillis > 0) {
             transport.seekBar().update(0, durationMillis);
@@ -778,7 +800,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.play().setEnabled(true);
         transport.pause().setEnabled(false);
         transport.stop().setEnabled(false);
-        transport.seekBar().reset();
+        resetTimeline();
         message.setText("Wiedergabe gestoppt");
     }
 
@@ -793,8 +815,19 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.play().setEnabled(true);
         transport.pause().setEnabled(false);
         transport.stop().setEnabled(false);
-        transport.seekBar().reset();
+        resetTimeline();
         message.setText(reason);
+    }
+
+    /**
+     * Die Zeitleiste auf den Anfang; ist die Länge aus dem MP4-Index bekannt, bleiben die Marken sichtbar und
+     * anspringbar, statt mit der Leiste zu verschwinden.
+     */
+    private void resetTimeline() {
+        transport.seekBar().reset();
+        if (indexDurationMillis > 0) {
+            transport.seekBar().update(0, indexDurationMillis);
+        }
     }
 
     /** Keep the timeline responsive while native playback fetches a newly requested range. */
@@ -811,6 +844,12 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         try {
             long duration = player.mediaPlayer().status().length();
             long current = player.mediaPlayer().status().time();
+            // Sicherung des Sprungs im angehaltenen Video: verpasst das Ereignis die neue Stelle oder erreicht VLC sie
+            // nicht, hält es trotzdem an, statt unsichtbar stumm weiterzuspielen und weiter zu laden.
+            if (stillAtMillis >= 0 && (stillReached(current) || System.nanoTime() - stillSinceNanos
+                    > TimeUnit.MILLISECONDS.toNanos(settings.get(VideoSettings.Value.SEEK_FEEDBACK_MILLIS)))) {
+                finishStill(player.mediaPlayer());
+            }
             float share = player.mediaPlayer().status().position();
             boolean hasFraction = share >= 0 && share <= 1;
             if (seekRequestedAtNanos != 0) {
