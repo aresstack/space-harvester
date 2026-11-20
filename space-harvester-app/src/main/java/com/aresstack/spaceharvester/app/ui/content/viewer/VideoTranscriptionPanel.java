@@ -5,6 +5,7 @@ import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.transcription.TranscribeAudioUseCase;
 import com.aresstack.spaceharvester.app.transcription.TranscriptSegment;
 import com.aresstack.spaceharvester.app.transcription.TranscriptionStatusListener;
+import com.aresstack.spaceharvester.app.transcription.WhisperModel;
 import com.aresstack.spaceharvester.app.transcription.WhisperModelLocation;
 
 import javax.swing.BorderFactory;
@@ -67,6 +68,17 @@ public final class VideoTranscriptionPanel extends JPanel {
             new com.aresstack.spaceharvester.app.ui.controls.CopyButton(this::copyText);
     private Runnable onCorrect = () -> { };
     private Runnable onDelete = () -> { };
+    /** Tooltip der Auswahl des Originals. */
+    public static final String ORIGINAL_TIP = "Original-Transkript je Whisper-Modell (✓ = vorhanden); zu einem Modell "
+            + "ohne Transkript erzeugt das Mikrofon eines";
+    /**
+     * Die Originale je Whisper-Modell (Angelo 20.11.2026): die Auswahl zeigt das Original eines Modells samt seinen
+     * Korrekturen; zu einem Modell ohne Transkript erzeugt das Mikrofon eines mit diesem Modell.
+     */
+    private final javax.swing.JComboBox<Original> originals = com.aresstack.spaceharvester.app.ui.Comic.combo();
+    /** Während die Auswahl von außen gefüllt wird, löst sie nichts aus. */
+    private boolean fillingOriginals;
+    private java.util.function.Consumer<String> onOriginal = whisper -> { };
     /**
      * Die Leiste mit der Lupe (Angelo, 20.11.2026): links der Knopf samt Fortschritt, mittig die Fassungen des
      * Transkripts zum Umschalten; alles senkrecht mittig zur Lupe.
@@ -81,15 +93,16 @@ public final class VideoTranscriptionPanel extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay storedLoading =
             new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(new JScrollPane(transcript));
     private VideoTranscriptSource videoSource;
-    private ModelGate modelGate = (progress, then) -> then.run();
+    private ModelGate modelGate = (model, progress, then) -> then.run();
 
     /** Stellt vor einer Transkription das Whisper-Modell bereit, nötigenfalls nach Rückfrage von Hugging Face. */
     public interface ModelGate {
         /**
+         * @param model    das in der Auswahl gewählte Modell
          * @param progress bekommt Fortschritt oder den Grund, warum nicht geladen wurde
          * @param then     läuft, sobald das Modell da ist
          */
-        void open(java.util.function.Consumer<String> progress, Runnable then);
+        void open(WhisperModel model, java.util.function.Consumer<String> progress, Runnable then);
     }
 
     public void modelGate(ModelGate gate) {
@@ -99,7 +112,7 @@ public final class VideoTranscriptionPanel extends JPanel {
     /** Was Whisper bisher erkannt hat, ohne Fehlermeldungen: so wird es gespeichert. */
     private final StringBuilder recognized = new StringBuilder();
     /** Bekommt das bisher erkannte Transkript nach jedem neuen Abschnitt und am Ende, um es zu speichern. */
-    private java.util.function.Consumer<String> onTranscript = text -> { };
+    private java.util.function.BiConsumer<String, String> onTranscript = (whisper, text) -> { };
     /**
      * Wo eine gestoppte Transkription fortsetzt: am Ende des zuletzt erkannten Abschnitts, wie Whisper sein Fenster
      * auch während eines Laufs verschiebt; {@code 0} ohne Transkript oder nach einem abgeschlossenen Lauf.
@@ -120,6 +133,24 @@ public final class VideoTranscriptionPanel extends JPanel {
     public record Version(String label, String text) {
     }
 
+    /**
+     * Ein Eintrag der Auswahl der Originale.
+     *
+     * @param whisper Kennung des Whisper-Modells, etwa {@code tiny}; leer für ein älteres Transkript ohne Modell
+     * @param stored  ob es zu diesem Modell schon ein Transkript gibt
+     */
+    public record Original(String whisper, boolean stored) {
+
+        /** Der Name in der Auswahl, etwa {@code Whisper Tiny ✓}. */
+        @Override
+        public String toString() {
+            WhisperModel model = WhisperModel.of(whisper);
+            String name = whisper.isEmpty() ? "Älteres Transkript"
+                    : "Whisper " + (model == null ? whisper : model.label());
+            return stored ? name + " ✓" : name;
+        }
+    }
+
     public VideoTranscriptionPanel(TranscribeAudioUseCase transcription) {
         super(new BorderLayout());
         this.transcription = transcription;
@@ -129,8 +160,11 @@ public final class VideoTranscriptionPanel extends JPanel {
         left.setOpaque(false);
         java.awt.GridBagConstraints at = new java.awt.GridBagConstraints();
         at.anchor = java.awt.GridBagConstraints.CENTER;
-        left.add(toggle, at);
+        originals.setToolTipText(ORIGINAL_TIP);
+        originals.getAccessibleContext().setAccessibleName("Original-Transkript");
+        left.add(originals, at);
         at.insets = new java.awt.Insets(0, 4, 0, 0);
+        left.add(toggle, at);
         left.add(correct, at);
         left.add(delete, at);
         left.add(copy, at);
@@ -157,13 +191,19 @@ public final class VideoTranscriptionPanel extends JPanel {
         // Das Transkript füllt die ganze Fläche; Fortschritt und Fassungen stehen unten in der Leiste mit der Lupe.
         add(storedLoading, BorderLayout.CENTER);
 
+        originals.addActionListener(event -> {
+            if (!fillingOriginals) {
+                originalChosen();
+            }
+        });
+        showOriginals(null, java.util.List.of(), null);
         correct.addActionListener(event -> onCorrect.run());
         delete.addActionListener(event -> onDelete.run());
         toggle.addActionListener(event -> {
             if (worker == null) {
                 VideoTranscriptSource wanted = videoSource;
                 // Fehlt das eingestellte Modell, fragt die App erst und lädt es; danach beginnt die Transkription.
-                modelGate.open(status::setText, () -> {
+                modelGate.open(transcriptionModel(), status::setText, () -> {
                     if (wanted == videoSource) {
                         startTranscription();
                     }
@@ -188,7 +228,109 @@ public final class VideoTranscriptionPanel extends JPanel {
         transcript.setText(START_TEXT);
         status.setText("");
         showVersions(source, java.util.List.of());
+        showOriginals(source, java.util.List.of(), null);
         updateActions();
+    }
+
+    /**
+     * Füllt die Auswahl der Originale: alle Whisper-Modelle, die mit Transkript markiert, davor ein älteres ohne
+     * Modell, wenn es eines gibt. Gewählt ist {@code chosen}, ohne Transkript das eingestellte Modell.
+     *
+     * @param stored die Modelle mit Transkript ({@code ""}: ein älteres ohne Modell)
+     * @param chosen das gewählte Original; {@code null} ohne Transkript
+     */
+    public void showOriginals(VideoTranscriptSource source, java.util.List<String> stored, String chosen) {
+        if (source != videoSource) {
+            return;
+        }
+        java.util.List<Original> items = new java.util.ArrayList<>();
+        if (stored.contains("")) {
+            items.add(new Original("", true));
+        }
+        for (WhisperModel model : WhisperModel.values()) {
+            items.add(new Original(model.id(), stored.contains(model.id())));
+        }
+        for (String other : stored) {
+            if (!other.isEmpty() && WhisperModel.of(other) == null) {
+                items.add(new Original(other, true));
+            }
+        }
+        String wanted = chosen != null ? chosen : WhisperModelLocation.selected().id();
+        fillingOriginals = true;
+        try {
+            originals.setModel(new javax.swing.DefaultComboBoxModel<>(items.toArray(Original[]::new)));
+            items.stream().filter(item -> item.whisper().equals(wanted)).findFirst()
+                    .ifPresent(originals::setSelectedItem);
+        } finally {
+            fillingOriginals = false;
+        }
+        updateActions();
+    }
+
+    /** Das gewählte Original ({@code ""}: ein älteres ohne Modell). */
+    public String whisper() {
+        Original item = (Original) originals.getSelectedItem();
+        return item == null ? WhisperModelLocation.selected().id() : item.whisper();
+    }
+
+    /** Das Modell, mit dem das Mikrofon transkribiert: das gewählte, bei einem älteren Transkript das eingestellte. */
+    public WhisperModel transcriptionModel() {
+        WhisperModel model = WhisperModel.of(whisper());
+        return model == null ? WhisperModelLocation.selected() : model;
+    }
+
+    /** Was die Wahl eines Originals mit Transkript tut: es laden und wählen ({@link #showOriginals}). */
+    public void onOriginal(java.util.function.Consumer<String> action) {
+        onOriginal = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Für Tests: die Auswahl der Originale. */
+    javax.swing.JComboBox<Original> originalChoice() {
+        return originals;
+    }
+
+    private void originalChosen() {
+        Original item = (Original) originals.getSelectedItem();
+        if (item == null || worker != null || following) {
+            return;
+        }
+        if (item.stored()) {
+            // Ein anderes Original beginnt mit seinem Original, nicht mit einer gleichnamigen Korrektur.
+            shownVersion = 0;
+            storedLoading.setBusy(true);
+            onOriginal.accept(item.whisper());
+            return;
+        }
+        // Noch kein Transkript zu diesem Modell: die Ansicht wie ohne Transkript, das Mikrofon erzeugt es.
+        recognized.setLength(0);
+        resumeMillis = 0;
+        transcript.setText(START_TEXT);
+        status.setText("Noch kein Transkript mit " + item + ".");
+        showVersions(videoSource, java.util.List.of());
+        updateActions();
+    }
+
+    /** Markiert das gewählte Original als vorhanden, sobald das Mikrofon den ersten Abschnitt gespeichert hat. */
+    private void markStored(String whisper) {
+        for (int i = 0; i < originals.getItemCount(); i++) {
+            Original item = originals.getItemAt(i);
+            if (item.whisper().equals(whisper) && !item.stored()) {
+                fillingOriginals = true;
+                try {
+                    boolean selected = originals.getSelectedIndex() == i;
+                    javax.swing.DefaultComboBoxModel<Original> model =
+                            (javax.swing.DefaultComboBoxModel<Original>) originals.getModel();
+                    model.removeElementAt(i);
+                    model.insertElementAt(new Original(whisper, true), i);
+                    if (selected) {
+                        originals.setSelectedIndex(i);
+                    }
+                } finally {
+                    fillingOriginals = false;
+                }
+                return;
+            }
+        }
     }
 
     /**
@@ -299,8 +441,11 @@ public final class VideoTranscriptionPanel extends JPanel {
         return java.util.List.of(correct, delete, copy);
     }
 
-    /** {@code listener} bekommt das bisher erkannte Transkript nach jedem neuen Abschnitt und am Ende (auf dem EDT). */
-    public void onTranscript(java.util.function.Consumer<String> listener) {
+    /**
+     * {@code listener} bekommt das Whisper-Modell und das bisher erkannte Transkript nach jedem neuen Abschnitt und am
+     * Ende (auf dem EDT).
+     */
+    public void onTranscript(java.util.function.BiConsumer<String, String> listener) {
         onTranscript = java.util.Objects.requireNonNull(listener, "listener");
     }
 
@@ -345,8 +490,31 @@ public final class VideoTranscriptionPanel extends JPanel {
      * @param running ob der Auftrag noch läuft
      */
     public void followStored(VideoTranscriptSource source, String text, boolean running) {
+        followStored(source, null, text, running);
+    }
+
+    /**
+     * Wie {@link #followStored(VideoTranscriptSource, String, boolean)} für das Original {@code whisper}, in das der
+     * Auftrag schreibt; zeigt die Auswahl ein anderes, schaltet sie darauf um.
+     */
+    public void followStored(VideoTranscriptSource source, String whisper, String text, boolean running) {
         if (source != videoSource) {
             return;
+        }
+        if (whisper != null && worker == null && text != null && !text.isBlank() && !whisper.equals(whisper())) {
+            markStored(whisper);
+            fillingOriginals = true;
+            try {
+                for (int i = 0; i < originals.getItemCount(); i++) {
+                    if (originals.getItemAt(i).whisper().equals(whisper)) {
+                        originals.setSelectedIndex(i);
+                    }
+                }
+            } finally {
+                fillingOriginals = false;
+            }
+            recognized.setLength(0);
+            showVersions(source, java.util.List.of());
         }
         following = running;
         if (worker != null || text == null || text.isBlank()) {
@@ -422,6 +590,8 @@ public final class VideoTranscriptionPanel extends JPanel {
             return;
         }
         VideoTranscriptSource requestedSource = videoSource;
+        String requestedWhisper = whisper().isEmpty() ? "" : transcriptionModel().id();
+        WhisperModel requestedModel = transcriptionModel();
         storedLoading.setBusy(false);
         if (shownVersion != 0 && !versions.isEmpty()) {
             // Whisper schreibt am Original weiter, nicht an einer Korrektur.
@@ -441,7 +611,9 @@ public final class VideoTranscriptionPanel extends JPanel {
                 if (isCancelled()) {
                     return null;
                 }
-                Path model = WhisperModelLocation.resolve();
+                Path model = WhisperModelLocation.find(requestedModel).orElseThrow(() ->
+                        new com.aresstack.spaceharvester.app.transcription.WhisperModelMissingException(
+                                requestedModel));
                 if (isCancelled()) {
                     return null;
                 }
@@ -494,9 +666,10 @@ public final class VideoTranscriptionPanel extends JPanel {
                     recognized.append(line);
                     resumeMillis = Math.max(resumeMillis, segment.endMillis());
                 }
+                markStored(requestedWhisper);
                 updateActions();
                 // Jeder Abschnitt wird sofort gespeichert: nichts geht beim Seitenwechsel verloren.
-                onTranscript.accept(recognized.toString());
+                onTranscript.accept(requestedWhisper, recognized.toString());
             }
 
             @Override
@@ -555,6 +728,7 @@ public final class VideoTranscriptionPanel extends JPanel {
         correct.setEnabled(stored);
         delete.setEnabled(stored);
         copy.setEnabled(recognized.length() > 0);
+        originals.setEnabled(videoSource != null && !running && !following);
         // Während Whisper schreibt, zeigt die Ansicht das Original, das gerade entsteht.
         renderVersions();
     }

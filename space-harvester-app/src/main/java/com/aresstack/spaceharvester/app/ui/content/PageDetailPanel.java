@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.enterpriseai.ui.comic.control.ComicOverlayPanel;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -624,7 +625,9 @@ public final class PageDetailPanel extends JPanel {
         images.onDescribeOne(this::describeImage);
         // Erzeugte Transkripte bleiben: gespeichert als virtueller Anhang, beim nächsten Öffnen wieder gezeigt.
         videoTranscript.onTranscript(this::storeTranscript);
-        videoTranscript.modelGate((progress, then) -> context.whisperModel().ensure(this, progress, progress, then));
+        // Das Mikrofon transkribiert mit dem in der Auswahl gewählten Modell; fehlt es, erst fragen und laden.
+        videoTranscript.modelGate((model, progress, then) -> context.whisperModel().ensure(model, this, progress,
+                progress, then));
         images.onOpen(this::openImage);
         images.onDescribeOnce(() -> describeImages(true));
         images.onRelease(this::releaseSourceAndDescribe);
@@ -1770,6 +1773,8 @@ public final class PageDetailPanel extends JPanel {
             // Angelo 20.11.2026: Korrigieren wie vor „In PPTX umwandeln“, Löschen samt Korrekturen und Analysen.
             videoTranscript.onCorrect(() -> correctTranscript(frames, ranges, videoSize, videoType));
             videoTranscript.onDelete(() -> deleteTranscript(transcriptSource, frames));
+            // Angelo 20.11.2026: je Whisper-Modell ein Original; die Auswahl wählt es auch für Korrektur und Analysen.
+            videoTranscript.onOriginal(whisper -> chooseOriginal(transcriptSource, frames, whisper));
             showStoredTranscript(transcriptSource, frames);
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
             // Das Transkript füllt den Reiter; die Akronymzeile gehört zum Lesetext.
@@ -3026,15 +3031,17 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         String name = "„In " + format.label() + " umwandeln“";
-        // „Transkript ziehen“ braucht das eingestellte Whisper-Modell: fehlt es, erst fragen und laden.
-        context.whisperModel().ensure(this, feedback::working,
+        // „Transkript ziehen“ braucht das in der Transkriptansicht gewählte Whisper-Modell: fehlt es, erst fragen.
+        com.aresstack.spaceharvester.app.transcription.WhisperModel whisper = videoTranscript.transcriptionModel();
+        context.whisperModel().ensure(whisper, this, feedback::working,
                 reason -> feedback.warning(name + " nicht gestartet", reason),
-                () -> startPresentation(runtime, video, ranges, size, mediaType, format));
+                () -> startPresentation(runtime, video, ranges, size, mediaType, format, whisper));
     }
 
     private void startPresentation(AppRuntime runtime, VideoFrameSource video,
                                    com.aresstack.spaceharvester.application.sources.MediaByteRange ranges,
-                                   long size, String mediaType, com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format format) {
+                                   long size, String mediaType, com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format format,
+                                   com.aresstack.spaceharvester.app.transcription.WhisperModel whisper) {
         if (video != videoFrames) {
             return;
         }
@@ -3042,7 +3049,7 @@ public final class PageDetailPanel extends JPanel {
         com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia media =
                 new com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia(ranges, size, mediaType,
                         context.video(), new TranscribeAudioUseCase(new VlcPcmAudioDecoder(),
-                                new WhisperSpeechTranscriber()));
+                                new WhisperSpeechTranscriber()), whisper);
         feedback.working(name + " wird gestartet …");
         java.nio.file.Path directory = context.settings() == null
                 ? com.aresstack.spaceharvester.app.settings.AppSettings.defaultOutputDirectory()
@@ -3123,7 +3130,8 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         String name = "„Transkript korrigieren“";
-        context.whisperModel().ensure(this, feedback::working,
+        com.aresstack.spaceharvester.app.transcription.WhisperModel whisper = videoTranscript.transcriptionModel();
+        context.whisperModel().ensure(whisper, this, feedback::working,
                 reason -> feedback.warning(name + " nicht gestartet", reason), () -> {
                     if (video != videoFrames) {
                         return;
@@ -3131,7 +3139,7 @@ public final class PageDetailPanel extends JPanel {
                     com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia media =
                             new com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia(ranges,
                                     size, mediaType, context.video(), new TranscribeAudioUseCase(
-                                            new VlcPcmAudioDecoder(), new WhisperSpeechTranscriber()));
+                                            new VlcPcmAudioDecoder(), new WhisperSpeechTranscriber()), whisper);
                     feedback.working(name + " wird gestartet …");
                     Background.run(() -> runtime.workspace().startVideoCorrection(video.sourceId(), video.pageId(),
                             media), run -> {
@@ -3153,31 +3161,86 @@ public final class PageDetailPanel extends JPanel {
                 });
     }
 
-    /** Fragt nach und löscht dann Transkript, Korrekturen und die Analysen dazu (Angelo 20.11.2026). */
+    /**
+     * Fragt nach und löscht dann das gezeigte Original, seine Korrekturen und die Analysen dazu (Angelo 20.11.2026);
+     * gibt es ein weiteres Original, zeigt die Ansicht danach dieses.
+     */
     private void deleteTranscript(VideoTranscriptSource transcriptSource, VideoFrameSource video) {
         AppRuntime runtime = context.runtime();
+        String whisper = videoTranscript.whisper();
         if (runtime == null || video == null || video != videoFrames
                 || !com.aresstack.spaceharvester.app.ui.Dialogs.confirm(this, "Transkript löschen?",
-                TRANSCRIPT_DELETE_QUESTION)) {
+                transcriptDeleteQuestion(whisper))) {
             return;
         }
-        Background.run(() -> runtime.workspace().deleteVideoTranscript(video.sourceId(), video.pageId()),
-                deleted -> {
-                    if (video != videoFrames) {
-                        return;
+        Background.run(() -> {
+            runtime.workspace().deleteVideoTranscript(video.sourceId(), video.pageId(), whisper);
+            return runtime.workspace().videoTranscripts(video.sourceId(), video.pageId());
+        }, transcripts -> {
+            if (video != videoFrames) {
+                return;
+            }
+            videoTranscript.cleared(transcriptSource);
+            showTranscripts(transcriptSource, transcripts);
+            attachmentsChanged(video);
+        }, error -> {
+            if (video == videoFrames) {
+                feedback.problem(error, Problems.Step.PAGE);
+            }
+        });
+    }
+
+    /** Die Rückfrage vor dem Löschen des Transkripts. */
+    static final String TRANSCRIPT_DELETE_QUESTION = "Wirklich das Transkript samt allen Korrekturen löschen? Die "
+            + "Analysen dazu fallen mit weg.";
+
+    /** Die Rückfrage vor dem Löschen des Originals dieses Whisper-Modells, etwa mit {@code (Whisper Tiny)}. */
+    static String transcriptDeleteQuestion(String whisper) {
+        if (whisper == null || whisper.isEmpty()) {
+            return TRANSCRIPT_DELETE_QUESTION;
+        }
+        String name = new com.aresstack.spaceharvester.app.ui.content.viewer.VideoTranscriptionPanel.Original(whisper,
+                false).toString();
+        return "Wirklich das Transkript (" + name + ") samt allen Korrekturen löschen? Die Analysen dazu fallen mit "
+                + "weg.";
+    }
+
+    /** Wählt das Original eines Whisper-Modells (Auswahl in der Transkriptansicht) und zeigt es samt Korrekturen. */
+    private void chooseOriginal(VideoTranscriptSource transcriptSource, VideoFrameSource video, String whisper) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || video == null || video != videoFrames) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().chooseVideoTranscript(video.sourceId(), video.pageId(), whisper),
+                transcripts -> {
+                    if (video == videoFrames) {
+                        showTranscripts(transcriptSource, transcripts);
                     }
-                    videoTranscript.cleared(transcriptSource);
-                    attachmentsChanged(video);
                 }, error -> {
+                    videoTranscript.loadingStored(transcriptSource, false);
                     if (video == videoFrames) {
                         feedback.problem(error, Problems.Step.PAGE);
                     }
                 });
     }
 
-    /** Die Rückfrage vor dem Löschen des Transkripts. */
-    static final String TRANSCRIPT_DELETE_QUESTION = "Wirklich das Transkript samt allen Korrekturen löschen? Die "
-            + "Analysen dazu fallen mit weg.";
+    /** Zeigt Originale, gewähltes Original und seine Fassungen in der Transkriptansicht. */
+    private void showTranscripts(VideoTranscriptSource transcriptSource, Workspace.VideoTranscripts transcripts) {
+        videoTranscript.loadingStored(transcriptSource, false);
+        videoTranscript.showOriginals(transcriptSource, transcripts.originals(), transcripts.chosen());
+        if (!transcripts.versions().isEmpty()) {
+            videoTranscript.showStored(transcriptSource, transcripts.versions().get(0).text());
+            videoTranscript.showVersions(transcriptSource, versions(transcripts));
+        }
+    }
+
+    private static List<com.aresstack.spaceharvester.app.ui.content.viewer.VideoTranscriptionPanel.Version> versions(
+            Workspace.VideoTranscripts transcripts) {
+        return transcripts.versions().stream()
+                .map(version -> new com.aresstack.spaceharvester.app.ui.content.viewer.VideoTranscriptionPanel
+                        .Version(version.label(), version.text()))
+                .toList();
+    }
 
     /**
      * Liest Analysen und Lesetext der gezeigten Seite neu, nachdem der Core sie zum Transkript neu gerechnet hat; ein
@@ -3224,18 +3287,10 @@ public final class PageDetailPanel extends JPanel {
         watchTranscript(runtime, transcriptSource, video);
         // Das gespeicherte Transkript kommt verzögert wie die Anhänge: bis dahin die Sanduhr.
         videoTranscript.loadingStored(transcriptSource, true);
-        // Mit den Korrekturen, die als Ergänzung daneben liegen: unten in der Mitte zum Umschalten.
-        Background.run(() -> runtime.workspace().videoTranscriptVersions(video.sourceId(), video.pageId()),
-                versions -> {
-                    videoTranscript.loadingStored(transcriptSource, false);
-                    if (!versions.isEmpty()) {
-                        videoTranscript.showStored(transcriptSource, versions.get(0).text());
-                        videoTranscript.showVersions(transcriptSource, versions.stream()
-                                .map(version -> new com.aresstack.spaceharvester.app.ui.content.viewer
-                                        .VideoTranscriptionPanel.Version(version.label(), version.text()))
-                                .toList());
-                    }
-                }, error -> videoTranscript.loadingStored(transcriptSource, false));
+        // Mit den Originalen je Whisper-Modell und den Korrekturen, die als Ergänzung daneben liegen.
+        Background.run(() -> runtime.workspace().videoTranscripts(video.sourceId(), video.pageId()),
+                transcripts -> showTranscripts(transcriptSource, transcripts),
+                error -> videoTranscript.loadingStored(transcriptSource, false));
     }
 
     /** Meldungen der neu gerechneten Analysen zum Transkript des gezeigten Videos; {@code null} ohne Video. */
@@ -3250,13 +3305,11 @@ public final class PageDetailPanel extends JPanel {
                 .get(com.aresstack.spaceharvester.application.presentation.VideoPresentations.PAGE_PARAMETER))) {
             return;
         }
-        Background.run(() -> runtime.workspace().videoTranscriptVersions(video.sourceId(), video.pageId()),
-                versions -> {
-                    if (video == videoFrames && !versions.isEmpty()) {
-                        videoTranscript.showVersions(transcriptSource, versions.stream()
-                                .map(version -> new com.aresstack.spaceharvester.app.ui.content.viewer
-                                        .VideoTranscriptionPanel.Version(version.label(), version.text()))
-                                .toList());
+        Background.run(() -> runtime.workspace().videoTranscripts(video.sourceId(), video.pageId()),
+                transcripts -> {
+                    if (video == videoFrames && !transcripts.versions().isEmpty()
+                            && transcripts.chosen().equals(videoTranscript.whisper())) {
+                        videoTranscript.showVersions(transcriptSource, versions(transcripts));
                     }
                 }, error -> {
                     // Nicht lesbar: die Fassungen bleiben, wie sie sind.
@@ -3284,12 +3337,14 @@ public final class PageDetailPanel extends JPanel {
             }
             long ticket = issued.incrementAndGet();
             boolean running = !status.state().terminal();
-            Background.run(() -> runtime.workspace().videoTranscript(video.sourceId(), video.pageId()), stored -> {
+            Background.run(() -> runtime.workspace().videoTranscripts(video.sourceId(), video.pageId()), stored -> {
                 if (video != videoFrames || ticket < applied[0]) {
                     return;
                 }
                 applied[0] = ticket;
-                videoTranscript.followStored(transcriptSource, stored.orElse(null), running);
+                // Der Auftrag schreibt in das gewählte Original; zeigt die Auswahl ein anderes, schaltet sie um.
+                videoTranscript.followStored(transcriptSource, stored.chosen(),
+                        stored.versions().isEmpty() ? null : stored.versions().get(0).text(), running);
             }, error -> {
                 // Nicht lesbar (etwa Seite inzwischen gesperrt): die Ansicht bleibt, wie sie ist.
             });
@@ -3330,7 +3385,7 @@ public final class PageDetailPanel extends JPanel {
      * Speichert das bisher erkannte Transkript des gezeigten Videos als virtuellen Anhang; die Liste unter „Anhänge“
      * zeigt es danach.
      */
-    private void storeTranscript(String text) {
+    private void storeTranscript(String whisper, String text) {
         AppRuntime runtime = context.runtime();
         VideoFrameSource video = videoFrames;
         if (runtime == null || video == null || text.isBlank()) {
@@ -3338,7 +3393,7 @@ public final class PageDetailPanel extends JPanel {
         }
         String name = transcriptName(page == null ? null : page.header().metadata().title());
         Background.run(() -> {
-            runtime.workspace().storeVideoTranscript(video.sourceId(), video.pageId(), name, text);
+            runtime.workspace().storeVideoTranscript(video.sourceId(), video.pageId(), whisper, name, text);
             return null;
         }, saved -> attachmentsChanged(video), error -> {
             if (video == videoFrames) {

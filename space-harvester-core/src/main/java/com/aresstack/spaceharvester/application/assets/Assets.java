@@ -1222,45 +1222,153 @@ public class Assets implements DocumentInventory {
     public static final String VIDEO_TRANSCRIPT = "video-transcript-";
 
     /**
-     * Legt das Transkript eines Videos dieser Fassung ab (Text in UTF-8) und ersetzt ein früheres; es erscheint als
-     * virtueller Anhang ({@link #withVideoTranscript}) und wird beim Öffnen des Videos wieder gezeigt
-     * ({@link #videoTranscript}). Das Recht auf die Seite prüft der Aufrufer.
+     * Ein Original-Transkript eines Videos (Angelo 20.11.2026): je Whisper-Modell eines, ausgewählt in der
+     * Transkriptansicht. Transkripte von vor dieser Unterscheidung haben kein Modell ({@code whisper} leer).
      *
-     * @param fileName Dateiname des Anhangs, etwa {@code Vortrag – Transkript.txt}
+     * @param whisper      Kennung des Whisper-Modells, etwa {@code tiny}; leer bei einem älteren Transkript
+     * @param attachmentId Kennung des virtuellen Anhangs
      */
-    public void putVideoTranscript(String sourceId, String pageId, String version, String fileName, String text) {
+    public record TranscriptOriginal(String whisper, String attachmentId) {
+    }
+
+    /** Schlüssel des gewählten Originals im Verzeichnis der Transkripte. */
+    private static final String CHOSEN = "original";
+    /** Präfix der Originale je Whisper-Modell im Verzeichnis der Transkripte. */
+    private static final String ORIGINAL = "original.";
+
+    /**
+     * Legt das Original-Transkript eines Whisper-Modells für das Video dieser Fassung ab (Text in UTF-8) und ersetzt
+     * das frühere desselben Modells; die anderen bleiben. Ist es das erste, wird es das gewählte
+     * ({@link #chooseVideoTranscript}). Es erscheint als virtueller Anhang ({@link #withVideoTranscript}). Das Recht
+     * auf die Seite prüft der Aufrufer.
+     *
+     * @param whisper  Kennung des Whisper-Modells; leer nur für ein älteres Transkript ohne Modell
+     * @param fileName Dateiname des Anhangs, etwa {@code Vortrag – Transkript.txt}; das Modell kommt hinzu
+     */
+    public void putVideoTranscript(String sourceId, String pageId, String version, String whisper, String fileName,
+                                   String text) {
+        String model = whisper == null ? "" : whisper.strip();
+        String id = originalId(pageId, model);
         byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        store.put(new Asset(sourceId, pageId, transcriptId(pageId), frameVersion(version), fileName, "text/plain",
-                AssetKind.TRANSCRIPT, bytes.length, sha256(bytes), clock.instant()), bytes);
+        synchronized (corrections) {
+            boolean first = chosenVideoTranscript(sourceId, pageId, version).isEmpty();
+            store.put(new Asset(sourceId, pageId, id, frameVersion(version), originalTitle(fileName, model),
+                    "text/plain", AssetKind.TRANSCRIPT, bytes.length, sha256(bytes), clock.instant()), bytes);
+            java.util.Properties index = transcriptIndex(sourceId, pageId, version);
+            boolean changed = false;
+            if (!model.isEmpty() && !id.equals(index.getProperty(ORIGINAL + model))) {
+                index.setProperty(ORIGINAL + model, id);
+                changed = true;
+            }
+            if (first && !model.equals(index.getProperty(CHOSEN))) {
+                index.setProperty(CHOSEN, model);
+                changed = true;
+            }
+            if (changed) {
+                storeTranscriptIndex(sourceId, pageId, version, index);
+            }
+        }
         transcriptChanged(sourceId, pageId);
     }
 
-    /** Das abgelegte Transkript des Videos dieser Fassung; leer, solange keines erzeugt ist. */
+    /** Der Anzeigename eines Originals: der Dateiname mit dem Modell, etwa {@code Vortrag – Transkript (Whisper tiny).txt}. */
+    private static String originalTitle(String fileName, String whisper) {
+        if (whisper.isEmpty()) {
+            return fileName;
+        }
+        int dot = fileName.lastIndexOf('.');
+        String suffix = " (Whisper " + whisper + ")";
+        return dot > 0 ? fileName.substring(0, dot) + suffix + fileName.substring(dot) : fileName + suffix;
+    }
+
+    /**
+     * Wählt das Original, auf das sich Ansicht, Korrektur und Analysen beziehen; die Analysen rechnen über
+     * {@link #transcriptChanges} neu. Nichts, wenn es dieses Original nicht gibt oder es schon gewählt ist.
+     *
+     * @return ob sich die Wahl geändert hat
+     */
+    public boolean chooseVideoTranscript(String sourceId, String pageId, String version, String whisper) {
+        String model = whisper == null ? "" : whisper.strip();
+        synchronized (corrections) {
+            Optional<TranscriptOriginal> chosen = chosenVideoTranscript(sourceId, pageId, version);
+            if (chosen.map(original -> original.whisper().equals(model)).orElse(true)
+                    || store.find(sourceId, originalId(pageId, model), frameVersion(version)).isEmpty()) {
+                return false;
+            }
+            java.util.Properties index = transcriptIndex(sourceId, pageId, version);
+            index.setProperty(CHOSEN, model);
+            storeTranscriptIndex(sourceId, pageId, version, index);
+        }
+        transcriptChanged(sourceId, pageId);
+        return true;
+    }
+
+    /** Die abgelegten Originale des Videos dieser Fassung: zuerst ein älteres ohne Modell, dann nach Modell. */
+    public List<TranscriptOriginal> videoTranscriptOriginals(String sourceId, String pageId, String version) {
+        List<TranscriptOriginal> found = new java.util.ArrayList<>();
+        if (store.find(sourceId, transcriptId(pageId), frameVersion(version)).isPresent()) {
+            found.add(new TranscriptOriginal("", transcriptId(pageId)));
+        }
+        java.util.Properties index = transcriptIndex(sourceId, pageId, version);
+        new java.util.TreeSet<>(index.stringPropertyNames()).stream()
+                .filter(key -> key.startsWith(ORIGINAL) && key.indexOf('.', ORIGINAL.length()) < 0)
+                .map(key -> new TranscriptOriginal(key.substring(ORIGINAL.length()), index.getProperty(key)))
+                .filter(original -> !original.whisper().isEmpty()
+                        && original.attachmentId().equals(originalId(pageId, original.whisper()))
+                        && store.find(sourceId, original.attachmentId(), frameVersion(version)).isPresent())
+                .forEach(found::add);
+        return List.copyOf(found);
+    }
+
+    /**
+     * Das gewählte Original des Videos dieser Fassung; ohne ausdrückliche Wahl das ältere ohne Modell, sonst das erste
+     * nach Modell. Leer ohne Transkript.
+     */
+    public Optional<TranscriptOriginal> chosenVideoTranscript(String sourceId, String pageId, String version) {
+        List<TranscriptOriginal> originals = videoTranscriptOriginals(sourceId, pageId, version);
+        String chosen = transcriptIndex(sourceId, pageId, version).getProperty(CHOSEN);
+        return originals.stream().filter(original -> original.whisper().equals(chosen)).findFirst()
+                .or(() -> originals.stream().findFirst());
+    }
+
+    /** Das gewählte Original-Transkript des Videos dieser Fassung; leer, solange keines erzeugt ist. */
     public Optional<String> videoTranscript(String sourceId, String pageId, String version) {
-        return store.find(sourceId, transcriptId(pageId), frameVersion(version)).map(this::read)
+        return chosenVideoTranscript(sourceId, pageId, version)
+                .flatMap(original -> videoTranscript(sourceId, pageId, version, original.whisper()));
+    }
+
+    /** Das Original-Transkript dieses Whisper-Modells ({@code ""}: das ältere ohne Modell); leer ohne. */
+    public Optional<String> videoTranscript(String sourceId, String pageId, String version, String whisper) {
+        return store.find(sourceId, originalId(pageId, whisper == null ? "" : whisper.strip()), frameVersion(version))
+                .map(this::read)
                 .map(content -> new String(content.content(), java.nio.charset.StandardCharsets.UTF_8));
     }
 
     /**
-     * Die Anhangsliste einer Seite samt dem Transkript ihres Videos als virtuellem Anhang
-     * ({@link AssetKind#TRANSCRIPT}); ohne abgelegtes Transkript unverändert.
+     * Die Anhangsliste einer Seite samt den Transkripten ihres Videos als virtuellen Anhängen
+     * ({@link AssetKind#TRANSCRIPT}): je Original eines, jeweils mit seinen Korrekturen dahinter; ohne abgelegtes
+     * Transkript unverändert.
      */
     public PageAttachmentList withVideoTranscript(PageAttachmentList list, String version) {
         String pageId = list.attachments().pageId();
-        String id = transcriptId(pageId);
-        Optional<Asset> stored = store.find(list.sourceId(), id, frameVersion(version));
-        if (stored.isEmpty()) {
+        List<TranscriptOriginal> originals = videoTranscriptOriginals(list.sourceId(), pageId, version);
+        if (originals.isEmpty()) {
             return list;
         }
         List<PageAttachment> attachments = new java.util.ArrayList<>(list.attachments().attachments());
-        attachments.add(new PageAttachment(id, id, stored.get().title(), AssetKind.TRANSCRIPT_MEDIA_TYPE,
-                stored.get().size(), frameVersion(version), stored.get().retrievedAt(), null));
-        // Die Korrekturen stehen als Ergänzung gleich dahinter.
-        for (TranscriptCorrection correction : videoTranscriptCorrections(list.sourceId(), pageId, version)) {
-            store.find(list.sourceId(), correction.attachmentId(), frameVersion(version)).ifPresent(asset ->
-                    attachments.add(new PageAttachment(asset.attachmentId(), asset.attachmentId(), asset.title(),
-                            AssetKind.TRANSCRIPT_MEDIA_TYPE, asset.size(), frameVersion(version),
-                            asset.retrievedAt(), null)));
+        List<TranscriptCorrection> all = videoTranscriptCorrections(list.sourceId(), pageId, version);
+        for (TranscriptOriginal original : originals) {
+            List<String> ids = new java.util.ArrayList<>();
+            ids.add(original.attachmentId());
+            // Die Korrekturen stehen als Ergänzung gleich hinter ihrem Original.
+            all.stream().filter(correction -> correction.whisper().equals(original.whisper()))
+                    .forEach(correction -> ids.add(correction.attachmentId()));
+            for (String id : ids) {
+                store.find(list.sourceId(), id, frameVersion(version)).ifPresent(asset ->
+                        attachments.add(new PageAttachment(asset.attachmentId(), asset.attachmentId(), asset.title(),
+                                AssetKind.TRANSCRIPT_MEDIA_TYPE, asset.size(), frameVersion(version),
+                                asset.retrievedAt(), null)));
+            }
         }
         PageAttachments source = list.attachments();
         return new PageAttachmentList(list.sourceId(), list.spaceKey(), new PageAttachments(source.pageId(),
@@ -1269,89 +1377,121 @@ public class Assets implements DocumentInventory {
     }
 
     /**
-     * Eine Korrektur des Transkripts eines Videos (Angelo, 20.11.2026): als Ergänzung neben dem Transkript abgelegt, je
-     * Modell eine, und wie das Transkript ein virtueller Anhang; das Transkript selbst bleibt unverändert.
+     * Eine Korrektur eines Original-Transkripts eines Videos (Angelo, 20.11.2026): als Ergänzung neben dem Original
+     * abgelegt, je Original und Modell eine, und wie das Original ein virtueller Anhang; das Original selbst bleibt
+     * unverändert.
      *
      * @param attachmentId Kennung des Anhangs
      * @param label        Anzeigename, etwa {@code Korrektur gemma4:12b}
      * @param model        Verfahren und Modell, aus dem sie entstand; je Modell ersetzt eine neue die alte
      * @param input        Fingerabdruck der Eingabe (Transkript, Folienbeschreibungen, Modell)
      * @param complete     ob jedes Paket korrigiert ist; sonst stehen gescheiterte unkorrigiert darin
+     * @param whisper      das Original, das sie korrigiert ({@link TranscriptOriginal#whisper()})
      */
     public record TranscriptCorrection(String attachmentId, String label, String model, String input,
-                                       boolean complete) {
+                                       boolean complete, String whisper) {
+
+        public TranscriptCorrection {
+            whisper = whisper == null ? "" : whisper.strip();
+        }
+
+        /** Eine Korrektur des älteren Originals ohne Modell. */
+        public TranscriptCorrection(String attachmentId, String label, String model, String input, boolean complete) {
+            this(attachmentId, label, model, input, complete, "");
+        }
     }
 
     private final Object corrections = new Object();
 
-    /** Legt eine Korrektur des Transkripts ab und ersetzt die frühere desselben Modells. */
+    /**
+     * Legt eine Korrektur des Originals {@link TranscriptCorrection#whisper()} ab und ersetzt die frühere desselben
+     * Modells zu diesem Original.
+     */
     public void putVideoTranscriptCorrection(String sourceId, String pageId, String version, String fileName,
                                              TranscriptCorrection correction, String text) {
-        String id = correctionId(pageId, correction.model());
+        String id = correctionId(pageId, correction.whisper(), correction.model());
         byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         synchronized (corrections) {
             store.put(new Asset(sourceId, pageId, id, frameVersion(version), fileName, "text/plain",
                     AssetKind.TRANSCRIPT, bytes.length, sha256(bytes), clock.instant()), bytes);
-            java.util.Properties index = correctionIndex(sourceId, pageId, version);
+            java.util.Properties index = transcriptIndex(sourceId, pageId, version);
             index.setProperty(id + ".label", correction.label());
             index.setProperty(id + ".model", correction.model());
             index.setProperty(id + ".input", correction.input());
             index.setProperty(id + ".complete", String.valueOf(correction.complete()));
-            java.io.StringWriter written = new java.io.StringWriter();
-            try {
-                index.store(written, null);
-            } catch (java.io.IOException e) {
-                throw new java.io.UncheckedIOException(e);
-            }
-            byte[] indexBytes = written.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            store.put(new Asset(sourceId, pageId, correctionIndexId(pageId), frameVersion(version),
-                    "Korrekturen.properties", "text/plain", AssetKind.TRANSCRIPT, indexBytes.length,
-                    sha256(indexBytes), clock.instant()), indexBytes);
+            index.setProperty(id + ".whisper", correction.whisper());
+            storeTranscriptIndex(sourceId, pageId, version, index);
         }
         transcriptChanged(sourceId, pageId);
     }
 
     /**
-     * Der Text, den die Analysen einer Videoseite lesen (Angelo 20.11.2026): die zuletzt abgelegte Korrektur, ohne
-     * Korrektur das Transkript; leer ohne Transkript. Mit Zeitmarken wie abgelegt.
+     * Der Text, den die Analysen einer Videoseite lesen (Angelo 20.11.2026): die zuletzt abgelegte Korrektur des
+     * gewählten Originals, ohne Korrektur das Original; leer ohne Transkript. Mit Zeitmarken wie abgelegt.
      */
     public Optional<String> latestVideoTranscriptText(String sourceId, String pageId, String version) {
-        if (!hasVideoTranscript(sourceId, pageId, version)) {
+        Optional<TranscriptOriginal> chosen = chosenVideoTranscript(sourceId, pageId, version);
+        if (chosen.isEmpty()) {
             return Optional.empty();
         }
         Asset latest = null;
-        for (TranscriptCorrection correction : videoTranscriptCorrections(sourceId, pageId, version)) {
+        for (TranscriptCorrection correction : videoTranscriptCorrections(sourceId, pageId, version,
+                chosen.get().whisper())) {
             Optional<Asset> asset = store.find(sourceId, correction.attachmentId(), frameVersion(version));
             if (asset.isPresent() && (latest == null || asset.get().retrievedAt().isAfter(latest.retrievedAt()))) {
                 latest = asset.get();
             }
         }
         if (latest == null) {
-            return videoTranscript(sourceId, pageId, version);
+            return videoTranscript(sourceId, pageId, version, chosen.get().whisper());
         }
         return Optional.of(new String(read(latest).content(), java.nio.charset.StandardCharsets.UTF_8));
     }
 
     /**
-     * Löscht das Transkript des Videos dieser Fassung samt allen Korrekturen (Angelo 20.11.2026, Knopf in der
-     * Transkriptansicht); die Analysen darüber fallen über {@link #transcriptChanges} weg. Das Recht auf die Seite
-     * prüft der Aufrufer.
+     * Löscht das gewählte Original-Transkript des Videos dieser Fassung samt seinen Korrekturen.
+     *
+     * @return ob etwas gelöscht wurde
+     * @see #deleteVideoTranscript(String, String, String, String)
+     */
+    public boolean deleteVideoTranscript(String sourceId, String pageId, String version) {
+        Optional<TranscriptOriginal> chosen = chosenVideoTranscript(sourceId, pageId, version);
+        return chosen.isPresent() && deleteVideoTranscript(sourceId, pageId, version, chosen.get().whisper());
+    }
+
+    /**
+     * Löscht das Original-Transkript dieses Whisper-Modells samt allen seinen Korrekturen (Angelo 20.11.2026, Knopf in
+     * der Transkriptansicht); die anderen Originale bleiben, und war es das gewählte, gilt danach ein verbliebenes. Die
+     * Analysen darüber fallen über {@link #transcriptChanges} weg oder rechnen über das verbliebene neu. Das Recht
+     * auf die Seite prüft der Aufrufer.
      *
      * @return ob etwas gelöscht wurde
      */
-    public boolean deleteVideoTranscript(String sourceId, String pageId, String version) {
+    public boolean deleteVideoTranscript(String sourceId, String pageId, String version, String whisper) {
+        String model = whisper == null ? "" : whisper.strip();
         String stored = frameVersion(version);
-        boolean deleted;
+        boolean deleted = false;
         synchronized (corrections) {
-            List<String> ids = new java.util.ArrayList<>();
-            for (TranscriptCorrection correction : videoTranscriptCorrections(sourceId, pageId, version)) {
-                ids.add(correction.attachmentId());
+            java.util.Properties index = transcriptIndex(sourceId, pageId, version);
+            for (TranscriptCorrection correction : videoTranscriptCorrections(sourceId, pageId, version, model)) {
+                deleted |= store.remove(sourceId, correction.attachmentId(), stored);
+                for (String field : List.of(".label", ".model", ".input", ".complete", ".whisper")) {
+                    index.remove(correction.attachmentId() + field);
+                }
             }
-            ids.add(correctionIndexId(pageId));
-            ids.add(transcriptId(pageId));
-            deleted = false;
-            for (String id : ids) {
-                deleted |= store.remove(sourceId, id, stored);
+            deleted |= store.remove(sourceId, originalId(pageId, model), stored);
+            index.remove(ORIGINAL + model);
+            if (model.equals(index.getProperty(CHOSEN))) {
+                index.remove(CHOSEN);
+            }
+            if (videoTranscriptOriginals(sourceId, pageId, version).isEmpty()) {
+                // Ohne Original bleibt auch kein Verzeichnis, auch keine verwaisten Korrekturen.
+                for (TranscriptCorrection correction : videoTranscriptCorrections(sourceId, pageId, version)) {
+                    deleted |= store.remove(sourceId, correction.attachmentId(), stored);
+                }
+                deleted |= store.remove(sourceId, correctionIndexId(pageId), stored);
+            } else if (deleted) {
+                storeTranscriptIndex(sourceId, pageId, version, index);
             }
         }
         if (deleted) {
@@ -1360,34 +1500,50 @@ public class Assets implements DocumentInventory {
         return deleted;
     }
 
-    /** Die abgelegten Korrekturen des Transkripts dieser Fassung, nach Anzeigename. */
+    /** Die abgelegten Korrekturen aller Originale des Videos dieser Fassung, nach Anzeigename. */
     public List<TranscriptCorrection> videoTranscriptCorrections(String sourceId, String pageId, String version) {
-        java.util.Properties index = correctionIndex(sourceId, pageId, version);
+        java.util.Properties index = transcriptIndex(sourceId, pageId, version);
         List<TranscriptCorrection> found = new java.util.ArrayList<>();
         for (String key : index.stringPropertyNames()) {
-            if (!key.endsWith(".model")) {
+            if (!key.endsWith(".model") || key.startsWith(ORIGINAL)) {
                 continue;
             }
             String id = key.substring(0, key.length() - ".model".length());
             if (store.find(sourceId, id, frameVersion(version)).isPresent()) {
                 found.add(new TranscriptCorrection(id, index.getProperty(id + ".label", id),
                         index.getProperty(key), index.getProperty(id + ".input", ""),
-                        Boolean.parseBoolean(index.getProperty(id + ".complete"))));
+                        Boolean.parseBoolean(index.getProperty(id + ".complete")),
+                        index.getProperty(id + ".whisper", "")));
             }
         }
         found.sort(java.util.Comparator.comparing(TranscriptCorrection::label));
         return List.copyOf(found);
     }
 
-    /** Die Korrektur dieses Modells; leer ohne. */
+    /** Die abgelegten Korrekturen des Originals dieses Whisper-Modells, nach Anzeigename. */
+    public List<TranscriptCorrection> videoTranscriptCorrections(String sourceId, String pageId, String version,
+                                                                 String whisper) {
+        String model = whisper == null ? "" : whisper.strip();
+        return videoTranscriptCorrections(sourceId, pageId, version).stream()
+                .filter(correction -> correction.whisper().equals(model)).toList();
+    }
+
+    /** Die Korrektur dieses Modells zum gewählten Original; leer ohne. */
     public Optional<TranscriptCorrection> videoTranscriptCorrection(String sourceId, String pageId, String version,
                                                                     String model) {
-        String id = correctionId(pageId, model);
+        return chosenVideoTranscript(sourceId, pageId, version).flatMap(original ->
+                videoTranscriptCorrection(sourceId, pageId, version, original.whisper(), model));
+    }
+
+    /** Die Korrektur dieses Modells zum Original dieses Whisper-Modells; leer ohne. */
+    public Optional<TranscriptCorrection> videoTranscriptCorrection(String sourceId, String pageId, String version,
+                                                                    String whisper, String model) {
+        String id = correctionId(pageId, whisper == null ? "" : whisper.strip(), model);
         return videoTranscriptCorrections(sourceId, pageId, version).stream()
                 .filter(correction -> correction.attachmentId().equals(id)).findFirst();
     }
 
-    /** Der Text eines Transkript-Anhangs dieser Fassung: das Transkript selbst oder eine Korrektur. */
+    /** Der Text eines Transkript-Anhangs dieser Fassung: ein Original oder eine Korrektur. */
     public Optional<String> videoTranscriptText(String sourceId, String pageId, String version, String attachmentId) {
         if (!transcriptAttachment(attachmentId) || attachmentId.equals(correctionIndexId(pageId))) {
             return Optional.empty();
@@ -1396,7 +1552,8 @@ public class Assets implements DocumentInventory {
                 .map(content -> new String(content.content(), java.nio.charset.StandardCharsets.UTF_8));
     }
 
-    private java.util.Properties correctionIndex(String sourceId, String pageId, String version) {
+    /** Das Verzeichnis der Transkripte eines Videos: gewähltes Original, Originale je Modell und Korrekturen. */
+    private java.util.Properties transcriptIndex(String sourceId, String pageId, String version) {
         java.util.Properties index = new java.util.Properties();
         store.find(sourceId, correctionIndexId(pageId), frameVersion(version)).map(this::read).ifPresent(content -> {
             try {
@@ -1409,18 +1566,33 @@ public class Assets implements DocumentInventory {
         return index;
     }
 
+    private void storeTranscriptIndex(String sourceId, String pageId, String version, java.util.Properties index) {
+        java.io.StringWriter written = new java.io.StringWriter();
+        try {
+            index.store(written, null);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        byte[] indexBytes = written.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        store.put(new Asset(sourceId, pageId, correctionIndexId(pageId), frameVersion(version),
+                "Korrekturen.properties", "text/plain", AssetKind.TRANSCRIPT, indexBytes.length,
+                sha256(indexBytes), clock.instant()), indexBytes);
+    }
+
     private static String correctionIndexId(String pageId) {
         return VIDEO_TRANSCRIPT + "corrections-" + framePage(pageId);
     }
 
-    private static String correctionId(String pageId, String model) {
-        return transcriptId(pageId) + "-" + sha256(model.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    /** Die Korrektur eines Originals; die des älteren ohne Modell behält ihre bisherige Kennung. */
+    private static String correctionId(String pageId, String whisper, String model) {
+        String key = whisper.isEmpty() ? model : whisper + "|" + model;
+        return transcriptId(pageId) + "-" + sha256(key.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 .substring("sha256:".length(), "sha256:".length() + 12);
     }
 
-    /** Ob die Seite dieser Fassung ein abgelegtes Transkript hat. */
+    /** Ob die Seite dieser Fassung ein abgelegtes Transkript hat, gleich welches Original. */
     public boolean hasVideoTranscript(String sourceId, String pageId, String version) {
-        return store.find(sourceId, transcriptId(pageId), frameVersion(version)).isPresent();
+        return !videoTranscriptOriginals(sourceId, pageId, version).isEmpty();
     }
 
     /** Ob ein Anhang das Transkript eines Videos ist; es liegt nur in der Ablage, nie bei der Quelle. */
@@ -1430,6 +1602,20 @@ public class Assets implements DocumentInventory {
 
     private static String transcriptId(String pageId) {
         return VIDEO_TRANSCRIPT + framePage(pageId);
+    }
+
+    /**
+     * Das Original eines Whisper-Modells: ohne Modell die bisherige Kennung, sonst mit {@code -w-} und dem Modell
+     * (unterscheidbar von den Korrekturen, die zwölf Hexzeichen anhängen).
+     */
+    private static String originalId(String pageId, String whisper) {
+        if (whisper.isEmpty()) {
+            return transcriptId(pageId);
+        }
+        String name = whisper.matches("[A-Za-z0-9_-]{1,40}") ? whisper
+                : sha256(whisper.getBytes(java.nio.charset.StandardCharsets.UTF_8)).substring("sha256:".length(),
+                "sha256:".length() + 16);
+        return transcriptId(pageId) + "-w-" + name;
     }
 
     /** Ob ein Anhang eine Marke eines Videos ist; sie liegt nur in der Ablage, nie bei der Quelle. */

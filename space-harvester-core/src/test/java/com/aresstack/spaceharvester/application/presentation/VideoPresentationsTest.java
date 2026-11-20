@@ -329,6 +329,77 @@ class VideoPresentationsTest {
     }
 
     @Test
+    void theChosenOriginalIsExtendedWithItsOwnWhisperModelAndANewOneUsesTheAppsModel() throws Exception {
+        // Angelo 20.11.2026: je Whisper-Modell ein Original; vorhandene werden wiederverwendet und nur verlängert.
+        com.aresstack.spaceharvester.application.assets.Assets assets = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.assets.Assets.class);
+        com.aresstack.spaceharvester.application.snapshot.PageSnapshot snapshot = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.snapshot.PageSnapshot.class);
+        org.mockito.Mockito.when(snapshot.revision()).thenReturn("r1");
+        org.mockito.Mockito.when(snapshot.metadata()).thenReturn(new com.aresstack.spaceharvester.application.sources
+                .PageMetadata("42", "42", "Vortrag.mp4", "S", null, null, null, null, new java.util.TreeMap<>()));
+        VideoPresentations presentations = new VideoPresentations(org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.jobs.Jobs.class), (who, sourceId, pageId) -> snapshot, assets,
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.images.PageImageAnalysis.class),
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.marks.VideoMarks.class),
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.stepmodel.StepModel.class),
+                new PresentationStore(new InMemoryEnrichmentStore(), Clock.systemUTC()), key -> true,
+                java.nio.file.Path.of("out"));
+        List<String> used = new java.util.ArrayList<>();
+        class Media implements VideoMedia {
+            private final String whisper;
+
+            Media(String whisper) {
+                this.whisper = whisper;
+            }
+
+            @Override
+            public String whisper() {
+                return whisper;
+            }
+
+            @Override
+            public VideoMedia withWhisper(String other) {
+                return new Media(other);
+            }
+
+            @Override
+            public String transcribe(String existing, java.util.function.Consumer<String> partial, Progress progress,
+                                     java.util.function.BooleanSupplier cancelled) {
+                used.add(whisper);
+                return (existing == null ? "" : existing) + "[00:00:05 – 00:00:09] weiter\n\n";
+            }
+
+            @Override
+            public void frames(List<Long> millis, java.util.function.BiConsumer<Long, byte[]> found,
+                               java.util.function.BooleanSupplier cancelled) {
+            }
+        }
+        com.aresstack.spaceharvester.application.jobs.JobContext context = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.jobs.JobContext.class);
+        com.aresstack.spaceharvester.application.access.AccessContext caller =
+                com.aresstack.spaceharvester.application.access.AccessContext.technicalClient("space-harvester-app");
+        String existing = "[00:00:00 – 00:00:05] Anfang\n\n";
+        org.mockito.Mockito.when(assets.chosenVideoTranscript("wiki", "42", "r1")).thenReturn(java.util.Optional.of(
+                new com.aresstack.spaceharvester.application.assets.Assets.TranscriptOriginal("small", "x")));
+        org.mockito.Mockito.when(assets.videoTranscript("wiki", "42", "r1", "small"))
+                .thenReturn(java.util.Optional.of(existing));
+
+        presentations.transcribe(caller, "wiki", "42", new Media("tiny"), context);
+
+        assertThat(used).containsExactly("small");
+        org.mockito.Mockito.verify(assets).putVideoTranscript("wiki", "42", "r1", "small", "Vortrag – Transkript.txt",
+                existing + "[00:00:05 – 00:00:09] weiter\n\n");
+
+        org.mockito.Mockito.when(assets.chosenVideoTranscript("wiki", "42", "r1")).thenReturn(java.util.Optional.empty());
+        presentations.transcribe(caller, "wiki", "42", new Media("tiny"), context);
+
+        assertThat(used).containsExactly("small", "tiny");
+        org.mockito.Mockito.verify(assets).putVideoTranscript("wiki", "42", "r1", "tiny", "Vortrag – Transkript.txt",
+                "[00:00:05 – 00:00:09] weiter\n\n");
+    }
+
+    @Test
     void aJobOfAnEndUserOrWithoutItsPageCannotBeRebuiltAndSaysWhy() {
         assertThat(VideoPresentations.caller("TECHNICAL_CLIENT:space-harvester-app"))
                 .hasValueSatisfying(caller -> assertThat(caller.jobOwner())

@@ -119,44 +119,65 @@ public final class WhisperModelSetup {
      * @param then     die Aktion, die das Modell braucht
      */
     public void ensure(Component parent, Consumer<String> progress, Consumer<String> stopped, Runnable then) {
+        ensure(selected.get(), parent, progress, stopped, then);
+    }
+
+    /**
+     * Wie {@link #ensure(Component, Consumer, Consumer, Runnable)}, aber für ein bestimmtes Modell, etwa das in der
+     * Transkriptansicht gewählte (Angelo 20.11.2026); die Einstellung bleibt, wie sie ist.
+     */
+    public void ensure(WhisperModel model, Component parent, Consumer<String> progress, Consumer<String> stopped,
+                       Runnable then) {
+        Objects.requireNonNull(model, "model");
         refresh();
-        if (status.state() == State.INSTALLED) {
+        if (installed(model)) {
             then.run();
             return;
         }
-        if (status.state() == State.NOT_INSTALLED) {
-            WhisperModel model = status.model();
+        if (running != null && status.model() != model) {
+            stopped.accept("Gerade lädt das Whisper-Modell „" + status.model().label() + "“; danach bitte erneut.");
+            return;
+        }
+        if (running == null) {
             if (!question.ask(parent, ASK_TITLE, "Das Whisper-Modell „" + model.described() + "“ liegt noch nicht auf "
                     + "diesem Rechner. Wirklich jetzt von Hugging Face laden? Das ist in der Regel nur einmal nötig.")) {
                 stopped.accept("Ohne Whisper-Modell nicht gestartet.");
                 return;
             }
-            install();
+            install(model);
         }
         Consumer<Status>[] waiting = new Consumer[1];
         waiting[0] = next -> {
-            switch (next.state()) {
-                case INSTALLING -> progress.accept(LABEL + ": " + next.message());
-                case INSTALLED -> {
-                    unlisten(waiting[0]);
-                    then.run();
-                }
-                case NOT_INSTALLED -> {
-                    unlisten(waiting[0]);
-                    stopped.accept(next.message() == null ? "Whisper-Modell nicht geladen." : next.message());
-                }
+            if (next.state() == State.INSTALLING && running != null) {
+                progress.accept(LABEL + ": " + next.message());
+                return;
+            }
+            unlisten(waiting[0]);
+            if (installed(model)) {
+                then.run();
+            } else {
+                stopped.accept(next.message() == null ? "Whisper-Modell nicht geladen." : next.message());
             }
         };
         listen(waiting[0]);
     }
 
+    /** Ob {@code model} auf diesem Rechner liegt. */
+    private boolean installed(WhisperModel model) {
+        return installer().map(installer -> installer.installed(model)).orElse(false);
+    }
+
     /** Lädt das eingestellte Modell; nichts, wenn schon ein Download läuft oder es schon da ist. */
     public void install() {
+        install(selected.get());
+    }
+
+    /** Lädt {@code model}; nichts, wenn schon ein Download läuft oder es schon da ist. */
+    private void install(WhisperModel model) {
         if (running != null) {
             return;
         }
         Optional<WhisperModelInstaller> found = installer();
-        WhisperModel model = selected.get();
         if (found.isEmpty() || found.get().installed(model)) {
             update(probe(null, false));
             return;

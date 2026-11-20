@@ -798,25 +798,64 @@ public final class Workspace {
     }
 
     /**
-     * Das gespeicherte Transkript des Videos dieser Seite mit seinen Korrekturen (Angelo, 20.11.2026): zuerst das
+     * Das gewählte Original-Transkript des Videos dieser Seite mit seinen Korrekturen (Angelo, 20.11.2026): zuerst das
      * Original, dann je Modell eine Korrektur; leer, solange kein Transkript erzeugt ist. Fragt die Quelle nicht.
      */
     public List<TranscriptVersion> videoTranscriptVersions(String sourceId, String pageId) {
+        return videoTranscripts(sourceId, pageId).versions();
+    }
+
+    /**
+     * Die Original-Transkripte eines Videos (Angelo 20.11.2026: je Whisper-Modell eines) samt den Fassungen des
+     * gewählten.
+     *
+     * @param chosen    das gewählte Original (Whisper-Kennung, {@code ""} für ein älteres ohne Modell); {@code null}
+     *                  ohne Transkript
+     * @param originals alle abgelegten Originale, zuerst ein älteres ohne Modell
+     * @param versions  das gewählte Original und seine Korrekturen
+     */
+    public record VideoTranscripts(String chosen, List<String> originals, List<TranscriptVersion> versions) {
+    }
+
+    /** Die Original-Transkripte des Videos dieser Seite und die Fassungen des gewählten. Fragt die Quelle nicht. */
+    public VideoTranscripts videoTranscripts(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
-        String version = page.snapshot().revision();
-        java.util.Optional<String> original = harvester.assets().videoTranscript(sourceId, pageId, version);
+        return videoTranscripts(sourceId, pageId, page.snapshot().revision());
+    }
+
+    private VideoTranscripts videoTranscripts(String sourceId, String pageId, String version) {
+        Assets assets = harvester.assets();
+        List<String> originals = assets.videoTranscriptOriginals(sourceId, pageId, version).stream()
+                .map(Assets.TranscriptOriginal::whisper).toList();
+        java.util.Optional<Assets.TranscriptOriginal> chosen = assets.chosenVideoTranscript(sourceId, pageId, version);
+        java.util.Optional<String> original = chosen.flatMap(found -> assets.videoTranscript(sourceId, pageId, version,
+                found.whisper()));
         if (original.isEmpty()) {
-            return List.of();
+            return new VideoTranscripts(null, originals, List.of());
         }
+        String whisper = chosen.get().whisper();
         List<TranscriptVersion> versions = new ArrayList<>();
         versions.add(new TranscriptVersion("Original", original.get()));
-        for (Assets.TranscriptCorrection correction : harvester.assets().videoTranscriptCorrections(sourceId, pageId,
-                version)) {
-            harvester.assets().videoTranscriptText(sourceId, pageId, version, correction.attachmentId())
+        for (Assets.TranscriptCorrection correction : assets.videoTranscriptCorrections(sourceId, pageId, version,
+                whisper)) {
+            assets.videoTranscriptText(sourceId, pageId, version, correction.attachmentId())
                     .ifPresent(text -> versions.add(new TranscriptVersion(correction.label()
                             + (correction.complete() ? "" : " (unvollständig)"), text)));
         }
-        return List.copyOf(versions);
+        return new VideoTranscripts(whisper, originals, List.copyOf(versions));
+    }
+
+    /**
+     * Wählt das Original dieses Whisper-Modells für Ansicht, Korrektur und Analysen (Angelo 20.11.2026); die Analysen
+     * rechnen danach im Hintergrund neu. Braucht wie das Ablegen die sync-Freigabe.
+     *
+     * @return die Transkripte danach
+     */
+    public VideoTranscripts chooseVideoTranscript(String sourceId, String pageId, String whisper) {
+        DeliveredPage page = syncedPage(sourceId, pageId);
+        String version = page.snapshot().revision();
+        harvester.assets().chooseVideoTranscript(sourceId, pageId, version, whisper);
+        return videoTranscripts(sourceId, pageId, version);
     }
 
     /**
@@ -836,30 +875,35 @@ public final class Workspace {
         return List.copyOf(notes);
     }
 
-    /** Das gespeicherte Transkript des Videos dieser Seite; leer, solange keines erzeugt ist. Fragt die Quelle nicht. */
+    /** Das gewählte Original-Transkript des Videos dieser Seite; leer, solange keines erzeugt ist. Fragt die Quelle nicht. */
     public java.util.Optional<String> videoTranscript(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         return harvester.assets().videoTranscript(sourceId, pageId, page.snapshot().revision());
     }
 
     /**
-     * Speichert das Transkript des Videos dieser Seite und ersetzt ein früheres; es steht dann als virtueller Anhang
-     * unter „Anhänge“. Braucht wie das Ablegen von Anhängen die sync-Freigabe.
+     * Speichert das Original-Transkript dieses Whisper-Modells für das Video dieser Seite, ersetzt das frühere
+     * desselben Modells und wählt es (die Ansicht zeigt es gerade). Es steht dann als virtueller Anhang unter
+     * „Anhänge“. Braucht wie das Ablegen von Anhängen die sync-Freigabe.
      */
-    public void storeVideoTranscript(String sourceId, String pageId, String fileName, String text) {
+    public void storeVideoTranscript(String sourceId, String pageId, String whisper, String fileName, String text) {
         DeliveredPage page = syncedPage(sourceId, pageId);
-        harvester.assets().putVideoTranscript(sourceId, pageId, page.snapshot().revision(), fileName, text);
+        String version = page.snapshot().revision();
+        harvester.assets().putVideoTranscript(sourceId, pageId, version, whisper, fileName, text);
+        harvester.assets().chooseVideoTranscript(sourceId, pageId, version, whisper);
     }
 
     /**
-     * Löscht das Transkript des Videos dieser Seite samt allen Korrekturen (Angelo 20.11.2026) und mit ihnen die
-     * Analysen der Seite, auch die Aussagen-Analyse. Braucht wie das Ablegen die sync-Freigabe.
+     * Löscht das Original-Transkript dieses Whisper-Modells samt allen seinen Korrekturen (Angelo 20.11.2026); die
+     * Analysen der Seite fallen mit weg, auch die Aussagen-Analyse, oder rechnen über ein verbliebenes Original neu.
+     * Braucht wie das Ablegen die sync-Freigabe.
      *
      * @return ob ein Transkript da war
      */
-    public boolean deleteVideoTranscript(String sourceId, String pageId) {
+    public boolean deleteVideoTranscript(String sourceId, String pageId, String whisper) {
         DeliveredPage page = syncedPage(sourceId, pageId);
-        boolean deleted = harvester.assets().deleteVideoTranscript(sourceId, pageId, page.snapshot().revision());
+        boolean deleted = harvester.assets().deleteVideoTranscript(sourceId, pageId, page.snapshot().revision(),
+                whisper);
         if (deleted) {
             harvester.transcriptAnalyses().update(page.snapshot().key());
             harvester.knowledgeGraph().delete(caller, page.snapshot().key()::equals);

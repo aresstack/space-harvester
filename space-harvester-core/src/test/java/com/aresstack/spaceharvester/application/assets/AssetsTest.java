@@ -83,7 +83,7 @@ class AssetsTest {
     @Test
     void transcriptCorrectionsLieNextToTheTranscriptAsAttachments() {
         Assets assets = assets(1000);
-        assets.putVideoTranscript("wiki", "101", "v1", "Vortrag – Transkript.txt", "[00:00:00] Zabak");
+        assets.putVideoTranscript("wiki", "101", "v1", "", "Vortrag – Transkript.txt", "[00:00:00] Zabak");
         assets.putVideoTranscriptCorrection("wiki", "101", "v1", "Vortrag – Transkript (Korrektur a).txt",
                 new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:1", true), "[00:00:00] ZahlBuch");
         assets.putVideoTranscriptCorrection("wiki", "101", "v1", "Vortrag – Transkript (Korrektur b).txt",
@@ -143,7 +143,7 @@ class AssetsTest {
         assets.transcriptChanges(reported::add);
 
         assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).as("ohne Transkript").isEmpty();
-        assets.putVideoTranscript("wiki", "101", "v1", "T.txt", "[00:00:00] Original");
+        assets.putVideoTranscript("wiki", "101", "v1", "", "T.txt", "[00:00:00] Original");
         assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).contains("[00:00:00] Original");
         now[0] = NOW.plusSeconds(10);
         assets.putVideoTranscriptCorrection("wiki", "101", "v1", "B.txt",
@@ -167,10 +167,10 @@ class AssetsTest {
     void deletingTheTranscriptRemovesAllCorrections() {
         Assets assets = assets(1000);
         List<com.aresstack.spaceharvester.application.snapshot.PageKey> reported = new java.util.ArrayList<>();
-        assets.putVideoTranscript("wiki", "101", "v1", "T.txt", "[00:00:00] Original");
+        assets.putVideoTranscript("wiki", "101", "v1", "", "T.txt", "[00:00:00] Original");
         assets.putVideoTranscriptCorrection("wiki", "101", "v1", "A.txt",
                 new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:1", true), "[00:00:00] A");
-        assets.putVideoTranscript("wiki", "101", "v2", "T.txt", "[00:00:00] Andere Fassung");
+        assets.putVideoTranscript("wiki", "101", "v2", "", "T.txt", "[00:00:00] Andere Fassung");
         assets.transcriptChanges(reported::add);
 
         assertThat(assets.deleteVideoTranscript("wiki", "101", "v1")).isTrue();
@@ -183,6 +183,65 @@ class AssetsTest {
         assertThat(reported).hasSize(1);
         assertThat(assets.deleteVideoTranscript("wiki", "101", "v1")).as("nichts mehr da").isFalse();
         assertThat(reported).hasSize(1);
+    }
+
+    /**
+     * Angelo 20.11.2026: je Whisper-Modell ein Original; das gewählte bestimmt Korrekturen und Analysen, Löschen nimmt
+     * nur das gezeigte samt seinen Korrekturen.
+     */
+    @Test
+    void eachWhisperModelHasItsOwnOriginalAndTheChosenOneFeedsTheAnalyses() {
+        Assets assets = assets(1000);
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> reported = new java.util.ArrayList<>();
+        assets.transcriptChanges(reported::add);
+        assets.putVideoTranscript("wiki", "101", "v1", "tiny", "Vortrag – Transkript.txt", "[00:00:00] Zabak");
+        assets.putVideoTranscript("wiki", "101", "v1", "small", "Vortrag – Transkript.txt", "[00:00:00] Zahlbuch");
+
+        assertThat(assets.videoTranscriptOriginals("wiki", "101", "v1")).extracting(Assets.TranscriptOriginal::whisper)
+                .containsExactly("small", "tiny");
+        assertThat(assets.chosenVideoTranscript("wiki", "101", "v1")).map(Assets.TranscriptOriginal::whisper)
+                .as("das erste bleibt gewählt").contains("tiny");
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Zabak");
+        assertThat(assets.videoTranscript("wiki", "101", "v1", "small")).contains("[00:00:00] Zahlbuch");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "K.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:1", true, "tiny"), "[00:00:00] ZahlBuch");
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).contains("[00:00:00] ZahlBuch");
+
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "small")).isTrue();
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "small")).as("schon gewählt").isFalse();
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "large-v3")).as("gibt es nicht").isFalse();
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).as("Korrektur gehört zu tiny")
+                .contains("[00:00:00] Zahlbuch");
+        assertThat(assets.videoTranscriptCorrection("wiki", "101", "v1", "m|a")).isEmpty();
+        assertThat(assets.videoTranscriptCorrection("wiki", "101", "v1", "tiny", "m|a")).isPresent();
+        assertThat(assets.withVideoTranscript(list(), "v1").attachments().attachments())
+                .extracting(PageAttachment::title).containsExactly("Vortrag – Transkript (Whisper small).txt",
+                        "Vortrag – Transkript (Whisper tiny).txt", "K.txt");
+
+        assertThat(assets.deleteVideoTranscript("wiki", "101", "v1", "tiny")).isTrue();
+        assertThat(assets.videoTranscriptOriginals("wiki", "101", "v1")).extracting(Assets.TranscriptOriginal::whisper)
+                .containsExactly("small");
+        assertThat(assets.videoTranscriptCorrections("wiki", "101", "v1")).isEmpty();
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).contains("[00:00:00] Zahlbuch");
+        assertThat(assets.deleteVideoTranscript("wiki", "101", "v1")).as("das gewählte").isTrue();
+        assertThat(assets.hasVideoTranscript("wiki", "101", "v1")).isFalse();
+        assertThat(reported).hasSize(6);
+    }
+
+    /** Ein älteres Transkript ohne Modell bleibt lesbar und gewählt, bis ein anderes gewählt wird. */
+    @Test
+    void anOlderTranscriptWithoutModelStaysChosen() {
+        Assets assets = assets(1000);
+        assets.putVideoTranscript("wiki", "101", "v1", "", "T.txt", "[00:00:00] Alt");
+        assets.putVideoTranscript("wiki", "101", "v1", "tiny", "T.txt", "[00:00:00] Neu");
+
+        assertThat(assets.videoTranscriptOriginals("wiki", "101", "v1")).extracting(Assets.TranscriptOriginal::whisper)
+                .containsExactly("", "tiny");
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Alt");
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "tiny")).isTrue();
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Neu");
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "")).isTrue();
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Alt");
     }
 
     /** Angelo 20.11.2026: Folienkommentare liegen an der virtuellen Marke, je Modell einer, versioniert. */
