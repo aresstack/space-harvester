@@ -38,4 +38,23 @@ final class VideoTranscriptFollowTest {
             assertThat(panel.shownText()).as("nur das gezeigte Video").isEqualTo(FIRST + SECOND);
         });
     }
+
+    @Test
+    void whileACorrectionIsShownTheOriginalStillGrowsForTheWayBack() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            VideoTranscriptionPanel panel = new VideoTranscriptionPanel(null);
+            VideoTranscriptSource source = new VideoTranscriptSource(10, (offset, length) -> new byte[0]);
+            panel.setVideoSource(source);
+            panel.showStored(source, FIRST);
+            panel.showVersions(source, java.util.List.of(new VideoTranscriptionPanel.Version("Original", FIRST),
+                    new VideoTranscriptionPanel.Version("Korrektur", "[00:00:00 – 00:00:30] Herzlich willkommen.")));
+            panel.versionButtons().get(1).doClick();
+
+            panel.followStored(source, FIRST + SECOND, false);
+            assertThat(panel.shownText()).as("die Korrektur bleibt stehen")
+                    .isEqualTo("[00:00:00 – 00:00:30] Herzlich willkommen.");
+            panel.versionButtons().get(0).doClick();
+            assertThat(panel.shownText()).isEqualTo(FIRST + SECOND);
+        });
+    }
 }

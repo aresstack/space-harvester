@@ -3121,20 +3121,32 @@ public final class PageDetailPanel extends JPanel {
      */
     private void watchTranscript(AppRuntime runtime, VideoTranscriptSource transcriptSource, VideoFrameSource video) {
         stopTranscriptWatch();
-        transcriptWatch = runtime.workspace().subscribeJobs(status -> {
+        // Jede Meldung bekommt eine Nummer; ein Ergebnis, das nach dem einer jüngeren Meldung ankommt, fällt weg.
+        java.util.concurrent.atomic.AtomicLong issued = new java.util.concurrent.atomic.AtomicLong();
+        long[] applied = {0};
+        java.util.function.Consumer<com.aresstack.spaceharvester.application.jobs.JobStatus> handle = status -> {
             if (status.type() != com.aresstack.spaceharvester.application.jobs.JobType.VIDEO_TRANSCRIPT
                     || !video.sourceId().equals(status.sourceId()) || !video.pageId().equals(status.parameters()
                     .get(com.aresstack.spaceharvester.application.presentation.VideoPresentations.PAGE_PARAMETER))) {
                 return;
             }
+            long ticket = issued.incrementAndGet();
             boolean running = !status.state().terminal();
             Background.run(() -> runtime.workspace().videoTranscript(video.sourceId(), video.pageId()), stored -> {
-                if (video == videoFrames) {
-                    videoTranscript.followStored(transcriptSource, stored.orElse(null), running);
+                if (video != videoFrames || ticket < applied[0]) {
+                    return;
                 }
+                applied[0] = ticket;
+                videoTranscript.followStored(transcriptSource, stored.orElse(null), running);
             }, error -> {
                 // Nicht lesbar (etwa Seite inzwischen gesperrt): die Ansicht bleibt, wie sie ist.
             });
+        };
+        transcriptWatch = runtime.workspace().subscribeJobs(handle::accept);
+        // Erst anmelden, dann den Stand lesen: Läuft der Auftrag schon, folgt die Ansicht sofort (ADR 0027).
+        Background.run(() -> runtime.workspace().jobs(), jobs -> jobs.stream()
+                .filter(job -> !job.state().terminal()).forEach(handle), error -> {
+            // Ohne Liste folgt die Ansicht ab der nächsten Meldung.
         });
     }
 

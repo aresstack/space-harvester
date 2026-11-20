@@ -255,27 +255,35 @@ public final class VideoTranscriptionPanel extends JPanel {
             return;
         }
         following = running;
-        if (worker != null || text == null || text.isBlank() || shownVersion != 0) {
+        if (worker != null || text == null || text.isBlank()) {
             updateActions();
             return;
         }
         loadingStored(source, false);
+        // Zeigt die Ansicht eine Korrektur, bleibt sie stehen; das Original wächst trotzdem mit, damit es beim
+        // Zurückschalten vollständig ist.
+        boolean showing = shownVersion == 0;
         String shown = recognized.toString();
-        if (shown.isEmpty()) {
+        if (shown.isEmpty() && showing) {
             showStored(source, text);
         } else if (!text.equals(shown)) {
             if (text.startsWith(shown)) {
                 String added = text.substring(shown.length());
                 recognized.append(added);
-                transcript.append(added);
+                if (showing) {
+                    transcript.append(added);
+                }
             } else {
-                int caret = transcript.getCaretPosition();
                 recognized.setLength(0);
                 recognized.append(text);
-                transcript.setText(text);
-                transcript.setCaretPosition(Math.min(caret, transcript.getDocument().getLength()));
+                if (showing) {
+                    int caret = transcript.getCaretPosition();
+                    transcript.setText(text);
+                    transcript.setCaretPosition(Math.min(caret, transcript.getDocument().getLength()));
+                }
             }
-            resumeMillis = resumePoint(recognized.toString());
+            resumeMillis = com.aresstack.spaceharvester.application.presentation.TranscriptSections
+                    .reach(recognized.toString());
         }
         if (!versions.isEmpty()) {
             java.util.List<Version> updated = new java.util.ArrayList<>(versions);
