@@ -36,7 +36,10 @@ public interface ImageDescriber {
         return true;
     }
 
-    /** Lädt das Modell und wartet darauf, höchstens die eingestellte Ladefrist. Ohne eigene Umsetzung nichts. */
+    /**
+     * Stößt das Laden des Modells einmal an und wartet, bis es läuft, höchstens die eingestellte Ladefrist; erst dann
+     * gehen Prompts hinaus. Ohne eigene Umsetzung nichts.
+     */
     default void load() {
     }
 

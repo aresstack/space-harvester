@@ -464,12 +464,14 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param loadTimeout   so lange darf Ollama ein Modell laden ({@code load-timeout}); {@code null}: Standard des Core
      * @param retries       Wiederholungen einer fehlgeschlagenen Bildbeschreibung ({@code retries}); {@code null}:
      *                      Standard des Core
+     * @param loadPollInterval Abstand der Frage an Ollama, ob ein angestoßenes Modell läuft
+     *                      ({@code load-poll-interval}); {@code null}: Standard des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
                              Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
                              Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
-                             Duration loadTimeout, Integer retries) {
+                             Duration loadTimeout, Integer retries, Duration loadPollInterval) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -485,7 +487,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           Integer chatMaxTokens) {
             this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
                     rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, null, null, null,
-                    null);
+                    null, null);
         }
 
         /** Mit dem Ausgabelimit des Core. */

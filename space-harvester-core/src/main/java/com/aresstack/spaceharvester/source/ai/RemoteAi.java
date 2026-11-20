@@ -411,8 +411,9 @@ public final class RemoteAi {
     }
 
     /**
-     * Lädt das Vision-Modell eines Ollama-Servers und wartet darauf, höchstens die eingestellte Ladefrist
-     * ({@code load-timeout}). Für andere Dienste nichts.
+     * Der Anstoß zum Laden des Vision-Modells eines Ollama-Servers: kehrt erst zurück, wenn der Server es geladen hat,
+     * höchstens nach der Ladefrist ({@code load-timeout}). Ob es läuft, fragt der Aufrufer derweil mit
+     * {@link #visionLoaded()}. Für andere Dienste nichts.
      *
      * @throws AiServiceException wenn der Server es nicht laden kann oder die Ladefrist abläuft
      */

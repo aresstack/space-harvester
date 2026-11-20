@@ -366,7 +366,8 @@ public final class AppRuntime implements AutoCloseable {
             service = new AiServiceSettings(URI.create(ai.baseUrl()), key, ai.chatModel(), ai.embeddingModel(),
                     ai.embeddingDimensions(), ai.timeout(), null, Set.copyOf(ai.externalProcessingSources()))
                     .withProvider(ai.provider()).withContextTokens(ai.contextTokens())
-                    .withLoadTimeout(ai.loadTimeout()).withRetries(ai.retries());
+                    .withLoadTimeout(ai.loadTimeout()).withRetries(ai.retries())
+                    .withLoadPollInterval(ai.loadPollInterval());
         } catch (IllegalArgumentException e) {
             LOG.log(System.Logger.Level.WARNING, "KI-Dienst nicht nutzbar: {0}", e.getMessage());
             return AiServiceSettings.NONE;

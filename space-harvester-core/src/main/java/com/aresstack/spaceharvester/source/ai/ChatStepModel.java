@@ -67,7 +67,7 @@ public final class ChatStepModel implements StepModel {
                 current.embeddingDimensions(), current.timeout(), current.trustBundle(),
                 current.externalProcessingSources(), current.rerankModel(), current.visionModel(),
                 current.chatMaxTokens(), current.provider(), current.contextTokens(), current.loadTimeout(),
-                current.retries());
+                current.retries(), current.loadPollInterval());
     }
 
     /** Verfahren, Modell und ein Fingerabdruck der Dienstadresse; nie die Adresse selbst. */
