@@ -131,6 +131,21 @@ class LargeFilesTest {
     }
 
     @Test
+    void aDocumentStoredWithItsHeaderOnlyGetsItsTextExtractOnTheNextOpen() {
+        PageFreshness freshness = new PageFreshness(new SourceQueries(catalog, FakeSource.CLOCK), snapshots,
+                FakeSource.CLOCK);
+        PageSnapshot old = LargeFiles.placeholder("bscw", PDF, Instant.parse("2026-11-20T09:00:00Z"));
+
+        PageFreshness.Refreshed opened = freshness.check("bscw", "pdf", Optional.of(old.header()), Optional.of(old));
+        assertThat(LargeFiles.textOnly(opened.snapshot().payload())).isTrue();
+
+        PageFreshness.Refreshed again = freshness.check("bscw", "pdf", Optional.of(opened.header()),
+                Optional.of(opened.snapshot()));
+        assertThat(again.outcome()).as("der Textauszug bleibt").isEqualTo(PageFreshness.Outcome.CURRENT);
+        assertThat(extracts).isEqualTo(1);
+    }
+
+    @Test
     void aLargeFileGetsItsOwnLongerDeadlineForTheTextExtract() {
         slowMillis = 400;
         PageFreshness freshness = new PageFreshness(new SourceQueries(catalog, FakeSource.CLOCK), snapshots,

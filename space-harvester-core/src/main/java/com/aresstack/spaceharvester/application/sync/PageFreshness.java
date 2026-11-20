@@ -195,11 +195,15 @@ public class PageFreshness {
             return new Refreshed(Outcome.GONE, null, null, clock.instant());
         }
         String version = live.page().version();
-        // Eine zu große Datei ohne Inhalt gilt nicht mehr als aktuell, sobald sie unter die Grenze passt.
+        // Eine zu große Datei gilt nicht mehr als aktuell, sobald sie unter die Grenze passt; nur mit Kopfdaten auch
+        // nicht, solange ein Textauszug in Frage kommt (etwa abgelegt, bevor es ihn gab; ohne lesbaren Text lädt die
+        // Quelle dabei nichts).
         Optional<PageSnapshot> sameRevision = cachedSnapshot
                 .filter(snapshot -> snapshot.key().equals(key) && version != null
                         && version.equals(snapshot.revision()))
-                .filter(snapshot -> !LargeFiles.placeholder(snapshot.payload()) || !fetcher.loadsWhole(live.page()));
+                .filter(snapshot -> !LargeFiles.placeholder(snapshot.payload())
+                        || !fetcher.loadsWhole(live.page()) && (LargeFiles.textOnly(snapshot.payload())
+                        || !fetcher.triesText(live.page())));
         if (sameRevision.isPresent()) {
             boolean headerCurrent = cachedHeader
                     .filter(header -> header.metadataHash().equals(live.metadataHash())
@@ -216,6 +220,17 @@ public class PageFreshness {
         if (!fresh.key().equals(key)) {
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.INVALID_RESPONSE,
                     "Die Quelle lieferte eine andere Seite", null);
+        }
+        // Wieder nur die Kopfdaten derselben Version (kein lesbarer Text): nichts Neues, nichts abzulegen.
+        Optional<PageSnapshot> unchanged = cachedSnapshot.filter(snapshot -> snapshot.key().equals(key)
+                && LargeFiles.placeholder(snapshot.payload()) && !LargeFiles.textOnly(snapshot.payload())
+                && LargeFiles.placeholder(fresh.payload()) && !LargeFiles.textOnly(fresh.payload())
+                && version != null && version.equals(snapshot.revision()));
+        if (unchanged.isPresent()) {
+            boolean headerCurrent = cachedHeader.filter(header -> header.metadataHash().equals(live.metadataHash())
+                    && header.attributesHash().equals(live.attributesHash())).isPresent();
+            return headerCurrent ? new Refreshed(Outcome.CURRENT, cachedHeader.get(), unchanged.get(), clock.instant())
+                    : new Refreshed(Outcome.HEADER_CHANGED, fresh.header(), unchanged.get(), clock.instant());
         }
         return new Refreshed(Outcome.CONTENT_CHANGED, fresh.header(), fresh, clock.instant());
     }

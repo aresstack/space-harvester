@@ -98,6 +98,12 @@ public class SourceSnapshots implements PageContentFetcher {
         return !LargeFiles.tooLarge(metadata, maxBytes.getAsLong());
     }
 
+    @Override
+    public boolean triesText(PageMetadata metadata) {
+        long textLimit = maxTextBytes.getAsLong();
+        return !loadsWhole(metadata) && textLimit > 0 && LargeFiles.size(metadata) <= textLimit;
+    }
+
     /** Meldet Beginn und Ende jedes Abrufs (ADR 0027); ohne Aufruf {@link PageLoads#NONE}. */
     public void loads(PageLoads loads) {
         this.loads = Objects.requireNonNull(loads, "loads");

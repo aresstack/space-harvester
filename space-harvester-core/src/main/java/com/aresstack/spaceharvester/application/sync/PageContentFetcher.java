@@ -28,4 +28,12 @@ public interface PageContentFetcher {
     default boolean loadsWhole(PageMetadata metadata) {
         return true;
     }
+
+    /**
+     * Ob {@link #fetch(String, PageMetadata)} für eine zu große Datei dieser Kopfdaten einen Textauszug versucht
+     * ({@code LargeFiles}); Standard: nie.
+     */
+    default boolean triesText(PageMetadata metadata) {
+        return false;
+    }
 }
