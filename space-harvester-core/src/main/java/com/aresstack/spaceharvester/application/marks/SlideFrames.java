@@ -20,14 +20,26 @@ import java.util.Objects;
  */
 public final class SlideFrames {
 
-    /** Kantenlänge eines Blocks in Pixeln. */
-    static final int BLOCK = 16;
-    /** Ab dieser Abweichung seines Mittels in Graustufen gilt ein Block als geändert. */
-    static final float CHANGED_GRAY = 8;
-    /** So viele Blöcke breit und hoch ist eine Stelle von der Größe eines Mauszeigers höchstens. */
-    static final int POINTER_BLOCKS = 3;
-    /** An höchstens so vielen solchen Stellen darf sich dieselbe Folie unterscheiden. */
-    static final int POINTER_SPOTS = 4;
+    /**
+     * Die Werte des Vergleichs; die App stellt sie ein ({@code space-harvester-app.video.*}).
+     *
+     * @param blockPixels   Kantenlänge eines Blocks in Pixeln
+     * @param changedGray   ab dieser Abweichung seines Mittels in Graustufen gilt ein Block als geändert
+     * @param pointerBlocks so viele Blöcke breit und hoch ist eine Stelle von der Größe eines Mauszeigers höchstens
+     * @param pointerSpots  an höchstens so vielen solchen Stellen darf sich dieselbe Folie unterscheiden
+     * @param maxFrames     so viele Marken hat ein Video höchstens; so viele Raster hält der Vergleich vor
+     */
+    public record Thresholds(int blockPixels, float changedGray, int pointerBlocks, int pointerSpots, int maxFrames) {
+
+        /** Die gemessenen Werte (siehe oben). */
+        public static final Thresholds DEFAULT = new Thresholds(16, 8, 3, 4, 200);
+
+        public Thresholds {
+            if (blockPixels < 1 || changedGray < 0 || pointerBlocks < 1 || pointerSpots < 0 || maxFrames < 1) {
+                throw new IllegalArgumentException("Ungültige Werte für den Vergleich von Standbildern");
+            }
+        }
+    }
 
     private SlideFrames() {
     }
@@ -48,40 +60,40 @@ public final class SlideFrames {
      *
      * @throws IOException wenn die Bytes kein lesbares Bild sind
      */
-    public static Grid grid(byte[] image) throws IOException {
+    public static Grid grid(byte[] image, int blockPixels) throws IOException {
         BufferedImage picture = ImageIO.read(new ByteArrayInputStream(image));
         if (picture == null) {
             throw new IOException("kein lesbares Bild");
         }
-        int columns = picture.getWidth() / BLOCK;
-        int rows = picture.getHeight() / BLOCK;
-        int width = columns * BLOCK;
+        int columns = picture.getWidth() / blockPixels;
+        int rows = picture.getHeight() / blockPixels;
+        int width = columns * blockPixels;
         float[] means = new float[columns * rows];
         int[] line = new int[width];
-        for (int y = 0; y < rows * BLOCK; y++) {
+        for (int y = 0; y < rows * blockPixels; y++) {
             picture.getRGB(0, y, width, 1, line, 0, width);
-            int row = y / BLOCK * columns;
+            int row = y / blockPixels * columns;
             for (int x = 0; x < width; x++) {
                 int rgb = line[x];
                 // Helligkeit nach ITU-R BT.601, wie die Graustufen gängiger Bildbibliotheken.
-                means[row + x / BLOCK] += ((rgb >> 16 & 0xff) * 299 + (rgb >> 8 & 0xff) * 587 + (rgb & 0xff) * 114)
+                means[row + x / blockPixels] += ((rgb >> 16 & 0xff) * 299 + (rgb >> 8 & 0xff) * 587 + (rgb & 0xff) * 114)
                         / 1000f;
             }
         }
         for (int i = 0; i < means.length; i++) {
-            means[i] /= BLOCK * BLOCK;
+            means[i] /= blockPixels * blockPixels;
         }
         return new Grid(columns, rows, means);
     }
 
     /** Ob beide Standbilder dieselbe Folie zeigen; Bilder anderer Größe nie. */
-    public static boolean same(Grid a, Grid b) {
+    public static boolean same(Grid a, Grid b, Thresholds thresholds) {
         if (a.columns() != b.columns() || a.rows() != b.rows()) {
             return false;
         }
         boolean[] changed = new boolean[a.means().length];
         for (int i = 0; i < changed.length; i++) {
-            changed[i] = Math.abs(a.means()[i] - b.means()[i]) > CHANGED_GRAY;
+            changed[i] = Math.abs(a.means()[i] - b.means()[i]) > thresholds.changedGray();
         }
         int spots = 0;
         Deque<Integer> open = new ArrayDeque<>();
@@ -89,7 +101,7 @@ public final class SlideFrames {
             if (!changed[start]) {
                 continue;
             }
-            if (++spots > POINTER_SPOTS) {
+            if (++spots > thresholds.pointerSpots()) {
                 return false;
             }
             // Eine Stelle: zusammenhängende geänderte Blöcke, auch über Eck.
@@ -119,7 +131,7 @@ public final class SlideFrames {
                     }
                 }
             }
-            if (right - left + 1 > POINTER_BLOCKS || bottom - top + 1 > POINTER_BLOCKS) {
+            if (right - left + 1 > thresholds.pointerBlocks() || bottom - top + 1 > thresholds.pointerBlocks()) {
                 return false;
             }
         }

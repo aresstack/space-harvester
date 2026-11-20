@@ -233,7 +233,31 @@ public final class AppSettingsLoader {
                 simplification(map(get(map(get(root, "statements")), "simplification")), problems),
                 standing(map(get(map(get(root, "statements")), "standing")), problems),
                 check(map(get(map(get(root, "statements")), "check")), problems),
-                viewerBackground(get(map(get(app, "viewer")), "background"), problems));
+                viewerBackground(get(map(get(app, "viewer")), "background"), problems),
+                video(map(get(app, "video")), problems));
+    }
+
+    /**
+     * {@code space-harvester-app.video.*}: die Werte für Videos ({@link VideoSettings.Value}). Ein unlesbarer oder zu
+     * großer Wert ist ein Problem und lässt den Default stehen.
+     */
+    private VideoSettings video(Map<?, ?> video, List<String> problems) {
+        Map<VideoSettings.Value, Long> values = new java.util.EnumMap<>(VideoSettings.Value.class);
+        for (VideoSettings.Value value : VideoSettings.Value.values()) {
+            Object raw = get(video, value.key());
+            if (raw == null) {
+                continue;
+            }
+            String key = VideoSettings.KEY + "." + value.key();
+            long chosen = longNumber(raw, value.defaultValue(), key, problems);
+            if (value.accepts(chosen)) {
+                values.put(value, chosen);
+            } else {
+                problems.add(key + " liegt zwischen " + value.min() + " und " + value.max() + "; es gilt "
+                        + value.defaultValue());
+            }
+        }
+        return new VideoSettings(values);
     }
 
     /**

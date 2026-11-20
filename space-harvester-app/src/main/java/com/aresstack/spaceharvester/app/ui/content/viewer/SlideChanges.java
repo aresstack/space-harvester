@@ -3,9 +3,12 @@ package com.aresstack.spaceharvester.app.ui.content.viewer;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import com.aresstack.spaceharvester.app.settings.VideoSettings;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -13,27 +16,31 @@ import java.util.List;
  *
  * <p>While a slide is shown the picture is still, so the encoder needs only a few hundred bytes per frame. A new
  * slide produces one frame tens of kilobytes large. Key frames are not used as change points because encoders
- * place them at a fixed interval (about every 30 s in the BSCW recordings); a burst of large frames within three
- * seconds, as produced by a slide animation or a moving window, counts as one change.</p>
+ * place them at a fixed interval (about every 30 s in the BSCW recordings); a burst of large frames within a short
+ * time, as produced by a slide animation or a moving window, counts as one change.</p>
+ *
+ * <p>A video that is no presentation (moving pictures, a live demo) has large frames all the time. As a safeguard it
+ * gets at most so many marks per minute and per video ({@link VideoSettings.Value#MAX_MARKS_PER_MINUTE},
+ * {@link VideoSettings.Value#MAX_MARKS}): then only the strongest changes stay, which are its scene changes. All values
+ * come from {@link VideoSettings}.</p>
  */
 final class SlideChanges {
-    /** A frame at least this many times the median frame size marks a change. */
-    private static final int SIZE_FACTOR = 20;
-    /** Frames smaller than this are never changes, even if the median is tiny. */
-    private static final int MIN_CHANGE_BYTES = 2048;
-    /** Large frames closer than this belong to the same change. */
-    private static final long BURST_MILLIS = 3000;
-    /** The picture at the very beginning is the first slide, not a change. */
-    private static final long START_MILLIS = 1500;
+    /** More samples than any video track has; a larger count means a damaged index. */
     private static final int MAX_SAMPLES = 5_000_000;
 
     private SlideChanges() {
     }
 
     /** Read the MP4 index of a remote file and return its slide changes in milliseconds. */
-    static List<Long> load(MediaStreamBridge.ChunkSource source, long length) throws IOException {
+    static List<Long> load(MediaStreamBridge.ChunkSource source, long length, VideoSettings settings)
+            throws IOException {
         byte[] moov = moov(source, length);
-        return moov == null ? Collections.emptyList() : detect(moov);
+        return moov == null ? Collections.emptyList() : detect(moov, settings);
+    }
+
+    /** Like {@link #load(MediaStreamBridge.ChunkSource, long, VideoSettings)} with the defaults. */
+    static List<Long> load(MediaStreamBridge.ChunkSource source, long length) throws IOException {
+        return load(source, length, VideoSettings.DEFAULT);
     }
 
     /** The length of a remote MP4 file from its movie header ({@code mvhd}), or 0 if unreadable. */
@@ -89,8 +96,13 @@ final class SlideChanges {
         return null;
     }
 
-    /** Detect slide changes in a {@code moov} box (with or without its own header). */
+    /** Like {@link #detect(byte[], VideoSettings)} with the defaults. */
     static List<Long> detect(byte[] moov) {
+        return detect(moov, VideoSettings.DEFAULT);
+    }
+
+    /** Detect slide changes in a {@code moov} box (with or without its own header). */
+    static List<Long> detect(byte[] moov, VideoSettings settings) {
         int start = moov.length >= 8 && "moov".equals(new String(moov, 4, 4, StandardCharsets.ISO_8859_1)) ? 8 : 0;
         int[] track = videoTrack(moov, start, moov.length);
         if (track == null) {
@@ -138,25 +150,60 @@ final class SlideChanges {
         }
         int[] sorted = sizes.clone();
         Arrays.sort(sorted);
-        long threshold = Math.max(MIN_CHANGE_BYTES, (long) sorted[samples / 2] * SIZE_FACTOR);
-        List<Long> changes = new ArrayList<>();
-        long burstEnd = -BURST_MILLIS;
+        long threshold = Math.max(settings.get(VideoSettings.Value.MIN_CHANGE_BYTES),
+                (long) sorted[samples / 2] * settings.get(VideoSettings.Value.SIZE_FACTOR));
+        long burst = settings.get(VideoSettings.Value.BURST_MILLIS);
+        long firstSlide = settings.get(VideoSettings.Value.START_MILLIS);
+        // Each change with the largest frame of its burst, the measure of how strong it is.
+        List<long[]> changes = new ArrayList<>();
+        long burstEnd = -burst;
         for (int i = 0; i < samples; i++) {
-            if (key[i] || sizes[i] < threshold || times[i] < START_MILLIS) {
+            if (key[i] || sizes[i] < threshold || times[i] < firstSlide) {
                 continue;
             }
-            if (times[i] - burstEnd >= BURST_MILLIS) {
-                changes.add(times[i]);
+            if (times[i] - burstEnd >= burst) {
+                changes.add(new long[]{times[i], sizes[i]});
+            } else if (!changes.isEmpty()) {
+                long[] last = changes.get(changes.size() - 1);
+                last[1] = Math.max(last[1], sizes[i]);
             }
             burstEnd = times[i];
         }
-        return Collections.unmodifiableList(changes);
+        return strongest(changes, times[samples - 1], settings);
     }
 
-    /** The first change after {@code positionMillis}, or -1. */
+    /**
+     * The safeguard for videos that are no presentation: at most so many changes per minute of video and per video;
+     * if there are more, the strongest (largest frame) stay, in time order.
+     *
+     * @param changes time and strength of each change, in time order
+     */
+    static List<Long> strongest(List<long[]> changes, long durationMillis, VideoSettings settings) {
+        long perMinute = settings.get(VideoSettings.Value.MAX_MARKS_PER_MINUTE);
+        long minutes = Math.max(1, (durationMillis + 59_999) / 60_000);
+        long allowed = Math.min(settings.get(VideoSettings.Value.MAX_MARKS), minutes * perMinute);
+        List<long[]> kept = changes;
+        if (changes.size() > allowed) {
+            kept = new ArrayList<>(changes);
+            kept.sort(Comparator.comparingLong((long[] change) -> change[1]).reversed());
+            kept = new ArrayList<>(kept.subList(0, (int) allowed));
+            kept.sort(Comparator.comparingLong(change -> change[0]));
+        }
+        List<Long> times = new ArrayList<>(kept.size());
+        kept.forEach(change -> times.add(change[0]));
+        return Collections.unmodifiableList(times);
+    }
+
+    /** Like {@link #next(List, long, VideoSettings)} with the defaults. */
     static long next(List<Long> changes, long positionMillis) {
+        return next(changes, positionMillis, VideoSettings.DEFAULT);
+    }
+
+    /** The first change after {@code positionMillis} (not within the skip distance), or -1. */
+    static long next(List<Long> changes, long positionMillis, VideoSettings settings) {
+        long skip = settings.get(VideoSettings.Value.NEXT_SKIP_MILLIS);
         for (long change : changes) {
-            if (change > positionMillis + 500) {
+            if (change > positionMillis + skip) {
                 return change;
             }
         }
@@ -168,9 +215,15 @@ final class SlideChanges {
      * goes to the slide before, like the previous-track button of a player.
      */
     static long previous(List<Long> changes, long positionMillis) {
+        return previous(changes, positionMillis, VideoSettings.DEFAULT);
+    }
+
+    /** Like {@link #previous(List, long)} with the grace time from {@code settings}. */
+    static long previous(List<Long> changes, long positionMillis, VideoSettings settings) {
+        long grace = settings.get(VideoSettings.Value.PREVIOUS_GRACE_MILLIS);
         long previous = 0;
         for (long change : changes) {
-            if (change >= positionMillis - 2000) {
+            if (change >= positionMillis - grace) {
                 break;
             }
             previous = change;

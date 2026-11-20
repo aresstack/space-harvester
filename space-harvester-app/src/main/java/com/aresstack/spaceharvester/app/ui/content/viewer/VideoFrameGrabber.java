@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.spaceharvester.app.settings.VideoSettings;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
@@ -27,21 +28,6 @@ import java.util.function.BooleanSupplier;
  * Speicher; gelesen wird nur, was VLC für die angesprungenen Stellen braucht.
  */
 public final class VideoFrameGrabber {
-
-    /** Abstand nach einem Wechsel, bis die neue Folie sicher vollständig zu sehen ist. */
-    static final long SETTLE_MILLIS = 2000;
-    /** So lange wartet ein Bild höchstens auf VLC (Sprung über BSCW, je 256 KiB etwa 0,7 s). */
-    private static final long FRAME_TIMEOUT_MILLIS = 30_000;
-    /** Nach dem letzten gelieferten Bild so lange Ruhe, dann gilt es als das angesprungene. */
-    private static final long QUIET_MILLIS = 400;
-    /** So viele Bilder Wiedergabe nach einem Sprung, bevor eines als Standbild gilt (bei 25 fps etwa 0,4 s). */
-    private static final int FRAMES_AFTER_SEEK = 10;
-    /** So weit darf die Position von VLC beim gelieferten Bild vor der angesprungenen Stelle liegen. */
-    private static final long EARLY_TOLERANCE_MILLIS = 500;
-    /** So weit darf die Position von VLC beim gelieferten Bild nach der angesprungenen Stelle liegen. */
-    static final long POSITION_TOLERANCE_MILLIS = 1500;
-    /** Liefert VLC nach dem ersten neuen Bild weiter Bilder, gilt nach dieser Zeit das jüngste. */
-    private static final long SETTLE_LIMIT_MILLIS = 3000;
 
     /** Fortschritt: {@code done} von {@code total} Standbildern. */
     public interface Progress {
@@ -81,24 +67,25 @@ public final class VideoFrameGrabber {
             throws IOException {
         List<Assets.VideoFrame> frames = new ArrayList<>();
         grab(reader, size, mediaType, slides(SlideChanges.load(reader, size), limit), frames::add, progress,
-                cancelled);
+                cancelled, VideoSettings.DEFAULT);
         return frames;
     }
 
     /**
-     * Springt jede Folie {@link #SETTLE_MILLIS} nach ihrem Beginn an und gibt ihr Standbild sofort an {@code sink};
-     * das Standbild trägt den Beginn der Folie. Läuft im aufrufenden Thread, nie auf dem EDT.
+     * Springt jede Folie kurz nach ihrem Beginn an ({@link VideoSettings.Value#SETTLE_MILLIS}) und gibt ihr Standbild
+     * sofort an {@code sink}; das Standbild trägt den Beginn der Folie. Läuft im aufrufenden Thread, nie auf dem EDT.
      *
      * @param slides Beginn der Folien, deren Standbild gebraucht wird
      * @throws IOException           wenn VLC fehlt oder das Video nicht spielt
      * @throws CancellationException wenn {@code cancelled} zutrifft
      */
     public static void grab(MediaStreamBridge.ChunkSource reader, long size, String mediaType, List<Long> slides,
-                            FrameSink sink, Progress progress, BooleanSupplier cancelled) throws IOException {
+                            FrameSink sink, Progress progress, BooleanSupplier cancelled, VideoSettings settings)
+            throws IOException {
         if (slides.isEmpty()) {
             return;
         }
-        try (Session session = Session.open(reader, size, mediaType, cancelled)) {
+        try (Session session = Session.open(reader, size, mediaType, cancelled, settings)) {
             for (int index = 0; index < slides.size(); index++) {
                 Assets.VideoFrame frame = session.frame(slides.get(index));
                 if (frame != null) {
@@ -120,13 +107,15 @@ public final class VideoFrameGrabber {
         private final EmbeddedMediaPlayer player;
         private final Surface surface = new Surface();
         private final BooleanSupplier cancelled;
+        private final VideoSettings settings;
 
         private Session(MediaPlayerFactory factory, MediaStreamBridge bridge, EmbeddedMediaPlayer player,
-                        BooleanSupplier cancelled) {
+                        BooleanSupplier cancelled, VideoSettings settings) {
             this.factory = factory;
             this.bridge = bridge;
             this.player = player;
             this.cancelled = cancelled;
+            this.settings = settings;
         }
 
         /**
@@ -136,7 +125,7 @@ public final class VideoFrameGrabber {
          * @throws CancellationException wenn {@code cancelled} zutrifft
          */
         public static Session open(MediaStreamBridge.ChunkSource reader, long size, String mediaType,
-                                   BooleanSupplier cancelled) throws IOException {
+                                   BooleanSupplier cancelled, VideoSettings settings) throws IOException {
             if (!VlcRuntimeLocator.configure()) {
                 throw new IOException("VLC ist nicht verfügbar");
             }
@@ -146,7 +135,8 @@ public final class VideoFrameGrabber {
             Session session = null;
             try {
                 bridge = new MediaStreamBridge(reader, size, mediaType);
-                session = new Session(factory, bridge, factory.mediaPlayers().newEmbeddedMediaPlayer(), cancelled);
+                session = new Session(factory, bridge, factory.mediaPlayers().newEmbeddedMediaPlayer(), cancelled,
+                        settings);
                 session.start();
                 return session;
             } catch (IOException | RuntimeException failure) {
@@ -165,31 +155,35 @@ public final class VideoFrameGrabber {
         private void start() throws IOException {
             player.videoSurface().set(factory.videoSurfaces().newVideoSurface(surface, surface, true));
             player.media().play(bridge.address().toASCIIString());
-            long until = System.currentTimeMillis() + FRAME_TIMEOUT_MILLIS;
+            long poll = settings.get(VideoSettings.Value.POLL_MILLIS);
+            long until = System.currentTimeMillis() + settings.get(VideoSettings.Value.FRAME_TIMEOUT_MILLIS);
             while (surface.count() == 0 && System.currentTimeMillis() < until) {
                 check(cancelled);
-                sleep(50);
+                sleep(poll);
             }
             if (surface.count() == 0) {
                 throw new IOException("Das Video spielt nicht");
             }
             // Erst angehalten zeigt VLC nach einem Sprung genau ein Bild; spielend kämen laufend neue.
-            for (int attempt = 0; attempt < 50 && player.status().isPlaying(); attempt++) {
-                if (attempt % 10 == 0) {
+            long pauseUntil = System.currentTimeMillis() + settings.get(VideoSettings.Value.PAUSE_WAIT_MILLIS);
+            long pauseAgain = 0;
+            while (player.status().isPlaying() && System.currentTimeMillis() < pauseUntil) {
+                if (System.currentTimeMillis() >= pauseAgain) {
                     player.controls().setPause(true);
+                    pauseAgain = System.currentTimeMillis() + settings.get(VideoSettings.Value.PAUSE_RETRY_MILLIS);
                 }
-                sleep(100);
+                sleep(poll);
             }
-            sleep(QUIET_MILLIS);
+            sleep(settings.get(VideoSettings.Value.QUIET_MILLIS));
         }
 
         /**
-         * Das Standbild der Folie, die an {@code slide} beginnt, {@link #SETTLE_MILLIS} danach; {@code null}, wenn VLC
-         * dort kein Bild liefert.
+         * Das Standbild der Folie, die an {@code slide} beginnt, kurz danach
+         * ({@link VideoSettings.Value#SETTLE_MILLIS}); {@code null}, wenn VLC dort kein Bild liefert.
          */
         public Assets.VideoFrame frame(long slide) throws IOException {
             check(cancelled);
-            long position = slide + SETTLE_MILLIS;
+            long position = slide + settings.get(VideoSettings.Value.SETTLE_MILLIS);
             long seen = surface.count();
             // Angehalten springt VLC nicht zuverlässig weiter: springen, abspielen, das erste Bild an der Stelle
             // nehmen, wieder anhalten. Die Folie steht dort noch eine Weile, ein Bild später ist gleich.
@@ -198,19 +192,21 @@ public final class VideoFrameGrabber {
             // VLC meldet die neue Position schon vor dem ersten Bild von dort; Bilder aus der Zeit vor dem Sprung sind
             // noch unterwegs. Erst nach einigen Bildern Wiedergabe gilt eines.
             BufferedImage image = null;
-            long frameUntil = System.currentTimeMillis() + FRAME_TIMEOUT_MILLIS;
+            long frameUntil = System.currentTimeMillis() + settings.get(VideoSettings.Value.FRAME_TIMEOUT_MILLIS);
             int played = 0;
             try {
                 while (true) {
-                    BufferedImage candidate = surface.awaitNew(seen, frameUntil, cancelled);
+                    BufferedImage candidate = surface.awaitNew(seen, frameUntil,
+                            settings.get(VideoSettings.Value.POLL_MILLIS), cancelled);
                     if (candidate == null) {
                         break;
                     }
                     image = candidate;
                     seen = surface.count();
                     long time = player.status().time();
-                    if (++played >= FRAMES_AFTER_SEEK && time >= position - EARLY_TOLERANCE_MILLIS
-                            && time <= position + POSITION_TOLERANCE_MILLIS) {
+                    if (++played >= settings.get(VideoSettings.Value.FRAMES_AFTER_SEEK)
+                            && time >= position - settings.get(VideoSettings.Value.EARLY_TOLERANCE_MILLIS)
+                            && time <= position + settings.get(VideoSettings.Value.LATE_TOLERANCE_MILLIS)) {
                         break;
                     }
                 }
@@ -263,7 +259,6 @@ public final class VideoFrameGrabber {
         private int height;
         private int[] pixels;
         private long count;
-        private long lastAt;
 
         @Override
         public synchronized BufferFormat getBufferFormat(int sourceWidth, int sourceHeight) {
@@ -282,7 +277,6 @@ public final class VideoFrameGrabber {
                                          BufferFormat bufferFormat) {
             nativeBuffers[0].order(ByteOrder.nativeOrder()).asIntBuffer().get(0, pixels, 0, pixels.length);
             count++;
-            lastAt = System.currentTimeMillis();
             notifyAll();
         }
 
@@ -291,7 +285,7 @@ public final class VideoFrameGrabber {
         }
 
         /** Das nächste Bild nach {@code before}, sobald es da ist; {@code null}, wenn bis {@code until} keines kommt. */
-        synchronized BufferedImage awaitNew(long before, long until, BooleanSupplier cancelled) {
+        synchronized BufferedImage awaitNew(long before, long until, long poll, BooleanSupplier cancelled) {
             while (count == before) {
                 check(cancelled);
                 long left = until - System.currentTimeMillis();
@@ -299,39 +293,7 @@ public final class VideoFrameGrabber {
                     return null;
                 }
                 try {
-                    wait(Math.min(left, 100));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new CancellationException("Standbilder abgebrochen");
-                }
-            }
-            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-            image.setRGB(0, 0, width, height, pixels, 0, width);
-            return image;
-        }
-
-        /**
-         * Das jüngste Bild nach {@code before}, sobald VLC {@link #QUIET_MILLIS} lang kein weiteres liefert, spätestens
-         * {@link #SETTLE_LIMIT_MILLIS} nach dem ersten neuen; {@code null} nach {@link #FRAME_TIMEOUT_MILLIS} ohne
-         * neues Bild.
-         */
-        synchronized BufferedImage next(long before, BooleanSupplier cancelled) {
-            long until = System.currentTimeMillis() + FRAME_TIMEOUT_MILLIS;
-            long firstAt = 0;
-            while (count == before || System.currentTimeMillis() - lastAt < QUIET_MILLIS) {
-                check(cancelled);
-                long now = System.currentTimeMillis();
-                if (count == before && now >= until) {
-                    return null;
-                }
-                if (count != before) {
-                    firstAt = firstAt == 0 ? now : firstAt;
-                    if (now - firstAt >= SETTLE_LIMIT_MILLIS) {
-                        break;
-                    }
-                }
-                try {
-                    wait(count == before ? 100 : Math.max(1, QUIET_MILLIS - (now - lastAt)));
+                    wait(Math.min(left, poll));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new CancellationException("Standbilder abgebrochen");

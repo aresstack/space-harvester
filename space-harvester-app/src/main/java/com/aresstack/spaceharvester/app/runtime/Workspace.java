@@ -751,6 +751,12 @@ public final class Workspace {
                 marks);
     }
 
+    /** Setzt, woher die Werte für den Vergleich zweier Standbilder kommen ({@code space-harvester-app.video.*}). */
+    public void slideThresholds(java.util.function.Supplier<
+            com.aresstack.spaceharvester.application.marks.SlideFrames.Thresholds> thresholds) {
+        harvester.assets().slideThresholds(thresholds);
+    }
+
     /** Die Folien der Videos: gespeicherte Marken ohne Wiederholungen derselben Folie. */
     private VideoMarks slides() {
         return VideoMarks.slides(harvester.enrichments().store(), harvester.assets());

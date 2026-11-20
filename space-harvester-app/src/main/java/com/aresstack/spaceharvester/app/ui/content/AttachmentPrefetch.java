@@ -31,9 +31,9 @@ final class AttachmentPrefetch implements AutoCloseable {
     }
 
     /** So viele zuletzt geladene Anhänge bleiben im Speicher. */
-    static final int CACHED = 24;
+    private final int cached;
     /** Nach so vielen geladenen Anhängen zeigt {@code batch} den Stand, und am Ende. */
-    static final int BATCH = 10;
+    private final int batchSize;
 
     private final Source source;
     private final Function<Throwable, String> reason;
@@ -41,7 +41,7 @@ final class AttachmentPrefetch implements AutoCloseable {
     private final Map<String, byte[]> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, byte[]> eldest) {
-            return size() > CACHED;
+            return size() > cached;
         }
     };
     /** Schon geladen und abgelegt: im Hintergrund nicht noch einmal. */
@@ -59,10 +59,15 @@ final class AttachmentPrefetch implements AutoCloseable {
 
     /**
      * @param reason lesbarer Grund eines Fehlers
-     * @param batch  läuft auf dem EDT nach {@value #BATCH} geladenen Anhängen und am Ende, etwa um die Liste neu zu
-     *               zeigen
+     * @param batch     läuft auf dem EDT nach {@code batchSize} geladenen Anhängen und am Ende, etwa um die Liste neu
+     *                  zu zeigen
+     * @param cached    so viele zuletzt geladene Anhänge bleiben im Speicher
+     * @param batchSize nach so vielen geladenen Anhängen läuft {@code batch}
      */
-    AttachmentPrefetch(Source source, Function<Throwable, String> reason, Runnable batch) {
+    AttachmentPrefetch(Source source, Function<Throwable, String> reason, Runnable batch, int cached,
+                       int batchSize) {
+        this.cached = cached;
+        this.batchSize = batchSize;
         this.source = Objects.requireNonNull(source, "source");
         this.reason = Objects.requireNonNull(reason, "reason");
         this.batch = Objects.requireNonNull(batch, "batch");
@@ -175,7 +180,7 @@ final class AttachmentPrefetch implements AutoCloseable {
                     cache.put(key, bytes);
                     loaded.add(key);
                     waiters = waiting.remove(key);
-                    report = ++sinceBatch >= BATCH;
+                    report = ++sinceBatch >= batchSize;
                     if (report) {
                         sinceBatch = 0;
                     }

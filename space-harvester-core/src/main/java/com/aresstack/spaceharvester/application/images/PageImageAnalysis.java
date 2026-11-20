@@ -43,9 +43,10 @@ public class PageImageAnalysis {
 
     /** Höchstens so viele Bilder je Seite; weitere stehen als Warnung {@value #TRUNCATED} im Ergebnis. */
     public static final int MAX_IMAGES = 50;
-    /** Höchstens so viele Standbilder eines Videos; eine Aufzeichnung von einer Stunde hat oft mehr als 50 Folien. */
-    public static final int MAX_VIDEO_FRAMES = 200;
-    /** Warnung: Die Seite hat mehr Bilder als {@link #MAX_IMAGES} (bei einem Video {@link #MAX_VIDEO_FRAMES}). */
+    /**
+     * Warnung: Die Seite hat mehr Bilder als {@link #MAX_IMAGES} (bei einem Video mehr Marken, als
+     * eingestellt sind).
+     */
     public static final String TRUNCATED = "images-truncated";
     /** Warnung: Die Quelle hat keine Lese-Ansicht, also keine Bilder. */
     public static final String NO_READING_VIEW = "no-reading-view";
@@ -482,8 +483,8 @@ public class PageImageAnalysis {
     }
 
     /**
-     * Alles Beschreibbare der Seite: die Marken ihres Videos mit gezogenem Standbild (höchstens
-     * {@link #MAX_VIDEO_FRAMES}), sonst die Bilder ihrer Lese-Ansicht (höchstens {@link #MAX_IMAGES}).
+     * Alles Beschreibbare der Seite: die Marken ihres Videos mit gezogenem Standbild (höchstens so viele, wie ein Video
+     * Marken haben darf), sonst die Bilder ihrer Lese-Ansicht (höchstens {@link #MAX_IMAGES}).
      */
     private List<Describable> describables(PageSnapshot snapshot, List<String> warnings) {
         PageKey key = snapshot.key();
@@ -494,7 +495,7 @@ public class PageImageAnalysis {
                     assets.videoFrame(key.sourceId(), key.pageId(), snapshot.revision(), millis).orElse(null)));
         }
         if (!items.isEmpty()) {
-            return truncated(items, MAX_VIDEO_FRAMES, warnings);
+            return truncated(items, assets.slideThresholds().maxFrames(), warnings);
         }
         List<PageAttachment>[] attachments = new List[1];
         java.util.function.Supplier<List<PageAttachment>> lazy = () -> {

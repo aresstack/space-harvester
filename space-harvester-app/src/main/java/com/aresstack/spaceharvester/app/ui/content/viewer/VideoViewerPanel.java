@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
 
+import com.aresstack.spaceharvester.app.settings.VideoSettings;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 import uk.co.caprica.vlcj.player.component.EmbeddedMediaPlayerComponent;
@@ -34,14 +35,8 @@ import java.util.concurrent.TimeUnit;
  */
 public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
-    private static final long START_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(15);
-    private static final long SEEK_FEEDBACK_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(10);
-    /**
-     * So lange spielt ein angehaltenes Video nach einem Sprung von der neuen Stelle aus, bevor es wieder anhält: VLC
-     * meldet die neue Position vor dem ersten Bild von dort, angehalten bliebe das alte Bild stehen (wie
-     * {@code FRAMES_AFTER_SEEK} des {@link VideoFrameGrabber}, bei 25 fps etwa 10 Bilder).
-     */
-    private static final long STILL_AFTER_SEEK_MILLIS = 400;
+    /** Fristen, Toleranzen und Takt des Players ({@code space-harvester-app.video.*}). */
+    private final VideoSettings settings;
     private static final String VIDEO_CARD = "video";
     private static final String AUDIO_CARD = "audio";
 
@@ -53,7 +48,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private final VideoFullScreenController fullScreen =
             new VideoFullScreenController(this, this::prepareForFullScreenTransfer,
                     this::completeFullScreenTransfer, transport::setFullScreen);
-    private final Timer progress = new Timer(350, event -> updateProgress());
+    private final Timer progress;
     private final ExecutorService seekWorker = Executors.newSingleThreadExecutor(task -> {
         Thread thread = new Thread(task, "space-harvester-video-seek");
         thread.setDaemon(true);
@@ -101,7 +96,15 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     public VideoViewerPanel(String fileName, long size, String mediaType,
                             MediaStreamBridge.ChunkSource reader) {
+        this(fileName, size, mediaType, reader, VideoSettings.DEFAULT);
+    }
+
+    /** @param settings Fristen, Toleranzen, Takt und Marken des Players */
+    public VideoViewerPanel(String fileName, long size, String mediaType,
+                            MediaStreamBridge.ChunkSource reader, VideoSettings settings) {
         super(new BorderLayout(0, 0));
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.progress = new Timer(settings.number(VideoSettings.Value.PROGRESS_MILLIS), event -> updateProgress());
         this.fileName = fileName;
         this.fileSize = size;
         this.reader = reader;
@@ -450,7 +453,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             public void timeChanged(MediaPlayer mediaPlayer, long time) {
                 long still = stillAtMillis;
                 // Nur Zeiten von der neuen Stelle zählen; direkt nach dem Sprung meldet VLC noch die alte.
-                if (still >= 0 && time >= still && time <= still + VideoFrameGrabber.POSITION_TOLERANCE_MILLIS) {
+                if (still >= 0 && time >= still
+                        && time <= still + settings.get(VideoSettings.Value.LATE_TOLERANCE_MILLIS)) {
                     stillAtMillis = -1;
                     boolean muted = mutedBeforeStill;
                     mediaPlayer.submit(() -> {
@@ -591,7 +595,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (stillAtMillis < 0) {
             mutedBeforeStill = player.mediaPlayer().audio().isMute();
         }
-        stillAtMillis = target + STILL_AFTER_SEEK_MILLIS;
+        stillAtMillis = target + settings.get(VideoSettings.Value.STILL_AFTER_SEEK_MILLIS);
         player.mediaPlayer().audio().setMute(true);
     }
 
@@ -658,7 +662,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         slideDetection = new SwingWorker<SlideIndex, Void>() {
             @Override
             protected SlideIndex doInBackground() throws IOException {
-                return new SlideIndex(SlideChanges.load(reader, fileSize), SlideChanges.durationMillis(reader, fileSize));
+                return new SlideIndex(SlideChanges.load(reader, fileSize, settings),
+                        SlideChanges.durationMillis(reader, fileSize));
             }
 
             @Override
@@ -737,7 +742,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (changes.isEmpty() || duration <= 0 || position < 0) {
             return;
         }
-        long target = forward ? SlideChanges.next(changes, position) : SlideChanges.previous(changes, position);
+        long target = forward ? SlideChanges.next(changes, position, settings)
+                : SlideChanges.previous(changes, position, settings);
         if (target >= 0) {
             seek(target / (double) duration);
         }
@@ -797,7 +803,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             return;
         }
         if (startRequestedAtNanos != 0 && !actuallyPlaying
-                && System.nanoTime() - startRequestedAtNanos > START_TIMEOUT_NANOS) {
+                && System.nanoTime() - startRequestedAtNanos
+                > TimeUnit.MILLISECONDS.toNanos(settings.get(VideoSettings.Value.START_TIMEOUT_MILLIS))) {
             playbackFailed("VLC startet nicht. Installation, Videoformat und BSCW-Verbindung prüfen.");
             return;
         }
@@ -808,12 +815,15 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             boolean hasFraction = share >= 0 && share <= 1;
             if (seekRequestedAtNanos != 0) {
                 boolean reached = duration > 0
-                        ? Math.abs(current - Math.round(requestedSeekShare * duration)) <= 2500
-                        : hasFraction && Math.abs(share - requestedSeekShare) < 0.02;
+                        ? Math.abs(current - Math.round(requestedSeekShare * duration))
+                        <= settings.get(VideoSettings.Value.SEEK_REACHED_MILLIS)
+                        : hasFraction && Math.abs(share - requestedSeekShare)
+                        < settings.get(VideoSettings.Value.SEEK_REACHED_PERMILLE) / 1000.0;
                 if (reached) {
                     seekRequestedAtNanos = 0;
                     message.setText(actuallyPlaying ? playbackMessage() : "Pausiert");
-                } else if (System.nanoTime() - seekRequestedAtNanos < SEEK_FEEDBACK_TIMEOUT_NANOS) {
+                } else if (System.nanoTime() - seekRequestedAtNanos
+                        < TimeUnit.MILLISECONDS.toNanos(settings.get(VideoSettings.Value.SEEK_FEEDBACK_MILLIS))) {
                     if (!transport.seekBar().isDragging()) {
                         showSeekProgress(duration, current, hasFraction ? share : -1, true);
                     }

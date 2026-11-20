@@ -1553,7 +1553,7 @@ public final class PageDetailPanel extends JPanel {
             }
             return reader.read(offset, count);
         };
-        originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, ranges::read);
+        originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, ranges::read, context.video());
         if (size > 0 && file.endsWith(".mp4")) {
             VideoFrameSource frames = new VideoFrameSource(source, id, ranges::read, size, mediaType);
             videoFrames = frames;
@@ -2621,9 +2621,8 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || video != videoFrames || changes.isEmpty()) {
             return;
         }
-        List<Long> marks = changes.size() > com.aresstack.spaceharvester.application.images.PageImageAnalysis
-                .MAX_VIDEO_FRAMES ? changes.subList(0,
-                com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES) : changes;
+        // Wie viele Marken ein Video höchstens bekommt, hat die Erkennung schon begrenzt (die stärksten Wechsel).
+        List<Long> marks = changes;
         Background.run(() -> {
             runtime.workspace().saveVideoMarks(video.sourceId(), video.pageId(), marks);
             return marks.size();
@@ -2664,7 +2663,7 @@ public final class PageDetailPanel extends JPanel {
                     if (runtime.workspace().missingVideoFrames(source, id).contains(millis)) {
                         if (session == null) {
                             session = VideoFrameGrabber.Session.open(video.reader(), video.size(), video.mediaType(),
-                                    () -> video != videoFrames);
+                                    () -> video != videoFrames, context.video());
                         }
                         com.aresstack.spaceharvester.application.assets.Assets.VideoFrame frame = session.frame(millis);
                         if (frame != null) {
@@ -2682,7 +2681,9 @@ public final class PageDetailPanel extends JPanel {
                     session = null;
                 }
             }
-        }, PageDetailPanel::reason, () -> attachmentsChanged(video));
+        }, PageDetailPanel::reason, () -> attachmentsChanged(video),
+                context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_CACHED),
+                context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_BATCH));
         return prefetch;
     }
 

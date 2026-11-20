@@ -489,6 +489,44 @@ public final class AppContext {
     private volatile ViewerBackground viewerWanted;
 
     /**
+     * Speichert die Werte für Videos ({@code space-harvester-app.video.*}) in der Datei, ohne Neustart der Laufzeit:
+     * Player, Standbilder und Marken lesen sie beim nächsten Gebrauch aus den Einstellungen. Schnell aufeinanderfolgende
+     * Änderungen schreiben immer die jüngste zuletzt.
+     */
+    public void video(com.aresstack.spaceharvester.app.settings.VideoSettings video, Runnable done,
+                      Consumer<Throwable> failed) {
+        videoWanted = video;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                com.aresstack.spaceharvester.app.settings.VideoSettings wanted = videoWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withVideo(configFile, new ConfigFileEditor.Draft(text, null), wanted),
+                        !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withVideo(saved);
+            }
+            fire();
+            done.run();
+        }, error -> {
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private volatile com.aresstack.spaceharvester.app.settings.VideoSettings videoWanted;
+
+    /** Die Werte für Videos; ohne geladene Einstellungen die Defaults. */
+    public com.aresstack.spaceharvester.app.settings.VideoSettings video() {
+        AppSettings current = settings;
+        return current == null ? com.aresstack.spaceharvester.app.settings.VideoSettings.DEFAULT : current.video();
+    }
+
+    /**
      * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab
      * ({@code space-harvester-app.disabled-sources}) und startet die Quellen neu; beim Start setzt die Laufzeit ihn im
      * Core ({@code SourceManagement.setEnabled}). Der Bestand der Quelle bleibt.
@@ -817,6 +855,10 @@ public final class AppContext {
             boolean restarted = started.runtime() != previous;
             settings = started.settings();
             runtime = started.runtime();
+            if (runtime != null) {
+                // Der Vergleich der Standbilder im Core folgt den Werten für Videos, auch nach dem Speichern.
+                runtime.workspace().slideThresholds(() -> video().slideThresholds());
+            }
             startProblem = started.problem();
             reloads.decrementAndGet();
             if (restarted) {

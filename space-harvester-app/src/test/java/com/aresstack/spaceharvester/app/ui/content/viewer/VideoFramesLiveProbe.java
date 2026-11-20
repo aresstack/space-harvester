@@ -65,7 +65,8 @@ class VideoFramesLiveProbe {
                 missing.size(), (System.nanoTime() - start) / 1e9);
         listAttachments(workspace, source, pageId);
         VideoFrameGrabber.grab(ranges::read, size, "video/mp4", missing.subList(0, Math.min(limit, missing.size())),
-                frame -> workspace.storeVideoFrame(source, pageId, frame), (done, total) -> { }, () -> false);
+                frame -> workspace.storeVideoFrame(source, pageId, frame), (done, total) -> { }, () -> false,
+                com.aresstack.spaceharvester.app.settings.VideoSettings.DEFAULT);
         System.out.printf(Locale.ROOT, "PROBE %d frames grabbed after %.1f s%n", Math.min(limit, missing.size()),
                 (System.nanoTime() - start) / 1e9);
         listAttachments(workspace, source, pageId);

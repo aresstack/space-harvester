@@ -46,6 +46,8 @@ public final class SettingsView implements View {
     static final String MODELS = "Modelle";
     static final String NETWORK = "Netzwerk";
     static final String CACHE = "Cache";
+    /** Bereich „Video“: Marken, Standbilder und Player ({@code space-harvester-app.video.*}). */
+    static final String VIDEO = "Video";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -103,6 +105,8 @@ public final class SettingsView implements View {
     /** Platte „Dateizugriff“ unter Allgemein: freigegebene Ordner für Ordner-Quellen. */
     final FileAccessEditor fileAccess;
     final StandingWordsEditor standingWords;
+    /** Bereich „Video“: alle Werte für Videos. */
+    final VideoSettingsPanel video;
     final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
@@ -170,6 +174,7 @@ public final class SettingsView implements View {
         this.ai = new AiSettingsPanel(context);
         this.fileAccess = new FileAccessEditor(context);
         this.standingWords = new StandingWordsEditor(context);
+        this.video = new VideoSettingsPanel(context);
         this.glossaryRules = new GlossaryRulesEditor(context);
         this.keePass = new KeePassPairingPanel(context);
         this.releases = new PageReleasesPanel(context);
@@ -285,6 +290,7 @@ public final class SettingsView implements View {
                 Comic.plate(SettingDialogs.RETRY_TITLE, Comic.PETROL, withButtons(retry, editRetry))));
         page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache, viewChangeLog))));
+        page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
@@ -310,6 +316,9 @@ public final class SettingsView implements View {
             standingWords.render();
             glossaryRules.render();
             keePass.render();
+            if (!VIDEO.equals(selected)) {
+                video.render();
+            }
             // Eingaben in den offenen Bereichen „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
             // neue Stand.
             if (!AI.equals(selected) && !MODELS.equals(selected)) {

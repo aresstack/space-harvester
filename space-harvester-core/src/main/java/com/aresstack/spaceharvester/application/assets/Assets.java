@@ -993,12 +993,13 @@ public class Assets implements DocumentInventory {
      * Standbild bleiben, bis es da ist.
      */
     public List<Long> distinctSlides(String sourceId, String pageId, String version, List<Long> marks) {
+        SlideFrames.Thresholds thresholds = slideThresholds.get();
         List<Long> slides = new java.util.ArrayList<>(marks.size());
         SlideFrames.Grid previous = null;
         for (long millis : marks) {
             SlideFrames.Grid grid = store.find(sourceId, markId(pageId, millis), frameVersion(version))
-                    .map(this::slideGrid).orElse(null);
-            if (grid != null && previous != null && SlideFrames.same(previous, grid)) {
+                    .map(frame -> slideGrid(frame, thresholds)).orElse(null);
+            if (grid != null && previous != null && SlideFrames.same(previous, grid, thresholds)) {
                 continue;
             }
             slides.add(millis);
@@ -1007,33 +1008,47 @@ public class Assets implements DocumentInventory {
         return List.copyOf(slides);
     }
 
-    /** Das Raster eines Standbilds, je Bild einmal berechnet; unlesbar {@code null}. */
-    private SlideFrames.Grid slideGrid(Asset frame) {
+    /** Das Raster eines Standbilds, je Bild und Blockgröße einmal berechnet; unlesbar {@code null}. */
+    private SlideFrames.Grid slideGrid(Asset frame, SlideFrames.Thresholds thresholds) {
+        String key = frame.sha256() + "@" + thresholds.blockPixels();
         synchronized (slideGrids) {
-            SlideFrames.Grid known = slideGrids.get(frame.sha256());
+            SlideFrames.Grid known = slideGrids.get(key);
             if (known != null) {
                 return known;
             }
         }
         SlideFrames.Grid grid;
         try {
-            grid = SlideFrames.grid(read(frame).content());
+            grid = SlideFrames.grid(read(frame).content(), thresholds.blockPixels());
         } catch (java.io.IOException | RuntimeException e) {
             return null;
         }
         synchronized (slideGrids) {
-            slideGrids.put(frame.sha256(), grid);
+            slideGrids.put(key, grid);
+            // So viele, wie ein Video Marken haben kann.
+            while (slideGrids.size() > thresholds.maxFrames()) {
+                slideGrids.remove(slideGrids.keySet().iterator().next());
+            }
         }
         return grid;
     }
 
-    /** Die Raster der zuletzt verglichenen Standbilder, so viele, wie ein Video Marken haben kann. */
-    private final Map<String, SlideFrames.Grid> slideGrids = new java.util.LinkedHashMap<>(16, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<String, SlideFrames.Grid> eldest) {
-            return size() > com.aresstack.spaceharvester.application.images.PageImageAnalysis.MAX_VIDEO_FRAMES;
-        }
-    };
+    /** Die Raster der zuletzt verglichenen Standbilder, die ältesten zuerst. */
+    private final Map<String, SlideFrames.Grid> slideGrids = new java.util.LinkedHashMap<>(16, 0.75f, true);
+
+    /** Die Werte, mit denen zwei Standbilder verglichen werden; die App stellt sie ein. */
+    private volatile java.util.function.Supplier<SlideFrames.Thresholds> slideThresholds =
+            () -> SlideFrames.Thresholds.DEFAULT;
+
+    /** Die eingestellten Werte des Vergleichs zweier Standbilder, auch wie viele Marken ein Video haben darf. */
+    public SlideFrames.Thresholds slideThresholds() {
+        return slideThresholds.get();
+    }
+
+    /** Setzt, woher die Werte des Vergleichs zweier Standbilder kommen ({@link #distinctSlides}). */
+    public void slideThresholds(java.util.function.Supplier<SlideFrames.Thresholds> thresholds) {
+        slideThresholds = Objects.requireNonNull(thresholds, "thresholds");
+    }
 
     /** Die Marken, deren Standbild in dieser Fassung noch nicht gezogen ist. */
     public List<Long> missingVideoFrames(String sourceId, String pageId, String version, List<Long> marks) {
