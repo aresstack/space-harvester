@@ -47,6 +47,14 @@ public final class FakeChatCompletionPort implements ChatCompletionPort {
         return enqueue(new Script(Arrays.asList(deltas), null, false));
     }
 
+    /**
+     * Die nächste Anfrage wird mit diesen Deltas beantwortet und endet mit diesem Abschlussgrund, etwa
+     * {@link ChatFinishReason#LENGTH} für eine am Ausgabelimit abgeschnittene Antwort.
+     */
+    public FakeChatCompletionPort enqueueAnswerEnding(ChatFinishReason finish, String... deltas) {
+        return enqueue(new Script(Arrays.asList(deltas), null, false, finish));
+    }
+
     /** Die nächste Anfrage scheitert mit diesem Fehler (beim Streaming nach onStart). */
     public FakeChatCompletionPort enqueueError(ChatCompletionException error) {
         return enqueue(new Script(Collections.<String>emptyList(), error, false));
@@ -79,7 +87,7 @@ public final class FakeChatCompletionPort implements ChatCompletionPort {
         if (script.hanging) {
             throw new IllegalStateException("hanging scripts are only supported for streaming");
         }
-        return response(join(script.deltas), request);
+        return response(join(script.deltas), request, script.finish);
     }
 
     @Override
@@ -121,7 +129,7 @@ public final class FakeChatCompletionPort implements ChatCompletionPort {
             if (script.error != null) {
                 task.finish(listener, null, script.error);
             } else {
-                task.finish(listener, response(text.toString(), request), null);
+                task.finish(listener, response(text.toString(), request, script.finish), null);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -155,8 +163,8 @@ public final class FakeChatCompletionPort implements ChatCompletionPort {
         return "";
     }
 
-    private static ChatResponse response(String text, ChatRequest request) {
-        return new ChatResponse(ChatMessage.assistant(text), ChatFinishReason.STOP, ChatUsage.notReported(),
+    private static ChatResponse response(String text, ChatRequest request, ChatFinishReason finish) {
+        return new ChatResponse(ChatMessage.assistant(text), finish, ChatUsage.notReported(),
                 request.options().model() == null ? "fake" : request.options().model());
     }
 
@@ -172,11 +180,17 @@ public final class FakeChatCompletionPort implements ChatCompletionPort {
         final List<String> deltas;
         final ChatCompletionException error;
         final boolean hanging;
+        final ChatFinishReason finish;
 
         Script(List<String> deltas, ChatCompletionException error, boolean hanging) {
+            this(deltas, error, hanging, ChatFinishReason.STOP);
+        }
+
+        Script(List<String> deltas, ChatCompletionException error, boolean hanging, ChatFinishReason finish) {
             this.deltas = new ArrayList<String>(deltas);
             this.error = error;
             this.hanging = hanging;
+            this.finish = finish;
         }
     }
 
