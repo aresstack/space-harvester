@@ -438,9 +438,9 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return disabledSources.contains(sourceId);
     }
 
-    /** Vorgabe des Ausgabeordners: Downloads im Benutzerverzeichnis. */
+    /** Vorgabe des Ausgabeordners: der Downloads-Ordner des Benutzers (unter Windows der Known Folder). */
     public static Path defaultOutputDirectory() {
-        return Path.of(System.getProperty("user.home"), "Downloads");
+        return DownloadsFolder.current();
     }
 
     /**

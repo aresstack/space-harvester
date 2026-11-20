@@ -1217,9 +1217,8 @@ public final class AttachmentViewerPanel extends JPanel {
             return;
         }
         requestOriginal(bytes -> {
-            JFileChooser chooser = new JFileChooser();
+            JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(safeFileName(attachment.fileName()));
             chooser.setDialogTitle("Anhang speichern");
-            chooser.setSelectedFile(new File(safeFileName(attachment.fileName())));
             if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
                 return;
             }
@@ -1233,9 +1232,8 @@ public final class AttachmentViewerPanel extends JPanel {
 
     /** Speichern einer großen Datei: direkt aus der Quelle in die gewählte Datei, ohne Umweg über den Speicher. */
     private void saveToFile() {
-        JFileChooser chooser = new JFileChooser();
+        JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(safeFileName(attachment.fileName()));
         chooser.setDialogTitle("Anhang speichern");
-        chooser.setSelectedFile(new File(safeFileName(attachment.fileName())));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }

@@ -3033,8 +3033,11 @@ public final class PageDetailPanel extends JPanel {
                         context.video(), new TranscribeAudioUseCase(new VlcPcmAudioDecoder(),
                                 new WhisperSpeechTranscriber()));
         feedback.working(name + " wird gestartet …");
+        java.nio.file.Path directory = context.settings() == null
+                ? com.aresstack.spaceharvester.app.settings.AppSettings.defaultOutputDirectory()
+                : context.settings().outputDirectory();
         Background.run(() -> runtime.workspace().startVideoPresentation(video.sourceId(), video.pageId(), media,
-                        format),
+                        format, directory),
                 run -> {
                     if (video == videoFrames) {
                         feedback.working(name + " läuft: fünf Aufträge unter „Aufträge“, die Datei kommt "
@@ -3557,8 +3560,7 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         PageAssets.Entry entry = assetsModel.rows.get(row);
-        JFileChooser chooser = new JFileChooser();
-        chooser.setSelectedFile(new File(safeName(entry.attachment().title())));
+        JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(safeName(entry.attachment().title()));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
@@ -3802,9 +3804,8 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         NativePayload payload = page.snapshot().payload();
-        JFileChooser chooser = new JFileChooser();
-        chooser.setSelectedFile(new File(safeName(page.header().metadata().title())
-                + (Payloads.isJson(payload) ? ".json" : ".bin")));
+        JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(safeName(page.header().metadata().title())
+                + (Payloads.isJson(payload) ? ".json" : ".bin"));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }

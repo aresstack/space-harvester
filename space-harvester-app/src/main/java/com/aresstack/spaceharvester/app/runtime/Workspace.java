@@ -890,10 +890,22 @@ public final class Workspace {
             String sourceId, String pageId,
             com.aresstack.spaceharvester.application.presentation.VideoMedia media,
             com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format format) {
+        return startVideoPresentation(sourceId, pageId, media, format, null);
+    }
+
+    /**
+     * Wie oben, die Datei im Ausgabeordner der Einstellungen (Angelo 20.11.2026: Vorgabe Downloads, nie der
+     * Datenordner); sie heißt wie das Video. {@code directory == null}: im Exportordner des Kerns.
+     */
+    public com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run startVideoPresentation(
+            String sourceId, String pageId,
+            com.aresstack.spaceharvester.application.presentation.VideoMedia media,
+            com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format format,
+            java.nio.file.Path directory) {
         syncedPage(sourceId, pageId);
         com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run run =
                 harvester.videoPresentations().start(caller, sourceId, pageId, media,
-                        harvester.videoPresentations().options(format));
+                        harvester.videoPresentations().options(format).withDirectory(directory));
         run.all().forEach(job -> activities.remember(job.id()));
         return run;
     }

@@ -336,9 +336,8 @@ public final class MermaidViewerDialog extends JDialog {
         if (image == null) {
             return;
         }
-        JFileChooser chooser = new JFileChooser();
+        JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create("diagramm.png");
         chooser.setDialogTitle("Diagramm als PNG speichern");
-        chooser.setSelectedFile(new File("diagramm.png"));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }

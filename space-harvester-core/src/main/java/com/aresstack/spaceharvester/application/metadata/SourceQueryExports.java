@@ -77,7 +77,7 @@ public class SourceQueryExports {
     /** So viele Seiten nacheinander ohne Antwort der Quelle gelten als Verbindungsabbruch: Auftrag hält sich an. */
     static final int CONNECTION_LOST_AFTER = 3;
     /** Angaben am Auftrag, aus denen ein neuer Lauf nach einem Neustart die Arbeit wiederherstellt. */
-    static final String DIRECTORY = "directory";
+    public static final String DIRECTORY = "directory";
     static final String ANALYTICS_DAYS = "analytics.days";
     static final String ANALYTICS_DETAILS = "analytics.details";
     static final String ANALYTICS_ACTIVITY_BY_DATE = "analytics.activityByDate";
