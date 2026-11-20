@@ -87,12 +87,10 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private long seekRequestedAtNanos;
     private double requestedSeekShare;
     /**
-     * Ein Sprung im angehaltenen oder noch nicht gestarteten Video: Es spielt, bis VLC diese Zeit meldet, und
-     * hält dann an; {@code -1} ohne. Ein neuer Sprung ersetzt den laufenden.
+     * Ein Sprung vor dem ersten Abspielen: Das Video startet an der Stelle und hält sofort an, dann zeigt es ein Bild
+     * weiter ({@link #playbackStarted}).
      */
-    private volatile long stillAtMillis = -1;
-    /** Seit wann der laufende Sprung spielt; nach der Frist für einen Sprung hält das Video in jedem Fall an. */
-    private volatile long stillSinceNanos;
+    private volatile boolean pauseWhenStarted;
     /** Die Länge des Videos aus seinem MP4-Index; mit ihr bleiben die Marken auch nach Stopp oder Fehler sichtbar. */
     private long indexDurationMillis;
 
@@ -464,13 +462,6 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             }
 
             @Override
-            public void timeChanged(MediaPlayer mediaPlayer, long time) {
-                if (stillReached(time)) {
-                    finishStill(mediaPlayer);
-                }
-            }
-
-            @Override
             public void stopped(MediaPlayer mediaPlayer) {
                 SwingUtilities.invokeLater(() -> playbackStopped());
             }
@@ -499,10 +490,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             startRequestedAtNanos = System.nanoTime();
             message.setText(audioOnly ? "Audio wird gestartet …" : "Video wird gestartet …");
             boolean accepted = true;
-            if (stillAtMillis >= 0) {
-                // Abspielen während eines Sprungs: weiterspielen statt anhalten.
-                stillAtMillis = -1;
-            }
+            pauseWhenStarted = false;
             if (started) {
                 player.mediaPlayer().controls().play();
             } else {
@@ -540,7 +528,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
 
     /**
      * Commit a seek only after the user releases the timeline; execute libVLC's potentially slow call off the EDT.
-     * Angehalten oder noch nicht gestartet zeigt das Video danach das Bild an der neuen Stelle ({@link #stillAtMillis}).
+     * Angehalten springt das Video genau an die Stelle und geht dann ein Bild weiter, damit VLC das Bild von dort
+     * zeigt; noch nicht gestartet startet es an der Stelle und hält dort an.
      */
     private void seek(double share) {
         if (closed || player == null || audioPreparation != null) {
@@ -550,7 +539,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             return;
         }
         if (!started) {
-            startStillAt(Math.round(Math.max(0, Math.min(1, share)) * transport.seekBar().durationMillis()));
+            startPausedAt(Math.round(Math.max(0, Math.min(1, share)) * transport.seekBar().durationMillis()));
             return;
         }
         final double requestedShare = Math.max(0, Math.min(1, share));
@@ -564,10 +553,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             transport.seekBar().updateFraction(requestedShare);
         }
         message.setText("Position wird geladen …");
-        boolean still = !actuallyPlaying && duration > 0;
-        if (still) {
-            holdStillAt(target);
-        }
+        boolean paused = !actuallyPlaying;
         try {
             seekWorker.execute(() -> {
                 try {
@@ -577,9 +563,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                         } else {
                             player.mediaPlayer().controls().setPosition((float) requestedShare);
                         }
-                        if (still) {
-                            // Angehalten springt VLC nicht zuverlässig weiter: abspielen, bis das Bild steht.
-                            player.mediaPlayer().controls().setPause(false);
+                        if (paused) {
+                            // Angehalten zeigt VLC nach dem Sprung noch das alte Bild: ein Bild weiter.
+                            player.mediaPlayer().controls().nextFrame();
                         }
                     }
                 } catch (RuntimeException failure) {
@@ -595,35 +581,24 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         }
     }
 
-    /** Ob VLC eine Zeit von der neuen Stelle meldet; direkt nach dem Sprung meldet es noch die alte. */
-    private boolean stillReached(long time) {
-        long still = stillAtMillis;
-        return still >= 0 && time >= still && time <= still + settings.get(VideoSettings.Value.LATE_TOLERANCE_MILLIS);
-    }
-
-    /**
-     * Beendet einen Sprung im angehaltenen Video: anhalten, Ton wie vorher. Nie im Ereignis-Thread von VLC aufrufen
-     * lassen, darum über {@code submit}.
-     */
-    private void finishStill(MediaPlayer mediaPlayer) {
-        if (stillAtMillis < 0) {
-            return;
+    /** Hält an (falls {@code pause}) und zeigt ein Bild weiter; abseits des EDT. */
+    private void stepFrame(boolean pause) {
+        try {
+            seekWorker.execute(() -> {
+                if (!closed && player != null) {
+                    if (pause) {
+                        player.mediaPlayer().controls().setPause(true);
+                    }
+                    player.mediaPlayer().controls().nextFrame();
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // Der Player schließt gerade.
         }
-        stillAtMillis = -1;
-        mediaPlayer.submit(() -> mediaPlayer.controls().setPause(true));
     }
 
-    /** Merkt einen Sprung im angehaltenen Video vor: spielen bis kurz nach {@code target}, dann anhalten. */
-    private void holdStillAt(long target) {
-        stillSinceNanos = System.nanoTime();
-        stillAtMillis = target + settings.get(VideoSettings.Value.STILL_AFTER_SEEK_MILLIS);
-    }
-
-    /**
-     * Ein Sprung vor dem ersten Abspielen: startet das Video an der Stelle (wie nach einem Wechsel des Medienmodus) und
-     * hält es dort an, sobald sein Bild steht.
-     */
-    private void startStillAt(long target) {
+    /** Ein Sprung vor dem ersten Abspielen: startet das Video an der Stelle, es hält dort sofort an. */
+    private void startPausedAt(long target) {
         if (bridge == null) {
             return;
         }
@@ -633,16 +608,16 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.seekBar().update(target, transport.seekBar().durationMillis());
         message.setText("Position wird geladen …");
         try {
-            holdStillAt(target);
+            pauseWhenStarted = true;
             startRequestedAtNanos = System.nanoTime();
             if (player.mediaPlayer().media().play(activeBridge().address().toASCIIString(), startAt(target))) {
                 started = true;
             } else {
-                stillAtMillis = -1;
+                pauseWhenStarted = false;
                 playbackFailed("VLC hat den Wiedergabestart abgelehnt.");
             }
         } catch (RuntimeException failure) {
-            stillAtMillis = -1;
+            pauseWhenStarted = false;
             playbackFailed((audioOnly ? "Audio" : "Video") + " nicht abspielbar: " + failure.getMessage());
         }
     }
@@ -651,10 +626,12 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (closed) {
             return;
         }
-        if (stillAtMillis >= 0 && !switchingMedia) {
-            // Spielt nur für das Bild nach einem Sprung; die Bedienung bleibt angehalten.
+        if (pauseWhenStarted && !switchingMedia) {
+            // Ein Sprung vor dem ersten Abspielen: an der Stelle anhalten und ein Bild weiter, damit es zu sehen ist.
+            pauseWhenStarted = false;
             started = true;
             startRequestedAtNanos = 0;
+            stepFrame(true);
             return;
         }
         if (switchingMedia) {
@@ -788,7 +765,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (closed || switchingMedia) {
             return;
         }
-        stillAtMillis = -1;
+        pauseWhenStarted = false;
         actuallyPlaying = false;
         started = false;
         startRequestedAtNanos = 0;
@@ -840,12 +817,6 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         try {
             long duration = player.mediaPlayer().status().length();
             long current = player.mediaPlayer().status().time();
-            // Sicherung des Sprungs im angehaltenen Video: verpasst das Ereignis die neue Stelle oder erreicht VLC sie
-            // nicht, hält es trotzdem an, statt unbemerkt weiterzuspielen und weiter zu laden.
-            if (stillAtMillis >= 0 && (stillReached(current) || System.nanoTime() - stillSinceNanos
-                    > TimeUnit.MILLISECONDS.toNanos(settings.get(VideoSettings.Value.SEEK_FEEDBACK_MILLIS)))) {
-                finishStill(player.mediaPlayer());
-            }
             float share = player.mediaPlayer().status().position();
             boolean hasFraction = share >= 0 && share <= 1;
             if (seekRequestedAtNanos != 0) {
