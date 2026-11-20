@@ -1014,6 +1014,10 @@ public class KeywordSearch {
         if (!query.spaces().permits(metadata.partitionKey())) {
             return Optional.empty();
         }
+        // Ein Fund der Quelle (nicht aus dem Index): die Kopfdaten entscheiden endgültig über die Art.
+        if (!candidate.indexed() && !query.admits(metadata)) {
+            return Optional.empty();
+        }
         ResourceScope page = ResourceScope.page(candidate.sourceId(), metadata.partitionKey(), metadata.pageId());
         if (!access.permits(caller, page, AccessKind.METADATA)) {
             return Optional.empty();
@@ -1304,12 +1308,20 @@ public class KeywordSearch {
         }
 
         /**
-         * Ob ein Fund der Quelle zur Suche passt: in der Grenze der Seiten und, mit Arten, von einer gewählten Art
-         * nach seinem Titel (die Quelle meldet keinen Medientyp; ein Titel ohne Dateiendung ist eine Seite).
+         * Ob ein Fund der Quelle Kandidat bleibt: in der Grenze der Seiten und, mit Arten, nicht schon nach seinem
+         * Titel von einer anderen Art. Ein Titel ohne bekannte Endung bleibt Kandidat (und lädt), denn erst die
+         * Kopfdaten kennen den gemeldeten Medientyp; {@link #admits(String, PageMetadata)} entscheidet dann.
          */
         boolean admits(String sourceId, SourceSearchMatch match) {
-            return admits(sourceId, match.pageId())
-                    && (kinds.isEmpty() || kinds.contains(DocumentKind.of(match.title(), null)));
+            return admits(sourceId, match.pageId()) && (kinds.isEmpty()
+                    || !DocumentKind.namedByExtension(match.title())
+                    || kinds.contains(DocumentKind.of(match.title(), null)));
+        }
+
+        /** Ob eine Seite nach ihren Kopfdaten (Titel und gemeldeter Medientyp, #964) von einer gewählten Art ist. */
+        boolean admits(PageMetadata metadata) {
+            return kinds.isEmpty() || kinds.contains(DocumentKind.of(metadata.title(),
+                    metadata.attributes().get(PageMetadata.REMOTE_MEDIA_TYPE)));
         }
 
         /** Ob die Quelle Seiten in der Grenze der Suche hat; ohne Grenze jede. */

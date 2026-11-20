@@ -427,6 +427,10 @@ class SearchViewTest {
             assertThat(view[0].chosenSources()).containsExactly("beta");
             assertThat(view[0].chosenSpaces()).containsExactly("DEV");
             assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Beta › DEV");
+            // Eine ganze abgehakte Quelle in der Auswahl hebt den Space-Filter der angehakten nicht auf.
+            view[0].scope(List.of(new Explorer.Scope("alpha", null), new Explorer.Scope("beta", "DEV")));
+            assertThat(view[0].chosenSources()).containsExactly("beta");
+            assertThat(view[0].chosenSpaces()).containsExactly("DEV");
             // Die gewählte Quelle ist abgehakt: nichts zu durchsuchen, das Häkchen bleibt.
             view[0].scope(List.of(new Explorer.Scope("alpha", null)));
             assertThat(view[0].sourceBoxes.get("alpha").isSelected()).isFalse();

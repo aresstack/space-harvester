@@ -29,6 +29,14 @@ public interface PageTextIndex {
     Optional<String> inputSha256(PageKey key);
 
     /**
+     * Der abgelegte Medientyp ({@link Entry#mediaType()}) der Seite; leer, wenn sie im Index fehlt oder der Eintrag
+     * vor dem Medientyp entstand (dann schreibt {@link PageTextIndexing} ihn beim nächsten Indizieren nach).
+     */
+    default Optional<String> mediaType(PageKey key) {
+        return Optional.empty();
+    }
+
+    /**
      * Der abgelegte Lesetext der Seite (#181, für den Rerank-Dienst), wenn sie im Index liegt. Entscheidet nicht über
      * Rechte; der Aufrufer prüft {@code content} vorher.
      */

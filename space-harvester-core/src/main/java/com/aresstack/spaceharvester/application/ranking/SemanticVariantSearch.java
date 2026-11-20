@@ -79,8 +79,10 @@ public final class SemanticVariantSearch implements VariantSearch {
                        SearchRunId partOf) {
         PageSearchQuery scope = scope(variant);
         // Ausgeschlossene Spaces laden nicht und sind keine Kandidaten: Erlaubte Treffer füllen das Limit.
+        // Mit Arten das ganze Fenster der Rangfolge, damit nach dem Filter noch genug Treffer bleiben.
+        int window = variant.kinds().isEmpty() ? Math.min(limit, Reranking.MAX_WINDOW) : Reranking.MAX_WINDOW;
         RelevanceSearch.RelevanceResults found = relevance.search(caller, scope, original, variant.text(),
-                variant.excludedSpaceKeys(), Math.min(limit, Reranking.MAX_WINDOW), partOf);
+                variant.excludedSpaceKeys(), window, partOf);
         List<KeywordSearch.Hit> hits = new ArrayList<>(found.hits().size());
         Map<PageKey, Double> scores = new HashMap<>();
         for (RelevanceSearch.RankedHit ranked : found.hits()) {
@@ -95,6 +97,9 @@ public final class SemanticVariantSearch implements VariantSearch {
             if (!variant.kinds().isEmpty() && !variant.kinds().contains(kind(metadata, best, inDocument))) {
                 // Nur die gewählten Arten (Seiten, PDF, …), nach Name und gemeldetem Medientyp wie im Volltextindex.
                 continue;
+            }
+            if (hits.size() == limit) {
+                break;
             }
             // Liegt das ähnlichste Stück in einem Anhang (ADR 0026, AP9a): Ausschnitt aus dessen Abschnitt und der
             // Anhang wie bei Treffern der Volltextsuche (#723).

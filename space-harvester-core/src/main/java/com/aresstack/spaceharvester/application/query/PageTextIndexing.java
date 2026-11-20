@@ -57,11 +57,15 @@ public final class PageTextIndexing {
             }
             // Titel und Space gehören zum Stand des Eintrags: ändern sie sich, wird neu indiziert.
             String input = entryState(text.get().inputSha256(), current);
-            if (index.inputSha256(snapshot.key()).filter(input::equals).isPresent()) {
+            String mediaType = mediaType(snapshot, current);
+            // Gleicher Stand, aber ohne oder mit anderem Medientyp (Einträge vor dem Artenfilter): einmal nachschreiben.
+            if (index.inputSha256(snapshot.key()).filter(input::equals).isPresent()
+                    && (mediaType == null || mediaType.isEmpty()
+                    || index.mediaType(snapshot.key()).filter(mediaType::equals).isPresent())) {
                 return false;
             }
             index.put(new PageTextIndex.Entry(snapshot.key(), current.partitionKey(), current.title(),
-                    text.get().text(), input, mediaType(snapshot, current)));
+                    text.get().text(), input, mediaType));
             return true;
         } catch (RuntimeException e) {
             // Ohne Meldung: sie könnte Text der Seite enthalten.

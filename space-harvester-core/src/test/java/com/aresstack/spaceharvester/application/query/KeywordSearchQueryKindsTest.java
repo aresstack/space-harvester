@@ -18,12 +18,25 @@ class KeywordSearchQueryKindsTest {
         KeywordSearch.Query pdf = all.ofKinds(Set.of(DocumentKind.PDF));
         assertThat(pdf.kinds()).containsExactly(DocumentKind.PDF);
         assertThat(pdf.text()).isEqualTo("nachtlauf");
-        assertThat(pdf.admits("wiki", match("Betrieb"))).as("eine Seite ohne Endung").isFalse();
+        // Ohne bekannte Endung bleibt der Fund Kandidat: erst die Kopfdaten kennen den Medientyp (#964).
+        assertThat(pdf.admits("wiki", match("Betrieb"))).isTrue();
+        assertThat(pdf.admits(metadata("Betrieb", null))).as("Kopfdaten einer Seite").isFalse();
+        assertThat(pdf.admits(metadata("Protokoll", "application/pdf"))).isTrue();
         assertThat(pdf.admits("files", match("Protokoll.pdf"))).isTrue();
         assertThat(pdf.admits("files", match("Regeltermin.pptx"))).isFalse();
         // Leer hebt die Grenze wieder auf; Varianten behalten die Arten.
         assertThat(pdf.ofKinds(Set.of()).kinds()).isEmpty();
         assertThat(pdf.within(null).kinds()).containsExactly(DocumentKind.PDF);
+    }
+
+    private static com.aresstack.spaceharvester.application.sources.PageMetadata metadata(String title,
+                                                                                            String mediaType) {
+        java.util.SortedMap<String, String> attributes = new java.util.TreeMap<>();
+        if (mediaType != null) {
+            attributes.put(com.aresstack.spaceharvester.application.sources.PageMetadata.REMOTE_MEDIA_TYPE, mediaType);
+        }
+        return new com.aresstack.spaceharvester.application.sources.PageMetadata("1", "r:1", title, "DEV", null,
+                null, null, null, attributes);
     }
 
     private static SourceSearchMatch match(String title) {

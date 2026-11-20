@@ -375,6 +375,13 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     }
 
     @Override
+    public Optional<String> mediaType(PageKey key) {
+        Objects.requireNonNull(key, "key");
+        requireOpen();
+        return stored(id(key), MEDIA_TYPE);
+    }
+
+    @Override
     public Optional<String> text(PageKey key) {
         Objects.requireNonNull(key, "key");
         requireOpen();

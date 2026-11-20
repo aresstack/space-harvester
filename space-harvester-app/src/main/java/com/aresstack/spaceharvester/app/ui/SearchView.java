@@ -158,8 +158,6 @@ public final class SearchView implements View {
     private int request;
     /** Quellen aus der Auswahl im Explorer; leer für alle. */
     private final Set<String> chosen = new TreeSet<>();
-    /** Spaces aus der Auswahl im Explorer; leer für alle Spaces der Quellen. */
-    private final Set<String> spaces = new TreeSet<>();
     /** Gewählte Knoten mit Namen für die Umfangszeile. */
     private List<Explorer.Scope> scopes = List.of();
 
@@ -412,17 +410,7 @@ public final class SearchView implements View {
         scopes = selection.stream().filter(scope -> scope.sourceId() != null && known.contains(scope.sourceId()))
                 .distinct().toList();
         chosen.clear();
-        spaces.clear();
-        for (Explorer.Scope scope : scopes) {
-            chosen.add(scope.sourceId());
-            if (scope.spaceKey() != null) {
-                spaces.add(scope.spaceKey());
-            }
-        }
-        if (scopes.stream().anyMatch(scope -> scope.spaceKey() == null)) {
-            // Eine ganze Quelle in der Auswahl: alle ihre Spaces, kein Space-Filter für die anderen.
-            spaces.clear();
-        }
+        scopes.forEach(scope -> chosen.add(scope.sourceId()));
         Set<String> searched = searchedSources();
         if (searched.isEmpty()) {
             scopeLabel.setText("In: keine Wissensquelle angehakt");
@@ -460,8 +448,22 @@ public final class SearchView implements View {
         return chosen.isEmpty() && searched.size() == sourceBoxes.size() ? Set.of() : searched;
     }
 
-    /** Die Spaces, in denen die nächste Suche sucht; leer heißt alle. */
+    /**
+     * Die Spaces, in denen die nächste Suche sucht, aus der Auswahl im Explorer unter den angehakten Quellen; leer
+     * heißt alle. Eine ganze angehakte Quelle in der Auswahl: alle ihre Spaces, kein Space-Filter für die anderen.
+     */
     Set<String> chosenSpaces() {
+        Set<String> searched = searchedSources();
+        Set<String> spaces = new TreeSet<>();
+        for (Explorer.Scope scope : scopes) {
+            if (!searched.contains(scope.sourceId())) {
+                continue;
+            }
+            if (scope.spaceKey() == null) {
+                return Set.of();
+            }
+            spaces.add(scope.spaceKey());
+        }
         return Set.copyOf(spaces);
     }
 

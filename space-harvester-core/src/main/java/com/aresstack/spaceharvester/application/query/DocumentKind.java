@@ -133,6 +133,15 @@ public enum DocumentKind {
         return OTHER;
     }
 
+    /**
+     * Ob der Name allein die Art entscheidet (bekannte Endung). Sonst entscheidet erst der Medientyp, den nur der
+     * Cache oder der Index kennt: ein Fund der Quelle ohne Endung bleibt also Kandidat, bis seine Kopfdaten da sind.
+     */
+    public static boolean namedByExtension(String fileName) {
+        String extension = extension(fileName);
+        return extension != null && EXTENSIONS.containsKey(extension);
+    }
+
     /** Die Endung des Dateinamens in Kleinbuchstaben oder {@code null} ohne. */
     private static String extension(String fileName) {
         if (fileName == null) {
