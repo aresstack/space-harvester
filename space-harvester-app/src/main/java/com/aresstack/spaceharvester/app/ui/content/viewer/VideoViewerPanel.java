@@ -91,6 +91,11 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
      * weiter ({@link #playbackStarted}).
      */
     private volatile boolean pauseWhenStarted;
+    /**
+     * Das zuletzt angesprungene Ziel im angehaltenen Video; {@code -1} ohne. Von ihm rechnen „nächste“ und „vorige
+     * Folie“, denn VLC meldet nach einem Sprung im angehaltenen Video erst verzögert die neue Position.
+     */
+    private volatile long pausedTarget = -1;
     /** Die Länge des Videos aus seinem MP4-Index; mit ihr bleiben die Marken auch nach Stopp oder Fehler sichtbar. */
     private long indexDurationMillis;
 
@@ -491,6 +496,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             message.setText(audioOnly ? "Audio wird gestartet …" : "Video wird gestartet …");
             boolean accepted = true;
             pauseWhenStarted = false;
+            pausedTarget = -1;
             if (started) {
                 player.mediaPlayer().controls().play();
             } else {
@@ -554,6 +560,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         }
         message.setText("Position wird geladen …");
         boolean paused = !actuallyPlaying;
+        pausedTarget = paused && duration > 0 ? target : -1;
         try {
             seekWorker.execute(() -> {
                 try {
@@ -564,8 +571,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                             player.mediaPlayer().controls().setPosition((float) requestedShare);
                         }
                         if (paused) {
-                            // Angehalten zeigt VLC nach dem Sprung noch das alte Bild: ein Bild weiter.
-                            player.mediaPlayer().controls().nextFrame();
+                            // Angehalten zeigt VLC nach dem Sprung noch das alte Bild: ein Bild weiter, bis VLC die
+                            // neue Stelle meldet; vorher ginge es nur von der alten Stelle ein Bild weiter.
+                            stepUntil(duration > 0 ? target : -1);
                         }
                     }
                 } catch (RuntimeException failure) {
@@ -579,6 +587,30 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
             // Ignore seeks submitted while the viewer is closing.
         }
+    }
+
+    /**
+     * Abseits des EDT: geht im angehaltenen Video ein Bild weiter, und so lange weitere, bis VLC {@code target} oder
+     * eine spätere Stelle meldet, höchstens die Frist für einen Sprung. VLC führt den Sprung asynchron aus; ein
+     * einzelnes Bild weiter kam oft noch von der alten Stelle, also vor dem Ziel (bei einer Marke die vorige Folie).
+     * Ohne Ziel ein Bild weiter.
+     */
+    private void stepUntil(long target) {
+        long deadline = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(settings.get(VideoSettings.Value.SEEK_FEEDBACK_MILLIS));
+        do {
+            player.mediaPlayer().controls().nextFrame();
+            if (target < 0) {
+                return;
+            }
+            try {
+                Thread.sleep(settings.get(VideoSettings.Value.POLL_MILLIS));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        } while (!closed && player != null && pausedTarget == target && System.nanoTime() - deadline < 0
+                && player.mediaPlayer().status().time() < target);
     }
 
     /** Hält an (falls {@code pause}) und zeigt ein Bild weiter; abseits des EDT. */
@@ -609,6 +641,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         message.setText("Position wird geladen …");
         try {
             pauseWhenStarted = true;
+            pausedTarget = target;
             startRequestedAtNanos = System.nanoTime();
             if (player.mediaPlayer().media().play(activeBridge().address().toASCIIString(), startAt(target))) {
                 started = true;
@@ -738,7 +771,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     private void jumpToSlide(boolean forward) {
         java.util.List<Long> changes = transport.seekBar().slides();
         long duration = transport.seekBar().durationMillis();
-        long position = transport.seekBar().displayedMillis();
+        long position = !actuallyPlaying && pausedTarget >= 0 ? pausedTarget : transport.seekBar().displayedMillis();
         if (changes.isEmpty() || duration <= 0 || position < 0) {
             return;
         }
@@ -766,6 +799,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
             return;
         }
         pauseWhenStarted = false;
+        pausedTarget = -1;
         actuallyPlaying = false;
         started = false;
         startRequestedAtNanos = 0;

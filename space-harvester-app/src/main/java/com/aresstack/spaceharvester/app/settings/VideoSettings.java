@@ -71,7 +71,8 @@ public final class VideoSettings {
                 "So weit darf die Position beim Standbild oder nach einem Sprung im Player nach der Stelle liegen",
                 1500, 0, 60_000),
         POLL_MILLIS("poll-millis", "Abfrageabstand beim Warten auf VLC (ms)",
-                "In diesem Abstand prüft das Ziehen von Standbildern, ob VLC ein Bild geliefert oder angehalten hat",
+                "In diesem Abstand prüfen Standbilder und Player, ob VLC ein Bild geliefert, angehalten oder die "
+                        + "angesprungene Stelle erreicht hat",
                 100, 1, 10_000),
         PAUSE_WAIT_MILLIS("pause-wait-millis", "Längstens auf das Anhalten warten (ms)",
                 "So lange wartet das Ziehen von Standbildern beim Start höchstens, bis VLC angehalten hat", 5000, 0,
