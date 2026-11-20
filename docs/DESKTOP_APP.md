@@ -45,22 +45,28 @@ das öffnet denselben Assistenten wie **Verwaltung › Wissensquellen verwalten 
 [Quellen-Assistent](#quellen-assistent)). Alternativ legt **Einstellungen › Beispiel anlegen** eine kommentierte
 Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu laden** wählen.
 
-## Whisper-Modell im ausführbaren Desktop-JAR
+## Whisper-Modell
 
-Das ausführbare **`space-harvester-app.jar`** enthält die vier Dateien von
-`openai/whisper-tiny` sowie die MIT- und Apache-2.0-Lizenztexte mit Herkunftshinweis.
-Für die lokale Transkription ist **kein separates ZIP, kein zweites Modellpaket und kein
-Download beim Programmstart** nötig. Der JAR-Build beschafft die festgelegte
-Modellrevision und prüft die SHA-256-Werte; `verifyWhisperJar` kontrolliert
-die Einbettung. Die große `model.safetensors` ist dabei im Build etwa 151 MB
-groß und wird bewusst nicht als Binärdatei ins Git-Repository eingecheckt.
+Das **`space-harvester-app.jar`** enthält kein Whisper-Modell mehr. Unter **Einstellungen › Modelle** steht das
+**Whisper-Modell** zur Wahl: Tiny (Vorgabe, etwa 150 MB), Base, Small, Medium, Large v3 Turbo und Large v3; größere
+Modelle erkennen genauer und rechnen länger. Schlüssel in der Konfigurationsdatei: `space-harvester-app.whisper.model`.
+
+Wird das eingestellte Modell gebraucht (Spracheingabe im Chat, **Transkript erzeugen**, **In PPTX umwandeln**) und
+liegt noch nicht auf dem Rechner, fragt die App, ob sie es von Hugging Face laden soll. Nach **Ja** lädt sie es über
+Proxy und Zertifikate der App nach `%USERPROFILE%\.space-harvester\models\whisper-<Modell>`, prüft jede Datei gegen
+ihre Prüfsumme und macht dann weiter; das ist in der Regel nur einmal nötig. **Laden** neben der Auswahl holt es auch
+ohne Anlass. Ein abgebrochener Download wird beim nächsten Mal fortgesetzt. Tiny ist auf eine Revision samt SHA-256
+festgelegt, für die anderen Modelle gelten die Prüfsummen, die Hugging Face zur geladenen Revision nennt. Der Proxy
+muss `huggingface.co` und dessen Download-Rechner erlauben.
+
+Ohne Netz geht es von Hand: `config.json`, `model.safetensors`, `tokenizer.json` und `vocab.json` (optional
+`generation_config.json`) eines Whisper-Checkpoints nach `%USERPROFILE%\.space-harvester\models\whisper` kopieren;
+dieser Ordner hat Vorrang vor der Auswahl. Ein von einer früheren Fassung entpacktes Tiny-Modell wird weiterverwendet.
 
 Öffne ein MP4-Video aus BSCW in der **Leseransicht**, wechsle danach zum
 Reiter **Text** und klicke auf **Transkript erzeugen**. Space Harvester liest
 ausschließlich die erforderlichen Audio-Bytebereiche vom BSCW-Server und
-verwendet Whisper lokal. Bei der ersten Verwendung werden die Modellgewichte
-aus dem JAR in `%USERPROFILE%\\.space-harvester\\models` extrahiert und
-überprüft; anschließend kann der Cache weiterverwendet werden. Der erzeugte
+verwendet Whisper lokal. Der erzeugte
 Text erscheint mit groben Zeitmarken im Text-Reiter und wird beim Prototyp
 noch nicht automatisch in den Suchindex übernommen.
 

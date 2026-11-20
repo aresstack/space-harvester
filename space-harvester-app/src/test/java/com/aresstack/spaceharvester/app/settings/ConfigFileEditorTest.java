@@ -798,6 +798,32 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theWhisperModelIsWrittenUnderTheAppRootAndRemovedForTheDefault() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester-app:\n  output-directory: D:\\out   # bleibt\nspace-harvester:\n"
+                + "  sources: []\n");
+        assertThat(loader.load(file).whisperModel())
+                .isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY);
+
+        editor.save(file, editor.withWhisperModel(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.LARGE_V3_TURBO));
+        String text = Files.readString(file);
+        assertThat(text).contains("  output-directory: D:\\out   # bleibt\n", "  whisper:\n    model: large-v3-turbo\n");
+        assertThat(loader.load(file).whisperModel())
+                .isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.LARGE_V3_TURBO);
+
+        editor.save(file, editor.withWhisperModel(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY));
+        text = Files.readString(file);
+        assertThat(text).doesNotContain("whisper").contains("  output-directory: D:\\out   # bleibt\n", "sources: []");
+
+        Files.writeString(file, "space-harvester-app:\n  whisper:\n    model: riesig\nspace-harvester:\n  sources: []\n");
+        AppSettings unknown = loader.load(file);
+        assertThat(unknown.whisperModel()).isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY);
+        assertThat(unknown.problems()).anyMatch(problem -> problem.contains("space-harvester-app.whisper.model"));
+    }
+
+    @Test
     void theAnalyticsExportIsWrittenAsABlockUnderTheAppRootAndRemovedWhenAllIsDefault() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester-app:\n  output-directory: D:\\out   # bleibt\nspace-harvester:\n"
