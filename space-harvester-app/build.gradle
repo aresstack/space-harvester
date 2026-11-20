@@ -50,6 +50,13 @@ dependencies {
     // KeePass koppeln und Einträge lesen/anlegen wie im Enterprise AI Client; nur die App, nie der Core
     implementation project(':enterprise-ai-keepass')
     implementation libs.snakeyaml
+    // Chat-Antworten als Markdown wie im Enterprise AI Client (app.ui.markdown, Kopie von exedra.ui.markdown): flexmark
+    // und mermaid-java in derselben Fassung wie document-export, keine neue Bibliothek
+    implementation libs.flexmark
+    implementation libs.flexmark.ext.tables
+    implementation libs.flexmark.ext.autolink
+    implementation libs.flexmark.ext.gfm.strikethrough
+    implementation libs.mermaid.java
     implementation libs.jsoup
     // Eingebautes trust-bundle 'windows': JVM-Truststore plus Windows Root/CA wie im Enterprise AI Client
     implementation libs.win.trust.java

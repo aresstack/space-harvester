@@ -4,6 +4,12 @@ import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubblePalette;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
+import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownBubble;
+import com.aresstack.spaceharvester.app.ui.markdown.CachingMermaidImageRenderer;
+import com.aresstack.spaceharvester.app.ui.markdown.DesktopLinkOpener;
+import com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView;
+import com.aresstack.spaceharvester.app.ui.markdown.MarkdownTheme;
+import com.aresstack.spaceharvester.app.ui.markdown.MermaidImageRenderer;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.control.PlaceholderTextArea;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
@@ -180,7 +186,10 @@ public final class ChatPanel extends JPanel {
     private boolean settled;
     /** Ergebnisse der verfolgten Aufträge, gemeldet erst, wenn alle geendet haben. */
     private final List<JobStatus> jobOutcomes = new ArrayList<>();
-    private SpeechBubblePanel answering;
+    private AssistantMarkdownBubble answering;
+    /** Antworten rendert der Chat als Markdown wie der EAC (AssistantMarkdownBubble, MarkdownMessageView). */
+    private final DesktopLinkOpener linkOpener = DesktopLinkOpener.systemDefault();
+    private MermaidImageRenderer mermaid;
     /** Die Auftragskennungen des zuletzt hier gestarteten Downloads, bis der Auftrag endet. */
     private final Set<String> watchedJobs = new HashSet<>();
     private Subscription jobSubscription;
@@ -1274,8 +1283,7 @@ public final class ChatPanel extends JPanel {
         composer.revalidate();
         composer.repaint();
         release();
-        answering = addBubble(BubbleSide.LEFT, bubbles.getAssistantBackground(), bubbles.getAssistantForeground(),
-                ASSISTANT, "…");
+        answering = addAnswer("…");
         ChatRecord target = chat;
         ChatNode targetNode = node;
         TurnListener listener = new TurnListener(target, targetNode, answering);
@@ -1322,21 +1330,32 @@ public final class ChatPanel extends JPanel {
 
         private final ChatRecord started;
         private final ChatNode startedNode;
-        private final SpeechBubblePanel bubble;
+        private final AssistantMarkdownBubble bubble;
         private final StringBuilder text = new StringBuilder();
         ChatTurn turn;
         boolean detached;
 
-        TurnListener(ChatRecord started, ChatNode startedNode, SpeechBubblePanel bubble) {
+        TurnListener(ChatRecord started, ChatNode startedNode, AssistantMarkdownBubble bubble) {
             this.started = started;
             this.startedNode = startedNode;
             this.bubble = bubble;
         }
 
+        /** Ersetzt den ganzen Text der Antwortblase (Platzhalter, Fehler, Abschluss) und beendet das Streaming. */
+        private void show(String markdown) {
+            MarkdownMessageView view = bubble.view();
+            if (view.isStreaming()) {
+                view.finishStreaming();
+            }
+            view.setMarkdown(markdown);
+            bubble.revalidate();
+            bubble.repaint();
+        }
+
         @Override
         public void loading() {
             if (text.isEmpty()) {
-                bubble.setText(MODEL_LOADING);
+                bubble.view().setMarkdown(MODEL_LOADING);
             }
             if (!detached) {
                 status.setText(MODEL_LOADING);
@@ -1354,11 +1373,13 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void delta(String delta) {
+            MarkdownMessageView view = bubble.view();
             if (text.isEmpty()) {
-                bubble.setText(delta);
-            } else {
-                bubble.appendText(delta);
+                // Der Platzhalter „…“ weicht dem ersten Delta; danach wird nur angehängt (gedrosselt gerendert).
+                view.setMarkdown("");
+                view.startStreaming();
             }
+            view.appendMarkdownDelta(delta);
             text.append(delta);
             if (!detached) {
                 scrollDown();
@@ -1367,15 +1388,13 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void completed(String full) {
-            if (text.isEmpty()) {
-                bubble.setText(full);
-            }
+            show(text.isEmpty() ? full : text.toString());
             finish(ChatRecord.Message.assistant(full, false, System.currentTimeMillis()), " ");
         }
 
         @Override
         public void failed(String message) {
-            bubble.setText(message);
+            show(message);
             bubble.setHeaderColor(Comic.RED);
             // Eine gescheiterte Antwort wird nicht gespeichert (wie im EAC); die Frage bleibt im Chat.
             finish(null, message.lines().findFirst().orElse(" "));
@@ -1383,7 +1402,7 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void cancelled(String partial) {
-            bubble.setText(partial.isEmpty() ? CANCELLED : partial + "\n\n" + CANCELLED);
+            show(partial.isEmpty() ? CANCELLED : partial + "\n\n" + CANCELLED);
             finish(partial.isEmpty() ? null
                     : ChatRecord.Message.assistant(partial, true, System.currentTimeMillis()), CANCELLED);
         }
@@ -1462,6 +1481,25 @@ public final class ChatPanel extends JPanel {
         return bubble;
     }
 
+    /** Eine Antwortblase mit Markdown-Körper wie im EAC ({@code ChatTranscriptPanel.createMarkdownBubble}). */
+    private AssistantMarkdownBubble addAnswer(String markdown) {
+        if (mermaid == null) {
+            mermaid = CachingMermaidImageRenderer.forChat();
+        }
+        MarkdownMessageView view = new MarkdownMessageView(MarkdownTheme.forBubble(bubbles.getAssistantBackground(),
+                bubbles.getAssistantForeground()), linkOpener, mermaid);
+        view.setMarkdown(markdown);
+        AssistantMarkdownBubble bubble = new AssistantMarkdownBubble(BubbleSide.LEFT, bubbles, ASSISTANT, view);
+        BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
+        row.setAlignmentX(LEFT_ALIGNMENT);
+        emptyNote.setVisible(false);
+        transcript.add(row);
+        transcript.revalidate();
+        transcript.repaint();
+        scrollDown();
+        return bubble;
+    }
+
     private void scrollDown() {
         SwingUtilities.invokeLater(() -> {
             javax.swing.JScrollBar bar = transcriptScroll.getVerticalScrollBar();
@@ -1494,8 +1532,7 @@ public final class ChatPanel extends JPanel {
                 addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du",
                         message.text());
             } else {
-                addBubble(BubbleSide.LEFT, bubbles.getAssistantBackground(), bubbles.getAssistantForeground(),
-                        ASSISTANT, message.cancelled() ? message.text() + "\n\n" + CANCELLED : message.text());
+                addAnswer(message.cancelled() ? message.text() + "\n\n" + CANCELLED : message.text());
             }
         }
         transcript.revalidate();
