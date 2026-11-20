@@ -34,6 +34,7 @@ final class SlideChanges {
     /** Read the MP4 index of a remote file and return its slide changes in milliseconds. */
     static List<Long> load(MediaStreamBridge.ChunkSource source, long length, VideoSettings settings)
             throws IOException {
+        Mp4AudioOnlySource.indexReaders(settings);
         byte[] moov = moov(source, length);
         return moov == null ? Collections.emptyList() : detect(moov, settings);
     }

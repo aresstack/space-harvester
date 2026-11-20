@@ -44,6 +44,8 @@ public final class SettingsView implements View {
     static final String GENERAL = "Allgemein";
     static final String AI = "KI-Dienst";
     static final String MODELS = "Modelle";
+    /** Bereich „Wortlisten“: die Wörter für den Stand und die Glossarregeln, aus „Modelle“ herausgezogen. */
+    static final String WORDS = "Wortlisten";
     static final String NETWORK = "Netzwerk";
     static final String CACHE = "Cache";
     /** Bereich „Video“: Marken, Standbilder und Player ({@code space-harvester-app.video.*}). */
@@ -281,9 +283,10 @@ public final class SettingsView implements View {
                 Comic.plate("Diagnose", Comic.DARK, diagnosis),
                 Comic.plate(CONSOLE_TITLE, Comic.DARK, consoleRows)));
         page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
-        // Die Wörter für den Stand gehören zur Aussagenanalyse, deren Vorstufe unter „Modelle“ steht (ADR 0032).
-        page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent()),
-                Comic.plate(null, Comic.PETROL, standingWords.component()),
+        page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
+        // Die Wortlisten stehen in einem eigenen Bereich: Wörter für den Stand (Aussagenanalyse, ADR 0032) und
+        // Glossarregeln.
+        page(WORDS, Comic.column(Comic.plate(null, Comic.PETROL, standingWords.component()),
                 Comic.plate(null, Comic.PETROL, glossaryRules.component())));
         page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
                 withButtons(network, proxy, tls)),

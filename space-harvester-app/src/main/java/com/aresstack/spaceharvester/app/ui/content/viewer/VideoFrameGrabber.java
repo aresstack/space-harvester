@@ -134,7 +134,7 @@ public final class VideoFrameGrabber {
             MediaStreamBridge bridge = null;
             Session session = null;
             try {
-                bridge = new MediaStreamBridge(reader, size, mediaType);
+                bridge = new MediaStreamBridge(reader, size, mediaType, settings);
                 session = new Session(factory, bridge, factory.mediaPlayers().newEmbeddedMediaPlayer(), cancelled,
                         settings);
                 session.start();

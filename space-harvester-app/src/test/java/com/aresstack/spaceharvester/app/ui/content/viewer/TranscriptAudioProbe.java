@@ -51,6 +51,24 @@ class TranscriptAudioProbe {
         System.out.println("PROBE page " + page.header().metadata().title() + " size " + size);
         com.aresstack.spaceharvester.application.sources.MediaByteRange remote = workspace.openMediaRange(source,
                 pageId);
+        // Varianten „parallel/lücke“, etwa SPACEHARVESTER_PROBE_AUDIO_VARIANTS=4/32768,6/32768,6/262144
+        for (String variant : System.getenv().getOrDefault("SPACEHARVESTER_PROBE_AUDIO_VARIANTS", "6/32768")
+                .split(",")) {
+            String[] parts = variant.split("/");
+            com.aresstack.spaceharvester.app.settings.VideoSettings settings =
+                    com.aresstack.spaceharvester.app.settings.VideoSettings.DEFAULT
+                            .with(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.AUDIO_PARALLEL,
+                                    Long.parseLong(parts[0]))
+                            .with(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.AUDIO_MAX_GAP,
+                                    Long.parseLong(parts[1]));
+            System.out.println("PROBE ===== parallel " + parts[0] + ", gap " + parts[1]);
+            measure(size, remote, settings);
+        }
+        context.shutdown();
+    }
+
+    private static void measure(long size, com.aresstack.spaceharvester.application.sources.MediaByteRange remote,
+                                com.aresstack.spaceharvester.app.settings.VideoSettings settings) throws Exception {
         long start = System.nanoTime();
         AtomicLong reads = new AtomicLong();
         AtomicLong readBytes = new AtomicLong();
@@ -59,14 +77,14 @@ class TranscriptAudioProbe {
             byte[] bytes = remote.read(offset, count);
             long n = reads.incrementAndGet();
             readBytes.addAndGet(bytes.length);
-            if (n <= 20 || n % 50 == 0) {
+            if (n <= 0) {
                 System.out.printf(Locale.ROOT, "PROBE   read #%d at %d: %d of %d bytes in %.2f s (t=%.1f s)%n", n,
                         offset, bytes.length, count, (System.nanoTime() - before) / 1e9,
                         (System.nanoTime() - start) / 1e9);
             }
             return bytes;
         };
-        try (VideoTranscriptSource transcript = new VideoTranscriptSource(size, counted)) {
+        try (VideoTranscriptSource transcript = new VideoTranscriptSource(size, counted, settings)) {
             java.net.URI audio = transcript.openAudioOnly();
             System.out.printf(Locale.ROOT, "PROBE audio-only ready after %.1f s, %d reads, %d bytes%n",
                     (System.nanoTime() - start) / 1e9, reads.get(), readBytes.get());
@@ -75,15 +93,13 @@ class TranscriptAudioProbe {
             try {
                 new VlcPcmAudioDecoder().decode(audio, () -> bytes.get() > limit,
                         (data, offset, count) -> bytes.addAndGet(count),
-                        seconds -> System.out.printf(Locale.ROOT, "PROBE   %d s decoded after %.1f s, %d reads%n",
-                                seconds, (System.nanoTime() - start) / 1e9, reads.get()));
+                        seconds -> { });
             } catch (Exception e) {
                 System.out.println("PROBE decode ended: " + e + (e.getCause() == null ? "" : " / " + e.getCause()));
             }
             System.out.printf(Locale.ROOT, "PROBE %d PCM bytes after %.1f s, %d reads, %d bytes read%n", bytes.get(),
                     (System.nanoTime() - start) / 1e9, reads.get(), readBytes.get());
         }
-        context.shutdown();
     }
 
     @Test

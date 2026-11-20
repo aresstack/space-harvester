@@ -159,7 +159,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                 return;
             }
             player = new EmbeddedMediaPlayerComponent();
-            bridge = new MediaStreamBridge(reader, size, mediaType);
+            bridge = new MediaStreamBridge(reader, size, mediaType, settings);
             registerPlaybackEvents();
             player.mediaPlayer().input().enableMouseInputHandling(false);
             VideoFullScreenController.installDoubleClick(
@@ -208,7 +208,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         audioPreparation = new SwingWorker<Mp4AudioStream, Void>() {
             @Override
             protected Mp4AudioStream doInBackground() throws IOException {
-                return Mp4AudioOnlySource.open(reader, fileSize);
+                return Mp4AudioOnlySource.open(reader, fileSize, settings);
             }
 
             @Override
@@ -220,7 +220,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                 transport.audioOnly().setEnabled(true);
                 try {
                     Mp4AudioStream audioSource = get();
-                    audioBridge = new MediaStreamBridge(audioSource, audioSource.length(), "video/mp4");
+                    audioBridge = new MediaStreamBridge(audioSource, audioSource.length(), "video/mp4", settings);
                     switchPlaybackMode(true);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();

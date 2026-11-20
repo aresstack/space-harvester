@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.spaceharvester.app.settings.VideoSettings;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -26,28 +27,39 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
     private final int[] chunkLengths;
     private final long length;
     private final AudioChunkPrefetcher prefetcher;
-    /** Reads the parts of a large MP4 box (the index) in parallel; every remote read is latency-bound. */
-    private static final java.util.concurrent.ExecutorService METADATA_READERS =
-            java.util.concurrent.Executors.newFixedThreadPool(4, task -> {
-                Thread reader = new Thread(task, "space-harvester-mp4-index");
-                reader.setDaemon(true);
-                return reader;
-            });
+    /**
+     * Reads the parts of a large MP4 box (the index) in parallel; every remote read is latency-bound
+     * ({@link VideoSettings.Value#INDEX_READERS}).
+     */
+    private static final java.util.concurrent.ThreadPoolExecutor METADATA_READERS = AudioChunkPrefetcher.pool(
+            (int) VideoSettings.Value.INDEX_READERS.defaultValue(), "space-harvester-mp4-index");
+
+    /** Applies the parallel reads of the MP4 index from {@code settings} to the next reads. */
+    static void indexReaders(VideoSettings settings) {
+        AudioChunkPrefetcher.resize(METADATA_READERS, settings.number(VideoSettings.Value.INDEX_READERS));
+    }
 
     private Mp4AudioOnlySource(MediaStreamBridge.ChunkSource remote, byte[] header,
                                long[] inputOffsets, long[] outputOffsets,
-                               int[] chunkLengths, long length) {
+                               int[] chunkLengths, long length, VideoSettings settings) {
         this.remote = remote;
         this.header = header;
         this.inputOffsets = inputOffsets;
         this.outputOffsets = outputOffsets;
         this.chunkLengths = chunkLengths;
         this.length = length;
-        this.prefetcher = new AudioChunkPrefetcher(remote, inputOffsets, chunkLengths, REMOTE_READ_BYTES);
+        this.prefetcher = new AudioChunkPrefetcher(remote, inputOffsets, chunkLengths, REMOTE_READ_BYTES, settings);
     }
 
     static Mp4AudioStream open(MediaStreamBridge.ChunkSource source, long sourceLength)
             throws IOException {
+        return open(source, sourceLength, VideoSettings.DEFAULT);
+    }
+
+    /** @param settings parallel reads of the index and of the audio chunks */
+    static Mp4AudioStream open(MediaStreamBridge.ChunkSource source, long sourceLength, VideoSettings settings)
+            throws IOException {
+        indexReaders(settings);
         if (source == null || sourceLength < 16) {
             throw unsupported("Invalid MP4 source");
         }
@@ -124,7 +136,7 @@ final class Mp4AudioOnlySource implements Mp4AudioStream {
             absoluteOffsets[i] = add(payloadStart, outputOffsets[i]);
         }
         return new Mp4AudioOnlySource(source, outputHeader, chunks.inputOffsets,
-                absoluteOffsets, chunks.lengths, resultSize);
+                absoluteOffsets, chunks.lengths, resultSize, settings);
     }
 
     @Override

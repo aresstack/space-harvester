@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.spaceharvester.app.settings.VideoSettings;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -39,13 +40,14 @@ public final class MediaStreamBridge implements AutoCloseable {
         byte[] read(long offset, int maximumBytes) throws Exception;
     }
 
+    /** The largest range one source read may ask for (the core rejects larger ones). */
     static final int CHUNK_BYTES = 256 * 1024;
-    /** Chunks read ahead behind every delivered chunk: 2 MiB, about 15 s of a 1-Mbit/s video. */
-    static final int READ_AHEAD_CHUNKS = 8;
-    /** Parallel source reads; each BSCW range request is latency-bound, not bandwidth-bound. */
-    private static final int FETCH_THREADS = 4;
-    /** Cached chunks (32 MiB), enough for the read-ahead of both regions of a non-interleaved MP4. */
-    private static final int CACHED_CHUNKS = 128;
+    /** Chunks read ahead behind every delivered chunk, with the defaults of {@link VideoSettings}. */
+    static final int READ_AHEAD_CHUNKS = (int) VideoSettings.Value.BRIDGE_READ_AHEAD.defaultValue();
+    /** Chunks read ahead behind every delivered chunk. */
+    private final int readAhead;
+    /** Cached chunks, enough for the read-ahead of both regions of a non-interleaved MP4. */
+    private final int cachedChunks;
     private static final Pattern RANGE = Pattern.compile("bytes=(\\d*)-(\\d*)");
     private final ChunkSource source;
     private final long length;
@@ -57,13 +59,20 @@ public final class MediaStreamBridge implements AutoCloseable {
             new LinkedHashMap<Long, CompletableFuture<byte[]>>(64, 0.75f, true) {
                 @Override
                 protected boolean removeEldestEntry(Map.Entry<Long, CompletableFuture<byte[]>> eldest) {
-                    return size() > CACHED_CHUNKS;
+                    return size() > cachedChunks;
                 }
             };
     private final URI address;
     private volatile String lastFailure;
 
     MediaStreamBridge(ChunkSource source, long length, String mediaType) throws IOException {
+        this(source, length, mediaType, VideoSettings.DEFAULT);
+    }
+
+    /** @param settings read-ahead, parallel source reads, cache and server threads */
+    MediaStreamBridge(ChunkSource source, long length, String mediaType, VideoSettings settings) throws IOException {
+        this.readAhead = settings.number(VideoSettings.Value.BRIDGE_READ_AHEAD);
+        this.cachedChunks = settings.number(VideoSettings.Value.BRIDGE_CACHED);
         if (source == null || length <= 0) {
             throw new IllegalArgumentException("A media source and a positive length are required");
         }
@@ -74,12 +83,12 @@ public final class MediaStreamBridge implements AutoCloseable {
         new SecureRandom().nextBytes(secret);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(secret);
         this.server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
-        this.workers = Executors.newFixedThreadPool(3, task -> {
+        this.workers = Executors.newFixedThreadPool(settings.number(VideoSettings.Value.BRIDGE_WORKERS), task -> {
             Thread worker = new Thread(task, "space-harvester-media");
             worker.setDaemon(true);
             return worker;
         });
-        this.fetchers = Executors.newFixedThreadPool(FETCH_THREADS, task -> {
+        this.fetchers = Executors.newFixedThreadPool(settings.number(VideoSettings.Value.BRIDGE_FETCHERS), task -> {
             Thread fetcher = new Thread(task, "space-harvester-media-fetch");
             fetcher.setDaemon(true);
             return fetcher;
@@ -167,7 +176,7 @@ public final class MediaStreamBridge implements AutoCloseable {
     private byte[] slice(long position, long end) throws Exception {
         long index = position / CHUNK_BYTES;
         CompletableFuture<byte[]> pending = chunk(index);
-        for (int ahead = 1; ahead <= READ_AHEAD_CHUNKS && (index + ahead) * CHUNK_BYTES < length; ahead++) {
+        for (int ahead = 1; ahead <= readAhead && (index + ahead) * CHUNK_BYTES < length; ahead++) {
             chunk(index + ahead);
         }
         byte[] data;

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.spaceharvester.app.settings.VideoSettings;
 import com.aresstack.spaceharvester.application.sources.MediaByteRange;
 
 import java.io.IOException;
@@ -14,10 +15,17 @@ public final class VideoTranscriptSource implements AutoCloseable {
 
     private final long fileSize;
     private final MediaByteRange remote;
+    private final VideoSettings settings;
     private MediaStreamBridge audioStream;
     private boolean closed;
 
     public VideoTranscriptSource(long fileSize, MediaByteRange remote) {
+        this(fileSize, remote, VideoSettings.DEFAULT);
+    }
+
+    /** @param settings parallel reads of the index and the audio chunks, and of the media bridge */
+    public VideoTranscriptSource(long fileSize, MediaByteRange remote, VideoSettings settings) {
+        this.settings = Objects.requireNonNull(settings, "settings");
         if (fileSize < 1) {
             throw new IllegalArgumentException("An MP4 content length is required");
         }
@@ -35,8 +43,8 @@ public final class VideoTranscriptSource implements AutoCloseable {
             }
         }
 
-        Mp4AudioStream audio = Mp4AudioOnlySource.open(remote::read, fileSize);
-        MediaStreamBridge prepared = new MediaStreamBridge(audio, audio.length(), "video/mp4");
+        Mp4AudioStream audio = Mp4AudioOnlySource.open(remote::read, fileSize, settings);
+        MediaStreamBridge prepared = new MediaStreamBridge(audio, audio.length(), "video/mp4", settings);
         synchronized (this) {
             if (closed) {
                 prepared.close();

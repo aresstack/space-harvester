@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.spaceharvester.app.settings.VideoSettings;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.Map;
@@ -7,8 +8,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Fetch the indexed audio chunks of a remote MP4 ahead of the reader, several requests at a time. Every audio
@@ -16,25 +15,22 @@ import java.util.concurrent.Executors;
  * (Angelo, 19.11.2026: "viel zu langsam").
  *
  * <p>Neighbouring chunks are fetched in one request when only a little video lies between them
- * ({@link #MAXIMUM_GAP}): files with many tiny audio chunks then need a fraction of the requests, while files with
+ * ({@link VideoSettings.Value#AUDIO_MAX_GAP}): files with many tiny audio chunks then need a fraction of the requests, while files with
  * large video gaps still transfer only their audio. Chunks larger than one remote read are read directly.</p>
  */
 final class AudioChunkPrefetcher {
 
-    /** Parallel range requests for all transcriptions together; the source sees at most this many at once. */
-    static final int PARALLEL_REQUESTS = 4;
-    /** Requests fetched ahead of the one being read. */
-    static final int AHEAD_GROUPS = 24;
-    /** Upper bound of data held ahead of the reader. */
-    static final long AHEAD_BYTES = 6L * 1024 * 1024;
-    /** Video bytes between two audio chunks that are still fetched along to save a request. */
-    static final int MAXIMUM_GAP = 32 * 1024;
+    /**
+     * Parallel range requests for all transcriptions together; the source sees at most so many at once
+     * ({@link VideoSettings.Value#AUDIO_PARALLEL}, applied whenever a prefetcher is made).
+     */
+    private static final java.util.concurrent.ThreadPoolExecutor FETCHERS = pool(
+            (int) VideoSettings.Value.AUDIO_PARALLEL.defaultValue(), "space-harvester-audio-prefetch");
 
-    private static final ExecutorService FETCHERS = Executors.newFixedThreadPool(PARALLEL_REQUESTS, task -> {
-        Thread thread = new Thread(task, "space-harvester-audio-prefetch");
-        thread.setDaemon(true);
-        return thread;
-    });
+    /** Requests fetched ahead of the one being read. */
+    private final int aheadGroups;
+    /** Upper bound of data held ahead of the reader. */
+    private final long aheadBytes;
 
     private final MediaStreamBridge.ChunkSource remote;
     private final long[] offsets;
@@ -53,6 +49,16 @@ final class AudioChunkPrefetcher {
             new java.util.concurrent.ConcurrentSkipListMap<>();
 
     AudioChunkPrefetcher(MediaStreamBridge.ChunkSource remote, long[] offsets, int[] lengths, int maximumRequest) {
+        this(remote, offsets, lengths, maximumRequest, VideoSettings.DEFAULT);
+    }
+
+    /** @param settings parallel requests, lookahead and the video gap fetched along */
+    AudioChunkPrefetcher(MediaStreamBridge.ChunkSource remote, long[] offsets, int[] lengths, int maximumRequest,
+                         VideoSettings settings) {
+        resize(FETCHERS, settings.number(VideoSettings.Value.AUDIO_PARALLEL));
+        this.aheadGroups = settings.number(VideoSettings.Value.AUDIO_AHEAD_REQUESTS);
+        this.aheadBytes = settings.get(VideoSettings.Value.AUDIO_AHEAD_BYTES);
+        long maximumGap = settings.get(VideoSettings.Value.AUDIO_MAX_GAP);
         this.remote = remote;
         this.offsets = offsets;
         this.lengths = lengths;
@@ -70,7 +76,7 @@ final class AudioChunkPrefetcher {
                 long previousEnd = starts[groups - 1] + spans[groups - 1];
                 long gap = offsets[chunk] - previousEnd;
                 long span = offsets[chunk] + lengths[chunk] - starts[groups - 1];
-                if (gap >= 0 && gap <= MAXIMUM_GAP && span <= maximumRequest) {
+                if (gap >= 0 && gap <= maximumGap && span <= maximumRequest) {
                     spans[groups - 1] = (int) span;
                     groupOf[chunk] = groups - 1;
                     continue;
@@ -151,14 +157,37 @@ final class AudioChunkPrefetcher {
         // were about to read, and over a slow source every request was fetched again and again.
         int low = Math.min(group, reading.isEmpty() ? group : reading.firstKey());
         int high = Math.max(group, reading.isEmpty() ? group : reading.lastKey());
-        fetched.keySet().removeIf(index -> index < low - 1 || index > high + AHEAD_GROUPS);
+        fetched.keySet().removeIf(index -> index < low - 1 || index > high + aheadGroups);
         long ahead = 0;
-        for (int next = group + 1; next < groupStart.length && next <= group + AHEAD_GROUPS; next++) {
+        for (int next = group + 1; next < groupStart.length && next <= group + aheadGroups; next++) {
             ahead += groupLength[next];
-            if (ahead > AHEAD_BYTES) {
+            if (ahead > aheadBytes) {
                 break;
             }
             request(next);
+        }
+    }
+
+    /** A pool of daemon threads whose size {@link #resize} can change. */
+    static java.util.concurrent.ThreadPoolExecutor pool(int threads, String name) {
+        java.util.concurrent.ThreadPoolExecutor pool = new java.util.concurrent.ThreadPoolExecutor(threads, threads,
+                0, java.util.concurrent.TimeUnit.MILLISECONDS, new java.util.concurrent.LinkedBlockingQueue<>(),
+                task -> {
+                    Thread thread = new Thread(task, name);
+                    thread.setDaemon(true);
+                    return thread;
+                });
+        return pool;
+    }
+
+    /** Sets the number of threads of {@code pool}; a changed setting applies to the next tasks. */
+    static synchronized void resize(java.util.concurrent.ThreadPoolExecutor pool, int threads) {
+        if (threads > pool.getMaximumPoolSize()) {
+            pool.setMaximumPoolSize(threads);
+            pool.setCorePoolSize(threads);
+        } else if (threads < pool.getMaximumPoolSize()) {
+            pool.setCorePoolSize(threads);
+            pool.setMaximumPoolSize(threads);
         }
     }
 }

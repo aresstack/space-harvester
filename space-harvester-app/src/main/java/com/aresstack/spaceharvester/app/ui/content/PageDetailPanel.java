@@ -1562,7 +1562,7 @@ public final class PageDetailPanel extends JPanel {
             // Die Marken des Players sind die einzige Quelle der Folien; gespeichert erscheinen sie als Anhänge.
             originalVideoViewer.onSlides(changes -> slidesFound(frames, changes));
             showVideoMarks(originalVideoViewer, frames);
-            VideoTranscriptSource transcriptSource = new VideoTranscriptSource(size, ranges);
+            VideoTranscriptSource transcriptSource = new VideoTranscriptSource(size, ranges, context.video());
             videoTranscript.setVideoSource(transcriptSource);
             showStoredTranscript(transcriptSource, frames);
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
