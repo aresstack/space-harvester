@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Codex-Befunde zu #966: frühes Schließen des Behälterzauns, Referenzlinks mit Definition. */
+/** Codex-Befunde zu #966/#967: frühes Schließen des Behälterzauns, Referenzlinks mit Definition. */
 class MarkdownReviewFixesTest {
 
     @Test
@@ -31,6 +31,13 @@ class MarkdownReviewFixesTest {
         String answer = "```markdown\n# Titel\n\n```java\nint x = 1;\n```\n\nText.\n```";
         assertThat(MarkdownResponseNormalizer.normalize(answer, true))
                 .isEqualTo("# Titel\n\n```java\nint x = 1;\n```\n\nText.");
+    }
+
+    @Test
+    void anIndentedNestedFenceDoesNotCloseTheWrapper() {
+        String answer = "```markdown\n# Titel\n\n- Schritt:\n\n    ```\n    code\n    ```\n\nText.\n```";
+        assertThat(MarkdownResponseNormalizer.normalize(answer, true))
+                .isEqualTo("# Titel\n\n- Schritt:\n\n    ```\n    code\n    ```\n\nText.");
     }
 
     @Test

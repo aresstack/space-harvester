@@ -1332,6 +1332,7 @@ public final class ChatPanel extends JPanel {
         private final ChatNode startedNode;
         private final AssistantMarkdownBubble bubble;
         private final StringBuilder text = new StringBuilder();
+        private final java.awt.event.ComponentListener follow;
         ChatTurn turn;
         boolean detached;
 
@@ -1341,14 +1342,15 @@ public final class ChatPanel extends JPanel {
             this.bubble = bubble;
             // Die Markdown-Ansicht rendert gedrosselt: erst wenn die Blase dadurch wächst, nach unten rollen (Codex-
             // Befund zu #966), auch nach dem letzten Delta und beim Abschluss.
-            bubble.addComponentListener(new java.awt.event.ComponentAdapter() {
+            follow = new java.awt.event.ComponentAdapter() {
                 @Override
                 public void componentResized(java.awt.event.ComponentEvent event) {
                     if (!detached && ChatPanel.this.answering == TurnListener.this.bubble) {
                         scrollDown();
                     }
                 }
-            });
+            };
+            bubble.addComponentListener(follow);
         }
 
         /** Ersetzt den ganzen Text der Antwortblase (Platzhalter, Fehler, Abschluss) und beendet das Streaming. */
@@ -1421,6 +1423,9 @@ public final class ChatPanel extends JPanel {
         }
 
         private void finish(ChatRecord.Message answer, String note) {
+            // Nach dem letzten Layout-Durchgang den Mitroll-Hörer lösen, damit die Blase den Zug nicht festhält
+            // (Codex-Befund zu #967).
+            SwingUtilities.invokeLater(() -> bubble.removeComponentListener(follow));
             ChatRecord next = started;
             if (answer != null) {
                 next = store.load(startedNode, started.id());

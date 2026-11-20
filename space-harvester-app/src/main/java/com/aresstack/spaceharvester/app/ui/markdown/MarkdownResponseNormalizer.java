@@ -110,8 +110,19 @@ final class MarkdownResponseNormalizer {
         return -1;
     }
 
-    /** Ein schließender Zaun hat dasselbe Zeichen, ist mindestens so lang und trägt keine Sprache. */
+    /**
+     * Ein schließender Zaun hat dasselbe Zeichen, ist mindestens so lang, trägt keine Sprache und ist höchstens drei
+     * Leerzeichen eingerückt (wie der öffnende); tiefer eingerückte Zäune gehören zu verschachteltem Inhalt
+     * (Codex-Befund zu #967).
+     */
     private static boolean isBareClose(String line, String openMarker) {
+        int indent = 0;
+        while (indent < line.length() && line.charAt(indent) == ' ') {
+            indent++;
+        }
+        if (indent > 3) {
+            return false;
+        }
         String trimmed = line.trim();
         char markerChar = openMarker.charAt(0);
         int minLength = openMarker.length();
