@@ -46,6 +46,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 final class BscwWebDavSourceTest {
 
+    @org.junit.jupiter.api.Test
+    void aVideoWithoutExtensionIsStreamedByItsReportedContentType() {
+        assertThat(BscwWebDavKnowledgeSource.streamableMediaType("2023_Roadmapplugin_JIRA_How_to", "video/mp4"))
+                .isEqualTo("video/mp4");
+        assertThat(BscwWebDavKnowledgeSource.streamableMediaType("Aufnahme.MP4", null)).isEqualTo("video/mp4");
+        assertThat(BscwWebDavKnowledgeSource.streamableMediaType("clip", "video/webm; codecs=vp9"))
+                .isEqualTo("video/webm");
+        assertThat(BscwWebDavKnowledgeSource.streamableMediaType("Bericht", "application/pdf")).isNull();
+        assertThat(BscwWebDavKnowledgeSource.streamableMediaType("ohne", null)).isNull();
+    }
+
+
     private static final byte[] ZIP_CONTENT = new byte[] {0x50, 0x4b, 0x03, 0x04, 0, 0};
     private static final byte[] TEXT_CONTENT = "Example BSCW document".getBytes(StandardCharsets.UTF_8);
 

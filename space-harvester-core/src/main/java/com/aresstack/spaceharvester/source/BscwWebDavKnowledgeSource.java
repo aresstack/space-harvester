@@ -220,7 +220,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         if (isFolder(resource)) {
             return new StoredContent(resource, new byte[0], "text/plain", FOLDER_FORMAT, Instant.now());
         }
-        if (streamableMedia(resource.title())) {
+        if (streamableMedia(resource.title(), resource.contentType())) {
             // A remote-media snapshot is metadata, never counterfeit original video bytes.
             return new StoredContent(resource, new byte[0], "application/x-space-harvester-remote-media",
                     "remote-media-metadata", Instant.now());
@@ -509,28 +509,51 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         URI uri = uriOf(localId);
         DavEntry known = knownEntries.get(uri);
         KnowledgeResource resource = known == null ? resourceMetadata(localId) : resource(known);
-        if (!streamableMedia(resource.title())) {
+        if (!streamableMedia(resource.title(), resource.contentType())) {
             throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED,
                     "Not a streamable BSCW media resource");
         }
         return transport.downloadRange(uri, offset, maximumBytes);
     }
 
-    private static boolean streamableMedia(String fileName) {
-        if (fileName == null) {
-            return false;
+    private static boolean streamableMedia(String fileName, String mediaType) {
+        return streamableMediaType(fileName, mediaType) != null;
+    }
+
+    /**
+     * Video type of a file, from its name or, when the name has no known extension (BSCW titles often have none),
+     * from the content type the server reports; {@code null} for anything else.
+     */
+    static String streamableMediaType(String fileName, String mediaType) {
+        String name = fileName == null ? "" : fileName.toLowerCase(java.util.Locale.ROOT);
+        if (name.endsWith(".mp4") || name.endsWith(".m4v")) {
+            return "video/mp4";
         }
-        String name = fileName.toLowerCase(java.util.Locale.ROOT);
-        return name.endsWith(".mp4") || name.endsWith(".m4v") || name.endsWith(".webm")
-                || name.endsWith(".mov") || name.endsWith(".mkv");
+        if (name.endsWith(".webm")) {
+            return "video/webm";
+        }
+        if (name.endsWith(".mov")) {
+            return "video/quicktime";
+        }
+        if (name.endsWith(".mkv")) {
+            return "video/x-matroska";
+        }
+        String type = mediaType == null ? "" : mediaType.toLowerCase(java.util.Locale.ROOT).split(";", 2)[0].strip();
+        return switch (type) {
+            case "video/mp4", "video/x-m4v" -> "video/mp4";
+            case "video/webm", "video/quicktime", "video/x-matroska" -> type;
+            default -> null;
+        };
     }
 
     private KnowledgeResource resource(DavEntry entry) {
         Map<String, String> attributes = new LinkedHashMap<>();
         attributes.put("bscw.path", entry.uri.getRawPath());
         attributes.put(PageMetadata.RESOURCE_KIND, entry.folder ? PageMetadata.FOLDER_KIND : PageMetadata.FILE_KIND);
-        if (!entry.folder && streamableMedia(entry.name)) {
+        String remoteType = entry.folder ? null : streamableMediaType(entry.name, entry.mediaType);
+        if (remoteType != null) {
             attributes.put(PageMetadata.REMOTE_MEDIA, "true");
+            attributes.put(PageMetadata.REMOTE_MEDIA_TYPE, remoteType);
         }
         if (entry.etag != null) {
             attributes.put("dav.etag", entry.etag);

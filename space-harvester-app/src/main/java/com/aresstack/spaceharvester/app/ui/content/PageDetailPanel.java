@@ -1551,7 +1551,10 @@ public final class PageDetailPanel extends JPanel {
         final String source = sourceId;
         final String id = metadata.pageId();
         String file = metadata.title().toLowerCase(java.util.Locale.ROOT);
-        String mediaType = file.endsWith(".webm") ? "video/webm"
+        // Der Typ kommt aus der Quelle (auch für Titel ohne Endung, etwa bei BSCW), sonst aus dem Dateinamen.
+        String reported = metadata.attributes().get(PageMetadata.REMOTE_MEDIA_TYPE);
+        String mediaType = reported != null ? reported
+                : file.endsWith(".webm") ? "video/webm"
                 : file.endsWith(".mov") ? "video/quicktime"
                 : file.endsWith(".mkv") ? "video/x-matroska" : "video/mp4";
         final java.util.concurrent.atomic.AtomicReference<
@@ -1575,7 +1578,7 @@ public final class PageDetailPanel extends JPanel {
             return reader.read(offset, count);
         };
         originalVideoViewer = new VideoViewerPanel(metadata.title(), size, mediaType, ranges::read, context.video());
-        if (size > 0 && file.endsWith(".mp4")) {
+        if (size > 0 && "video/mp4".equals(mediaType)) {
             VideoFrameSource frames = new VideoFrameSource(source, id, ranges::read, size, mediaType);
             videoFrames = frames;
             // Die Marken des Players sind die einzige Quelle der Folien; gespeichert erscheinen sie als Anhänge.
