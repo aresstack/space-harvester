@@ -1196,6 +1196,14 @@ public final class ActivitiesView implements View {
                         + " Seiten, " + p.written() + " geprüft, " + skipped + " übersprungen",
                         p.processed(), total);
             }
+            if (type == JobType.VIDEO_TRANSCRIPT && total > 1) {
+                // Sekunden Video: wie weit das Transkript reicht, von der Länge des Videos (Angelo 20.11.2026).
+                return new Step((phase == null ? Texts.type(type) : phase) + " · "
+                        + com.aresstack.spaceharvester.application.presentation.TranscriptSections.clock(
+                                p.processed() * 1000) + " von "
+                        + com.aresstack.spaceharvester.application.presentation.TranscriptSections.clock(total * 1000),
+                        p.processed(), total);
+            }
             if (type.presentation()) {
                 // „In PPTX umwandeln“: Folien, Transkriptpakete oder das eine Transkript.
                 String unit = type == JobType.TRANSCRIPT_CORRECTION ? " Abschnitten"
@@ -1266,7 +1274,7 @@ public final class ActivitiesView implements View {
                 case IMPORT -> new Counters("Seiten im Paket", "Bearbeitet", "Übernommen", "Fehlgeschlagen");
                 case REREAD -> new Counters("Dokumente", "Geprüft", "Neu gelesen", "Fehlgeschlagen");
                 case METADATA_EXPORT, ANALYTICS_EXPORT -> new Counters("Seiten", "Abgefragt", "Mit Daten", "Ohne Antwort");
-                case VIDEO_TRANSCRIPT -> new Counters("Transkript", "Bearbeitet", "Abgelegt", "Fehlgeschlagen");
+                case VIDEO_TRANSCRIPT -> new Counters("Sekunden Video", "Transkribiert", "Abgelegt", "Fehlgeschlagen");
                 case VIDEO_SLIDES -> new Counters("Folien", "Bearbeitet", "Beschrieben", "Fehlgeschlagen");
                 case TRANSCRIPT_CORRECTION -> new Counters("Transkriptpakete", "Bearbeitet", "Korrigiert",
                         "Unkorrigiert");

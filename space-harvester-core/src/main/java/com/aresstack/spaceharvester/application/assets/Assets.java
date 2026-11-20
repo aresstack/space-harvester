@@ -303,7 +303,7 @@ public class Assets implements DocumentInventory {
      * dasselbe Modell läuft nie zweimal gleichzeitig: weitere Aufrufer warten höchstens {@link #DESCRIBE_WAIT} auf den
      * laufenden.
      */
-    static final int MAX_CONCURRENT_DESCRIPTIONS = 2;
+    public static final int MAX_CONCURRENT_DESCRIPTIONS = 2;
     private static final java.time.Duration DESCRIBE_WAIT = java.time.Duration.ofMinutes(2);
     private final Semaphore descriptions = new Semaphore(MAX_CONCURRENT_DESCRIPTIONS);
     private final Map<String, CompletableFuture<ImageDescription>> describing = new ConcurrentHashMap<>();

@@ -448,8 +448,8 @@ final class OverallProgress {
             // Je Seite ein Modellaufruf je Aussage gegen ihren Originalsatz: langsamer als die Analyse.
             case STATEMENT_CHECK -> 2;
             case GLOSSARY -> 2;
-            // „In PPTX umwandeln“: Whisper je Video, sonst ein Modellaufruf je Folie oder Transkriptpaket.
-            case VIDEO_TRANSCRIPT -> 300;
+            // „In PPTX umwandeln“: Whisper je Sekunde Video, sonst ein Modellaufruf je Folie oder Transkriptpaket.
+            case VIDEO_TRANSCRIPT -> 0.3;
             case VIDEO_SLIDES, SLIDE_NOTES, TRANSCRIPT_CORRECTION -> 15;
             case PRESENTATION_EXPORT -> 0.1;
             default -> 0.5;
@@ -464,7 +464,7 @@ final class OverallProgress {
             case GLOSSARY -> 100;
             case PURGE -> 10;
             case STATEMENT_ANALYSIS, STATEMENT_CHECK -> 200;
-            case VIDEO_TRANSCRIPT -> 1;
+            case VIDEO_TRANSCRIPT -> 1800;
             case VIDEO_SLIDES, SLIDE_NOTES, PRESENTATION_EXPORT -> 30;
             case TRANSCRIPT_CORRECTION -> 10;
             default -> 200;

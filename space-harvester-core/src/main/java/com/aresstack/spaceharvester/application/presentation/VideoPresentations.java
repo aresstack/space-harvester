@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -307,25 +308,92 @@ public final class VideoPresentations {
         context.phase(COMPONENT, "Transkript");
         PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
         context.rootTitle(snapshot.metadata().title());
-        context.discovered(1);
         String version = snapshot.revision();
         String name = transcriptName(snapshot.metadata().title());
         String existing = assets.videoTranscript(sourceId, pageId, version).orElse(null);
+        TranscriptProgress progress = new TranscriptProgress(context);
         String text = media.transcribe(existing, partial -> {
-            if (partial != null && !partial.isBlank()) {
+            if (extendsTranscript(partial, existing)) {
                 assets.putVideoTranscript(sourceId, pageId, version, name, partial);
             }
-        }, context::cancelRequested);
+        }, progress, context::cancelRequested);
         context.checkpoint();
         if (text == null || TranscriptSections.parse(text).isEmpty()) {
             throw new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript, und die App konnte "
                     + "keines erzeugen.");
         }
-        if (!text.equals(existing)) {
+        // Das vorhandene Transkript wird nur verlängert, nie durch ein kürzeres ersetzt (Angelo 20.11.2026).
+        if (!text.equals(existing) && extendsTranscript(text, existing)) {
             assets.putVideoTranscript(sourceId, pageId, version, name, text);
         }
-        context.processed(1);
-        context.written(1);
+        progress.finish();
+    }
+
+    /**
+     * Ob {@code candidate} das vorhandene Transkript fortsetzt statt es zu ersetzen: Es beginnt mit dessen fertigem Teil
+     * und reicht mindestens so weit.
+     */
+    static boolean extendsTranscript(String candidate, String existing) {
+        if (candidate == null || candidate.isBlank()) {
+            return false;
+        }
+        if (existing == null || existing.isBlank()) {
+            return true;
+        }
+        String kept = TranscriptSections.completedPart(existing).strip();
+        return candidate.strip().startsWith(kept)
+                && TranscriptSections.reach(candidate) >= TranscriptSections.reach(existing);
+    }
+
+    /**
+     * Der Fortschritt von „Transkript ziehen“ in Sekunden Video: bekannt ist die Länge, erreicht die Zeit, bis zu der
+     * das Transkript reicht. Ohne bekannte Länge ein Transkript.
+     */
+    private static final class TranscriptProgress implements VideoMedia.Progress {
+
+        private final JobContext context;
+        private final AtomicLong total = new AtomicLong();
+        private final AtomicLong done = new AtomicLong();
+
+        TranscriptProgress(JobContext context) {
+            this.context = context;
+        }
+
+        @Override
+        public void duration(long millis) {
+            long seconds = Math.max(1, millis / 1000);
+            if (millis > 0 && total.compareAndSet(0, seconds)) {
+                context.discovered(seconds);
+            }
+        }
+
+        @Override
+        public void reached(long millis) {
+            long known = total.get();
+            if (known == 0) {
+                return;
+            }
+            long seconds = Math.min(known, Math.max(0, millis / 1000));
+            long before = done.getAndAccumulate(seconds, Math::max);
+            if (seconds > before) {
+                context.processed(seconds - before);
+            }
+        }
+
+        void finish() {
+            long known = total.get();
+            if (known == 0) {
+                context.discovered(1);
+                context.processed(1);
+                context.written(1);
+                return;
+            }
+            long before = done.getAndSet(known);
+            if (known > before) {
+                context.processed(known - before);
+            }
+            context.written(known);
+        }
     }
 
     // --- 2. Folien beschreiben ------------------------------------------------------------------------------------
@@ -370,6 +438,7 @@ public final class VideoPresentations {
                 context.processed(1);
                 context.failed(1);
                 withoutFrame++;
+                slideFailed(context, millis, "not-ready");
             } else if (entry != null && entry.status() == ImageStatus.DESCRIBED && entry.description() != null
                     && Objects.equals(entry.sha256(), frame.get().sha256())) {
                 context.processed(1);
@@ -379,22 +448,74 @@ public final class VideoPresentations {
             }
         }
         AtomicLong failed = new AtomicLong(withoutFrame);
-        inParallel(open, options.parallel(), context, index -> {
+        // Nie mehr zugleich, als die Bildbeschreibung annimmt: Ein weiterer Aufruf käme sofort als „belegt“ zurück.
+        int parallel = Math.min(options.parallel(), Assets.MAX_CONCURRENT_DESCRIPTIONS);
+        inParallel(open, parallel, context, index -> {
             long millis = slideMarks.get(index);
-            PageImages result = images.describeOne(snapshot, index, false, false);
-            boolean described = result.images().stream().anyMatch(entry -> Assets.markAttachmentId(pageId, millis)
-                    .equals(entry.assetId()) && entry.status() == ImageStatus.DESCRIBED);
+            String id = Assets.markAttachmentId(pageId, millis);
+            ImagePayload.Entry entry = null;
+            for (int attempt = 0; ; attempt++) {
+                PageImages result = images.describeOne(snapshot, index, false, false);
+                entry = result.images().stream().filter(found -> id.equals(found.assetId())).findFirst()
+                        .orElse(null);
+                // Belegt (etwa von „Analysen › Bilder“ zugleich): kurz warten und dieselbe Folie erneut.
+                if (entry == null || !BUSY.equals(entry.reason()) || attempt >= BUSY_ATTEMPTS
+                        || !pause(context)) {
+                    break;
+                }
+            }
             context.processed(1);
-            if (described) {
+            if (entry != null && entry.status() == ImageStatus.DESCRIBED) {
                 context.written(1);
             } else {
                 context.failed(1);
                 failed.incrementAndGet();
+                slideFailed(context, millis, entry == null ? "not-ready" : entry.reason());
             }
         });
         if (failed.get() > 0) {
             context.incomplete();
         }
+    }
+
+    /** Grund einer Folie, die die Bildbeschreibung gerade nicht annimmt. */
+    private static final String BUSY = "model-busy";
+    /** So oft wird eine belegte Folie erneut versucht, je nach {@link #BUSY_WAIT_MILLIS}. */
+    static final int BUSY_ATTEMPTS = 40;
+    static final long BUSY_WAIT_MILLIS = 3_000;
+
+    /** Wartet vor einem neuen Versuch; {@code false} nach Abbruch oder Anhalten. */
+    private static boolean pause(JobContext context) {
+        if (context.cancelRequested()) {
+            return false;
+        }
+        try {
+            Thread.sleep(BUSY_WAIT_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return !context.cancelRequested();
+    }
+
+    /** Hält im Auftrag fest, welche Folie warum ohne Beschreibung blieb. */
+    private static void slideFailed(JobContext context, long millis, String reason) {
+        context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, "SLIDE_NOT_DESCRIBED",
+                "Folie " + TranscriptSections.clock(millis) + " nicht beschrieben: " + slideReason(reason)));
+    }
+
+    /** Der Grund einer nicht beschriebenen Folie in Worten. */
+    static String slideReason(String reason) {
+        if (reason == null) {
+            return "unbekannter Grund";
+        }
+        return switch (reason) {
+            case "not-ready" -> "kein Standbild gezogen";
+            case BUSY -> "die Bildbeschreibung war die ganze Zeit belegt";
+            case "model-failed" -> "das Vision-Modell hat nicht oder leer geantwortet";
+            case "too-large" -> "das Standbild ist zu groß";
+            default -> reason;
+        };
     }
 
     // --- 3. Transkript korrigieren --------------------------------------------------------------------------------
@@ -596,6 +717,9 @@ public final class VideoPresentations {
             } else {
                 context.failed(1);
                 failed.incrementAndGet();
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, "SLIDE_NOTE_MISSING",
+                        "Kein Vortragstext für Folie " + TranscriptSections.clock(millis)
+                                + ": das Vision-Modell hat nicht oder leer geantwortet"));
             }
         });
         requireReleased(key);
