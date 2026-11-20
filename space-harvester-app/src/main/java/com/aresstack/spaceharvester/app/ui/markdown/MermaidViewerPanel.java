@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
+import com.aresstack.spaceharvester.app.ui.controls.ViewerWheel;
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
@@ -34,7 +35,7 @@ import java.io.File;
 
 /**
  * Der einbettbare Mermaid-Betrachter (aus askai-java8 {@code MermaidViewerPanel}): Ziehen zum Verschieben,
- * Mausrad-Zoom am Cursor, ständig sichtbare Knöpfe ➖/➕/🔄 (unten rechts) sowie ⧉ kopieren und 💾 speichern
+ * Strg+Mausrad-Zoom am Cursor (Rad allein und Shift+Rad verschieben, {@link ViewerWheel}), ständig sichtbare Knöpfe ➖/➕/🔄 (unten rechts) sowie ⧉ kopieren und 💾 speichern
  * (oben rechts), Infozeile mit Flächenfarbe und Deckkraft und das automatische Neu-Rendern in hoher Auflösung.
  * Er sitzt im Comic-Overlay über dem Verlauf ({@link DiagramOverlayHost}); ein Renderfehler zeigt den
  * Mermaid-Quelltext statt einer leeren Fläche.
@@ -263,10 +264,28 @@ public final class MermaidViewerPanel extends JPanel {
         };
         canvas.addMouseListener(mouse);
         canvas.addMouseMotionListener(mouse);
-        canvas.addMouseWheelListener(e -> {
-            canvas.zoomAt(e.getWheelRotation() < 0 ? 1.15 : 1.0 / 1.15, e.getPoint());
-            updateInfo();
-        });
+        canvas.addMouseWheelListener(new ViewerWheel(new ViewerWheel.Target() {
+            @Override
+            public boolean pan(int dx, int dy) {
+                return canvas.pan(dx, dy);
+            }
+
+            @Override
+            public void zoom(double factor, Point at) {
+                canvas.zoomAt(factor, at);
+                updateInfo();
+            }
+
+            @Override
+            public void previous() {
+                // ein Diagramm hat keine Seiten
+            }
+
+            @Override
+            public void next() {
+                // ein Diagramm hat keine Seiten
+            }
+        }));
     }
 
     /** Base render first (fast feedback), then the crisp high-resolution pass — like the dialog. */
@@ -437,6 +456,22 @@ public final class MermaidViewerPanel extends JPanel {
                 offsetY = 0;
             }
             repaint();
+        }
+
+        /** Verschiebt den Ausschnitt um Bildschirmpixel; siehe {@link ViewerWheel#panTo}. */
+        boolean pan(int dx, int dy) {
+            if (imgW <= 0) {
+                return false;
+            }
+            double nx = ViewerWheel.panTo(offsetX, offsetX + dx, imgW * zoom, getWidth());
+            double ny = ViewerWheel.panTo(offsetY, offsetY + dy, imgH * zoom, getHeight());
+            if (nx == offsetX && ny == offsetY) {
+                return false;
+            }
+            offsetX = nx;
+            offsetY = ny;
+            repaint();
+            return true;
         }
 
         void zoomAt(double factor, Point pivot) {

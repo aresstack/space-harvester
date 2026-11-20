@@ -42,8 +42,10 @@ import java.util.Objects;
 /**
  * Bildbetrachter für die Bilder einer Seite, übernommen aus dem {@code ImageSlideshowPanel} des Enterprise AI Client
  * (dort aus MainframeMates {@code ImageStripPanel.openOverlay}): Das Bild ist beim Öffnen und nach jeder
- * Größenänderung des Fensters eingepasst, bis der Benutzer selbst zoomt oder verschiebt. Mausrad zoomt am Cursor
- * (×1,15), Ziehen verschiebt, + − 0 zoomen bzw. passen ein (×1,25), ← → blättern. Die Knöpfe liegen im Bild und
+ * Größenänderung des Fensters eingepasst, bis der Benutzer selbst zoomt oder verschiebt. Das Mausrad blättert wie
+ * die Pfeile (bei hineingezoomtem Bild verschiebt es erst den Ausschnitt), Strg+Rad zoomt am Cursor (×1,15),
+ * Shift+Rad verschiebt waagrecht ({@link ViewerWheel}); Ziehen verschiebt, + − 0 zoomen bzw. passen ein (×1,25),
+ * ← → blättern. Die Knöpfe liegen im Bild und
  * erscheinen nur, solange die Maus in ihrer Zone steht: Speichern oben rechts, Verkleinern/Vergrößern/Einpassen unten
  * rechts, die Pfeile im mittleren Drittel links bzw. rechts (nur wo es ein vorheriges bzw. nächstes Bild gibt).
  * Darunter die Infozeile „n / m — Titel (B × H) | Zoom: x %“, nach dem Speichern die Meldung dazu.
@@ -92,7 +94,7 @@ public final class ImageViewer extends JPanel {
     static final String SAVED_PREFIX = "Bild gespeichert: ";
     static final String SAVE_FAILED_PREFIX = "Fehler beim Speichern: ";
     static final double STEP = 1.25;
-    static final double WHEEL_STEP = 1.15;
+    static final double WHEEL_STEP = ViewerWheel.ZOOM_STEP;
     private static final int BUTTON = 36;
     private static final int ARROW_W = 48;
 
@@ -519,11 +521,29 @@ public final class ImageViewer extends JPanel {
         };
         canvas.addMouseListener(mouse);
         canvas.addMouseMotionListener(mouse);
-        canvas.addMouseWheelListener(e -> {
-            canvas.zoomAt(e.getWheelRotation() < 0 ? WHEEL_STEP : 1.0 / WHEEL_STEP, e.getPoint());
-            message = null;
-            updateInfo();
-        });
+        canvas.addMouseWheelListener(new ViewerWheel(new ViewerWheel.Target() {
+            @Override
+            public boolean pan(int dx, int dy) {
+                return canvas.pan(dx, dy);
+            }
+
+            @Override
+            public void zoom(double factor, Point at) {
+                canvas.zoomAt(factor, at);
+                message = null;
+                updateInfo();
+            }
+
+            @Override
+            public void previous() {
+                ImageViewer.this.previous();
+            }
+
+            @Override
+            public void next() {
+                ImageViewer.this.next();
+            }
+        }));
     }
 
     @Override
@@ -603,6 +623,23 @@ public final class ImageViewer extends JPanel {
             fitted = false;
             pending = false;
             repaint();
+        }
+
+        /** Verschiebt den Ausschnitt um Bildschirmpixel; siehe {@link ViewerWheel#panTo}. */
+        boolean pan(int dx, int dy) {
+            if (image == null) {
+                return false;
+            }
+            double nx = ViewerWheel.panTo(offsetX, offsetX + dx, imgW * zoom, getWidth());
+            double ny = ViewerWheel.panTo(offsetY, offsetY + dy, imgH * zoom, getHeight());
+            if (nx == offsetX && ny == offsetY) {
+                return false;
+            }
+            offsetX = nx;
+            offsetY = ny;
+            fitted = false;
+            repaint();
+            return true;
         }
 
         int zoomPercent() {

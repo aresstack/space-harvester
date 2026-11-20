@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
+import com.aresstack.spaceharvester.app.ui.controls.ViewerWheel;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -41,7 +42,7 @@ import java.util.Locale;
 
 /**
  * Vergrößerter Mermaid-Betrachter (aus askai-java8 {@code MermaidViewerDialog}): dunkle, rahmenlose Fläche mit
- * Ziehen zum Verschieben, Mausrad-Zoom am Cursor, halbtransparenten runden Überlagerungsknöpfen (verkleinern /
+ * Ziehen zum Verschieben, Strg+Mausrad-Zoom am Cursor (Rad allein und Shift+Rad verschieben, {@link ViewerWheel}), halbtransparenten runden Überlagerungsknöpfen (verkleinern /
  * vergrößern / einpassen sowie kopieren und speichern) und einer Infozeile unten.
  *
  * <p>Das Diagramm wird einmal in hoher Auflösung aus seinem Mermaid-Quelltext neu gerendert (scharfe
@@ -198,11 +199,28 @@ public final class MermaidViewerDialog extends JDialog {
                 }
             }
         });
-        glass.addMouseWheelListener(e -> {
-            Point p = SwingUtilities.convertPoint(glass, e.getPoint(), imagePanel);
-            imagePanel.zoomAt(e.getWheelRotation() < 0 ? 1.15 : 1.0 / 1.15, p);
-            updateInfo();
-        });
+        glass.addMouseWheelListener(new ViewerWheel(new ViewerWheel.Target() {
+            @Override
+            public boolean pan(int dx, int dy) {
+                return imagePanel.pan(dx, dy);
+            }
+
+            @Override
+            public void zoom(double factor, Point at) {
+                imagePanel.zoomAt(factor, SwingUtilities.convertPoint(glass, at, imagePanel));
+                updateInfo();
+            }
+
+            @Override
+            public void previous() {
+                // ein Diagramm hat keine Seiten
+            }
+
+            @Override
+            public void next() {
+                // ein Diagramm hat keine Seiten
+            }
+        }));
 
         installKeyBindings();
 
@@ -380,6 +398,22 @@ public final class MermaidViewerDialog extends JDialog {
                 offsetY = 0;
             }
             repaint();
+        }
+
+        /** Verschiebt den Ausschnitt um Bildschirmpixel; siehe {@link ViewerWheel#panTo}. */
+        boolean pan(int dx, int dy) {
+            if (imgW <= 0) {
+                return false;
+            }
+            double nx = ViewerWheel.panTo(offsetX, offsetX + dx, imgW * zoom, getWidth());
+            double ny = ViewerWheel.panTo(offsetY, offsetY + dy, imgH * zoom, getHeight());
+            if (nx == offsetX && ny == offsetY) {
+                return false;
+            }
+            offsetX = nx;
+            offsetY = ny;
+            repaint();
+            return true;
         }
 
         void zoomAt(double factor, Point pivot) {

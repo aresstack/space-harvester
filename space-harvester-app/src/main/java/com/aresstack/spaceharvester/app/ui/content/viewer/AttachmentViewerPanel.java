@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiTypography;
+import com.aresstack.spaceharvester.app.ui.controls.ViewerWheel;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -57,7 +58,9 @@ import java.util.function.Consumer;
 /**
  * Der Anhang-Viewer im Comic-Overlay über dem Reiter „Anhänge“: zeigt einen Dateianhang der Seite. Bilder über den
  * Bildweg ({@link ReaderImageStore.Loaded}), PDF als Seitenbilder über Apache PDFBox ({@link PdfPages}; die Pfeile und
- * ← → blättern Seiten, Mausrad-Zoom am Cursor, + − 0 zoomen bzw. einpassen, beim Hineinzoomen wird die Seite schärfer
+ * ← → und das Mausrad blättern Seiten (bei hineingezoomter Seite verschiebt das Rad erst den Ausschnitt), Strg+Rad
+ * zoomt am Cursor, Shift+Rad verschiebt waagrecht ({@link ViewerWheel}), + − 0 zoomen bzw. einpassen, beim
+ * Hineinzoomen wird die Seite schärfer
  * nachgezeichnet), Text in einer Textfläche, Office-Dateien über die Vorschau der Quelle (PDF oder Bild), alles andere
  * mit Name, Typ und Größe. Unten stehen immer „Typ · Größe“, Seite und Zoom sowie Speichern und Öffnen der
  * Originaldatei. Geladen wird erst, wenn der Viewer geöffnet wird.
@@ -632,11 +635,29 @@ public final class AttachmentViewerPanel extends JPanel {
         };
         canvas.addMouseListener(mouse);
         canvas.addMouseMotionListener(mouse);
-        canvas.addMouseWheelListener(e -> {
-            canvas.zoomAt(e.getWheelRotation() < 0 ? 1.15 : 1.0 / 1.15, e.getPoint());
-            updateInfo();
-            zoomed();
-        });
+        canvas.addMouseWheelListener(new ViewerWheel(new ViewerWheel.Target() {
+            @Override
+            public boolean pan(int dx, int dy) {
+                return canvas.pan(dx, dy);
+            }
+
+            @Override
+            public void zoom(double factor, Point at) {
+                canvas.zoomAt(factor, at);
+                updateInfo();
+                zoomed();
+            }
+
+            @Override
+            public void previous() {
+                AttachmentViewerPanel.this.previous();
+            }
+
+            @Override
+            public void next() {
+                AttachmentViewerPanel.this.next();
+            }
+        }));
     }
 
     /**
@@ -1339,6 +1360,22 @@ public final class AttachmentViewerPanel extends JPanel {
             offsetX = px - (px - offsetX) * (zoom / oldZoom);
             offsetY = py - (py - offsetY) * (zoom / oldZoom);
             repaint();
+        }
+
+        /** Verschiebt den Ausschnitt um Bildschirmpixel; siehe {@link ViewerWheel#panTo}. */
+        boolean pan(int dx, int dy) {
+            if (imgW <= 0) {
+                return false;
+            }
+            double nx = ViewerWheel.panTo(offsetX, offsetX + dx, imgW * zoom, getWidth());
+            double ny = ViewerWheel.panTo(offsetY, offsetY + dy, imgH * zoom, getHeight());
+            if (nx == offsetX && ny == offsetY) {
+                return false;
+            }
+            offsetX = nx;
+            offsetY = ny;
+            repaint();
+            return true;
         }
 
         int getZoomPercent() {
