@@ -1454,10 +1454,12 @@ public final class Workspace {
         outputs.forEach(root -> requireExport(root.sourceId(), root.spaceKey()));
         List<JobStatus> started = new ArrayList<>(2 * outputs.size());
         for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
-            // Aus dem Bestand nur, wenn dort auch Bilder und Anhänge der Seiten liegen; sonst holt der Export sie von der
-            // Quelle (gespeicherte, aktuelle Seiten liest auch er nur aus dem Cache) und legt sie im Bestand ab.
-            boolean stored = harvester.holdings().resolve(caller,
-                    com.aresstack.spaceharvester.application.holdings.Selection.of(root)).counts().stored() > 0
+            // Aus dem Bestand nur, wenn jede lesbare Seite aktuell dort liegt, samt Bildern und Anhängen; sonst indexiert
+            // der Export erst, was fehlt oder veraltet ist (Angelo, 20.11.2026: gespeicherte, aktuelle Seiten liest auch
+            // er nur aus dem Cache), und legt Bilder und Anhänge im Bestand ab.
+            com.aresstack.spaceharvester.application.holdings.HoldingCounts counts = harvester.holdings().resolve(caller,
+                    com.aresstack.spaceharvester.application.holdings.Selection.of(root)).counts();
+            boolean stored = counts.local() > 0 && counts.local() >= counts.pages() - counts.locked()
                     && harvester.assetCollection() != null
                     && harvester.assetCollection().inHoldings(Harvester.OWNER, root);
             JobStatus data = stored
