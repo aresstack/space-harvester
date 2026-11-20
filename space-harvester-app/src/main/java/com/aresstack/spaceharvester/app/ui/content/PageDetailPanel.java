@@ -341,6 +341,8 @@ public final class PageDetailPanel extends JPanel {
     /** Der Viewer im Reiter „Text“ für eine Datei ohne Textauszug. */
     private AttachmentViewerPanel textOriginalViewer;
     private final JPanel textOriginal = new JPanel(new BorderLayout());
+    /** Die Zeile mit dem Akronym-Hinweis über dem Lesetext; über dem Transkript eines Videos ausgeblendet. */
+    private final JPanel acronymBar = new JPanel(new BorderLayout(8, 0));
     /** Ob die gezeigte Datei leer ist (die Quelle meldet 0 Bytes). */
     private boolean emptyFileShown;
     /**
@@ -470,7 +472,6 @@ public final class PageDetailPanel extends JPanel {
 
         JPanel readerPanel = new JPanel(new BorderLayout(0, 6));
         readerPanel.setOpaque(false);
-        JPanel acronymBar = new JPanel(new BorderLayout(8, 0));
         acronymBar.setOpaque(false);
         acronymBar.add(acronymHint, BorderLayout.CENTER);
         acronymBar.add(Comic.row(recomputeReader), BorderLayout.EAST);
@@ -1774,6 +1775,8 @@ public final class PageDetailPanel extends JPanel {
             videoTranscript.setVideoSource(transcriptSource);
             showStoredTranscript(transcriptSource, frames);
             textCardLayout.show(textContents, TEXT_VIDEO_TRANSCRIPT_CARD);
+            // Das Transkript füllt den Reiter; die Akronymzeile gehört zum Lesetext.
+            acronymBar.setVisible(false);
             videoTranscriptShown = true;
         }
         fileContent.add(originalVideoViewer, BorderLayout.CENTER);
@@ -2015,6 +2018,7 @@ public final class PageDetailPanel extends JPanel {
     private void closeOriginalFile() {
         videoTranscript.setVideoSource(null);
         textCardLayout.show(textContents, TEXT_READER_CARD);
+        acronymBar.setVisible(true);
         if (originalFileViewer != null) {
             originalFileViewer.close();
             originalFileViewer = null;
@@ -3091,10 +3095,18 @@ public final class PageDetailPanel extends JPanel {
         }
         // Das gespeicherte Transkript kommt verzögert wie die Anhänge: bis dahin die Sanduhr.
         videoTranscript.loadingStored(transcriptSource, true);
-        Background.run(() -> runtime.workspace().videoTranscript(video.sourceId(), video.pageId()), stored -> {
-            videoTranscript.loadingStored(transcriptSource, false);
-            stored.ifPresent(text -> videoTranscript.showStored(transcriptSource, text));
-        }, error -> videoTranscript.loadingStored(transcriptSource, false));
+        // Mit den Korrekturen, die als Ergänzung daneben liegen: unten in der Mitte zum Umschalten.
+        Background.run(() -> runtime.workspace().videoTranscriptVersions(video.sourceId(), video.pageId()),
+                versions -> {
+                    videoTranscript.loadingStored(transcriptSource, false);
+                    if (!versions.isEmpty()) {
+                        videoTranscript.showStored(transcriptSource, versions.get(0).text());
+                        videoTranscript.showVersions(transcriptSource, versions.stream()
+                                .map(version -> new com.aresstack.spaceharvester.app.ui.content.viewer
+                                        .VideoTranscriptionPanel.Version(version.label(), version.text()))
+                                .toList());
+                    }
+                }, error -> videoTranscript.loadingStored(transcriptSource, false));
     }
 
     /**

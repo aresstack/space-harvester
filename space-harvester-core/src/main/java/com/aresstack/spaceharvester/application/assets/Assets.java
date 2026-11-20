@@ -1108,10 +1108,117 @@ public class Assets implements DocumentInventory {
         List<PageAttachment> attachments = new java.util.ArrayList<>(list.attachments().attachments());
         attachments.add(new PageAttachment(id, id, stored.get().title(), AssetKind.TRANSCRIPT_MEDIA_TYPE,
                 stored.get().size(), frameVersion(version), stored.get().retrievedAt(), null));
+        // Die Korrekturen stehen als Ergänzung gleich dahinter.
+        for (TranscriptCorrection correction : videoTranscriptCorrections(list.sourceId(), pageId, version)) {
+            store.find(list.sourceId(), correction.attachmentId(), frameVersion(version)).ifPresent(asset ->
+                    attachments.add(new PageAttachment(asset.attachmentId(), asset.attachmentId(), asset.title(),
+                            AssetKind.TRANSCRIPT_MEDIA_TYPE, asset.size(), frameVersion(version),
+                            asset.retrievedAt(), null)));
+        }
         PageAttachments source = list.attachments();
         return new PageAttachmentList(list.sourceId(), list.spaceKey(), new PageAttachments(source.pageId(),
                 attachments, source.responses(), source.mediaType(), source.nativeFormat(), source.warnings(),
                 source.retrievedAt()), list.retrievedAt());
+    }
+
+    /**
+     * Eine Korrektur des Transkripts eines Videos (Angelo, 20.11.2026): als Ergänzung neben dem Transkript abgelegt, je
+     * Modell eine, und wie das Transkript ein virtueller Anhang; das Transkript selbst bleibt unverändert.
+     *
+     * @param attachmentId Kennung des Anhangs
+     * @param label        Anzeigename, etwa {@code Korrektur gemma4:12b}
+     * @param model        Verfahren und Modell, aus dem sie entstand; je Modell ersetzt eine neue die alte
+     * @param input        Fingerabdruck der Eingabe (Transkript, Folienbeschreibungen, Modell)
+     * @param complete     ob jedes Paket korrigiert ist; sonst stehen gescheiterte unkorrigiert darin
+     */
+    public record TranscriptCorrection(String attachmentId, String label, String model, String input,
+                                       boolean complete) {
+    }
+
+    private final Object corrections = new Object();
+
+    /** Legt eine Korrektur des Transkripts ab und ersetzt die frühere desselben Modells. */
+    public void putVideoTranscriptCorrection(String sourceId, String pageId, String version, String fileName,
+                                             TranscriptCorrection correction, String text) {
+        String id = correctionId(pageId, correction.model());
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        synchronized (corrections) {
+            store.put(new Asset(sourceId, pageId, id, frameVersion(version), fileName, "text/plain",
+                    AssetKind.TRANSCRIPT, bytes.length, sha256(bytes), clock.instant()), bytes);
+            java.util.Properties index = correctionIndex(sourceId, pageId, version);
+            index.setProperty(id + ".label", correction.label());
+            index.setProperty(id + ".model", correction.model());
+            index.setProperty(id + ".input", correction.input());
+            index.setProperty(id + ".complete", String.valueOf(correction.complete()));
+            java.io.StringWriter written = new java.io.StringWriter();
+            try {
+                index.store(written, null);
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            byte[] indexBytes = written.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            store.put(new Asset(sourceId, pageId, correctionIndexId(pageId), frameVersion(version),
+                    "Korrekturen.properties", "text/plain", AssetKind.TRANSCRIPT, indexBytes.length,
+                    sha256(indexBytes), clock.instant()), indexBytes);
+        }
+    }
+
+    /** Die abgelegten Korrekturen des Transkripts dieser Fassung, nach Anzeigename. */
+    public List<TranscriptCorrection> videoTranscriptCorrections(String sourceId, String pageId, String version) {
+        java.util.Properties index = correctionIndex(sourceId, pageId, version);
+        List<TranscriptCorrection> found = new java.util.ArrayList<>();
+        for (String key : index.stringPropertyNames()) {
+            if (!key.endsWith(".model")) {
+                continue;
+            }
+            String id = key.substring(0, key.length() - ".model".length());
+            if (store.find(sourceId, id, frameVersion(version)).isPresent()) {
+                found.add(new TranscriptCorrection(id, index.getProperty(id + ".label", id),
+                        index.getProperty(key), index.getProperty(id + ".input", ""),
+                        Boolean.parseBoolean(index.getProperty(id + ".complete"))));
+            }
+        }
+        found.sort(java.util.Comparator.comparing(TranscriptCorrection::label));
+        return List.copyOf(found);
+    }
+
+    /** Die Korrektur dieses Modells; leer ohne. */
+    public Optional<TranscriptCorrection> videoTranscriptCorrection(String sourceId, String pageId, String version,
+                                                                    String model) {
+        String id = correctionId(pageId, model);
+        return videoTranscriptCorrections(sourceId, pageId, version).stream()
+                .filter(correction -> correction.attachmentId().equals(id)).findFirst();
+    }
+
+    /** Der Text eines Transkript-Anhangs dieser Fassung: das Transkript selbst oder eine Korrektur. */
+    public Optional<String> videoTranscriptText(String sourceId, String pageId, String version, String attachmentId) {
+        if (!transcriptAttachment(attachmentId) || attachmentId.equals(correctionIndexId(pageId))) {
+            return Optional.empty();
+        }
+        return store.find(sourceId, attachmentId, frameVersion(version)).map(this::read)
+                .map(content -> new String(content.content(), java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private java.util.Properties correctionIndex(String sourceId, String pageId, String version) {
+        java.util.Properties index = new java.util.Properties();
+        store.find(sourceId, correctionIndexId(pageId), frameVersion(version)).map(this::read).ifPresent(content -> {
+            try {
+                index.load(new java.io.StringReader(new String(content.content(),
+                        java.nio.charset.StandardCharsets.UTF_8)));
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        });
+        return index;
+    }
+
+    private static String correctionIndexId(String pageId) {
+        return VIDEO_TRANSCRIPT + "corrections-" + framePage(pageId);
+    }
+
+    private static String correctionId(String pageId, String model) {
+        return transcriptId(pageId) + "-" + sha256(model.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .substring("sha256:".length(), "sha256:".length() + 12);
     }
 
     /** Ob die Seite dieser Fassung ein abgelegtes Transkript hat. */

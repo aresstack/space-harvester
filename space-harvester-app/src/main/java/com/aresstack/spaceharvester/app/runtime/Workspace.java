@@ -789,6 +789,36 @@ public final class Workspace {
         return harvester.assets().missingVideoFrames(sourceId, pageId, version, marks);
     }
 
+    /**
+     * Eine Fassung des Transkripts eines Videos: das Original oder eine Korrektur, die als Ergänzung daneben liegt.
+     *
+     * @param label Anzeigename, {@code Original} oder etwa {@code Korrektur gemma4:12b}, unvollständige mit Zusatz
+     */
+    public record TranscriptVersion(String label, String text) {
+    }
+
+    /**
+     * Das gespeicherte Transkript des Videos dieser Seite mit seinen Korrekturen (Angelo, 20.11.2026): zuerst das
+     * Original, dann je Modell eine Korrektur; leer, solange kein Transkript erzeugt ist. Fragt die Quelle nicht.
+     */
+    public List<TranscriptVersion> videoTranscriptVersions(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        String version = page.snapshot().revision();
+        java.util.Optional<String> original = harvester.assets().videoTranscript(sourceId, pageId, version);
+        if (original.isEmpty()) {
+            return List.of();
+        }
+        List<TranscriptVersion> versions = new ArrayList<>();
+        versions.add(new TranscriptVersion("Original", original.get()));
+        for (Assets.TranscriptCorrection correction : harvester.assets().videoTranscriptCorrections(sourceId, pageId,
+                version)) {
+            harvester.assets().videoTranscriptText(sourceId, pageId, version, correction.attachmentId())
+                    .ifPresent(text -> versions.add(new TranscriptVersion(correction.label()
+                            + (correction.complete() ? "" : " (unvollständig)"), text)));
+        }
+        return List.copyOf(versions);
+    }
+
     /** Das gespeicherte Transkript des Videos dieser Seite; leer, solange keines erzeugt ist. Fragt die Quelle nicht. */
     public java.util.Optional<String> videoTranscript(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);

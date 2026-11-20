@@ -539,10 +539,12 @@ public final class VideoPresentations {
         String model = CORRECTION_VERSION + "|" + textModel.version();
         String input = Assets.sha256((model + "\n" + transcript + "\n" + descriptions)
                 .getBytes(StandardCharsets.UTF_8));
-        Optional<PresentationStore.Result> stored = store.corrected(key, version);
+        // Die Korrektur liegt als Ergänzung neben dem Transkript, je Modell eine (Angelo, 20.11.2026).
+        Optional<Assets.TranscriptCorrection> stored = assets.videoTranscriptCorrection(sourceId, pageId, version,
+                model);
         List<List<TranscriptSections.Section>> chunks = TranscriptSections.chunks(sections, CORRECTION_CHUNK_CHARS);
         context.discovered(chunks.size());
-        if (stored.isPresent() && stored.get().input().equals(input)) {
+        if (stored.isPresent() && stored.get().complete() && stored.get().input().equals(input)) {
             context.processed(chunks.size());
             context.written(chunks.size());
             return;
@@ -584,8 +586,11 @@ public final class VideoPresentations {
         List<TranscriptSections.Section> all = new ArrayList<>();
         corrected.forEach(all::addAll);
         // Gescheiterte Pakete bleiben unkorrigiert stehen; ein neuer Lauf fragt dann alles erneut.
-        store.saveCorrected(key, version, new PresentationStore.Result(TranscriptSections.render(all), model,
-                failed.get() == 0 ? input : "incomplete:" + input));
+        String label = "Korrektur " + modelName(textModel.version());
+        assets.putVideoTranscriptCorrection(sourceId, pageId, version,
+                baseName(snapshot.metadata().title()) + " – Transkript (" + label + ").txt",
+                new Assets.TranscriptCorrection(null, label, model, input, failed.get() == 0),
+                TranscriptSections.render(all));
         if (failed.get() > 0) {
             context.incomplete();
         }
@@ -791,9 +796,19 @@ public final class VideoPresentations {
         return marks.size() > limit ? marks.subList(0, limit) : marks;
     }
 
-    /** Das korrigierte Transkript, sonst das abgelegte. */
+    /** Das Modell aus der Kennung eines Schritts ({@code id:modell@fingerabdruck}), etwa {@code gemma4:12b}. */
+    static String modelName(String version) {
+        int start = version.indexOf(':');
+        int end = version.lastIndexOf('@');
+        return start >= 0 && end > start ? version.substring(start + 1, end) : version;
+    }
+
+    /** Die Korrektur des eingestellten Text-Modells, sonst das abgelegte Transkript. */
     private String transcriptFor(PageKey key, String version) {
-        return store.corrected(key, version).map(PresentationStore.Result::text)
+        String model = CORRECTION_VERSION + "|" + textModel.version();
+        return assets.videoTranscriptCorrection(key.sourceId(), key.pageId(), version, model)
+                .flatMap(correction -> assets.videoTranscriptText(key.sourceId(), key.pageId(), version,
+                        correction.attachmentId()))
                 .or(() -> assets.videoTranscript(key.sourceId(), key.pageId(), version))
                 .orElseThrow(() -> new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript."));
     }

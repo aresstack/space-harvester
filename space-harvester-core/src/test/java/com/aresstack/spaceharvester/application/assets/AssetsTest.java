@@ -76,6 +76,35 @@ class AssetsTest {
                 imageDescriber, documents, null, gate);
     }
 
+    /**
+     * Angelo 20.11.2026: Korrekturen des Transkripts liegen als Ergänzung neben ihm, je Modell eine, und stehen wie das
+     * Transkript unter „Anhänge“; das Transkript selbst bleibt unverändert.
+     */
+    @Test
+    void transcriptCorrectionsLieNextToTheTranscriptAsAttachments() {
+        Assets assets = assets(1000);
+        assets.putVideoTranscript("wiki", "101", "v1", "Vortrag – Transkript.txt", "[00:00:00] Zabak");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "Vortrag – Transkript (Korrektur a).txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:1", true), "[00:00:00] ZahlBuch");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "Vortrag – Transkript (Korrektur b).txt",
+                new Assets.TranscriptCorrection(null, "Korrektur b", "m|b", "sha:2", false), "[00:00:00] Zabak");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "Vortrag – Transkript (Korrektur a).txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:3", true), "[00:00:00] ZahlBuch!");
+
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Zabak");
+        List<Assets.TranscriptCorrection> corrections = assets.videoTranscriptCorrections("wiki", "101", "v1");
+        assertThat(corrections).extracting(Assets.TranscriptCorrection::label)
+                .as("je Modell eine, die neue ersetzt die alte").containsExactly("Korrektur a", "Korrektur b");
+        assertThat(corrections.get(0).input()).isEqualTo("sha:3");
+        assertThat(corrections.get(1).complete()).isFalse();
+        assertThat(assets.videoTranscriptText("wiki", "101", "v1", corrections.get(0).attachmentId()))
+                .contains("[00:00:00] ZahlBuch!");
+        assertThat(assets.videoTranscriptCorrection("wiki", "101", "v2", "m|a")).as("andere Fassung").isEmpty();
+        assertThat(assets.withVideoTranscript(list(), "v1").attachments().attachments())
+                .extracting(PageAttachment::title).containsExactly("Vortrag – Transkript.txt",
+                        "Vortrag – Transkript (Korrektur a).txt", "Vortrag – Transkript (Korrektur b).txt");
+    }
+
     @Test
     void aSignatureInTheContentOverridesAWrongMediaTypeOfTheSource() {
         FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
