@@ -101,6 +101,11 @@ public final class AttachmentViewerPanel extends JPanel {
     private final JLabel info = new JLabel(" ", SwingConstants.CENTER);
     private final JTextArea textArea = new JTextArea();
     private final JScrollPane textPane;
+    /** Ein Word-Dokument als HTML mit seinen Bildern an ihrer Stelle. */
+    private final javax.swing.JEditorPane documentArea = new javax.swing.JEditorPane();
+    private final JScrollPane documentPane;
+    /** Der Klartext der gezeigten Text- oder Dokumentansicht. */
+    private String shownText = "";
     private final JPanel spreadsheetPane = new JPanel(new BorderLayout());
     private final ViewerButton previous;
     private final ViewerButton next;
@@ -174,6 +179,12 @@ public final class AttachmentViewerPanel extends JPanel {
         textPane = com.aresstack.spaceharvester.app.ui.Comic.scroll(textArea);
         textPane.setBorder(BorderFactory.createEmptyBorder());
         textPane.setVisible(false);
+        documentArea.setEditable(false);
+        documentArea.setBorder(BorderFactory.createEmptyBorder(16, 20, 16, 20));
+        documentArea.setBackground(Color.WHITE);
+        documentPane = com.aresstack.spaceharvester.app.ui.Comic.scroll(documentArea);
+        documentPane.setBorder(BorderFactory.createEmptyBorder());
+        documentPane.setVisible(false);
         spreadsheetPane.setVisible(false);
         spreadsheetPane.setOpaque(true);
 
@@ -202,6 +213,7 @@ public final class AttachmentViewerPanel extends JPanel {
             layers.add(button, JLayeredPane.PALETTE_LAYER);
         }
         layers.add(textPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 10));
+        layers.add(documentPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 10));
         layers.add(spreadsheetPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 11));
         layers.addComponentListener(new ComponentAdapter() {
             @Override
@@ -213,6 +225,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 spinner.setBounds(0, 0, w, h);
                 int inset = 8; // die Textansicht eines Anhangs blättert nicht
                 textPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
+                documentPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
                 spreadsheetPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
                 previous.setBounds(0, h / 3, ARROW_W, h / 3);
                 next.setBounds(w - ARROW_W, h / 3, ARROW_W, h / 3);
@@ -718,11 +731,11 @@ public final class AttachmentViewerPanel extends JPanel {
                     requestOriginal(bytes -> decodeAside(
                             () -> {
                                 try {
-                                    return WordDocumentPreview.read(attachment.fileName(), bytes);
+                                    return WordDocumentPreview.render(attachment.fileName(), bytes);
                                 } catch (IOException failure) {
                                     throw new IllegalStateException(failure.getMessage(), failure);
                                 }
-                            }, this::showText), reason -> showUnavailable(
+                            }, this::showDocument), reason -> showUnavailable(
                             "Word-Dokument nicht lesbar: " + reasonText(reason)));
                     return;
                 }
@@ -810,6 +823,7 @@ public final class AttachmentViewerPanel extends JPanel {
         loaded();
         showingText = false;
         textPane.setVisible(false);
+        documentPane.setVisible(false);
         spreadsheetPane.revalidate();
         spreadsheetPane.repaint();
         updateInfo();
@@ -817,8 +831,10 @@ public final class AttachmentViewerPanel extends JPanel {
 
     private void showText(String text) {
         spreadsheetPane.setVisible(false);
+        documentPane.setVisible(false);
         showingText = true;
         loaded();
+        shownText = text;
         textArea.setText(text);
         textArea.setCaretPosition(0);
         textPane.setVisible(true);
@@ -826,9 +842,58 @@ public final class AttachmentViewerPanel extends JPanel {
         updateInfo();
     }
 
-    /** Die gezeigte Textansicht ({@code ""} außerhalb). */
+    /**
+     * Zeigt ein Word-Dokument wie gesetzt: Überschriften, Absätze, Tabellen und die Bilder an ihrer Stelle (aus dem
+     * Speicher, wie in der Leseansicht), nicht nur den Text.
+     */
+    private void showDocument(WordDocumentPreview.Rendered document) {
+        spreadsheetPane.setVisible(false);
+        textPane.setVisible(false);
+        showingText = true;
+        loaded();
+        shownText = document.text();
+        javax.swing.text.html.HTMLEditorKit kit = new javax.swing.text.html.HTMLEditorKit();
+        kit.getStyleSheet().addRule("body { font-family: " + com.aresstack.spaceharvester.app.ui.Comic.regular(13.5f)
+                .getFamily() + "; font-size: 13pt; }");
+        kit.getStyleSheet().addRule("table { border-collapse: collapse; } td, th { border: 1px solid #c8c8c8; "
+                + "padding: 3px; }");
+        documentArea.setEditorKit(kit);
+        javax.swing.text.html.HTMLDocument html = (javax.swing.text.html.HTMLDocument) kit.createDefaultDocument();
+        java.util.Hashtable<java.net.URL, java.awt.Image> images = new java.util.Hashtable<>();
+        document.images().forEach((src, image) -> {
+            try {
+                images.put(java.net.URI.create(src).toURL(), image);
+            } catch (IOException | IllegalArgumentException e) {
+                // Eigene Adressen sind immer gültig.
+            }
+        });
+        html.putProperty("imageCache", images);
+        html.setAsynchronousLoadPriority(-1);
+        try {
+            kit.read(new java.io.StringReader(document.html()), html, 0);
+        } catch (IOException | javax.swing.text.BadLocationException e) {
+            showText(document.text());
+            return;
+        }
+        documentArea.setDocument(html);
+        documentArea.setCaretPosition(0);
+        documentPane.setVisible(true);
+        hover(pointer);
+        updateInfo();
+    }
+
+    /** Die gezeigte Text- oder Dokumentansicht als Klartext ({@code ""} außerhalb). */
     public String textContent() {
-        return showingText ? textArea.getText() : "";
+        return showingText ? shownText : "";
+    }
+
+    /** Ob ein Word-Dokument mit seinen Bildern gezeigt wird, und wie viele Bilder es zeigt (für Tests). */
+    public int documentImages() {
+        if (!documentPane.isVisible() || !(documentArea.getDocument() instanceof javax.swing.text.html.HTMLDocument html)) {
+            return -1;
+        }
+        Object images = html.getProperty("imageCache");
+        return images instanceof java.util.Map<?, ?> map ? map.size() : 0;
     }
 
     /** Statt einer Vorschau: Name, Typ, Größe und der Grund; Speichern und Öffnen bleiben unten. */
@@ -838,6 +903,8 @@ public final class AttachmentViewerPanel extends JPanel {
         }
         showingText = false;
         spreadsheetPane.setVisible(false);
+        textPane.setVisible(false);
+        documentPane.setVisible(false);
         canvas.setStaticImage(null);
         StringBuilder html = new StringBuilder("<html><div style='text-align:center;width:560px'><b>")
                 .append(escape(attachment.fileName())).append("</b><br>").append(escape(attachment.summary()));
