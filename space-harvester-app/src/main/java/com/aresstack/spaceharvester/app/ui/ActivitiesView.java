@@ -693,8 +693,12 @@ public final class ActivitiesView implements View {
         root.revalidate();
     }
 
-    /** Das Ergebnis eines Abgleichs steht unter den Zahlen des Laufs in derselben Kachel. */
+    /**
+     * Das Ergebnis eines Abgleichs steht unter den Zahlen des Laufs in derselben Kachel. „Fehlend“ sind nur neue Seiten,
+     * deren Abruf scheiterte; Seiten, die der Lauf bewusst nur katalogisiert, zählen unter „Nur im Katalog“.
+     */
     private void renderSync(JobStatus status, SyncSummary summary) {
+        List<String> missing = summary.missingPageIds().stream().filter(summary.failedPageIds()::contains).toList();
         facts.add("Gelistet", String.valueOf(summary.listed()))
                 .add("Neu", String.valueOf(summary.added()))
                 .add("Nur im Katalog", String.valueOf(summary.notLoaded()))
@@ -711,8 +715,7 @@ public final class ActivitiesView implements View {
                 .add("Nicht geprüft", String.valueOf(summary.unverified()))
                 .add("Fehlgeschlagen", String.valueOf(summary.failedPageIds().size()),
                         summary.failedPageIds().isEmpty() ? Comic.INK : Comic.RED)
-                .add("Fehlend", String.valueOf(summary.missingPageIds().size()),
-                        summary.missingPageIds().isEmpty() ? Comic.INK : Comic.RED)
+                .add("Fehlend", String.valueOf(missing.size()), missing.isEmpty() ? Comic.INK : Comic.RED)
                 .add("Abfrage", inventory(summary.inventory()))
                 .add("Vollständig", summary.complete() ? "ja" : "nein", summary.complete() ? Comic.GREEN : Comic.ORANGE)
                 .add("Generation", summary.generation() == null ? "keine bestätigt" : String.valueOf(summary.generation()))
@@ -720,13 +723,23 @@ public final class ActivitiesView implements View {
         if (!summary.failedPageIds().isEmpty()) {
             facts.add("Fehlgeschlagene Seiten", String.join(", ", summary.failedPageIds()), Comic.RED);
         }
-        if (!summary.missingPageIds().isEmpty()) {
-            facts.add("Fehlende Seiten", String.join(", ", summary.missingPageIds()), Comic.RED);
+        if (!missing.isEmpty()) {
+            facts.add("Fehlende Seiten", String.join(", ", missing), Comic.RED);
         }
+        boolean confirmed = summary.generation() != null && summary.notConfirmed() == null;
         if (!status.state().terminal()) {
             feedback.working("Abgleich läuft …");
-        } else if (status.state() == JobState.COMPLETED && summary.complete() && summary.notConfirmed() == null) {
+        } else if (status.state() == JobState.COMPLETED && confirmed && !summary.failedPageIds().isEmpty()) {
+            feedback.warning("Generation " + summary.generation() + " bestätigt, "
+                    + Texts.count(summary.failedPageIds().size(), "Seite", "Seiten") + " fehlgeschlagen",
+                    "Sie bleiben veraltet bzw. fehlen; „Nur Fehler neu versuchen“ holt sie nach.");
+        } else if (status.state() == JobState.COMPLETED && confirmed && summary.complete()) {
             feedback.success("Abgleich vollständig, Generation " + summary.generation() + " bestätigt");
+        } else if (status.state() == JobState.COMPLETED && confirmed) {
+            // Bestätigt, aber nicht jede Seite mit Inhalt: Der Lauf hat Seiten bewusst nur katalogisiert.
+            feedback.info("Generation " + summary.generation() + " bestätigt",
+                    Texts.count(summary.notLoaded(), "Seite", "Seiten") + " nur im Katalog: geladen werden sie beim "
+                            + "Öffnen, von der Suche oder über „Indexieren“ im Baum.");
         } else if (status.state() == JobState.COMPLETED || summary.notConfirmed() != null) {
             feedback.warning("Abgleich nicht bestätigt", summary.notConfirmed() == null
                     ? "Der Lauf war unvollständig; der Bestand gilt nicht als bestätigt."
