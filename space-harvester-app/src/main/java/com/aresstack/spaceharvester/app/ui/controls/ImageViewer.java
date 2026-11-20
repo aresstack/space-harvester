@@ -323,7 +323,7 @@ public final class ImageViewer extends JPanel {
     }
 
     private void saveWithChooser() {
-        JFileChooser chooser = new JFileChooser();
+        JFileChooser chooser = SaveChooser.create(null);
         chooser.setDialogTitle("Bild speichern");
         Picture picture = pictures.get(index);
         if (picture.vector() != null) {

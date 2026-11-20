@@ -236,6 +236,11 @@ public final class AppContext {
         this.configFile = configFile;
         this.version = version;
         this.vault = vault;
+        // Speichern-Dialoge öffnen im eingestellten Ausgabeordner, Vorgabe Downloads (Angelo 20.11.2026).
+        com.aresstack.spaceharvester.app.ui.controls.SaveChooser.directory(() -> {
+            AppSettings current = settings;
+            return current == null ? null : current.outputDirectory();
+        });
     }
 
     public SecretVault vault() {
