@@ -1193,9 +1193,9 @@ public final class SourcesView implements View {
             }
             cards.values().forEach(SourceCard::update);
         }
-        // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: nur katalogisieren).
+        // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: Cache synchronisieren).
         SyncMode mode = context.settings() != null ? context.settings().effectiveSync(id).mode()
-                : SyncMode.CATALOG_ONLY;
+                : com.aresstack.spaceharvester.application.configuration.SyncSettings.DEFAULT_MODE;
         feedback.working("Nachholen von " + Texts.count(keys.size(), "Space", "Spaces") + " wird gestartet …");
         Background.run(() -> {
             List<String> jobs = new ArrayList<>();

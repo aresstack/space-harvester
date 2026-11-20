@@ -33,6 +33,8 @@ public class SpaceSync {
     private final RemovalCheck removalCheck;
     private final Clock clock;
     private final Function<String, Duration> withheldRetention;
+    /** Was indexiert wird; jeder Lauf liest die Markierungen neu. */
+    private volatile IndexMarks marks = IndexMarks.NONE;
 
     public SpaceSync(SourceQueries queries, SyncBaselineStore store, Clock clock) {
         this(queries, store, clock, DEFAULT_WITHHELD_RETENTION);
@@ -75,6 +77,11 @@ public class SpaceSync {
         this.removalCheck = Objects.requireNonNull(removalCheck, "removalCheck");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.withheldRetention = Objects.requireNonNull(withheldRetention, "withheldRetention");
+    }
+
+    /** Seiten unter diesen Markierungen lädt jeder Lauf vollständig ({@link SyncPlan#withIndexed}). */
+    public void indexMarks(IndexMarks marks) {
+        this.marks = Objects.requireNonNull(marks, "marks");
     }
 
     static Function<String, Duration> fixed(Duration withheldRetention) {
@@ -120,9 +127,21 @@ public class SpaceSync {
         if (!plan.inventory().confirmed()) {
             return plan;
         }
+        plan = indexed(plan);
         Map<String, RemovalCheck.Result> removals = removalCheck.verify(plan);
         SyncPlan checked = removals.isEmpty() ? plan : plan.withRemovals(removals);
         return checked.withPurgesDue(clock.instant().minus(retention(sourceId)));
+    }
+
+    /** Lädt die Seiten unter markierten Wurzeln vollständig; die Vorfahren kommen aus der Inventur. */
+    private SyncPlan indexed(SyncPlan plan) {
+        Set<String> roots = marks.roots(plan.inventory().sourceId(), plan.inventory().spaceKey());
+        if (roots.isEmpty()) {
+            return plan;
+        }
+        Map<String, String> parents = new java.util.HashMap<>();
+        plan.inventory().pages().forEach(entry -> parents.put(entry.page().pageId(), entry.page().parentPageId()));
+        return plan.withIndexed(IndexScope.of(roots, parents::get));
     }
 
     /**

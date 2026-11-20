@@ -586,7 +586,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
 
         SyncMode mode(String key) {
             String value = value(key);
-            SyncMode mode = value == null ? SyncMode.CATALOG_ONLY : SyncMode.parse(value);
+            SyncMode mode = value == null ? SyncSettings.DEFAULT_MODE : SyncMode.parse(value);
             if (mode == null) {
                 problems.add(new ConfigurationProblem(key, "Erwartet catalog-only, sync-cache oder full"));
                 return null;

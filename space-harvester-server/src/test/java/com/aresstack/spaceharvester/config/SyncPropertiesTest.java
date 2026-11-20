@@ -16,7 +16,7 @@ class SyncPropertiesTest {
         assertThat(properties.interval()).isNull();
         assertThat(properties.spaces()).isEmpty();
         assertThat(properties.withheldRetention()).isEqualTo(Duration.ofDays(30));
-        // Änderungsquellen sind optional, ein Zeitplan lädt nur Kopfdaten (ADR 0014, Fortschreibung).
+        // Änderungsquellen sind optional, ein Zeitplan lädt keine unbekannten Seiten (ADR 0014, Fortschreibung).
         assertThat(properties.loadUnknown()).isFalse();
         assertThat(properties.catchUpOnStart()).isFalse();
     }
@@ -24,7 +24,7 @@ class SyncPropertiesTest {
     @Test
     void theModeReplacesLoadUnknown() {
         assertThat(new SyncProperties(null, null, null, null, null, null).mode())
-                .isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.CATALOG_ONLY);
+                .isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.SYNC_CACHE);
         assertThat(new SyncProperties(null, null, null, true, null, null).mode())
                 .isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.FULL);
         assertThat(new SyncProperties(null, null, null, false, null, null).mode())

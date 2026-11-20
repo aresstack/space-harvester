@@ -148,6 +148,7 @@ import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.Indexing;
 import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
@@ -174,6 +175,7 @@ import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileReadStates;
+import com.aresstack.spaceharvester.persistence.files.FileIndexMarks;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
@@ -341,6 +343,7 @@ public final class Harvester implements AutoCloseable {
     private final LucenePageCache pageCache;
     private final ChangeLog changeLog;
     private final SpaceSyncJobs syncs;
+    private final Indexing indexing;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
     /** Bestandsinventur nach {@code sync.inventory-interval}, nur aus der Konfiguration (ADR 0014/0015). */
@@ -850,8 +853,13 @@ public final class Harvester implements AutoCloseable {
                     List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId)),
                     documentEnrichments);
             this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock,
-                    List.of(afterSync, run -> pruneChangeLog.run()), retentionRule(builder));
+                    List.of(afterSync, run -> pruneChangeLog.run(), run -> indexed(run)), retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
+            // Indexieren (Angelo 20.11.2026): markierte Teilbäume lädt jeder Abgleich vollständig; Bilder und Anhänge
+            // folgen als eigene Aufträge, sobald die Seiten da sind.
+            FileIndexMarks indexMarks = new FileIndexMarks(builder.dataDirectory);
+            syncs.indexMarks(indexMarks);
+            this.indexing = new Indexing(indexMarks, syncs, this::collectIndexedAssets);
             // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
             // ADR 0030, CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
             cache.contentDiffer(new TextContentDiffer(pageTexts));
@@ -1875,6 +1883,27 @@ public final class Harvester implements AutoCloseable {
     /** Abgleich eines Space in den Cache als Auftrag; Status und Delta über {@link SpaceSyncJobs#status}. */
     public SpaceSyncJobs syncs() {
         return syncs;
+    }
+
+    /** Indexieren: markierte Teilbäume vollständig laden und aktuell halten, samt Bildern und Anhängen. */
+    public Indexing indexing() {
+        return indexing;
+    }
+
+    /** Bilder und Anhänge einer markierten Wurzel beschaffen; vor dem Aufbau der Beschaffung nichts. */
+    private void collectIndexedAssets(String sourceId, String spaceKey, String pageId) {
+        ExportAssetCollection collection = assetCollection;
+        if (collection != null) {
+            collection.collect(OWNER, new Selection.Root(sourceId, spaceKey, pageId));
+        }
+    }
+
+    /** Folgearbeit nach einem Abgleich: Bilder und Anhänge markierter Teilbäume ({@link Indexing}). */
+    private void indexed(SpaceSync.SyncRun run) {
+        Indexing current = this.indexing;
+        if (current != null) {
+            current.committed(run);
+        }
     }
 
     /**

@@ -54,6 +54,24 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
     }
 
     /**
+     * Indexieren ({@link IndexMarks}): Seiten, für die {@code indexed} gilt, lädt der Lauf vollständig, gleich in
+     * welcher Betriebsart. Unbekannte ({@link PageChange.Kind#NOT_LOADED}) werden {@link PageChange.Kind#NEW},
+     * veraltete ({@link PageChange.Kind#OUTDATED}) {@link PageChange.Kind#CONTENT_CHANGED}; alle übrigen bleiben.
+     */
+    public SyncPlan withIndexed(java.util.function.Predicate<String> indexed) {
+        Objects.requireNonNull(indexed, "indexed");
+        List<PageChange> full = changes.stream().map(change -> switch (change.kind()) {
+            case NOT_LOADED -> change.current() != null && indexed.test(change.pageId())
+                    ? new PageChange(change.pageId(), PageChange.Kind.NEW, null, change.current()) : change;
+            case OUTDATED -> change.previous() != null && change.current() != null && indexed.test(change.pageId())
+                    ? new PageChange(change.pageId(), PageChange.Kind.CONTENT_CHANGED, change.previous(),
+                    change.current()) : change;
+            default -> change;
+        }).toList();
+        return new SyncPlan(inventory, baseline, full, removals, purges);
+    }
+
+    /**
      * „Neu erzwingen“ (ADR 0025): lädt auch unveränderte Seiten neu, für die {@code inScope} gilt. Bekannte Seiten
      * mit gleicher Version, nur geänderten Kopfdaten oder Attributen werden {@link PageChange.Kind#CONTENT_CHANGED};
      * über die {@link StagedGeneration} ersetzt jede erst mit der neuen Generation ihren bisherigen Stand, und

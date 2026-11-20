@@ -67,7 +67,7 @@ class ConfigurationManagerTest {
         assertThat(RefreshStrategy.parse("time-based-with-version-check"))
                 .isEqualTo(RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK);
         assertThat(SyncSettings.DEFAULT.events() || SyncSettings.DEFAULT.catchUpOnStart()
-                || SyncSettings.DEFAULT.beforeSearch() || SyncSettings.DEFAULT.mode() != SyncMode.CATALOG_ONLY
+                || SyncSettings.DEFAULT.beforeSearch() || SyncSettings.DEFAULT.mode() != SyncMode.SYNC_CACHE
                 || SyncSettings.DEFAULT.interval() != null).isFalse();
     }
 

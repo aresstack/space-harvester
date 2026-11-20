@@ -590,7 +590,7 @@ public final class AppSettingsLoader {
     /** Die globalen Werte unter {@code space-harvester.sync}, geprüft wie im Core; ungültige gelten wie die Vorgabe. */
     private SyncSettings sync(Map<?, ?> sync, AppSettings.Cache cache, List<String> problems) {
         String prefix = "space-harvester.";
-        SyncMode mode = SyncMode.CATALOG_ONLY;
+        SyncMode mode = SyncSettings.DEFAULT_MODE;
         String modeText = text(get(sync, "mode"), problems);
         if (modeText != null && !modeText.isBlank()) {
             SyncMode parsed = SyncMode.parse(modeText);
