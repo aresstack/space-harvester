@@ -34,6 +34,8 @@ public class JobActions {
     private final ExportConversions conversions;
     private final DocumentRereads rereads;
     private final SourceQueryExports sourceQueryExports;
+    /** „In PPTX umwandeln“ oder {@code null}; bindet der Harvester nach dem Bau an. */
+    private volatile com.aresstack.spaceharvester.application.presentation.VideoPresentations presentations;
 
     /**
      * @param syncs       Abgleiche oder {@code null}, wenn kein Abgleich angebunden ist
@@ -67,6 +69,11 @@ public class JobActions {
         this.conversions = conversions;
         this.rereads = rereads;
         this.sourceQueryExports = sourceQueryExports;
+    }
+
+    /** Bindet „In PPTX umwandeln“ an: Fortsetzen und „Nur Fehler“ laufen dann auch nach dem Ende im selben Eintrag. */
+    public void presentations(com.aresstack.spaceharvester.application.presentation.VideoPresentations presentations) {
+        this.presentations = presentations;
     }
 
     /** Der wirksame Zustand des eigenen Auftrags mit den jetzt erlaubten Aktionen. */
@@ -123,7 +130,7 @@ public class JobActions {
                     yield conversions.retryImages(jobId, owner);
                 }
                 if (state instanceof JobLifecycleState.Paused || state instanceof JobLifecycleState.Stopped
-                        || current.type().sourceQuery()) {
+                        || current.type().sourceQuery() || current.type().presentation()) {
                     // Angehalten oder abgebrochen: Fortsetzen holt nur, was fehlt, das Gescheiterte eingeschlossen.
                     // Metadaten und Analytics auch nach „fertig, unvollständig“: ein neuer Lauf im selben Eintrag.
                     yield resume(current, owner, access);
@@ -191,8 +198,10 @@ public class JobActions {
                 yield sourceQueryExports.resume(current.id(), owner);
             }
             // „In PPTX umwandeln“: derselbe Auftrag läuft im selben Eintrag neu und fragt nur, was fehlt.
-            case VIDEO_TRANSCRIPT, VIDEO_SLIDES, TRANSCRIPT_CORRECTION, SLIDE_NOTES, PRESENTATION_EXPORT ->
-                    jobs.resume(current.id(), owner);
+            case VIDEO_TRANSCRIPT, VIDEO_SLIDES, TRANSCRIPT_CORRECTION, SLIDE_NOTES, PRESENTATION_EXPORT -> {
+                com.aresstack.spaceharvester.application.presentation.VideoPresentations bound = presentations;
+                yield bound != null ? bound.resume(current.id(), owner) : jobs.resume(current.id(), owner);
+            }
             default -> throw new JobNotResumableException(current.id(), "diese Auftragsart lässt sich nicht fortsetzen");
         };
     }

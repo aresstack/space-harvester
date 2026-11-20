@@ -81,6 +81,9 @@ class VideoPresentationsTest {
         assertThat(store.notes(page, "v1")).containsOnlyKeys(1_000L, 3_000L);
         assertThat(store.notes(page, "v2")).isEmpty();
         assertThat(store.has(page)).isTrue();
+        store.removeNote(page, "v1", 3_000);
+        assertThat(store.notes(page, "v1")).containsOnlyKeys(1_000L);
+        assertThat(store.corrected(page, "v1")).isPresent();
         store.remove(page);
         assertThat(store.corrected(page, "v1")).isEmpty();
     }

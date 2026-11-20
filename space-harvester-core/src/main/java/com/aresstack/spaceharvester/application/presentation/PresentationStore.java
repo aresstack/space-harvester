@@ -84,6 +84,16 @@ public final class PresentationStore {
         }
     }
 
+    /** Entfernt den Vortragstext einer Folie. */
+    public void removeNote(PageKey page, String version, long millis) {
+        synchronized (lock) {
+            Content content = read(page, version);
+            if (content.notes.remove(millis) != null) {
+                write(page, version, content);
+            }
+        }
+    }
+
     /** Entfernt alle Zwischenergebnisse der Seite. */
     public void remove(PageKey page) {
         synchronized (lock) {

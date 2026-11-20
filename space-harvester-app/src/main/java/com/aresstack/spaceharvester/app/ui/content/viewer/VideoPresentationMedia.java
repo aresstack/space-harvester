@@ -24,7 +24,7 @@ import java.util.function.Consumer;
 public final class VideoPresentationMedia implements VideoMedia {
 
     /** Endet das Transkript höchstens so kurz vor dem Ende des Videos, gilt es als vollständig. */
-    static final long COMPLETE_TOLERANCE_MILLIS = 30_000;
+    static final long COMPLETE_TOLERANCE_MILLIS = 2_000;
 
     private final MediaByteRange remote;
     private final long size;
@@ -56,14 +56,19 @@ public final class VideoPresentationMedia implements VideoMedia {
         long resume = 0;
         if (!sections.isEmpty()) {
             TranscriptSections.Section last = sections.get(sections.size() - 1);
-            boolean ended = last.endMillis() > last.startMillis();
+            boolean lastEnded = last.endMillis() > last.startMillis();
             // Kennt der letzte Abschnitt kein Ende (ältere Transkripte), wird er von seinem Anfang an neu erkannt.
-            List<TranscriptSections.Section> kept = ended ? sections : sections.subList(0, sections.size() - 1);
+            List<TranscriptSections.Section> kept = lastEnded ? sections
+                    : sections.subList(0, sections.size() - 1);
             text.append(TranscriptSections.render(kept));
-            resume = ended ? last.endMillis() : last.startMillis();
+            resume = lastEnded ? last.endMillis() : last.startMillis();
         }
+        // Vollständig nur, wenn der letzte Abschnitt ein Ende hat und es (fast) das Ende des Videos ist; sonst wird der
+        // Rest erkannt, auch ein letztes, unvollendetes Fenster.
+        boolean ended = !sections.isEmpty()
+                && sections.get(sections.size() - 1).endMillis() > sections.get(sections.size() - 1).startMillis();
         long duration = SlideChanges.durationMillis(remote::read, size);
-        if (resume > 0 && duration > 0 && resume >= duration - COMPLETE_TOLERANCE_MILLIS) {
+        if (ended && duration > 0 && resume >= duration - COMPLETE_TOLERANCE_MILLIS) {
             return existing;
         }
         try (VideoTranscriptSource source = new VideoTranscriptSource(size, remote, settings)) {

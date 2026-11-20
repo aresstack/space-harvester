@@ -2708,12 +2708,15 @@ public final class PageDetailPanel extends JPanel {
                 });
     }
 
-    /** Wartet per Beobachter (ADR 0027) auf das Ende des Auftrags „PPTX erzeugen“ und meldet die Datei. */
+    /**
+     * Wartet per Beobachter (ADR 0027) auf das Ende des Auftrags „PPTX erzeugen“ und meldet die Datei; liest nach dem
+     * Anmelden einmal den Stand, damit ein schon beendeter Auftrag nicht verpasst wird.
+     */
     private void watchPresentation(AppRuntime runtime, VideoFrameSource video, String fileJob) {
         java.util.concurrent.atomic.AtomicReference<com.aresstack.spaceharvester.application.observe.Subscription>
                 watch = new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.atomic.AtomicBoolean ended = new java.util.concurrent.atomic.AtomicBoolean();
-        watch.set(runtime.workspace().subscribeJobs(status -> {
+        java.util.function.Consumer<com.aresstack.spaceharvester.application.jobs.JobStatus> handle = status -> {
             if (!fileJob.equals(status.id()) || !status.state().terminal()
                     || status.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED
                     || !ended.compareAndSet(false, true)) {
@@ -2723,7 +2726,7 @@ public final class PageDetailPanel extends JPanel {
                     == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED
                     ? runtime.workspace().presentationFile(fileJob) : java.util.Optional.empty();
             javax.swing.SwingUtilities.invokeLater(() -> {
-                com.aresstack.spaceharvester.application.observe.Subscription subscription = watch.get();
+                com.aresstack.spaceharvester.application.observe.Subscription subscription = watch.getAndSet(null);
                 if (subscription != null) {
                     subscription.close();
                 }
@@ -2739,7 +2742,11 @@ public final class PageDetailPanel extends JPanel {
                             "Die Aufträge unter „Aufträge“ zeigen, welcher Schritt fehlt; Fortsetzen macht dort weiter.");
                 }
             });
-        }));
+        };
+        watch.set(runtime.workspace().subscribeJobs(handle::accept));
+        Background.run(() -> runtime.workspace().job(fileJob), handle, error -> {
+            // Unbekannt (etwa gelöscht): nichts zu melden.
+        });
     }
 
     /** Lädt das gespeicherte Transkript des geöffneten Videos in den Reiter „Text“, statt es neu zu erzeugen. */

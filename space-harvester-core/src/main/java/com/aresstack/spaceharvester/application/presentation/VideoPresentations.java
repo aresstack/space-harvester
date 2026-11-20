@@ -144,6 +144,8 @@ public final class VideoPresentations {
     private final PresentationStore store;
     private final Predicate<PageKey> released;
     private final Path outputDirectory;
+    /** Die Arbeit der Aufträge seit dem Start der App, damit „Nur Fehler“ auch nach ihrem Ende im selben Eintrag läuft. */
+    private final Map<String, JobTask> tasks = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * @param slides          die Folien der Videos ({@link VideoMarks#slides})
@@ -209,22 +211,66 @@ public final class VideoPresentations {
         Path file = outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title));
         String run = java.util.UUID.randomUUID().toString();
         Map<String, String> parameters = Map.of(PAGE_PARAMETER, pageId, RUN_PARAMETER, run);
-        JobStatus transcript = jobs.submit(JobType.VIDEO_TRANSCRIPT, sourceId, space, pageId, owner, parameters,
-                JobTask.blocking(context -> transcribe(caller, sourceId, pageId, media, context)));
-        JobStatus described = jobs.submit(JobType.VIDEO_SLIDES, sourceId, space, pageId, owner, parameters,
-                JobTask.blocking(context -> describeSlides(caller, sourceId, pageId, media, options, context)));
-        JobStatus correction = jobs.submitAfter(JobType.TRANSCRIPT_CORRECTION, sourceId, space, pageId, owner,
-                parameters, JobTask.blocking(context -> correct(caller, sourceId, pageId, options, context)),
-                List.of(transcript.id(), described.id()));
-        JobStatus notes = jobs.submitAfter(JobType.SLIDE_NOTES, sourceId, space, pageId, owner, parameters,
-                JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, options, context)),
-                correction.id());
-        Map<String, String> fileParameters = new HashMap<>(parameters);
-        fileParameters.put(FILE_PARAMETER, file.toString());
-        JobStatus output = jobs.submitAfter(JobType.PRESENTATION_EXPORT, sourceId, space, pageId, owner,
-                fileParameters, JobTask.blocking(context -> writeFile(caller, sourceId, pageId, file, context)),
-                notes.id());
-        return new Run(transcript, described, correction, notes, output);
+        JobTask transcribing = JobTask.blocking(context -> transcribe(caller, sourceId, pageId, media, context));
+        JobTask describing = JobTask.blocking(context -> describeSlides(caller, sourceId, pageId, media, options,
+                context));
+        JobTask correcting = JobTask.blocking(context -> correct(caller, sourceId, pageId, options, context));
+        JobTask commenting = JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, options, context));
+        JobTask writing = JobTask.blocking(context -> writeFile(caller, sourceId, pageId, file, context));
+        // Die beiden ersten belegen sofort einen Platz: Scheitert ein späterer Schritt am Platz, werden die schon
+        // angenommenen wieder abgebrochen, statt eine Transkription ohne Nachfolger laufen zu lassen.
+        List<JobStatus> submitted = new ArrayList<>(5);
+        try {
+            JobStatus transcript = remember(jobs.submit(JobType.VIDEO_TRANSCRIPT, sourceId, space, pageId, owner,
+                    parameters, transcribing), transcribing, submitted);
+            JobStatus described = remember(jobs.submit(JobType.VIDEO_SLIDES, sourceId, space, pageId, owner,
+                    parameters, describing), describing, submitted);
+            JobStatus correction = remember(jobs.submitAfter(JobType.TRANSCRIPT_CORRECTION, sourceId, space, pageId,
+                    owner, parameters, correcting, List.of(transcript.id(), described.id())), correcting, submitted);
+            JobStatus notes = remember(jobs.submitAfter(JobType.SLIDE_NOTES, sourceId, space, pageId, owner,
+                    parameters, commenting, correction.id()), commenting, submitted);
+            Map<String, String> fileParameters = new HashMap<>(parameters);
+            fileParameters.put(FILE_PARAMETER, file.toString());
+            JobStatus output = remember(jobs.submitAfter(JobType.PRESENTATION_EXPORT, sourceId, space, pageId, owner,
+                    fileParameters, writing, notes.id()), writing, submitted);
+            return new Run(transcript, described, correction, notes, output);
+        } catch (RuntimeException e) {
+            for (JobStatus job : submitted) {
+                tasks.remove(job.id());
+                try {
+                    jobs.cancel(job.id(), owner);
+                } catch (RuntimeException ignored) {
+                    // schon beendet oder gelöscht
+                }
+            }
+            throw e;
+        }
+    }
+
+    private JobStatus remember(JobStatus status, JobTask task, List<JobStatus> submitted) {
+        submitted.add(status);
+        tasks.put(status.id(), task);
+        return status;
+    }
+
+    /**
+     * Setzt einen Auftrag des Vorgangs im selben Eintrag fort (ADR 0025): angehalten, abgebrochen oder gescheitert wie
+     * jeder Auftrag, fertig mit Fehlern („Nur Fehler neu versuchen“) mit derselben Arbeit; sie fragt nur, was fehlt.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException für einen Auftrag aus der Zeit
+     *                                                                                vor dem letzten Neustart
+     */
+    public JobStatus resume(String jobId, String owner) {
+        if (jobs.resumable(jobId, owner)) {
+            return jobs.resume(jobId, owner);
+        }
+        JobTask task = tasks.get(jobId);
+        if (task == null) {
+            throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                    "der Auftrag stammt aus der Zeit vor dem letzten Neustart; „In PPTX umwandeln“ neu starten, es "
+                            + "fragt ebenfalls nur, was fehlt");
+        }
+        return jobs.rerun(jobId, owner, task);
     }
 
     /**
@@ -389,7 +435,8 @@ public final class VideoPresentations {
         inParallel(indices, options.parallel(), context, index -> {
             List<TranscriptSections.Section> chunk = chunks.get(index);
             List<TranscriptSections.Section> result = null;
-            for (int attempt = 0; attempt <= retries() && result == null && !context.cancelRequested(); attempt++) {
+            for (int attempt = 0; attempt <= retries() && result == null && !context.cancelRequested()
+                    && released.test(key); attempt++) {
                 try {
                     String answer = textModel.complete(CORRECTION_INSTRUCTIONS,
                             correctionInput(chunk, descriptions, marks));
@@ -515,6 +562,11 @@ public final class VideoPresentations {
                 context.written(1);
                 continue;
             }
+            if (note != null) {
+                // Veraltet (anderes Standbild, Transkript oder Modell): fällt weg, damit die Datei ihn nie zeigt,
+                // auch wenn der neue Text scheitert.
+                store.removeNote(key, version, millis);
+            }
             open.add(i);
             inputs.put(i, excerpt + "\u0000" + input);
             frames.put(i, frame.get());
@@ -526,8 +578,8 @@ public final class VideoPresentations {
             String instruction = NOTES_INSTRUCTIONS + "\n\nGesagt:\n"
                     + (parts[0].isBlank() ? "(Während dieser Folie wurde nichts gesagt.)" : parts[0]);
             String text = null;
-            for (int attempt = 0; attempt <= vision.retries() && text == null && !context.cancelRequested();
-                    attempt++) {
+            for (int attempt = 0; attempt <= vision.retries() && text == null && !context.cancelRequested()
+                    && released.test(key); attempt++) {
                 try {
                     String answer = vision.describe(frames.get(index).content(), "image/png", instruction);
                     text = answer == null || answer.isBlank() ? null : answer.strip();
@@ -591,11 +643,16 @@ public final class VideoPresentations {
             throw new JobFailedException("NO_SLIDES", "Keine Folie hat ein Standbild; es wurde keine Datei erzeugt.");
         }
         Files.createDirectories(file.getParent());
-        Path partial = file.resolveSibling(file.getFileName() + ".part");
-        try (OutputStream out = Files.newOutputStream(partial)) {
-            new PptxExportWriter().write(content, out);
+        // Je Lauf eine eigene Teildatei: zwei Läufe desselben Videos überschreiben sich nie halb.
+        Path partial = Files.createTempFile(file.getParent(), "presentation-", ".part");
+        try {
+            try (OutputStream out = Files.newOutputStream(partial)) {
+                new PptxExportWriter().write(content, out);
+            }
+            Files.move(partial, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } finally {
+            Files.deleteIfExists(partial);
         }
-        Files.move(partial, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         if (incomplete) {
             context.incomplete();
         }

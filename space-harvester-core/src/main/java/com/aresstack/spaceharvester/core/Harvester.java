@@ -1117,6 +1117,7 @@ public final class Harvester implements AutoCloseable {
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
                     new FileReadStates(builder.assetDirectory()), clock);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads, sourceQueryExports);
+            jobActions.presentations(videoPresentations);
             // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
             // mit derselben Lese- und Exportprüfung wie beim Start.
             jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action,
