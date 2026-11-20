@@ -1718,7 +1718,7 @@ public class Assets implements DocumentInventory {
                     // Kein Abschnitt mit Text (etwa ein Behälter ohne eigenen Text und ohne lesbare Teile): wie
                     // bisher nur der Dateiname.
                     texts.replaceAttachment(page, asset.attachmentId(), List.of(new PageTextIndex.AttachmentEntry(
-                            page, list.spaceKey(), asset.attachmentId(), title, "", input)));
+                            page, list.spaceKey(), asset.attachmentId(), title, "", input, asset.mediaType())));
                     indexed(list, asset, structured);
                     return Optional.of(true);
                 }
@@ -1732,7 +1732,8 @@ public class Assets implements DocumentInventory {
                     public PageTextIndex.AttachmentEntry next() {
                         DocumentExtractions.IndexSection section = found.next();
                         return new PageTextIndex.AttachmentEntry(page, list.spaceKey(), asset.attachmentId(), title,
-                                section.text(), input, section.partId(), section.partTitle(), section.section());
+                                section.text(), input, section.partId(), section.partTitle(), section.section(),
+                                asset.mediaType());
                     }
                 };
                 texts.replaceAttachment(page, asset.attachmentId(), entries);
@@ -1789,7 +1790,7 @@ public class Assets implements DocumentInventory {
                 return false;
             }
             texts.putAttachment(new PageTextIndex.AttachmentEntry(page, spaceKey, asset.attachmentId(), title,
-                    text, input));
+                    text, input, asset.mediaType()));
             return true;
         } catch (RuntimeException e) {
             // Ohne Meldung und ohne Seite: sie könnte Text oder IDs enthalten.
