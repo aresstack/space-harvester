@@ -461,11 +461,15 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      *                      {@code null} für den Standard des Core (8192)
      * @param provider      Art des Dienstes ({@code provider}): OpenAI-kompatibel oder Ollama (Basisadresse = Server)
      * @param contextTokens Kontextlänge je Anfrage an Ollama ({@code context-tokens}); {@code null}: Standard des Core
+     * @param loadTimeout   so lange darf Ollama ein Modell laden ({@code load-timeout}); {@code null}: Standard des Core
+     * @param retries       Wiederholungen einer fehlgeschlagenen Bildbeschreibung ({@code retries}); {@code null}:
+     *                      Standard des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
                              Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
-                             Integer chatMaxTokens, AiProvider provider, Integer contextTokens) {
+                             Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                             Duration loadTimeout, Integer retries) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -480,7 +484,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
                           Integer chatMaxTokens) {
             this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
-                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, null, null);
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, null, null, null,
+                    null);
         }
 
         /** Mit dem Ausgabelimit des Core. */

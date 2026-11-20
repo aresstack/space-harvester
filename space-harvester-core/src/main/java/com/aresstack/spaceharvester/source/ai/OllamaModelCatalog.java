@@ -60,6 +60,36 @@ final class OllamaModelCatalog {
         return List.copyOf(models);
     }
 
+    /**
+     * Die Namen der geladenen Modelle ({@code GET /api/ps}), wie AskAI den Zustand „läuft“ zeigt.
+     *
+     * @throws AiServiceException wenn der Server nicht erreichbar ist oder nicht wie Ollama antwortet
+     */
+    Set<String> loaded() {
+        Set<String> names = new LinkedHashSet<>();
+        for (JsonNode entry : request("GET", "/api/ps", null).path("models")) {
+            String name = entry.path("model").asString(entry.path("name").asString(""));
+            if (!name.isBlank()) {
+                names.add(name);
+            }
+        }
+        return Set.copyOf(names);
+    }
+
+    /**
+     * Lädt ein Modell und wartet, bis es bereit ist, wie AskAI: ein leeres {@code POST /api/generate} mit derselben
+     * Kontextlänge wie jede Anfrage, sonst lüde die nächste Anfrage es neu. Wie lange es dauern darf, bestimmt die
+     * Frist der Verbindungen.
+     *
+     * @throws AiServiceException wenn der Server es nicht laden kann oder die Frist abläuft
+     */
+    void load(String model, int contextTokens) {
+        tools.jackson.databind.node.ObjectNode body = JSON.createObjectNode().put("model", model).put("prompt", "")
+                .put("stream", false);
+        body.putObject("options").put("num_ctx", contextTokens);
+        request("POST", "/api/generate", body.toString());
+    }
+
     /** Die gemeldeten Fähigkeiten eines Modells; leer bei Servern, die sie noch nicht melden. */
     private List<String> capabilities(String model) {
         String body = JSON.createObjectNode().put("model", model).toString();

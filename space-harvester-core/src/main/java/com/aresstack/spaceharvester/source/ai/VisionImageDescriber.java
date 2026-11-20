@@ -65,11 +65,24 @@ public final class VisionImageDescriber implements ImageDescriber {
     }
 
     @Override
-    public void prepare() {
+    public boolean loaded() {
+        AiServiceSettings current = settings.get();
+        return current == null || !current.vision()
+                || RemoteAi.of(current, catalog, trustBundles, userAgent).visionLoaded();
+    }
+
+    @Override
+    public void load() {
         AiServiceSettings current = settings.get();
         if (current != null && current.vision()) {
-            RemoteAi.of(current, catalog, trustBundles, userAgent).prepareVision();
+            RemoteAi.of(current, catalog, trustBundles, userAgent).loadVision();
         }
+    }
+
+    @Override
+    public int retries() {
+        AiServiceSettings current = settings.get();
+        return current == null ? 0 : current.retries();
     }
 
     @Override

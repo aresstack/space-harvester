@@ -44,11 +44,17 @@ import java.util.Set;
  * @param contextTokens             Kontextlänge je Anfrage an einen Ollama-Server ({@code num_ctx}); {@code null} heißt
  *                                  {@link #DEFAULT_CONTEXT_TOKENS}. Ohne sie lädt Ollama ein Modell mit dessen voller
  *                                  Kontextlänge, die oft nicht in den Grafikspeicher passt
+ * @param loadTimeout               So lange darf ein Ollama-Server ein Modell laden, bevor die App aufgibt;
+ *                                  {@code null} heißt {@link #DEFAULT_LOAD_TIMEOUT}. Das Laden dauert oft länger als
+ *                                  die Lesefrist einer Anfrage
+ * @param retries                   So oft wird eine fehlgeschlagene Bildbeschreibung wiederholt; {@code null} heißt
+ *                                  {@link #DEFAULT_RETRIES}
  */
 public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
                                 Integer embeddingDimensions, Duration timeout, String trustBundle,
                                 Set<String> externalProcessingSources, String rerankModel, String visionModel,
-                                Integer chatMaxTokens, AiProvider provider, Integer contextTokens) {
+                                Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                                Duration loadTimeout, Integer retries) {
 
     /** Präfix der Properties im Server und in der Konfigurationsdatei der App. */
     public static final String PREFIX = "space-harvester.ai.";
@@ -66,6 +72,17 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final String CHAT_MAX_TOKENS = "chat-max-tokens";
     public static final String PROVIDER = "provider";
     public static final String CONTEXT_TOKENS = "context-tokens";
+    public static final String LOAD_TIMEOUT = "load-timeout";
+    public static final String RETRIES = "retries";
+
+    /** Standard der Ladefrist eines Modells bei Ollama; der Benutzer ändert sie mit {@link #LOAD_TIMEOUT}. */
+    public static final Duration DEFAULT_LOAD_TIMEOUT = Duration.ofMinutes(10);
+    /** Größte Ladefrist. */
+    public static final Duration MAX_LOAD_TIMEOUT = Duration.ofHours(1);
+    /** Standard der Wiederholungen einer fehlgeschlagenen Bildbeschreibung; änderbar mit {@link #RETRIES}. */
+    public static final int DEFAULT_RETRIES = 2;
+    /** Höchstens so viele Wiederholungen. */
+    public static final int MAX_RETRIES = 10;
 
     /** Standard der Kontextlänge bei Ollama, wie {@code ModelContextSizes.OTHER_MODELS} in AskAI. */
     public static final int DEFAULT_CONTEXT_TOKENS = 8192;
@@ -83,7 +100,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
 
     /** Kein Dienst eingerichtet. */
     public static final AiServiceSettings NONE = new AiServiceSettings(null, null, null, null, null, null, null,
-            Set.of(), null, null, null, null, null);
+            Set.of(), null, null, null, null, null, null, null);
 
     public AiServiceSettings {
         if (baseUrl != null && !("https".equalsIgnoreCase(baseUrl.getScheme())
@@ -119,6 +136,15 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
             throw new IllegalArgumentException(PREFIX + CONTEXT_TOKENS + " muss zwischen " + MIN_CONTEXT_TOKENS
                     + " und " + MAX_CONTEXT_TOKENS + " liegen");
         }
+        loadTimeout = loadTimeout == null ? DEFAULT_LOAD_TIMEOUT : loadTimeout;
+        if (loadTimeout.isNegative() || loadTimeout.isZero() || loadTimeout.compareTo(MAX_LOAD_TIMEOUT) > 0) {
+            throw new IllegalArgumentException(PREFIX + LOAD_TIMEOUT + " muss zwischen 1 ms und "
+                    + MAX_LOAD_TIMEOUT.toMinutes() + " min liegen");
+        }
+        retries = retries == null ? DEFAULT_RETRIES : retries;
+        if (retries < 0 || retries > MAX_RETRIES) {
+            throw new IllegalArgumentException(PREFIX + RETRIES + " muss zwischen 0 und " + MAX_RETRIES + " liegen");
+        }
     }
 
     /** Als OpenAI-kompatibler Dienst. */
@@ -127,7 +153,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                              Set<String> externalProcessingSources, String rerankModel, String visionModel,
                              Integer chatMaxTokens) {
         this(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, null, null);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, null, null, null, null);
     }
 
     /** Mit dem Standard des Ausgabelimits. */
@@ -195,6 +221,20 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(PREFIX + CONTEXT_TOKENS + " ist keine Zahl");
         }
+        String load = value(properties, LOAD_TIMEOUT);
+        Duration parsedLoad;
+        try {
+            parsedLoad = load == null ? null : Duration.parse(load);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException(PREFIX + LOAD_TIMEOUT + " ist keine ISO-8601-Dauer wie PT10M");
+        }
+        String retries = value(properties, RETRIES);
+        Integer parsedRetries;
+        try {
+            parsedRetries = retries == null ? null : Integer.valueOf(retries);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(PREFIX + RETRIES + " ist keine Zahl");
+        }
         String maxTokens = value(properties, CHAT_MAX_TOKENS);
         Integer parsedMaxTokens;
         try {
@@ -205,19 +245,33 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, value(properties, API_KEY), value(properties, CHAT_MODEL),
                 value(properties, EMBEDDING_MODEL), parsedDimensions, parsedTimeout, value(properties, TRUST_BUNDLE),
                 allowed, value(properties, RERANK_MODEL), value(properties, VISION_MODEL), parsedMaxTokens,
-                AiProvider.fromKey(value(properties, PROVIDER)), parsedContext);
+                AiProvider.fromKey(value(properties, PROVIDER)), parsedContext, parsedLoad, parsedRetries);
     }
 
     /** Dieselben Einstellungen für eine andere Art von Dienst. */
     public AiServiceSettings withProvider(AiProvider provider) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries);
     }
 
     /** Dieselben Einstellungen mit anderer Kontextlänge bei Ollama; {@code null} heißt Standard. */
     public AiServiceSettings withContextTokens(Integer contextTokens) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries);
+    }
+
+    /** Dieselben Einstellungen mit anderer Ladefrist bei Ollama; {@code null} heißt Standard. */
+    public AiServiceSettings withLoadTimeout(Duration loadTimeout) {
+        return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries);
+    }
+
+    /** Dieselben Einstellungen mit anderer Zahl an Wiederholungen; {@code null} heißt Standard. */
+    public AiServiceSettings withRetries(Integer retries) {
+        return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries);
     }
 
     /**
@@ -282,31 +336,31 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     /** Dieselben Einstellungen mit dem API-Key aus einem Tresor oder Secret-Speicher. */
     public AiServiceSettings withApiKey(String key) {
         return new AiServiceSettings(baseUrl, key, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries);
     }
 
     /** Dieselben Einstellungen mit anderem Embedding-Modell und anderer Dimension. */
     public AiServiceSettings withEmbedding(String model, Integer dimensions) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, model, dimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries);
     }
 
     /** Dieselben Einstellungen mit anderem Rerank-Modell (#181). */
     public AiServiceSettings withRerankModel(String model) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, model, visionModel, chatMaxTokens, provider, contextTokens);
+                externalProcessingSources, model, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries);
     }
 
     /** Dieselben Einstellungen mit anderem Vision-Modell (ADR 0021). */
     public AiServiceSettings withVisionModel(String model) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, model, chatMaxTokens, provider, contextTokens);
+                externalProcessingSources, rerankModel, model, chatMaxTokens, provider, contextTokens, loadTimeout, retries);
     }
 
     /** Dieselben Einstellungen mit anderem Ausgabelimit des Chat-Modells; {@code null} heißt Standard. */
     public AiServiceSettings withChatMaxTokens(Integer maxTokens) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, maxTokens, provider, contextTokens);
+                externalProcessingSources, rerankModel, visionModel, maxTokens, provider, contextTokens, loadTimeout, retries);
     }
 
     /** Ohne API-Key, damit nichts davon in Logs oder Fehlermeldungen gelangt. */
@@ -327,6 +381,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         parts.add("chatMaxTokens=" + chatMaxTokens);
         parts.add("provider=" + provider.key());
         parts.add("contextTokens=" + contextTokens);
+        parts.add("loadTimeout=" + loadTimeout);
+        parts.add("retries=" + retries);
         return "AiServiceSettings[" + String.join(", ", parts) + "]";
     }
 

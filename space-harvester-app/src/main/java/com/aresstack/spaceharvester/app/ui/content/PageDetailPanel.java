@@ -2419,6 +2419,7 @@ public final class PageDetailPanel extends JPanel {
         feedback.working("Bilder werden beschrieben … 0 von " + todo.size());
         int[] done = {0};
         Background.run(() -> {
+            loadVisionModel(runtime, shown);
             ImageRows last = null;
             for (int index : todo) {
                 if (shown != page) {
@@ -2476,6 +2477,7 @@ public final class PageDetailPanel extends JPanel {
         DeliveredPage shown = page;
         images.running(index, true);
         Background.run(() -> {
+            loadVisionModel(runtime, shown);
             ImageRows found = imageRows(runtime, source, id,
                     runtime.workspace().describeImage(source, id, index, false, fresh));
             Icon icon = index < found.bytes().size() ? preview(found.bytes().get(index)) : null;
@@ -2493,6 +2495,32 @@ public final class PageDetailPanel extends JPanel {
             images.running(index, false);
             feedback.problem(error, Problems.Step.PAGE);
         });
+    }
+
+    /**
+     * Außerhalb des EDT: Läuft das Vision-Modell noch nicht (bei Ollama laut {@code /api/ps}), zeigt der Reiter
+     * „Vision-Modell wird geladen …“, bis es geladen ist, höchstens die eingestellte Ladefrist. Scheitert das Laden,
+     * meldet der Lauf den Fehler einmal statt je Bild.
+     */
+    private void loadVisionModel(AppRuntime runtime, DeliveredPage shown) {
+        if (runtime.workspace().visionModelLoaded()) {
+            return;
+        }
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            if (shown == page) {
+                images.modelLoading(true);
+                feedback.working(ImagesTab.MODEL_LOADING);
+            }
+        });
+        try {
+            runtime.workspace().loadVisionModel();
+        } finally {
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                if (shown == page) {
+                    images.modelLoading(false);
+                }
+            });
+        }
     }
 
     /** Die Bilder nach einer Einzelbeschreibung und die Vorschau des eben beschriebenen. */

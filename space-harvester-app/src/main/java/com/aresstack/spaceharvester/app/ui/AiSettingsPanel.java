@@ -74,6 +74,16 @@ final class AiSettingsPanel {
     static final String CONTEXT_TOKENS_LABEL = "Kontextlänge";
     static final String CONTEXT_TOKENS_HINT = "Tokens je Anfrage (num_ctx); leer: 8192. Größer braucht mehr "
             + "Grafikspeicher, Ollama lädt das Modell dafür neu";
+    /** So viele Sekunden darf Ollama ein Modell laden ({@code load-timeout}); leer: Standard des Core. */
+    final JTextField loadTimeout = Comic.field(8);
+    static final String LOAD_TIMEOUT_LABEL = "Ladefrist";
+    static final String LOAD_TIMEOUT_HINT = "Sekunden, die Ollama zum Laden eines Modells haben darf; leer: "
+            + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_LOAD_TIMEOUT.toSeconds();
+    /** Wiederholungen einer fehlgeschlagenen Bildbeschreibung ({@code retries}); leer: Standard des Core. */
+    final JTextField retries = Comic.field(4);
+    static final String RETRIES_LABEL = "Wiederholungen";
+    static final String RETRIES_HINT = "So oft wird ein Bild erneut beschrieben, wenn das Modell scheitert; leer: "
+            + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_RETRIES;
     final JPasswordField apiKey = new JPasswordField(32);
     final JTextField chatModel = Comic.field(24);
     final JTextField embeddingModel = Comic.field(24);
@@ -305,6 +315,7 @@ final class AiSettingsPanel {
         }
         rows.add("Basisadresse", baseUrl, OPENAI_HINT);
         rows.add(CONTEXT_TOKENS_LABEL, contextTokens, CONTEXT_TOKENS_HINT);
+        rows.add(LOAD_TIMEOUT_LABEL, loadTimeout, LOAD_TIMEOUT_HINT);
         rows.add("API-Key", apiKey, " ");
         modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über das Auswahlmenü rechts");
         modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
@@ -335,6 +346,7 @@ final class AiSettingsPanel {
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
                 "Beschreibt die Bilder einer Seite (Leseansicht › Bilder); leer: keine Bildbeschreibung");
+        modelRows.add(RETRIES_LABEL, retries, RETRIES_HINT);
         {
             modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
@@ -431,6 +443,8 @@ final class AiSettingsPanel {
         provider.setSelectedItem(current.provider().displayName());
         baseUrl.setText(current.baseUrl() == null ? "" : current.baseUrl());
         contextTokens.setText(current.contextTokens() == null ? "" : current.contextTokens());
+        loadTimeout.setText(current.loadTimeout() == null ? "" : current.loadTimeout());
+        retries.setText(current.retries() == null ? "" : current.retries());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
         dimensions.setText(current.embeddingDimensions() == null ? "" : current.embeddingDimensions());
@@ -503,6 +517,7 @@ final class AiSettingsPanel {
         rows.visible(entryRow, !ollama && keePassChosen());
         rows.visible(apiKey, !ollama);
         rows.visible(contextTokens, ollama);
+        rows.visible(loadTimeout, ollama);
         rows.hint(baseUrl, ollama ? OLLAMA_HINT : OPENAI_HINT);
         if (ollama && baseUrl.getText().isBlank()) {
             baseUrl.setText(AiProvider.OLLAMA_DEFAULT_URL);
@@ -716,7 +731,8 @@ final class AiSettingsPanel {
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
                 timeout, releasedDraft(), rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
                 visionModel.getText(), chatMaxTokens.getText(), chosenProvider(),
-                ollamaChosen() ? contextTokens.getText() : null);
+                ollamaChosen() ? contextTokens.getText() : null, ollamaChosen() ? loadTimeout.getText() : null,
+                retries.getText());
     }
 
     /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */
@@ -1214,7 +1230,8 @@ final class AiSettingsPanel {
         return new AiServiceSettings(URI.create(draft.baseUrl().strip()),
                 key == null || key.length == 0 || draft.ollama() ? null : new String(key),
                 blankToNull(draft.chatModel()), blankToNull(draft.embeddingModel()), draft.dimensions(),
-                draft.timeout(), null, Set.of()).withProvider(draft.provider()).withContextTokens(draft.context());
+                draft.timeout(), null, Set.of()).withProvider(draft.provider()).withContextTokens(draft.context())
+                .withLoadTimeout(draft.loadDuration()).withRetries(draft.retryCount());
     }
 
     static final String CHAT_MAX_TOKENS_LABEL = "Ausgabelimit";

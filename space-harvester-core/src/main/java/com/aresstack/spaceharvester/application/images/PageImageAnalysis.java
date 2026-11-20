@@ -183,7 +183,8 @@ public class PageImageAnalysis {
         }
         prepare(model);
         for (int index = 0; index < items.size(); index++) {
-            ImagePayload.Entry entry = describe(index, key, items.get(index), releasedOnce, false);
+            ImagePayload.Entry entry = describe(index, key, items.get(index), releasedOnce, false,
+                    model.retries());
             entries.add(entry);
             progress.accept(entry);
         }
@@ -313,18 +314,29 @@ public class PageImageAnalysis {
         return entries;
     }
 
-    /** Wartet, bis das Modell bereit ist (ein lokaler Dienst lädt es erst); Fehler melden dann die Bilder selbst. */
+    /** Lädt das Modell, falls es noch nicht geladen ist; Fehler melden dann die Bilder selbst. */
     private static void prepare(ImageDescriber model) {
         try {
-            model.prepare();
+            if (!model.loaded()) {
+                model.load();
+            }
         } catch (RuntimeException e) {
-            LOG.log(System.Logger.Level.DEBUG, "Vision-Modell nicht vorbereitet ({0})", e.getClass().getName());
+            LOG.log(System.Logger.Level.DEBUG, "Vision-Modell nicht geladen ({0})", e.getClass().getName());
         }
     }
 
-    /** So oft wird ein fehlgeschlagenes Bild versucht, mit wachsendem Abstand. */
-    static final int ATTEMPTS = 3;
-    static final long RETRY_MILLIS = 2_000;
+    /**
+     * Ob das Vision-Modell geladen ist und sofort antwortet (bei Ollama laut {@code /api/ps}); ohne Modell
+     * {@code true}.
+     */
+    public boolean modelLoaded() {
+        return assets.describerInUse().map(ImageDescriber::loaded).orElse(true);
+    }
+
+    /** Lädt das Vision-Modell und wartet darauf, höchstens die eingestellte Ladefrist. */
+    public void loadModel() {
+        assets.describerInUse().ifPresent(ImageDescriber::load);
+    }
 
     /**
      * Beschreibt genau ein Bild der Seite ({@code index} wie in der Liste) und legt es im Ergebnis {@code images} ab;
@@ -353,7 +365,8 @@ public class PageImageAnalysis {
         prepare(model);
         // Erst das Bild beschreiben (dauert), dann unter der Sperre mit dem gespeicherten Ergebnis zusammenführen:
         // Laufen mehrere Einzelbeschreibungen zugleich, geht keine verloren.
-        ImagePayload.Entry described = describe(index, key, items.get(index), releasedOnce, fresh);
+        ImagePayload.Entry described = describe(index, key, items.get(index), releasedOnce, fresh,
+                model.retries());
         synchronized (merging) {
             // Was schon beschrieben ist, bleibt; der Rest steht ohne Text da.
             List<ImagePayload.Entry> stored = new ArrayList<>();
@@ -416,20 +429,13 @@ public class PageImageAnalysis {
         return known;
     }
 
+    /** Beschreibt ein Bild; scheitert das Modell, bis zu {@code retries} weitere Male. */
     private ImagePayload.Entry describe(int index, PageKey key, Describable item, boolean releasedOnce,
-                                        boolean fresh) {
-        ImagePayload.Entry entry = null;
-        for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
+                                        boolean fresh, int retries) {
+        ImagePayload.Entry entry = describeOnce(index, key, item, releasedOnce, fresh);
+        for (int retry = 0; retry < retries && entry.status() == ImageStatus.FAILED
+                && "model-failed".equals(entry.reason()); retry++) {
             entry = describeOnce(index, key, item, releasedOnce, fresh);
-            if (entry.status() != ImageStatus.FAILED || !"model-failed".equals(entry.reason())) {
-                return entry;
-            }
-            try {
-                Thread.sleep(RETRY_MILLIS << attempt);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return entry;
-            }
         }
         return entry;
     }

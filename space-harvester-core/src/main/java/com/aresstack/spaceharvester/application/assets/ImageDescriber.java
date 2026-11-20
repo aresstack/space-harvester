@@ -29,10 +29,20 @@ public interface ImageDescriber {
      * es auch ohne Modell; dann beschreibt er nichts, und {@link #modelVersion()} hat keine Bedeutung.
      */
     /**
-     * Bereitet das Modell vor einem Lauf vor und wartet darauf, etwa bis ein lokaler Dienst es geladen hat; sonst
-     * liefen die ersten Bilder in die Frist. Ohne eigene Umsetzung nichts.
+     * Ob das Modell geladen ist und sofort antwortet; ein lokaler Dienst wie Ollama lädt es sonst erst, und die ersten
+     * Bilder liefen in die Frist. Ohne eigene Umsetzung immer.
      */
-    default void prepare() {
+    default boolean loaded() {
+        return true;
+    }
+
+    /** Lädt das Modell und wartet darauf, höchstens die eingestellte Ladefrist. Ohne eigene Umsetzung nichts. */
+    default void load() {
+    }
+
+    /** So oft wird eine fehlgeschlagene Beschreibung wiederholt, wie eingestellt. Ohne eigene Umsetzung nie. */
+    default int retries() {
+        return 0;
     }
 
     default boolean available() {

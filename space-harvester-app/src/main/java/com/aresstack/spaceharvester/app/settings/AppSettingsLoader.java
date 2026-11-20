@@ -1064,7 +1064,9 @@ public final class AppSettingsLoader {
                 text(get(ai, "rerank-model"), problems), text(get(ai, "embedding-chunk-tokens"), problems),
                 text(get(ai, "embedding-chunk-overlap-sentences"), problems), text(get(ai, "vision-model"), problems),
                 text(get(ai, "chat-max-tokens"), problems), provider(text(get(ai, "provider"), problems), problems),
-                text(get(ai, "context-tokens"), problems));
+                text(get(ai, "context-tokens"), problems),
+                seconds(optionalDuration(get(ai, "load-timeout"), "space-harvester.ai.load-timeout", problems)),
+                text(get(ai, "retries"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1073,7 +1075,12 @@ public final class AppSettingsLoader {
         return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
                 draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
                 draft.tokens(), draft.overlap(), draft.visionModel(), draft.maxTokens(), draft.provider(),
-                draft.context());
+                draft.context(), draft.loadDuration(), draft.retryCount());
+    }
+
+    /** Eine Dauer als Sekunden, wie das Feld der Einstellungen sie zeigt; {@code null} bleibt. */
+    private static String seconds(Duration duration) {
+        return duration == null ? null : String.valueOf(duration.toSeconds());
     }
 
     /** Die Art des KI-Dienstes; ein unbekannter Wert ist ein Problem, und es gilt OpenAI-kompatibel. */

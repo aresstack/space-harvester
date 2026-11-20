@@ -85,6 +85,9 @@ final class ImagesTab extends JPanel {
     static final String RETRY = "Erneut versuchen";
     static final String REDESCRIBE = "Neu beschreiben: ersetzt die Beschreibung dieses Bildes";
     static final String RUNNING = "Wird beschrieben …";
+    static final String MODEL_LOADING = "Vision-Modell wird geladen …";
+    /** Der zuletzt gezeigte Stand, für den Kopf nach dem Laden des Modells. */
+    private PassagesTab.State state = PassagesTab.State.MISSING;
     private java.util.function.IntConsumer onOpen = index -> { };
     static final String PREVIEW_LOADING = "Lädt …";
     static final String NO_PREVIEW = "Keine Vorschau";
@@ -137,6 +140,26 @@ final class ImagesTab extends JPanel {
             running.remove(index);
         }
         fill(index);
+    }
+
+    /**
+     * Zeigt im Kopf, dass das Vision-Modell gerade geladen wird (wie AskAI „läuft“ zeigt), danach wieder den Stand.
+     */
+    void modelLoading(boolean on) {
+        if (on) {
+            head.status(MODEL_LOADING, Comic.ORANGE);
+        } else {
+            head.status(stateText(state), tone(state));
+        }
+    }
+
+    private static Color tone(PassagesTab.State state) {
+        return switch (state) {
+            case CURRENT -> Comic.GREEN;
+            case STALE -> Comic.ORANGE;
+            case FAILED -> Comic.RED;
+            case MISSING -> Comic.MUTED;
+        };
     }
 
     /** Die Zeile wird gerade beschrieben. */
@@ -289,13 +312,8 @@ final class ImagesTab extends JPanel {
         describe.setVisible(!"vision-model-missing".equals(reason) && !unreleased);
         single = describe.isVisible();
         notReleased.setVisible(unreleased);
-        Color tone = switch (current) {
-            case CURRENT -> Comic.GREEN;
-            case STALE -> Comic.ORANGE;
-            case FAILED -> Comic.RED;
-            case MISSING -> Comic.MUTED;
-        };
-        head.status(stateText(current), tone);
+        state = current;
+        head.status(stateText(current), tone(current));
         list.removeAll();
         previews.clear();
         cells.clear();

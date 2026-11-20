@@ -24,6 +24,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param provider            {@code openai-compatible} (leer) oder {@code ollama}; bei Ollama ist {@code base-url} der
  *                            Server, etwa {@code http://localhost:11434}
  * @param contextTokens       Kontextlänge je Anfrage an Ollama ({@code num_ctx}); leer: 8192
+ * @param loadTimeout         so lange darf Ollama ein Modell laden; leer: 10 min
+ * @param retries             Wiederholungen einer fehlgeschlagenen Bildbeschreibung; leer: 2
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -33,12 +35,12 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            @DefaultValue("350") int embeddingChunkTokens,
                            @DefaultValue("1") int embeddingChunkOverlapSentences, String visionModel,
                            @DefaultValue("8192") int chatMaxTokens, String provider,
-                           Integer contextTokens) {
+                           Integer contextTokens, Duration loadTimeout, Integer retries) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
                 trustBundle, externalProcessingSources, rerankModel, visionModel, chatMaxTokens,
-                AiProvider.fromKey(provider), contextTokens);
+                AiProvider.fromKey(provider), contextTokens, loadTimeout, retries);
     }
 
     /** Ohne API-Key. */

@@ -395,40 +395,33 @@ public final class RemoteAi {
         return describeImage(image, mediaType, null);
     }
 
-    /** So lange darf Ollama zum Laden eines Modells brauchen. */
-    static final int MODEL_LOAD_TIMEOUT_MILLIS = 10 * 60 * 1000;
+    /**
+     * Ob das Vision-Modell geladen ist und sofort antwortet: bei Ollama laut {@code GET /api/ps}, wie AskAI „läuft“
+     * zeigt; andere Dienste halten ihre Modelle selbst bereit.
+     *
+     * @throws AiServiceException wenn der Ollama-Server nicht erreichbar ist
+     */
+    public boolean visionLoaded() {
+        if (settings.provider() != AiProvider.OLLAMA || !settings.vision()) {
+            return true;
+        }
+        Set<String> loaded = new OllamaModelCatalog(ollama(timeoutMillis())).loaded();
+        String model = settings.visionModel();
+        return loaded.contains(model) || !model.contains(":") && loaded.contains(model + ":latest");
+    }
 
     /**
-     * Lädt das Vision-Modell eines Ollama-Servers vorab und wartet darauf ({@code POST /api/generate} ohne Prompt, mit
-     * derselben Kontextlänge wie jede Anfrage, wie in AskAI): Das Laden dauert oft länger als die Frist einer Anfrage.
-     * Für andere Dienste nichts. Fehler bleiben hier; die Beschreibungen melden sie dann selbst.
+     * Lädt das Vision-Modell eines Ollama-Servers und wartet darauf, höchstens die eingestellte Ladefrist
+     * ({@code load-timeout}). Für andere Dienste nichts.
+     *
+     * @throws AiServiceException wenn der Server es nicht laden kann oder die Ladefrist abläuft
      */
-    public void prepareVision() {
+    public void loadVision() {
         if (settings.provider() != AiProvider.OLLAMA || !settings.vision()) {
             return;
         }
-        try {
-            java.net.HttpURLConnection connection = ollama(MODEL_LOAD_TIMEOUT_MILLIS).open("/api/generate");
-            try {
-                connection.setRequestMethod("POST");
-                connection.setDoOutput(true);
-                connection.setRequestProperty("Content-Type", "application/json");
-                String body = "{\"model\":" + tools.jackson.databind.json.JsonMapper.builder().build()
-                        .writeValueAsString(settings.visionModel()) + ",\"keep_alive\":\"15m\",\"options\":"
-                        + "{\"num_ctx\":" + settings.contextTokens() + "}}";
-                try (java.io.OutputStream out = connection.getOutputStream()) {
-                    out.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                }
-                connection.getResponseCode();
-                try (java.io.InputStream in = connection.getInputStream()) {
-                    in.readAllBytes();
-                }
-            } finally {
-                connection.disconnect();
-            }
-        } catch (java.io.IOException | RuntimeException e) {
-            // Nicht geladen: die Beschreibungen versuchen es selbst und melden den Fehler.
-        }
+        int millis = (int) Math.min(Integer.MAX_VALUE, settings.loadTimeout().toMillis());
+        new OllamaModelCatalog(ollama(millis)).load(settings.visionModel(), settings.contextTokens());
     }
 
     /**

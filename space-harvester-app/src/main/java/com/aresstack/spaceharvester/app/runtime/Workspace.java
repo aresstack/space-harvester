@@ -710,6 +710,16 @@ public final class Workspace {
         return images;
     }
 
+    /** Ob das Vision-Modell geladen ist und sofort antwortet (bei Ollama laut {@code /api/ps}). */
+    public boolean visionModelLoaded() {
+        return harvester.imageAnalysis().modelLoaded();
+    }
+
+    /** Lädt das Vision-Modell und wartet darauf, höchstens die eingestellte Ladefrist. */
+    public void loadVisionModel() {
+        harvester.imageAnalysis().loadModel();
+    }
+
     /**
      * Beschreibt nur das Bild an {@code index} der Bilderliste und gibt die Bilder der Seite zurück; die übrigen
      * bleiben, wie sie waren. {@code once} wie {@link #describeImagesOnce}; mit {@code fresh} neu statt aus den
