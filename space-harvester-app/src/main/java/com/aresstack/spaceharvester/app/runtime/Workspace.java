@@ -877,10 +877,24 @@ public final class Workspace {
     public com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run startVideoPresentation(
             String sourceId, String pageId,
             com.aresstack.spaceharvester.application.presentation.VideoMedia media) {
+        return startVideoPresentation(sourceId, pageId, media,
+                com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.PPTX);
+    }
+
+    /**
+     * Wie {@link #startVideoPresentation(String, String,
+     * com.aresstack.spaceharvester.application.presentation.VideoMedia)}, mit dem Format der Datei: „In PDF umwandeln“
+     * läuft durch dieselben Schritte und schreibt am Ende ein PDF; schon Vorhandenes fragt keiner der Schritte neu.
+     */
+    public com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run startVideoPresentation(
+            String sourceId, String pageId,
+            com.aresstack.spaceharvester.application.presentation.VideoMedia media,
+            com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format format) {
         syncedPage(sourceId, pageId);
         com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run run =
                 harvester.videoPresentations().start(caller, sourceId, pageId, media,
-                        com.aresstack.spaceharvester.application.presentation.VideoPresentations.Options.DEFAULT);
+                        com.aresstack.spaceharvester.application.presentation.VideoPresentations.Options.DEFAULT
+                                .withFormat(format));
         run.all().forEach(job -> activities.remember(job.id()));
         return run;
     }

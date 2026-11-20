@@ -139,7 +139,8 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.stop().addActionListener(event -> stop());
         transport.download().addActionListener(event -> chooseDownload());
         transport.cancelDownload().addActionListener(event -> cancelDownload());
-        transport.convert().addActionListener(event -> onConvert.run());
+        transport.convert().addActionListener(event -> onConvert.accept(false));
+        transport.convertPdf().addActionListener(event -> onConvert.accept(true));
         transport.fullScreen().addActionListener(event -> fullScreen.toggle());
         transport.audioOnly().addActionListener(event -> toggleAudioOnly());
         transport.skipBack().addActionListener(event -> skip(false));
@@ -768,16 +769,17 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         }
     }
 
-    /** „In PPTX umwandeln“: wer die Aufträge startet; ohne ihn bleibt der Knopf verborgen. */
-    private Runnable onConvert = () -> { };
+    /** „In PPTX/PDF umwandeln“: wer die Aufträge startet ({@code true} für PDF); ohne ihn bleiben die Knöpfe verborgen. */
+    private java.util.function.Consumer<Boolean> onConvert = pdf -> { };
 
     /**
-     * Zeigt neben „Herunterladen“ den Knopf „In PPTX umwandeln“ (Angelo 20.11.2026); {@code listener} läuft auf dem
-     * EDT, wenn er gedrückt wird.
+     * Zeigt neben „Herunterladen“ die Knöpfe „In PPTX umwandeln“ und „In PDF umwandeln“ (Angelo 20.11.2026);
+     * {@code listener} läuft auf dem EDT, wenn einer gedrückt wird, mit {@code true} für PDF.
      */
-    public void onConvert(Runnable listener) {
+    public void onConvert(java.util.function.Consumer<Boolean> listener) {
         onConvert = java.util.Objects.requireNonNull(listener, "listener");
         transport.convert().setVisible(true);
+        transport.convertPdf().setVisible(true);
         transport.revalidate();
         transport.repaint();
     }
@@ -785,6 +787,11 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     /** Der Knopf „In PPTX umwandeln“ (für Tests). */
     javax.swing.JButton convertButton() {
         return transport.convert();
+    }
+
+    /** Der Knopf „In PDF umwandeln“ (für Tests). */
+    javax.swing.JButton convertPdfButton() {
+        return transport.convertPdf();
     }
 
     /** Whoever wants the slide changes once they are found, e.g. for one virtual attachment per slide. */

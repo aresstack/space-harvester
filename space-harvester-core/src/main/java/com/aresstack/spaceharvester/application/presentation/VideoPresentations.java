@@ -73,6 +73,8 @@ public final class VideoPresentations {
     public static final String PAGE_PARAMETER = "page";
     /** Angabe von {@link JobType#PRESENTATION_EXPORT}: die erzeugte Datei. */
     public static final String FILE_PARAMETER = "file";
+    /** Angabe am Auftrag „PPTX erzeugen“: das Format der Datei ({@link Format#extension()}); fehlend heißt PPTX. */
+    public static final String FORMAT_PARAMETER = "format";
     /** Angabe aller Aufträge eines Vorgangs: der Auftrag „PPTX erzeugen“, an dem die Datei hängt. */
     public static final String RUN_PARAMETER = "presentation";
 
@@ -110,20 +112,62 @@ public final class VideoPresentations {
         PageSnapshot page(AccessContext caller, String sourceId, String pageId);
     }
 
+    /** Das Format der erzeugten Datei; die vier Schritte davor sind für beide dieselben. */
+    public enum Format {
+        /** PowerPoint: je Folie das Standbild, der Kommentar als Notiz. */
+        PPTX("pptx", "PPTX"),
+        /** PDF: je Folie eine Seite, der Kommentar unter dem Standbild. */
+        PDF("pdf", "PDF");
+
+        private final String extension;
+        private final String label;
+
+        Format(String extension, String label) {
+            this.extension = extension;
+            this.label = label;
+        }
+
+        /** Dateiendung ohne Punkt und Wert von {@link #FORMAT_PARAMETER}. */
+        public String extension() {
+            return extension;
+        }
+
+        /** Name für Meldungen, etwa „PDF“. */
+        public String label() {
+            return label;
+        }
+
+        /** Liest {@link #extension()}; fehlend oder unbekannt heißt {@link #PPTX} (Aufträge vor dieser Angabe). */
+        public static Format parse(String value) {
+            return value != null && PDF.extension.equalsIgnoreCase(value.strip()) ? PDF : PPTX;
+        }
+    }
+
     /**
      * Einstellungen eines Vorgangs.
      *
      * @param parallel so viele Modellaufrufe laufen je Auftrag zugleich, mindestens 1
+     * @param format   das Format der Datei
      */
-    public record Options(int parallel) {
+    public record Options(int parallel, Format format) {
 
-        /** Vier Aufrufe zugleich. */
+        /** Vier Aufrufe zugleich, PowerPoint. */
         public static final Options DEFAULT = new Options(4);
 
+        public Options(int parallel) {
+            this(parallel, Format.PPTX);
+        }
+
         public Options {
+            Objects.requireNonNull(format, "format");
             if (parallel < 1 || parallel > 32) {
                 throw new IllegalArgumentException("parallel muss zwischen 1 und 32 liegen");
             }
+        }
+
+        /** Dieselben Einstellungen mit anderem Dateiformat. */
+        public Options withFormat(Format format) {
+            return new Options(parallel, format);
         }
     }
 
@@ -209,7 +253,7 @@ public final class VideoPresentations {
         String space = snapshot.metadata().partitionKey();
         String owner = caller.jobOwner();
         String title = snapshot.metadata().title();
-        Path file = outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title));
+        Path file = outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title, options.format()));
         String run = java.util.UUID.randomUUID().toString();
         Map<String, String> parameters = Map.of(PAGE_PARAMETER, pageId, RUN_PARAMETER, run);
         JobTask transcribing = JobTask.blocking(context -> transcribe(caller, sourceId, pageId, media, context));
@@ -217,7 +261,8 @@ public final class VideoPresentations {
                 context));
         JobTask correcting = JobTask.blocking(context -> correct(caller, sourceId, pageId, options, context));
         JobTask commenting = JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, options, context));
-        JobTask writing = JobTask.blocking(context -> writeFile(caller, sourceId, pageId, file, context));
+        JobTask writing = JobTask.blocking(context -> writeFile(caller, sourceId, pageId, file, options.format(),
+                context));
         // Die beiden ersten belegen sofort einen Platz: Scheitert ein späterer Schritt am Platz, werden die schon
         // angenommenen wieder abgebrochen, statt eine Transkription ohne Nachfolger laufen zu lassen.
         List<JobStatus> submitted = new ArrayList<>(5);
@@ -232,6 +277,7 @@ public final class VideoPresentations {
                     parameters, commenting, correction.id()), commenting, submitted);
             Map<String, String> fileParameters = new HashMap<>(parameters);
             fileParameters.put(FILE_PARAMETER, file.toString());
+            fileParameters.put(FORMAT_PARAMETER, options.format().extension());
             JobStatus output = remember(jobs.submitAfter(JobType.PRESENTATION_EXPORT, sourceId, space, pageId, owner,
                     fileParameters, writing, notes.id()), writing, submitted);
             return new Run(transcript, described, correction, notes, output);
@@ -783,9 +829,9 @@ public final class VideoPresentations {
 
     // --- 5. PPTX erzeugen -----------------------------------------------------------------------------------------
 
-    private void writeFile(AccessContext caller, String sourceId, String pageId, Path file, JobContext context)
-            throws IOException {
-        context.phase(COMPONENT, "PPTX erzeugen");
+    private void writeFile(AccessContext caller, String sourceId, String pageId, Path file, Format format,
+                           JobContext context) throws IOException {
+        context.phase(COMPONENT, format.label() + " erzeugen");
         PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
         context.rootTitle(snapshot.metadata().title());
         PageKey key = snapshot.key();
@@ -827,7 +873,11 @@ public final class VideoPresentations {
         Path partial = Files.createTempFile(file.getParent(), "presentation-", ".part");
         try {
             try (OutputStream out = Files.newOutputStream(partial)) {
-                new PptxExportWriter().write(content, out);
+                if (format == Format.PDF) {
+                    new com.aresstack.spaceharvester.document.PdfSlidesWriter().write(content, out);
+                } else {
+                    new PptxExportWriter().write(content, out);
+                }
             }
             Files.move(partial, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } finally {
@@ -928,7 +978,12 @@ public final class VideoPresentations {
 
     /** Der Dateiname der Präsentation nach dem Video, etwa {@code Vortrag.pptx}. */
     static String fileName(String title) {
-        return baseName(title) + ".pptx";
+        return fileName(title, Format.PPTX);
+    }
+
+    /** Wie {@link #fileName(String)} mit der Endung des Formats, etwa {@code Vortrag.pdf}. */
+    static String fileName(String title, Format format) {
+        return baseName(title) + "." + format.extension();
     }
 
     /** Der Dateiname des Transkripts nach dem Video, wie in der App, etwa {@code Vortrag – Transkript.txt}. */

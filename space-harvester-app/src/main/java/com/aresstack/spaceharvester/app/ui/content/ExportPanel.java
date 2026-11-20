@@ -983,7 +983,7 @@ public final class ExportPanel extends JPanel {
 
     /** Ein Export scheiterte: Orange mit ✕ in der Statuszeile, der Grund bleibt unter Aufträge (und auf der Platte). */
     private String failedText(String what, JobStatus job) {
-        return what + ": " + Texts.type(job.type()) + " " + Texts.state(job).toLowerCase(Locale.GERMAN)
+        return what + ": " + Texts.type(job) + " " + Texts.state(job).toLowerCase(Locale.GERMAN)
                 + " · Grund unter Aufträge";
     }
 
@@ -1015,7 +1015,7 @@ public final class ExportPanel extends JPanel {
             exportStatus(format + " erzeugt; die Datei steht im Ausgabeordner" + remaining, Severity.INFO, true);
         } else {
             exportStatus(failedText(format, job) + remaining, Severity.WARN, true);
-            show = f -> f.warning(format + ": " + Texts.type(job.type()) + " "
+            show = f -> f.warning(format + ": " + Texts.type(job) + " "
                     + Texts.state(job).toLowerCase(Locale.GERMAN) + remaining,
                     job.error() == null ? null : job.error().message());
         }
