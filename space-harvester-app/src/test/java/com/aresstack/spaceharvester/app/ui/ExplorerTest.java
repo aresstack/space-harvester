@@ -297,8 +297,29 @@ class ExplorerTest {
                     System.currentTimeMillis(), 0, spaceRow.x + 5, spaceRow.y + spaceRow.height / 2, 2, false,
                     java.awt.event.MouseEvent.BUTTON1));
             assertThat(tree.isExpanded(parent)).as("Doppelklick klappt auf").isTrue();
+
+            // Angelo (20.11.2026): oft öffnete erst der zweite Klick. Wandert die Maus zwischen Drücken und Loslassen,
+            // meldet Swing keinen Klick; losgelassen auf derselben Zeile öffnet die Seite trotzdem.
+            java.awt.event.MouseAdapter mouse = explorer[0].treeMouse();
+            int x = row.x + 5;
+            int y = row.y + row.height / 2;
+            mouse.mousePressed(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_PRESSED, x, y, 1));
+            mouse.mouseDragged(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_DRAGGED, x + 2, y + 1, 1));
+            mouse.mouseReleased(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_RELEASED, x + 2, y + 1, 1));
+            assertThat(opened).as("losgelassen nach kleiner Bewegung").containsExactly(wanted, wanted);
+            // Ohne Bewegung kommt der Klick von Swing; das Loslassen öffnet nicht ein zweites Mal.
+            mouse.mousePressed(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_PRESSED, x, y, 1));
+            mouse.mouseReleased(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_RELEASED, x, y, 1));
+            assertThat(opened).as("ohne Bewegung nur über den Klick").hasSize(2);
+            // Auf einer anderen Zeile losgelassen: nichts öffnen.
+            mouse.mousePressed(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_PRESSED, x, y, 1));
+            mouse.mouseDragged(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_DRAGGED, spaceRow.x + 5,
+                    spaceRow.y + spaceRow.height / 2, 1));
+            mouse.mouseReleased(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_RELEASED, spaceRow.x + 5,
+                    spaceRow.y + spaceRow.height / 2, 1));
+            assertThat(opened).as("auf anderer Zeile losgelassen").hasSize(2);
         });
-        assertThat(opened).containsExactly(wanted);
+        assertThat(opened).containsExactly(wanted, wanted);
 
         // Fußleiste: keine Anzahl der Wissensquellen; „Alles zuklappen“ und das Fadenkreuz zeigen die gezeigte Seite.
         SwingUtilities.invokeAndWait(() -> {
@@ -320,7 +341,7 @@ class ExplorerTest {
             Thread.sleep(50);
         }
         assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
-        assertThat(opened).as("das Fadenkreuz öffnet nicht").containsExactly(wanted);
+        assertThat(opened).as("das Fadenkreuz öffnet nicht").containsExactly(wanted, wanted);
 
         // Fadenkreuz bei gewählter Seite: das Zuklappen verbreitert den Suchumfang nicht auf die ganze Quelle.
         int before = scopeCalls[0];
@@ -644,6 +665,12 @@ class ExplorerTest {
     private static void click(javax.swing.JTree tree, int x, int y) {
         tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
                 System.currentTimeMillis(), 0, x, y, 1, false, java.awt.event.MouseEvent.BUTTON1));
+    }
+
+    /** Ein Ereignis der linken Maustaste, zum direkten Aufruf des Listeners (ohne Fenster, ohne Toolkit). */
+    private static java.awt.event.MouseEvent mouseEvent(javax.swing.JTree tree, int id, int x, int y, int clicks) {
+        return new java.awt.event.MouseEvent(tree, id, System.currentTimeMillis(),
+                java.awt.event.InputEvent.BUTTON1_DOWN_MASK, x, y, clicks, false, java.awt.event.MouseEvent.BUTTON1);
     }
 
     private static void move(javax.swing.JTree tree, int x, int y) {

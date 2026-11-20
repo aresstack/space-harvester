@@ -297,6 +297,8 @@ public final class Explorer {
     private int hoverStarRow = -1;
     /** Zeile, über deren Zustandspunkt die Maus steht; dort stehen dann die Kreispfeile zum Nachholen. */
     private int hoverBadgeRow = -1;
+    /** Maus am Baum: Klick, Loslassen nach kleiner Bewegung, Hover (für Tests erreichbar). */
+    private MouseAdapter treeMouse;
     /** „Analysieren“ über den Core ({@code Workspace}); Tests setzen eine eigene Umsetzung. */
     private Analyses analyses = new WorkspaceAnalyses();
     /** Bestätigung großer Analyseumfänge; Tests antworten ohne Dialog. */
@@ -447,34 +449,57 @@ public final class Explorer {
             selectCurrentFavorite();
         });
         MouseAdapter mouse = new MouseAdapter() {
+            /** Die Zeile unter dem Drücken der linken Taste, bis zum Loslassen. */
+            private TreePath pressed;
+            /** Ob die Maus zwischen Drücken und Loslassen gewandert ist: Swing meldet dann keinen Klick. */
+            private boolean moved;
+
             @Override
             public void mouseClicked(MouseEvent event) {
-                TreePath path = tree.getPathForLocation(event.getX(), event.getY());
-                if (path == null || !javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    clicked(tree.getPathForLocation(event.getX(), event.getY()), event.getPoint(),
+                            event.getClickCount());
+                }
+            }
+
+            /**
+             * Ein Klick öffnet (Angelo, 17.11.2026: einheitlich für Quelle, Space und Seite, kein Doppelklick zum
+             * Lesen); der Doppelklick klappt auf und zu, der Griff davor ebenso.
+             */
+            private void clicked(TreePath path, java.awt.Point point, int count) {
+                if (path == null) {
                     return;
                 }
-                // Ein Klick öffnet (Angelo, 17.11.2026: einheitlich für Quelle, Space und Seite, kein Doppelklick
-                // zum Lesen); der Doppelklick klappt auf und zu, der Griff davor ebenso.
-                boolean single = event.getClickCount() == 1;
-                if (onStar(path, event.getPoint())) {
+                boolean single = count == 1;
+                if (onStar(path, point)) {
                     if (single) {
                         toggleFavorite(((Node) path.getLastPathComponent()).item());
                     }
-                } else if (onBadge(path, event.getPoint())) {
+                } else if (onBadge(path, point)) {
                     if (single) {
                         refresh(((Node) path.getLastPathComponent()).item());
                     }
                 } else if (single) {
                     activate(path);
-                } else if (event.getClickCount() == 2) {
+                } else if (count == 2) {
                     toggle(path);
                 }
             }
 
             @Override
             public void mousePressed(MouseEvent event) {
+                pressed = javax.swing.SwingUtilities.isLeftMouseButton(event)
+                        ? tree.getPathForLocation(event.getX(), event.getY()) : null;
+                moved = false;
                 if (event.isPopupTrigger()) {
                     popup(event);
+                }
+            }
+
+            @Override
+            public void mouseDragged(MouseEvent event) {
+                if (pressed != null) {
+                    moved = true;
                 }
             }
 
@@ -483,6 +508,16 @@ public final class Explorer {
                 if (event.isPopupTrigger()) {
                     popup(event);
                 }
+                // Angelo (20.11.2026): oft erst der zweite Klick öffnete. Wandert die Maus beim Klick auch nur einen
+                // Punkt, markiert Swing die Zeile schon beim Drücken, meldet aber keinen Klick; so blieb die alte Seite
+                // stehen. Losgelassen auf derselben Zeile gilt das als Klick.
+                TreePath path = tree.getPathForLocation(event.getX(), event.getY());
+                if (moved && pressed != null && pressed.equals(path)
+                        && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    clicked(path, event.getPoint(), event.getClickCount());
+                }
+                pressed = null;
+                moved = false;
             }
 
             @Override
@@ -507,6 +542,7 @@ public final class Explorer {
                 }
             }
         };
+        treeMouse = mouse;
         tree.addMouseListener(mouse);
         tree.addMouseMotionListener(mouse);
         javax.swing.ToolTipManager.sharedInstance().registerComponent(tree);
@@ -2354,6 +2390,11 @@ public final class Explorer {
     /** Für Tests: Zeile, über deren Zustandspunkt die Maus steht. */
     int hoverBadgeRow() {
         return hoverBadgeRow;
+    }
+
+    /** Für Tests: der Maus-Listener des Baums, direkt aufrufbar ohne Fenster. */
+    MouseAdapter treeMouse() {
+        return treeMouse;
     }
 
 
