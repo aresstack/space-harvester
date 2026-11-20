@@ -1574,9 +1574,18 @@ public final class PageDetailPanel extends JPanel {
             }
         }
         if (payload.length() == 0 && fileSize == 0) {
-            // Auch in der Quelle leer (etwa eine leere Vorlage in BSCW): nichts zu laden, nichts zu zeigen.
+            // Auch in der Quelle leer (etwa eine leere Vorlage in BSCW): keine Vorschau, aber Speichern und Öffnen.
             emptyFileShown = true;
-            showFileCard(metadata, EMPTY_FILE);
+            ReaderAttachmentLoader empty = (file, done, failed) -> done.accept(new byte[0]);
+            originalFileViewer = AttachmentViewerPanel.withoutPreview(new ReaderAttachment(metadata.pageId(),
+                    metadata.title(), originalMediaType(payload), 0), empty, fileOpener, attachmentRenderer,
+                    EMPTY_FILE);
+            originalFileViewer.detachFooter();
+            fileContent.add(originalFileViewer, BorderLayout.CENTER);
+            originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+            fileContent.revalidate();
+            fileContent.repaint();
+            updateFootTools(tabs.selected());
             return;
         }
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
@@ -1587,19 +1596,42 @@ public final class PageDetailPanel extends JPanel {
         // Recheck it once against the source instead of trusting an empty cache as the original.
         final boolean originalAvailable = payload.length() > 0
                 || (fileSize == 0 && !metadata.attributes().containsKey("bscw.path"));
-        ReaderAttachmentLoader loader = (file, done, failed) -> {
-            if (originalAvailable) {
-                Background.run(payload::bytes, done, error -> failed.accept(reason(error)));
-                return;
+        ReaderAttachmentLoader loader = new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment file, Consumer<byte[]> done, Consumer<String> failed) {
+                if (originalAvailable) {
+                    Background.run(payload::bytes, done, error -> failed.accept(reason(error)));
+                    return;
+                }
+                AppRuntime runtime = context.runtime();
+                if (runtime == null) {
+                    failed.accept("Die Quelle ist nicht mehr verbunden.");
+                    return;
+                }
+                // Refresh an older empty metadata shell directly from the owning BSCW page.
+                Background.run(() -> runtime.workspace().page(source, id, true).snapshot().payload().bytes(), done,
+                        error -> failed.accept(reason(error)));
             }
-            AppRuntime runtime = context.runtime();
-            if (runtime == null) {
-                failed.accept("Die Quelle ist nicht mehr verbunden.");
-                return;
+
+            /** Ohne Inhalt im Cache holen Speichern und Öffnen das Original direkt aus der Quelle auf die Platte. */
+            @Override
+            public boolean downloadsToFile() {
+                return !originalAvailable && context.runtime() != null;
             }
-            // Refresh an older empty metadata shell directly from the owning BSCW page.
-            Background.run(() -> runtime.workspace().page(source, id, true).snapshot().payload().bytes(), done,
-                    error -> failed.accept(reason(error)));
+
+            @Override
+            public void downloadTo(ReaderAttachment file, java.nio.file.Path target, Runnable done,
+                                   Consumer<String> failed) {
+                AppRuntime runtime = context.runtime();
+                if (runtime == null) {
+                    failed.accept("Die Quelle ist nicht mehr verbunden.");
+                    return;
+                }
+                Background.run(() -> {
+                    runtime.workspace().downloadOriginal(source, metadata, target);
+                    return Boolean.TRUE;
+                }, ignored -> done.run(), error -> failed.accept(reason(error)));
+            }
         };
         originalAttachment = attachment;
         originalLoader = once(loader);
@@ -2316,8 +2348,12 @@ public final class PageDetailPanel extends JPanel {
             }
             assetsLoaded = false;
             assetsBusy.setBusy(false);
+            // Mit Ursache ins Protokoll: „Unerwarteter Fehler“ allein sagt nicht, was schiefging.
+            LOG.log(System.Logger.Level.WARNING, "Anhänge von " + source + " nicht geladen", error);
+            String detail = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             assetsHint.setText("Anhänge nicht geladen: " + com.aresstack.spaceharvester.app.ui.Problems
-                    .describe(error).title());
+                    .describe(error).title() + " (" + detail + "); der nächste Wechsel auf „Anhänge“ versucht es "
+                    + "erneut.");
         });
     }
 

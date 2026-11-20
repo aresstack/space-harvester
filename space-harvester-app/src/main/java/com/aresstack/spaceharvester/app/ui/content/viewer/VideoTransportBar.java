@@ -27,6 +27,9 @@ final class VideoTransportBar extends JPanel {
     private final JButton play = iconButton("Abspielen", ComposerIcons.play());
     private final JButton pause = iconButton("Pausieren", ComposerIcons.pause());
     private final JButton stop = iconButton("Stoppen", ComposerIcons.stop());
+    /** Sprung zurück bzw. vor um die eingestellte Zeit (Angelo, 20.11.2026); den Tooltip setzt der Player. */
+    private final JButton skipBack = iconButton("Zurück", new VideoSkipIcon(false));
+    private final JButton skipForward = iconButton("Vor", new VideoSkipIcon(true));
     private final JButton previousSlide = iconButton("Vorige Folie", ComposerIcons.chevronLeft());
     private final JButton nextSlide = iconButton("Nächste Folie", ComposerIcons.chevronRight());
     private final JButton download = iconButton("Herunterladen", ComposerIcons.download());
@@ -51,6 +54,8 @@ final class VideoTransportBar extends JPanel {
         playback.add(play);
         playback.add(pause);
         playback.add(stop);
+        playback.add(skipBack);
+        playback.add(skipForward);
         playback.add(previousSlide);
         playback.add(nextSlide);
         previousSlide.setVisible(false);
@@ -83,6 +88,14 @@ final class VideoTransportBar extends JPanel {
         add(seekBar, BorderLayout.CENTER);
         pause.setEnabled(false);
         stop.setEnabled(false);
+    }
+
+    JButton skipBack() {
+        return skipBack;
+    }
+
+    JButton skipForward() {
+        return skipForward;
     }
 
     JButton previousSlide() {

@@ -81,6 +81,8 @@ public final class VideoSettings {
                 "Hält VLC beim Start nicht an, wird es in diesem Abstand erneut verlangt", 1000, 1, 600_000),
         START_TIMEOUT_MILLIS("start-timeout-millis", "Frist für den Start (ms)",
                 "Startet VLC in dieser Zeit nicht, meldet der Player einen Fehler", 15_000, 1000, 600_000),
+        SKIP_SECONDS("skip-seconds", "Sprung zurück/vor (Sekunden)",
+                "So weit springen die Knöpfe mit den Pfeilen im Kreis zurück bzw. vor", 5, 1, 3600),
         SEEK_FEEDBACK_MILLIS("seek-feedback-millis", "Frist für einen Sprung (ms)",
                 "Erreicht VLC die angesprungene Stelle in dieser Zeit nicht, meldet der Player es", 10_000, 1000,
                 600_000),

@@ -142,6 +142,11 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         transport.convert().addActionListener(event -> onConvert.run());
         transport.fullScreen().addActionListener(event -> fullScreen.toggle());
         transport.audioOnly().addActionListener(event -> toggleAudioOnly());
+        transport.skipBack().addActionListener(event -> skip(false));
+        transport.skipForward().addActionListener(event -> skip(true));
+        long step = settings.get(VideoSettings.Value.SKIP_SECONDS);
+        transport.skipBack().setToolTipText(step + " s zurück");
+        transport.skipForward().setToolTipText(step + " s vor");
         transport.previousSlide().addActionListener(event -> jumpToSlide(false));
         transport.nextSlide().addActionListener(event -> jumpToSlide(true));
         transport.fullScreen().setEnabled(false);
@@ -791,6 +796,21 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     }
 
     /** Jump to the next slide, or to the start of the current or previous one like a player's previous button. */
+    /**
+     * Springt um die eingestellte Zeit zurück bzw. vor (Einstellungen › Video, Vorgabe 5 s), höchstens bis zum Anfang
+     * bzw. Ende; angehalten vom zuletzt angesprungenen Ziel aus, wie „nächste Folie“.
+     */
+    private void skip(boolean forward) {
+        long duration = transport.seekBar().durationMillis();
+        long position = !actuallyPlaying && pausedTarget >= 0 ? pausedTarget : transport.seekBar().displayedMillis();
+        if (duration <= 0 || position < 0) {
+            return;
+        }
+        long step = settings.get(VideoSettings.Value.SKIP_SECONDS) * 1000L;
+        long target = Math.max(0, Math.min(duration - 1, position + (forward ? step : -step)));
+        seek(target / (double) duration);
+    }
+
     private void jumpToSlide(boolean forward) {
         java.util.List<Long> changes = transport.seekBar().slides();
         long duration = transport.seekBar().durationMillis();
