@@ -1,16 +1,11 @@
 package com.aresstack.spaceharvester.source.ai;
 
-import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriptionException;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
 /**
@@ -76,64 +71,15 @@ public final class VisionImageDescriber implements ImageDescriber {
                 || RemoteAi.of(current, catalog, trustBundles, userAgent).visionLoaded();
     }
 
-    /**
-     * Wie AskAI: stößt das Laden einmal an ({@code POST /api/generate} läuft im Hintergrund weiter, auch wenn mehrere
-     * Läufe zugleich warten) und fragt dann im eingestellten Abstand ({@code load-poll-interval}) mit
-     * {@code GET /api/ps}, bis das Modell läuft; erst danach gehen die Prompts hinaus. Höchstens die Ladefrist
-     * ({@code load-timeout}).
-     *
-     * @throws AiServiceException wenn das Laden scheitert oder die Ladefrist abläuft
-     */
+    /** Wartet wie der Chat, bis das Vision-Modell läuft ({@link RemoteAi#awaitModel}). */
     @Override
     public void load() {
         AiServiceSettings current = settings.get();
-        if (current == null || !current.vision()) {
-            return;
-        }
-        RemoteAi remote = RemoteAi.of(current, catalog, trustBundles, userAgent);
-        if (remote.visionLoaded()) {
-            return;
-        }
-        CompletableFuture<Void> request;
-        synchronized (this) {
-            if (loading == null || loading.isDone()) {
-                loading = CompletableFuture.runAsync(remote::loadVision, loader);
-            }
-            request = loading;
-        }
-        long deadline = System.nanoTime() + current.loadTimeout().toNanos();
-        while (!remote.visionLoaded()) {
-            if (request.isDone()) {
-                try {
-                    request.join();
-                } catch (CompletionException failed) {
-                    throw failed.getCause() instanceof AiServiceException cause ? cause
-                            : new AiServiceException(AiServiceException.Reason.UNREACHABLE, "Vision-Modell nicht geladen");
-                }
-                // Geladen, auch wenn der Server es unter anderem Namen führt.
-                return;
-            }
-            if (System.nanoTime() - deadline > 0) {
-                throw new AiServiceException(AiServiceException.Reason.TIMEOUT, "Vision-Modell nicht innerhalb der "
-                        + "Ladefrist geladen");
-            }
-            try {
-                Thread.sleep(current.loadPollInterval().toMillis());
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new AiServiceException(AiServiceException.Reason.TIMEOUT, "Warten auf das Vision-Modell "
-                        + "abgebrochen");
-            }
+        if (current != null && current.vision()) {
+            RemoteAi.of(current, catalog, trustBundles, userAgent).awaitModel(current.visionModel(), () -> { },
+                    () -> false);
         }
     }
-
-    /** Das laufende Laden des Modells, damit es auch bei mehreren wartenden Läufen nur einmal angestoßen wird. */
-    private CompletableFuture<Void> loading;
-    private final ExecutorService loader = Executors.newSingleThreadExecutor(work -> {
-        Thread thread = new Thread(work, "vision-model-load");
-        thread.setDaemon(true);
-        return thread;
-    });
 
     @Override
     public int retries() {

@@ -65,6 +65,10 @@ public interface AiChat {
         void failed(AiChatException error);
 
         void cancelled();
+
+        /** Das Modell wird gerade geladen (etwa bei Ollama); die Antwort kommt, sobald es läuft. */
+        default void loading() {
+        }
     }
 
     interface Task {

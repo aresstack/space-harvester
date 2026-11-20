@@ -115,6 +115,8 @@ public final class ChatPanel extends JPanel {
     static final String DELETE_QUESTION = "Diesen Chat wirklich löschen?";
     static final String ASSISTANT = "Assistent";
     static final String ANSWERING = "Antwort wird geschrieben …";
+    /** Wie in AskAI: solange Ollama das Modell lädt, steht das in der Blase und in der Statuszeile. */
+    static final String MODEL_LOADING = "Modell wird geladen …";
     static final String SEARCHING = "Wissen wird gesucht …";
     static final String CANCELLED = "Abgebrochen";
     static final String DOWNLOAD_DONE = "abgeschlossen";
@@ -1328,6 +1330,16 @@ public final class ChatPanel extends JPanel {
             this.started = started;
             this.startedNode = startedNode;
             this.bubble = bubble;
+        }
+
+        @Override
+        public void loading() {
+            if (text.isEmpty()) {
+                bubble.setText(MODEL_LOADING);
+            }
+            if (!detached) {
+                status.setText(MODEL_LOADING);
+            }
         }
 
         @Override

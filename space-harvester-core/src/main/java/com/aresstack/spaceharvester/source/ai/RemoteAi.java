@@ -168,7 +168,52 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        ChatCompletionPort adapter = chatPort(settings.chatModel(), timeoutMillis());
+        AiChat direct = streaming(chatPort(settings.chatModel(), timeoutMillis()));
+        if (settings.provider() != AiProvider.OLLAMA) {
+            return direct;
+        }
+        // Ollama lädt ein Modell oft länger, als die Lesefrist einer Anfrage erlaubt: erst warten, bis es läuft
+        // ({@link #awaitModel}), dann fragen. Das Warten läuft abseits des Aufrufers. Die erste Anfrage nach einem
+        // Laden darf so lange dauern wie das Laden: Das erste Token nach einem frischen Laden kam einmal erst nach
+        // mehr als 30 s.
+        AiChat afterLoad = streaming(chatPort(settings.chatModel(),
+                (int) Math.min(Integer.MAX_VALUE, settings.loadTimeout().toMillis())));
+        return (request, listener) -> {
+            java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicBoolean loaded = new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicReference<AiChat.Task> running =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            MODEL_LOADERS.execute(() -> {
+                try {
+                    awaitModel(request.model(), () -> {
+                        loaded.set(true);
+                        listener.loading();
+                    }, cancelled::get);
+                } catch (AiServiceException failed) {
+                    listener.failed(new AiChatException(AiChatException.Kind.TRANSPORT, 0, failed.getMessage(), failed));
+                    return;
+                }
+                if (cancelled.get()) {
+                    listener.cancelled();
+                    return;
+                }
+                running.set((loaded.get() ? afterLoad : direct).stream(request, listener));
+                if (cancelled.get()) {
+                    running.get().cancel();
+                }
+            });
+            return () -> {
+                cancelled.set(true);
+                AiChat.Task task = running.get();
+                if (task != null) {
+                    task.cancel();
+                }
+            };
+        };
+    }
+
+    /** Der Chat über {@code adapter}: Nachrichten, Optionen und Rückmeldungen wie im Enterprise AI Client. */
+    private static AiChat streaming(ChatCompletionPort adapter) {
         return (request, listener) -> {
             List<ChatMessage> messages = new ArrayList<>();
             for (AiChat.Message message : request.messages()) {
@@ -396,34 +441,88 @@ public final class RemoteAi {
     }
 
     /**
-     * Ob das Vision-Modell geladen ist und sofort antwortet: bei Ollama laut {@code GET /api/ps}, wie AskAI „läuft“
-     * zeigt; andere Dienste halten ihre Modelle selbst bereit.
+     * Ob {@code model} geladen ist und sofort antwortet: bei Ollama laut {@code GET /api/ps}, wie AskAI „läuft“ zeigt;
+     * andere Dienste halten ihre Modelle selbst bereit.
      *
      * @throws AiServiceException wenn der Ollama-Server nicht erreichbar ist
      */
-    public boolean visionLoaded() {
-        if (settings.provider() != AiProvider.OLLAMA || !settings.vision()) {
+    public boolean modelLoaded(String model) {
+        if (settings.provider() != AiProvider.OLLAMA || model == null) {
             return true;
         }
         Set<String> loaded = new OllamaModelCatalog(ollama(timeoutMillis())).loaded();
-        String model = settings.visionModel();
         return loaded.contains(model) || !model.contains(":") && loaded.contains(model + ":latest");
     }
 
+    /** Ob das Vision-Modell geladen ist ({@link #modelLoaded}). */
+    public boolean visionLoaded() {
+        return !settings.vision() || modelLoaded(settings.visionModel());
+    }
+
     /**
-     * Der Anstoß zum Laden des Vision-Modells eines Ollama-Servers: kehrt erst zurück, wenn der Server es geladen hat,
-     * höchstens nach der Ladefrist ({@code load-timeout}). Ob es läuft, fragt der Aufrufer derweil mit
-     * {@link #visionLoaded()}. Für andere Dienste nichts.
+     * Wartet, bis {@code model} bei einem Ollama-Server läuft, bevor ein Prompt hinausgeht, wie AskAI: Läuft es nicht,
+     * meldet {@code onLoading} das einmal, das Laden wird einmal angestoßen ({@code POST /api/generate} läuft im
+     * Hintergrund weiter, auch wenn mehrere Aufrufer zugleich warten), und {@code GET /api/ps} wird im eingestellten
+     * Abstand ({@code load-poll-interval}) gefragt, bis es läuft, höchstens die Ladefrist ({@code load-timeout}).
+     * Für andere Dienste nichts.
      *
-     * @throws AiServiceException wenn der Server es nicht laden kann oder die Ladefrist abläuft
+     * @param cancelled bricht das Warten ab (dann kehrt die Methode zurück, ohne zu werfen)
+     * @throws AiServiceException wenn das Laden scheitert oder die Ladefrist abläuft
      */
-    public void loadVision() {
-        if (settings.provider() != AiProvider.OLLAMA || !settings.vision()) {
+    public void awaitModel(String model, Runnable onLoading, java.util.function.BooleanSupplier cancelled) {
+        if (settings.provider() != AiProvider.OLLAMA || model == null || modelLoaded(model)) {
             return;
         }
-        int millis = (int) Math.min(Integer.MAX_VALUE, settings.loadTimeout().toMillis());
-        new OllamaModelCatalog(ollama(millis)).load(settings.visionModel(), settings.contextTokens());
+        onLoading.run();
+        String key = settings.ollamaServer() + "\n" + model;
+        java.util.concurrent.CompletableFuture<Void> request = MODEL_LOADS.compute(key, (ignored, running) ->
+                running != null && !running.isDone() ? running
+                        : java.util.concurrent.CompletableFuture.runAsync(() -> loadModel(model), MODEL_LOADERS));
+        long deadline = System.nanoTime() + settings.loadTimeout().toNanos();
+        while (!cancelled.getAsBoolean() && !modelLoaded(model)) {
+            if (request.isDone()) {
+                try {
+                    request.join();
+                } catch (java.util.concurrent.CompletionException failed) {
+                    throw failed.getCause() instanceof AiServiceException cause ? cause
+                            : new AiServiceException(AiServiceException.Reason.UNREACHABLE, "Modell nicht geladen");
+                }
+                // Geladen, auch wenn der Server es unter anderem Namen führt.
+                return;
+            }
+            if (System.nanoTime() - deadline > 0) {
+                throw new AiServiceException(AiServiceException.Reason.TIMEOUT,
+                        "Modell nicht innerhalb der Ladefrist geladen");
+            }
+            try {
+                Thread.sleep(settings.loadPollInterval().toMillis());
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
+
+    /**
+     * Der Anstoß zum Laden eines Modells eines Ollama-Servers: kehrt erst zurück, wenn der Server es geladen hat,
+     * höchstens nach der Ladefrist ({@code load-timeout}).
+     */
+    private void loadModel(String model) {
+        int millis = (int) Math.min(Integer.MAX_VALUE, settings.loadTimeout().toMillis());
+        new OllamaModelCatalog(ollama(millis)).load(model, settings.contextTokens());
+    }
+
+    /** Laufende Anstöße zum Laden je Server und Modell: jedes Modell wird nur einmal zugleich angestoßen. */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+            java.util.concurrent.CompletableFuture<Void>> MODEL_LOADS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** Die Threads, auf denen die Anstöße laufen; sie warten nur auf den Server. */
+    private static final java.util.concurrent.ExecutorService MODEL_LOADERS =
+            java.util.concurrent.Executors.newCachedThreadPool(work -> {
+                Thread thread = new Thread(work, "ai-model-load");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     /**
      * Wie {@link #describeImage(byte[], String)} mit eigenem Prompt eines Beschreibbaren (etwa einer Marke eines

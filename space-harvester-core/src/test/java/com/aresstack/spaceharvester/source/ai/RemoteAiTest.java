@@ -347,6 +347,9 @@ class RemoteAiTest {
 
     @Test
     void streamsTheOllamaChatLineByLine() throws Exception {
+        // Ein Ollama-Server meldet die geladenen Modelle; hier läuft das Chat-Modell schon.
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"gemma4:12b","model":"gemma4:12b"}]}"""));
         server.createContext("/api/chat", exchange -> {
             exchange.getRequestBody().readAllBytes();
             respond(exchange, """
@@ -386,6 +389,65 @@ class RemoteAiTest {
 
         assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("Hallo");
         assertThat(deltas).containsExactly("Hal", "lo");
+    }
+
+    @Test
+    void theOllamaChatLoadsTheModelOnceAndWaitsUntilItRuns() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger loads = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean();
+        // Erst läuft das Modell nicht; der Anstoß lädt es, danach meldet /api/ps es.
+        server.createContext("/api/ps", exchange -> respond(exchange, running.get()
+                ? "{\"models\":[{\"name\":\"gemma4:12b\",\"model\":\"gemma4:12b\"}]}" : "{\"models\":[]}"));
+        server.createContext("/api/generate", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(body).contains("\"model\":\"gemma4:12b\"", "\"num_ctx\"");
+            loads.incrementAndGet();
+            running.set(true);
+            respond(exchange, "{\"done\":true}");
+        });
+        server.createContext("/api/chat", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            assertThat(running.get()).as("erst fragen, wenn das Modell läuft").isTrue();
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"OK"},"done":true,"done_reason":"stop"}
+                    """);
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "gemma4:12b", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA).withLoadPollInterval(java.time.Duration.ofMillis(10));
+        java.util.concurrent.atomic.AtomicInteger loading = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CompletableFuture<String> done = new java.util.concurrent.CompletableFuture<>();
+
+        remote(settings).chat().stream(new com.aresstack.spaceharvester.ai.AiChat.Request(
+                List.of(com.aresstack.spaceharvester.ai.AiChat.Message.user("Hallo?")), "gemma4:12b", null),
+                new com.aresstack.spaceharvester.ai.AiChat.Listener() {
+                    @Override
+                    public void loading() {
+                        loading.incrementAndGet();
+                    }
+
+                    @Override
+                    public void delta(String text) {
+                    }
+
+                    @Override
+                    public void completed(String text) {
+                        done.complete(text);
+                    }
+
+                    @Override
+                    public void failed(com.aresstack.spaceharvester.ai.AiChatException error) {
+                        done.completeExceptionally(error);
+                    }
+
+                    @Override
+                    public void cancelled() {
+                        done.cancel(false);
+                    }
+                });
+
+        assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("OK");
+        assertThat(loading.get()).as("„wird geladen“ einmal gemeldet").isEqualTo(1);
+        assertThat(loads.get()).as("einmal angestoßen").isEqualTo(1);
     }
 
     @Test
