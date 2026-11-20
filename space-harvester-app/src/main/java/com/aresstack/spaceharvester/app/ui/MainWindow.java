@@ -561,6 +561,32 @@ public final class MainWindow implements AppContext.Navigator {
         }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
     }
 
+    /** Indexieren aus dem Kontextmenü des Baums; das Ergebnis steht in der Statuszeile, der Auftrag unter Aufträge. */
+    @Override
+    public void index(String sourceId, String spaceKey, String pageId) {
+        notice("Indexieren wird gestartet …", Comic.MUTED);
+        Indexer.start(context, sourceId, spaceKey, pageId, started -> {
+            if (started.failed().isEmpty()) {
+                notice(started.jobs().isEmpty() ? "Kein Space zum Indexieren"
+                        : Texts.count(started.jobs().size(), "Space wird", "Spaces werden") + " indexiert",
+                        Comic.MUTED);
+            } else {
+                notice(String.join("; ", started.failed()), Comic.ORANGE);
+            }
+            if (!started.jobs().isEmpty()) {
+                showJob(started.jobs().get(0).id());
+            }
+        }, error -> notice("Indexieren ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
+    }
+
+    @Override
+    public void unindex(String sourceId, String spaceKey, String pageId) {
+        Indexer.stop(context, sourceId, spaceKey, pageId,
+                () -> notice("Nicht mehr indexiert; Geladenes bleibt und wird weiter aktuell gehalten", Comic.MUTED),
+                error -> notice("Markierung ließ sich nicht aufheben: " + Problems.describe(error).title(),
+                        Comic.RED));
+    }
+
     /** Kreispfeile im Baum: Quelle oder Space holen nach wie die Quellenkarte, eine Seite liest ihren Teilbaum neu. */
     @Override
     public void refresh(String sourceId, String spaceKey, String pageId) {

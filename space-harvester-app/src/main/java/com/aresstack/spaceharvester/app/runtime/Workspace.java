@@ -1203,6 +1203,33 @@ public final class Workspace {
     }
 
     /**
+     * Indexieren (Angelo, 20.11.2026): markiert die Seite samt Unterseiten, ohne {@code pageId} den ganzen Space, und
+     * startet den Abgleich in der Betriebsart {@code mode}. Die markierten Seiten lädt er vollständig, Bilder und
+     * Anhänge folgen als eigene Aufträge; jede spätere Synchronisierung hält sie aktuell.
+     *
+     * @throws com.aresstack.spaceharvester.application.sync.SyncAlreadyRunningException wenn der Space gerade abgleicht;
+     *                                                                                   markiert ist er trotzdem
+     */
+    public JobStatus index(String sourceId, String spaceKey, String pageId, SyncMode mode) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        harvester.spaceKeys().requireExisting(sourceId, spaceKey);
+        JobStatus status = harvester.indexing().index(sourceId, spaceKey, pageId, Harvester.OWNER, mode);
+        activities.remember(status.id());
+        return status;
+    }
+
+    /** Hebt die Markierung genau dieser Wurzel auf; Geladenes bleibt und wird weiter aktuell gehalten. */
+    public void unindex(String sourceId, String spaceKey, String pageId) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        harvester.indexing().unindex(sourceId, spaceKey, pageId);
+    }
+
+    /** Ob genau diese Wurzel zum Indexieren markiert ist, ohne {@code pageId} der ganze Space; liest nur die Ablage. */
+    public boolean indexed(String sourceId, String spaceKey, String pageId) {
+        return harvester.indexing().marks().marked(sourceId, spaceKey, pageId);
+    }
+
+    /**
      * Katalogstand eines Space im Cache, ohne Quellenzugriff ({@code GET …/spaces/{key}/catalog}): erfasst oder nicht,
      * bekannte Seiten und Seiten mit Inhalt.
      */

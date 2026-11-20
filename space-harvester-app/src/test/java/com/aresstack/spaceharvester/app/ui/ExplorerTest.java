@@ -415,12 +415,12 @@ class ExplorerTest {
                         .isLessThanOrEqualTo(visible);
             }
             assertThat(tree.getPreferredSize().width).as("keine waagerechte Scrollleiste").isLessThanOrEqualTo(visible);
-            // Die lange Zeile: Label mit rechtem Rand für die drei Spalten, Titel breiter als der Platz davor.
+            // Die lange Zeile: Label mit rechtem Rand für die zwei Spalten, Titel breiter als der Platz davor.
             javax.swing.tree.TreePath path = tree.getSelectionPath();
             javax.swing.JLabel label = (javax.swing.JLabel) tree.getCellRenderer().getTreeCellRendererComponent(tree,
                     path.getLastPathComponent(), true, false, true, tree.getRowForPath(path), false);
             java.awt.Rectangle bounds = tree.getPathBounds(path);
-            assertThat(label.getInsets().right).isEqualTo(30 + 30 + 22);
+            assertThat(label.getInsets().right).isEqualTo(30 + 22);
             label.setSize(bounds.width, bounds.height);
             int available = bounds.width - label.getInsets().right - label.getIcon().getIconWidth()
                     - label.getIconTextGap();
@@ -511,30 +511,32 @@ class ExplorerTest {
             assertThat(selections.get(selections.size() - 1)).isNull();
         });
 
-        // Der Download-Knopf daneben lädt jede Quelle mit allen Spaces (je Space ein Auftrag, wie einzeln).
-        List<String> downloaded = new java.util.ArrayList<>();
+        // „Alles indexieren“ im Kontextmenü der Überschrift indexiert jede Quelle mit allen Spaces (je Space ein
+        // Auftrag, wie einzeln).
+        List<String> indexed = new java.util.ArrayList<>();
         context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
                 getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("download") && args[1] instanceof List<?> keys) {
-                        downloaded.add(args[0] + ":" + keys);
+                    if (method.getName().equals("index")) {
+                        indexed.add(args[0] + ":" + args[1] + ":" + args[2]);
                     }
                     return null;
                 }));
         List<Boolean> answers = new java.util.ArrayList<>(List.of(false, true));
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(explorer[0].downloadAllButton().getToolTipText()).isEqualTo(Explorer.DOWNLOAD_ALL_TIP);
-            // Erst die Rückfrage (Ja/Nein, „wirklich“): bei Nein passiert nichts, bei Ja lädt jede Quelle.
-            explorer[0].confirmDownloadAll(parent -> answers.remove(0));
-            explorer[0].downloadAllButton().doClick();
-            assertThat(downloaded).isEmpty();
-            explorer[0].downloadAllButton().doClick();
+            javax.swing.JMenuItem all = (javax.swing.JMenuItem) explorer[0].headMenu().getComponent(0);
+            assertThat(all.getText()).isEqualTo(Explorer.INDEX_ALL);
+            // Erst die Rückfrage (Ja/Nein, „wirklich“): bei Nein passiert nichts, bei Ja indexiert jede Quelle.
+            explorer[0].confirmIndexAll(parent -> answers.remove(0));
+            all.doClick();
+            assertThat(indexed).isEmpty();
+            all.doClick();
         });
         assertThat(answers).isEmpty();
-        assertThat(Explorer.DOWNLOAD_ALL_QUESTION).containsIgnoringCase("wirklich");
-        assertThat(downloaded).containsExactly("handbuch:[]");
+        assertThat(Explorer.INDEX_ALL_QUESTION).containsIgnoringCase("wirklich");
+        assertThat(indexed).containsExactly("handbuch:null:null");
     }
 
-    /** Die Hervorhebung des Sterns folgt der Maus über dem Stern, nicht über dem Download-Symbol (Angelo, 16.11.2026). */
+    /** Die Hervorhebung des Sterns folgt der Maus über dem Stern (Angelo, 16.11.2026). */
     @Test
     void theStarHighlightsOnlyUnderTheMouse() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
@@ -595,40 +597,34 @@ class ExplorerTest {
             javax.swing.tree.TreePath path = tree.getSelectionPath();
             int row = tree.getRowForPath(path);
             java.awt.Rectangle bounds = tree.getPathBounds(path);
-            // Spalten von rechts: Download (30), Stern (30), Bestandszeichen (22).
+            // Spalten von rechts: Stern (30), Bestandszeichen (22); das Download-Symbol ist weg (Angelo, 20.11.2026).
             int y = bounds.y + bounds.height / 2;
             move(tree, bounds.x + bounds.width - 15, y);
-            assertThat(explorer[0].hoverRow()).isEqualTo(row);
-            assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
-            assertThat(tree.getToolTipText()).isEqualTo(Explorer.DOWNLOAD_TIP);
-            move(tree, bounds.x + bounds.width - 45, y);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(row);
-            assertThat(explorer[0].hoverRow()).isEqualTo(-1);
             assertThat(tree.getToolTipText()).isEqualTo(Explorer.STAR_TIP);
             move(tree, bounds.x + 5, y);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
-            assertThat(explorer[0].hoverRow()).isEqualTo(-1);
             // Der Zustandspunkt links vom Stern: Kreispfeile unter der Maus, Klick holt die Seite samt Teilbaum nach.
-            move(tree, bounds.x + bounds.width - 60 - 11, y);
+            move(tree, bounds.x + bounds.width - 30 - 11, y);
             assertThat(explorer[0].hoverBadgeRow()).isEqualTo(row);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
             assertThat(tree.getToolTipText()).endsWith(Explorer.REFRESH_TIP);
-            click(tree, bounds.x + bounds.width - 60 - 11, y);
+            click(tree, bounds.x + bounds.width - 30 - 11, y);
             assertThat(refreshed).containsExactly("handbuch/" + space.spaceKey() + "/" + page.pageId());
-            // Die Wurzel der Quelle (Zeile 0) trägt dieselben Spalten: Zustandspunkt, Stern, Download.
+            // Die Wurzel der Quelle (Zeile 0) trägt dieselben Spalten: Zustandspunkt und Stern.
             java.awt.Rectangle top = tree.getRowBounds(0);
             assertThat(((Explorer.Node) tree.getPathForRow(0).getLastPathComponent()).item())
                     .isInstanceOf(Explorer.SourceItem.class);
             int ty = top.y + top.height / 2;
-            move(tree, top.x + top.width - 60 - 11, ty);
+            move(tree, top.x + top.width - 30 - 11, ty);
             assertThat(explorer[0].hoverBadgeRow()).isZero();
-            click(tree, top.x + top.width - 60 - 11, ty);
+            click(tree, top.x + top.width - 30 - 11, ty);
             assertThat(refreshed).hasSize(2);
             assertThat(refreshed.get(1)).isEqualTo("handbuch/null/null");
             // Der Stern an der Quelle merkt die ganze Quelle als Favorit (Angelo, 16.11.2026).
-            move(tree, top.x + top.width - 45, ty);
+            move(tree, top.x + top.width - 15, ty);
             assertThat(explorer[0].hoverStarRow()).isZero();
-            click(tree, top.x + top.width - 45, ty);
+            click(tree, top.x + top.width - 15, ty);
             assertThat(context.favorites().contains("handbuch", null, null)).isTrue();
             assertThat(context.favorites().all().get(0).isSource()).isTrue();
             assertThat(context.favorites().all().get(0).title()).isEqualTo("Handbuch");

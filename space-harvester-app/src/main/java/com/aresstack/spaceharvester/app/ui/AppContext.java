@@ -164,6 +164,18 @@ public final class AppContext {
         }
 
         /**
+         * Indexieren (Angelo, 20.11.2026): markiert den Knoten und startet sofort den Abgleich, der ihn vollständig lädt;
+         * danach hält ihn jede Synchronisierung aktuell, auch neue Seiten. Ohne {@code spaceKey} jeder Space der
+         * Quelle, ohne {@code pageId} der ganze Space, sonst die Seite samt Unterseiten.
+         */
+        default void index(String sourceId, String spaceKey, String pageId) {
+        }
+
+        /** Hebt die Markierung genau dieses Knotens auf (Space bzw. Seite); Geladenes bleibt. */
+        default void unindex(String sourceId, String spaceKey, String pageId) {
+        }
+
+        /**
          * Holt die Änderungen eines Knotens samt Teilbaum aus der Quelle nach (Kreispfeile im Baum, Angelo
          * 16.11.2026): ohne {@code spaceKey} jeden Space der Quelle, mit {@code spaceKey} diesen Space (Nachholen wie
          * auf der Quellenkarte), mit {@code pageId} die Seite samt Unterseiten neu aus der Quelle.

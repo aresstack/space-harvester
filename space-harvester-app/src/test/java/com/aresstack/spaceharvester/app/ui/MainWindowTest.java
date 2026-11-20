@@ -244,18 +244,19 @@ class MainWindowTest {
                 .as("Titelfilter findet die Seite").isEqualTo(1));
         SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], home.resolve("explorer.png")));
 
-        // Rechtsbündig am Space das Download-Symbol: ein Klick startet den Auftrag sofort, ohne Dialog.
+        // „Indexieren“ im Kontextmenü des Space: markiert ihn und startet den Abgleich sofort, ohne Dialog.
         List<String> jobsBefore = context.runtime().workspace().jobs().stream().map(JobStatus::id).toList();
         SwingUtilities.invokeAndWait(() -> {
             window[0].explorer().filter().setText("");
-            java.awt.Rectangle row = tree.getRowBounds(1);
-            java.awt.Point icon = new java.awt.Point(row.x + row.width - 10, row.y + row.height / 2);
-            for (java.awt.event.MouseListener listener : tree.getMouseListeners()) {
-                listener.mouseClicked(new MouseEvent(tree, MouseEvent.MOUSE_CLICKED, 0, 0, icon.x, icon.y, 1, false,
-                        MouseEvent.BUTTON1));
-            }
+            Explorer.Item spaceNode = ((Explorer.Node) tree.getPathForRow(1).getLastPathComponent()).item();
+            assertThat(spaceNode).isInstanceOf(Explorer.SpaceItem.class);
+            javax.swing.JPopupMenu menu = window[0].explorer().menu(spaceNode);
+            javax.swing.JMenuItem index = (javax.swing.JMenuItem) java.util.Arrays.stream(menu.getComponents())
+                    .filter(c -> c instanceof javax.swing.JMenuItem item && Explorer.INDEX.equals(item.getText()))
+                    .findFirst().orElseThrow();
+            index.doClick();
         });
-        // Der Export plant nach dem Veröffentlichen selbst einen Folgeauftrag ein (Bilder); gezählt wird, was der Klick
+        // Der Abgleich plant danach selbst Folgeaufträge ein (Anreicherung, Bilder); gezählt wird, was der Klick
         // startet.
         List<JobStatus> clicked = List.of();
         for (int i = 0; i < 100 && clicked.isEmpty(); i++) {
@@ -264,7 +265,7 @@ class MainWindowTest {
                     .filter(j -> !j.type().followUp()).toList();
         }
         assertThat(clicked).as("vom Klick gestartete Aufträge").singleElement()
-                .extracting(JobStatus::type).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.EXPORT);
+                .extracting(JobStatus::type).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.SYNC);
         SwingUtilities.invokeAndWait(() -> {
             window[0].showJob(job);
             window[0].showDiagnosis(job);

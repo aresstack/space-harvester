@@ -108,18 +108,19 @@ class ExplorerAnalyzeTest {
     }
 
     @Test
-    void entriesFollowDownloadInTheRightOrder() throws Exception {
+    void entriesFollowIndexingInTheRightOrder() throws Exception {
         useFakes();
-        // „Favorit“ und „Änderungen nachholen“ stehen hinter Herunterladen, auch an der Quelle (Angelo, 16.11.2026).
-        assertThat(labels(LEAF)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
-                Explorer.ANALYZE, Explorer.CHECK, Explorer.PAGE_ONLY);
-        assertThat(labels(PARENT)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
-                Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.CHECK, Explorer.CHECK_PAGE, Explorer.PAGE_ONLY);
-        assertThat(labels(UNKNOWN)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
-                Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.CHECK, Explorer.CHECK_PAGE, Explorer.PAGE_ONLY);
-        assertThat(labels(SPACE)).containsExactly("Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
+        // „Indexieren“ zuerst, „Seite indexieren“ nur an Seiten mit Unterseiten (Angelo, 20.11.2026); dahinter
+        // „Favorit“ und „Änderungen nachholen“, auch an der Quelle (Angelo, 16.11.2026).
+        assertThat(labels(LEAF)).containsExactly("Öffnen", Explorer.INDEX, Explorer.FAVORITE, Explorer.REFRESH,
                 Explorer.ANALYZE, Explorer.CHECK);
-        assertThat(labels(SOURCE)).containsExactly("Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
+        assertThat(labels(PARENT)).containsExactly("Öffnen", Explorer.INDEX, Explorer.PAGE_ONLY, Explorer.FAVORITE,
+                Explorer.REFRESH, Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.CHECK, Explorer.CHECK_PAGE);
+        assertThat(labels(UNKNOWN)).containsExactly("Öffnen", Explorer.INDEX, Explorer.PAGE_ONLY, Explorer.FAVORITE,
+                Explorer.REFRESH, Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.CHECK, Explorer.CHECK_PAGE);
+        assertThat(labels(SPACE)).containsExactly(Explorer.INDEX, Explorer.FAVORITE, Explorer.REFRESH,
+                Explorer.ANALYZE, Explorer.CHECK);
+        assertThat(labels(SOURCE)).containsExactly(Explorer.INDEX, Explorer.FAVORITE, Explorer.REFRESH,
                 Explorer.ANALYZE, Explorer.CHECK);
         assertThat(labels(new Explorer.MoreItem("c"))).isEmpty();
         assertThat(labels(new Explorer.Note(Explorer.LOADING))).isEmpty();
@@ -154,7 +155,7 @@ class ExplorerAnalyzeTest {
         JMenuItem only = entry(PARENT, Explorer.ANALYZE_PAGE);
         assertThat(only.isEnabled()).isFalse();
         assertThat(only.getToolTipText()).isEqualTo(Explorer.ANALYZE_UNAVAILABLE);
-        assertThat(entry(PARENT, "Herunterladen").isEnabled()).isTrue();
+        assertThat(entry(PARENT, Explorer.INDEX).isEnabled()).isTrue();
     }
 
     @Test
