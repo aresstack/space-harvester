@@ -432,7 +432,7 @@ class SetupWizardTest {
             AiSettingsPanel panel = new AiSettingsPanel(context);
             javax.swing.JComponent models = panel.modelsComponent();
             // Hoch genug für alle Zeilen: Reicht die Höhe nicht, legt das Raster nach Mindestgrößen aus.
-            models.setSize(700, 1300);
+            models.setSize(700, 1500);
             layout(models);
             assertThat(panel.dimensions.isVisible()).as("Dimension unter „Erweitert“").isFalse();
             assertThat(panel.simplifyParallel.getParent().isVisible()).as("Abschnitte zugleich unter „Erweitert“").isFalse();
