@@ -3,10 +3,12 @@ package com.aresstack.spaceharvester.application.sync;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Fragt jede in einer bestätigten Inventur fehlende Seite einzeln bei der Quelle nach, bevor sie entfernt wird.
@@ -18,6 +20,11 @@ import java.util.Objects;
  * <p>Nach ADR 0014, Punkt 4, ist „nicht gefunden“ nur dann eine Löschung, wenn die Quelle das autoritativ bestätigt
  * ({@link com.aresstack.spaceharvester.application.sources.HarvestSource#confirmsDeletion()}); Confluence antwortet
  * auch mit 404, wenn das technische Konto die Seite nicht mehr sehen darf.
+ *
+ * <p>Findet die Quelle eine fehlende Seite, führt sie aber unter einer anderen ID, die diese Inventur listet, ist die
+ * alte ID nur eine veraltete Doppelung (etwa nach einer geänderten Adressbildung der Quelle, bei BSCW Ordner mit und
+ * ohne Schrägstrich am Ende): Sie gilt als gelöscht, die Seite selbst bleibt unter ihrer heutigen ID. Sonst hielte die
+ * alte ID jede Generation als „doch vorhanden“ auf.
  *
  * <p>Eine Seite außerhalb des Umfangs einer Quelle mit Startpunkten
  * ({@link com.aresstack.spaceharvester.application.sources.HarvestSource#outsideScope}) gilt ohne Einzelabfrage als
@@ -83,14 +90,17 @@ public class RemovalCheck {
             return results;
         }
         boolean confirmsDeletion = queries.confirmsDeletion(plan.inventory().sourceId());
+        Set<String> listed = new HashSet<>();
+        plan.inventory().pages().forEach(entry -> listed.add(entry.page().pageId()));
         for (PageChange change : missing) {
             results.put(change.pageId(), verify(plan.inventory().sourceId(), plan.inventory().spaceKey(),
-                    change.pageId(), confirmsDeletion));
+                    change.pageId(), confirmsDeletion, listed));
         }
         return results;
     }
 
-    private Result verify(String sourceId, String spaceKey, String pageId, boolean confirmsDeletion) {
+    private Result verify(String sourceId, String spaceKey, String pageId, boolean confirmsDeletion,
+                          Set<String> listed) {
         try {
             if (queries.outsideScope(sourceId, pageId)) {
                 // Außerhalb von Startpunkten und Tiefe laut vollständiger Discovery dieses Laufs: fällt ohne
@@ -98,6 +108,11 @@ public class RemovalCheck {
                 return new Result(pageId, Verdict.DELETED, null, null);
             }
             PageMetadataListing.Entry current = queries.pageMetadata(sourceId, pageId).entry();
+            String currentId = current.page().pageId();
+            if (!pageId.equals(currentId) && listed.contains(currentId)) {
+                // Dieselbe Seite unter ihrer heutigen ID, und die listet die Inventur: die alte ID ist eine Doppelung.
+                return new Result(pageId, Verdict.DELETED, null, null);
+            }
             Verdict verdict = spaceKey.equals(current.page().partitionKey())
                     ? Verdict.STILL_PRESENT : Verdict.MOVED_OUT;
             return new Result(pageId, verdict, current, null);
