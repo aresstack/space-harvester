@@ -18,11 +18,34 @@ public interface VideoMedia {
      *
      * @param existing  das abgelegte Transkript oder {@code null}
      * @param partial   bekommt nach jedem neuen Abschnitt den ganzen bisherigen Text, damit er sofort abgelegt wird
+     * @param progress  bekommt die Länge des Videos und die Zeit, bis zu der das Transkript reicht
      * @param cancelled ob der Auftrag abgebrochen oder angehalten wurde; dann endet die Transkription bald
      * @return das ganze Transkript im Format der Ablage ({@link TranscriptSections})
      * @throws Exception wenn das Video oder das Sprachmodell nicht lesbar ist
      */
-    String transcribe(String existing, Consumer<String> partial, BooleanSupplier cancelled) throws Exception;
+    String transcribe(String existing, Consumer<String> partial, Progress progress, BooleanSupplier cancelled)
+            throws Exception;
+
+    /** Wie weit die Transkription ist, gemessen an der Zeit im Video. */
+    interface Progress {
+
+        /** Die Länge des Videos; einmal, sobald sie bekannt ist. */
+        void duration(long millis);
+
+        /** Bis hierhin reicht das Transkript jetzt, auch das schon vorhandene. */
+        void reached(long millis);
+
+        /** Meldet nichts. */
+        Progress NONE = new Progress() {
+            @Override
+            public void duration(long millis) {
+            }
+
+            @Override
+            public void reached(long millis) {
+            }
+        };
+    }
 
     /**
      * Zieht die Standbilder dieser Marken als PNG.
@@ -35,7 +58,8 @@ public interface VideoMedia {
     /** Ohne Video: kein Transkript und keine Standbilder über das Abgelegte hinaus. */
     VideoMedia NONE = new VideoMedia() {
         @Override
-        public String transcribe(String existing, Consumer<String> partial, BooleanSupplier cancelled) {
+        public String transcribe(String existing, Consumer<String> partial, Progress progress,
+                                 BooleanSupplier cancelled) {
             return existing;
         }
 

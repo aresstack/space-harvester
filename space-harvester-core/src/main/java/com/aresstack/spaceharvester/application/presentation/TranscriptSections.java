@@ -87,6 +87,36 @@ public final class TranscriptSections {
         return sections;
     }
 
+    /**
+     * Der Teil des Transkripts, an den eine fortgesetzte Erkennung anhängt, wörtlich wie abgelegt: ohne einen letzten
+     * Abschnitt ohne Ende (ältere Transkripte), der von seinem Anfang an neu erkannt wird; endet mit einer Leerzeile.
+     * Leer ohne Transkript.
+     */
+    public static String completedPart(String transcript) {
+        if (transcript == null || transcript.isBlank()) {
+            return "";
+        }
+        Matcher matcher = SECTION.matcher(transcript);
+        int lastStart = -1;
+        boolean ended = true;
+        while (matcher.find()) {
+            lastStart = matcher.start();
+            ended = matcher.group(4) != null;
+        }
+        String kept = lastStart >= 0 && !ended ? transcript.substring(0, lastStart) : transcript;
+        kept = kept.stripTrailing();
+        return kept.isEmpty() ? "" : kept + "\n\n";
+    }
+
+    /** Bis wohin das Transkript reicht: das späteste Ende oder ohne Ende der späteste Anfang; 0 ohne Abschnitte. */
+    public static long reach(String transcript) {
+        long reach = 0;
+        for (Section section : parse(transcript)) {
+            reach = Math.max(reach, section.endMillis());
+        }
+        return reach;
+    }
+
     /** Das Transkript aus Abschnitten im Format der Ablage. */
     public static String render(List<Section> sections) {
         StringBuilder text = new StringBuilder();

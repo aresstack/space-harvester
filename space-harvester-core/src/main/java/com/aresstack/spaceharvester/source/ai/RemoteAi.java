@@ -324,10 +324,11 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        ChatCompletionPort adapter = chatPort(settings.chatModel(), (int) EXPANSION_TIMEOUT.toMillis());
         int maxTokens = settings.chatMaxTokens();
         ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens).build();
         return (instructions, input) -> {
+            ChatCompletionPort adapter = chatPort(settings.chatModel(),
+                    awaitedTimeout(settings.chatModel(), (int) EXPANSION_TIMEOUT.toMillis()));
             try {
                 return complete(adapter.complete(new ChatRequest(
                         List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)), maxTokens, true);
@@ -535,7 +536,8 @@ public final class RemoteAi {
                 throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED,
                         "KI-Dienst oder Vision-Modell fehlt");
             }
-            ChatCompletionPort adapter = chatPort(settings.visionModel(), timeoutMillis());
+            ChatCompletionPort adapter = chatPort(settings.visionModel(),
+                    awaitedTimeout(settings.visionModel(), timeoutMillis()));
             try {
                 return adapter.complete(new ChatRequest(List.of(ChatMessage.userWithImages(instruction,
                         List.of(new com.aresstack.enterpriseai.astu.chat.ChatImage(mediaType, image)))),
@@ -547,7 +549,8 @@ public final class RemoteAi {
         if (!settings.vision()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Vision-Modell fehlt");
         }
-        ChatCompletionPort adapter = chatPort(settings.visionModel(), timeoutMillis());
+        ChatCompletionPort adapter = chatPort(settings.visionModel(),
+                awaitedTimeout(settings.visionModel(), timeoutMillis()));
         String model = settings.visionModel();
         SourceImageAnalysisUseCase useCase = new SourceImageAnalysisUseCase(List::of, adapter, () -> null,
                 () -> model, NO_CACHE);
@@ -700,6 +703,30 @@ public final class RemoteAi {
         }
         String key = settings.apiKey();
         return new OpenAiCompatibleEmbeddingAdapter(config.build(), () -> key == null ? null : key.toCharArray());
+    }
+
+    /**
+     * Die Lesefrist einer Anfrage an {@code model}, die nicht gestreamt wird (Bildbeschreibung, Textschritte): Bei
+     * Ollama wartet sie erst, bis das Modell läuft ({@link #awaitModel}), und darf dann so lange dauern wie das Laden
+     * ({@code load-timeout}): Ein lokaler Server bearbeitet Anfragen nacheinander, und das erste Token nach einem
+     * frischen Laden kam schon nach mehr als 30 s (Angelo 20.11.2026: „Folien beschreiben“ scheiterte an der ersten
+     * Folie). Andere Dienste: {@code normalMillis}.
+     *
+     * @throws AiServiceException {@code TIMEOUT}, wenn die Ladefrist abläuft
+     */
+    private int awaitedTimeout(String model, int normalMillis) {
+        if (settings.provider() != AiProvider.OLLAMA || model == null) {
+            return normalMillis;
+        }
+        try {
+            awaitModel(model, () -> { }, () -> false);
+        } catch (AiServiceException e) {
+            if (e.reason() == AiServiceException.Reason.TIMEOUT) {
+                throw e;
+            }
+            // Ohne Auskunft über laufende Modelle (etwa ein Vermittler ohne /api/ps) fragt die Anfrage selbst.
+        }
+        return (int) Math.max(normalMillis, Math.min(Integer.MAX_VALUE, settings.loadTimeout().toMillis()));
     }
 
     private int timeoutMillis() {

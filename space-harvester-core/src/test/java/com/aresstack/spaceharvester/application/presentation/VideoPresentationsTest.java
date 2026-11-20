@@ -87,4 +87,25 @@ class VideoPresentationsTest {
         store.remove(page);
         assertThat(store.corrected(page, "v1")).isEmpty();
     }
+
+    @Test
+    void anExistingTranscriptIsOnlyExtendedNeverReplacedByAShorterOne() {
+        String existing = "[00:00:00 – 00:00:30] Willkommen.\n\n[00:00:30 – 00:01:00] Erste Folie.\n\n";
+        assertThat(VideoPresentations.extendsTranscript(existing + "[00:01:00 – 00:01:20] Zweite.\n\n", existing))
+                .isTrue();
+        assertThat(VideoPresentations.extendsTranscript("[00:00:00 – 00:00:30] Neu erkannt.\n\n", existing))
+                .isFalse();
+        assertThat(VideoPresentations.extendsTranscript("[00:00:00 – 00:00:30] Willkommen.\n\n", existing))
+                .isFalse();
+        assertThat(VideoPresentations.extendsTranscript("[00:00:00 – 00:00:30] Erstes.\n\n", null)).isTrue();
+        assertThat(VideoPresentations.extendsTranscript(" ", null)).isFalse();
+    }
+
+    @Test
+    void aSlideWithoutDescriptionSaysWhy() {
+        assertThat(VideoPresentations.slideReason("model-busy")).contains("belegt");
+        assertThat(VideoPresentations.slideReason("not-ready")).contains("Standbild");
+        assertThat(VideoPresentations.slideReason("model-failed")).contains("Vision-Modell");
+        assertThat(VideoPresentations.slideReason(null)).isEqualTo("unbekannter Grund");
+    }
 }

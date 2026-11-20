@@ -50,31 +50,29 @@ public final class VideoPresentationMedia implements VideoMedia {
     }
 
     @Override
-    public String transcribe(String existing, Consumer<String> partial, BooleanSupplier cancelled) throws Exception {
-        List<TranscriptSections.Section> sections = TranscriptSections.parse(existing);
-        StringBuilder text = new StringBuilder();
-        long resume = 0;
-        if (!sections.isEmpty()) {
-            TranscriptSections.Section last = sections.get(sections.size() - 1);
-            boolean lastEnded = last.endMillis() > last.startMillis();
-            // Kennt der letzte Abschnitt kein Ende (ältere Transkripte), wird er von seinem Anfang an neu erkannt.
-            List<TranscriptSections.Section> kept = lastEnded ? sections
-                    : sections.subList(0, sections.size() - 1);
-            text.append(TranscriptSections.render(kept));
-            resume = lastEnded ? last.endMillis() : last.startMillis();
-        }
-        // Vollständig nur, wenn der letzte Abschnitt ein Ende hat und es (fast) das Ende des Videos ist; sonst wird der
-        // Rest erkannt, auch ein letztes, unvollendetes Fenster.
-        boolean ended = !sections.isEmpty()
-                && sections.get(sections.size() - 1).endMillis() > sections.get(sections.size() - 1).startMillis();
+    public String transcribe(String existing, Consumer<String> partial, Progress progress, BooleanSupplier cancelled)
+            throws Exception {
+        // Das vorhandene Transkript bleibt wörtlich stehen; nur ein letzter Abschnitt ohne Ende (ältere Transkripte)
+        // wird von seinem Anfang an neu erkannt. Neues kommt dahinter (Angelo 20.11.2026: wiederverwenden, nur
+        // vervollständigen).
+        String kept = TranscriptSections.completedPart(existing);
+        StringBuilder text = new StringBuilder(kept);
+        long resume = TranscriptSections.reach(kept);
         long duration = SlideChanges.durationMillis(remote::read, size);
-        if (ended && duration > 0 && resume >= duration - COMPLETE_TOLERANCE_MILLIS) {
+        if (duration > 0) {
+            progress.duration(duration);
+        }
+        progress.reached(resume);
+        // Vollständig, wenn der fertige Teil (fast) bis zum Ende des Videos reicht; sonst wird der Rest erkannt, auch
+        // ein letztes, unvollendetes Fenster.
+        if (!kept.isEmpty() && kept.strip().equals(existing.strip()) && duration > 0
+                && resume >= duration - COMPLETE_TOLERANCE_MILLIS) {
             return existing;
         }
         try (VideoTranscriptSource source = new VideoTranscriptSource(size, remote, settings)) {
             VideoTranscriptSource.AudioOnly audio = source.openAudioOnly(resume);
             if (cancelled.getAsBoolean()) {
-                return text.toString();
+                return existing == null ? text.toString() : existing;
             }
             transcription.execute(audio.address(), audio.startMillis(), Math.max(resume, audio.startMillis()),
                     WhisperModelLocation.resolve(), cancelled, segment -> {
@@ -82,6 +80,7 @@ public final class VideoPresentationMedia implements VideoMedia {
                             text.append(line(segment));
                             partial.accept(text.toString());
                         }
+                        progress.reached(segment.endMillis());
                     }, new TranscriptionStatusListener() {
                         @Override
                         public void onDecodedSeconds(long seconds) {

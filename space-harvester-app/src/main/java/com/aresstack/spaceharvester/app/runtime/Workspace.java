@@ -1767,8 +1767,10 @@ public final class Workspace {
      * oder nicht mehr sichtbarer Auftrag gilt als unbekannt.
      */
     public List<JobEvent> events(String jobId) {
-        job(jobId);
-        return harvester.events(jobId);
+        JobStatus status = job(jobId);
+        // Läufe des Aufrufers (Aussagenanalyse, „In PPTX umwandeln“ …) gehören ihm, nicht dem Core.
+        return Harvester.OWNER.equals(status.owner()) ? harvester.events(jobId)
+                : harvester.jobs().events(jobId, status.owner());
     }
 
     /**
