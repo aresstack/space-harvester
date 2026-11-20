@@ -1,7 +1,5 @@
 package com.aresstack.spaceharvester.app.ui;
 
-import com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton;
-
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JTable;
@@ -176,9 +174,9 @@ final class ReaderFind {
             collectLabel((JLabel) component, needle);
             return;
         }
-        if (component instanceof ResearchPillButton) {
+        if (component instanceof FindablePill) {
             // Die Pillen der Begriffsansicht (Akronyme, Bezeichner) sind Knöpfe mit eigenem Text.
-            collectPill((ResearchPillButton) component, needle);
+            collectPill((FindablePill) component, needle);
             return;
         }
         if (component instanceof Container) {
@@ -297,7 +295,7 @@ final class ReaderFind {
         }
     }
 
-    private void collectPill(ResearchPillButton pill, String needle) {
+    private void collectPill(FindablePill pill, String needle) {
         String text = pill.getText();
         if (text != null && text.toLowerCase(Locale.ROOT).contains(needle)) {
             hits.add(Hit.pill(pill, text));
@@ -439,7 +437,7 @@ final class ReaderFind {
         final JTable table;
         final Cell cell;
         final JLabel label;
-        final ResearchPillButton pill;
+        final FindablePill pill;
         final String found;
         /** Dokument und Länge zur Zeit der Suche, um veraltete Stellen zu erkennen. */
         Document document;
@@ -447,7 +445,7 @@ final class ReaderFind {
         Object tag;
 
         private Hit(JTextComponent text, int start, int end, JTable table, Cell cell, JLabel label,
-                    ResearchPillButton pill, String found) {
+                    FindablePill pill, String found) {
             this.text = text;
             this.start = start;
             this.end = end;
@@ -473,7 +471,7 @@ final class ReaderFind {
             return new Hit(null, 0, 0, null, null, label, null, found);
         }
 
-        static Hit pill(ResearchPillButton pill, String found) {
+        static Hit pill(FindablePill pill, String found) {
             return new Hit(null, 0, 0, null, null, null, pill, found);
         }
     }

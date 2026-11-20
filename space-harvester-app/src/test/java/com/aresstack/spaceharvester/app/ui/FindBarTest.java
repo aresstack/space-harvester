@@ -65,13 +65,13 @@ class FindBarTest {
     void pillsOfTheTermsViewAreFound() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             JPanel page = new JPanel();
-            com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton first =
-                    new com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton("Holzapfel-Hüttenrauch", 26, 26,
+            FindablePill first =
+                    new FindablePill("Holzapfel-Hüttenrauch", 26, 26,
                             10);
-            com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton second =
-                    new com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton("Holzmann-Kaiser", 26, 26, 10);
-            com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton other =
-                    new com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton("Workshop", 26, 26, 10);
+            FindablePill second =
+                    new FindablePill("Holzmann-Kaiser", 26, 26, 10);
+            FindablePill other =
+                    new FindablePill("Workshop", 26, 26, 10);
             page.add(first);
             page.add(second);
             page.add(other);

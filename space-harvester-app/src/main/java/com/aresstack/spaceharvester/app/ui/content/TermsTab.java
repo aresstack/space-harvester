@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.FindablePill;
 import com.aresstack.spaceharvester.app.ui.Pager;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.Relation;
@@ -509,8 +510,8 @@ final class TermsTab extends JPanel {
     }
 
     /** Ein Begriff der Auswahl: Klick zeigt die Seiten mit Fundstellen als Overlay am Begriff. */
-    private ResearchPillButton chip(TermQueries.TermSummary term) {
-        ResearchPillButton chip = chip(selectionLabel(term), selectionTooltip(term), List.of());
+    private FindablePill chip(TermQueries.TermSummary term) {
+        FindablePill chip = chip(selectionLabel(term), selectionTooltip(term), List.of());
         chip.setEnabled(true);
         for (java.awt.event.ActionListener listener : chip.getActionListeners()) {
             chip.removeActionListener(listener);
@@ -635,8 +636,8 @@ final class TermsTab extends JPanel {
         return text.toString().stripTrailing();
     }
 
-    private ResearchPillButton chip(String label, String tooltip, List<Span> spans) {
-        ResearchPillButton chip = new ResearchPillButton(label, 26, 26, 10);
+    private FindablePill chip(String label, String tooltip, List<Span> spans) {
+        FindablePill chip = new FindablePill(label, 26, 26, 10);
         chip.setFont(Comic.semiBold(12f));
         chip.setFills(Comic.SURFACE, ResearchUiPalette.SECONDARY_SURFACE, ResearchUiPalette.ACCENT_BLUE);
         chip.setForegrounds(Comic.INK, Color.WHITE, Color.WHITE);
