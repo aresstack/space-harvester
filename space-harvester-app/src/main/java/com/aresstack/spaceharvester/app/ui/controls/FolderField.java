@@ -75,7 +75,7 @@ public final class FolderField extends InputFrame {
         changed = Objects.requireNonNull(listener, "listener");
     }
 
-    /** Bekommt eine Eingabe, die kein Pfad ist; das Feld zeigt danach wieder den geltenden Ordner. */
+    /** Bekommt eine Eingabe, die kein Pfad oder eine vorhandene Datei ist; das Feld zeigt danach wieder den geltenden Ordner. */
     public void onInvalid(Consumer<String> listener) {
         invalid = Objects.requireNonNull(listener, "listener");
     }
@@ -108,6 +108,12 @@ public final class FolderField extends InputFrame {
         try {
             path = Path.of(typed).toAbsolutePath().normalize();
         } catch (InvalidPathException | java.io.IOError e) {
+            show(current);
+            invalid.accept(typed);
+            return;
+        }
+        // Eine vorhandene Datei ist kein Ordner; ein Ordner, den es noch nicht gibt, darf es sein (er wird angelegt).
+        if (Files.exists(path) && !Files.isDirectory(path)) {
             show(current);
             invalid.accept(typed);
             return;

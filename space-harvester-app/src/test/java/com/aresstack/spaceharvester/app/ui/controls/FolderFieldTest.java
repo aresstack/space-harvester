@@ -89,6 +89,32 @@ class FolderFieldTest {
         });
     }
 
+    @Test
+    void anExistingFileIsNotAFolderButAMissingFolderIsFine(@org.junit.jupiter.api.io.TempDir Path temp)
+            throws Exception {
+        Path file = java.nio.file.Files.writeString(temp.resolve("datei.txt"), "x");
+        SwingUtilities.invokeAndWait(() -> {
+            FolderField field = new FolderField(new JTextField(24));
+            List<Path> changes = new ArrayList<>();
+            List<String> rejected = new ArrayList<>();
+            field.path(temp);
+            field.onChange(changes::add);
+            field.onInvalid(rejected::add);
+
+            field.textField().setText(file.toString());
+            field.textField().postActionEvent();
+
+            assertThat(rejected).containsExactly(file.toString());
+            assertThat(changes).isEmpty();
+            assertThat(field.textField().getText()).isEqualTo(temp.toString());
+
+            field.textField().setText(temp.resolve("neu").toString());
+            field.textField().postActionEvent();
+
+            assertThat(changes).containsExactly(temp.resolve("neu"));
+        });
+    }
+
     private static boolean inside(Container parent, Component wanted) {
         for (Component child : parent.getComponents()) {
             if (child == wanted || child instanceof Container container && inside(container, wanted)) {

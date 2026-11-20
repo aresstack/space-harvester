@@ -207,7 +207,7 @@ public final class SettingsView implements View {
         outputFolder.dialogTitle("Ausgabeordner wählen");
         outputFolder.onChange(this::saveOutput);
         outputFolder.onInvalid(input -> feedback.warning("Ausgabeordner nicht geändert",
-                "„" + input + "“ ist kein gültiger Ordnerpfad."));
+                "„" + input + "“ ist kein Ordner."));
         openOutput.addActionListener(e -> {
             if (context.settings() != null) {
                 open(context.settings().outputDirectory());
