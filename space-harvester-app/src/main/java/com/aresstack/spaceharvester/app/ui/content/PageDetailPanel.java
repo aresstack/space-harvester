@@ -118,7 +118,11 @@ public final class PageDetailPanel extends JPanel {
     /** Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links, auch ohne gezeigte Seite. */
     static final String EXPORT = "Export";
     static final String CHAT = "Chat";
-    private static final String ANALYSIS = "Analyse";
+    /**
+     * Unterreiter „Beziehungen“ unter „Analysen“ (vorher „Analyse“ unter „Info“, Angelo 20.11.2026): Analyseschritte
+     * und Beziehungen der Begriffe der Seite, ohne Seite die der Auswahl.
+     */
+    static final String RELATIONS = "Beziehungen";
     private static final String RAW = "Originaldaten";
     private static final String TECHNICAL = "Technische Angaben";
     private static final String EMPTY = "empty";
@@ -491,20 +495,16 @@ public final class PageDetailPanel extends JPanel {
                 .tab("Storage-Format", Comic.scroll(storage));
         advancedTabs.tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(TECHNICAL, Comic.scroll(padded(technical)))
-                .tab(ANALYSIS, analysisView)
                 .tab(RAW, rawTabs);
-        // Die Aktionen stehen rechts in der Zeile der Unterreiter, nicht als eigene Knopfzeilen darüber und darunter;
-        // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Analyse“ gewählt ist (BG2b).
-        advancedTabs.actions(analysisView.proposeButton(), analysisView.createButton(), refresh, saveRaw, recompute);
+        // Die Aktionen stehen rechts in der Zeile der Unterreiter, nicht als eigene Knopfzeilen darüber und darunter.
+        advancedTabs.actions(refresh, saveRaw, recompute);
         advancedTabs.select(PROPERTIES);
-        advancedTabs.onSelect(name -> showAdvanced());
+        advancedTabs.onSelect(name -> { });
         // Ohne Seite: dieselben Unterreiter; „Eigenschaften“ zeigt die der Quelle (oder aller Quellen),
         // „Technische Angaben“ und „Originaldaten“ bleiben dort leer.
         wideAdvanced.tab(PROPERTIES, sourceProperties)
                 .tab(TECHNICAL, new JPanel())
-                .tab(ANALYSIS, wideAnalysis)
-                .tab(RAW, new JPanel())
-                .actions(wideAnalysis.proposeButton(), wideAnalysis.createButton());
+                .tab(RAW, new JPanel());
         wideAdvanced.select(PROPERTIES);
         wideAdvanced.onSelect(name -> showDeck());
         JPanel advanced = new JPanel(new BorderLayout(0, 8));
@@ -522,7 +522,10 @@ public final class PageDetailPanel extends JPanel {
                 .tab(REFERENCES, references)
                 .tab(IMAGES, images)
                 .tab(STATEMENTS, statements)
-                .tab(GRAPH, graph);
+                .tab(GRAPH, graph)
+                .tab(RELATIONS, analysisView)
+                // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Beziehungen“ gewählt ist (BG2b).
+                .actions(analysisView.proposeButton(), analysisView.createButton());
         originalContent.setOpaque(false);
         fileContent.setOpaque(false);
         originalContent.add(readingPane, ORIGINAL_PAGE_CARD);
@@ -555,6 +558,7 @@ public final class PageDetailPanel extends JPanel {
             showTabStatus();
         });
         analysisTabs.onSelect(name -> {
+            showRelations();
             if (ANALYSES.equals(tabs.selected())) {
                 loadVisible();
                 showTabStatus();
@@ -684,6 +688,9 @@ public final class PageDetailPanel extends JPanel {
                 overviewGraph.shown();
             }
         }, overviewGraph.tools());
+        // Ohne Seite: die Beziehungen der Auswahl als Reiter beim Stand, mit ihren beiden Aktionen.
+        standing.tab(RELATIONS, wideAnalysis, wideAnalysis::shown, wideAnalysis.proposeButton(),
+                wideAnalysis.createButton());
         glossaryHelp.setVisible(false);
         graphHelp.setVisible(false);
         deck.add(standing, STAND_CARD);
@@ -842,7 +849,7 @@ public final class PageDetailPanel extends JPanel {
         boolean wideAdvancedShown = ADVANCED.equals(selected) && wide;
         cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD
                 : standingShown ? STAND_CARD : wideAdvancedShown ? WIDE_ADVANCED_CARD : page);
-        showAdvanced();
+        showRelations();
     }
 
     /**
@@ -997,19 +1004,14 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Der Unterreiter „Analyse“ des Technik-Reiters liest nur, solange er zu sehen ist; seine beiden Aktionen stehen
-     * nur dann in der Reiterzeile.
+     * Der Unterreiter „Beziehungen“ unter „Analysen“ liest nur, solange er zu sehen ist; seine beiden Aktionen stehen
+     * nur dann in der Reiterzeile. Ohne Seite steht er beim Stand und erfährt dort, ob er zu sehen ist.
      */
-    private void showAdvanced() {
-        boolean advancedShown = ADVANCED.equals(tabs.selected());
-        boolean pageAnalysis = advancedShown && !wide && ANALYSIS.equals(advancedTabs.selected());
-        boolean wideShown = advancedShown && wide && ANALYSIS.equals(wideAdvanced.selected());
-        analysisView.proposeButton().setVisible(ANALYSIS.equals(advancedTabs.selected()));
-        analysisView.createButton().setVisible(ANALYSIS.equals(advancedTabs.selected()));
-        wideAnalysis.proposeButton().setVisible(ANALYSIS.equals(wideAdvanced.selected()));
-        wideAnalysis.createButton().setVisible(ANALYSIS.equals(wideAdvanced.selected()));
-        analysisView.shown(pageAnalysis);
-        wideAnalysis.shown(wideShown);
+    private void showRelations() {
+        boolean selected = RELATIONS.equals(analysisTabs.selected());
+        analysisView.proposeButton().setVisible(selected);
+        analysisView.createButton().setVisible(selected);
+        analysisView.shown(ANALYSES.equals(tabs.selected()) && !wide && selected);
     }
 
     /** Die ?-Hilfe zum gewählten Reiter von Analysen ohne Seite: Stand, Fachglossar oder Graph, sonst keine. */

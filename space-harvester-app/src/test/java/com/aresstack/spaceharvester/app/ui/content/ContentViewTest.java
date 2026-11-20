@@ -243,10 +243,11 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.tabs().names()))
                 .containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export", "Chat");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
-                .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
-        // „Info“ hat die Eigenschaften als ersten Unterreiter (Angelo, 19.11.2026).
+                .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph", "Beziehungen");
+        // „Info“ hat die Eigenschaften als ersten Unterreiter (Angelo, 19.11.2026); „Beziehungen“ steht unter
+        // „Analysen“ (Angelo, 20.11.2026).
         assertThat(onEdt(() -> detail.advancedTabs().names())).containsExactly("Eigenschaften",
-                "Technische Angaben", "Analyse", "Originaldaten");
+                "Technische Angaben", "Originaldaten");
         assertThat(onEdt(() -> detail.advancedTabs().selected())).isEqualTo("Eigenschaften");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
         // Die Hauptreiter sind quadratische Symbolknöpfe für die Icon-Leiste des Hauptfensters; ihr Name steht im
@@ -303,9 +304,9 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
         // EINE Reiterzeile (AT 17.11.2026): „Begriffe“ vorn wie auf der Seite, dahinter die Reiter des Stands.
         assertThat(onEdt(() -> detail.standing().isVisible())).isTrue();
-        // Fachglossar und Graph hinten in derselben Zeile (BG2c).
+        // Fachglossar, Graph und die Beziehungen der Auswahl hinten in derselben Zeile (BG2c).
         assertThat(onEdt(() -> detail.standing().tabs().names())).containsExactly("Begriffe", "Aussagen",
-                "Zuerst lesen", "Mögliche Widersprüche", "Fachglossar", "Graph");
+                "Zuerst lesen", "Mögliche Widersprüche", "Fachglossar", "Graph", "Beziehungen");
         assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Begriffe");
         assertThat(onEdt(() -> detail.overviewTerms().showsSelection())).isTrue();
         assertThat(onEdt(() -> detail.overviewTerms().title())).isEqualTo("Begriffe in handbuch");
@@ -359,14 +360,14 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
-        // Technik-Reiter ohne Seite (BG2b): dieselben Unterreiter, unter „Analyse“ nur die Beziehungen der Auswahl.
+        // Ohne Seite (BG2b): die Beziehungen der Auswahl als Reiter „Beziehungen“ beim Stand unter „Analysen“.
         onEdt(() -> {
-            detail.tabs().select("Info");
-            detail.wideAdvanced().select("Analyse");
+            detail.tabs().select("Analysen");
+            detail.standing().tabs().select("Beziehungen");
             return null;
         });
         assertThat(onEdt(() -> detail.wideAdvanced().names())).containsExactly("Eigenschaften",
-                "Technische Angaben", "Analyse", "Originaldaten");
+                "Technische Angaben", "Originaldaten");
         assertThat(onEdt(() -> detail.wideAnalysis().isVisible() && !detail.wideAnalysis().showsSteps())).isTrue();
         assertThat(onEdt(() -> detail.wideAnalysis().proposeButton().isVisible()
                 && detail.wideAnalysis().createButton().isVisible())).isTrue();
