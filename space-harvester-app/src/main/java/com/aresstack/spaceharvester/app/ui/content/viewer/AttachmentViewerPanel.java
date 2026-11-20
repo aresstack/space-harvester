@@ -327,7 +327,50 @@ public final class AttachmentViewerPanel extends JPanel {
             showPage(page - 1);
             SwingUtilities.invokeLater(this::refreshHover);
         } else if (neighbours.hasPrevious()) {
-            neighbours.previous();
+            handOver(neighbours::previous);
+        }
+    }
+
+    /**
+     * Zoom und Ausschnitt, wie der Benutzer sie eingestellt hat (Angelo, 20.11.2026): Sie bleiben beim Blättern auf eine
+     * andere PDF-Seite und beim Wechsel auf das vorige oder nächste Bild; „Einpassen“ (0) setzt sie zurück.
+     *
+     * @param zoom    Bildschirmpixel je Pixel des Bildes bzw. der in Grundgröße gezeichneten PDF-Seite
+     * @param offsetX linke Kante des Bildes im Viewer
+     * @param offsetY obere Kante des Bildes im Viewer
+     */
+    public record View(double zoom, double offsetX, double offsetY) {
+    }
+
+    /** Was {@link #handOver} dem nächsten Viewer mitgibt; nur auf dem EDT während des Wechsels gesetzt. */
+    private static View handedOver;
+    /** Zoom und Ausschnitt für das nächste Bild bzw. die nächste Seite; {@code null}: einpassen. */
+    private View pendingView = handedOver;
+
+    /** Der eingestellte Zoom samt Ausschnitt; {@code null}, solange eingepasst ist. */
+    public View view() {
+        if (!canvas.adjusted || canvas.staticImage == null) {
+            return null;
+        }
+        return new View(canvas.zoom * (pages == null ? 1.0 : renderScale / PDF_BASE_SCALE), canvas.offsetX,
+                canvas.offsetY);
+    }
+
+    /** Übernimmt Zoom und Ausschnitt für das nächste gezeigte Bild bzw. die nächste Seite ({@code null}: einpassen). */
+    public void keepView(View view) {
+        this.pendingView = view;
+    }
+
+    /**
+     * Wechselt zum Nachbarn: Der Aufrufer baut dafür einen neuen Viewer, auf dem EDT und gleich hier; er übernimmt
+     * Zoom und Ausschnitt dieses Viewers.
+     */
+    private void handOver(Runnable open) {
+        handedOver = view();
+        try {
+            open.run();
+        } finally {
+            handedOver = null;
         }
     }
 
@@ -337,7 +380,7 @@ public final class AttachmentViewerPanel extends JPanel {
             showPage(page + 1);
             SwingUtilities.invokeLater(this::refreshHover);
         } else if (neighbours.hasNext()) {
-            neighbours.next();
+            handOver(neighbours::next);
         }
     }
 
@@ -502,6 +545,7 @@ public final class AttachmentViewerPanel extends JPanel {
     }
 
     private void fit() {
+        pendingView = null;
         canvas.resetView();
         updateInfo();
     }
@@ -628,6 +672,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 if (canvas.dragStart != null) {
                     canvas.offsetX += e.getX() - canvas.dragStart.x;
                     canvas.offsetY += e.getY() - canvas.dragStart.y;
+                    canvas.adjusted = true;
                     canvas.dragStart = e.getPoint();
                     canvas.repaint();
                 }
@@ -834,6 +879,9 @@ public final class AttachmentViewerPanel extends JPanel {
         } else {
             canvas.setStaticImage(loaded.image());
         }
+        // Vom vorigen Bild übernommen: derselbe Zoom, derselbe Ausschnitt.
+        canvas.apply(pendingView);
+        pendingView = null;
         updateInfo();
     }
 
@@ -1018,6 +1066,11 @@ public final class AttachmentViewerPanel extends JPanel {
             return;
         }
         page = Math.max(0, Math.min(target, pageCount - 1));
+        // Beim Blättern bleiben Zoom und Ausschnitt (Angelo, 20.11.2026); die neue Seite kommt in Grundgröße.
+        View kept = view();
+        if (kept != null) {
+            pendingView = kept;
+        }
         renderScale = PDF_BASE_SCALE;
         sharpen.stop();
         if (canvas.staticImage == null) {
@@ -1056,6 +1109,11 @@ public final class AttachmentViewerPanel extends JPanel {
                 loaded();
                 if (fresh) {
                     canvas.setStaticImage(drawn);
+                    if (pendingView != null) {
+                        canvas.apply(pendingView);
+                        pendingView = null;
+                        zoomed();
+                    }
                 } else {
                     canvas.replaceImage(drawn, drawn.getWidth() / (double) Math.max(1, canvas.imgW));
                     renderScale = scale;
@@ -1290,6 +1348,8 @@ public final class AttachmentViewerPanel extends JPanel {
         double offsetY;
         Point dragStart;
         private boolean fitted;
+        /** Ob der Benutzer gezoomt oder den Ausschnitt verschoben hat; „Einpassen“ setzt es zurück. */
+        boolean adjusted;
 
         Canvas() {
             setBackground(new Color(30, 30, 30));
@@ -1335,7 +1395,21 @@ public final class AttachmentViewerPanel extends JPanel {
             resetView();
         }
 
+        /** Setzt Zoom und Ausschnitt; {@code null} lässt das eingepasste Bild. */
+        void apply(View view) {
+            if (view == null || staticImage == null) {
+                return;
+            }
+            zoom = Math.max(0.05, Math.min(view.zoom(), 20.0));
+            offsetX = view.offsetX();
+            offsetY = view.offsetY();
+            fitted = true;
+            adjusted = true;
+            repaint();
+        }
+
         void resetView() {
+            adjusted = false;
             zoom = 1.0;
             if (imgW > 0 && imgH > 0 && getWidth() > 0 && getHeight() > 0) {
                 zoom = Math.min(getWidth() / (double) imgW, getHeight() / (double) imgH);
@@ -1355,6 +1429,7 @@ public final class AttachmentViewerPanel extends JPanel {
             }
             double oldZoom = zoom;
             zoom = Math.max(0.05, Math.min(zoom * factor, 20.0));
+            adjusted = true;
             double px = pivot != null ? pivot.x : getWidth() / 2.0;
             double py = pivot != null ? pivot.y : getHeight() / 2.0;
             offsetX = px - (px - offsetX) * (zoom / oldZoom);
@@ -1374,6 +1449,7 @@ public final class AttachmentViewerPanel extends JPanel {
             }
             offsetX = nx;
             offsetY = ny;
+            adjusted = true;
             repaint();
             return true;
         }
