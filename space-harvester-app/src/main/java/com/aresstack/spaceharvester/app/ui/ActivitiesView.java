@@ -97,8 +97,8 @@ public final class ActivitiesView implements View {
     static final String DELETE_ALL = "Alle Aufträge löschen";
     static final String MORE_JOB_ACTIONS = "Weitere Aktionen zu den Aufträgen";
     /** Links neben den Auswahlen (Angelo 11.11.2026): alle Bilder- und Anhänge-Unterzeilen auf- bzw. zuklappen. */
-    final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Bilder und Anhänge aufklappen");
-    final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Bilder und Anhänge zuklappen");
+    final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Unterschritte aufklappen (Bilder, Anhänge, Schritte von „In PPTX umwandeln“)");
+    final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Unterschritte zuklappen");
     /**
      * Links vom Besen (Angelo 11.11.2026): wie viele Bilder- und Anhängeaufträge gleichzeitig laden; 0 bereitet nur vor.
      * Gilt sofort und bleibt in der Konfigurationsdatei ({@code jobs.parallel-downloads}).
@@ -1741,30 +1741,77 @@ public final class ActivitiesView implements View {
         return result;
     }
 
-    /** Folgeaufträge je Export-ID, nur für Exporte, die selbst in {@code jobs} stehen. */
+    /**
+     * Unterzeilen je Oberschritt, nur für Oberschritte, die selbst in {@code jobs} stehen: unter einem Export seine
+     * Bilder und Anhänge (Verknüpfung {@link ExportAssetCollection#EXPORT_ID}); unter „PPTX erzeugen“ die übrigen vier
+     * Schritte desselben Laufs von „In PPTX umwandeln“ (Angelo 20.11.2026, {@code VideoPresentations.RUN_PARAMETER}) in
+     * ihrer Reihenfolge.
+     */
     static Map<String, List<JobStatus>> children(List<JobStatus> jobs) {
-        Set<String> exports = new HashSet<>();
+        Map<String, String> parents = new HashMap<>();
         for (JobStatus job : jobs) {
-            if (job.type() == JobType.EXPORT) {
-                exports.add(job.id());
+            String group = groupKey(job);
+            if (group != null) {
+                parents.put(group, job.id());
             }
         }
         Map<String, List<JobStatus>> children = new HashMap<>();
         for (JobStatus job : jobs) {
-            String exportId = showsProgress(job) ? job.parameter(ExportAssetCollection.EXPORT_ID) : null;
-            if (exportId != null && exports.contains(exportId)) {
-                children.computeIfAbsent(exportId, id -> new ArrayList<>()).add(job);
+            String member = memberKey(job);
+            String parent = member == null ? null : parents.get(member);
+            if (parent != null) {
+                children.computeIfAbsent(parent, id -> new ArrayList<>()).add(job);
             }
         }
         for (List<JobStatus> list : children.values()) {
-            list.sort(Comparator.comparing((JobStatus job) -> job.type() == JobType.ATTACHMENTS));
+            list.sort(Comparator.comparingInt(ActivitiesView::stepOrder));
         }
         return children;
     }
 
+    /** Unter welchem Schlüssel ein Oberschritt seine Unterzeilen sammelt; {@code null}, wenn er keiner ist. */
+    private static String groupKey(JobStatus job) {
+        if (job.type() == JobType.EXPORT) {
+            return "export:" + job.id();
+        }
+        String run = job.parameter(com.aresstack.spaceharvester.application.presentation.VideoPresentations
+                .RUN_PARAMETER);
+        return job.type() == JobType.PRESENTATION_EXPORT && run != null ? "presentation:" + run : null;
+    }
+
+    /** Zu welchem Oberschritt ein Auftrag gehört; {@code null}, wenn er eigenständig ist. */
+    private static String memberKey(JobStatus job) {
+        if (showsProgress(job)) {
+            String exportId = job.parameter(ExportAssetCollection.EXPORT_ID);
+            return exportId == null ? null : "export:" + exportId;
+        }
+        String run = job.parameter(com.aresstack.spaceharvester.application.presentation.VideoPresentations
+                .RUN_PARAMETER);
+        return job.type().presentation() && job.type() != JobType.PRESENTATION_EXPORT && run != null
+                ? "presentation:" + run : null;
+    }
+
+    /** Reihenfolge der Unterzeilen: Bilder vor Anhängen, die Schritte von „In PPTX umwandeln“ wie sie laufen. */
+    private static int stepOrder(JobStatus job) {
+        return switch (job.type()) {
+            case VIDEO_TRANSCRIPT -> 0;
+            case VIDEO_SLIDES -> 1;
+            case TRANSCRIPT_CORRECTION -> 2;
+            case SLIDE_NOTES -> 3;
+            case ATTACHMENTS -> 5;
+            default -> 4;
+        };
+    }
+
     private static String parentOf(JobStatus job, Map<String, List<JobStatus>> children) {
-        String exportId = showsProgress(job) ? job.parameter(ExportAssetCollection.EXPORT_ID) : null;
-        return exportId != null && children.containsKey(exportId) ? exportId : null;
+        for (Map.Entry<String, List<JobStatus>> group : children.entrySet()) {
+            for (JobStatus child : group.getValue()) {
+                if (child.id().equals(job.id())) {
+                    return group.getKey();
+                }
+            }
+        }
+        return null;
     }
 
     static final class JobsModel extends AbstractTableModel {
