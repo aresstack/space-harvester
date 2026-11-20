@@ -450,32 +450,62 @@ public final class VideoPresentations {
         AtomicLong failed = new AtomicLong(withoutFrame);
         // Nie mehr zugleich, als die Bildbeschreibung annimmt: Ein weiterer Aufruf käme sofort als „belegt“ zurück.
         int parallel = Math.min(options.parallel(), Assets.MAX_CONCURRENT_DESCRIPTIONS);
+        Map<Integer, ImagePayload.Entry> retry = new java.util.concurrent.ConcurrentHashMap<>();
         inParallel(open, parallel, context, index -> {
-            long millis = slideMarks.get(index);
-            String id = Assets.markAttachmentId(pageId, millis);
-            ImagePayload.Entry entry = null;
-            for (int attempt = 0; ; attempt++) {
-                PageImages result = images.describeOne(snapshot, index, false, false);
-                entry = result.images().stream().filter(found -> id.equals(found.assetId())).findFirst()
-                        .orElse(null);
-                // Belegt (etwa von „Analysen › Bilder“ zugleich): kurz warten und dieselbe Folie erneut.
-                if (entry == null || !BUSY.equals(entry.reason()) || attempt >= BUSY_ATTEMPTS
-                        || !pause(context)) {
-                    break;
-                }
-            }
-            context.processed(1);
+            ImagePayload.Entry entry = describeSlide(snapshot, pageId, slideMarks, index, context);
             if (entry != null && entry.status() == ImageStatus.DESCRIBED) {
+                context.processed(1);
+                context.written(1);
+            } else {
+                retry.put(index, entry == null ? missingEntry() : entry);
+            }
+        });
+        // Nachzügler einzeln: Laufen zwei Anfragen und Whisper zugleich, braucht ein lokales Modell oft länger als die
+        // Lesefrist; allein bekommt jede Folie das Modell für sich (Angelo 20.11.2026).
+        List<Integer> late = retry.entrySet().stream()
+                .filter(failure -> PageImageAnalysis.modelFailure(failure.getValue().reason()))
+                .map(Map.Entry::getKey).sorted().toList();
+        inParallel(late, 1, context, index -> {
+            ImagePayload.Entry entry = describeSlide(snapshot, pageId, slideMarks, index, context);
+            if (entry != null) {
+                retry.put(index, entry);
+            }
+        });
+        retry.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(failure -> {
+            context.processed(1);
+            if (failure.getValue().status() == ImageStatus.DESCRIBED) {
                 context.written(1);
             } else {
                 context.failed(1);
                 failed.incrementAndGet();
-                slideFailed(context, millis, entry == null ? "not-ready" : entry.reason());
+                slideFailed(context, slideMarks.get(failure.getKey()), failure.getValue().reason());
             }
         });
         if (failed.get() > 0) {
             context.incomplete();
         }
+    }
+
+    /**
+     * Beschreibt eine Folie; ist die Bildbeschreibung belegt (etwa von „Analysen › Bilder“ zugleich), kurz warten und
+     * dieselbe Folie erneut. Ihr Eintrag im Ergebnis, {@code null} ohne.
+     */
+    private ImagePayload.Entry describeSlide(PageSnapshot snapshot, String pageId, List<Long> slideMarks, int index,
+                                             JobContext context) {
+        String id = Assets.markAttachmentId(pageId, slideMarks.get(index));
+        ImagePayload.Entry entry = null;
+        for (int attempt = 0; ; attempt++) {
+            PageImages result = images.describeOne(snapshot, index, false, false);
+            entry = result.images().stream().filter(found -> id.equals(found.assetId())).findFirst().orElse(null);
+            if (entry == null || !BUSY.equals(entry.reason()) || attempt >= BUSY_ATTEMPTS || !pause(context)) {
+                return entry;
+            }
+        }
+    }
+
+    /** Eine Folie ohne Eintrag im Ergebnis: ohne Standbild. */
+    private static ImagePayload.Entry missingEntry() {
+        return ImagePayload.Entry.without(0, null, null, null, null, null, ImageStatus.PENDING, "not-ready");
     }
 
     /** Grund einer Folie, die die Bildbeschreibung gerade nicht annimmt. */
@@ -512,7 +542,11 @@ public final class VideoPresentations {
         return switch (reason) {
             case "not-ready" -> "kein Standbild gezogen";
             case BUSY -> "die Bildbeschreibung war die ganze Zeit belegt";
-            case "model-failed" -> "das Vision-Modell hat nicht oder leer geantwortet";
+            case PageImageAnalysis.MODEL_TIMEOUT -> "das Vision-Modell hat innerhalb der Frist je Anfrage nicht "
+                    + "geantwortet (ai.timeout, Standard 30 s)";
+            case PageImageAnalysis.MODEL_EMPTY -> "das Vision-Modell hat leer geantwortet";
+            case PageImageAnalysis.MODEL_UNREACHABLE -> "der KI-Dienst war nicht erreichbar";
+            case PageImageAnalysis.MODEL_FAILED -> "das Vision-Modell hat keine verwertbare Antwort geliefert";
             case "too-large" -> "das Standbild ist zu groß";
             default -> reason;
         };

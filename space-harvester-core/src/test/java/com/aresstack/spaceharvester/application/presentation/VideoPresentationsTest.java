@@ -106,6 +106,8 @@ class VideoPresentationsTest {
         assertThat(VideoPresentations.slideReason("model-busy")).contains("belegt");
         assertThat(VideoPresentations.slideReason("not-ready")).contains("Standbild");
         assertThat(VideoPresentations.slideReason("model-failed")).contains("Vision-Modell");
+        assertThat(VideoPresentations.slideReason("model-timeout")).contains("Frist", "ai.timeout");
+        assertThat(VideoPresentations.slideReason("model-empty")).contains("leer");
         assertThat(VideoPresentations.slideReason(null)).isEqualTo("unbekannter Grund");
     }
 }

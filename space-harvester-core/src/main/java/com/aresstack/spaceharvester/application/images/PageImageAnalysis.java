@@ -435,10 +435,37 @@ public class PageImageAnalysis {
                                         boolean fresh, int retries) {
         ImagePayload.Entry entry = describeOnce(index, key, item, releasedOnce, fresh);
         for (int retry = 0; retry < retries && entry.status() == ImageStatus.FAILED
-                && "model-failed".equals(entry.reason()); retry++) {
+                && modelFailure(entry.reason()); retry++) {
             entry = describeOnce(index, key, item, releasedOnce, fresh);
         }
         return entry;
+    }
+
+    /** Ein Modellaufruf zum Bild ist gescheitert (nicht erreichbar, Frist, leer oder unbrauchbar). */
+    public static final String MODEL_FAILED = "model-failed";
+    /** Das Modell hat innerhalb der Lesefrist ({@code ai.timeout}) nicht geantwortet. */
+    public static final String MODEL_TIMEOUT = "model-timeout";
+    /** Das Modell hat leer geantwortet. */
+    public static final String MODEL_EMPTY = "model-empty";
+    /** Der KI-Dienst war nicht erreichbar. */
+    public static final String MODEL_UNREACHABLE = "model-unreachable";
+
+    /** Ob ein Grund ein gescheiterter Modellaufruf ist, den ein neuer Versuch beheben kann. */
+    public static boolean modelFailure(String reason) {
+        return MODEL_FAILED.equals(reason) || MODEL_TIMEOUT.equals(reason) || MODEL_EMPTY.equals(reason)
+                || MODEL_UNREACHABLE.equals(reason);
+    }
+
+    /** Der Grund eines gescheiterten Modellaufrufs, so genau es die Ausnahme sagt. */
+    static String failureReason(ImageDescriptionException e) {
+        if (e.getCause() instanceof com.aresstack.spaceharvester.ai.AiServiceException cause) {
+            return switch (cause.reason()) {
+                case TIMEOUT -> MODEL_TIMEOUT;
+                case UNREACHABLE -> MODEL_UNREACHABLE;
+                default -> MODEL_FAILED;
+            };
+        }
+        return e.getCause() == null && "Leere Beschreibung".equals(e.getMessage()) ? MODEL_EMPTY : MODEL_FAILED;
     }
 
     private ImagePayload.Entry describeOnce(int index, PageKey key, Describable item, boolean releasedOnce,
@@ -468,7 +495,7 @@ public class PageImageAnalysis {
                         item.mediaType(), ImageStatus.PENDING, "model-busy");
                 case NOT_CONFIGURED, NOT_RELEASED -> throw e;
                 default -> ImagePayload.Entry.without(index, item.id(), null, filename, title,
-                        item.mediaType(), ImageStatus.FAILED, "model-failed");
+                        item.mediaType(), ImageStatus.FAILED, failureReason(e));
             };
         } catch (AssetTooLargeException e) {
             return ImagePayload.Entry.without(index, item.id(), null, filename, title, item.mediaType(),

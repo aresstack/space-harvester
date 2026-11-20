@@ -344,6 +344,25 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void aFailedModelCallSaysWhetherTheModelTimedOutAnsweredEmptyOrWasUnreachable() {
+        assertThat(PageImageAnalysis.failureReason(new com.aresstack.spaceharvester.application.assets
+                .ImageDescriptionException(com.aresstack.spaceharvester.application.assets.ImageDescriptionException
+                .Reason.FAILED, "Beschreibung fehlgeschlagen", new com.aresstack.spaceharvester.ai.AiServiceException(
+                com.aresstack.spaceharvester.ai.AiServiceException.Reason.TIMEOUT, "Frist"))))
+                .isEqualTo(PageImageAnalysis.MODEL_TIMEOUT);
+        assertThat(PageImageAnalysis.failureReason(new com.aresstack.spaceharvester.application.assets
+                .ImageDescriptionException(com.aresstack.spaceharvester.application.assets.ImageDescriptionException
+                .Reason.FAILED, "Leere Beschreibung", null))).isEqualTo(PageImageAnalysis.MODEL_EMPTY);
+        assertThat(PageImageAnalysis.failureReason(new com.aresstack.spaceharvester.application.assets
+                .ImageDescriptionException(com.aresstack.spaceharvester.application.assets.ImageDescriptionException
+                .Reason.FAILED, "Beschreibung fehlgeschlagen", new com.aresstack.spaceharvester.ai.AiServiceException(
+                com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNREACHABLE, "weg"))))
+                .isEqualTo(PageImageAnalysis.MODEL_UNREACHABLE);
+        assertThat(PageImageAnalysis.modelFailure(PageImageAnalysis.MODEL_TIMEOUT)).isTrue();
+        assertThat(PageImageAnalysis.modelFailure("model-busy")).isFalse();
+    }
+
+    @Test
     void aFailedModelCallIsMarkedAndRetriedLater() {
         source.image("1", "att1", "ablauf.png", PNG);
         describer.fail = true;
