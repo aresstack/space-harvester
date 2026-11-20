@@ -121,11 +121,17 @@ public final class SettingsView implements View {
     private final ComposerButton openData = Comic.button("Ordner öffnen", "Datenordner des lokalen Bestands im Dateimanager öffnen");
     private final ComposerButton editPageSize = Comic.button(SettingDialogs.PAGE_SIZE_TITLE + " …",
             "Größere Dateien lädt die App nicht herunter, sondern legt nur ihre Kopfdaten ab");
-    final ComposerButton chooseOutput = Comic.button("Ausgabeordner ändern …",
-            "Ordner, in den „Exportieren“ unter Aufträge die Dateien legt");
-    final ComposerButton openOutput = Comic.button("Ausgabeordner öffnen", "Den Ausgabeordner anzeigen");
-    final ComposerButton resetOutput = Comic.button("Zurück auf Downloads", "Wieder den Ordner Downloads verwenden");
-    private final Facts output = new Facts();
+    /** Der Ausgabeordner als Feld; „Durchsuchen …“, „Öffnen“ und „Zurück auf Downloads“ sitzen im Feld. */
+    final com.aresstack.spaceharvester.app.ui.controls.FolderField outputFolder =
+            new com.aresstack.spaceharvester.app.ui.controls.FolderField(Comic.field(24));
+    final javax.swing.JButton openOutput = outputFolder.addButton(
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("Öffnen",
+                    "Den Ausgabeordner anzeigen"));
+    final javax.swing.JButton resetOutput = outputFolder.addButton(
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("Zurück auf Downloads",
+                    "Wieder den Ordner Downloads verwenden"));
+    static final String OUTPUT_HINT = "Dateien, die du unter Aufträge aus einem Download exportierst; ohne "
+            + "technische Zwischendateien";
     private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
     /**
      * Platte „Terminal-Ausgabe“ unter Allgemein (Angelo 12.11.2026): welche Meldungen im Terminal erscheinen,
@@ -198,7 +204,10 @@ public final class SettingsView implements View {
                 open(context.settings().storage().dataDirectory());
             }
         });
-        chooseOutput.addActionListener(e -> chooseOutput());
+        outputFolder.dialogTitle("Ausgabeordner wählen");
+        outputFolder.onChange(this::saveOutput);
+        outputFolder.onInvalid(input -> feedback.warning("Ausgabeordner nicht geändert",
+                "„" + input + "“ ist kein gültiger Ordnerpfad."));
         openOutput.addActionListener(e -> {
             if (context.settings() != null) {
                 open(context.settings().outputDirectory());
@@ -256,10 +265,8 @@ public final class SettingsView implements View {
         data.add(Comic.row(openData, editPageSize), BorderLayout.SOUTH);
         editPageSize.addActionListener(e -> SettingDialogs.pageSize(root, context,
                 () -> feedback.success(SettingDialogs.PAGE_SIZE_TITLE + " übernommen")).open());
-        JPanel outputPanel = new JPanel(new BorderLayout(0, 8));
-        outputPanel.setOpaque(false);
-        outputPanel.add(output, BorderLayout.CENTER);
-        outputPanel.add(Comic.row(chooseOutput, openOutput, resetOutput), BorderLayout.SOUTH);
+        SettingDialogs.Rows outputPanel = new SettingDialogs.Rows();
+        outputPanel.add("Ordner", outputFolder, OUTPUT_HINT);
         JPanel diagnosis = new JPanel(new BorderLayout(0, 8));
         diagnosis.setOpaque(false);
         diagnosis.add(runtime, BorderLayout.CENTER);
@@ -587,13 +594,12 @@ public final class SettingsView implements View {
 
         storage.reset();
         network.reset();
-        output.reset();
+        outputFolder.path(settings == null ? null : settings.outputDirectory());
+        outputFolder.editable(settings != null);
+        openOutput.setEnabled(settings != null);
         resetOutput.setVisible(settings != null
                 && !settings.outputDirectory().equals(AppSettings.defaultOutputDirectory()));
         if (settings != null) {
-            output.add("Ordner", settings.outputDirectory().toString())
-                    .add("Inhalt", "Dateien, die du unter Aufträge aus einem Download exportierst; ohne technische "
-                            + "Zwischendateien");
             AppSettings.Storage s = settings.storage();
             storage.add("Daten (Cache, Aufträge, Analysen)", s.dataDirectory().toString())
                     .add("Exporte", s.exportDirectory().toString())
@@ -751,23 +757,15 @@ public final class SettingsView implements View {
         }, feedback::problem);
     }
 
-    /** Ein Ordnerdialog genau hier, einmalig; „Exportieren“ unter Aufträge fragt nie nach einem Ordner. */
-    private void chooseOutput() {
-        AppSettings settings = context.settings();
-        javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(
-                settings == null ? null : settings.outputDirectory().toFile());
-        chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
-        chooser.setDialogTitle("Ausgabeordner wählen");
-        if (chooser.showDialog(root, "Übernehmen") == javax.swing.JFileChooser.APPROVE_OPTION) {
-            saveOutput(chooser.getSelectedFile().toPath());
-        }
-    }
-
     /** @param directory neuer Ordner oder {@code null} für Downloads */
     void saveOutput(Path directory) {
         feedback.working("Ausgabeordner wird gespeichert …");
         context.outputDirectory(directory, () -> feedback.success("Ausgabeordner: "
-                + context.settings().outputDirectory()), feedback::problem);
+                + context.settings().outputDirectory()), error -> {
+                    // Nicht gespeichert: das Feld zeigt wieder den geltenden Ordner.
+                    outputFolder.path(context.settings() == null ? null : context.settings().outputDirectory());
+                    feedback.problem(error);
+                });
     }
 
     /** Zeigt die Terminal-Ausgabe aus der Datei; eine offene Liste bleibt unberührt. */
