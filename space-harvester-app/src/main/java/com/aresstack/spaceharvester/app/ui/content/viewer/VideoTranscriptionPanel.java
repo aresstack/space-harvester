@@ -51,6 +51,8 @@ public final class VideoTranscriptionPanel extends JPanel {
     private final JPanel action = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final JTextArea transcript = new JTextArea();
     private final JLabel status = new JLabel("Transkription noch nicht gestartet.");
+    private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay storedLoading =
+            new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(new JScrollPane(transcript));
     private VideoTranscriptSource videoSource;
     private SwingWorker<Void, TranscriptSegment> worker;
     /** Was Whisper bisher erkannt hat, ohne Fehlermeldungen: so wird es gespeichert. */
@@ -81,7 +83,10 @@ public final class VideoTranscriptionPanel extends JPanel {
         transcript.setFont(transcript.getFont().deriveFont(15f));
         transcript.setText("Klicke unten neben der Lupe auf das Mikrofon („Transkript erzeugen“), "
                 + "um die MP4-Audiospur lokal mit Whisper zu transkribieren.");
-        add(new JScrollPane(transcript), BorderLayout.CENTER);
+        // Solange das gespeicherte Transkript lädt, dreht sich die Sanduhr der Suche darüber, ohne Esc.
+        storedLoading.setHighlight(com.aresstack.spaceharvester.app.ui.Comic.BLUE);
+        storedLoading.setVeilColor(com.aresstack.spaceharvester.app.ui.Comic.SURFACE);
+        add(storedLoading, BorderLayout.CENTER);
         add(status, BorderLayout.SOUTH);
 
         toggle.addActionListener(event -> {
@@ -100,6 +105,7 @@ public final class VideoTranscriptionPanel extends JPanel {
             videoSource.close();
         }
         videoSource = source;
+        storedLoading.setBusy(false);
         resumeMillis = 0;
         recognized.setLength(0);
         transcript.setText("Klicke unten neben der Lupe auf das Mikrofon („Transkript erzeugen“), "
@@ -113,8 +119,24 @@ public final class VideoTranscriptionPanel extends JPanel {
         onTranscript = java.util.Objects.requireNonNull(listener, "listener");
     }
 
+    /**
+     * Zeigt die Sanduhr, solange das gespeicherte Transkript des gezeigten Videos lädt; {@link #showStored} oder
+     * {@code false} nimmt sie wieder weg.
+     */
+    public void loadingStored(VideoTranscriptSource source, boolean loading) {
+        if (source == videoSource) {
+            storedLoading.setBusy(loading && worker == null);
+        }
+    }
+
+    /** Ob gerade die Sanduhr über dem Transkript steht (für Tests). */
+    boolean storedLoadingShown() {
+        return storedLoading.isBusy();
+    }
+
     /** Zeigt ein gespeichertes Transkript des gezeigten Videos, solange keines erzeugt wird. */
     public void showStored(VideoTranscriptSource source, String text) {
+        loadingStored(source, false);
         if (source != videoSource || worker != null || text == null || text.isBlank()) {
             return;
         }
@@ -158,6 +180,7 @@ public final class VideoTranscriptionPanel extends JPanel {
             return;
         }
         VideoTranscriptSource requestedSource = videoSource;
+        storedLoading.setBusy(false);
         // Ein unvollständiges Transkript wird fortgesetzt, nicht neu begonnen; nur ein abgeschlossenes neu erzeugt.
         long startMillis = resumeMillis;
         if (startMillis <= 0) {

@@ -220,6 +220,8 @@ public final class PageDetailPanel extends JPanel {
     private final VideoTranscriptionPanel videoTranscript = new VideoTranscriptionPanel(
             new TranscribeAudioUseCase(new VlcPcmAudioDecoder(), new WhisperSpeechTranscriber()));
     private final NavigableDocumentPage readerPage;
+    /** Die Sanduhr über dem Text, solange die Seite lädt (wie bei den Anhängen, ohne Esc). */
+    private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay textBusy;
     private final JLabel acronymHint = Comic.muted(" ");
     private final JLabel acronymDetail = Comic.muted(" ");
     private final ComposerButton recomputeReader = Comic.button("Analyse neu berechnen",
@@ -462,7 +464,10 @@ public final class PageDetailPanel extends JPanel {
         readerPanel.add(acronymBar, BorderLayout.NORTH);
         // Der Banner liegt als eigene Ebene über dem Lesetext und nimmt ihm keine Breite.
         readerPage = new NavigableDocumentPage(Comic.scroll(reader), reader, READER_PADDING_TOP);
-        textContents.add(readerPage, TEXT_READER_CARD);
+        textBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(readerPage);
+        textBusy.setHighlight(Comic.BLUE);
+        textBusy.setVeilColor(Comic.SURFACE);
+        textContents.add(textBusy, TEXT_READER_CARD);
         textContents.add(videoTranscript, TEXT_VIDEO_TRANSCRIPT_CARD);
         readerPanel.add(textContents, BorderLayout.CENTER);
         // Ein Themenabschnitt beginnt mit einem Absatz: unter „Absätze“ steht derselbe Absatz gewählt bereit.
@@ -1214,6 +1219,8 @@ public final class PageDetailPanel extends JPanel {
         update.dismiss();
         showCard(PAGE);
         showReader(null, false);
+        // Bis die Seite da ist, dreht sich auch über dem Text die Sanduhr.
+        textBusy.setBusy(true);
         statementsView.pending(new PageKey(sourceId, pageId));
         graphView.page(null);
         acronymHint.setText(" ");
@@ -1266,6 +1273,7 @@ public final class PageDetailPanel extends JPanel {
             }
             closeOriginalFile();
             readingPane.clear(" ");
+            textBusy.setBusy(false);
             feedback.problem(error, Problems.Step.PAGE);
             statementsView.unavailable();
             page = null;
@@ -1723,6 +1731,7 @@ public final class PageDetailPanel extends JPanel {
 
     /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */
     private void showReader(ReaderDocument document, boolean live) {
+        textBusy.setBusy(false);
         // Neu berechnet bei gleichem Text: die Navigation gilt weiter; sonst gehörte sie zum vorigen Text.
         boolean sameText = shown != null && document != null && shown.text() != null && document.text() != null
                 && shown.text().text().equals(document.text().text());
@@ -2661,8 +2670,12 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || video == null) {
             return;
         }
-        Background.run(() -> runtime.workspace().videoTranscript(video.sourceId(), video.pageId()),
-                stored -> stored.ifPresent(text -> videoTranscript.showStored(transcriptSource, text)), error -> { });
+        // Das gespeicherte Transkript kommt verzögert wie die Anhänge: bis dahin die Sanduhr.
+        videoTranscript.loadingStored(transcriptSource, true);
+        Background.run(() -> runtime.workspace().videoTranscript(video.sourceId(), video.pageId()), stored -> {
+            videoTranscript.loadingStored(transcriptSource, false);
+            stored.ifPresent(text -> videoTranscript.showStored(transcriptSource, text));
+        }, error -> videoTranscript.loadingStored(transcriptSource, false));
     }
 
     /**
