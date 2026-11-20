@@ -875,6 +875,24 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theLargestFileInTheCacheIsWrittenInMegabytesAndReadBack() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  cache:\n    max-age: 6h   # bleibt\n");
+        assertThat(loader.load(file).storage().maxPageBytes()).as("Vorgabe")
+                .isEqualTo(AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES);
+
+        editor.save(file, editor.withMaxPageSize(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                100L << 20));
+
+        assertThat(Files.readString(file)).contains("max-age: 6h   # bleibt", "    max-page-size: 100MB");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.storage().maxPageBytes()).isEqualTo(100L << 20);
+        Files.writeString(file, "space-harvester:\n  cache:\n    max-page-size: 4GB\n");
+        assertThat(loader.load(file).problems()).anyMatch(problem -> problem.contains("max-page-size"));
+    }
+
+    @Test
     void theBackgroundFillUsesTheCoreKeysGloballyAndPerSource() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sync:\n    withheld-retention: 14d   # bleibt\n");

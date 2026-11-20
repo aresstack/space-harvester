@@ -209,10 +209,16 @@ public final class AppSettingsLoader {
         int maxTreeNodes = integer(get(map(get(root, "query")), "max-tree-nodes"), 50_000,
                 "space-harvester.query.max-tree-nodes", problems);
         Path pdfFont = path(get(map(get(map(get(root, "export")), "pdf")), "font"), problems);
+        long maxPage = size(get(map(get(root, "cache")), "max-page-size"), AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES,
+                "space-harvester.cache.max-page-size", problems);
+        if (maxPage <= 0 || maxPage > AppSettings.Storage.MAX_PAGE_BYTES_LIMIT) {
+            problems.add("space-harvester.cache.max-page-size liegt zwischen 1B und 2047MB: " + maxPage);
+            maxPage = AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES;
+        }
         AppSettings.Storage storage = new AppSettings.Storage(data,
                 exports == null ? data.resolve("exports") : exports, assets == null ? data.resolve("assets") : assets,
                 maxAsset, largeAsset, maxLargeAssets, searchTimeout, maxTreeNodes, pdfFont,
-                extraction(map(get(map(get(root, "assets")), "extraction")), problems));
+                extraction(map(get(map(get(root, "assets")), "extraction")), problems), maxPage);
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "

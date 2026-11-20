@@ -381,6 +381,26 @@ public final class ConfigFileEditor {
     }
 
     /**
+     * Der Entwurf {@code base} mit neuer größter Datei im Cache ({@code space-harvester.cache.max-page-size}); nur dieser
+     * Wert ändert sich. Geschrieben in MB, wenn er sich darin ausdrücken lässt.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withMaxPageSize(Path file, Draft base, long bytes) {
+        String value = bytes % (1L << 20) == 0 ? (bytes >> 20) + "MB" : bytes % 1024 == 0 ? (bytes >> 10) + "KB"
+                : String.valueOf(bytes);
+        String text = nested(base.text(), "cache", "max-page-size", indent -> indent + "max-page-size: " + value
+                + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.storage().maxPageBytes() != bytes) {
+            throw new IllegalArgumentException("Die größte Datei im Cache ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.cache.max-page-size von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
      * Der Entwurf {@code base} mit neuer Hintergrundfüllung für alle Quellen ({@code space-harvester.sync.background-fill},
      * {@code background-parallelism}, ADR 0016); nur diese beiden Werte ändern sich.
      *

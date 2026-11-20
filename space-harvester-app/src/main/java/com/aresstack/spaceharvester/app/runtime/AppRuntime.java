@@ -147,7 +147,8 @@ public final class AppRuntime implements AutoCloseable {
         AppSettings.Storage storage = new AppSettings.Storage(scratch.resolve("data"), scratch.resolve("exports"),
                 scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().largeAssetBytes(),
                 settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
-                settings.storage().maxTreeNodes(), null, settings.storage().extraction());
+                settings.storage().maxTreeNodes(), null, settings.storage().extraction(),
+                settings.storage().maxPageBytes());
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
         try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
                 .build()) {
@@ -210,6 +211,7 @@ public final class AppRuntime implements AutoCloseable {
                 .exportDirectory(storage.exportDirectory())
                 .assetDirectory(storage.assetDirectory())
                 .maxAssetBytes(storage.maxAssetBytes())
+                .maxPageBytes(storage.maxPageBytes())
                 .largeAssetThresholdBytes(storage.largeAssetBytes())
                 .maxConcurrentLargeAssets(storage.maxLargeAssets())
                 .extractionLimits(storage.extraction())

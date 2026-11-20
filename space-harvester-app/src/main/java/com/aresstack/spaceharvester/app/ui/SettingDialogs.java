@@ -624,6 +624,60 @@ final class SettingDialogs {
         return syncRules(parent, context, null, saved);
     }
 
+    static final String PAGE_SIZE_TITLE = "Größte Datei im Cache";
+
+    /** Eine Größe wie 20MB, 512KB oder Bytes ohne Einheit; sonst {@code -1}. */
+    static long pageSize(String text) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,10})\\s*(b|kb|mb|gb)?")
+                .matcher(text == null ? "" : text.strip().toLowerCase(java.util.Locale.ROOT));
+        if (!m.matches()) {
+            return -1;
+        }
+        long amount = Long.parseLong(m.group(1));
+        String unit = m.group(2) == null ? "b" : m.group(2);
+        return amount << switch (unit) {
+            case "kb" -> 10;
+            case "mb" -> 20;
+            case "gb" -> 30;
+            default -> 0;
+        };
+    }
+
+    /**
+     * Größte Datei im Cache ({@code space-harvester.cache.max-page-size}, Angelo 20.11.2026): Größere Dateien lädt die
+     * App nicht herunter, sondern legt nur ihre Kopfdaten ab; die Lese-Ansicht öffnet sie dann in der Quelle. Gilt ab dem
+     * Neustart der Laufzeit; schon abgelegte zu große Dateien lädt das nächste Öffnen nach, wenn sie jetzt passen.
+     */
+    static Shell pageSize(Component parent, AppContext context, Runnable saved) {
+        long current = context.settings() != null ? context.settings().storage().maxPageBytes()
+                : AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES;
+        JTextField size = Comic.field(10);
+        size.setText(current % (1L << 20) == 0 ? (current >> 20) + "MB" : String.valueOf(current));
+        Rows rows = new Rows();
+        rows.add(PAGE_SIZE_TITLE, size, "Größere Dateien lädt die App nicht herunter; die Lese-Ansicht öffnet sie in "
+                + "der Quelle. Eine Größe wie 20MB oder 100MB, höchstens 2047MB; Vorgabe "
+                + Texts.bytes(AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES));
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        body.setOpaque(false);
+        body.add(wrapped("Gilt für alle Quellen. Große Dateien belegen den Cache und laden lange; ihr Text ist für die "
+                + "Suche oft ohnehin wenig ergiebig."), BorderLayout.NORTH);
+        body.add(rows, BorderLayout.CENTER);
+        Shell shell = new Shell(parent, PAGE_SIZE_TITLE, body);
+        shell.onSaveFile(() -> {
+            long bytes = pageSize(size.getText());
+            return bytes <= 0 || bytes > AppSettings.Storage.MAX_PAGE_BYTES_LIMIT
+                    ? List.of("Die größte Datei ist eine Größe wie 20MB oder 100MB, höchstens 2047MB.") : List.of();
+        }, () -> {
+            ConfigFileEditor editor = new ConfigFileEditor(context.loader());
+            String text = Files.isRegularFile(context.configFile())
+                    ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
+            ConfigFileEditor.Draft written = editor.withMaxPageSize(context.configFile(),
+                    new ConfigFileEditor.Draft(text, null), pageSize(size.getText()));
+            editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
+        }, () -> pageSize(size.getText()) == current, context, saved);
+        return shell;
+    }
+
     static final String RETRY_TITLE = "Wiederholungen";
     static final String RETRY_ATTEMPTS = "Weitere Versuche";
     static final String RETRY_INITIAL = "Erste Wartezeit";

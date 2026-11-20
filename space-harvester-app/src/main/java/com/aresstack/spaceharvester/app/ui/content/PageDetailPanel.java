@@ -1497,6 +1497,11 @@ public final class PageDetailPanel extends JPanel {
             showOriginalVideo(metadata);
             return;
         }
+        if (com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(payload)) {
+            readingPane.clear(" ");
+            showLargeFile(metadata);
+            return;
+        }
         readingPane.clear(" ");
         long fileSize = payload.length();
         if (fileSize <= 0) {
@@ -1605,6 +1610,51 @@ public final class PageDetailPanel extends JPanel {
      * Present a redirect target as a source-neutral link document.
      * Open the target only after an explicit user action; never reuse source credentials.
      */
+    /**
+     * Eine Datei über der Grenze „Größte Datei im Cache“ (Angelo, 20.11.2026): Die App hat sie nicht heruntergeladen;
+     * die Karte nennt Größe und Grenze und öffnet die Datei in der Quelle.
+     */
+    private void showLargeFile(PageMetadata metadata) {
+        long size = com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
+        long limit = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES
+                : context.settings().storage().maxPageBytes();
+        JPanel card = new JPanel(new BorderLayout(0, 12));
+        card.setOpaque(false);
+        javax.swing.JTextArea explanation = new javax.swing.JTextArea("Zu groß für den Cache: "
+                + (size < 0 ? "Größe unbekannt" : Texts.bytes(size)) + ", die Grenze liegt bei " + Texts.bytes(limit)
+                + ". Die App lädt solche Dateien nicht herunter. Öffne sie in der Quelle, oder erhöhe die Grenze "
+                + "unter Einstellungen › Daten › „Größte Datei im Cache“; danach lädt das nächste Öffnen sie.");
+        explanation.setEditable(false);
+        explanation.setOpaque(false);
+        explanation.setLineWrap(true);
+        explanation.setWrapStyleWord(true);
+        card.add(explanation, BorderLayout.NORTH);
+        javax.swing.JButton open = new javax.swing.JButton("In der Quelle öffnen");
+        java.net.URI target = metadata.url();
+        boolean supported = target != null && ("http".equalsIgnoreCase(target.getScheme())
+                || "https".equalsIgnoreCase(target.getScheme())) && target.getHost() != null
+                && target.getRawUserInfo() == null;
+        open.setEnabled(supported);
+        if (supported) {
+            open.addActionListener(event -> {
+                try {
+                    if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                        Desktop.getDesktop().browse(target);
+                    } else {
+                        feedback.warning("Browser nicht verfügbar", "Adresse: " + target);
+                    }
+                } catch (IOException | RuntimeException failed) {
+                    feedback.warning("Datei konnte nicht geöffnet werden", "Adresse: " + target);
+                }
+            });
+        }
+        card.add(Comic.row(open), BorderLayout.SOUTH);
+        fileContent.add(card, BorderLayout.CENTER);
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        fileContent.revalidate();
+        fileContent.repaint();
+    }
+
     private void showOriginalLink(NativePayload payload) {
         String destination = new String(payload.bytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
         JPanel link = new JPanel(new BorderLayout(0, 12));

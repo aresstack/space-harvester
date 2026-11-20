@@ -449,7 +449,7 @@ public final class Harvester implements AutoCloseable {
             boolean liveAi = manager != null && !builder.aiFixed;
             this.currentAi = () -> liveAi ? this.settings.ai() : builder.ai;
             Path cacheDirectory = builder.dataDirectory.resolve("cache");
-            LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"));
+            LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"), builder.maxPageBytes);
             opened.add(cache);
             this.pageCache = cache;
             LuceneJobStore jobStore = LuceneJobStore.open(cacheDirectory.resolve("jobs"));
@@ -638,6 +638,9 @@ public final class Harvester implements AutoCloseable {
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
             this.snapshots = new SourceSnapshots(catalog);
+            // Größere Dateien nimmt der Cache nicht an: gar nicht erst herunterladen, nur die Kopfdaten ablegen.
+            long maxPageBytes = builder.maxPageBytes;
+            snapshots.maxBytes(() -> maxPageBytes);
             // ADR 0027: jeder Inhaltsabruf bei der Quelle (Planer, Lesen, Abgleich, Export) meldet dem Bestand „lädt“.
             snapshots.loads(holdings);
             this.sources = new SourceQueries(catalog);
@@ -920,7 +923,7 @@ public final class Harvester implements AutoCloseable {
             // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
             EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);
             this.packageImport = new ExportPackageImport(jobs, new ZipExportPackageReader(
-                    LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES, maxAssetBytes), baselineStore,
+                    builder.maxPageBytes, maxAssetBytes), baselineStore,
                     sourceId -> catalog.config(sourceId).isPresent(), assetStore, assets::adoptText,
                     new ReadingViewStore(enrichmentStore), importedAssets, List.of(afterSync), clock);
             // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
@@ -2413,6 +2416,7 @@ public final class Harvester implements AutoCloseable {
         private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
+        private int maxPageBytes = LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
         private boolean prefetchSearchHits = true;
         private boolean prefetchSearchHitsFixed;
         private int discoveryQueries = KeywordSearch.DEFAULT_MAX_QUERIES;
@@ -2644,6 +2648,20 @@ public final class Harvester implements AutoCloseable {
          * Größte einzelne Datei, die als Asset abgelegt wird; Standard {@code 0}, ohne Grenze wie im Server (Angelo
          * 11.11.2026). Dateien über {@link Assets#MAX_IN_MEMORY_BYTES} gibt es nur als Strom.
          */
+        /**
+         * Größte Datei bzw. Seite, die der Cache ablegt ({@code space-harvester.cache.max-page-size}); größere Dateien
+         * werden nicht heruntergeladen, nur ihre Kopfdaten abgelegt. Standard
+         * {@link LucenePageCache#DEFAULT_MAX_PAYLOAD_BYTES}.
+         */
+        public Builder maxPageBytes(long maxPageBytes) {
+            if (maxPageBytes <= 0 || maxPageBytes > Integer.MAX_VALUE - 8) {
+                throw new IllegalArgumentException("maxPageBytes muss zwischen 1 und " + (Integer.MAX_VALUE - 8)
+                        + " liegen");
+            }
+            this.maxPageBytes = (int) maxPageBytes;
+            return this;
+        }
+
         public Builder maxAssetBytes(long maxAssetBytes) {
             if (maxAssetBytes < 0) {
                 throw new IllegalArgumentException("maxAssetBytes darf nicht negativ sein");

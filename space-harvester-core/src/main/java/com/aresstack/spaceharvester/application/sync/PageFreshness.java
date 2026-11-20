@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import com.aresstack.spaceharvester.application.snapshot.LargeFiles;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -170,9 +171,11 @@ public class PageFreshness {
             return new Refreshed(Outcome.GONE, null, null, clock.instant());
         }
         String version = live.page().version();
+        // Eine zu große Datei ohne Inhalt gilt nicht mehr als aktuell, sobald sie unter die Grenze passt.
         Optional<PageSnapshot> sameRevision = cachedSnapshot
                 .filter(snapshot -> snapshot.key().equals(key) && version != null
-                        && version.equals(snapshot.revision()));
+                        && version.equals(snapshot.revision()))
+                .filter(snapshot -> !LargeFiles.placeholder(snapshot.payload()) || !fetcher.loadsWhole(live.page()));
         if (sameRevision.isPresent()) {
             boolean headerCurrent = cachedHeader
                     .filter(header -> header.metadataHash().equals(live.metadataHash())
@@ -184,7 +187,8 @@ public class PageFreshness {
                     : new Refreshed(Outcome.HEADER_CHANGED, new PageHeader(key, live.page(), live.metadataHash(),
                     live.attributesHash(), checkedAt), sameRevision.get(), checkedAt);
         }
-        PageSnapshot fresh = fetcher.fetch(sourceId, pageId);
+        PageSnapshot fresh = live.page().pageId().equals(pageId) ? fetcher.fetch(sourceId, live.page())
+                : fetcher.fetch(sourceId, pageId);
         if (!fresh.key().equals(key)) {
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.INVALID_RESPONSE,
                     "Die Quelle lieferte eine andere Seite", null);

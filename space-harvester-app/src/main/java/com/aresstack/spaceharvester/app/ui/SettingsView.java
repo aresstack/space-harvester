@@ -119,6 +119,8 @@ public final class SettingsView implements View {
     private final ComposerButton openFile = Comic.button("Datei öffnen", "Konfiguration im Standardeditor öffnen");
     private final ComposerButton openFolder = Comic.button("Ordner öffnen", "Ordner der Konfiguration öffnen");
     private final ComposerButton openData = Comic.button("Ordner öffnen", "Datenordner des lokalen Bestands im Dateimanager öffnen");
+    private final ComposerButton editPageSize = Comic.button(SettingDialogs.PAGE_SIZE_TITLE + " …",
+            "Größere Dateien lädt die App nicht herunter, sondern legt nur ihre Kopfdaten ab");
     final ComposerButton chooseOutput = Comic.button("Ausgabeordner ändern …",
             "Ordner, in den „Exportieren“ unter Aufträge die Dateien legt");
     final ComposerButton openOutput = Comic.button("Ausgabeordner öffnen", "Den Ausgabeordner anzeigen");
@@ -251,7 +253,9 @@ public final class SettingsView implements View {
         JPanel data = new JPanel(new BorderLayout(0, 8));
         data.setOpaque(false);
         data.add(storage, BorderLayout.CENTER);
-        data.add(Comic.row(openData), BorderLayout.SOUTH);
+        data.add(Comic.row(openData, editPageSize), BorderLayout.SOUTH);
+        editPageSize.addActionListener(e -> SettingDialogs.pageSize(root, context,
+                () -> feedback.success(SettingDialogs.PAGE_SIZE_TITLE + " übernommen")).open());
         JPanel outputPanel = new JPanel(new BorderLayout(0, 8));
         outputPanel.setOpaque(false);
         outputPanel.add(output, BorderLayout.CENTER);
@@ -595,6 +599,7 @@ public final class SettingsView implements View {
                     .add("Exporte", s.exportDirectory().toString())
                     .add("Anhänge", s.assetDirectory().toString())
                     .add("Größter Anhang", Texts.sizeLimit(s.maxAssetBytes()))
+                    .add(SettingDialogs.PAGE_SIZE_TITLE, Texts.bytes(s.maxPageBytes()))
                     .add("Zeitgrenze der Suche", s.searchTimeout().toString().substring(2).toLowerCase(Locale.ROOT))
                     .add("Größter Seitenbaum", s.maxTreeNodes() + " Seiten")
                     .add("PDF-Schrift", s.pdfFont() == null ? "eingebaut" : s.pdfFont().toString());

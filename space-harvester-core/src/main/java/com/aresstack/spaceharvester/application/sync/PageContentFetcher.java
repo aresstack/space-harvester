@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 
@@ -14,4 +15,17 @@ public interface PageContentFetcher {
      *                               und wird im nächsten Lauf erneut abgeglichen
      */
     PageSnapshot fetch(String sourceId, String pageId);
+
+    /**
+     * Wie {@link #fetch(String, String)}, mit den Kopfdaten aus Inventur bzw. Versionsprüfung: Eine Umsetzung kann daran
+     * entscheiden, die Datei gar nicht herunterzuladen ({@code LargeFiles}). Standard: lädt immer.
+     */
+    default PageSnapshot fetch(String sourceId, PageMetadata expected) {
+        return fetch(sourceId, expected.pageId());
+    }
+
+    /** Ob {@link #fetch(String, PageMetadata)} die Datei dieser Kopfdaten ganz lädt; Standard: immer. */
+    default boolean loadsWhole(PageMetadata metadata) {
+        return true;
+    }
 }

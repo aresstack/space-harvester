@@ -441,10 +441,18 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param maxTreeNodes    größter Seitenbaum
      * @param pdfFont         TrueType-Schrift für PDF-Exporte oder {@code null}
      * @param extraction      Schutzgrenzen beim Lesen von Dokumenten ({@code assets.extraction.*}, ADR 0026)
+     * @param maxPageBytes    größte Datei bzw. Seite im Cache ({@code cache.max-page-size}); größere Dateien werden
+     *                        nicht heruntergeladen, nur ihre Kopfdaten abgelegt
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
-                          Path pdfFont, ExtractionLimits extraction) {
+                          Path pdfFont, ExtractionLimits extraction, long maxPageBytes) {
+
+        /** Vorgabe für {@link #maxPageBytes}, wie der Cache des Core. */
+        public static final long DEFAULT_MAX_PAGE_BYTES =
+                com.aresstack.spaceharvester.persistence.lucene.LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
+        /** Größter einstellbarer Wert für {@link #maxPageBytes}; ein Eintrag im Cache ist ein Java-Array. */
+        public static final long MAX_PAGE_BYTES_LIMIT = Integer.MAX_VALUE - 8;
 
         public Storage {
             Objects.requireNonNull(dataDirectory, "dataDirectory");
@@ -452,6 +460,15 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             Objects.requireNonNull(assetDirectory, "assetDirectory");
             Objects.requireNonNull(searchTimeout, "searchTimeout");
             extraction = extraction == null ? ExtractionLimits.DEFAULTS : extraction;
+            maxPageBytes = maxPageBytes <= 0 ? DEFAULT_MAX_PAGE_BYTES : Math.min(maxPageBytes, MAX_PAGE_BYTES_LIMIT);
+        }
+
+        /** Mit der Vorgabe für die größte Datei im Cache. */
+        public Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
+                       long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                       Path pdfFont, ExtractionLimits extraction) {
+            this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
+                    searchTimeout, maxTreeNodes, pdfFont, extraction, DEFAULT_MAX_PAGE_BYTES);
         }
 
         /** Mit den Standardgrenzen der Extraktion. */

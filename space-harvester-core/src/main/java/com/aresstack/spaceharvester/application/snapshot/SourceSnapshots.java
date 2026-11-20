@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.snapshot;
 
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -25,9 +26,33 @@ public class SourceSnapshots implements PageContentFetcher {
 
     private final SourceCatalog catalog;
     private volatile PageLoads loads = PageLoads.NONE;
+    /** Größte Datei, die ganz geladen wird ({@link LargeFiles}); {@code <= 0} ohne Grenze. */
+    private volatile java.util.function.LongSupplier maxBytes = () -> 0;
 
     public SourceSnapshots(SourceCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
+    }
+
+    /**
+     * Dateien über dieser Größe lädt {@link #fetch(String, PageMetadata)} nicht herunter, sondern liefert nur ihre
+     * Kopfdaten ({@link LargeFiles}); gelesen bei jedem Abruf, {@code <= 0} ohne Grenze.
+     */
+    public void maxBytes(java.util.function.LongSupplier maxBytes) {
+        this.maxBytes = Objects.requireNonNull(maxBytes, "maxBytes");
+    }
+
+    @Override
+    public PageSnapshot fetch(String sourceId, PageMetadata expected) {
+        if (!loadsWhole(expected)) {
+            catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+            return LargeFiles.placeholder(sourceId, expected, java.time.Instant.now());
+        }
+        return fetch(sourceId, expected.pageId());
+    }
+
+    @Override
+    public boolean loadsWhole(PageMetadata metadata) {
+        return !LargeFiles.tooLarge(metadata, maxBytes.getAsLong());
     }
 
     /** Meldet Beginn und Ende jedes Abrufs (ADR 0027); ohne Aufruf {@link PageLoads#NONE}. */
