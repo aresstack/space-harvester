@@ -113,6 +113,18 @@ public class FileSystemAssetStore implements AssetStore {
      * sein Inhalt muss abgelegt sein. Beschädigte Einträge fehlen.
      */
     @Override
+    public boolean remove(String sourceId, String attachmentId, String version) {
+        if (version == null) {
+            return false;
+        }
+        try {
+            return Files.deleteIfExists(entry(sourceId, attachmentId, version));
+        } catch (IOException e) {
+            throw new AssetStoreException("Eintrag nicht entfernbar", e);
+        }
+    }
+
+    @Override
     public Stream<Asset> entries(String sourceId) {
         Path dir = root.resolve("index").resolve(name(sourceId));
         Stream<Path> paths;

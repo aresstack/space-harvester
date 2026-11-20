@@ -254,6 +254,81 @@ class VideoPresentationsTest {
     }
 
     @Test
+    void correctingAloneRunsTheCorrectionSessionWithAllImagesButWritesNoFile() {
+        // Angelo 20.11.2026: „Korrekturbutton in die Transcriptansicht … wie beim PPX vorher die Korrektursitzung mit
+        // allen Bildern“ – Transkript, Folien beschreiben, Transkript korrigieren; keine Kommentare, keine Datei.
+        String owner = "TECHNICAL_CLIENT:space-harvester-app";
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.jobs.Jobs.class);
+        List<com.aresstack.spaceharvester.application.jobs.JobType> submitted = new java.util.ArrayList<>();
+        org.mockito.Mockito.when(jobs.submit(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyMap(),
+                org.mockito.ArgumentMatchers.any(com.aresstack.spaceharvester.application.jobs.JobTask.class)))
+                .thenAnswer(call -> {
+                    com.aresstack.spaceharvester.application.jobs.JobType type = call.getArgument(0);
+                    submitted.add(type);
+                    return status("job-" + type, type, owner, Map.of());
+                });
+        org.mockito.Mockito.when(jobs.submitAfter(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyMap(),
+                org.mockito.ArgumentMatchers.any(com.aresstack.spaceharvester.application.jobs.JobTask.class),
+                org.mockito.ArgumentMatchers.<List<String>>any())).thenAnswer(call -> {
+                    com.aresstack.spaceharvester.application.jobs.JobType type = call.getArgument(0);
+                    submitted.add(type);
+                    return status("job-" + type, type, owner, Map.of());
+                });
+        com.aresstack.spaceharvester.application.assets.Assets assets = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.assets.Assets.class);
+        org.mockito.Mockito.when(assets.describerInUse()).thenReturn(java.util.Optional.of(org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.assets.ImageDescriber.class)));
+        com.aresstack.spaceharvester.application.marks.VideoMarks marks = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.marks.VideoMarks.class);
+        org.mockito.Mockito.when(marks.find(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(0L));
+        com.aresstack.spaceharvester.application.snapshot.PageSnapshot snapshot = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.snapshot.PageSnapshot.class);
+        org.mockito.Mockito.when(snapshot.key()).thenReturn(new PageKey("wiki", "42"));
+        org.mockito.Mockito.when(snapshot.revision()).thenReturn("r1");
+        org.mockito.Mockito.when(snapshot.metadata()).thenReturn(new com.aresstack.spaceharvester.application.sources
+                .PageMetadata("42", "42", "Vortrag.mp4", "S", null, null, null, null, new java.util.TreeMap<>()));
+        com.aresstack.spaceharvester.application.stepmodel.StepModel text =
+                new com.aresstack.spaceharvester.application.stepmodel.StepModel() {
+                    @Override
+                    public String version() {
+                        return "t";
+                    }
+
+                    @Override
+                    public boolean available() {
+                        return true;
+                    }
+
+                    @Override
+                    public String complete(String instructions, String input) {
+                        return "";
+                    }
+                };
+        VideoPresentations presentations = new VideoPresentations(jobs, (who, sourceId, pageId) -> snapshot, assets,
+                org.mockito.Mockito.mock(com.aresstack.spaceharvester.application.images.PageImageAnalysis.class),
+                marks, text, new PresentationStore(new InMemoryEnrichmentStore(), Clock.systemUTC()), key -> true,
+                java.nio.file.Path.of("out"));
+
+        VideoPresentations.Run run = presentations.startCorrection(
+                com.aresstack.spaceharvester.application.access.AccessContext.technicalClient("space-harvester-app"),
+                "wiki", "42", VideoMedia.NONE, VideoPresentations.Options.DEFAULT);
+
+        assertThat(submitted).containsExactly(com.aresstack.spaceharvester.application.jobs.JobType.VIDEO_TRANSCRIPT,
+                com.aresstack.spaceharvester.application.jobs.JobType.VIDEO_SLIDES,
+                com.aresstack.spaceharvester.application.jobs.JobType.TRANSCRIPT_CORRECTION);
+        assertThat(run.notes()).isNull();
+        assertThat(run.file()).isNull();
+        assertThat(run.all()).hasSize(3);
+    }
+
+    @Test
     void aJobOfAnEndUserOrWithoutItsPageCannotBeRebuiltAndSaysWhy() {
         assertThat(VideoPresentations.caller("TECHNICAL_CLIENT:space-harvester-app"))
                 .hasValueSatisfying(caller -> assertThat(caller.jobOwner())

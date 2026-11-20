@@ -48,6 +48,25 @@ public final class VideoTranscriptionPanel extends JPanel {
      * Stopp. Er steht in der Werkzeugleiste unten neben der Lupe ({@link #action()}), nicht im Panel.
      */
     private final ComposerButton toggle = ComposerButton.iconButton(new TranscribeIcon(), START_TIP);
+    /** Tooltip des Knopfs „Korrigieren“. */
+    public static final String CORRECT_TIP = "Transkript korrigieren: mit den Folienbildern wie vor „In PPTX "
+            + "umwandeln“, als Aufträge unter „Aufträge“";
+    /** Tooltip des Knopfs „Löschen“. */
+    public static final String DELETE_TIP = "Transkript samt allen Korrekturen löschen";
+    /**
+     * Neben dem Mikrofon (Angelo 20.11.2026): Korrigieren startet die Korrektursitzung mit allen Bildern, der
+     * Papierkorb löscht Transkript und Korrekturen, der Kopierknopf kopiert die gezeigte Fassung.
+     */
+    private final com.aresstack.spaceharvester.app.ui.IconButton correct =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.PENCIL,
+                    CORRECT_TIP);
+    private final com.aresstack.spaceharvester.app.ui.IconButton delete =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.TRASH,
+                    DELETE_TIP);
+    private final com.aresstack.spaceharvester.app.ui.controls.CopyButton copy =
+            new com.aresstack.spaceharvester.app.ui.controls.CopyButton(this::copyText);
+    private Runnable onCorrect = () -> { };
+    private Runnable onDelete = () -> { };
     /**
      * Die Leiste mit der Lupe (Angelo, 20.11.2026): links der Knopf samt Fortschritt, mittig die Fassungen des
      * Transkripts zum Umschalten; alles senkrecht mittig zur Lupe.
@@ -111,6 +130,10 @@ public final class VideoTranscriptionPanel extends JPanel {
         java.awt.GridBagConstraints at = new java.awt.GridBagConstraints();
         at.anchor = java.awt.GridBagConstraints.CENTER;
         left.add(toggle, at);
+        at.insets = new java.awt.Insets(0, 4, 0, 0);
+        left.add(correct, at);
+        left.add(delete, at);
+        left.add(copy, at);
         at.insets = new java.awt.Insets(0, 8, 0, 0);
         status.setFont(status.getFont().deriveFont(12f));
         status.setForeground(com.aresstack.spaceharvester.app.ui.Comic.MUTED);
@@ -134,6 +157,8 @@ public final class VideoTranscriptionPanel extends JPanel {
         // Das Transkript füllt die ganze Fläche; Fortschritt und Fassungen stehen unten in der Leiste mit der Lupe.
         add(storedLoading, BorderLayout.CENTER);
 
+        correct.addActionListener(event -> onCorrect.run());
+        delete.addActionListener(event -> onDelete.run());
         toggle.addActionListener(event -> {
             if (worker == null) {
                 VideoTranscriptSource wanted = videoSource;
@@ -223,6 +248,39 @@ public final class VideoTranscriptionPanel extends JPanel {
         transcript.setText(versions.get(index).text());
         transcript.setCaretPosition(0);
         renderVersions();
+    }
+
+    /** Was „Korrigieren“ tut; der Knopf ist nur mit gespeichertem Transkript an. */
+    public void onCorrect(Runnable action) {
+        onCorrect = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Was der Papierkorb tut (fragt selbst nach); nur mit gespeichertem Transkript an. */
+    public void onDelete(Runnable action) {
+        onDelete = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Die gezeigte Fassung für den Kopierknopf; ohne Transkript nichts. */
+    String copyText() {
+        return recognized.length() == 0 ? null : transcript.getText();
+    }
+
+    /** Nach dem Löschen: die Ansicht wie ohne Transkript, das Mikrofon erzeugt es neu. */
+    public void cleared(VideoTranscriptSource source) {
+        if (source != videoSource || worker != null) {
+            return;
+        }
+        recognized.setLength(0);
+        resumeMillis = 0;
+        transcript.setText(START_TEXT);
+        status.setText("Transkript und Korrekturen gelöscht.");
+        showVersions(source, java.util.List.of());
+        updateActions();
+    }
+
+    /** Für Tests: Korrigieren, Löschen, Kopieren. */
+    java.util.List<javax.swing.JButton> transcriptActions() {
+        return java.util.List.of(correct, delete, copy);
     }
 
     /** {@code listener} bekommt das bisher erkannte Transkript nach jedem neuen Abschnitt und am Ende (auf dem EDT). */
@@ -477,6 +535,10 @@ public final class VideoTranscriptionPanel extends JPanel {
         toggle.setEmphasized(running);
         // Schreibt schon der Auftrag „Transkript ziehen“, startet das Mikrofon keinen zweiten Lauf daneben.
         toggle.setEnabled(running || videoSource != null && !following);
+        boolean stored = videoSource != null && recognized.length() > 0 && !running && !following;
+        correct.setEnabled(stored);
+        delete.setEnabled(stored);
+        copy.setEnabled(recognized.length() > 0);
         // Während Whisper schreibt, zeigt die Ansicht das Original, das gerade entsteht.
         renderVersions();
     }

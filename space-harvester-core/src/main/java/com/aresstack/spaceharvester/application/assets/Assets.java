@@ -261,6 +261,25 @@ public class Assets implements DocumentInventory {
         this.indexedDocuments = listener;
     }
 
+    private volatile java.util.function.Consumer<PageKey> transcriptChanges = key -> { };
+
+    /**
+     * Schließt den Hörer an, der erfährt, dass Transkript oder Korrekturen einer Seite abgelegt oder gelöscht wurden
+     * (Angelo 20.11.2026: die Analysen rechnen dann über den neuen Text, ADR 0027: ohne Polling). Er wird im
+     * schreibenden Thread gerufen und darf nicht lange arbeiten.
+     */
+    public void transcriptChanges(java.util.function.Consumer<PageKey> listener) {
+        this.transcriptChanges = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    private void transcriptChanged(String sourceId, String pageId) {
+        try {
+            transcriptChanges.accept(new PageKey(sourceId, pageId));
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Hörer auf Transkripte scheiterte ({0})", e.getClass().getName());
+        }
+    }
+
     /**
      * Schließt die Liste freigegebener Seiten an (ADR 0028): Bilder einer Seite darauf gehen auch aus einer nicht
      * freigegebenen Quelle an das Modell. Gefragt wird bei jeder Beschreibung.
@@ -1213,6 +1232,7 @@ public class Assets implements DocumentInventory {
         byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         store.put(new Asset(sourceId, pageId, transcriptId(pageId), frameVersion(version), fileName, "text/plain",
                 AssetKind.TRANSCRIPT, bytes.length, sha256(bytes), clock.instant()), bytes);
+        transcriptChanged(sourceId, pageId);
     }
 
     /** Das abgelegte Transkript des Videos dieser Fassung; leer, solange keines erzeugt ist. */
@@ -1288,6 +1308,56 @@ public class Assets implements DocumentInventory {
                     "Korrekturen.properties", "text/plain", AssetKind.TRANSCRIPT, indexBytes.length,
                     sha256(indexBytes), clock.instant()), indexBytes);
         }
+        transcriptChanged(sourceId, pageId);
+    }
+
+    /**
+     * Der Text, den die Analysen einer Videoseite lesen (Angelo 20.11.2026): die zuletzt abgelegte Korrektur, ohne
+     * Korrektur das Transkript; leer ohne Transkript. Mit Zeitmarken wie abgelegt.
+     */
+    public Optional<String> latestVideoTranscriptText(String sourceId, String pageId, String version) {
+        if (!hasVideoTranscript(sourceId, pageId, version)) {
+            return Optional.empty();
+        }
+        Asset latest = null;
+        for (TranscriptCorrection correction : videoTranscriptCorrections(sourceId, pageId, version)) {
+            Optional<Asset> asset = store.find(sourceId, correction.attachmentId(), frameVersion(version));
+            if (asset.isPresent() && (latest == null || asset.get().retrievedAt().isAfter(latest.retrievedAt()))) {
+                latest = asset.get();
+            }
+        }
+        if (latest == null) {
+            return videoTranscript(sourceId, pageId, version);
+        }
+        return Optional.of(new String(read(latest).content(), java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Löscht das Transkript des Videos dieser Fassung samt allen Korrekturen (Angelo 20.11.2026, Knopf in der
+     * Transkriptansicht); die Analysen darüber fallen über {@link #transcriptChanges} weg. Das Recht auf die Seite
+     * prüft der Aufrufer.
+     *
+     * @return ob etwas gelöscht wurde
+     */
+    public boolean deleteVideoTranscript(String sourceId, String pageId, String version) {
+        String stored = frameVersion(version);
+        boolean deleted;
+        synchronized (corrections) {
+            List<String> ids = new java.util.ArrayList<>();
+            for (TranscriptCorrection correction : videoTranscriptCorrections(sourceId, pageId, version)) {
+                ids.add(correction.attachmentId());
+            }
+            ids.add(correctionIndexId(pageId));
+            ids.add(transcriptId(pageId));
+            deleted = false;
+            for (String id : ids) {
+                deleted |= store.remove(sourceId, id, stored);
+            }
+        }
+        if (deleted) {
+            transcriptChanged(sourceId, pageId);
+        }
+        return deleted;
     }
 
     /** Die abgelegten Korrekturen des Transkripts dieser Fassung, nach Anzeigename. */

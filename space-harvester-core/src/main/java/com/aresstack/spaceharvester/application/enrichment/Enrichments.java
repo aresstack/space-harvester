@@ -433,6 +433,27 @@ public class Enrichments {
         return processor == null ? Optional.empty() : Optional.of(processor.version());
     }
 
+    /**
+     * Entfernt die gespeicherten Ergebnisse aller Prozessoren dieser Klasse für eine Seite, deren Text weggefallen ist,
+     * etwa nach dem Löschen eines Video-Transkripts; Ergebnisse anderer (Bildanalyse, Folien) bleiben.
+     *
+     * @return wie viele Prozessoren ein Ergebnis hatten
+     */
+    public int forget(PageKey key) {
+        java.util.Set<String> stored = new java.util.HashSet<>();
+        for (Enrichment enrichment : store.find(key)) {
+            stored.add(enrichment.processorId());
+        }
+        int removed = 0;
+        for (EnrichmentProcessor processor : processors.values()) {
+            if (stored.contains(processor.id())) {
+                store.remove(key, processor.id());
+                removed++;
+            }
+        }
+        return removed;
+    }
+
     /** Macht die Ergebnisse dauerhaft, etwa am Ende eines Abgleichs. */
     public void flush() {
         store.flush();
