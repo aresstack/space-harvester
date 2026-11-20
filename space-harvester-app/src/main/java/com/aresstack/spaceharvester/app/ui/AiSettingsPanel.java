@@ -90,6 +90,17 @@ final class AiSettingsPanel {
     static final String RETRIES_LABEL = "Wiederholungen";
     static final String RETRIES_HINT = "So oft wird ein Bild erneut beschrieben, wenn das Modell scheitert; leer: "
             + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_RETRIES;
+    /**
+     * Nachdenken des Chat-Modells bei Analyseschritten ({@code step-thinking}, Angelo 20.11.2026): Ein Modell mit
+     * Nachdenk-Modus schreibt sonst vor jeder Antwort Tausende Token, und „Transkript korrigieren“ kommt nicht voran.
+     */
+    final JComboBox<String> stepThinking = Comic.combo();
+    static final String THINKING_LABEL = "Nachdenken bei Analyseschritten";
+    static final String THINKING_HINT = "Transkript korrigieren, Folienkommentare und Prüfschritte; „aus“ antwortet "
+            + "direkt (Standard), sonst denkt ein Modell mit Nachdenk-Modus erst nach";
+    /** Anzeige und Wert in der Datei, in derselben Reihenfolge. */
+    static final java.util.List<String> THINKING_NAMES = java.util.List.of("aus", "wenig", "mittel", "viel");
+    static final java.util.List<String> THINKING_KEYS = java.util.List.of("none", "low", "medium", "high");
     final JPasswordField apiKey = new JPasswordField(32);
     final JTextField chatModel = Comic.field(24);
     final JTextField embeddingModel = Comic.field(24);
@@ -354,6 +365,8 @@ final class AiSettingsPanel {
         modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
                 "Beschreibt die Bilder einer Seite (Leseansicht › Bilder); leer: keine Bildbeschreibung");
         modelRows.add(RETRIES_LABEL, retries, RETRIES_HINT);
+        THINKING_NAMES.forEach(stepThinking::addItem);
+        modelRows.add(THINKING_LABEL, stepThinking, THINKING_HINT);
         {
             modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
@@ -452,6 +465,8 @@ final class AiSettingsPanel {
         contextTokens.setText(current.contextTokens() == null ? "" : current.contextTokens());
         loadTimeout.setText(current.loadTimeout() == null ? "" : current.loadTimeout());
         retries.setText(current.retries() == null ? "" : current.retries());
+        int thinking = current.thinking() == null ? 0 : THINKING_KEYS.indexOf(current.thinking());
+        stepThinking.setSelectedIndex(Math.max(0, thinking));
         loadPollInterval.setText(current.loadPollInterval() == null ? "" : current.loadPollInterval());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
@@ -741,7 +756,8 @@ final class AiSettingsPanel {
                 timeout, releasedDraft(), rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
                 visionModel.getText(), chatMaxTokens.getText(), chosenProvider(),
                 ollamaChosen() ? contextTokens.getText() : null, ollamaChosen() ? loadTimeout.getText() : null,
-                retries.getText(), ollamaChosen() ? loadPollInterval.getText() : null);
+                retries.getText(), ollamaChosen() ? loadPollInterval.getText() : null,
+                stepThinking.getSelectedIndex() <= 0 ? null : THINKING_KEYS.get(stepThinking.getSelectedIndex()));
     }
 
     /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */

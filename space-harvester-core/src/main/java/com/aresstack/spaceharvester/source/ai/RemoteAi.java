@@ -325,7 +325,14 @@ public final class RemoteAi {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
         int maxTokens = settings.chatMaxTokens();
-        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens).build();
+        // Nachdenken der Analyseschritte (ai.step-thinking, Standard aus): Bei Ollama geht es als think mit; ein
+        // OpenAI-kompatibler Dienst kennt „none“ oft nicht und bekommt dann keine Vorgabe.
+        String thinking = settings.stepThinking();
+        ChatOptions.Builder builder = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens);
+        if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {
+            builder.reasoningEffort(thinking);
+        }
+        ChatOptions options = builder.build();
         return (instructions, input) -> {
             ChatCompletionPort adapter = chatPort(settings.chatModel(),
                     awaitedTimeout(settings.chatModel(), (int) EXPANSION_TIMEOUT.toMillis()));

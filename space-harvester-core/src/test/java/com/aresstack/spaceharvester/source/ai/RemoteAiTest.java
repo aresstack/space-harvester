@@ -340,9 +340,30 @@ class RemoteAiTest {
                 .isInstanceOfSatisfying(AiServiceException.class, e -> assertThat(e.reason())
                         .isEqualTo(AiServiceException.Reason.INVALID_RESPONSE))
                 .hasMessageContaining("max_tokens=100");
-        assertThat(chats).singleElement().asString().contains("\"num_ctx\":32768", "\"num_predict\":100");
+        // Analyseschritte denken standardmäßig nicht nach (ai.step-thinking, Angelo 20.11.2026).
+        assertThat(chats).singleElement().asString().contains("\"num_ctx\":32768", "\"num_predict\":100",
+                "\"think\":false");
         assertThatThrownBy(() -> settings.withContextTokens(100)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("context-tokens");
+    }
+
+    @Test
+    void theThinkingOfAnalysisStepsIsConfigurable() {
+        List<String> chats = new CopyOnWriteArrayList<>();
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"gemma4:12b","model":"gemma4:12b"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"korrigiert"},"done":true,"done_reason":"stop"}""");
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "gemma4:12b", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA).withStepThinking("low");
+
+        assertThat(remote(settings).termCompletions().apply("Anweisung", "Text")).isEqualTo("korrigiert");
+        assertThat(chats).singleElement().asString().contains("\"think\":\"low\"");
+        assertThatThrownBy(() -> settings.withStepThinking("ganz viel")).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("step-thinking");
     }
 
     @Test

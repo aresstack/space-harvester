@@ -373,7 +373,7 @@ public final class AppRuntime implements AutoCloseable {
                     ai.embeddingDimensions(), ai.timeout(), null, Set.copyOf(ai.externalProcessingSources()))
                     .withProvider(ai.provider()).withContextTokens(ai.contextTokens())
                     .withLoadTimeout(ai.loadTimeout()).withRetries(ai.retries())
-                    .withLoadPollInterval(ai.loadPollInterval());
+                    .withLoadPollInterval(ai.loadPollInterval()).withStepThinking(ai.stepThinking());
         } catch (IllegalArgumentException e) {
             LOG.log(System.Logger.Level.WARNING, "KI-Dienst nicht nutzbar: {0}", e.getMessage());
             return AiServiceSettings.NONE;

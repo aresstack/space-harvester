@@ -535,12 +535,15 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      *                      Standard des Core
      * @param loadPollInterval Abstand der Frage an Ollama, ob ein angestoßenes Modell läuft
      *                      ({@code load-poll-interval}); {@code null}: Standard des Core
+     * @param stepThinking  Nachdenken bei Analyseschritten ({@code step-thinking}: none, low, medium, high);
+     *                      {@code null}: Standard des Core (aus)
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
                              Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
                              Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
-                             Duration loadTimeout, Integer retries, Duration loadPollInterval) {
+                             Duration loadTimeout, Integer retries, Duration loadPollInterval,
+                             String stepThinking) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -556,7 +559,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           Integer chatMaxTokens) {
             this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
                     rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, null, null, null,
-                    null, null);
+                    null, null, null);
         }
 
         /** Mit dem Ausgabelimit des Core. */
