@@ -309,7 +309,12 @@ public final class HuggingFaceClient {
             if (response.status() / 100 != 2) {
                 throw new IOException("HTTP " + response.status() + " von " + response.host());
             }
-            return new String(response.content().readAllBytes(), StandardCharsets.UTF_8);
+            current = response.content();
+            try {
+                return new String(response.content().readAllBytes(), StandardCharsets.UTF_8);
+            } finally {
+                current = null;
+            }
         }
     }
 

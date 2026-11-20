@@ -82,6 +82,32 @@ final class WhisperModelInstallerTest {
     }
 
     @Test
+    void filesStagedFromAnOlderRevisionAreLoadedAgain() throws Exception {
+        FakeHuggingFace hub = base(true);
+        Path staging = Files.createDirectories(models.resolve("whisper-base.part"));
+        Files.writeString(staging.resolve(WhisperModelInstaller.REVISION_MARKER), "alt");
+        Files.writeString(staging.resolve("config.json"), "alter Stand");
+        WhisperModelInstaller installer = new WhisperModelInstaller(models, new HuggingFaceClient(hub));
+
+        installer.install(WhisperModel.BASE, SILENT, () -> false);
+
+        assertThat(models.resolve("whisper-base").resolve("config.json")).hasContent("{}");
+        assertThat(models.resolve("whisper-base").resolve(WhisperModelInstaller.REVISION_MARKER)).hasContent("c0ffee");
+    }
+
+    @Test
+    void anExplicitlyGivenModelFolderCountsAsInstalledForEveryModel() {
+        WhisperModelInstaller installer = new WhisperModelInstaller(models, new HuggingFaceClient(new FakeHuggingFace()));
+        System.setProperty(WhisperModelLocation.PROPERTY, models.resolve("eigenes").toString());
+        try {
+            assertThat(installer.installed(WhisperModel.LARGE_V3)).isTrue();
+        } finally {
+            System.clearProperty(WhisperModelLocation.PROPERTY);
+        }
+        assertThat(installer.installed(WhisperModel.LARGE_V3)).isFalse();
+    }
+
+    @Test
     void neverLoadsWeightsWithoutAChecksum() {
         List<HuggingFaceFile> listed = new ArrayList<>();
         for (String name : WhisperModelInstaller.REQUIRED) {

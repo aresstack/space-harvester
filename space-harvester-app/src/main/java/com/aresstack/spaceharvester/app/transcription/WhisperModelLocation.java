@@ -53,11 +53,15 @@ public final class WhisperModelLocation {
 
     /** Der Ordner, aus dem {@code model} gelesen würde; leer, solange es nicht geladen ist. */
     public static Optional<Path> find(WhisperModel model) {
+        Optional<Path> overridden = overridden();
+        return overridden.isPresent() ? overridden : find(modelsDirectory(), model);
+    }
+
+    /** Der mit {@value #PROPERTY} vorgegebene Modellordner; er gilt für jedes Modell und wird nie nachgeladen. */
+    static Optional<Path> overridden() {
         String overridden = System.getProperty(PROPERTY);
-        if (overridden != null && !overridden.isBlank()) {
-            return Optional.of(Paths.get(overridden.strip()).toAbsolutePath());
-        }
-        return find(modelsDirectory(), model);
+        return overridden == null || overridden.isBlank() ? Optional.empty()
+                : Optional.of(Paths.get(overridden.strip()).toAbsolutePath());
     }
 
     static Optional<Path> find(Path models, WhisperModel model) {

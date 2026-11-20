@@ -29,6 +29,8 @@ public final class WhisperModelInstaller {
     /** Braucht nur ein Teil der Modelle (etwa Large v3 mit eigenem Wortschatz); geladen, wenn das Repository sie hat. */
     static final List<String> OPTIONAL = List.of("generation_config.json");
     private static final String WEIGHTS = "model.safetensors";
+    /** Datei im Zwischenverzeichnis und im Modellordner mit der Revision, aus der die Dateien stammen. */
+    static final String REVISION_MARKER = ".revision";
 
     /** Fortschritt für die Oberfläche. */
     public interface Progress {
@@ -58,7 +60,7 @@ public final class WhisperModelInstaller {
 
     /** Ob {@code model} benutzbar auf der Platte liegt (auch von Hand kopiert oder aus einer früheren Fassung). */
     public boolean installed(WhisperModel model) {
-        return WhisperModelLocation.find(models, model).isPresent();
+        return WhisperModelLocation.overridden().isPresent() || WhisperModelLocation.find(models, model).isPresent();
     }
 
     /**
@@ -81,6 +83,16 @@ public final class WhisperModelInstaller {
             files = wanted(model, client.listFiles(model.repository(), revision));
         }
         check(cancelled);
+        // Schon Geladenes gilt nur für die Revision, aus der es kam: nach einem neuen Stand von vorn, nie gemischt.
+        Path marker = staging.resolve(REVISION_MARKER);
+        if (!Files.isRegularFile(marker) || !Files.readString(marker).strip().equals(revision)) {
+            try (Stream<Path> stale = Files.list(staging)) {
+                for (Path file : stale.toList()) {
+                    Files.deleteIfExists(file);
+                }
+            }
+            Files.writeString(marker, revision);
+        }
         progress.step("Wird heruntergeladen …");
         long total = files.stream().allMatch(file -> file.size() > 0)
                 ? files.stream().mapToLong(HuggingFaceFile::size).sum() : -1;
