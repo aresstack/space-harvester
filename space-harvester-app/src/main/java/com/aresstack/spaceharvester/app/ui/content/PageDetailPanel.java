@@ -1435,7 +1435,7 @@ public final class PageDetailPanel extends JPanel {
         }
 
         showReader(loaded.reader(), page.live());
-        showOriginalContent(metadata, snapshot.payload());
+        showOriginalContent(viewable(metadata, snapshot.metadata()), snapshot.payload());
         raw.setText(loaded.display());
         raw.setCaretPosition(0);
         storage.setText(loaded.storage() == null ? "Diese Payload hat kein body.storage." : loaded.storage());
@@ -1483,6 +1483,25 @@ public final class PageDetailPanel extends JPanel {
      * Show the unmodified source file in the original-view tab.
      * Keep extracted text and its analyses in the separate text and analysis tabs.
      */
+    /** Natives Format eines entfernten Videos ohne Dateiinhalt (BSCW). */
+    private static final String REMOTE_MEDIA_FORMAT = "remote-media-metadata";
+
+    /**
+     * Die Kopfdaten für die Original-Ansicht: Fehlen dem Kopf Attribute (etwa die Art der Ressource), ergänzt sie der
+     * Snapshot; was der Kopf hat, gilt.
+     */
+    static PageMetadata viewable(PageMetadata header, PageMetadata snapshot) {
+        if (snapshot == null || header.attributes().keySet().containsAll(snapshot.attributes().keySet())
+                && (header.url() != null || snapshot.url() == null)) {
+            return header;
+        }
+        java.util.SortedMap<String, String> attributes = new java.util.TreeMap<>(snapshot.attributes());
+        attributes.putAll(header.attributes());
+        return new PageMetadata(header.pageId(), header.resourceId(), header.title(), header.partitionKey(),
+                header.parentPageId(), header.version(), header.modifiedAt(),
+                header.url() != null ? header.url() : snapshot.url(), attributes);
+    }
+
     void showOriginalContent(PageMetadata metadata, NativePayload payload) {
         closeOriginalFile();
         if (PageMetadata.LINK_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
@@ -1490,16 +1509,19 @@ public final class PageDetailPanel extends JPanel {
             showOriginalLink(payload);
             return;
         }
-        if (!PageMetadata.FILE_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
-            return;
-        }
-        if ("true".equals(metadata.attributes().get(PageMetadata.REMOTE_MEDIA))) {
+        // Entfernte Videos und zu große Dateien erkennt die Ansicht auch an der Payload: Kopfdaten aus einem älteren
+        // Stand tragen die Art der Ressource nicht immer, sonst bliebe die Ansicht leer.
+        if ("true".equals(metadata.attributes().get(PageMetadata.REMOTE_MEDIA))
+                || REMOTE_MEDIA_FORMAT.equals(payload.nativeFormat())) {
             showOriginalVideo(metadata);
             return;
         }
         if (com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(payload)) {
             readingPane.clear(" ");
             showLargeFile(metadata, com.aresstack.spaceharvester.application.snapshot.LargeFiles.textOnly(payload));
+            return;
+        }
+        if (!PageMetadata.FILE_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
             return;
         }
         readingPane.clear(" ");
