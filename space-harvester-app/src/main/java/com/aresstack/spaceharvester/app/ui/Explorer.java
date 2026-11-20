@@ -453,6 +453,8 @@ public final class Explorer {
             private TreePath pressed;
             /** Ob die Maus zwischen Drücken und Loslassen gewandert ist: Swing meldet dann keinen Klick. */
             private boolean moved;
+            /** Klickzahl beim Drücken; beim Loslassen nach Bewegung setzt AWT sie (etwa unter X11) auf 0. */
+            private int pressedCount;
 
             @Override
             public void mouseClicked(MouseEvent event) {
@@ -490,6 +492,7 @@ public final class Explorer {
             public void mousePressed(MouseEvent event) {
                 pressed = javax.swing.SwingUtilities.isLeftMouseButton(event)
                         ? tree.getPathForLocation(event.getX(), event.getY()) : null;
+                pressedCount = Math.max(1, event.getClickCount());
                 moved = false;
                 if (event.isPopupTrigger()) {
                     popup(event);
@@ -514,7 +517,7 @@ public final class Explorer {
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
                 if (moved && pressed != null && pressed.equals(path)
                         && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
-                    clicked(path, event.getPoint(), event.getClickCount());
+                    clicked(path, event.getPoint(), pressedCount);
                 }
                 pressed = null;
                 moved = false;

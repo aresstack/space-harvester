@@ -304,8 +304,9 @@ class ExplorerTest {
             int x = row.x + 5;
             int y = row.y + row.height / 2;
             mouse.mousePressed(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_PRESSED, x, y, 1));
-            mouse.mouseDragged(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_DRAGGED, x + 2, y + 1, 1));
-            mouse.mouseReleased(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_RELEASED, x + 2, y + 1, 1));
+            // Nach der Bewegung meldet AWT beim Loslassen die Klickzahl 0 (Codex zu #975); es zählt die vom Drücken.
+            mouse.mouseDragged(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_DRAGGED, x + 2, y + 1, 0));
+            mouse.mouseReleased(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_RELEASED, x + 2, y + 1, 0));
             assertThat(opened).as("losgelassen nach kleiner Bewegung").containsExactly(wanted, wanted);
             // Ohne Bewegung kommt der Klick von Swing; das Loslassen öffnet nicht ein zweites Mal.
             mouse.mousePressed(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_PRESSED, x, y, 1));
