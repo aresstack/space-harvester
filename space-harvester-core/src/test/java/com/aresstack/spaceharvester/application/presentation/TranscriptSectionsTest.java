@@ -59,7 +59,9 @@ class TranscriptSectionsTest {
         assertThat(TranscriptSections.reach(TRANSCRIPT)).isEqualTo(85_000);
         String older = "[00:00:00] Willkommen.\n\n[00:00:30] Heute  geht es los\n";
         assertThat(TranscriptSections.completedPart(older)).isEqualTo("[00:00:00] Willkommen.\n\n");
+        // Fortgesetzt wird ab dem Anfang des weggefallenen Abschnitts, nicht ab dem Ende des fertigen Teils.
         assertThat(TranscriptSections.reach(older)).isEqualTo(30_000);
+        assertThat(TranscriptSections.reach(TranscriptSections.completedPart(older))).isZero();
         assertThat(TranscriptSections.completedPart(null)).isEmpty();
         assertThat(TranscriptSections.reach("")).isZero();
     }

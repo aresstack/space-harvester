@@ -57,7 +57,9 @@ public final class VideoPresentationMedia implements VideoMedia {
         // vervollständigen).
         String kept = TranscriptSections.completedPart(existing);
         StringBuilder text = new StringBuilder(kept);
-        long resume = TranscriptSections.reach(kept);
+        // Vom ganzen Transkript bestimmt: Ohne Ende reicht ein Abschnitt bis zum Anfang des nächsten, der eben
+        // weggefallene letzte gibt also die Stelle an, ab der neu erkannt wird.
+        long resume = TranscriptSections.reach(existing);
         long duration = SlideChanges.durationMillis(remote::read, size);
         if (duration > 0) {
             progress.duration(duration);
