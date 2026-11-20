@@ -215,6 +215,10 @@ public final class PageDetailPanel extends JPanel {
     /** Reiter „Text“: der Lesetext mit dem Navigationsbanner der Dokumentnavigation darüber (Kopie aus dem EAC). */
     private static final String TEXT_READER_CARD = "reader";
     private static final String TEXT_VIDEO_TRANSCRIPT_CARD = "video-transcript";
+    /** Im Reiter „Text“ statt des Lesetexts: das Original einer Datei ohne Textauszug (Bild, …) im Viewer. */
+    private static final String TEXT_ORIGINAL_CARD = "original";
+    /** Hinweis im Reiter „Text“ zu einer leeren Datei. */
+    static final String EMPTY_FILE = "Diese Datei ist leer: Die Quelle meldet 0 Bytes. Es gibt nichts anzuzeigen.";
     private final java.awt.CardLayout textCardLayout = new java.awt.CardLayout();
     private final JPanel textContents = new JPanel(textCardLayout);
     private final VideoTranscriptionPanel videoTranscript = new VideoTranscriptionPanel(
@@ -330,6 +334,15 @@ public final class PageDetailPanel extends JPanel {
     private AttachmentViewerPanel originalFileViewer;
     /** Ob im Reiter „Text“ die Transkription eines Videos steht. */
     private boolean videoTranscriptShown;
+    /** Das gezeigte Original, für den Viewer im Reiter „Text“; {@code null} ohne. */
+    private ReaderAttachment originalAttachment;
+    /** Lädt dieses Original höchstens einmal, für beide Viewer. */
+    private ReaderAttachmentLoader originalLoader;
+    /** Der Viewer im Reiter „Text“ für eine Datei ohne Textauszug. */
+    private AttachmentViewerPanel textOriginalViewer;
+    private final JPanel textOriginal = new JPanel(new BorderLayout());
+    /** Ob die gezeigte Datei leer ist (die Quelle meldet 0 Bytes). */
+    private boolean emptyFileShown;
     /**
      * Die Werkzeuge dieser Ansicht in der Leiste mit der Lupe ({@code ContentView.tools()}), je nach Reiter: im Chat
      * die Schnellaktionen (mittig), in der Leseansicht einer Datei „Speichern“/„Öffnen“ samt „Typ · Größe“, im Text
@@ -469,6 +482,8 @@ public final class PageDetailPanel extends JPanel {
         textBusy.setVeilColor(Comic.SURFACE);
         textContents.add(textBusy, TEXT_READER_CARD);
         textContents.add(videoTranscript, TEXT_VIDEO_TRANSCRIPT_CARD);
+        textOriginal.setOpaque(false);
+        textContents.add(textOriginal, TEXT_ORIGINAL_CARD);
         readerPanel.add(textContents, BorderLayout.CENTER);
         // Ein Themenabschnitt beginnt mit einem Absatz: unter „Absätze“ steht derselbe Absatz gewählt bereit.
         readerPage.onJump(section -> {
@@ -1456,6 +1471,7 @@ public final class PageDetailPanel extends JPanel {
 
         showReader(loaded.reader(), page.live());
         showOriginalContent(viewable(metadata, snapshot.metadata()), snapshot.payload());
+        showTextOriginal(loaded.reader());
         raw.setText(loaded.display());
         raw.setCaretPosition(0);
         storage.setText(loaded.storage() == null ? "Diese Payload hat kein body.storage." : loaded.storage());
@@ -1557,6 +1573,12 @@ public final class PageDetailPanel extends JPanel {
                 fileSize = -1L;
             }
         }
+        if (payload.length() == 0 && fileSize == 0) {
+            // Auch in der Quelle leer (etwa eine leere Vorlage in BSCW): nichts zu laden, nichts zu zeigen.
+            emptyFileShown = true;
+            showFileCard(metadata, EMPTY_FILE);
+            return;
+        }
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
                 originalMediaType(payload), fileSize);
         final String source = sourceId;
@@ -1579,7 +1601,9 @@ public final class PageDetailPanel extends JPanel {
             Background.run(() -> runtime.workspace().page(source, id, true).snapshot().payload().bytes(), done,
                     error -> failed.accept(reason(error)));
         };
-        originalFileViewer = new AttachmentViewerPanel(attachment, loader, fileOpener, attachmentRenderer);
+        originalAttachment = attachment;
+        originalLoader = once(loader);
+        originalFileViewer = new AttachmentViewerPanel(attachment, originalLoader, fileOpener, attachmentRenderer);
         // Speichern, Öffnen und „Typ · Größe“ stehen unten in der Leiste mit der Lupe, nicht in der Vorschau.
         originalFileViewer.detachFooter();
         fileContent.add(originalFileViewer, BorderLayout.CENTER);
@@ -1587,6 +1611,67 @@ public final class PageDetailPanel extends JPanel {
         fileContent.revalidate();
         fileContent.repaint();
         updateFootTools(tabs.selected());
+    }
+
+    /**
+     * Der Reiter „Text“ einer Datei ohne Textauszug (Angelo, 20.11.2026): statt „keine Lesevorschau“ das Original im
+     * Viewer, aus demselben, nur einmal geladenen Original wie in der Leseansicht; zu einer leeren Datei ein Hinweis.
+     */
+    private void showTextOriginal(ReaderDocument document) {
+        if (emptyFileShown) {
+            reader.setText(EMPTY_FILE);
+            return;
+        }
+        if (videoTranscriptShown || originalAttachment == null || document != null && document.text() != null) {
+            return;
+        }
+        textOriginalViewer = new AttachmentViewerPanel(originalAttachment, originalLoader, fileOpener,
+                attachmentRenderer);
+        textOriginal.add(textOriginalViewer, BorderLayout.CENTER);
+        textCardLayout.show(textContents, TEXT_ORIGINAL_CARD);
+        textOriginal.revalidate();
+        textOriginal.repaint();
+    }
+
+    /** Lädt das Original höchstens einmal; wer während des Ladens fragt, bekommt dasselbe Ergebnis (EDT). */
+    private static ReaderAttachmentLoader once(ReaderAttachmentLoader loader) {
+        return new ReaderAttachmentLoader() {
+            private byte[] bytes;
+            private List<Consumer<byte[]>> waiting;
+            private List<Consumer<String>> failing;
+
+            @Override
+            public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                if (bytes != null) {
+                    done.accept(bytes);
+                    return;
+                }
+                if (waiting != null) {
+                    waiting.add(done);
+                    failing.add(failed);
+                    return;
+                }
+                waiting = new ArrayList<>(List.of(done));
+                failing = new ArrayList<>(List.of(failed));
+                loader.load(attachment, loaded -> {
+                    bytes = loaded;
+                    List<Consumer<byte[]>> all = waiting;
+                    waiting = null;
+                    failing = null;
+                    all.forEach(each -> each.accept(loaded));
+                }, reason -> {
+                    List<Consumer<String>> all = failing;
+                    waiting = null;
+                    failing = null;
+                    all.forEach(each -> each.accept(reason));
+                });
+            }
+
+            @Override
+            public void preview(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                loader.preview(attachment, done, failed);
+            }
+        };
     }
 
     /** Keep remote video content out of the native snapshot; stream it after a deliberate play action. */
@@ -1676,7 +1761,9 @@ public final class PageDetailPanel extends JPanel {
         String source = sourceId;
         ReaderAttachmentLoader loader = (file, done, failed) -> Background.run(
                 () -> runtime.workspace().original(source, metadata), done, error -> failed.accept(reason(error)));
-        originalFileViewer = new AttachmentViewerPanel(attachment, loader, fileOpener, attachmentRenderer);
+        originalAttachment = attachment;
+        originalLoader = once(loader);
+        originalFileViewer = new AttachmentViewerPanel(attachment, originalLoader, fileOpener, attachmentRenderer);
         originalFileViewer.detachFooter();
         fileContent.add(originalFileViewer, BorderLayout.CENTER);
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
@@ -1695,15 +1782,20 @@ public final class PageDetailPanel extends JPanel {
         long size = com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
         long limit = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES
                 : context.settings().storage().maxPageBytes();
-        JPanel card = new JPanel(new BorderLayout(0, 12));
-        card.setOpaque(false);
-        javax.swing.JTextArea explanation = new javax.swing.JTextArea("Zu groß für den Cache: "
+        showFileCard(metadata, "Zu groß für den Cache: "
                 + (size < 0 ? "Größe unbekannt" : Texts.bytes(size)) + ", die Grenze liegt bei " + Texts.bytes(limit)
                 + (textOnly ? ". Abgelegt ist nur ihr Textauszug: Er steht in der Text-Ansicht, und die Suche findet "
                 + "die Datei darüber." : ". Abgelegt sind nur ihre Kopfdaten, weil sie keinen lesbaren Text hat oder "
                 + "größer ist als die Grenze für den Textauszug.")
                 + " Das Original öffnest du in der Quelle; oder erhöhe die Grenzen unter Einstellungen › Daten › "
                 + "„Größte Datei im Cache“, dann lädt das nächste Öffnen es.");
+    }
+
+    /** Eine Karte statt des Originals: Hinweis und „In der Quelle öffnen“. */
+    private void showFileCard(PageMetadata metadata, String text) {
+        JPanel card = new JPanel(new BorderLayout(0, 12));
+        card.setOpaque(false);
+        javax.swing.JTextArea explanation = new javax.swing.JTextArea(text);
         explanation.setEditable(false);
         explanation.setOpaque(false);
         explanation.setLineWrap(true);
@@ -1830,6 +1922,14 @@ public final class PageDetailPanel extends JPanel {
             originalFileViewer.close();
             originalFileViewer = null;
         }
+        if (textOriginalViewer != null) {
+            textOriginal.remove(textOriginalViewer);
+            textOriginalViewer.close();
+            textOriginalViewer = null;
+        }
+        originalAttachment = null;
+        originalLoader = null;
+        emptyFileShown = false;
         if (originalVideoViewer != null) {
             originalVideoViewer.close();
             originalVideoViewer = null;
