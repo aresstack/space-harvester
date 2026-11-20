@@ -8,6 +8,7 @@ import java.awt.event.MouseWheelEvent;
 import java.util.ArrayList;
 import java.util.List;
 import javax.swing.JPanel;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -21,28 +22,37 @@ class ViewerWheelTest {
     private boolean room;
     private long now;
 
-    private final ViewerWheel wheel = new ViewerWheel(new ViewerWheel.Target() {
-        @Override
-        public boolean pan(int dx, int dy) {
-            calls.add("pan " + dx + "," + dy);
-            return room;
-        }
+    private final ViewerWheel wheel = wheel();
 
-        @Override
-        public void zoom(double factor, Point at) {
-            calls.add("zoom " + (factor > 1 ? "in" : "out") + " " + at.x + "," + at.y);
-        }
+    private ViewerWheel wheel() {
+        return new ViewerWheel(new ViewerWheel.Target() {
+            @Override
+            public boolean pan(int dx, int dy) {
+                calls.add("pan " + dx + "," + dy);
+                return room;
+            }
 
-        @Override
-        public void previous() {
-            calls.add("previous");
-        }
+            @Override
+            public void zoom(double factor, Point at) {
+                calls.add("zoom " + (factor > 1 ? "in" : "out") + " " + at.x + "," + at.y);
+            }
 
-        @Override
-        public void next() {
-            calls.add("next");
-        }
-    }, () -> now);
+            @Override
+            public void previous() {
+                calls.add("previous");
+            }
+
+            @Override
+            public void next() {
+                calls.add("next");
+            }
+        }, () -> now);
+    }
+
+    @BeforeEach
+    void freshGap() {
+        ViewerWheel.resetPageGap();
+    }
 
     @Test
     void wheelAloneTurnsThePageLikeTheArrows() {
@@ -73,6 +83,18 @@ class ViewerWheelTest {
         assertThat(calls).filteredOn("next"::equals).hasSize(1);
         now += 300;
         wheel.mouseWheelMoved(event(1, 0));
+        assertThat(calls).filteredOn("next"::equals).hasSize(2);
+    }
+
+    /** Der nächste Anhang öffnet einen neuen Betrachter mit eigenem Rad; die Sperre gilt trotzdem weiter. */
+    @Test
+    void theGapSurvivesAReplacedViewer() {
+        wheel.mouseWheelMoved(event(1, 0));
+        now += 50;
+        wheel().mouseWheelMoved(event(1, 0));
+        assertThat(calls).filteredOn("next"::equals).hasSize(1);
+        now += 300;
+        wheel().mouseWheelMoved(event(1, 0));
         assertThat(calls).filteredOn("next"::equals).hasSize(2);
     }
 

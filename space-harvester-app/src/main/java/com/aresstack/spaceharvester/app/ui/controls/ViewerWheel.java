@@ -16,7 +16,8 @@ import java.util.function.LongSupplier;
  *   <li><b>Shift</b>+Rad wechselt die Achse: verschiebt den Ausschnitt waagrecht, blättert nie.</li>
  * </ul>
  * Zwischen zwei Blättern liegt eine kurze Sperre, damit ein Touchpad mit vielen kleinen Radschritten nicht gleich
- * mehrere Seiten weiterspringt.
+ * mehrere Seiten weiterspringt. Sie gilt über alle Betrachter hinweg (ein Rad, ein Benutzer), denn das Blättern zum
+ * nächsten Anhang baut einen neuen Betrachter mit eigenem {@code ViewerWheel} auf, und die Sperre muss ihn überleben.
  */
 public final class ViewerWheel implements MouseWheelListener {
 
@@ -46,9 +47,11 @@ public final class ViewerWheel implements MouseWheelListener {
     /** Mindestabstand zweier Blätter-Schritte. */
     static final long PAGE_GAP_MS = 250;
 
+    /** Zeitpunkt des letzten Blätterns, über alle Betrachter geteilt (nur auf dem EDT berührt). */
+    private static long lastPageAt = Long.MIN_VALUE / 2;
+
     private final Target target;
     private final LongSupplier clock;
-    private long lastPageAt = Long.MIN_VALUE / 2;
 
     public ViewerWheel(Target target) {
         this(target, System::currentTimeMillis);
@@ -57,6 +60,11 @@ public final class ViewerWheel implements MouseWheelListener {
     ViewerWheel(Target target, LongSupplier clock) {
         this.target = Objects.requireNonNull(target, "target");
         this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    /** Vergisst die Blätter-Sperre (für Tests). */
+    static void resetPageGap() {
+        lastPageAt = Long.MIN_VALUE / 2;
     }
 
     @Override
