@@ -326,6 +326,27 @@ class ActivitiesActionsTest {
                 .containsExactly("f1", "t2");
     }
 
+    /** Angelo 20.11.2026: Im Detail von „PPTX erzeugen“ steht der Ordner der Datei, im Download der Ausgabeordner. */
+    @Test
+    void theDetailNamesTheFolderAJobWritesTo() {
+        java.nio.file.Path exports = java.nio.file.Path.of("ausgabe").toAbsolutePath();
+        java.nio.file.Path pptx = exports.resolve("praesentationen").resolve("KickOff.pptx");
+        JobStatus file = withParameters(run("f1", JobType.PRESENTATION_EXPORT, "r1"), Map.of(
+                com.aresstack.spaceharvester.application.presentation.VideoPresentations.FILE_PARAMETER,
+                pptx.toString()));
+
+        assertThat(ActivitiesView.outputDirectory(file, exports)).isEqualTo(pptx.getParent());
+        assertThat(ActivitiesView.outputDirectory(run("e1", JobType.EXPORT, "r1"), exports)).isEqualTo(exports);
+        assertThat(ActivitiesView.outputDirectory(run("t1", JobType.VIDEO_TRANSCRIPT, "r1"), exports)).isNull();
+        assertThat(ActivitiesView.outputDirectory(run("f2", JobType.PRESENTATION_EXPORT, "r2"), exports)).isNull();
+    }
+
+    private static JobStatus withParameters(JobStatus job, Map<String, String> parameters) {
+        return new JobStatus(job.id(), job.type(), "wiki", "OPS", "local", JobState.COMPLETED,
+                new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, null, null, parameters,
+                false, false, null);
+    }
+
     private static JobStatus run(String id, JobType type, String run) {
         return new JobStatus(id, type, "wiki", "OPS", "local", JobState.RUNNING, new JobProgress(0, 0, 0, 0), null,
                 false, Instant.EPOCH, null, null, null, null,

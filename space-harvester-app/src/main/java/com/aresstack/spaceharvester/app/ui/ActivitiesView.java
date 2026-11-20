@@ -76,6 +76,10 @@ public final class ActivitiesView implements View {
     private final JTable table = Comic.table(new JobsTable(model));
     private final JLabel title = new JLabel("Kein Auftrag gewählt");
     private final Facts facts = new Facts();
+    /** Rechts neben „Ausgabeordner“: öffnet den Ordner, in den der gewählte Auftrag schreibt. */
+    final ComposerButton openOutput = Comic.button("Ordner öffnen", "Den Ausgabeordner im Dateimanager anzeigen");
+    /** Der Ausgabeordner des gezeigten Auftrags; {@code null}: er schreibt keine Dateien. */
+    private java.nio.file.Path outputShown;
     private final Feedback feedback = new Feedback();
     private final ComposerButton again = Comic.button("Erneut abgleichen", "Denselben Space erneut abgleichen");
     /** Die Einmalcode-Abfrage des gewählten Auftrags, ohne Auswahl die älteste offene (ADR 0018). */
@@ -196,6 +200,12 @@ public final class ActivitiesView implements View {
                         && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
                     toggleGroup(row);
                 }
+                // Ein Klick auf die schon markierte Zeile meldet keine neue Auswahl: Fehlt ihr Detail noch (Abruf
+                // gescheitert), liest ihn der Klick nach, statt „Kein Auftrag gewählt“ stehen zu lassen.
+                if (row >= 0 && row < model.rows.size() && detail == null
+                        && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    select(model.rows.get(row).id());
+                }
             }
         });
         table.getSelectionModel().addListSelectionListener(e -> {
@@ -256,6 +266,7 @@ public final class ActivitiesView implements View {
         title.setForeground(Comic.INK);
         again.addActionListener(e -> restart());
         deleteFinished.addActionListener(e -> deleteFinished());
+        openOutput.addActionListener(e -> SettingsView.open(outputShown, feedback));
         moreJobs.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
                 moreJobsMenu(), moreJobs).show(moreJobs, 0, moreJobs.getHeight()));
 
@@ -526,18 +537,29 @@ public final class ActivitiesView implements View {
             downloads.refresh(runtime.workspace().parallelDownloads());
             preparations.refresh(runtime.workspace().parallelPreparations());
             connections.refresh(runtime.workspace().downloadConnections());
-            reselect();
-            // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
-            if (java.util.Objects.equals(id, selectedId)) {
+            // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an. Das Detail steht vor dem
+            // Markieren der Zeile fest, damit deren Auswahlmeldung keinen weiteren Abruf auslöst.
+            boolean shown = java.util.Objects.equals(id, selectedId);
+            if (shown) {
                 detail = id == null ? null : data[1];
                 phase = (String) data[2];
                 @SuppressWarnings("unchecked")
                 List<Note> notes = (List<Note>) data[3];
                 stageNotes = id == null ? List.of() : notes;
+            }
+            reselect();
+            if (shown) {
                 render();
             }
         }, error -> {
             readDone();
+            // Ließ sich der gewählte Auftrag nicht lesen, bleibt keine Zeile markiert, deren Detail fehlt: Ein
+            // erneuter Klick auf sie wählt sie wieder und liest nach.
+            if (id != null && id.equals(selectedId) && detail == null) {
+                selectedId = null;
+                table.clearSelection();
+                render();
+            }
             feedback.problem(error);
         });
     }
@@ -551,7 +573,11 @@ public final class ActivitiesView implements View {
         }
     }
 
+    /** Wählt einen Auftrag; derselbe Auftrag ohne gelesenes Detail wird erneut gelesen. */
     private void select(String id) {
+        if (id.equals(selectedId) && detail != null) {
+            return;
+        }
         if (!id.equals(selectedId)) {
             selectedId = id;
             detail = null;
@@ -560,8 +586,8 @@ public final class ActivitiesView implements View {
             details.revalidate();
             details.repaint();
             feedback.clear();
-            poll();
         }
+        poll();
     }
 
     /** Klappt alle Gruppen zu ({@code collapse}) oder auf; die Auswahl bleibt beim selben Auftrag, sofern sichtbar. */
@@ -579,6 +605,10 @@ public final class ActivitiesView implements View {
         reselect();
     }
 
+    /**
+     * Markiert die Zeile des gewählten Auftrags; ist er nicht sichtbar (zugeklappt, noch nicht gelistet), bleibt keine
+     * andere Zeile markiert, deren Klick sonst keine Auswahl meldet.
+     */
     private void reselect() {
         for (int i = 0; i < model.rows.size(); i++) {
             if (model.rows.get(i).id().equals(selectedId)) {
@@ -587,6 +617,9 @@ public final class ActivitiesView implements View {
                 }
                 return;
             }
+        }
+        if (table.getSelectedRow() >= 0) {
+            table.clearSelection();
         }
     }
 
@@ -675,6 +708,11 @@ public final class ActivitiesView implements View {
             facts.add(note.label(), note.text(), note.skipped() ? Comic.ORANGE : Comic.INK);
         }
         facts.add("Auftrags-ID", status.id());
+        outputShown = outputDirectory(status,
+                context.settings() == null ? null : context.settings().outputDirectory());
+        if (outputShown != null) {
+            facts.add(OUTPUT_LABEL, outputShown.toString(), Comic.INK, openOutput);
+        }
         if (status.error() != null) {
             facts.add("Fehler", status.error().code() + ": " + status.error().message(), Comic.RED);
         }
@@ -787,6 +825,21 @@ public final class ActivitiesView implements View {
                     : status.error().code() + ": " + status.error().message());
             default -> feedback.working(Texts.state(status.state()));
         }
+    }
+
+    static final String OUTPUT_LABEL = "Ausgabeordner";
+
+    /**
+     * Wohin ein Auftrag schreibt (Angelo 20.11.2026): „PPTX erzeugen“ in den Ordner seiner Datei, ein Download in den
+     * Ausgabeordner der Einstellungen; andere Aufträge schreiben keine Dateien ({@code null}).
+     */
+    static java.nio.file.Path outputDirectory(JobStatus status, java.nio.file.Path exportDirectory) {
+        if (status.type() == JobType.PRESENTATION_EXPORT) {
+            String file = status.parameters().get(
+                    com.aresstack.spaceharvester.application.presentation.VideoPresentations.FILE_PARAMETER);
+            return file == null ? null : java.nio.file.Path.of(file).toAbsolutePath().getParent();
+        }
+        return status.type() == JobType.EXPORT ? exportDirectory : null;
     }
 
     /** Quelle / Space eines Auftrags, bei einem Seiten-Download dazu „ab“ seiner Startseite. */
@@ -1144,6 +1197,11 @@ public final class ActivitiesView implements View {
     }
 
     /** Für Tests. */
+    /** Für Tests und Proben: die Überschrift des Detailbereichs. */
+    String detailTitleForTest() {
+        return title.getText();
+    }
+
     JTable table() {
         return table;
     }
