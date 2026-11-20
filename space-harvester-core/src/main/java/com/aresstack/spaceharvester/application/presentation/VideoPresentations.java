@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.presentation;
 
+import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.Asset;
 import com.aresstack.spaceharvester.application.assets.Assets;
@@ -151,7 +152,7 @@ public final class VideoPresentations {
      */
     public record Options(int parallel, Format format) {
 
-        /** Vier Aufrufe zugleich, PowerPoint. */
+        /** Vier Aufrufe zugleich in jeder Phase (die Bildbeschreibung nimmt ebenso viele an), PowerPoint. */
         public static final Options DEFAULT = new Options(4);
 
         public Options(int parallel) {
@@ -635,33 +636,53 @@ public final class VideoPresentations {
         for (int i = 0; i < chunks.size(); i++) {
             indices.add(i);
         }
+        Map<Integer, String> reasons = new java.util.concurrent.ConcurrentHashMap<>();
+        Consumer<Integer> attempt = index -> {
+            Outcome<List<TranscriptSections.Section>> outcome = call(retries(), context, key, () -> {
+                String answer = textModel.complete(CORRECTION_INSTRUCTIONS,
+                        correctionInput(chunks.get(index), descriptions, marks));
+                if (answer == null || answer.isBlank()) {
+                    return Outcome.failed("das Text-Modell hat leer geantwortet");
+                }
+                List<TranscriptSections.Section> result = acceptCorrection(chunks.get(index), answer);
+                return result == null ? Outcome.failed("die Antwort hatte nicht dieselben Abschnitte und Zeitmarken")
+                        : Outcome.of(result);
+            });
+            if (outcome.value() != null) {
+                synchronized (corrected) {
+                    corrected.set(index, outcome.value());
+                }
+                reasons.remove(index);
+            } else {
+                reasons.put(index, outcome.reason());
+            }
+        };
         inParallel(indices, options.parallel(), context, index -> {
-            List<TranscriptSections.Section> chunk = chunks.get(index);
-            List<TranscriptSections.Section> result = null;
-            for (int attempt = 0; attempt <= retries() && result == null && !context.cancelRequested()
-                    && released.test(key); attempt++) {
-                try {
-                    String answer = textModel.complete(CORRECTION_INSTRUCTIONS,
-                            correctionInput(chunk, descriptions, marks));
-                    result = acceptCorrection(chunk, answer);
-                } catch (RuntimeException e) {
-                    LOG.log(System.Logger.Level.DEBUG, "Korrektur eines Transkriptpakets gescheitert ({0})",
-                            e.getClass().getName());
-                }
+            attempt.accept(index);
+            if (!reasons.containsKey(index)) {
+                context.processed(1);
+                context.written(1);
             }
-            synchronized (corrected) {
-                if (result != null) {
-                    corrected.set(index, result);
-                }
-            }
+        });
+        // Nachzügler einzeln, wie bei „Folien beschreiben“: allein bekommt jedes Paket das Modell für sich.
+        List<Integer> late = reasons.keySet().stream().sorted().toList();
+        inParallel(late, 1, context, attempt);
+        for (int index : late) {
             context.processed(1);
-            if (result != null) {
+            String reason = reasons.get(index);
+            if (reason == null) {
                 context.written(1);
             } else {
                 context.failed(1);
                 failed.incrementAndGet();
+                List<TranscriptSections.Section> chunk = chunks.get(index);
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, "CORRECTION_FAILED",
+                        "Transkriptpaket " + (index + 1) + " von " + chunks.size() + " ("
+                                + TranscriptSections.clock(chunk.get(0).startMillis()) + "–"
+                                + TranscriptSections.clock(chunk.get(chunk.size() - 1).endMillis())
+                                + ") nicht korrigiert: " + reason));
             }
-        });
+        }
         requireReleased(key);
         List<TranscriptSections.Section> all = new ArrayList<>();
         corrected.forEach(all::addAll);
@@ -785,36 +806,50 @@ public final class VideoPresentations {
             frames.put(i, frame.get());
         }
         AtomicLong failed = new AtomicLong(missingFrames);
-        inParallel(open, options.parallel(), context, index -> {
+        Map<Integer, String> reasons = new java.util.concurrent.ConcurrentHashMap<>();
+        Consumer<Integer> attempt = index -> {
             long millis = marks.get(index);
             String[] parts = inputs.get(index).split("\u0000", 2);
             String instruction = NOTES_INSTRUCTIONS + "\n\nGesagt:\n"
                     + (parts[0].isBlank() ? "(Während dieser Folie wurde nichts gesagt.)" : parts[0]);
-            String text = null;
-            for (int attempt = 0; attempt <= vision.retries() && text == null && !context.cancelRequested()
-                    && released.test(key); attempt++) {
-                try {
-                    String answer = vision.describe(frames.get(index).content(), "image/png", instruction);
-                    text = answer == null || answer.isBlank() ? null : answer.strip();
-                } catch (RuntimeException e) {
-                    LOG.log(System.Logger.Level.DEBUG, "Folienkommentar gescheitert ({0})", e.getClass().getName());
-                }
-            }
-            if (text != null && released.test(key)) {
+            byte[] png = frames.get(index).content();
+            Outcome<String> outcome = call(vision.retries(), context, key, () -> {
+                String answer = vision.describe(png, "image/png", instruction);
+                return answer == null || answer.isBlank() ? Outcome.failed("das Vision-Modell hat leer geantwortet")
+                        : Outcome.of(answer.strip());
+            });
+            if (outcome.value() != null && released.test(key)) {
                 assets.putVideoSlideNote(sourceId, pageId, version,
-                        new Assets.SlideNote(millis, null, label, model, parts[1]), text);
+                        new Assets.SlideNote(millis, null, label, model, parts[1]), outcome.value());
+                reasons.remove(index);
+            } else {
+                reasons.put(index, outcome.value() != null ? "die Seite ist nicht mehr für den KI-Dienst freigegeben"
+                        : outcome.reason() + " (" + imageFacts(png) + ", Prompt " + instruction.length()
+                        + " Zeichen)");
             }
+        };
+        inParallel(open, options.parallel(), context, index -> {
+            attempt.accept(index);
+            if (!reasons.containsKey(index)) {
+                context.processed(1);
+                context.written(1);
+            }
+        });
+        // Nachzügler einzeln, wie bei „Folien beschreiben“ (Angelo 20.11.2026: Folie 00:05:00 scheiterte zweimal).
+        List<Integer> late = reasons.keySet().stream().sorted().toList();
+        inParallel(late, 1, context, attempt);
+        for (int index : late) {
             context.processed(1);
-            if (text != null) {
+            String reason = reasons.get(index);
+            if (reason == null) {
                 context.written(1);
             } else {
                 context.failed(1);
                 failed.incrementAndGet();
                 context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, "SLIDE_NOTE_MISSING",
-                        "Kein Vortragstext für Folie " + TranscriptSections.clock(millis)
-                                + ": das Vision-Modell hat nicht oder leer geantwortet"));
+                        "Kein Vortragstext für Folie " + TranscriptSections.clock(marks.get(index)) + ": " + reason));
             }
-        });
+        }
         requireReleased(key);
         if (failed.get() > 0) {
             context.incomplete();
@@ -931,6 +966,85 @@ public final class VideoPresentations {
             throw new JobFailedException("NOT_RELEASED", "Diese Seite ist nicht für den KI-Dienst freigegeben; was "
                     + "schon fertig ist, bleibt.");
         }
+    }
+
+    /** Ergebnis eines Modellaufrufs samt Versuchen: der Wert oder warum keiner kam. */
+    record Outcome<T>(T value, String reason) {
+
+        static <T> Outcome<T> of(T value) {
+            return new Outcome<>(value, null);
+        }
+
+        static <T> Outcome<T> failed(String reason) {
+            return new Outcome<>(null, reason);
+        }
+    }
+
+    /**
+     * Ruft das Modell bis zu {@code retries + 1} Mal, bis {@code once} einen Wert liefert. Ohne Wert der Grund des
+     * letzten Versuchs samt Zahl der Versuche und Dauer; Ausnahmen werden zu ihrem Grund ({@link #callFailure}).
+     */
+    private <T> Outcome<T> call(int retries, JobContext context, PageKey key,
+                                java.util.function.Supplier<Outcome<T>> once) {
+        return call(retries, context, () -> released.test(key), once);
+    }
+
+    /** Wie oben; {@code allowed} prüft vor jedem Versuch die KI-Freigabe. */
+    static <T> Outcome<T> call(int retries, JobContext context, java.util.function.BooleanSupplier allowed,
+                               java.util.function.Supplier<Outcome<T>> once) {
+        long started = System.nanoTime();
+        String reason = "abgebrochen";
+        int attempts = 0;
+        for (int attempt = 0; attempt <= retries && !context.cancelRequested() && allowed.getAsBoolean(); attempt++) {
+            attempts++;
+            try {
+                Outcome<T> outcome = once.get();
+                if (outcome.value() != null) {
+                    return outcome;
+                }
+                reason = outcome.reason();
+            } catch (RuntimeException e) {
+                reason = callFailure(e);
+                LOG.log(System.Logger.Level.DEBUG, "Modellaufruf gescheitert ({0})", e.getClass().getName());
+            }
+        }
+        if (attempts == 0) {
+            return Outcome.failed(context.cancelRequested() ? "abgebrochen"
+                    : "die Seite ist nicht für den KI-Dienst freigegeben");
+        }
+        long seconds = java.util.concurrent.TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - started);
+        return Outcome.failed(reason + "; " + attempts + (attempts == 1 ? " Versuch, " : " Versuche, ") + seconds
+                + " s");
+    }
+
+    /** Warum ein Modellaufruf scheiterte, in Worten; nennt nie Text, Antwort oder Schlüssel. */
+    static String callFailure(Throwable e) {
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (cause instanceof AiServiceException failure) {
+                return switch (failure.reason()) {
+                    case TIMEOUT -> "keine Antwort innerhalb der Frist (" + failure.getMessage() + ")";
+                    case UNREACHABLE -> "der KI-Dienst war nicht erreichbar (" + failure.getMessage() + ")";
+                    case UNAUTHORIZED -> "der KI-Dienst lehnt den Zugang ab";
+                    case NOT_CONFIGURED -> "kein Modell eingestellt";
+                    case INVALID_RESPONSE -> "unbrauchbare Antwort (" + failure.getMessage() + ")";
+                };
+            }
+        }
+        return "Fehler " + e.getClass().getSimpleName();
+    }
+
+    /** Größe und Maße eines PNG-Standbilds für die Meldung; ein leeres oder fremdes Bild sagt das. */
+    static String imageFacts(byte[] png) {
+        if (png == null || png.length == 0) {
+            return "Standbild leer";
+        }
+        String size = png.length >= 1024 ? (png.length / 1024) + " KiB" : png.length + " Bytes";
+        if (png.length >= 24 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G') {
+            int width = java.nio.ByteBuffer.wrap(png, 16, 4).getInt();
+            int height = java.nio.ByteBuffer.wrap(png, 20, 4).getInt();
+            return "Standbild " + width + "×" + height + ", " + size;
+        }
+        return "Standbild kein PNG, " + size;
     }
 
     private int retries() {
