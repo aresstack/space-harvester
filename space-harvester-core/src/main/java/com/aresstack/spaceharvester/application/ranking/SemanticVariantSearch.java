@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.ranking;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.query.DocumentKind;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
@@ -91,6 +92,10 @@ public final class SemanticVariantSearch implements VariantSearch {
             PageKey key = header.key();
             RelevanceSearch.Relevance best = ranked.relevance();
             boolean inDocument = best != null && best.attachmentId() != null;
+            if (!variant.kinds().isEmpty() && !variant.kinds().contains(kind(metadata, best, inDocument))) {
+                // Nur die gewählten Arten (Seiten, PDF, …), nach Name und gemeldetem Medientyp wie im Volltextindex.
+                continue;
+            }
             // Liegt das ähnlichste Stück in einem Anhang (ADR 0026, AP9a): Ausschnitt aus dessen Abschnitt und der
             // Anhang wie bei Treffern der Volltextsuche (#723).
             hits.add(new KeywordSearch.Hit(key.sourceId(), key.pageId(), metadata.partitionKey(), metadata.title(),
@@ -117,6 +122,15 @@ public final class SemanticVariantSearch implements VariantSearch {
     @Override
     public void requireAvailable(AccessContext caller, KeywordSearch.Query query) {
         relevance.requireAvailable(caller, scope(query));
+    }
+
+    /** Die Art des Treffers: enthaltene Datei, Anhang oder die Seite selbst (mit dem Medientyp der Quelle, #964). */
+    private static DocumentKind kind(PageMetadata metadata, RelevanceSearch.Relevance best, boolean inDocument) {
+        if (inDocument) {
+            return best.partId() != null ? DocumentKind.of(best.partTitle(), null)
+                    : DocumentKind.of(best.attachmentTitle(), null);
+        }
+        return DocumentKind.of(metadata.title(), metadata.attributes().get(PageMetadata.REMOTE_MEDIA_TYPE));
     }
 
     private static PageSearchQuery scope(KeywordSearch.Query query) {

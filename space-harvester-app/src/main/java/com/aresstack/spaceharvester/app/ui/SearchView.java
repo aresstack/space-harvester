@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.observe.Subscription;
+import com.aresstack.spaceharvester.application.query.DocumentKind;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
@@ -29,6 +30,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -80,18 +82,26 @@ public final class SearchView implements View {
     /** Der Modus der nächsten Suche: Schlagwortsuche oder semantisch, wie der Core ihn meldet. */
     final JLabel modeLabel = Comic.muted(" ");
     /**
-     * „Überall suchen“ (#515): übergeht bei der nächsten Suche die Auswahl im Explorer, ohne sie aufzuheben; nur der
-     * Benutzer schaltet es um, keine Baumauswahl und keine Konfigurationsänderung.
+     * Ein Häkchen je eingetragener Wissensquelle (Angelo 20.11.2026, ersetzt „Überall suchen“ aus #515): Vorgabe alle
+     * an; abgehakt nimmt die nächste Suche die Quelle aus, auch wenn sie im Explorer gewählt ist. Nur der Benutzer
+     * schaltet um, keine Baumauswahl und keine Konfigurationsänderung; eine neue Quelle kommt angehakt dazu. Gilt für
+     * die Sitzung, nicht darüber hinaus.
      */
-    final JCheckBox everywhere = checkBox("Überall suchen", "Sucht in allen Wissensquellen, unabhängig von der "
-            + "Auswahl im Explorer; die Auswahl bleibt bestehen");
+    final Map<String, JCheckBox> sourceBoxes = new LinkedHashMap<>();
+    /**
+     * Ein Häkchen je Dokumentart ({@link DocumentKind}: Seiten, PDF, Word, …), Vorgabe alle an; abgehakt fehlt die
+     * Art in der nächsten Suche. Gilt für die Sitzung wie die Quellen.
+     */
+    final Map<DocumentKind, JCheckBox> kindBoxes = new java.util.EnumMap<>(DocumentKind.class);
+    /** Die Dateitypen der nächsten Suche: „Dateitypen: alle“ oder die angehakten. */
+    final JLabel kindsLabel = Comic.muted(" ");
     /** Die Suchleiste der Kopfzeile des Hauptfensters: Suchfeld mit Pfeil für die Suchoptionen (#515). */
     private final com.aresstack.spaceharvester.app.ui.controls.InputFrame searchBar =
             com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(query);
     /** Pfeil rechts im Suchfeld: öffnet {@link #options}. */
     final javax.swing.JButton optionsButton =
             com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("\u25BE", "Suchoptionen");
-    /** Die Suchoptionen als Popup am Suchfeld: Überall suchen, Semantische Suche, Umfang, Modus, Hinweise. */
+    /** Die Suchoptionen als Popup am Suchfeld: Quellen, Dateitypen, Semantische Suche, Umfang, Modus, Hinweise. */
     final javax.swing.JPopupMenu options = new javax.swing.JPopupMenu();
     /** Warum die semantische Suche gesperrt ist bzw. woher ihre Varianten kommen, lesbar im Popup. */
     final JLabel semanticNote = Comic.muted(" ");
@@ -174,8 +184,13 @@ public final class SearchView implements View {
         semantic.addItemListener(e -> mode());
         tags.setOpaque(false);
         tags.setVisible(false);
-        everywhere.setSelected(false);
-        everywhere.addItemListener(e -> scope(scopes));
+        for (DocumentKind kind : DocumentKind.values()) {
+            JCheckBox box = checkBox(kind.label(), "Nur Dokumente dieser Art durchsuchen; abgehakt fehlt sie");
+            box.setSelected(true);
+            box.addItemListener(e -> kinds());
+            kindBoxes.put(kind, box);
+        }
+        kinds();
         context.onChange(ignored -> refreshSources());
         refreshSources();
         // Schon die Auswahl eines Treffers zeigt seine Seite im Explorer; ein Doppelklick öffnet sie.
@@ -245,7 +260,8 @@ public final class SearchView implements View {
     static final String HELP = "<html><b>Hinweise zur Suche</b><br>"
             + "Schlagwortsuche über Titel und Inhalt, direkt in den Quellen.<br>"
             + "Wo gesucht wird, wählst du im Explorer links: eine Wissensquelle, einen Space<br>"
-            + "oder mit Strg-Klick mehrere; ohne Auswahl in allen. „Überall suchen“ übergeht die Auswahl.<br>"
+            + "oder mit Strg-Klick mehrere; ohne Auswahl in allen angehakten Quellen.<br>"
+            + "Die Häkchen oben nehmen Quellen und Dateitypen aus der Suche.<br>"
             + "Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage<br>"
             + "geordnet; braucht ein Embedding-Modell (Einstellungen › Modelle).<br>"
             + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) öffnet die Seite direkt.<br>"
@@ -275,25 +291,58 @@ public final class SearchView implements View {
         panel.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
         JLabel help = new JLabel(HELP);
         help.setForeground(Comic.MUTED);
-        // Menüpunkte mit demselben Modell wie die Häkchen: per Pfeiltasten erreichbar, Leertaste/Enter schaltet,
-        // das Popup bleibt beim Umschalten offen.
-        for (JCheckBox box : List.of(everywhere, semantic)) {
-            javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(box.getText());
-            item.setModel(box.getModel());
-            item.setToolTipText(box.getToolTipText());
-            box.addPropertyChangeListener("ToolTipText", e -> item.setToolTipText(box.getToolTipText()));
-            item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
-            item.setEnabled(box.isEnabled());
-            box.addPropertyChangeListener("enabled", e -> item.setEnabled(box.isEnabled()));
-            options.add(item);
-        }
-        for (JComponent part : List.of(semanticNote, scopeLabel, modeLabel, help)) {
+        for (JComponent part : List.of(semanticNote, scopeLabel, kindsLabel, modeLabel, help)) {
             part.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
             panel.add(part);
             panel.add(javax.swing.Box.createVerticalStrut(part == help ? 0 : 4));
         }
-        options.add(panel);
+        notes = panel;
+        rebuildOptions();
         options.getAccessibleContext().setAccessibleName("Suchoptionen");
+    }
+
+    /** Die Hinweise unter den Häkchen; bleiben beim Neuaufbau des Popups. */
+    private JPanel notes;
+
+    /**
+     * Baut das Popup neu, in der Reihenfolge der Entscheidung: wo (Quellen), was (Dateitypen), wie (Semantische
+     * Suche), darunter Umfang, Dateitypen, Modus und Hinweise. Läuft einmal beim Aufbau und wenn Quellen dazukommen
+     * oder wegfallen.
+     */
+    private void rebuildOptions() {
+        options.removeAll();
+        if (!sourceBoxes.isEmpty()) {
+            options.add(caption("Wissensquellen"));
+            sourceBoxes.values().forEach(box -> options.add(menuItem(box)));
+            options.addSeparator();
+        }
+        options.add(caption("Dateitypen"));
+        kindBoxes.values().forEach(box -> options.add(menuItem(box)));
+        options.addSeparator();
+        options.add(menuItem(semantic));
+        options.add(notes);
+        options.revalidate();
+    }
+
+    private static JLabel caption(String text) {
+        JLabel label = Comic.caption(text);
+        label.setBorder(BorderFactory.createEmptyBorder(6, 10, 2, 10));
+        return label;
+    }
+
+    /**
+     * Ein Menüpunkt mit demselben Modell wie das Häkchen: per Pfeiltasten erreichbar, Leertaste/Enter schaltet, das
+     * Popup bleibt beim Umschalten offen.
+     */
+    private static javax.swing.JCheckBoxMenuItem menuItem(JCheckBox box) {
+        javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(box.getText());
+        item.setModel(box.getModel());
+        item.setToolTipText(box.getToolTipText());
+        box.addPropertyChangeListener("ToolTipText", e -> item.setToolTipText(box.getToolTipText()));
+        item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
+        item.setEnabled(box.isEnabled());
+        box.addPropertyChangeListener("enabled", e -> item.setEnabled(box.isEnabled()));
+        return item;
     }
 
     /** Öffnet die Optionen rechtsbündig unter dem Suchfeld; Swing hält das Popup im Bildschirm. */
@@ -304,8 +353,13 @@ public final class SearchView implements View {
         java.awt.Dimension size = options.getPreferredSize();
         options.show(searchBar, Math.max(0, searchBar.getWidth() - size.width), searchBar.getHeight());
         // Der erste Menüpunkt ist gleich gewählt, damit die Tastatur sofort darauf wirkt.
-        javax.swing.MenuSelectionManager.defaultManager().setSelectedPath(
-                new javax.swing.MenuElement[] {options, (javax.swing.MenuElement) options.getComponent(0)});
+        for (java.awt.Component component : options.getComponents()) {
+            if (component instanceof javax.swing.MenuElement first) {
+                javax.swing.MenuSelectionManager.defaultManager().setSelectedPath(
+                        new javax.swing.MenuElement[] {options, first});
+                break;
+            }
+        }
     }
 
     /** Die Suchleiste für die Kopfzeile des Hauptfensters; es gibt nur dieses eine Suchfeld. */
@@ -369,19 +423,69 @@ public final class SearchView implements View {
             // Eine ganze Quelle in der Auswahl: alle ihre Spaces, kein Space-Filter für die anderen.
             spaces.clear();
         }
-        scopeLabel.setText(everywhere.isSelected() || scopes.isEmpty() ? "In: Alle Wissensquellen"
-                : "In: " + String.join(", ", scopes.stream().map(scope -> title(scope.sourceId())
-                        + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
+        Set<String> searched = searchedSources();
+        if (searched.isEmpty()) {
+            scopeLabel.setText("In: keine Wissensquelle angehakt");
+        } else if (scopes.isEmpty()) {
+            scopeLabel.setText(searched.size() == sourceBoxes.size() ? "In: Alle Wissensquellen"
+                    : "In: " + String.join(", ", searched.stream().map(this::title).toList()));
+        } else {
+            scopeLabel.setText("In: " + String.join(", ", scopes.stream()
+                    .filter(scope -> searched.contains(scope.sourceId()))
+                    .map(scope -> title(scope.sourceId())
+                            + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
+        }
     }
 
-    /** Die Quellen, in denen die nächste Suche sucht; leer heißt alle. „Überall suchen“ übergeht die Auswahl. */
+    /**
+     * Die Quellen, in denen die nächste Suche sucht: die angehakten, bei einer Auswahl im Explorer nur die gewählten
+     * darunter. Leer, wenn keine angehakte Quelle übrig bleibt; dann sucht die Ansicht nicht.
+     */
+    Set<String> searchedSources() {
+        Set<String> checked = new LinkedHashSet<>();
+        sourceBoxes.forEach((id, box) -> {
+            if (box.isSelected() && (chosen.isEmpty() || chosen.contains(id))) {
+                checked.add(id);
+            }
+        });
+        return checked;
+    }
+
+    /**
+     * Die Quellen für die Anfrage an den Core; leer heißt alle (globale Suche, ADR 0009), also ohne Auswahl im
+     * Explorer und mit allen Quellen angehakt.
+     */
     Set<String> chosenSources() {
-        return everywhere.isSelected() ? Set.of() : Set.copyOf(chosen);
+        Set<String> searched = searchedSources();
+        return chosen.isEmpty() && searched.size() == sourceBoxes.size() ? Set.of() : searched;
     }
 
     /** Die Spaces, in denen die nächste Suche sucht; leer heißt alle. */
     Set<String> chosenSpaces() {
-        return everywhere.isSelected() ? Set.of() : Set.copyOf(spaces);
+        return Set.copyOf(spaces);
+    }
+
+    /** Die Dokumentarten der nächsten Suche; leer heißt alle. Ohne jedes Häkchen sucht die Ansicht nicht. */
+    Set<DocumentKind> chosenKinds() {
+        Set<DocumentKind> checked = java.util.EnumSet.noneOf(DocumentKind.class);
+        kindBoxes.forEach((kind, box) -> {
+            if (box.isSelected()) {
+                checked.add(kind);
+            }
+        });
+        return checked.size() == kindBoxes.size() ? Set.of() : checked;
+    }
+
+    /** Ob mindestens eine Dokumentart angehakt ist. */
+    private boolean anyKind() {
+        return kindBoxes.values().stream().anyMatch(JCheckBox::isSelected);
+    }
+
+    /** Nennt die Dateitypen der nächsten Suche unter dem Umfang. */
+    private void kinds() {
+        Set<DocumentKind> checked = chosenKinds();
+        kindsLabel.setText(!anyKind() ? "Dateitypen: keiner angehakt" : checked.isEmpty() ? "Dateitypen: alle"
+                : "Dateitypen: " + String.join(", ", checked.stream().map(DocumentKind::label).toList()));
     }
 
     private Set<String> knownSources() {
@@ -393,6 +497,7 @@ public final class SearchView implements View {
     /** Woher die Varianten der semantischen Suche kommen; entfernte Quellen fallen aus dem Umfang. */
     private void refreshSources() {
         AppRuntime runtime = context.runtime();
+        syncSourceBoxes(runtime);
         boolean available = runtime != null && runtime.workspace().semanticRanking();
         semantic.setEnabled(available);
         if (!available) {
@@ -405,6 +510,37 @@ public final class SearchView implements View {
         semanticNote.setText(tip == null ? " " : "<html><div style='width:320px'>" + tip + "</div></html>");
         mode();
         scope(scopes);
+    }
+
+    /**
+     * Ein Häkchen je Quelle der Laufzeit in ihrer Reihenfolge: neue kommen angehakt dazu, entfernte fallen weg,
+     * vorhandene behalten ihren Stand (auch beim Umbenennen). Das Popup baut sich nur neu, wenn sich die Liste ändert.
+     */
+    private void syncSourceBoxes(AppRuntime runtime) {
+        List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
+        Map<String, JCheckBox> current = new LinkedHashMap<>();
+        boolean changed = false;
+        for (HarvestSource source : sources) {
+            JCheckBox box = sourceBoxes.get(source.id());
+            if (box == null) {
+                box = checkBox(source.title(), "Diese Wissensquelle durchsuchen; abgehakt fehlt sie in der Suche");
+                box.setSelected(true);
+                box.addItemListener(e -> scope(scopes));
+                changed = true;
+            } else if (!box.getText().equals(source.title())) {
+                box.setText(source.title());
+                changed = true;
+            }
+            current.put(source.id(), box);
+        }
+        changed |= !current.keySet().equals(sourceBoxes.keySet());
+        if (changed) {
+            sourceBoxes.clear();
+            sourceBoxes.putAll(current);
+            if (notes != null) {
+                rebuildOptions();
+            }
+        }
     }
 
     /**
@@ -529,13 +665,24 @@ public final class SearchView implements View {
             open(runtime, text);
             return;
         }
+        if (searchedSources().isEmpty()) {
+            feedback.warning("Keine Wissensquelle angehakt", "In den Suchoptionen (Pfeil im Suchfeld) ist keine "
+                    + "Quelle angehakt, die zur Auswahl im Explorer passt.");
+            return;
+        }
+        if (!anyKind()) {
+            feedback.warning("Kein Dateityp angehakt", "In den Suchoptionen (Pfeil im Suchfeld) mindestens einen "
+                    + "Dateityp anhaken.");
+            return;
+        }
         KeywordSearch.Query q;
         try {
             // Eine gewählte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
             // Umfang als Schnappschuss beim Start: spätere Auswahl oder Optionen ändern diese Suche nicht.
             Set<String> sources = chosenSources();
             String sourceId = sources.size() == 1 ? sources.iterator().next() : null;
-            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), chosenSpaces());
+            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), chosenSpaces())
+                    .ofKinds(chosenKinds());
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
