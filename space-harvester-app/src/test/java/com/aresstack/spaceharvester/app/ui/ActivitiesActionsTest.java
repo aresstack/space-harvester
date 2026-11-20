@@ -339,6 +339,12 @@ class ActivitiesActionsTest {
         assertThat(ActivitiesView.outputDirectory(run("e1", JobType.EXPORT, "r1"), exports)).isEqualTo(exports);
         assertThat(ActivitiesView.outputDirectory(run("t1", JobType.VIDEO_TRANSCRIPT, "r1"), exports)).isNull();
         assertThat(ActivitiesView.outputDirectory(run("f2", JobType.PRESENTATION_EXPORT, "r2"), exports)).isNull();
+        java.nio.file.Path chosen = java.nio.file.Path.of("anderswo").toAbsolutePath();
+        for (JobType type : List.of(JobType.CONVERSION, JobType.METADATA_EXPORT, JobType.ANALYTICS_EXPORT)) {
+            assertThat(ActivitiesView.outputDirectory(withParameters(run("c1", type, "r3"),
+                    Map.of("directory", chosen.toString())), exports)).isEqualTo(chosen);
+            assertThat(ActivitiesView.outputDirectory(run("c2", type, "r4"), exports)).isEqualTo(exports);
+        }
     }
 
     private static JobStatus withParameters(JobStatus job, Map<String, String> parameters) {

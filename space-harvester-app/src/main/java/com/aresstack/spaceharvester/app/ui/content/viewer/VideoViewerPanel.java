@@ -947,10 +947,11 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (closed || fileSize < 1 || downloadTask != null) {
             return;
         }
-        JFileChooser chooser = new JFileChooser();
+        JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(null);
         String safeName = fileName == null ? "video.mp4"
                 : fileName.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
-        chooser.setSelectedFile(new java.io.File(safeName.isBlank() ? "video.mp4" : safeName));
+        chooser.setSelectedFile(new java.io.File(chooser.getCurrentDirectory(),
+                safeName.isBlank() ? "video.mp4" : safeName));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }

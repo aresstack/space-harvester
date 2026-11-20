@@ -149,13 +149,22 @@ public final class VideoPresentations {
      * @param parallel so viele Modellaufrufe laufen je Auftrag zugleich, mindestens 1
      * @param format   das Format der Datei
      */
-    public record Options(int parallel, Format format) {
+    /**
+     * @param directory Ausgabeordner der Datei (Angelo 20.11.2026: der eingestellte, Vorgabe Downloads); die Datei
+     *                  heißt dort wie das Video, ein schon vorhandener Name bekommt „ (2)“. {@code null}: unter dem
+     *                  Ordner des Konstruktors je Seite.
+     */
+    public record Options(int parallel, Format format, Path directory) {
 
         /** Vier Aufrufe zugleich, PowerPoint. */
         public static final Options DEFAULT = new Options(4);
 
         public Options(int parallel) {
             this(parallel, Format.PPTX);
+        }
+
+        public Options(int parallel, Format format) {
+            this(parallel, format, null);
         }
 
         public Options {
@@ -167,7 +176,12 @@ public final class VideoPresentations {
 
         /** Dieselben Einstellungen mit anderem Dateiformat. */
         public Options withFormat(Format format) {
-            return new Options(parallel, format);
+            return new Options(parallel, format, directory);
+        }
+
+        /** Dieselben Einstellungen mit anderem Ausgabeordner. */
+        public Options withDirectory(Path directory) {
+            return new Options(parallel, format, directory);
         }
     }
 
@@ -253,7 +267,9 @@ public final class VideoPresentations {
         String space = snapshot.metadata().partitionKey();
         String owner = caller.jobOwner();
         String title = snapshot.metadata().title();
-        Path file = outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title, options.format()));
+        Path file = options.directory() == null
+                ? outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title, options.format()))
+                : freeName(options.directory().toAbsolutePath(), fileName(title, options.format()));
         String run = java.util.UUID.randomUUID().toString();
         Map<String, String> parameters = Map.of(PAGE_PARAMETER, pageId, RUN_PARAMETER, run);
         JobTask transcribing = JobTask.blocking(context -> transcribe(caller, sourceId, pageId, media, context));
@@ -1005,6 +1021,18 @@ public final class VideoPresentations {
     }
 
     /** Ein Ordner je Seite, damit gleichnamige Videos verschiedener Seiten sich nicht überschreiben. */
+    /** {@code name} in {@code directory}, oder wie ein Browser {@code Name (2).pptx}, wenn die Datei schon da ist. */
+    static Path freeName(Path directory, String name) {
+        Path file = directory.resolve(name);
+        int dot = name.lastIndexOf('.');
+        String stem = dot > 0 ? name.substring(0, dot) : name;
+        String extension = dot > 0 ? name.substring(dot) : "";
+        for (int n = 2; Files.exists(file) && n < 1000; n++) {
+            file = directory.resolve(stem + " (" + n + ")" + extension);
+        }
+        return file;
+    }
+
     private static String pageFolder(PageKey key) {
         return Assets.sha256((key.sourceId() + "\n" + key.pageId()).getBytes(StandardCharsets.UTF_8))
                 .substring("sha256:".length(), "sha256:".length() + 12);

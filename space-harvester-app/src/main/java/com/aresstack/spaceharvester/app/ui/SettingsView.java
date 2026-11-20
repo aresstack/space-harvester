@@ -122,9 +122,9 @@ public final class SettingsView implements View {
     private final ComposerButton editPageSize = Comic.button(SettingDialogs.PAGE_SIZE_TITLE + " …",
             "Größere Dateien lädt die App nicht herunter, sondern legt nur ihre Kopfdaten ab");
     final ComposerButton chooseOutput = Comic.button("Ausgabeordner ändern …",
-            "Ordner, in den „Exportieren“ unter Aufträge die Dateien legt");
+            "Ordner für alle Exporte: Export-Reiter, Metadaten, Analytics, PPTX/PDF aus Videos, Speichern unter …");
     final ComposerButton openOutput = Comic.button("Ausgabeordner öffnen", "Den Ausgabeordner anzeigen");
-    final ComposerButton resetOutput = Comic.button("Zurück auf Downloads", "Wieder den Ordner Downloads verwenden");
+    final ComposerButton resetOutput = Comic.button("Zurück auf Downloads", "Wieder den Downloads-Ordner des Benutzers verwenden");
     private final Facts output = new Facts();
     private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
     /**
@@ -592,8 +592,8 @@ public final class SettingsView implements View {
                 && !settings.outputDirectory().equals(AppSettings.defaultOutputDirectory()));
         if (settings != null) {
             output.add("Ordner", settings.outputDirectory().toString())
-                    .add("Inhalt", "Dateien, die du unter Aufträge aus einem Download exportierst; ohne technische "
-                            + "Zwischendateien");
+                    .add("Inhalt", "Alle Exporte: Dateien aus dem Export-Reiter, Metadaten und Analytics, PPTX und PDF "
+                            + "aus Videos; „Speichern unter“ beginnt hier");
             AppSettings.Storage s = settings.storage();
             storage.add("Daten (Cache, Aufträge, Analysen)", s.dataDirectory().toString())
                     .add("Exporte", s.exportDirectory().toString())
