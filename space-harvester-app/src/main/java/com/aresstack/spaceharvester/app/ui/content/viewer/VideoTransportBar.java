@@ -30,6 +30,8 @@ final class VideoTransportBar extends JPanel {
     private final JButton previousSlide = iconButton("Vorige Folie", ComposerIcons.chevronLeft());
     private final JButton nextSlide = iconButton("Nächste Folie", ComposerIcons.chevronRight());
     private final JButton download = iconButton("Herunterladen", ComposerIcons.download());
+    /** „In PPTX umwandeln“ (Angelo 20.11.2026): wie „Herunterladen“, sichtbar erst mit {@link #convertible}. */
+    private final JButton convert = iconButton("In PPTX umwandeln", ComposerIcons.export());
     private final JButton cancelDownload = iconButton("Download abbrechen", ComposerIcons.stop());
     private final JButton fullScreen = iconButton("Vollbild", new VideoFullScreenIcon(false));
     private final JButton audioOnly = iconButton("Nur Audio", new VideoAudioModeIcon(false));
@@ -58,6 +60,10 @@ final class VideoTransportBar extends JPanel {
         download.setText("Herunterladen");
         download.setHorizontalTextPosition(SwingConstants.RIGHT);
         download.setIconTextGap(7);
+        convert.setText("In PPTX umwandeln");
+        convert.setHorizontalTextPosition(SwingConstants.RIGHT);
+        convert.setIconTextGap(7);
+        convert.setVisible(false);
         cancelDownload.setText("Abbrechen");
         cancelDownload.setHorizontalTextPosition(SwingConstants.RIGHT);
         cancelDownload.setIconTextGap(7);
@@ -67,6 +73,7 @@ final class VideoTransportBar extends JPanel {
         audioOnly.setIconTextGap(7);
         transfers.add(audioOnly);
         transfers.add(download);
+        transfers.add(convert);
         transfers.add(cancelDownload);
         transfers.add(fullScreen);
         buttons.add(playback, BorderLayout.WEST);
@@ -115,6 +122,10 @@ final class VideoTransportBar extends JPanel {
 
     JButton download() {
         return download;
+    }
+
+    JButton convert() {
+        return convert;
     }
 
     JButton cancelDownload() {

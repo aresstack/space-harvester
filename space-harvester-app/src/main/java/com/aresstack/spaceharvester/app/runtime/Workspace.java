@@ -791,6 +791,40 @@ public final class Workspace {
         harvester.assets().putVideoFrame(sourceId, pageId, page.snapshot().revision(), frame);
     }
 
+    /**
+     * Was „In PPTX umwandeln“ für das Video dieser Seite jetzt fehlt (Modell, KI-Freigabe, Folienmarken); leer, wenn
+     * es starten kann. Fragt weder Quelle noch Modell.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.presentation.PresentationUnavailableException
+            .Reason> videoPresentationUnavailable(String sourceId, String pageId) {
+        return harvester.videoPresentations().unavailable(caller, sourceId, pageId);
+    }
+
+    /**
+     * „In PPTX umwandeln“ (Angelo 20.11.2026): startet die fünf Aufträge für das Video dieser Seite; sie erscheinen
+     * einzeln unter „Aufträge“. Legt Transkript und Standbilder ab, braucht also wie diese die sync-Freigabe.
+     *
+     * @param media Whisper und Standbilder des geöffneten Videos
+     * @return die Aufträge in der Reihenfolge des Ablaufs; der letzte erzeugt die Datei
+     * @throws com.aresstack.spaceharvester.application.presentation.PresentationUnavailableException wenn etwas fehlt
+     */
+    public com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run startVideoPresentation(
+            String sourceId, String pageId,
+            com.aresstack.spaceharvester.application.presentation.VideoMedia media) {
+        syncedPage(sourceId, pageId);
+        com.aresstack.spaceharvester.application.presentation.VideoPresentations.Run run =
+                harvester.videoPresentations().start(caller, sourceId, pageId, media,
+                        com.aresstack.spaceharvester.application.presentation.VideoPresentations.Options.DEFAULT);
+        run.all().forEach(job -> activities.remember(job.id()));
+        return run;
+    }
+
+    /** Die Datei eines fertigen Auftrags „PPTX erzeugen“; leer, solange sie nicht geschrieben ist. */
+    public java.util.Optional<java.nio.file.Path> presentationFile(String jobId) {
+        JobStatus status = job(jobId);
+        return harvester.videoPresentations().file(jobId, status.owner());
+    }
+
     private DeliveredPage syncedPage(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);

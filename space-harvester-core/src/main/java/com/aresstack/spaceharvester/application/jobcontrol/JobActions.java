@@ -190,6 +190,9 @@ public class JobActions {
                 }
                 yield sourceQueryExports.resume(current.id(), owner);
             }
+            // „In PPTX umwandeln“: derselbe Auftrag läuft im selben Eintrag neu und fragt nur, was fehlt.
+            case VIDEO_TRANSCRIPT, VIDEO_SLIDES, TRANSCRIPT_CORRECTION, SLIDE_NOTES, PRESENTATION_EXPORT ->
+                    jobs.resume(current.id(), owner);
             default -> throw new JobNotResumableException(current.id(), "diese Auftragsart lässt sich nicht fortsetzen");
         };
     }

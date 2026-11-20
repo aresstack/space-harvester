@@ -1584,6 +1584,10 @@ public final class PageDetailPanel extends JPanel {
             // Die Marken des Players sind die einzige Quelle der Folien; gespeichert erscheinen sie als Anhänge.
             originalVideoViewer.onSlides(changes -> slidesFound(frames, changes));
             showVideoMarks(originalVideoViewer, frames);
+            // „In PPTX umwandeln“ neben „Herunterladen“ (Angelo 20.11.2026): fünf Aufträge unter „Aufträge“.
+            long videoSize = size;
+            String videoType = mediaType;
+            originalVideoViewer.onConvert(() -> convertToPresentation(frames, ranges, videoSize, videoType));
             VideoTranscriptSource transcriptSource = new VideoTranscriptSource(size, ranges, context.video());
             videoTranscript.setVideoSource(transcriptSource);
             showStoredTranscript(transcriptSource, frames);
@@ -2665,6 +2669,77 @@ public final class PageDetailPanel extends JPanel {
                 feedback.problem(error, Problems.Step.PAGE);
             }
         });
+    }
+
+    /**
+     * „In PPTX umwandeln“: startet die Aufträge Transkript ziehen, Folien beschreiben, Transkript korrigieren,
+     * Folienkommentare und PPTX erzeugen; sie stehen einzeln unter „Aufträge“. Die Statusmeldung „gestartet“ ersetzt
+     * sich durch das Ergebnis, sobald der letzte Auftrag endet.
+     */
+    private void convertToPresentation(VideoFrameSource video,
+                                       com.aresstack.spaceharvester.application.sources.MediaByteRange ranges,
+                                       long size, String mediaType) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || video != videoFrames) {
+            return;
+        }
+        com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia media =
+                new com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia(ranges, size, mediaType,
+                        context.video(), new TranscribeAudioUseCase(new VlcPcmAudioDecoder(),
+                                new WhisperSpeechTranscriber()));
+        feedback.working("„In PPTX umwandeln“ wird gestartet …");
+        Background.run(() -> runtime.workspace().startVideoPresentation(video.sourceId(), video.pageId(), media),
+                run -> {
+                    if (video == videoFrames) {
+                        feedback.working("„In PPTX umwandeln“ läuft: fünf Aufträge unter „Aufträge“, die Datei kommt "
+                                + "in den Ausgabeordner.");
+                    }
+                    watchPresentation(runtime, video, run.file().id());
+                }, error -> {
+                    if (video != videoFrames) {
+                        return;
+                    }
+                    if (error instanceof com.aresstack.spaceharvester.application.presentation
+                            .PresentationUnavailableException unavailable) {
+                        feedback.warning("„In PPTX umwandeln“ kann nicht starten", unavailable.getMessage());
+                    } else {
+                        feedback.problem(error, Problems.Step.PAGE);
+                    }
+                });
+    }
+
+    /** Wartet per Beobachter (ADR 0027) auf das Ende des Auftrags „PPTX erzeugen“ und meldet die Datei. */
+    private void watchPresentation(AppRuntime runtime, VideoFrameSource video, String fileJob) {
+        java.util.concurrent.atomic.AtomicReference<com.aresstack.spaceharvester.application.observe.Subscription>
+                watch = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean ended = new java.util.concurrent.atomic.AtomicBoolean();
+        watch.set(runtime.workspace().subscribeJobs(status -> {
+            if (!fileJob.equals(status.id()) || !status.state().terminal()
+                    || status.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED
+                    || !ended.compareAndSet(false, true)) {
+                return;
+            }
+            java.util.Optional<java.nio.file.Path> file = status.state()
+                    == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED
+                    ? runtime.workspace().presentationFile(fileJob) : java.util.Optional.empty();
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                com.aresstack.spaceharvester.application.observe.Subscription subscription = watch.get();
+                if (subscription != null) {
+                    subscription.close();
+                }
+                if (video != videoFrames) {
+                    return;
+                }
+                if (file.isPresent()) {
+                    feedback.info("PPTX erzeugt: " + file.get().getFileName()
+                            + (status.incomplete() ? " (unvollständig, siehe „Aufträge“)" : ""),
+                            file.get().toString());
+                } else {
+                    feedback.warning("„In PPTX umwandeln“ ist nicht fertig geworden",
+                            "Die Aufträge unter „Aufträge“ zeigen, welcher Schritt fehlt; Fortsetzen macht dort weiter.");
+                }
+            });
+        }));
     }
 
     /** Lädt das gespeicherte Transkript des geöffneten Videos in den Reiter „Text“, statt es neu zu erzeugen. */

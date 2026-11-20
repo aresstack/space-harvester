@@ -1183,6 +1183,13 @@ public final class ActivitiesView implements View {
                         + " Seiten, " + p.written() + " geprüft, " + skipped + " übersprungen",
                         p.processed(), total);
             }
+            if (type.presentation()) {
+                // „In PPTX umwandeln“: Folien, Transkriptpakete oder das eine Transkript.
+                String unit = type == JobType.TRANSCRIPT_CORRECTION ? " Abschnitten"
+                        : type == JobType.VIDEO_TRANSCRIPT ? " Transkript" : " Folien";
+                return new Step((phase == null ? Texts.type(type) : phase) + " · " + p.processed() + " von " + total
+                        + unit + (p.failed() > 0 ? ", " + p.failed() + " fehlgeschlagen" : ""), p.processed(), total);
+            }
             if (type == JobType.EXPORT && phase != null && phase.startsWith("Seiten exportieren")) {
                 return new Step("Seiten exportieren · " + p.written() + " von " + total + " exportiert",
                         p.written(), total);
@@ -1246,6 +1253,12 @@ public final class ActivitiesView implements View {
                 case IMPORT -> new Counters("Seiten im Paket", "Bearbeitet", "Übernommen", "Fehlgeschlagen");
                 case REREAD -> new Counters("Dokumente", "Geprüft", "Neu gelesen", "Fehlgeschlagen");
                 case METADATA_EXPORT, ANALYTICS_EXPORT -> new Counters("Seiten", "Abgefragt", "Mit Daten", "Ohne Antwort");
+                case VIDEO_TRANSCRIPT -> new Counters("Transkript", "Bearbeitet", "Abgelegt", "Fehlgeschlagen");
+                case VIDEO_SLIDES -> new Counters("Folien", "Bearbeitet", "Beschrieben", "Fehlgeschlagen");
+                case TRANSCRIPT_CORRECTION -> new Counters("Transkriptpakete", "Bearbeitet", "Korrigiert",
+                        "Unkorrigiert");
+                case SLIDE_NOTES -> new Counters("Folien", "Bearbeitet", "Kommentiert", "Fehlgeschlagen");
+                case PRESENTATION_EXPORT -> new Counters("Folien", "Bearbeitet", "In der Datei", "Ohne Standbild");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }
