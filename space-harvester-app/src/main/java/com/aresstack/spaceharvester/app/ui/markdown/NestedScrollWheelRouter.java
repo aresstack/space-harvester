@@ -1,0 +1,113 @@
+package com.aresstack.spaceharvester.app.ui.markdown;
+
+import javax.swing.JScrollBar;
+import javax.swing.JScrollPane;
+import javax.swing.SwingUtilities;
+import java.awt.Component;
+import java.awt.Point;
+import java.awt.event.MouseWheelEvent;
+import java.awt.event.MouseWheelListener;
+
+/**
+ * Scroll-Chaining für verschachtelte Scrollbereiche (Codeblöcke, Tabellen im Chat): Das Mausrad bewegt zuerst den
+ * inneren Bereich, solange der in Drehrichtung noch Platz hat; hat er keinen vertikalen Scrollbedarf oder steht er
+ * am oberen/unteren Rand, geht dasselbe Ereignis an den nächsten äußeren {@link JScrollPane} weiter. Mit gedrückter
+ * Umschalttaste (oder ohne sichtbaren vertikalen Balken) gilt dasselbe für die horizontale Richtung, damit breite
+ * Tabellen seitlich scrollbar bleiben. Feine Touchpad-Drehungen ({@code preciseWheelRotation}) werden aufsummiert
+ * statt verworfen.
+ */
+final class NestedScrollWheelRouter implements MouseWheelListener {
+
+    private final JScrollPane scrollPane;
+    private double pendingRotation;
+
+    private NestedScrollWheelRouter(JScrollPane scrollPane) {
+        this.scrollPane = scrollPane;
+    }
+
+    /** Ersetzt das eingebaute Mausrad von {@code scrollPane} durch das Scroll-Chaining. */
+    static void install(JScrollPane scrollPane) {
+        scrollPane.setWheelScrollingEnabled(false);
+        scrollPane.addMouseWheelListener(new NestedScrollWheelRouter(scrollPane));
+    }
+
+    @Override
+    public void mouseWheelMoved(MouseWheelEvent event) {
+        double rotation = event.getPreciseWheelRotation();
+        if (rotation == 0) {
+            event.consume();
+            return;
+        }
+        JScrollBar bar = barFor(event);
+        if (canScroll(bar, rotation)) {
+            scroll(bar, event, rotation);
+            event.consume();
+            return;
+        }
+        pendingRotation = 0;
+        forwardToParent(event);
+    }
+
+    /** Pick the horizontal bar for shift-wheel or when no vertical bar is shown, as Swing's own handler does. */
+    private JScrollBar barFor(MouseWheelEvent event) {
+        JScrollBar vertical = scrollPane.getVerticalScrollBar();
+        boolean verticalUsable = vertical != null && vertical.isVisible();
+        if (event.isShiftDown() || !verticalUsable) {
+            JScrollBar horizontal = scrollPane.getHorizontalScrollBar();
+            if (horizontal != null && horizontal.isVisible()) {
+                return horizontal;
+            }
+        }
+        return verticalUsable ? vertical : null;
+    }
+
+    static boolean canScroll(JScrollBar bar, double rotation) {
+        if (bar == null || !bar.isVisible()) {
+            return false;
+        }
+        int value = bar.getValue();
+        if (rotation < 0) {
+            return value > bar.getMinimum();
+        }
+        return value < bar.getMaximum() - bar.getVisibleAmount();
+    }
+
+    private void scroll(JScrollBar bar, MouseWheelEvent event, double rotation) {
+        int direction = rotation < 0 ? -1 : 1;
+        int increment = event.getScrollType() == MouseWheelEvent.WHEEL_BLOCK_SCROLL
+                ? bar.getBlockIncrement(direction)
+                : bar.getUnitIncrement(direction) * event.getScrollAmount();
+        // Accumulate fractional touchpad rotations so slow swipes still move the content.
+        pendingRotation += rotation * Math.max(1, increment);
+        int delta = (int) pendingRotation;
+        pendingRotation -= delta;
+        if (delta != 0) {
+            bar.setValue(bar.getValue() + delta);
+        }
+    }
+
+    private void forwardToParent(MouseWheelEvent event) {
+        JScrollPane parent = ancestorScrollPane(scrollPane.getParent());
+        if (parent == null) {
+            return;
+        }
+        Point point = SwingUtilities.convertPoint(scrollPane, event.getPoint(), parent);
+        MouseWheelEvent forwarded = new MouseWheelEvent(parent, event.getID(), event.getWhen(),
+                event.getModifiersEx(), point.x, point.y, event.getXOnScreen(),
+                event.getYOnScreen(), event.getClickCount(), event.isPopupTrigger(), event.getScrollType(),
+                event.getScrollAmount(), event.getWheelRotation(), event.getPreciseWheelRotation());
+        parent.dispatchEvent(forwarded);
+        event.consume();
+    }
+
+    private static JScrollPane ancestorScrollPane(Component component) {
+        Component current = component;
+        while (current != null) {
+            if (current instanceof JScrollPane) {
+                return (JScrollPane) current;
+            }
+            current = current.getParent();
+        }
+        return null;
+    }
+}
