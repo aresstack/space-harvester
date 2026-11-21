@@ -513,7 +513,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
             try {
                 executor.execute(() -> run(entry));
             } catch (RejectedExecutionException e) {
-                finish(entry, false);
+                finish(entry, false, null);
             }
         }
         // Jede Änderung von Warteschlange, Platz oder Pause endet hier: Anfrage, Ende, Rückzug, Freigabe, Wartezeit.
@@ -531,19 +531,21 @@ public final class AcquisitionScheduler implements AutoCloseable {
 
     private void run(Entry entry) {
         boolean stored = false;
+        RuntimeException failure = null;
         try {
             load.load(entry.caller, entry.key, entry.strict);
             stored = true;
         } catch (RuntimeException e) {
+            failure = e;
             // Ohne Seiten-ID.
             LOG.log(System.Logger.Level.INFO, "Beschaffung einer Seite in {0} gescheitert ({1})",
                     entry.key.sourceId(), e.getClass().getName());
         } finally {
-            finish(entry, stored);
+            finish(entry, stored, failure);
         }
     }
 
-    private void finish(Entry entry, boolean stored) {
+    private void finish(Entry entry, boolean stored, RuntimeException failure) {
         List<Ticket> tickets;
         synchronized (lock) {
             entries.remove(entry.key, entry);
@@ -557,7 +559,11 @@ public final class AcquisitionScheduler implements AutoCloseable {
             entry.background.clear();
             lock.notifyAll();
         }
-        tickets.forEach(ticket -> ticket.done.complete(stored));
+        tickets.forEach(ticket -> {
+            // Erst die Ursache, dann das Ergebnis: wer {@code false} sieht, findet auch den Grund (Anmeldung, Netz).
+            ticket.failure = failure;
+            ticket.done.complete(stored);
+        });
         dispatch();
     }
 
@@ -639,6 +645,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
         private final Entry entry;
         private final Priority priority;
         private final CompletableFuture<Boolean> done = new CompletableFuture<>();
+        private volatile RuntimeException failure;
 
         private Ticket(Entry entry, Priority priority) {
             this.entry = entry;
@@ -647,6 +654,11 @@ public final class AcquisitionScheduler implements AutoCloseable {
 
         public CompletableFuture<Boolean> done() {
             return done;
+        }
+
+        /** Warum sich die Seite nicht laden ließ ({@link #done()} {@code false}), etwa fehlende Anmeldung; sonst leer. */
+        public java.util.Optional<RuntimeException> failure() {
+            return java.util.Optional.ofNullable(failure);
         }
 
         public Priority priority() {
