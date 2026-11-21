@@ -426,6 +426,34 @@ class SearchViewTest {
         loadAll(view[0], table, more, 2 * PAGES_PER_SOURCE);
     }
 
+    /** Angelo 21.11.2026: ein anderer Bereich links sucht den stehenden Suchbegriff im neuen Bereich erneut. */
+    @Test
+    void choosingAnotherAreaSearchesTheSameTextThere() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].scope(List.of(new Explorer.Scope("beta", null)));
+            view[0].search("betrieb");
+        });
+        JTable table = find(whole(view[0]), JTable.class).get(0);
+        AbstractButton more = button(whole(view[0]), "Weitere laden");
+        loadAll(view[0], table, more, PAGES_PER_SOURCE);
+        // Nur der Bereich wechselt, keine neue Eingabe: der Begriff bleibt, die Treffer kommen aus Alpha.
+        SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("alpha", null))));
+        assertThat(view[0].queryText()).isEqualTo("betrieb");
+        assertThat(view[0].chosenSources()).containsExactly("alpha");
+        loadAll(view[0], table, more, PAGES_PER_SOURCE);
+        Set<String> sourcesSeen = new HashSet<>();
+        SwingUtilities.invokeAndWait(() -> {
+            for (int row = 0; row < table.getRowCount(); row++) {
+                sourcesSeen.add((String) table.getModel().getValueAt(row, 1));
+            }
+        });
+        assertThat(sourcesSeen).containsExactly("alpha");
+    }
+
     /**
      * Angelo 20.11.2026: statt „Überall suchen“ ein Häkchen je eingetragener Quelle, Vorgabe alle an; abgehakt fehlt
      * die Quelle in der Suche, auch wenn der Explorer sie wählt; die Häkchen bleiben beim Wechsel der Auswahl.

@@ -273,7 +273,7 @@ class ExplorerTest {
         List<String> opened = new java.util.ArrayList<>();
         context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
                 getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("openPage")) {
+                    if (method.getName().equals("openFromTree")) {
                         opened.add((String) args[1]);
                     }
                     return null;
@@ -531,6 +531,23 @@ class ExplorerTest {
             explorer[0].clearSelection();
             assertThat(explorer[0].allSelected()).isFalse();
             assertThat(selections.get(selections.size() - 1)).isNull();
+
+            // Gemerkte Auswahl (Suche verlassen) kommt zurück: Knoten wie „Wissensquellen“ (Angelo, 21.11.2026).
+            tree.setSelectionRow(0);
+            Explorer.Remembered node = explorer[0].remember();
+            explorer[0].selectAll();
+            Explorer.Remembered all = explorer[0].remember();
+            explorer[0].restore(node);
+            assertThat(explorer[0].allSelected()).isFalse();
+            assertThat(scopes.get(scopes.size() - 1)).containsExactly(new Explorer.Scope("handbuch", null));
+            explorer[0].restore(all);
+            assertThat(explorer[0].allSelected()).isTrue();
+            assertThat(scopes.get(scopes.size() - 1)).isEmpty();
+            // Unverändert wiederhergestellt: der Baum meldet nichts, die Suche startet nicht neu.
+            int reported = scopes.size();
+            explorer[0].restore(all);
+            assertThat(scopes).hasSize(reported);
+            explorer[0].clearSelection();
         });
 
         // „Alles indexieren“ im Kontextmenü der Überschrift indexiert jede Quelle mit allen Spaces (je Space ein

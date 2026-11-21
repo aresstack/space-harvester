@@ -298,13 +298,52 @@ class TermGraphViewTest {
     }
 
     @Test
-    void theRealFetchPassesCheckedOnlyAndTheHelpWaitsForTheComparison() {
+    void aDeviatingEvidenceNamesOnlyWhatTheOtherAnalyzerReadsDifferently() throws Exception {
+        DomainTermGraph.Evidence plain = evidence("1", "Förderantrag", DomainTermGraph.Trust.ABWEICHEND);
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Comparison differs =
+                new com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Comparison(
+                        plain.statement().id(),
+                        com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Agreement.DIFFERS,
+                        new com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Reading(
+                                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER,
+                                plain.statement().id(), "stellen", Set.of("antragsteller"), Set.of("antrag")),
+                        new com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Reading(
+                                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL,
+                                plain.statement().id(), "einreichen", Set.of("antragsteller"), Set.of()),
+                        java.util.EnumSet.of(
+                                com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.VERB,
+                                com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference
+                                        .AFFECTED_OBJECT));
+        DomainTermGraph.Evidence deviating = new DomainTermGraph.Evidence(plain.page(), plain.statement(),
+                plain.analyzerId(), plain.fromText(), plain.toText(), DomainTermGraph.Trust.ABWEICHEND, differs);
+        DomainTermGraph.Evidence checked = new DomainTermGraph.Evidence(plain.page(), plain.statement(),
+                plain.analyzerId(), plain.fromText(), plain.toText(), DomainTermGraph.Trust.GEPRUEFT, differs);
+
+        assertThat(EvidencePopup.otherText(deviating))
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.content.StatementProvenance.LANGUAGE_MODEL
+                + " liest anders: Verb „einreichen“ · keine Betroffenen");
+        assertThat(EvidencePopup.otherText(checked)).as("geprüft: ohne „abweichend“").isNull();
+        assertThat(EvidencePopup.otherText(plain)).as("ohne Abgleich").isNull();
+        List<List<String>> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = new EvidencePopup();
+            popup.fill("Antragsteller stellt Antrag", 2, List.of(deviating, checked), Map.of(), false);
+            seen.add(popup.otherTexts());
+        });
+        assertThat(seen.getFirst()).containsExactly(
+                com.aresstack.spaceharvester.app.ui.content.StatementProvenance.LANGUAGE_MODEL
+                + " liest anders: Verb „einreichen“ · keine Betroffenen");
+    }
+
+    @Test
+    void theRealFetchPassesCheckedOnlyAndTheHelpNamesEveryStage() {
         assertThat(TermGraphView.domainOptions(2, null, true).checkedOnly()).isTrue();
         assertThat(TermGraphView.domainOptions(1, null, false).checkedOnly()).isFalse();
         assertThat(TermGraphView.domainOptions(2, null, true).includeStale()).as("nie veraltete Aussagen").isFalse();
-        assertThat(TermGraphView.HELP).as("einig/abweichend erst mit dem Vergleich Parser/KI")
-                .contains("geprüft", "gestrichelt").doesNotContainIgnoringCase("einig")
-                .doesNotContainIgnoringCase("abweichend");
+        assertThat(TermGraphView.HELP).as("mit dem Vergleich Parser/KI alle vier Stufen")
+                .contains("kräftig", "geprüft", "dünn", "(einig)", "gestrichelt", "gepunktet mit „≠“", "(abweichend)")
+                .contains("Empfänger und Präpositionalobjekte werden nicht verglichen")
+                .doesNotContain("andere Seite");
     }
 
     @Test
