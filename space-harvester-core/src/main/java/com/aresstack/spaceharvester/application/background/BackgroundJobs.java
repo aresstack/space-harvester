@@ -55,6 +55,8 @@ public final class BackgroundJobs {
     private final Jobs jobs;
     private final String owner;
     private final Map<String, BackgroundKind> kinds = new ConcurrentHashMap<>();
+    /** Je Art ein Riegel, damit zwei gleichzeitige Anlässe nicht beide einen Teil starten. */
+    private final Map<String, Object> startLocks = new ConcurrentHashMap<>();
 
     /**
      * @param owner Auftraggeber aller Hintergrundaufträge, in der Desktop-App {@code Harvester.OWNER}, damit die
@@ -135,6 +137,57 @@ public final class BackgroundJobs {
                         && sourceId.equals(status.sourceId())
                         && Objects.equals(partitionKey, status.partitionKey()))
                 .findFirst();
+    }
+
+    /**
+     * Ein Unterauftrag dieser Art für Quelle und Space, der noch auf seinen Start wartet ({@link JobState#QUEUED}); ein
+     * laufender zählt nicht, denn er hat seine Arbeit schon bestimmt.
+     */
+    public Optional<JobStatus> waiting(String kind, String sourceId, String partitionKey) {
+        return all().stream()
+                .filter(status -> status.state() == JobState.QUEUED && kind.equals(status.parameter(KIND))
+                        && sourceId.equals(status.sourceId())
+                        && Objects.equals(partitionKey, status.partitionKey()))
+                .findFirst();
+    }
+
+    /**
+     * Startet eine Gruppe mit einem Teil, außer es wartet schon ein Teil derselben Art für Quelle und Space
+     * ({@link #waiting}): der nimmt dann mit, was der neue Anlass bringt. Für Arten, die ihre Arbeit erst beim Start aus
+     * dem Bestand bestimmen, etwa „Synonyme erkennen“ je Quelle; ein laufender Teil hält einen neuen Anlass nicht auf,
+     * denn was sich währenddessen ändert, sieht er nicht mehr.
+     *
+     * @return die neue Gruppe, oder leer, wenn schon ein Teil wartet
+     */
+    public Optional<BackgroundGroup> startUnlessWaiting(String kind, String title, BackgroundPart.Draft part) {
+        Objects.requireNonNull(part, "part");
+        synchronized (startLock(kind)) {
+            if (waiting(kind, part.sourceId(), part.partitionKey()).isPresent()) {
+                return Optional.empty();
+            }
+            return Optional.of(start(kind, title, List.of(part)));
+        }
+    }
+
+    /**
+     * Startet eine Gruppe mit einem Teil, außer ein Teil derselben Art für Quelle und Space wartet oder läuft schon
+     * ({@link #running}): Für Arten, deren laufender Teil sich weitere Arbeit selbst abholt, etwa aus einer
+     * Warteschlange im Speicher.
+     *
+     * @return die neue Gruppe, oder leer, wenn schon ein Teil wartet oder läuft
+     */
+    public Optional<BackgroundGroup> startUnlessRunning(String kind, String title, BackgroundPart.Draft part) {
+        Objects.requireNonNull(part, "part");
+        synchronized (startLock(kind)) {
+            if (running(kind, part.sourceId(), part.partitionKey()).isPresent()) {
+                return Optional.empty();
+            }
+            return Optional.of(start(kind, title, List.of(part)));
+        }
+    }
+
+    private Object startLock(String kind) {
+        return startLocks.computeIfAbsent(Objects.requireNonNull(kind, "kind"), ignored -> new Object());
     }
 
     /** Die Gruppe, solange noch einer ihrer Unteraufträge in der Liste steht. */

@@ -103,6 +103,27 @@ class BackgroundJobsTest {
     }
 
     @Test
+    void startUnlessWaitingLeavesAWaitingPartAloneButNotARunningOne() {
+        // Ein einziger Platz: Hintergrund startet nie, der Teil wartet.
+        BackgroundJobs waitingOnly = background(new Jobs(new InMemoryJobStore(), executor,
+                new JobLimits(1, 10, Duration.ofHours(1)), clock), new AtomicBoolean(true));
+        BackgroundPart.Draft alpha = new BackgroundPart.Draft("wiki", "ALPHA");
+
+        assertThat(waitingOnly.startUnlessWaiting("demo", "Demo", alpha)).isPresent();
+        assertThat(waitingOnly.waiting("demo", "wiki", "ALPHA")).isPresent();
+        assertThat(waitingOnly.startUnlessWaiting("demo", "Demo", alpha)).as("der wartende nimmt es mit").isEmpty();
+        assertThat(waitingOnly.startUnlessWaiting("demo", "Demo", new BackgroundPart.Draft("wiki", "BETA")))
+                .as("ein anderer Space").isPresent();
+
+        BackgroundJobs background = background(jobs(executor), new AtomicBoolean(true));
+        assertThat(background.startUnlessRunning("demo", "Demo", alpha)).isPresent();
+        assertThat(background.waiting("demo", "wiki", "ALPHA")).as("läuft schon").isEmpty();
+        assertThat(background.startUnlessRunning("demo", "Demo", alpha)).as("der laufende holt es sich").isEmpty();
+        assertThat(background.startUnlessWaiting("demo", "Demo", alpha))
+                .as("ein laufender sieht den neuen Anlass nicht mehr").isPresent();
+    }
+
+    @Test
     void aPausedGroupResumesInTheSameEntriesWithFreshWork() {
         BackgroundJobs background = background(jobs(executor), new AtomicBoolean(true));
         BackgroundGroup group = background.start("demo", "Demo", twoSpaces());

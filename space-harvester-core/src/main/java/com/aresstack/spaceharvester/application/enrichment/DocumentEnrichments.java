@@ -8,6 +8,9 @@ import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.assets.IndexedDocuments;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.assets.StoredExtraction;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
+import com.aresstack.spaceharvester.application.background.BackgroundKind;
+import com.aresstack.spaceharvester.application.background.BackgroundPart;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
@@ -43,10 +46,10 @@ import java.util.stream.Stream;
 /**
  * Analysen je Anhang und enthaltener Datei (ADR 0026, AP9a): Liegt ein Dokument-Anhang neu oder geändert im
  * Volltextindex, rechnen die Prozessoren mit {@link EnrichmentProcessor#documents()} je abgelegtem Abschnitt, Eingabe
- * {@link DocumentSectionText}. Gerechnet wird im selben Mechanismus wie für Seiten: als Auftrag
- * {@link JobType#ENRICHMENT} der Quelle und des Space, sichtbar, anhaltbar und abbrechbar wie dort, kein zweiter
- * Hintergrundweg. Der Auftrag nimmt alle bis dahin gemeldeten Anhänge seiner Partition mit; ein weiterer entsteht erst,
- * wenn er fertig ist.
+ * {@link DocumentSectionText}. Gerechnet wird als Hintergrundauftrag „{@value #BACKGROUND_TITLE}“ (ADR 0025
+ * Nachtrag, {@link #background}) mit einem Teil je Quelle und Space, sichtbar im Reiter „Hintergrund“, anhaltbar und
+ * abbrechbar; ohne Hintergrundaufträge (Dienst) als Auftrag {@link JobType#ENRICHMENT} der Quelle und des Space. Der
+ * Auftrag nimmt alle bis dahin gemeldeten Anhänge seiner Partition mit; ein weiterer entsteht erst, wenn er fertig ist.
  *
  * <ul>
  *   <li>Nur Dokumente und Teile mit Status {@code OK} oder {@code PARTIAL} ({@link DocumentExtractions#documentSections});
@@ -67,6 +70,10 @@ public final class DocumentEnrichments implements IndexedDocuments {
     private static final System.Logger LOG = System.getLogger(DocumentEnrichments.class.getName());
     private static final String COMPONENT = "Enrichments";
     public static final String PHASE = "Anreichern: Anhänge";
+    /** Art der Hintergrundaufträge (ADR 0025 Nachtrag; Angelo 21.11.2026: nichts läuft unsichtbar). */
+    public static final String BACKGROUND_KIND = "documents";
+    /** Titel der Gruppe in der Auftragsliste. */
+    public static final String BACKGROUND_TITLE = "Anhänge analysieren";
 
     private final Enrichments enrichments;
     private final Jobs jobs;
@@ -84,6 +91,8 @@ public final class DocumentEnrichments implements IndexedDocuments {
     private final Map<String, Integer> removals = new HashMap<>();
     /** Anhänge für den Bestand ({@link #catchUp}); ohne sie holt der Lauf nichts nach. */
     private volatile DocumentInventory assets;
+    /** Hintergrundaufträge; ohne sie ein eigener Auftrag ohne Auftraggeber (Dienst). */
+    private volatile BackgroundJobs background;
 
     /**
      * @param jobs    Auftragsverwaltung oder {@code null}, dann im aufrufenden Thread
@@ -113,6 +122,19 @@ public final class DocumentEnrichments implements IndexedDocuments {
     /** Schließt die Anhänge an, aus deren Ablage {@link #catchUp} den Bestand nachholt. */
     public void assets(DocumentInventory assets) {
         this.assets = assets;
+    }
+
+    /**
+     * Rechnet die gemeldeten Anhänge als Hintergrundauftrag (Art {@value #BACKGROUND_KIND}, ein Teil je Quelle und
+     * Space). Die Meldungen liegen nur im Speicher: Ein nach einem Neustart fortgesetzter Teil findet keine und endet
+     * sofort; was fehlt, holt die Anreicherung nach dem nächsten Abgleich aus dem Bestand nach ({@link #catchUp}). Ein
+     * angehaltener Teil behält seine Anhänge und rechnet sie beim Fortsetzen.
+     */
+    public void background(BackgroundJobs background) {
+        Objects.requireNonNull(background, "background");
+        background.register(new BackgroundKind(BACKGROUND_KIND,
+                part -> JobTask.blocking(context -> drain(part.sourceId(), part.partitionKey(), context))));
+        this.background = background;
     }
 
     /**
@@ -190,8 +212,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
             return;
         }
         try {
-            String id = jobs.submit(JobType.ENRICHMENT, list.sourceId(), list.spaceKey(), null,
-                    JobTask.blocking(context -> drain(list.sourceId(), list.spaceKey(), context))).id();
+            String id = submit(list.sourceId(), list.spaceKey());
             synchronized (this) {
                 scheduled.put(partition, id);
             }
@@ -199,6 +220,17 @@ public final class DocumentEnrichments implements IndexedDocuments {
             LOG.log(System.Logger.Level.INFO, "Analysen der Anhänge in {0} nicht eingeplant ({1}); die nächste "
                     + "Meldung holt sie nach", list.sourceId(), e.getClass().getSimpleName());
         }
+    }
+
+    /** Plant den Auftrag der Partition ein, als Hintergrundauftrag, wenn angeschlossen. */
+    private String submit(String sourceId, String spaceKey) {
+        BackgroundJobs hosted = background;
+        if (hosted != null) {
+            return hosted.start(BACKGROUND_KIND, BACKGROUND_TITLE,
+                    List.of(new BackgroundPart.Draft(sourceId, spaceKey))).jobIds().get(0);
+        }
+        return jobs.submit(JobType.ENRICHMENT, sourceId, spaceKey, null,
+                JobTask.blocking(context -> drain(sourceId, spaceKey, context))).id();
     }
 
     /** Ob der Auftrag noch wartet oder läuft; angehalten, beendet oder unbekannt zählt nicht. */

@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.assets.ExtractionKey;
 import com.aresstack.spaceharvester.application.assets.TextSection;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.assets.ExtractionWriter;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
@@ -217,6 +218,45 @@ class DocumentEnrichmentsTest {
 
         documents.retained(PAGE, Set.of("a2"));
         assertThat(results.findDocuments(PAGE)).isEmpty();
+    }
+
+    @Test
+    void asBackgroundJobTheAnalysesRunVisiblyAsOnePartOfTheirSpace() {
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = documents(true, jobs);
+        documents.background(new BackgroundJobs(jobs, "app"));
+        Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil mit Text."));
+
+        documents.indexed(list(), asset, extractions);
+
+        assertThat(jobs.list(null, JobType.ENRICHMENT)).as("kein unsichtbarer Auftrag ohne Auftraggeber").isEmpty();
+        assertThat(jobs.list("app", JobType.BACKGROUND)).singleElement().satisfies(part -> {
+            assertThat(part.parameter(BackgroundJobs.KIND)).isEqualTo(DocumentEnrichments.BACKGROUND_KIND);
+            assertThat(part.parameter(BackgroundJobs.TITLE)).isEqualTo(DocumentEnrichments.BACKGROUND_TITLE);
+            assertThat(part.sourceId()).isEqualTo("wiki");
+            assertThat(part.partitionKey()).isEqualTo("DEV");
+            assertThat(part.state()).isEqualTo(JobState.COMPLETED);
+        });
+        assertThat(recording.inputs).containsExactly("Erster Teil mit Text.");
+    }
+
+    @Test
+    void aWaitingBackgroundPartTakesLaterReportsOfItsSpaceAlong() {
+        List<Runnable> held = new ArrayList<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = documents(true, jobs);
+        documents.background(new BackgroundJobs(jobs, "app"));
+        Asset first = stored("teile.zip", Map.of("eins.txt", "Erster Teil."));
+
+        documents.indexed(list(), first, extractions);
+        documents.indexed(list(), first, extractions);
+
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("ein Teil je Space, solange er wartet oder läuft")
+                .hasSize(1);
+        new ArrayList<>(held).forEach(Runnable::run);
+        assertThat(recording.inputs).containsExactly("Erster Teil.");
     }
 
     @Test

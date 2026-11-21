@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
@@ -206,6 +207,54 @@ class SynonymAutomaticTest {
         held.cancel(first.id());
 
         assertThat(waiting.automatic("wiki")).isPresent();
+    }
+
+    @Test
+    void asBackgroundJobTheRunIsVisibleWithKindTitleAndOwner() {
+        Jobs hosting = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)),
+                Clock.fixed(T0, ZoneOffset.UTC));
+        SynonymDiscovery hosted = discovery(hosting);
+        hosted.background(new BackgroundJobs(hosting, "app"));
+
+        JobStatus first = hosted.automatic("wiki").orElseThrow();
+
+        assertThat(first.type()).isEqualTo(JobType.BACKGROUND);
+        assertThat(first.owner()).as("sichtbar in der Auftragsliste der App").isEqualTo("app");
+        assertThat(first.parameter(BackgroundJobs.KIND)).isEqualTo(SynonymDiscovery.BACKGROUND_KIND);
+        assertThat(first.parameter(BackgroundJobs.TITLE)).isEqualTo("Synonyme erkennen");
+        assertThat(hosting.status(first.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(hosting.list(null, JobType.ENRICHMENT)).as("kein Auftrag ohne Auftraggeber").isEmpty();
+        assertThat(synonyms()).hasSize(1);
+        assertThat(hosted.automatic("wiki")).as("ohne Änderung kein neuer Lauf").isEmpty();
+    }
+
+    @Test
+    void aWaitingBackgroundRunTakesTheNextChangeAlongAndACancelledOneBlocksNothing() {
+        // Ein einziger Platz: ein Hintergrundauftrag startet nie und wartet (QUEUED).
+        Jobs hosting = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 10, Duration.ofHours(1)),
+                Clock.fixed(T0, ZoneOffset.UTC));
+        SynonymDiscovery hosted = discovery(hosting);
+        BackgroundJobs background = new BackgroundJobs(hosting, "app");
+        hosted.background(background);
+
+        JobStatus first = hosted.automatic("wiki").orElseThrow();
+        assertThat(hosting.status(first.id()).state()).isEqualTo(JobState.QUEUED);
+        cached("Der Wagen fährt. Der Wagen ist rot.");
+        assertThat(hosted.automatic("wiki")).as("der wartende Teil nimmt die Änderung mit").isEmpty();
+
+        hosting.cancel(first.id(), "app");
+
+        assertThat(hosted.automatic("wiki")).isPresent();
+    }
+
+    private SynonymDiscovery discovery(Jobs on) {
+        SynonymCandidates candidates = new SynonymCandidates(catalog, store,
+                key -> Optional.ofNullable(cache.get(key)).map(PageSnapshot::header),
+                key -> Optional.ofNullable(cache.get(key)).flatMap(PLAIN::project), relations, () -> provider,
+                released::contains, new TermProcessor().version());
+        return new SynonymDiscovery(catalog, candidates,
+                new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), relations, model,
+                ResolutionCache.inMemory(), on, () -> budget, Clock.fixed(T0, ZoneOffset.UTC));
     }
 
     /** Zählt, wie viele Eingaben an das Modell gingen. */
