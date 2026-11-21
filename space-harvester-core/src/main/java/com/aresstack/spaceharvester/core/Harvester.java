@@ -352,6 +352,7 @@ public final class Harvester implements AutoCloseable {
     private FileSynonymVectorCache synonymVectors;
     private final AcronymResolution acronymResolution;
     private final Glossary glossary;
+    private final com.aresstack.spaceharvester.application.glossary.TechnicalTerms technicalTerms;
     private final GlossaryClassification glossaryClassification;
     private final com.aresstack.spaceharvester.application.glossary.GlossaryOverview glossaryOverview;
     private final SynonymDiscovery synonymDiscovery;
@@ -732,6 +733,9 @@ public final class Harvester implements AutoCloseable {
             // #122 Stufe 2: Fachglossar als Nutzerdaten neben den Beziehungen; KI nur auf Knopfdruck, dasselbe Modell.
             this.glossary = new Glossary(catalog, new FileGlossaryStore(builder.dataDirectory.resolve("glossary")),
                     access, cache::findHeader, clock);
+            // K5b: Suchmethode „Nur Fachbegriffe“ über Glossar und Synonymbeziehungen, nichts gespeichert.
+            this.technicalTerms = new com.aresstack.spaceharvester.application.glossary.TechnicalTerms(glossary,
+                    termRelations);
             // ADR 0032, FL5b: erste Phase „Begriffe ableiten“ aus den Aussagenanalysen, ohne Modell; Regeln aus
             // glossary.rules.* der wirksamen Konfiguration.
             TermSettings glossaryTerms = builder.terms;
@@ -1755,6 +1759,11 @@ public final class Harvester implements AutoCloseable {
     /** Fachglossar: Pflege von Hand und Abgleich der KI-Läufe. */
     public Glossary glossary() {
         return glossary;
+    }
+
+    /** Suchmethode „Nur Fachbegriffe“ (K5b): Fachbegriffe zu einem Suchtext, auch über ihre Synonyme. */
+    public com.aresstack.spaceharvester.application.glossary.TechnicalTerms technicalTerms() {
+        return technicalTerms;
     }
 
     /** „Fachbegriffe ermitteln“: KI-Lauf nur auf ausdrücklichen Wunsch. */
