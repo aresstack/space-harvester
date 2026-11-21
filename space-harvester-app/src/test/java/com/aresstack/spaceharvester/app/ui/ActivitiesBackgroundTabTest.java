@@ -96,8 +96,9 @@ class ActivitiesBackgroundTabTest {
                 view.tabs.select(ActivitiesView.JOBS_TAB);
                 view.showJobsForTest(sample());
                 assertThat(view.rowsForTest()).extracting(JobStatus::id).containsExactly("s1", "e1");
-                assertThat(view.backgroundRunning.isVisible()).isTrue();
-                assertThat(view.backgroundRunning.getText()).isEqualTo("laufend 1");
+                assertThat(view.tabs.count(ActivitiesView.BACKGROUND_TAB)).isEqualTo(1);
+                assertThat(view.tabs.button(ActivitiesView.BACKGROUND_TAB).getToolTipText())
+                        .isEqualTo("1 Hintergrundauftrag läuft");
 
                 view.tabs.select(ActivitiesView.BACKGROUND_TAB);
                 assertThat(view.backgroundTab()).isTrue();
@@ -107,6 +108,52 @@ class ActivitiesBackgroundTabTest {
             });
         } finally {
             context.shutdown();
+        }
+    }
+
+    @Test
+    void at900PixelsTheTabsWithTheirCountAndEveryToolStayVisible() throws Exception {
+        Path home = Files.createTempDirectory("bgtab900");
+        AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home),
+                home.resolve("app.yml"), "test");
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                ActivitiesView view = new ActivitiesView(context);
+                view.tabs.select(ActivitiesView.BACKGROUND_TAB);
+                view.showJobsForTest(sample());
+                javax.swing.JComponent root = view.component();
+                root.setSize(900, 520);
+                layout(root);
+                java.awt.Rectangle visible = new java.awt.Rectangle(0, 0, 900, 520);
+                for (javax.swing.JComponent part : List.<javax.swing.JComponent>of(
+                        view.tabs.button(ActivitiesView.JOBS_TAB), view.tabs.button(ActivitiesView.BACKGROUND_TAB),
+                        view.expandAll, view.collapseAll, view.preparations.box(), view.downloads.box(),
+                        view.connections.box(), view.deleteFinished, view.moreJobs, view.pauseAll, view.cancelAll)) {
+                    java.awt.Rectangle bounds = SwingUtilities.convertRectangle(part.getParent(), part.getBounds(),
+                            root);
+                    assertThat(part.isShowing() || part.isVisible()).isTrue();
+                    assertThat(visible.contains(bounds)).as(part.getClass().getSimpleName() + " " + bounds).isTrue();
+                    // Nicht vom Nachbarn verdeckt: die volle Breite, die das Teil braucht.
+                    assertThat(bounds.width).as("Breite " + part.getClass().getSimpleName())
+                            .isGreaterThanOrEqualTo(Math.min(part.getPreferredSize().width, part.getMinimumSize()
+                                    .width));
+                }
+                assertThat(view.tabs.button(ActivitiesView.BACKGROUND_TAB).getWidth())
+                        .isGreaterThanOrEqualTo(view.tabs.button(ActivitiesView.BACKGROUND_TAB)
+                                .getPreferredSize().width);
+                view.tabs.select(ActivitiesView.JOBS_TAB);
+            });
+        } finally {
+            context.shutdown();
+        }
+    }
+
+    private static void layout(java.awt.Component component) {
+        component.doLayout();
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                layout(child);
+            }
         }
     }
 

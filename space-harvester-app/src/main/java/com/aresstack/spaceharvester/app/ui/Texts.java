@@ -28,12 +28,19 @@ public final class Texts {
 
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.GERMANY)
             .withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter SHORT_TIME = DateTimeFormatter.ofPattern("dd.MM. HH:mm",
+            Locale.GERMANY).withZone(ZoneId.systemDefault());
 
     private Texts() {
     }
 
     public static String time(Instant instant) {
         return instant == null ? "–" : TIME.format(instant);
+    }
+
+    /** Wie {@link #time}, kurz für schmale Listen: Tag, Monat und Uhrzeit ohne Jahr und Sekunden. */
+    public static String shortTime(Instant instant) {
+        return instant == null ? "–" : SHORT_TIME.format(instant);
     }
 
     /** Eine Größengrenze: 0 (oder weniger) heißt „ohne Grenze“ (#571), sonst wie {@link #bytes}. */

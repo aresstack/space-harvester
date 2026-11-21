@@ -190,9 +190,6 @@ public final class ActivitiesView implements View {
     final PillTabs tabs = new PillTabs();
     static final String JOBS_TAB = "Aufträge";
     static final String BACKGROUND_TAB = "Hintergrund";
-    /** Am Reiter „Hintergrund“: wie viele Hintergrundaufträge laufen; ohne Laufendes unsichtbar. */
-    final com.aresstack.spaceharvester.app.ui.controls.CountChip backgroundRunning =
-            new com.aresstack.spaceharvester.app.ui.controls.CountChip("laufend", Comic.PETROL);
     /** Sehr heller Petrol-Ton hinter der Zeile einer Hintergrundgruppe. */
     static final java.awt.Color BACKGROUND_TONE = mix(Comic.PETROL, java.awt.Color.WHITE, 0.88);
     /** Breite des Petrol-Streifens am linken Rand jeder Hintergrundzeile. */
@@ -200,6 +197,10 @@ public final class ActivitiesView implements View {
     /** Kennung der Zeile einer Hintergrundgruppe, die kein eigener Auftrag ist. */
     static final String GROUP_PREFIX = "background-group:";
     private static final String TAB_PREFERENCE = "activities.tab";
+    static final String BACKGROUND_TIP = "Hintergrundaufträge: was die App von sich aus anstößt, etwa fehlende "
+            + "Seiten nachladen oder Bilder beschreiben; nachrangig, nach einem Neustart fortgesetzt";
+    /** Unter dieser Breite der Liste zeigt „Angelegt“ keine Sekunden, damit der Titel Platz hat. */
+    static final int COMPACT_TIME_BELOW = 1100;
     /** Alle zuletzt gelesenen Aufträge, beide Reiter. */
     private List<JobStatus> lastJobs = List.of();
     /** Beim nächsten Zeichnen nach oben: anderer Auftrag gewählt oder Codefeld neu erschienen. */
@@ -212,6 +213,10 @@ public final class ActivitiesView implements View {
         root.setBackground(Comic.SURFACE);
         table.getColumnModel().getColumn(2).setCellRenderer(new StateRenderer());
         table.getColumnModel().getColumn(0).setCellRenderer(new TypeRenderer());
+        // Der Titel braucht den meisten Platz (UX 21.11.2026); volle Zeit und voller Titel im Tooltip.
+        table.getColumnModel().getColumn(0).setPreferredWidth(170);
+        table.getColumnModel().getColumn(4).setCellRenderer(new TimeRenderer());
+
         // Ein Klick auf die Art eines Exports klappt seine Bilder und Anhänge auf oder zu (Angelo 11.11.2026).
         table.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -244,19 +249,14 @@ public final class ActivitiesView implements View {
                 + "endet oder sie gelöscht werden.</html>");
         tabs.tab(JOBS_TAB, emptyCard()).tab(BACKGROUND_TAB, emptyCard());
         tabs.button(JOBS_TAB).setToolTipText("Aufträge, die du gestartet hast");
-        tabs.button(BACKGROUND_TAB).setToolTipText("Hintergrundaufträge: was die App von sich aus anstößt, etwa "
-                + "fehlende Seiten nachladen oder Bilder beschreiben; nachrangig, nach einem Neustart fortgesetzt");
+        tabs.button(BACKGROUND_TAB).setToolTipText(BACKGROUND_TIP);
         String remembered = rememberedTab();
         if (BACKGROUND_TAB.equals(remembered)) {
             tabs.select(BACKGROUND_TAB);
         }
         tabs.onSelect(this::tabChanged);
-        backgroundRunning.setVisible(false);
-        backgroundRunning.addActionListener(e -> {
-            backgroundRunning.setSelected(false);
-            tabs.select(BACKGROUND_TAB);
-        });
-        JPanel listTitle = Comic.row(tabs, backgroundRunning, hint);
+        // Der Titelbereich enthält nur die Reiter; der Hinweis steht bei den Werkzeugen (UX 21.11.2026).
+        JPanel listTitle = Comic.row(tabs);
         JLabel downloadsLabel = new JLabel("Downloads");
         downloadsLabel.setToolTipText(downloads.box().getToolTipText());
         JLabel preparationsLabel = new JLabel("Vorbereitung");
@@ -273,7 +273,7 @@ public final class ActivitiesView implements View {
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
         JPanel listTools = Comic.row(expandAll, collapseAll, preparationsLabel, preparations.box(), downloadsLabel,
-                downloads.box(), connectionsLabel, connections.box(), deleteFinished, moreJobs);
+                downloads.box(), connectionsLabel, connections.box(), hint, deleteFinished, moreJobs);
         // Mittig in der Kopfzeile, für alle Aufträge zugleich (Angelo 11.11.2026).
         pauseAll.addActionListener(e -> pauseOrResumeAll());
         cancelAll.addActionListener(e -> cancelAll());
@@ -1350,10 +1350,8 @@ public final class ActivitiesView implements View {
     private void updateBackgroundChip(List<JobStatus> jobs) {
         int running = (int) jobs.stream().filter(job -> job.type().background()
                 && job.state() == JobState.RUNNING).count();
-        backgroundRunning.count(running);
-        backgroundRunning.setVisible(running > 0);
-        backgroundRunning.setToolTipText(running > 0 ? Texts.count(running, "Hintergrundauftrag läuft",
-                "Hintergrundaufträge laufen") + " · zeigen" : null);
+        tabs.count(BACKGROUND_TAB, running, Comic.PETROL, Texts.count(running, "Hintergrundauftrag läuft",
+                "Hintergrundaufträge laufen"), BACKGROUND_TIP);
     }
 
     /** Ein Hinweistext der Kopfknöpfe, im Reiter „Hintergrund“ auf Hintergrundaufträge bezogen. */
@@ -2203,6 +2201,16 @@ public final class ActivitiesView implements View {
         private static final String[] COLUMNS = {"Art", "Quelle / Space", "Zustand", "Fortschritt", "Angelegt", ""};
         private List<JobStatus> rows = new ArrayList<>();
         private List<JobStatus> all = List.of();
+        /** Schmale Liste: „Angelegt“ ohne Sekunden ({@link #COMPACT_TIME_BELOW}). */
+        private boolean compactTime;
+
+        /** Schaltet die kurze Zeit ein oder aus. */
+        void compactTime(boolean compact) {
+            if (compact != compactTime) {
+                compactTime = compact;
+                fireTableRowsUpdated(0, Math.max(0, rows.size() - 1));
+            }
+        }
         private Map<String, List<JobStatus>> children = Map.of();
         /** Zugeklappte Exporte; neue Gruppen sind aufgeklappt. */
         private final Set<String> collapsed = new HashSet<>();
@@ -2279,7 +2287,7 @@ public final class ActivitiesView implements View {
                 case 1 -> where(status);
                 case 2 -> status;
                 case 3 -> progressText(status);
-                case 4 -> Texts.time(status.createdAt());
+                case 4 -> compactTime ? Texts.shortTime(status.createdAt()) : Texts.time(status.createdAt());
                 default -> "";
             };
         }
@@ -2295,6 +2303,13 @@ public final class ActivitiesView implements View {
 
         JobsTable(JobsModel model) {
             super(model);
+        }
+
+        /** Beim Anordnen: in schmaler Liste „Angelegt“ ohne Sekunden, damit der Titel Platz hat. */
+        @Override
+        public void doLayout() {
+            ActivitiesView.this.model.compactTime(getWidth() > 0 && getWidth() < COMPACT_TIME_BELOW);
+            super.doLayout();
         }
 
         @Override
@@ -2406,9 +2421,22 @@ public final class ActivitiesView implements View {
             setIconTextGap(4);
             setBorder(BorderFactory.createEmptyBorder(0, job != null && model.child(job) ? 18 : 4, 0, 4));
             boolean background = job != null && groupRow(job);
-            setToolTipText(job != null && model.group(job) ? (model.collapsed(job)
+            String full = value == null ? null : value.toString();
+            setToolTipText(job != null && model.group(job) ? full + " · " + (model.collapsed(job)
                     ? (background ? "Unteraufträge je Space zeigen" : "Bilder und Anhänge zeigen")
-                    : (background ? "Unteraufträge ausblenden" : "Bilder und Anhänge ausblenden")) : null);
+                    : (background ? "Unteraufträge ausblenden" : "Bilder und Anhänge ausblenden")) : full);
+            return this;
+        }
+    }
+
+    /** „Angelegt“: in schmaler Liste ohne Sekunden, die volle Zeit im Tooltip. */
+    private final class TimeRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
+                                                       int row, int column) {
+            super.getTableCellRendererComponent(table, value, selected, focus, row, column);
+            JobStatus job = row < model.rows.size() ? model.rows.get(row) : null;
+            setToolTipText(job == null ? null : Texts.time(job.createdAt()));
             return this;
         }
     }
