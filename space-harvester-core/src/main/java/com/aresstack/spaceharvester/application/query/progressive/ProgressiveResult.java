@@ -19,16 +19,36 @@ import java.util.Objects;
  * @param failure    nur bei {@link Completion#FAILED}: woran die Suchanfragen scheiterten, soweit der KI-Dienst es
  *                   meldete ({@link AiServiceException.Reason}) oder die Frist ablief; sonst und wenn unbekannt
  *                   {@code null}. Nennt nie Ursachentexte, Key oder Anfrage.
+ * @param neighbors  ob die Suchmethode „Nachbarseiten“ (R2) lief und ihre Kandidaten prüfen konnte
  */
 public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
-                                Duration elapsed, AiServiceException.Reason failure) {
+                                Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors) {
 
     public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
                              Duration elapsed) {
         this(hits, variants, reason, loads, elapsed, null);
     }
 
+    public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
+                             Duration elapsed, AiServiceException.Reason failure) {
+        this(hits, variants, reason, loads, elapsed, failure, Neighbors.OFF);
+    }
+
+    /** Stand der Suchmethode „Nachbarseiten“ (R2). */
+    public enum Neighbors {
+        /** Nicht zugeschaltet. */
+        OFF,
+        /** Zugeschaltet und gelaufen; fehlt ein Nachbar, traf er die Anfrage nicht oder es gab keinen. */
+        CHECKED,
+        /**
+         * Zugeschaltet, aber nicht (ganz) geprüft: Frist, Fehler oder Abbruch. Ein fehlender Nachbar heißt dann nicht,
+         * dass es ihn nicht gibt.
+         */
+        UNCHECKED
+    }
+
     public ProgressiveResult {
+        neighbors = neighbors == null ? Neighbors.OFF : neighbors;
         if (reason != Completion.FAILED) {
             failure = null;
         }

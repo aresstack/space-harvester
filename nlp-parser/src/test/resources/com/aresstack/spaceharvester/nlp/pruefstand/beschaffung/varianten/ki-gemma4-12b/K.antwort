@@ -1,0 +1,6 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "prüfen", "handelnder": "Datenschutzbeauftragte", "betroffenes": "Lieferantenliste", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "melden", "handelnder": "Angestellter", "betroffenes": "Schaden", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "Vorsitzende", "handelnder": "Frau Kern", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "informieren", "handelnder": "Einkäufer", "betroffenes": "Bevollmächtigten", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "bestätigen", "handelnder": "Angestellten", "betroffenes": "Wareneingang", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

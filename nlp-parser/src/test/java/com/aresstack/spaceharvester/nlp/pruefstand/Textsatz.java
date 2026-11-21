@@ -43,11 +43,19 @@ record Textsatz(String name, String rolle, List<Text> texte, List<Variante> vari
         }
 
         boolean vorstufe() {
-            return !HEUTE.equals(name);
+            return !HEUTE.equals(name) && !ki();
         }
 
         boolean zusammengesetzt() {
-            return aus != null;
+            return aus != null && !ki();
+        }
+
+        /**
+         * Zweiter Analysator (Fahrplan Paket A2, dritte Spalte {@code ki:}): Aussagen aus den gepinnten Antworten des
+         * Sprachmodells ({@code varianten/<v>/<T>.antwort}) über den Wortabgleich des Core, ohne Parser.
+         */
+        boolean ki() {
+            return "ki".equals(art);
         }
 
         /** Variante, deren Pins und Vorstufen-Zeilen gelten. */
@@ -117,6 +125,37 @@ record Textsatz(String name, String rolle, List<Text> texte, List<Variante> vari
         }
         return String.join("\n", saetze.stream().map(VorstufenSatz::satz).toList());
     }
+
+    /**
+     * Die gepinnten Antworten des Sprachmodells für einen Text, je Aufruf eine, in Aufrufreihenfolge; {@code null}, wenn
+     * die Variante keine hat. In der Datei beginnt jeder Aufruf mit einer Zeile {@value #AUFRUF}.
+     */
+    List<String> kiAntworten(Variante variante, Text text) {
+        String content = optionalResource(BASIS + name + "/varianten/" + variante.name() + "/" + text.name()
+                + ".antwort");
+        if (content == null) {
+            return null;
+        }
+        List<String> result = new ArrayList<>();
+        StringBuilder current = null;
+        for (String line : content.split("\r?\n", -1)) {
+            if (line.equals(AUFRUF)) {
+                if (current != null) {
+                    result.add(current.toString());
+                }
+                current = new StringBuilder();
+            } else if (current != null) {
+                current.append(line).append('\n');
+            }
+        }
+        if (current != null) {
+            result.add(current.toString());
+        }
+        return List.copyOf(result);
+    }
+
+    /** Trennzeile vor jeder Antwort in {@code <T>.antwort}. */
+    static final String AUFRUF = "### Aufruf";
 
     /** Pfad der gepinnten CoNLL-U relativ zum Textsatz ({@code varianten/heute/A.conllu}). */
     String pinPfad(Variante variante, Text text) {
