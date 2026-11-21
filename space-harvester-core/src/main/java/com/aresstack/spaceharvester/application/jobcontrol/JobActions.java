@@ -214,6 +214,8 @@ public class JobActions {
                 com.aresstack.spaceharvester.application.quality.SearchQualityRuns bound = searchQuality;
                 yield bound != null ? bound.resume(current.id(), owner) : jobs.resume(current.id(), owner);
             }
+            // Podcast: derselbe Auftrag läuft im selben Eintrag neu und erzeugt nur, was auf der Platte fehlt.
+            case UPDATE_PODCAST -> jobs.resume(current.id(), owner);
             default -> throw new JobNotResumableException(current.id(), "diese Auftragsart lässt sich nicht fortsetzen");
         };
     }

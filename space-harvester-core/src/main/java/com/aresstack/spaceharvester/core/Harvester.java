@@ -360,6 +360,8 @@ public final class Harvester implements AutoCloseable {
     /** Seiten-Cache samt Änderungsprotokoll und Update-Marken (ADR 0030). */
     private final LucenePageCache pageCache;
     private final ChangeLog changeLog;
+    /** Die Update-Zusammenfassung als Podcast (Angelo 21.11.2026). */
+    private final com.aresstack.spaceharvester.application.podcast.UpdatePodcasts podcasts;
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
     private final ChangeEvents changeEvents;
@@ -940,6 +942,26 @@ public final class Harvester implements AutoCloseable {
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault());
             opened.add(changeLog);
+            // Podcast der Update-Zusammenfassung (Angelo 21.11.2026): Plan und Texte über ai.chat-model, Audio über die
+            // TTS-Modelle des Dienstes; Ablage unter data/podcasts, damit ein neuer Lauf dort weitermacht.
+            java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastAi =
+                    () -> liveAi ? this.settings.ai() : startAi;
+            this.podcasts = new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts(jobs,
+                    new ChatStepModel(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.VERSION,
+                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                    new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
+                            builder.userAgent),
+                    new com.aresstack.spaceharvester.application.podcast.PodcastStore(
+                            builder.dataDirectory.resolve("podcasts")),
+                    com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled(),
+                    new com.aresstack.enterpriseai.astu.acropolis.speech.TextAnalysisService(
+                            () -> com.aresstack.spaceharvester.application.podcast.SentenceAnalysis.engine(sentences),
+                            com.aresstack.enterpriseai.astu.acropolis.speech.TextAnalysisService
+                                    .DEFAULT_STOP_GRACE_MILLIS),
+                    () -> {
+                        com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
+                        return current == null ? 1 : current.parallel();
+                    });
             start.step("Änderungsprotokoll");
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
@@ -1015,6 +1037,8 @@ public final class Harvester implements AutoCloseable {
             PageImageAnalysis pageImages = this.imageAnalysis;
             AiRelease withdrawn = this.aiRelease;
             ChangeLog summaries = this.changeLog;
+            com.aresstack.spaceharvester.application.podcast.UpdatePodcasts podcastsAfterWithdrawal =
+                    this.podcasts;
             // ADR 0032, FL3: Vorstufe „Sätze vereinfachen“ nur auf Auftrag, an das Modell nur Seiten mit KI-Freigabe;
             // ihre Ablage zählt als Seiteninhalt und fällt mit der Seite, der Quelle und der Freigabe.
             this.simplifications = new Simplifications(new ChatStepModel(ChatStepModel.SIMPLIFICATION,
@@ -1066,6 +1090,12 @@ public final class Harvester implements AutoCloseable {
                 this.glossary.withdrawAi(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
+                // Podcasts, deren Zusammenfassung dabei wegfiel, entfallen mit ihr.
+                podcastsAfterWithdrawal.prune(meta -> cache.summary(meta.sourceId(), meta.updateId(), meta.spaceKey())
+                        .map(stored -> com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.key(
+                                stored.sourceId(), stored.updateId(), stored.spaceKey(), stored.text(),
+                                String.valueOf(stored.createdAt())))
+                        .filter(meta.key()::equals).isPresent());
                 // SY2: Vektoren der Synonymerkennung aus diesen Seiten und der Stand ihrer Quellen.
                 synonymDiscovery.withdrawn(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
             });
@@ -2267,6 +2297,11 @@ public final class Harvester implements AutoCloseable {
     /** Änderungsprotokoll und Updates je Quelle (ADR 0030), mit den Rechten des Aufrufers je Seite. */
     public ChangeLog changeLog() {
         return changeLog;
+    }
+
+    /** Die Update-Zusammenfassung als Podcast (Angelo 21.11.2026). */
+    public com.aresstack.spaceharvester.application.podcast.UpdatePodcasts podcasts() {
+        return podcasts;
     }
 
     /** Die Zeilen des Änderungsprotokolls einer Quelle (ADR 0030) ohne Rechteprüfung, für Tests. */

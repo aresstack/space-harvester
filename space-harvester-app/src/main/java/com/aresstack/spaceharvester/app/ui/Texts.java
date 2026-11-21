@@ -150,6 +150,7 @@ public final class Texts {
             case SLIDE_NOTES -> "Folienkommentare";
             case PRESENTATION_EXPORT -> "PPTX erzeugen";
             case SEARCH_QUALITY -> "Suchqualität messen";
+            case UPDATE_PODCAST -> "Podcast erzeugen";
         };
     }
 

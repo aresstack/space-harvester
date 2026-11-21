@@ -120,7 +120,13 @@ public enum JobType {
      * ({@link Jobs#ALL_SOURCES}); Liste, Statuszeile und Meldungen nennen nur den Testbestand und Zahlen. Fortsetzen
      * misst nur die Fragen, die im Ergebnis fehlen.
      */
-    SEARCH_QUALITY;
+    SEARCH_QUALITY,
+    /**
+     * „Podcast erzeugen“ (Angelo 21.11.2026): die Update-Zusammenfassung als lockeres Gespräch zweier Stimmen, erst der
+     * Plan, dann Text und Audio Abschnitt für Abschnitt im Hintergrund ({@code application.podcast.UpdatePodcasts}).
+     * Jede Stufe liegt sofort auf der Platte; Fortsetzen und jeder neue Lauf erzeugen nur, was fehlt.
+     */
+    UPDATE_PODCAST;
 
     /** Gehört zu „In PPTX umwandeln“ (Angelo 20.11.2026). */
     public boolean presentation() {
@@ -161,7 +167,7 @@ public enum JobType {
     public boolean resumable() {
         return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD
                 || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT || presentation()
-                || this == SEARCH_QUALITY;
+                || this == SEARCH_QUALITY || this == UPDATE_PODCAST;
     }
 
     /** Export aus der Quelle per REST-Abfrage (Metadaten, Analytics): Gescheitertes fragt ein neuer Lauf erneut. */
