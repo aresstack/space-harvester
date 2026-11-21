@@ -93,7 +93,7 @@ class SourcePropertiesViewTest {
                 "Stand vom", "16.11.2026, 18:30", "Updates", "1", "Letztes Update", "16.11.2026, 18:30",
                 "Seit dem letzten Update", "2 geänderte Seiten");
         // Die Zeilen in der farbigen Form des Export-Reiters (Angelo 17.11.2026), in drei Kästen.
-        assertThat(texts).as("je Space eine Zeile").containsSubsequence("Spaces", "CLUK",
+        assertThat(texts).as("je Space eine Zeile").containsSubsequence("Spaces", "BAU",
                 "305 von 340 Seiten lokal · 5 veraltet · 2 gesperrt · Stand vom 16.11.2026, 18:30", "DEV",
                 "6 von 20 Seiten lokal · 1 veraltet · " + ExportPanel.INCOMPLETE);
         assertThat(view.plateTitles()).containsExactly("Kennzahlen", "Spaces", "Einstellungen");
@@ -112,7 +112,7 @@ class SourcePropertiesViewTest {
         assertThat(view.plateTitles()).containsExactly("Kennzahlen", "Spaces", SourcePropertiesView.ALL_SOURCES);
         assertThat(texts).containsSubsequence("Kennzahlen", "Spaces", "4 Spaces, davon 2 mit Inventur", "Seiten", "720",
                 "Seit dem letzten Update", "4 geänderte Seiten");
-        assertThat(texts).containsSubsequence("Spaces", "archiv › CLUK", "archiv › DEV", "Confluence HaVdB › CLUK",
+        assertThat(texts).containsSubsequence("Spaces", "archiv › BAU", "archiv › DEV", "Confluence HaVdB › BAU",
                 "Confluence HaVdB › DEV");
         assertThat(texts).containsSubsequence(SourcePropertiesView.ALL_SOURCES, "Confluence HaVdB",
                 "Confluence · Personal Access Token · aktiv", "archiv", "aktiv");
@@ -133,7 +133,7 @@ class SourcePropertiesViewTest {
         assertThat(actions.reads).isGreaterThan(reads);
         view.source("wiki");
         assertThat(view.showsAll()).isFalse();
-        assertThat(view.texts()).contains("Einstellungen").doesNotContain("archiv › CLUK");
+        assertThat(view.texts()).contains("Einstellungen").doesNotContain("archiv › BAU");
     }
 
     /**
@@ -202,7 +202,7 @@ class SourcePropertiesViewTest {
         assertThat(waiting).hasSize(1);
 
         for (int i = 0; i < 5; i++) {
-            actions.holdings.pagesChanged("wiki", "CLUK", Set.of("11"));
+            actions.holdings.pagesChanged("wiki", "BAU", Set.of("11"));
             actions.changes.changed("wiki");
         }
         SwingUtilities.invokeAndWait(() -> { });
@@ -225,7 +225,7 @@ class SourcePropertiesViewTest {
         visible = false;
 
         actions.counts = new HoldingCounts(341, 301, 5, 2);
-        actions.holdings.pagesChanged("wiki", "CLUK", Set.of("11"));
+        actions.holdings.pagesChanged("wiki", "BAU", Set.of("11"));
         actions.changes.changed("wiki");
         SwingUtilities.invokeAndWait(() -> { });
         assertThat(actions.reads).as("verdeckt wird nicht gelesen").isEqualTo(reads);
@@ -244,7 +244,7 @@ class SourcePropertiesViewTest {
         int reads = actions.reads;
 
         actions.counts = new HoldingCounts(341, 301, 5, 2);
-        actions.holdings.pagesChanged("wiki", "CLUK", Set.of("11"));
+        actions.holdings.pagesChanged("wiki", "BAU", Set.of("11"));
         SwingUtilities.invokeAndWait(() -> { });
         assertThat(actions.reads).isEqualTo(reads + 1);
         assertThat(view.texts()).contains("361");
@@ -312,7 +312,7 @@ class SourcePropertiesViewTest {
             return List.of(
                     new SpaceSummary(sourceId, "DEV", new CacheGeneration("g0", CacheState.INCOMPLETE, null, null),
                             new HoldingCounts(20, 5, 1, 0)),
-                    new SpaceSummary(sourceId, "CLUK", new CacheGeneration("g3", CacheState.CONFIRMED, SYNCED, SYNCED),
+                    new SpaceSummary(sourceId, "BAU", new CacheGeneration("g3", CacheState.CONFIRMED, SYNCED, SYNCED),
                             counts));
         }
 
@@ -320,18 +320,18 @@ class SourcePropertiesViewTest {
         public List<ChangeUpdate> updates(String sourceId) {
             if (initialOnly.contains(sourceId)) {
                 return List.of(new ChangeUpdate(ChangeUpdate.OPEN, sourceId, SYNCED, null, null, true,
-                        Map.of(ChangeKind.NEW, 2), Map.of("CLUK", 2), 2, 0, 0, false));
+                        Map.of(ChangeKind.NEW, 2), Map.of("BAU", 2), 2, 0, 0, false));
             }
             if (openOnly.contains(sourceId)) {
                 return List.of(new ChangeUpdate(ChangeUpdate.OPEN, sourceId, SYNCED, null, null, false,
-                        Map.of(ChangeKind.NEW, 2), Map.of("CLUK", 2), 2, 0, 0, false));
+                        Map.of(ChangeKind.NEW, 2), Map.of("BAU", 2), 2, 0, 0, false));
             }
             return List.of(
                     new ChangeUpdate(ChangeUpdate.OPEN, "wiki", SYNCED, null, null, false, Map.of(ChangeKind.NEW, 2),
-                            Map.of("CLUK", 2), 2, 0, 0, false),
+                            Map.of("BAU", 2), 2, 0, 0, false),
                     new ChangeUpdate(String.valueOf(SYNCED.toEpochMilli()), "wiki", null, SYNCED,
-                            new UpdateMark("wiki", SYNCED, "angelo", List.of("CLUK"), 0, false), false,
-                            Map.of(ChangeKind.CONTENT_CHANGED, 1), Map.of("CLUK", 1), 1, 0, 0, false));
+                            new UpdateMark("wiki", SYNCED, "angelo", List.of("BAU"), 0, false), false,
+                            Map.of(ChangeKind.CONTENT_CHANGED, 1), Map.of("BAU", 1), 1, 0, 0, false));
         }
 
         @Override

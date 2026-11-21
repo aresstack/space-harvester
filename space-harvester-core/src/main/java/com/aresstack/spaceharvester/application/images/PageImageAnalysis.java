@@ -184,7 +184,7 @@ public class PageImageAnalysis {
         }
         prepare(model);
         for (int index = 0; index < items.size(); index++) {
-            ImagePayload.Entry entry = describe(index, key, items.get(index), releasedOnce, false,
+            ImagePayload.Entry entry = describe(index, snapshot, items.get(index), releasedOnce, false,
                     model.retries());
             entries.add(entry);
             progress.accept(entry);
@@ -366,7 +366,7 @@ public class PageImageAnalysis {
         prepare(model);
         // Erst das Bild beschreiben (dauert), dann unter der Sperre mit dem gespeicherten Ergebnis zusammenführen:
         // Laufen mehrere Einzelbeschreibungen zugleich, geht keine verloren.
-        ImagePayload.Entry described = describe(index, key, items.get(index), releasedOnce, fresh,
+        ImagePayload.Entry described = describe(index, snapshot, items.get(index), releasedOnce, fresh,
                 model.retries());
         synchronized (merging) {
             // Was schon beschrieben ist, bleibt; der Rest steht ohne Text da.
@@ -431,12 +431,12 @@ public class PageImageAnalysis {
     }
 
     /** Beschreibt ein Bild; scheitert das Modell, bis zu {@code retries} weitere Male. */
-    private ImagePayload.Entry describe(int index, PageKey key, Describable item, boolean releasedOnce,
+    private ImagePayload.Entry describe(int index, PageSnapshot snapshot, Describable item, boolean releasedOnce,
                                         boolean fresh, int retries) {
-        ImagePayload.Entry entry = describeOnce(index, key, item, releasedOnce, fresh);
+        ImagePayload.Entry entry = describeOnce(index, snapshot, item, releasedOnce, fresh);
         for (int retry = 0; retry < retries && entry.status() == ImageStatus.FAILED
                 && modelFailure(entry.reason()); retry++) {
-            entry = describeOnce(index, key, item, releasedOnce, fresh);
+            entry = describeOnce(index, snapshot, item, releasedOnce, fresh);
         }
         return entry;
     }
@@ -468,8 +468,9 @@ public class PageImageAnalysis {
         return e.getCause() == null && "Leere Beschreibung".equals(e.getMessage()) ? MODEL_EMPTY : MODEL_FAILED;
     }
 
-    private ImagePayload.Entry describeOnce(int index, PageKey key, Describable item, boolean releasedOnce,
+    private ImagePayload.Entry describeOnce(int index, PageSnapshot snapshot, Describable item, boolean releasedOnce,
                                             boolean fresh) {
+        PageKey key = snapshot.key();
         String filename = item.filename();
         String title = item.title();
         if (!item.ready()) {
@@ -483,6 +484,11 @@ public class PageImageAnalysis {
         }
         try {
             Assets.DescribedImage described = assets.describe(key, item, releasedOnce, fresh);
+            // B2: Ist das Bild ein Anhang der Seite, steht seine Beschreibung sofort im Volltextindex, nicht erst beim
+            // nächsten Ablegen der Anhänge. Nur mit Freigabe (ADR 0028): „einmalig“ Beschriebenes bleibt draußen.
+            if (!releasedOnce && item.instruction() == null) {
+                assets.indexDescription(key, snapshot.spaceKey(), described);
+            }
             return new ImagePayload.Entry(index, described.asset().attachmentId(), described.asset().sha256(),
                     filename, title, described.asset().mediaType(), ImageStatus.DESCRIBED, null,
                     described.description().text(), described.description().describer(),

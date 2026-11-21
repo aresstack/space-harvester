@@ -308,7 +308,7 @@ class LucenePageCacheChangeLogTest {
         LucenePageCache cache = open();
         cache.save(page("wiki", "101", "DEV", null, "1", json("{}")));
         int documents = cache.documentCount();
-        UpdateMark first = new UpdateMark("wiki", LATER, "client:a", List.of("DEV", "OPS"), 1, true);
+        UpdateMark first = new UpdateMark("wiki", LATER, "client:a", List.of("DEV", "OPS"), 1, true, List.of("OPS"));
 
         cache.mark(first);
         cache.mark(new UpdateMark("other", LATER, null, List.of(), 0, true));

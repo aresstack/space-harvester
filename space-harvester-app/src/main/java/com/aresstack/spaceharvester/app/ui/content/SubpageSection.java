@@ -338,6 +338,8 @@ final class SubpageSection extends JPanel {
         private final JPanel cell = new JPanel();
 
         OriginRenderer() {
+            // Titel kommen aus der Quelle: nie als HTML deuten (wie Comic.table).
+            link.putClientProperty("html.disable", Boolean.TRUE);
             cell.setLayout(new javax.swing.BoxLayout(cell, javax.swing.BoxLayout.X_AXIS));
         }
 

@@ -449,6 +449,13 @@ public final class PageDetailPanel extends JPanel {
                 }
             });
         }
+        for (SourceUpdatesView view : List.of(sourceView, sourceChanges)) {
+            view.onRetry((retrySource, spaces) -> {
+                if (context.navigator() != null) {
+                    context.navigator().retrySyncs(retrySource, spaces);
+                }
+            });
+        }
         // Beide Reiter zeigen dasselbe Update: Wer es in einem wählt, sieht es im anderen auch.
         sourceView.onSelected(sourceChanges::select);
         sourceChanges.onSelected(sourceView::select);
@@ -639,6 +646,13 @@ public final class PageDetailPanel extends JPanel {
         statementsBelow.onOpen(id -> load(sourceId, id, false));
         // Der Reiter „Graph“ bleibt beim Laden gewählt; die Unterseite öffnet sich also in ihrem Graphen.
         graphBelow.onOpen(id -> load(sourceId, id, false));
+        // Eine neue oder geänderte Beziehung kann eine der Unterseiten betreffen: unten neu laden.
+        analysisView.onRelationsChanged(() -> {
+            belowRelationsFor = null;
+            if (RELATIONS.equals(analysisTabs.selected())) {
+                loadBelowRelations();
+            }
+        });
         subpages.onChange(this::subpagesChanged);
         passages.onJump(this::jumpTo);
         statementsView.onJump(this::jumpTo);
@@ -1271,6 +1285,8 @@ public final class PageDetailPanel extends JPanel {
         breadcrumbs.clear();
         positionShown.accept(null);
         references.message(" ");
+        // Die Unterseiten der vorigen Seite gelten ab jetzt nicht mehr, auch wenn das Laden scheitert.
+        subpages.page(null, null, null, null);
         int current = ++request;
         update.dismiss();
         showCard(PAGE);
