@@ -97,6 +97,53 @@ public final class DomainTermGraph {
     }
 
     /**
+     * Vertrauen in einen Beleg (Paket W2). Die Reihenfolge ist die Rangfolge an der Kante: die höchste Stufe ihrer
+     * Belege, wobei {@link #ABWEICHEND} nur als Kennzeichen zählt ({@link Edge#differs()}).
+     */
+    public enum Trust {
+        /** Von Hand bestätigt ({@link ParsedStatements.Review#CONFIRMED}) oder vom Prüfschritt bestätigt. */
+        GEPRUEFT,
+        /** Die andere Ablage (Parser bzw. KI) liest den Satz gleich ({@link Agreement#AGREES}). */
+        EINIG,
+        /** Nur die Lesart des gewählten Analysators, nicht geprüft. */
+        UNGEPRUEFT,
+        /** Die andere Ablage liest den Satz anders ({@link Agreement#DIFFERS}); nicht geprüft. */
+        ABWEICHEND
+    }
+
+    /** Ob die andere Ablage eine Aussage gleich liest; die Vergleichslogik liegt allein beim Vergleich der Analysatoren. */
+    public enum Agreement {
+        AGREES,
+        DIFFERS,
+        NOT_COMPARABLE
+    }
+
+    /** Port für den Vergleich der Analysatoren (K2); bis er angeschlossen ist, {@link #NONE}. */
+    @FunctionalInterface
+    public interface Comparison {
+
+        /** Kein Vergleich: jede Aussage ist {@link Agreement#NOT_COMPARABLE}. */
+        Comparison NONE = (caller, page, statement) -> Agreement.NOT_COMPARABLE;
+
+        Agreement agreement(AccessContext caller, KnowledgeGraph.PageRef page, ParsedStatements.Statement statement);
+    }
+
+    /**
+     * Die Stufe eines Belegs: geprüft geht vor, dann der Vergleich der Analysatoren.
+     */
+    static Trust trust(ParsedStatements.Statement statement, Agreement agreement) {
+        if (statement.review() == ParsedStatements.Review.CONFIRMED || statement.check() != null
+                && statement.check().verdict() == ParsedStatements.Verdict.STIMMT) {
+            return Trust.GEPRUEFT;
+        }
+        return switch (agreement == null ? Agreement.NOT_COMPARABLE : agreement) {
+            case AGREES -> Trust.EINIG;
+            case DIFFERS -> Trust.ABWEICHEND;
+            case NOT_COMPARABLE -> Trust.UNGEPRUEFT;
+        };
+    }
+
+    /**
      * Ein Beleg einer Verb-Kante: genau eine gespeicherte Aussage.
      *
      * @param page        Seite mit Stand
@@ -104,13 +151,21 @@ public final class DomainTermGraph {
      * @param analyzerId  Analysator der Ablage
      * @param fromText    Wortlaut der Erwähnung, die auf den Ausgangsknoten passt
      * @param toText      Wortlaut der Erwähnung, die auf den Zielknoten passt
+     * @param trust       Vertrauen in diesen Beleg (Paket W2)
      */
     public record Evidence(KnowledgeGraph.PageRef page, ParsedStatements.Statement statement, String analyzerId,
-                           String fromText, String toText) {
+                           String fromText, String toText, Trust trust) {
 
         public Evidence {
             Objects.requireNonNull(page, "page");
             Objects.requireNonNull(statement, "statement");
+            trust = trust == null ? Trust.UNGEPRUEFT : trust;
+        }
+
+        /** Ohne Vergleich der Analysatoren. */
+        public Evidence(KnowledgeGraph.PageRef page, ParsedStatements.Statement statement, String analyzerId,
+                        String fromText, String toText) {
+            this(page, statement, analyzerId, fromText, toText, DomainTermGraph.trust(statement, Agreement.NOT_COMPARABLE));
         }
     }
 
@@ -120,14 +175,43 @@ public final class DomainTermGraph {
      * @param verb     Grundform des Verbs bei {@link EdgeKind#VERB}, sonst {@code null}
      * @param count    Zahl der Belege
      * @param evidence alle Belege, nach Quelle, Seite und Satz
+     * @param trust    höchste Stufe der Belege: {@link Trust#GEPRUEFT}, {@link Trust#EINIG} oder
+     *                 {@link Trust#UNGEPRUEFT}; bei Synonymen {@link Trust#GEPRUEFT} (bestätigte Beziehung)
+     * @param differs  ob ein Beleg abweicht und keiner geprüft ist
      */
-    public record Edge(String from, String to, EdgeKind kind, String verb, int count, List<Evidence> evidence) {
+    public record Edge(String from, String to, EdgeKind kind, String verb, int count, List<Evidence> evidence,
+                       Trust trust, boolean differs) {
 
         public Edge {
             Objects.requireNonNull(from, "from");
             Objects.requireNonNull(to, "to");
             Objects.requireNonNull(kind, "kind");
             evidence = List.copyOf(evidence);
+            trust = trust == null ? Trust.UNGEPRUEFT : trust;
+        }
+
+        /** Stufe und Kennzeichen aus den Belegen. */
+        public Edge(String from, String to, EdgeKind kind, String verb, int count, List<Evidence> evidence) {
+            this(from, to, kind, verb, count, evidence, kind == EdgeKind.SYNONYM ? Trust.GEPRUEFT : rank(evidence),
+                    kind == EdgeKind.VERB && differs(evidence));
+        }
+
+        private static Trust rank(List<Evidence> evidence) {
+            Trust best = Trust.UNGEPRUEFT;
+            for (Evidence item : evidence) {
+                if (item.trust() == Trust.GEPRUEFT) {
+                    return Trust.GEPRUEFT;
+                }
+                if (item.trust() == Trust.EINIG) {
+                    best = Trust.EINIG;
+                }
+            }
+            return best;
+        }
+
+        private static boolean differs(List<Evidence> evidence) {
+            return evidence.stream().anyMatch(item -> item.trust() == Trust.ABWEICHEND)
+                    && evidence.stream().noneMatch(item -> item.trust() == Trust.GEPRUEFT);
         }
     }
 
@@ -174,28 +258,43 @@ public final class DomainTermGraph {
      * @param depth        1 oder 2
      * @param includeStale Aussagen veralteter Seiten mitnehmen
      * @param pages        nur diese Seiten samt Dokumenten (Auswahl im Baum, ADR 0029) oder {@code null} für alle
+     * @param checkedOnly  „nur geprüft“ (Paket W2): nur Belege der Stufe {@link Trust#GEPRUEFT} zählen; Kanten ohne
+     *                     solche fallen weg
      */
-    public record Options(int depth, boolean includeStale, PageSet pages) {
+    public record Options(int depth, boolean includeStale, PageSet pages, boolean checkedOnly) {
 
-        public static final Options DEFAULT = new Options(2, false, null);
+        public static final Options DEFAULT = new Options(2, false, null, false);
 
         public Options {
             if (depth < 1 || depth > 2) {
                 throw new IllegalArgumentException("Tiefe 1 oder 2");
             }
         }
+
+        /** Ohne „nur geprüft“. */
+        public Options(int depth, boolean includeStale, PageSet pages) {
+            this(depth, includeStale, pages, false);
+        }
     }
 
     private final Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed;
     private final Vocabulary vocabulary;
+    private final Comparison comparison;
 
     public DomainTermGraph(KnowledgeGraph graph, Vocabulary vocabulary) {
-        this(Objects.requireNonNull(graph, "graph")::analysed, vocabulary);
+        this(graph, vocabulary, Comparison.NONE);
     }
 
-    DomainTermGraph(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed, Vocabulary vocabulary) {
+    /** @param comparison Vergleich der Analysatoren (K2) oder {@link Comparison#NONE} */
+    public DomainTermGraph(KnowledgeGraph graph, Vocabulary vocabulary, Comparison comparison) {
+        this(Objects.requireNonNull(graph, "graph")::analysed, vocabulary, comparison);
+    }
+
+    DomainTermGraph(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed, Vocabulary vocabulary,
+                    Comparison comparison) {
         this.analysed = Objects.requireNonNull(analysed, "analysed");
         this.vocabulary = Objects.requireNonNull(vocabulary, "vocabulary");
+        this.comparison = Objects.requireNonNull(comparison, "comparison");
     }
 
     /**
@@ -261,6 +360,11 @@ public final class DomainTermGraph {
                     skippedStale++;
                     continue;
                 }
+                Trust trust = trust(statement, statement.review() == ParsedStatements.Review.CONFIRMED
+                        ? Agreement.NOT_COMPARABLE : comparison.agreement(caller, ref, statement));
+                if (options.checkedOnly() && trust != Trust.GEPRUEFT) {
+                    continue;
+                }
                 String verb = verb(statement);
                 analyzers.add(page.analysis().analyzerId());
                 Set<String> seen = new LinkedHashSet<>();
@@ -273,7 +377,7 @@ public final class DomainTermGraph {
                         edges.computeIfAbsent("verb\u0000" + actor.key() + "\u0000" + verb + "\u0000" + object.key(),
                                         unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb))
                                 .add(new Evidence(ref, statement, page.analysis().analyzerId(), actor.text(),
-                                        object.text()));
+                                        object.text(), trust));
                     }
                 }
             }

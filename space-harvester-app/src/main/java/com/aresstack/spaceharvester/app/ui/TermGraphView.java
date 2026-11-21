@@ -63,12 +63,17 @@ public final class TermGraphView {
             + "ohne Pfeil verbindet einen Fachbegriff mit seinem Synonym. Ein Klick auf eine Verb-Kante zeigt die "
             + "Belege; der Seitentitel öffnet die Seite an der Stelle. Begriffe werden nur nach Wortlaut bzw. "
             + "Grundform zugeordnet, nie als identisch behauptet. Gelesen wird nur aus der Ablage des eingestellten "
-            + "Analysators; veraltete Aussagen bleiben weg.";
+            + "Analysators; veraltete Aussagen bleiben weg.\n\n"
+            + "Die Linie zeigt, wie sicher eine Verbindung ist: kräftig, wenn mindestens ein Beleg geprüft ist (von Hand "
+            + "bestätigt oder vom Prüfschritt als stimmig bewertet), gestrichelt, wenn keiner geprüft ist. Im Overlay "
+            + "steht die Stufe an jedem Beleg. „Nur geprüft“ zählt nur geprüfte Belege; Verbindungen ohne solche "
+            + "fallen weg.";
     static final String NO_NEIGHBOURS = "Zu diesem Begriff gibt es noch keine Beziehungen.";
     static final String NO_VERBS = "Zu diesem Fachbegriff gibt es auf den analysierten, für dich sichtbaren Seiten "
             + "noch keine Aussagen mit anderen Fachbegriffen.";
     static final String DOMAIN = "Nur Fachbegriffe";
-    static final String OPTIONS_TIP = "Optionen: Vorschläge zeigen, Nur Fachbegriffe";
+    static final String CHECKED = "Nur geprüft";
+    static final String OPTIONS_TIP = "Optionen: Vorschläge zeigen, Nur Fachbegriffe, Nur geprüft";
     static final String TRUNCATED = "Gezeigt werden die ersten " + GraphSource.MAX_NODES + " Begriffe.";
     /** Höchstens so viele Vorschläge zeigt die Begriffssuche am Startfeld. */
     static final int SUGGESTIONS = 8;
@@ -78,6 +83,8 @@ public final class TermGraphView {
     /** Fachsicht (Paket W1) hinter „Nur Fachbegriffe“; {@code null} ohne Laufzeit. */
     private final GraphSource domainSource;
     private final javax.swing.JCheckBoxMenuItem domain = new javax.swing.JCheckBoxMenuItem(DOMAIN);
+    /** „Nur geprüft“ (Paket W2): wirkt nur in der Fachsicht, sonst gesperrt. */
+    private final javax.swing.JCheckBoxMenuItem checked = new javax.swing.JCheckBoxMenuItem(CHECKED);
     private final EvidencePopup evidence = new EvidencePopup();
     private java.util.function.Consumer<EvidencePopup.Target> onOpen = target -> { };
     private final JPanel root = new JPanel(new BorderLayout(0, 8));
@@ -113,14 +120,14 @@ public final class TermGraphView {
             }
             return runtime.workspace().termRelations(term, null, withProposals ? null : ReviewStatus.CONFIRMED,
                     null, TermRelations.MAX_LIMIT, null, scope.get().get()).relations();
-        }), context == null ? null : GraphSource.ofDomainTerms((term, levels) -> {
+        }), context == null ? null : GraphSource.ofDomainTerms((term, levels, checkedOnly) -> {
             AppRuntime runtime = context.runtime();
             if (runtime == null) {
                 throw new IllegalStateException(TermDirectory.NO_RUNTIME);
             }
             return runtime.workspace().domainTermGraph(term,
                     new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options(levels, false,
-                            scope.get().get()), () -> false);
+                            scope.get().get(), checkedOnly), () -> false);
         }, com.aresstack.spaceharvester.app.ui.content.StatementProvenance::analyzer), scope);
     }
 
@@ -144,6 +151,8 @@ public final class TermGraphView {
         depth.setSelectedIndex(1);
         proposals.setToolTipText("Auch vorgeschlagene Beziehungen zeigen, gestrichelt");
         domain.setToolTipText("Fachsicht: nur bestätigte Fachbegriffe und Synonyme, Verben der Aussagen als Kanten");
+        checked.setToolTipText("Nur Verbindungen mit geprüften Belegen; die Zahl zählt nur diese (nur in der Fachsicht)");
+        checked.setEnabled(false);
 
         JLabel heading = Comic.text("Wissensgraph der Begriffe");
         heading.setFont(Comic.semiBold(15f));
@@ -155,6 +164,7 @@ public final class TermGraphView {
         controls.add(depth);
         optionsMenu.add(proposals);
         optionsMenu.add(domain);
+        optionsMenu.add(checked);
         com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(optionsMenu, options);
         options.addActionListener(e -> optionsMenu.show(options, 0, options.getHeight()));
         controls.add(showButton);
@@ -174,6 +184,11 @@ public final class TermGraphView {
             reload();
         });
         domain.addActionListener(e -> {
+            checked.setEnabled(domain.isSelected());
+            markOptions();
+            reload();
+        });
+        checked.addActionListener(e -> {
             markOptions();
             reload();
         });
@@ -280,6 +295,9 @@ public final class TermGraphView {
         }
         if (domain.isSelected()) {
             active.add(domain.getText());
+            if (checked.isSelected()) {
+                active.add(checked.getText());
+            }
         }
         options.marked(!active.isEmpty());
         options.setToolTipText(active.isEmpty() ? OPTIONS_TIP : "Optionen – aktiv: " + String.join(", ", active));
@@ -311,8 +329,9 @@ public final class TermGraphView {
         int current = ++request;
         int levels = depth.getSelectedIndex() + 1;
         boolean withProposals = proposals.isSelected();
+        boolean checkedOnly = domainMode() && checked.isSelected();
         hint.setText("Lädt …");
-        Background.run(() -> active.around(wanted, levels, withProposals), graph -> {
+        Background.run(() -> active.around(wanted, levels, withProposals, checkedOnly), graph -> {
             if (current == request) {
                 show(graph);
             }
@@ -342,12 +361,15 @@ public final class TermGraphView {
         if (!graph.note().isBlank()) {
             text = (text.isBlank() ? "" : text + " · ") + graph.note();
         }
+        if (fach && checked.isSelected() && !graph.nodes().isEmpty()) {
+            text = text + " · nur geprüft";
+        }
         hint.setText(text);
     }
 
     /** Overlay „Belege“ einer Verb-Kante: Sätze im Hintergrund lesen, dann zeigen. */
     private void showEvidence(GraphSource.Edge edge, int x, int y) {
-        String title = canvas.label(edge.from()) + " " + edge.label().replaceFirst(" · \\d+$", "") + " "
+        String title = canvas.label(edge.from()) + " " + edge.label().replaceFirst("( ≠)? · \\d+$", "") + " "
                 + canvas.label(edge.to());
         int total = edgeCount(edge);
         AppRuntime runtime = context == null ? null : context.runtime();
@@ -439,6 +461,10 @@ public final class TermGraphView {
 
     javax.swing.JCheckBoxMenuItem domainChoice() {
         return domain;
+    }
+
+    javax.swing.JCheckBoxMenuItem checkedChoice() {
+        return checked;
     }
 
     EvidencePopup evidencePopup() {
@@ -694,7 +720,7 @@ public final class TermGraphView {
             }
             return switch (edge.style()) {
                 case SYNONYM -> "Synonym";
-                case VERB -> "Klick zeigt die Belege";
+                case VERB -> edge.tip() == null ? "Klick zeigt die Belege" : edge.tip();
                 case RELATION -> null;
             };
         }
@@ -822,6 +848,8 @@ public final class TermGraphView {
             g2.setColor(color);
             if (edge.style() == GraphSource.Style.SYNONYM) {
                 g2.setStroke(new BasicStroke(1.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            } else if (edge.style() == GraphSource.Style.VERB && edge.trust() != null) {
+                g2.setStroke(trustStroke(edge));
             } else {
                 g2.setStroke(edge.confirmed() ? new BasicStroke(2.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
                         : new BasicStroke(2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10f, new float[]{7f, 5f},
@@ -860,6 +888,23 @@ public final class TermGraphView {
                 g2.setColor(Comic.MUTED);
                 g2.drawString(label.substring(dot), x + metrics.stringWidth(verb), y);
             }
+        }
+
+        /**
+         * Linienart einer Verb-Kante nach Vertrauen (Paket W2), ohne Farbe: kräftig geprüft, dünn einig, gestrichelt
+         * ungeprüft, gepunktet abweichend.
+         */
+        static BasicStroke trustStroke(GraphSource.Edge edge) {
+            if (edge.differs()) {
+                return new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 10f, new float[]{0.5f, 5f},
+                        0f);
+            }
+            return switch (edge.trust()) {
+                case GEPRUEFT -> new BasicStroke(3.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
+                case EINIG -> new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
+                case UNGEPRUEFT, ABWEICHEND -> new BasicStroke(2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10f,
+                        new float[]{7f, 5f}, 0f);
+            };
         }
 
         private static void arrow(Graphics2D g2, Point2D from, Point2D to) {

@@ -35,7 +35,8 @@ import java.util.function.Consumer;
 
 /**
  * Overlay „Belege“ einer Verb-Kante der Fachsicht (Paket W1): Kopf „Antragsteller stellt Antrag“ mit Zahl, je Beleg der
- * Satz und darunter der Seitentitel als Link, der die Seite an der Stelle öffnet und das Overlay schließt.
+ * Satz und darunter die Stufe des Belegs als stille Pille (Paket W2) und der Seitentitel als Link, der die Seite an der
+ * Stelle öffnet und das Overlay schließt.
  * Keine Standardknöpfe; Schließen mit dem Kreis „Esc“, der Esc-Taste oder einem Klick daneben. Nur auf dem EDT.
  */
 public final class EvidencePopup extends JPopupMenu {
@@ -47,6 +48,9 @@ public final class EvidencePopup extends JPopupMenu {
     /** Satz, wenn der Lesetext nicht mehr zur Analyse passt und keine Vorstufe vorliegt. */
     static final String NO_SENTENCE = "Satz nicht mehr im Lesetext – die Seite hat sich seit der Analyse geändert.";
 
+    /** Innenbreite des Overlays: {@link #WIDTH} ohne Rahmen (2 + 12 je Seite). */
+    private static final int INNER = WIDTH - 28;
+
     /** Wohin ein Link springt: Seite und Stelle im Lesetext ({@code start} negativ: nur die Seite). */
     public record Target(String sourceId, String pageId, int start, int end) {
     }
@@ -57,6 +61,7 @@ public final class EvidencePopup extends JPopupMenu {
             new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(null);
     private final JScrollPane scroll = Comic.scroll(rows);
     private final List<JLabel> links = new ArrayList<>();
+    private final List<CountChip> stages = new ArrayList<>();
     private Consumer<Target> onOpen = target -> { };
 
     EvidencePopup() {
@@ -116,9 +121,17 @@ public final class EvidencePopup extends JPopupMenu {
         count.count(total);
         rows.removeAll();
         links.clear();
+        stages.clear();
+        List<WrappedText> texts = new ArrayList<>();
         for (DomainTermGraph.Evidence item : evidence) {
-            rows.add(row(item, sentences.get(item.statement().id())));
+            rows.add(row(item, sentences.get(item.statement().id()), texts));
             rows.add(Box.createVerticalStrut(10));
+        }
+        // Die Sätze messen ihre Höhe an der echten Breite; sonst schätzen sie schmaler, und unter einem Satz bleibt
+        // eine Leerzeile stehen. Mit Scrollbalken wird die Spalte um dessen Breite schmaler.
+        width(texts, INNER);
+        if (rows.getPreferredSize().height + 64 > MAX_HEIGHT) {
+            width(texts, INNER - scroll.getVerticalScrollBar().getPreferredSize().width);
         }
         rows.revalidate();
         int height = Math.min(MAX_HEIGHT, rows.getPreferredSize().height + 64);
@@ -137,16 +150,33 @@ public final class EvidencePopup extends JPopupMenu {
         }
     }
 
-    private JComponent row(DomainTermGraph.Evidence item, SentenceText sentence) {
+    private static void width(List<WrappedText> texts, int width) {
+        for (WrappedText text : texts) {
+            text.setSize(width, text.heightFor(width));
+            text.invalidate();
+        }
+    }
+
+    private JComponent row(DomainTermGraph.Evidence item, SentenceText sentence, List<WrappedText> texts) {
         JPanel row = new JPanel();
         row.setOpaque(false);
         row.setLayout(new BoxLayout(row, BoxLayout.Y_AXIS));
         row.setAlignmentX(LEFT_ALIGNMENT);
         WrappedText text = Comic.wrapped(sentenceText(item, sentence), Comic.INK, 13f);
         text.setAlignmentX(LEFT_ALIGNMENT);
+        texts.add(text);
         row.add(text);
         JLabel link = link(pageTitle(item));
-        link.setAlignmentX(LEFT_ALIGNMENT);
+        JPanel foot = new JPanel();
+        foot.setOpaque(false);
+        foot.setLayout(new BoxLayout(foot, BoxLayout.X_AXIS));
+        foot.setAlignmentX(LEFT_ALIGNMENT);
+        CountChip stage = CountChip.tag(stageWord(item.trust()), Comic.MUTED, stageTip(item));
+        stages.add(stage);
+        foot.add(stage);
+        foot.add(Box.createHorizontalStrut(8));
+        foot.add(link);
+        foot.add(Box.createHorizontalGlue());
         Target target = new Target(item.page().key().sourceId(), item.page().key().pageId(),
                 sentence == null || sentence.stale() ? -1 : sentence.sentenceStart(),
                 sentence == null || sentence.stale() ? -1 : sentence.sentenceEnd());
@@ -169,8 +199,30 @@ public final class EvidencePopup extends JPopupMenu {
             }
         });
         links.add(link);
-        row.add(link);
+        row.add(Box.createVerticalStrut(4));
+        row.add(foot);
         return row;
+    }
+
+    /** Stufe eines Belegs als kurzes Wort für die Pille (Paket W2). */
+    static String stageWord(DomainTermGraph.Trust trust) {
+        return switch (trust) {
+            case GEPRUEFT -> "geprüft";
+            case EINIG -> "einig";
+            case UNGEPRUEFT -> "ungeprüft";
+            case ABWEICHEND -> "abweichend";
+        };
+    }
+
+    private static String stageTip(DomainTermGraph.Evidence item) {
+        String analyzer = com.aresstack.spaceharvester.app.ui.content.StatementProvenance.analyzer(item.analyzerId());
+        return switch (item.trust()) {
+            case GEPRUEFT -> "Von Hand bestätigt oder vom Prüfschritt als stimmig bewertet";
+            case EINIG -> "Parser und KI lesen diesen Satz gleich";
+            case UNGEPRUEFT -> "Nur die Lesart " + (analyzer == null ? "des Analysators" : "von " + analyzer)
+                    + ", nicht geprüft";
+            case ABWEICHEND -> "Parser und KI lesen diesen Satz verschieden, nicht geprüft";
+        };
     }
 
     /** Der Originalsatz, sonst der vereinfachte Satz der Vorstufe, sonst ein Hinweis mit dem Prädikat. */
@@ -225,6 +277,10 @@ public final class EvidencePopup extends JPopupMenu {
 
     int countValue() {
         return count.count();
+    }
+
+    List<String> stageTexts() {
+        return stages.stream().map(CountChip::word).toList();
     }
 
     List<String> linkTexts() {

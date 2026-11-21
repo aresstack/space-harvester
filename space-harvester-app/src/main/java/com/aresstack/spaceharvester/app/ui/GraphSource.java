@@ -29,6 +29,13 @@ interface GraphSource {
     Graph around(String start, int depth, boolean proposals) throws Exception;
 
     /**
+     * Wie {@link #around(String, int, boolean)}, mit „nur geprüft“ (Paket W2); nur die Fachsicht wertet es aus.
+     */
+    default Graph around(String start, int depth, boolean proposals, boolean checkedOnly) throws Exception {
+        return around(start, depth, proposals);
+    }
+
+    /**
      * Ein Begriff im Graphen.
      *
      * @param key    Suchwert, eindeutig im Graphen
@@ -59,13 +66,22 @@ interface GraphSource {
      * @param style     wie die Kante gezeichnet wird
      * @param label     Beschriftung der Fachsicht („Grundform · N“) oder {@code null} für die Art der Beziehung
      * @param evidence  Belege einer Verb-Kante der Fachsicht, sonst leer
+     * @param trust     Vertrauen einer Verb-Kante (Paket W2), sonst {@code null}
+     * @param differs   ob ein Beleg der Verb-Kante abweicht und keiner geprüft ist
+     * @param tip       Tooltip der Kante oder {@code null}
      */
     record Edge(String from, String to, String type, boolean confirmed, boolean directed, Style style, String label,
-                List<DomainTermGraph.Evidence> evidence) {
+                List<DomainTermGraph.Evidence> evidence, DomainTermGraph.Trust trust, boolean differs, String tip) {
 
         public Edge {
             style = style == null ? Style.RELATION : style;
             evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        }
+
+        /** Ohne Vertrauen (Beziehungen, Synonyme). */
+        Edge(String from, String to, String type, boolean confirmed, boolean directed, Style style, String label,
+             List<DomainTermGraph.Evidence> evidence) {
+            this(from, to, type, confirmed, directed, style, label, evidence, null, false, null);
         }
 
         /** Eine Beziehung zwischen Begriffen (wie vor der Fachsicht). */
@@ -163,10 +179,10 @@ interface GraphSource {
         };
     }
 
-    /** Die Fachsicht des Core zu einem Startbegriff und einer Tiefe (Paket W1). */
+    /** Die Fachsicht des Core zu einem Startbegriff und einer Tiefe (Paket W1), auf Wunsch nur Geprüftes (W2). */
     @FunctionalInterface
     interface DomainFetch {
-        DomainTermGraph.View around(String start, int depth) throws Exception;
+        DomainTermGraph.View around(String start, int depth, boolean checkedOnly) throws Exception;
     }
 
     /**
@@ -178,41 +194,83 @@ interface GraphSource {
     static GraphSource ofDomainTerms(DomainFetch fetch, java.util.function.Function<String, String> analyzerName) {
         Objects.requireNonNull(fetch, "fetch");
         Objects.requireNonNull(analyzerName, "analyzerName");
-        return (start, depth, proposals) -> {
-            DomainTermGraph.View view = fetch.around(start, Math.max(1, Math.min(2, depth)));
-            if (view.outcome() == DomainTermGraph.Outcome.NOT_A_TERM) {
-                return new Graph(List.of(), List.of(), false, "", "„" + start.trim() + "“ " + NOT_A_TERM);
+        return new GraphSource() {
+            @Override
+            public Graph around(String start, int depth, boolean proposals) throws Exception {
+                return around(start, depth, proposals, false);
             }
-            if (view.outcome() == DomainTermGraph.Outcome.EMPTY_START) {
-                return Graph.EMPTY;
+
+            @Override
+            public Graph around(String start, int depth, boolean proposals, boolean checkedOnly) throws Exception {
+                return domainGraph(fetch.around(start, Math.max(1, Math.min(2, depth)), checkedOnly), start,
+                        analyzerName);
             }
-            List<Node> nodes = new ArrayList<>();
-            for (DomainTermGraph.Node node : view.nodes()) {
-                nodes.add(new Node(node.key(), node.label(), node.depth(), node.parent(),
-                        node.kind() == DomainTermGraph.NodeKind.SYNONYM));
-            }
-            List<Edge> edges = new ArrayList<>();
-            for (DomainTermGraph.Edge edge : view.edges()) {
-                if (edge.kind() == DomainTermGraph.EdgeKind.SYNONYM) {
-                    edges.add(new Edge(edge.from(), edge.to(), "SYNONYM", true, false, Style.SYNONYM, null,
-                            List.of()));
-                } else {
-                    edges.add(new Edge(edge.from(), edge.to(), "VERB", true, true, Style.VERB,
-                            edge.verb() + " · " + edge.count(), edge.evidence()));
-                }
-            }
-            List<String> notes = new ArrayList<>();
-            if (!view.analyzers().isEmpty()) {
-                notes.add("Aussagen aus " + String.join(", ", view.analyzers().stream().map(analyzerName)
-                        .filter(Objects::nonNull).sorted().toList()));
-            }
-            if (view.skippedStale() > 0) {
-                notes.add(view.skippedStale() + (view.skippedStale() == 1 ? " veraltete Aussage" : " veraltete Aussagen")
-                        + " ausgelassen");
-            }
-            return new Graph(nodes, edges, view.truncated(), String.join(" · ", notes), null);
         };
     }
+
+    private static Graph domainGraph(DomainTermGraph.View view, String start,
+                                     java.util.function.Function<String, String> analyzerName) {
+        if (view.outcome() == DomainTermGraph.Outcome.NOT_A_TERM) {
+            return new Graph(List.of(), List.of(), false, "", "„" + start.trim() + "“ " + NOT_A_TERM);
+        }
+        if (view.outcome() == DomainTermGraph.Outcome.EMPTY_START) {
+            return Graph.EMPTY;
+        }
+        List<Node> nodes = new ArrayList<>();
+        for (DomainTermGraph.Node node : view.nodes()) {
+            nodes.add(new Node(node.key(), node.label(), node.depth(), node.parent(),
+                    node.kind() == DomainTermGraph.NodeKind.SYNONYM));
+        }
+        List<Edge> edges = new ArrayList<>();
+        for (DomainTermGraph.Edge edge : view.edges()) {
+            if (edge.kind() == DomainTermGraph.EdgeKind.SYNONYM) {
+                edges.add(new Edge(edge.from(), edge.to(), "SYNONYM", true, false, Style.SYNONYM, null,
+                        List.of()));
+            } else {
+                edges.add(new Edge(edge.from(), edge.to(), "VERB", true, true, Style.VERB,
+                        edge.verb() + (edge.differs() ? " ≠" : "") + " · " + edge.count(), edge.evidence(),
+                        edge.trust(), edge.differs(), edgeTip(edge, analyzerName)));
+            }
+        }
+        List<String> notes = new ArrayList<>();
+        if (!view.analyzers().isEmpty()) {
+            notes.add("Aussagen aus " + String.join(", ", view.analyzers().stream().map(analyzerName)
+                    .filter(Objects::nonNull).sorted().toList()));
+        }
+        if (view.skippedStale() > 0) {
+            notes.add(view.skippedStale() + (view.skippedStale() == 1 ? " veraltete Aussage" : " veraltete Aussagen")
+                    + " ausgelassen");
+        }
+        return new Graph(nodes, edges, view.truncated(), String.join(" · ", notes), null);
+    }
+
+    /** Stufe einer Verb-Kante in Worten (Linienart, Tooltip). */
+    static String trustText(DomainTermGraph.Trust trust, boolean differs) {
+        if (differs) {
+            return TRUST_DIFFERS;
+        }
+        return switch (trust == null ? DomainTermGraph.Trust.UNGEPRUEFT : trust) {
+            case GEPRUEFT -> TRUST_CHECKED;
+            case EINIG -> TRUST_AGREED;
+            case UNGEPRUEFT, ABWEICHEND -> TRUST_UNCHECKED;
+        };
+    }
+
+    /** Tooltip einer Verb-Kante: Stufe, Analysatoren der Belege, was ein Klick tut. */
+    private static String edgeTip(DomainTermGraph.Edge edge,
+                                  java.util.function.Function<String, String> analyzerName) {
+        List<String> analyzers = edge.evidence().stream().map(DomainTermGraph.Evidence::analyzerId).distinct()
+                .map(analyzerName).filter(Objects::nonNull).sorted().toList();
+        return trustText(edge.trust(), edge.differs())
+                + (analyzers.isEmpty() ? "" : " · Aussagen aus " + String.join(", ", analyzers))
+                + " – Klick zeigt die Belege";
+    }
+
+    /** Stufen in Worten (Paket W2). */
+    String TRUST_CHECKED = "Geprüft";
+    String TRUST_AGREED = "Parser und KI einig";
+    String TRUST_UNCHECKED = "Ungeprüft";
+    String TRUST_DIFFERS = "Abweichend";
 
     /** Hinweis, wenn der Startbegriff der Fachsicht kein bestätigter Fachbegriff ist. */
     String NOT_A_TERM = "ist kein bestätigter Fachbegriff und kein bestätigtes Synonym im Glossar.";

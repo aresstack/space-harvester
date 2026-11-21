@@ -143,7 +143,7 @@ class TermGraphViewTest {
 
     @Test
     void theDomainViewMapsTermsSynonymsAndVerbEdgesAndSaysWhereTheStatementsComeFrom() throws Exception {
-        GraphSource source = GraphSource.ofDomainTerms((start, depth) -> FACHSICHT, id -> "MaltParser");
+        GraphSource source = GraphSource.ofDomainTerms((start, depth, checkedOnly) -> FACHSICHT, id -> "MaltParser");
 
         GraphSource.Graph graph = source.around("Antragsteller", 2, false);
 
@@ -155,7 +155,7 @@ class TermGraphViewTest {
                 Tuple.tuple(GraphSource.Style.VERB, "stellen · 3", true),
                 Tuple.tuple(GraphSource.Style.SYNONYM, null, false));
         assertThat(graph.note()).isEqualTo("Aussagen aus MaltParser · 2 veraltete Aussagen ausgelassen");
-        assertThat(GraphSource.ofDomainTerms((start, depth) -> new DomainTermGraph.View(
+        assertThat(GraphSource.ofDomainTerms((start, depth, checkedOnly) -> new DomainTermGraph.View(
                 DomainTermGraph.Outcome.NOT_A_TERM, List.of(), List.of(), false, 0, Set.of()), id -> id)
                 .around("Kaffee", 1, false).empty()).isEqualTo("„Kaffee“ " + GraphSource.NOT_A_TERM);
     }
@@ -167,7 +167,7 @@ class TermGraphViewTest {
             asked.add("relations");
             return GraphSource.Graph.EMPTY;
         };
-        GraphSource domain = GraphSource.ofDomainTerms((start, depth) -> {
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, checkedOnly) -> {
             asked.add("domain");
             return FACHSICHT;
         }, id -> "MaltParser");
@@ -203,6 +203,7 @@ class TermGraphViewTest {
             seen.add(popup.headingText());
             seen.add(popup.countValue());
             seen.add(popup.linkTexts());
+            seen.add(popup.stageTexts());
             List<java.awt.geom.Rectangle2D> tags = canvas.segments(canvas.layout(900, 560)).stream()
                     .map(TermGraphView.Canvas.Segment::tag).filter(java.util.Objects::nonNull).toList();
             for (int i = 0; i < tags.size(); i++) {
@@ -217,8 +218,70 @@ class TermGraphViewTest {
         assertThat(seen).containsExactly(
                 "3 Fachbegriffe · 2 Verbindungen · Aussagen aus MaltParser · 2 veraltete Aussagen ausgelassen",
                 GraphSource.Style.VERB, "Antragsteller stellen Antrag", 3,
-                List.of("Förderantrag (wiki / FOE)", "Leitfaden (wiki / FOE)"));
+                List.of("Förderantrag (wiki / FOE)", "Leitfaden (wiki / FOE)"), List.of("ungeprüft", "ungeprüft"));
         assertThat(opened).containsExactly(new EvidencePopup.Target("wiki", "2", -1, -1));
+    }
+
+    @Test
+    void trustShowsAsLineStyleTooltipAndPillAndOnlyCheckedAsksTheCoreForCheckedEvidence() throws Exception {
+        DomainTermGraph.Evidence checkedEvidence = evidence("1", "Förderantrag", DomainTermGraph.Trust.GEPRUEFT);
+        DomainTermGraph.Evidence open = evidence("2", "Leitfaden", DomainTermGraph.Trust.UNGEPRUEFT);
+        DomainTermGraph.Evidence other = evidence("3", "Merkblatt", DomainTermGraph.Trust.ABWEICHEND);
+        DomainTermGraph.View view = new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND,
+                List.of(new DomainTermGraph.Node("antragsteller", "Antragsteller", DomainTermGraph.NodeKind.TERM, 0,
+                                null),
+                        new DomainTermGraph.Node("antrag", "Antrag", DomainTermGraph.NodeKind.TERM, 1, "antragsteller"),
+                        new DomainTermGraph.Node("frist", "Frist", DomainTermGraph.NodeKind.TERM, 1, "antragsteller")),
+                List.of(new DomainTermGraph.Edge("antragsteller", "antrag", DomainTermGraph.EdgeKind.VERB, "stellen",
+                                2, List.of(checkedEvidence, other)),
+                        new DomainTermGraph.Edge("antragsteller", "frist", DomainTermGraph.EdgeKind.VERB, "wahren", 2,
+                                List.of(open, other))),
+                false, 0, Set.of("maltparser-de"));
+        List<Boolean> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, checkedOnly) -> {
+            asked.add(checkedOnly);
+            return view;
+        }, id -> "MaltParser");
+
+        List<GraphSource.Edge> edges = domain.around("Antragsteller", 2, false).edges();
+        assertThat(edges).extracting(GraphSource.Edge::label, GraphSource.Edge::trust, GraphSource.Edge::differs)
+                .containsExactly(Tuple.tuple("stellen · 2", DomainTermGraph.Trust.GEPRUEFT, false),
+                        Tuple.tuple("wahren ≠ · 2", DomainTermGraph.Trust.UNGEPRUEFT, true));
+        assertThat(edges.getFirst().tip()).isEqualTo("Geprüft · Aussagen aus MaltParser – Klick zeigt die Belege");
+        java.awt.BasicStroke strong = TermGraphView.Canvas.trustStroke(edges.getFirst());
+        java.awt.BasicStroke dotted = TermGraphView.Canvas.trustStroke(edges.get(1));
+        assertThat(strong.getDashArray()).as("geprüft: durchgezogen").isNull();
+        assertThat(strong.getLineWidth()).isGreaterThan(3f);
+        assertThat(dotted.getDashArray()).as("abweichend: gepunktet").containsExactly(0.5f, 5f);
+        java.awt.BasicStroke dashed = TermGraphView.Canvas.trustStroke(new GraphSource.Edge("a", "b", "VERB", true,
+                true, GraphSource.Style.VERB, "x · 1", List.of(open), DomainTermGraph.Trust.UNGEPRUEFT, false, null));
+        assertThat(dashed.getDashArray()).as("ungeprüft: gestrichelt").containsExactly(7f, 5f);
+
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView graph = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY,
+                    domain);
+            seen.add(graph.checkedChoice().isEnabled());
+            graph.domainChoice().doClick();
+            seen.add(graph.checkedChoice().isEnabled());
+            graph.checkedChoice().doClick();
+            seen.add(graph.optionsButton().getToolTipText());
+            graph.showTerm("Antragsteller");
+        });
+        awaitTrue(() -> !asked.isEmpty() && asked.getLast());
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView graph = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY,
+                    domain);
+            graph.domainChoice().doClick();
+            graph.checkedChoice().doClick();
+            graph.show(new GraphSource.Graph(List.of(new GraphSource.Node("antragsteller", "Antragsteller", 0, null),
+                    new GraphSource.Node("antrag", "Antrag", 1, "antragsteller")), List.of(edges.getFirst()), false));
+            seen.add(graph.hint());
+            graph.showEvidenceFor(edges.getFirst());
+            seen.add(graph.evidencePopup().stageTexts());
+        });
+        assertThat(seen).containsExactly(false, true, "Optionen – aktiv: Nur Fachbegriffe, Nur geprüft",
+                "2 Fachbegriffe · 1 Verbindung · nur geprüft", List.of("geprüft", "abweichend"));
     }
 
     private static void awaitTrue(java.util.function.BooleanSupplier condition) throws Exception {
@@ -233,11 +296,15 @@ class TermGraphViewTest {
     }
 
     private static DomainTermGraph.Evidence evidence(String pageId, String title) {
+        return evidence(pageId, title, DomainTermGraph.Trust.UNGEPRUEFT);
+    }
+
+    private static DomainTermGraph.Evidence evidence(String pageId, String title, DomainTermGraph.Trust trust) {
         ParsedStatements.Statement statement = new ParsedStatements.Statement("wiki/" + pageId + "@x#s0.v1", 0, 4,
                 10, "stellt", "stellen", ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(),
                 Set.of(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED);
         return new DomainTermGraph.Evidence(new KnowledgeGraph.PageRef(new PageKey("wiki", pageId), "FOE", title,
-                PageStatements.State.CURRENT, null), statement, "maltparser-de", "Antragsteller", "Antrag");
+                PageStatements.State.CURRENT, null), statement, "maltparser-de", "Antragsteller", "Antrag", trust);
     }
 
     private static TermRelation relation(String from, String to, RelationType type, ReviewStatus status) {
