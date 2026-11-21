@@ -382,6 +382,7 @@ public final class Harvester implements AutoCloseable {
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    private final com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
     private final com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice;
     private final StatementAnalysisJobs statementAnalysisJobs;
@@ -758,6 +759,9 @@ public final class Harvester implements AutoCloseable {
             FileSynonymVectorCache synonymVectors = new FileSynonymVectorCache(
                     builder.dataDirectory.resolve("term-relations").resolve("synonyms"));
             synonymCandidates.vectors(synonymVectors);
+            // K3: Synonyme wahlweise nur aus bestätigten Fachbegriffen des Glossars.
+            Glossary synonymGlossary = this.glossary;
+            synonymCandidates.glossaryTerms(scope -> synonymGlossary.confirmedTerms(scope.relationScope()));
             this.synonymVectors = synonymVectors;
             this.synonymDiscovery = new SynonymDiscovery(catalog, synonymCandidates, access, termRelations, judge,
                     synonymCache, jobs,
@@ -1005,7 +1009,7 @@ public final class Harvester implements AutoCloseable {
             this.automaticImages = new com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions(
                     jobs, imageAnalysis, cache::snapshots,
                     () -> this.settings != null ? this.settings.images() : startImages,
-                    sourceId -> catalog.find(sourceId).isPresent());
+                    sourceId -> catalog.find(sourceId).isPresent(), OWNER);
             opened.add(pageReleases.subscribe(automaticImages::releasesChanged));
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
@@ -1092,6 +1096,8 @@ public final class Harvester implements AutoCloseable {
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            this.verbQueries = new com.aresstack.spaceharvester.application.knowledge.VerbQueries(
+                    this.knowledgeGraph);
             // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
             // gemerkten Eingabe-Hash, die Analysen rechnen neu.
             KnowledgeGraph transcriptGraph = this.knowledgeGraph;
@@ -1954,7 +1960,12 @@ public final class Harvester implements AutoCloseable {
     public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph domainTermGraph() {
         return new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph(knowledgeGraph,
                 new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations),
-                () -> statementAnalyzerChoice);
+                this::statementAnalyzerChoice);
+    }
+
+    /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries() {
+        return verbQueries;
     }
 
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */

@@ -142,6 +142,18 @@ public final class SearchView implements View {
     /** Die laufende Schlagwortsuche bzw. das Laden des nächsten Stapels im Hintergrund; {@code null} ohne. */
     private Future<?> searching;
     final JLabel status = Comic.muted(" ");
+    /** Wie viel des Bereichs lokal liegt (K6), aus dem Bestand; nach Meldungen des Bestands neu gezählt. */
+    final JLabel localShare = Comic.muted(" ");
+    /** Anmeldungen beim Bestand für die Quellen bzw. Spaces des Bereichs; ersetzt bei jedem neuen Bereich. */
+    private final List<Subscription> localShareWatch = new java.util.ArrayList<>();
+    /** Zählt Bereiche; ein Ergebnis zu einem überholten Bereich wird verworfen. */
+    private int localShareRequest;
+    /** Eine Zählung läuft; Meldungen währenddessen lösen genau eine weitere danach aus. */
+    private boolean localShareCounting;
+    private boolean localShareAgain;
+    /** Der Bereich der zuletzt angemeldeten Zählung, damit gleicher Bereich nicht neu anmeldet. */
+    private com.aresstack.spaceharvester.application.holdings.Selection localShareArea;
+    private AppRuntime localShareRuntime;
     private final Feedback feedback = new Feedback();
     /** Stand der Suche in der Statuszeile des Hauptfensters: Ladestand bzw. Ende, Abbrechen, Zahl der Treffer. */
     final JLabel progressText = Comic.muted(" ");
@@ -299,6 +311,10 @@ public final class SearchView implements View {
         status.addPropertyChangeListener("text", e -> status.setToolTipText(
                 status.getText() == null || status.getText().isBlank() ? null : status.getText()));
         statusInfo.add(status);
+        statusInfo.add(javax.swing.Box.createHorizontalStrut(8));
+        localShare.setToolTipText(LocalShare.TIP);
+        localShare.setMinimumSize(new java.awt.Dimension(0, 0));
+        statusInfo.add(localShare);
     }
 
     /**
@@ -497,6 +513,86 @@ public final class SearchView implements View {
                     .map(scope -> title(scope.sourceId())
                             + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
         }
+        watchLocalShare();
+    }
+
+    /**
+     * Zählt für die Statuszeile, wie viel des Bereichs lokal liegt (K6), und meldet sich beim Bestand der berührten
+     * Quellen bzw. Spaces an, damit Laden, Abgleich oder Bereinigen die Zahl nachführen; kein Zeitgeber.
+     */
+    private void watchLocalShare() {
+        AppRuntime runtime = context.runtime();
+        com.aresstack.spaceharvester.application.holdings.Selection area = runtime == null ? null
+                : LocalShare.selection(searchedSources(), scopes);
+        if (runtime == localShareRuntime && java.util.Objects.equals(area, localShareArea)) {
+            return;
+        }
+        localShareRuntime = runtime;
+        localShareArea = area;
+        localShareWatch.forEach(Subscription::close);
+        localShareWatch.clear();
+        localShareRequest++;
+        localShareAgain = false;
+        if (area == null || area.roots().isEmpty()) {
+            localShare.setText(" ");
+            return;
+        }
+        com.aresstack.spaceharvester.application.holdings.HoldingsListener listener =
+                new com.aresstack.spaceharvester.application.holdings.HoldingsListener() {
+                    @Override
+                    public void pagesChanged(String source, String space, Set<String> pageIds) {
+                        SwingUtilities.invokeLater(SearchView.this::countLocalShare);
+                    }
+
+                    @Override
+                    public void spaceChanged(String source, String space) {
+                        SwingUtilities.invokeLater(SearchView.this::countLocalShare);
+                    }
+                };
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : area.roots()) {
+            try {
+                localShareWatch.add(runtime.workspace().subscribeHoldings(root.sourceId(), root.spaceKey(),
+                        listener));
+            } catch (RuntimeException gone) {
+                // Die Quelle gibt es in dieser Laufzeit nicht mehr; der nächste Bereich räumt sie weg.
+            }
+        }
+        localShareCounting = false;
+        countLocalShare();
+    }
+
+    /** Liest die Zahlen aus dem Bestand im Hintergrund; läuft schon eine Zählung, folgt genau eine weitere. */
+    private void countLocalShare() {
+        AppRuntime runtime = context.runtime();
+        com.aresstack.spaceharvester.application.holdings.Selection area = localShareArea;
+        if (runtime == null || area == null || area.roots().isEmpty()) {
+            return;
+        }
+        if (localShareCounting) {
+            localShareAgain = true;
+            return;
+        }
+        localShareCounting = true;
+        int id = localShareRequest;
+        Background.run(() -> LocalShare.line(runtime.workspace().resolveSelection(area)), line -> {
+            if (id != localShareRequest) {
+                return;
+            }
+            localShareCounting = false;
+            localShare.setText(line.isEmpty() ? " " : line);
+            if (localShareAgain) {
+                localShareAgain = false;
+                countLocalShare();
+            }
+        }, error -> {
+            if (id != localShareRequest) {
+                return;
+            }
+            localShareCounting = false;
+            localShare.setText(" ");
+            LOG.log(System.Logger.Level.INFO, "Bestand des Suchbereichs nicht gezählt ({0})",
+                    error.getClass().getName());
+        });
     }
 
     /**

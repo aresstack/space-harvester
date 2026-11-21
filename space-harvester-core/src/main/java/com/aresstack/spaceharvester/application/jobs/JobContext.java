@@ -84,4 +84,15 @@ public interface JobContext {
     default void pause(PauseReason reason) {
         throw new JobCancelledException(jobId());
     }
+
+    /**
+     * Ruft {@code listener} einmal auf, sobald Abbruch oder Anhalten angefordert ist oder die Arbeit abgekoppelt wird,
+     * sofort, wenn das schon geschehen ist; für Arbeit, die an einer Sperre wartet statt im Takt zu prüfen (ADR 0027).
+     * Der Aufruf kommt aus dem Thread, der anfordert, und darf nicht blockieren. Außerhalb eines Auftrags ohne Wirkung.
+     *
+     * @return hebt die Anmeldung auf
+     */
+    default AutoCloseable whenStopRequested(Runnable listener) {
+        return () -> { };
+    }
 }

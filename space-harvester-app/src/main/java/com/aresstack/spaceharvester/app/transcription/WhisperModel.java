@@ -24,6 +24,11 @@ public enum WhisperModel {
 
     /** Schlüssel in der Konfigurationsdatei, nur die App. */
     public static final String KEY = "space-harvester-app.whisper.model";
+    /**
+     * Schlüssel für das Modell der Spracheingabe im Chat, getrennt von {@link #KEY} (Transkripte): Angelo 21.11.2026
+     * will dort schnelle Ergebnisse, Vorgabe Tiny.
+     */
+    public static final String DICTATION_KEY = "space-harvester-app.whisper.dictation-model";
     public static final WhisperModel DEFAULT = TINY;
 
     private final String id;
