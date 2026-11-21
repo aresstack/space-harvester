@@ -121,6 +121,47 @@ class KeywordSearchDiscoveryTest {
                 org.mockito.ArgumentMatchers.eq(Set.of("wiki")), any(), anyInt());
     }
 
+    private KeywordSearch withGlossarySynonyms() {
+        // K5a: „Wolkenpegel“ hat das bestätigte Synonym „Schleierlinie“ und das vorgeschlagene „Dunsthöhe“; die
+        // Methode bringt nur das vorgeschlagene, und „Schleierlinie“ käme sonst doppelt.
+        SearchExpansion confirmed = SearchExpansion.typed((caller, term, sourceId, spaceKey) ->
+                "Wolkenpegel".equals(term) ? List.of(new SearchExpansion.Counterpart("Schleierlinie", "synonym"))
+                        : List.of());
+        SearchExpansion proposed = SearchExpansion.typed((caller, term, sourceId, spaceKey) ->
+                "Wolkenpegel".equals(term) ? List.of(new SearchExpansion.Counterpart("Dunsthöhe", "synonym-proposed"),
+                        new SearchExpansion.Counterpart("Schleierlinie", "synonym-proposed")) : List.of());
+        wiki.results("Wolkenpegel", "1").results("Schleierlinie", "2").results("Dunsthöhe", "3");
+        return new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.topN(KeywordSearch.MAX_LIMIT), SearchRunLog.NONE, FindingCatalog.NONE,
+                () -> true, KeywordSearch.BeforeSearch.NONE, confirmed, proposed);
+    }
+
+    @Test
+    void withoutTheGlossarySynonymsMethodTheSearchStaysExactlyTheSame() {
+        KeywordSearch.Results results = withGlossarySynonyms()
+                .search(APP, new KeywordSearch.Query("Wolkenpegel", "wiki", Set.of(), Set.of("DEV"), Set.of()), null,
+                        50);
+
+        assertThat(wiki.searches).containsExactlyInAnyOrder("Wolkenpegel", "Schleierlinie");
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1", "2");
+    }
+
+    @Test
+    void theGlossarySynonymsMethodAddsOnlyProposalsAfterTheConfirmedOnes() {
+        KeywordSearch.Results results = withGlossarySynonyms()
+                .search(APP, new KeywordSearch.Query("Wolkenpegel", "wiki", Set.of(), Set.of("DEV"), Set.of())
+                        .withGlossarySynonyms(true), null, 50);
+
+        assertThat(wiki.searches).containsExactlyInAnyOrder("Wolkenpegel", "Schleierlinie", "Dunsthöhe");
+        // Treffer nur über das vorgeschlagene Synonym ranken hinter dem bestätigten.
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1", "2", "3");
+        // Jeder Grund nur einmal: das bestätigte Synonym nicht noch einmal als Vorschlag.
+        assertThat(results.hits()).flatExtracting(KeywordSearch.Hit::reasons).extracting(HitReason::relation)
+                .doesNotContain(new HitReason.Relation("Wolkenpegel", "Schleierlinie", "synonym-proposed"));
+        assertThat(results.hits().get(2).reasons()).extracting(HitReason::relation)
+                .contains(new HitReason.Relation("Wolkenpegel", "Dunsthöhe", "synonym-proposed"));
+    }
+
     @Test
     void eachHitCarriesTheQueriesThatReallyFoundItWithTheRelationAndTheWordsOfTheIndex() {
         // R1: Treffergrund aus dem Lauf der Suche; „RSL“ wird über eine bestätigte Abkürzung ausgeweitet.

@@ -61,7 +61,37 @@ final class HitReasons {
     /** Der Tooltip der Marke: bei einem Nachbarn die Ausgangsseite und die Kante, sonst {@code null}. */
     static String tip(List<HitReason> reasons) {
         HitReason first = neighbor(reasons);
-        return first == null ? null : neighborLine(first.via());
+        if (first != null) {
+            return neighborLine(first.via());
+        }
+        HitReason.Relation synonym = synonymOnly(reasons);
+        return synonym == null ? null : synonymLine(synonym);
+    }
+
+    /** Art „vorgeschlagenes Synonym eines Fachbegriffs“ (K5a, {@code GlossarySynonyms.PROPOSED}). */
+    static final String PROPOSED_SYNONYM = "synonym-proposed";
+
+    /**
+     * Die Synonym-Beziehung eines Treffers, der nur über ein Synonym gefunden wurde (K5a: Marke mit Tooltip), sonst
+     * {@code null}.
+     */
+    private static HitReason.Relation synonymOnly(List<HitReason> reasons) {
+        if (reasons == null) {
+            return null;
+        }
+        List<HitReason> text = reasons.stream().filter(reason -> reason.kind() == HitReason.Kind.TEXT).toList();
+        if (text.isEmpty() || text.stream().anyMatch(HitReason::original)) {
+            return null;
+        }
+        HitReason.Relation relation = text.getFirst().relation();
+        return relation != null && ("synonym".equals(relation.type()) || PROPOSED_SYNONYM.equals(relation.type()))
+                ? relation : null;
+    }
+
+    /** „Fachbegriff „Kunde“, Synonym „Klient““ für den Tooltip der Marke (K5a). */
+    static String synonymLine(HitReason.Relation relation) {
+        return "Fachbegriff „" + relation.term() + "“, " + (PROPOSED_SYNONYM.equals(relation.type())
+                ? "vorgeschlagenes Synonym" : "Synonym") + " „" + relation.counterpart() + "“";
     }
 
     /** „Unterseite von „Betrieb““ usw., aus Sicht des Treffers. */
@@ -107,7 +137,9 @@ final class HitReasons {
         if (reason.relation() != null) {
             HitReason.Relation relation = reason.relation();
             text.append("\n„").append(relation.counterpart()).append("“ statt „").append(relation.term())
-                    .append("“, bestätigt als ").append(relationName(relation.type())).append('.');
+                    .append(PROPOSED_SYNONYM.equals(relation.type())
+                            ? "“, als Synonym des Fachbegriffs vorgeschlagen, noch nicht bestätigt"
+                            : "“, bestätigt als " + relationName(relation.type())).append('.');
         }
         if (reason.variant() != null) {
             HitReason.Variant variant = reason.variant();
@@ -124,6 +156,7 @@ final class HitReasons {
         return switch (type == null ? "" : type) {
             case "abbreviation" -> "Abkürzung";
             case "synonym" -> "Synonym";
+            case PROPOSED_SYNONYM -> "Synonym (Vorschlag)";
             case "variant" -> "Schreibvariante";
             default -> "Begriffsbeziehung";
         };

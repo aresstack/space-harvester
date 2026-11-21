@@ -25,4 +25,16 @@ class SearchMethodsTest {
 
         assertThat(new SearchMethods(node).neighbors()).isTrue();
     }
+
+    @Test
+    void glossarySynonymsAreOffByDefaultAndHoldOnlyForTheSession() {
+        // K5a: Standard aus, gemerkt für die Sitzung, nicht über den Neustart.
+        SearchMethods methods = new SearchMethods(node);
+        assertThat(methods.glossarySynonyms()).isFalse();
+
+        methods.glossarySynonyms(true);
+
+        assertThat(methods.glossarySynonyms()).isTrue();
+        assertThat(new SearchMethods(node).glossarySynonyms()).isFalse();
+    }
 }
