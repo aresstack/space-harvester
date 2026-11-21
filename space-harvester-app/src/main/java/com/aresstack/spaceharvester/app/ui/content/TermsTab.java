@@ -654,9 +654,9 @@ final class TermsTab extends JPanel {
             }
         }
         for (PageAcronyms.Acronym acronym : visible) {
-            chips.add(chip(label(acronym), tooltip(acronym), acronym.occurrences().stream()
-                    .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()));
-            alsoBelow(chips, ref(acronym), acronym.acronym());
+            addPill(chips, chip(label(acronym), tooltip(acronym), acronym.occurrences().stream()
+                    .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()), ref(acronym),
+                    acronym.acronym());
         }
         identifierChips.removeAll();
         int identifiers = 0;
@@ -666,9 +666,9 @@ final class TermsTab extends JPanel {
                         && !entry.term().toLowerCase(Locale.ROOT).contains(query)) {
                     continue;
                 }
-                identifierChips.add(chip(entry.term(), tooltip(entry), entry.occurrences().stream()
-                        .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()));
-                alsoBelow(identifierChips, new TermQueries.TermRef(entry.normalized(), entry.kind()), entry.term());
+                addPill(identifierChips, chip(entry.term(), tooltip(entry), entry.occurrences().stream()
+                        .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()),
+                        new TermQueries.TermRef(entry.normalized(), entry.kind()), entry.term());
                 identifiers++;
             }
         }
@@ -815,7 +815,7 @@ final class TermsTab extends JPanel {
 
     List<ResearchPillButton> chips() {
         List<ResearchPillButton> list = new ArrayList<>();
-        for (java.awt.Component component : chips.getComponents()) {
+        for (java.awt.Component component : cells(chips)) {
             if (component instanceof ResearchPillButton pill) {
                 list.add(pill);
             }
@@ -825,7 +825,7 @@ final class TermsTab extends JPanel {
 
     List<ResearchPillButton> identifierChips() {
         List<ResearchPillButton> list = new ArrayList<>();
-        for (java.awt.Component component : identifierChips.getComponents()) {
+        for (java.awt.Component component : cells(identifierChips)) {
             if (component instanceof ResearchPillButton pill) {
                 list.add(pill);
             }
@@ -1003,7 +1003,7 @@ final class TermsTab extends JPanel {
     List<com.aresstack.spaceharvester.app.ui.controls.CountChip> alsoBelowChips() {
         List<com.aresstack.spaceharvester.app.ui.controls.CountChip> found = new ArrayList<>();
         for (JPanel list : List.of(chips, identifierChips)) {
-            for (java.awt.Component component : list.getComponents()) {
+            for (java.awt.Component component : cells(list)) {
                 if (component instanceof com.aresstack.spaceharvester.app.ui.controls.CountChip chip) {
                     found.add(chip);
                 }
@@ -1016,10 +1016,23 @@ final class TermsTab extends JPanel {
     List<String> alsoBelowTexts() {
         List<String> found = new ArrayList<>();
         for (JPanel list : List.of(chips, identifierChips)) {
-            for (java.awt.Component component : list.getComponents()) {
+            for (java.awt.Component component : cells(list)) {
                 if (component instanceof com.aresstack.spaceharvester.app.ui.controls.CountChip chip) {
                     found.add(chip.getText());
                 }
+            }
+        }
+        return found;
+    }
+
+    /** Die Bausteine einer Pillenliste; eine Zelle aus Pille und „+N“ zählt als ihre beiden Teile. */
+    private static List<java.awt.Component> cells(JPanel list) {
+        List<java.awt.Component> found = new ArrayList<>();
+        for (java.awt.Component component : list.getComponents()) {
+            if (component instanceof JPanel pair) {
+                found.addAll(List.of(pair.getComponents()));
+            } else {
+                found.add(component);
             }
         }
         return found;
@@ -1054,15 +1067,33 @@ final class TermsTab extends JPanel {
         return count;
     }
 
-    /** Hängt an eine eigene Pille „+N“, wenn der Begriff auch auf N Unterseiten vorkommt. */
-    private void alsoBelow(JPanel list, TermQueries.TermRef ref, String text) {
+    /**
+     * Legt eine eigene Pille aus; kommt der Begriff auch auf Unterseiten vor, steht „+N“ dicht daneben (2 px, UX), in
+     * einer gemeinsamen Zelle, damit die Zugehörigkeit klar ist.
+     */
+    private void addPill(JPanel list, FindablePill pill, TermQueries.TermRef ref, String text) {
+        com.aresstack.spaceharvester.app.ui.controls.CountChip also = alsoBelow(ref, text);
+        if (also == null) {
+            list.add(pill);
+            return;
+        }
+        JPanel pair = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        pair.setOpaque(false);
+        pair.add(pill);
+        pair.add(javax.swing.Box.createHorizontalStrut(2));
+        pair.add(also);
+        list.add(pair);
+    }
+
+    /** „+N“ für eine eigene Pille, wenn der Begriff auch auf N Unterseiten vorkommt; sonst {@code null}. */
+    private com.aresstack.spaceharvester.app.ui.controls.CountChip alsoBelow(TermQueries.TermRef ref, String text) {
         Below current = below;
         if (current == null) {
-            return;
+            return null;
         }
         Integer count = belowCounts.get(ref);
         if (count == null || count == 0) {
-            return;
+            return null;
         }
         String tip = "auch auf " + (count == 1 ? "1 Unterseite" : count + " Unterseiten");
         com.aresstack.spaceharvester.app.ui.controls.CountChip also =
@@ -1075,7 +1106,7 @@ final class TermsTab extends JPanel {
             also.setSelected(false);
             occurrences(current.terms(), term, also, () -> below == current);
         });
-        list.add(also);
+        return also;
     }
 
     /** Lädt den Abschnitt „Aus Unterseiten“ neu (Unterseiten oder Filter geändert); die eigenen Begriffe bleiben. */
