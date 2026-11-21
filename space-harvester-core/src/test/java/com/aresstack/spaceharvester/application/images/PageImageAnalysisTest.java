@@ -303,6 +303,172 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void theAutomaticRunIsOffByDefaultAndPlansNoJob() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs();
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs, analysis(),
+                sourceId -> List.of(page("1", "Text")).iterator(),
+                () -> com.aresstack.spaceharvester.application.configuration.ImageSettings.DEFAULT,
+                "wiki"::equals);
+
+        assertThat(automatic.automatic("wiki")).isEmpty();
+        assertThat(jobs.listAll(com.aresstack.spaceharvester.application.jobs.JobType.ENRICHMENT)).isEmpty();
+        assertThat(describer.calls).isZero();
+    }
+
+    @Test
+    void theAutomaticRunDescribesOnlyReleasedPagesAsItsOwnJob() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        describer.released = false;
+        java.util.Set<PageKey> released = new java.util.HashSet<>(List.of(new PageKey("wiki", "1")));
+        Assets assets = assets();
+        assets.pageReleases(released::contains);
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments(), Clock.fixed(NOW, ZoneOffset.UTC));
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs();
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs, analysis,
+                sourceId -> List.of(page("1", "Text"), page("2", "Text")).iterator(),
+                () -> new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500),
+                "wiki"::equals);
+
+        com.aresstack.spaceharvester.application.jobs.JobStatus job = automatic.automatic("wiki").orElseThrow();
+
+        assertThat(jobs.status(job.id()).state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+        assertThat(job.type()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.ENRICHMENT);
+        assertThat(job.parameters()).containsEntry(AutomaticImageDescriptions.TASK_PARAMETER,
+                AutomaticImageDescriptions.TASK);
+        assertThat(analysis.read(page("1", "Text")).describedCount()).isEqualTo(1);
+        assertThat(analysis.read(page("2", "Text")).reason()).as("ohne KI-Freigabe nie an das Modell")
+                .isEqualTo(PageImages.SOURCE_NOT_RELEASED);
+        assertThat(describer.calls).isEqualTo(1);
+        // Ein zweiter Lauf findet alles beschrieben und fragt das Modell nicht noch einmal.
+        automatic.automatic("wiki");
+        assertThat(describer.calls).isEqualTo(1);
+        // Unbekannte Quellen planen nichts.
+        assertThat(automatic.automatic("fremd")).isEmpty();
+    }
+
+    @Test
+    void withoutAVisionModelTheRunEndsYellowAndNeverRed() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        describer.available = false;
+        RecordingContext context = new RecordingContext();
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text")).iterator(),
+                () -> new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500),
+                "wiki"::equals);
+
+        automatic.run("wiki", new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500),
+                context);
+
+        assertThat(context.events).extracting(e -> e.code()).contains(AutomaticImageDescriptions.NO_MODEL);
+        assertThat(context.events).filteredOn(e -> AutomaticImageDescriptions.NO_MODEL.equals(e.code()))
+                .extracting(e -> e.severity())
+                .containsOnly(com.aresstack.spaceharvester.application.jobs.JobEvent.Severity.WARNING);
+        assertThat(context.failed).isZero();
+        assertThat(describer.calls).isZero();
+    }
+
+    @Test
+    void theLimitPerRunLeavesTheRestForTheNextRunAndSaysHowManyAreOpen() {
+        // Drei Seiten mit je zwei Bildern; deren Liste ist schon bekannt (gespeicherte Lese-Ansicht).
+        for (String pageId : List.of("1", "2", "3")) {
+            source.image(pageId, "a" + pageId, "a" + pageId + ".png", new byte[] {(byte) 0x89, 'P', 'N', 'G',
+                    (byte) pageId.charAt(0), 1});
+            source.image(pageId, "b" + pageId, "b" + pageId + ".png", new byte[] {(byte) 0x89, 'P', 'N', 'G',
+                    (byte) pageId.charAt(0), 2});
+        }
+        PageImageAnalysis analysis = analysis();
+        List<PageSnapshot> pages = List.of(page("1", "Text"), page("2", "Text"), page("3", "Text"));
+        // Die Lese-Ansicht ablegen, ohne zu beschreiben: Die Liste der Bilder ist damit bekannt.
+        for (PageSnapshot page : pages) {
+            new ReadingViewStore(store).save(new StoredReadingView(page.key(), "sha256:lese", "1", "", "", "",
+                    source.viewImages(page.key().pageId()), NOW));
+        }
+        RecordingContext context = new RecordingContext();
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis,
+                sourceId -> pages.iterator(),
+                () -> new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 3),
+                "wiki"::equals);
+
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki",
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 3), context);
+
+        assertThat(outcome.images()).as("höchstens drei, also nur eine Seite mit zwei Bildern").isEqualTo(2);
+        assertThat(outcome.open()).isEqualTo(4);
+        assertThat(describer.calls).isEqualTo(2);
+        assertThat(context.events).filteredOn(e -> AutomaticImageDescriptions.LIMIT_REACHED.equals(e.code()))
+                .singleElement().satisfies(e -> {
+                    assertThat(e.severity()).isEqualTo(
+                            com.aresstack.spaceharvester.application.jobs.JobEvent.Severity.WARNING);
+                    assertThat(e.message()).contains("4 Bilder");
+                });
+        assertThat(context.incomplete).isTrue();
+
+        // Der nächste Lauf holt die nächste Seite nach, ohne Bereits-Beschriebenes erneut zu senden.
+        automatic.run("wiki", new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 3),
+                new RecordingContext());
+        assertThat(describer.calls).isEqualTo(4);
+    }
+
+    private static com.aresstack.spaceharvester.application.jobs.Jobs jobs() {
+        return new com.aresstack.spaceharvester.application.jobs.Jobs(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(2, 10, java.time.Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    /** Hält Ereignisse und Zähler eines Laufs fest, ohne Auftragsverwaltung. */
+    private static final class RecordingContext implements com.aresstack.spaceharvester.application.jobs.JobContext {
+
+        final List<com.aresstack.spaceharvester.application.jobs.JobEvent.Draft> events = new ArrayList<>();
+        long failed;
+        boolean incomplete;
+
+        @Override
+        public String jobId() {
+            return "job-1";
+        }
+
+        @Override
+        public void checkpoint() {
+        }
+
+        @Override
+        public boolean cancelRequested() {
+            return false;
+        }
+
+        @Override
+        public void discovered(long pages) {
+        }
+
+        @Override
+        public void processed(long pages) {
+        }
+
+        @Override
+        public void written(long pages) {
+        }
+
+        @Override
+        public void failed(long pages) {
+            failed += pages;
+        }
+
+        @Override
+        public void record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft event) {
+            events.add(event);
+        }
+
+        @Override
+        public void incomplete() {
+            incomplete = true;
+        }
+    }
+
+    @Test
     void aReleaseWithdrawnWhileTheModelDescribesLeavesNothingBehind() {
         source.image("1", "att1", "ablauf.png", PNG);
         describer.released = false;

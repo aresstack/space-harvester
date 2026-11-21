@@ -138,6 +138,9 @@ class ConfigurationParityTest {
                   scope: all
                   parallel: 4
                   model: check-model
+              images:
+                automatic: true
+                max-per-run: 120
             """;
 
     private static final String TOKEN = "parity-token";
@@ -236,6 +239,9 @@ class ConfigurationParityTest {
         assertThat(app.check()).isEqualTo(service2.check())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.CheckSettings(
                         com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "check-model"));
+        // Fahrplan B1: automatische Bildbeschreibung, beim Dienst über withSyncRules.
+        assertThat(app.images()).isEqualTo(service2.images())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 120));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder

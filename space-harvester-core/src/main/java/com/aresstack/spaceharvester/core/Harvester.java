@@ -366,6 +366,8 @@ public final class Harvester implements AutoCloseable {
     private final com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses transcriptAnalyses;
     private final ConnectionBudget connections;
     private final PageImageAnalysis imageAnalysis;
+    /** Bilder automatisch beschreiben (Fahrplan B1); entsteht nach der Anreicherung, die sie als Folgeschritt ruft. */
+    private volatile com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions automaticImages;
     private final com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations;
     private final com.aresstack.spaceharvester.application.quality.SearchQualityRuns searchQuality;
     private final Simplifications simplifications;
@@ -892,7 +894,14 @@ public final class Harvester implements AutoCloseable {
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                     // SY1: danach der automatische Synonymlauf der Quelle als eigener Auftrag.
-                    List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId)),
+                    // B1: danach die automatische Bildbeschreibung der Quelle als eigener Auftrag (Standard aus).
+                    List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId),
+                            sourceId -> {
+                                var automatic = this.automaticImages;
+                                if (automatic != null) {
+                                    automatic.automatic(sourceId);
+                                }
+                            }),
                     documentEnrichments);
             this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock,
                     List.of(afterSync, run -> pruneChangeLog.run(), run -> indexed(run)), retentionRule(builder));
@@ -979,6 +988,13 @@ public final class Harvester implements AutoCloseable {
             assets.durations(durations);
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
+            // B1: Bilder automatisch beschreiben nach dem Abgleich und nach neuer KI-Freigabe, nur mit images.automatic.
+            com.aresstack.spaceharvester.application.configuration.ImageSettings startImages = builder.images;
+            this.automaticImages = new com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions(
+                    jobs, imageAnalysis, cache::snapshots,
+                    () -> this.settings != null ? this.settings.images() : startImages,
+                    sourceId -> catalog.find(sourceId).isPresent());
+            opened.add(pageReleases.subscribe(automaticImages::releasesChanged));
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
             PageImageAnalysis pageImages = this.imageAnalysis;
@@ -2538,6 +2554,8 @@ public final class Harvester implements AutoCloseable {
         private ImageDescriber imageDescriber;
         private StatementSettings statements = StatementSettings.DEFAULT;
         private TermSettings terms = TermSettings.DEFAULT;
+        private com.aresstack.spaceharvester.application.configuration.ImageSettings images =
+                com.aresstack.spaceharvester.application.configuration.ImageSettings.DEFAULT;
         private EnrichmentSettings enrichment = EnrichmentSettings.DEFAULT;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 0;
@@ -2820,6 +2838,12 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder statements(StatementSettings statements) {
             this.statements = Objects.requireNonNull(statements, "statements");
+            return this;
+        }
+
+        /** Automatische Bildbeschreibung ohne Konfigurationsverwaltung (Fahrplan B1); Standard aus. */
+        public Builder images(com.aresstack.spaceharvester.application.configuration.ImageSettings images) {
+            this.images = java.util.Objects.requireNonNull(images, "images");
             return this;
         }
 
