@@ -230,26 +230,39 @@ public final class AutomaticImageDescriptions {
                     continue;
                 }
                 int pending = work.pending;
-                synchronized (tally) {
-                    // Eine Seite größer als die ganze Grenze darf als erste des Laufs trotzdem (überzieht einmal).
-                    if (pending > budget - tally.reserved && !(tally.reserved == 0 && !tally.oversized)) {
-                        // Passt nicht mehr: bleibt für den nächsten Lauf, kleinere Seiten dürfen noch.
-                        tally.open += pending;
-                        continue;
-                    }
-                    if (pending > budget - tally.reserved) {
-                        tally.oversized = true;
-                    }
-                    tally.reserved += pending;
-                }
-                context.discovered(1);
-                // Höchstens so viele Seiten zugleich, wie das Kontingent erlaubt; eine fertige Seite gibt ihren Platz
-                // frei. Kein Takt: wartet am Semaphor, bis ein Arbeiter fertig ist.
+                // Erst den Platz, dann die Entscheidung über die Grenze (Codex #1028): So rechnet sie mit den
+                // berichtigten Zahlen aller Seiten, die vor dem freien Platz fertig wurden. Kein Takt: wartet am
+                // Semaphor, bis ein Arbeiter fertig ist.
                 slots.acquireUninterruptibly();
+                try {
+                    context.checkpoint();
+                } catch (RuntimeException e) {
+                    slots.release();
+                    throw e;
+                }
                 if (tally.stop.get() != null) {
                     slots.release();
                     break;
                 }
+                boolean fits;
+                synchronized (tally) {
+                    // Eine Seite größer als die ganze Grenze darf als erste des Laufs trotzdem (überzieht einmal).
+                    fits = pending <= budget - tally.reserved || tally.reserved == 0 && !tally.oversized;
+                    if (!fits) {
+                        // Passt nicht mehr: bleibt für den nächsten Lauf, kleinere Seiten dürfen noch.
+                        tally.open += pending;
+                    } else {
+                        if (pending > budget - tally.reserved) {
+                            tally.oversized = true;
+                        }
+                        tally.reserved += pending;
+                    }
+                }
+                if (!fits) {
+                    slots.release();
+                    continue;
+                }
+                context.discovered(1);
                 running.add(pool.submit(() -> {
                     try {
                         Assets.inLane(lane, () -> {
@@ -265,16 +278,30 @@ public final class AutomaticImageDescriptions {
             stopped = e;
         } finally {
             // Erst wenn alle Arbeiter ihr laufendes Bild beendet haben, endet der Lauf: nichts arbeitet abgekoppelt.
+            boolean interrupted = false;
             for (java.util.concurrent.Future<?> page : running) {
-                try {
-                    page.get();
-                } catch (java.util.concurrent.ExecutionException e) {
-                    if (stopped == null && e.getCause() instanceof RuntimeException cause) {
-                        stopped = cause;
+                while (true) {
+                    try {
+                        page.get();
+                        break;
+                    } catch (java.util.concurrent.ExecutionException e) {
+                        if (stopped == null && e.getCause() instanceof RuntimeException cause) {
+                            stopped = cause;
+                        }
+                        break;
+                    } catch (java.util.concurrent.CancellationException e) {
+                        break;
+                    } catch (InterruptedException e) {
+                        // Ende der Anwendung (Codex #1028): die Arbeiter unterbrechen und trotzdem auf sie warten,
+                        // damit kein Arbeiter den Auftrag überlebt; die Unterbrechung gilt danach wieder.
+                        interrupted = true;
+                        tally.stop.compareAndSet(null, "INTERRUPTED");
+                        pool.shutdownNow();
                     }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
                 }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
             }
             pool.shutdown();
         }
@@ -321,6 +348,7 @@ public final class AutomaticImageDescriptions {
             return;
         }
         try {
+            context.checkpoint();
             // Zwischen den Bildern einer Seite: Abbrechen wirkt nach dem laufenden Bild, und ein ausgefallenes
             // Modell bekommt nach den Wiederholungen dieses Bildes keine weiteren.
             // Nachrangig: vor jedem Bild zurücktreten, solange der Benutzer selbst Bilder beschreiben lässt.
@@ -374,6 +402,8 @@ public final class AutomaticImageDescriptions {
                 context.failed(1);
             }
         } catch (com.aresstack.spaceharvester.application.jobs.JobCancelledException e) {
+            // Abbrechen oder Anhalten: keine weitere Seite beginnen.
+            tally.stop.compareAndSet(null, "CANCELLED");
             throw e;
         } catch (RuntimeException e) {
             // Eine Seite, deren Lese-Ansicht oder Bilder sich nicht laden lassen, hält die übrigen nicht auf.

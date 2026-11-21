@@ -435,6 +435,42 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void aPageWithoutReadingViewThatTurnsOutLargeStopsTheNextPageAlsoWhileItWaitsForASlot() {
+        // Ohne gespeicherte Lese-Ansicht zählt Seite 1 vorab als ein Bild, hat aber vier (Codex #1028).
+        for (int i = 1; i <= 4; i++) {
+            source.image("1", "a" + i, "a" + i + ".png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1, (byte) i});
+        }
+        source.image("2", "b1", "b1.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 2, 1});
+        com.aresstack.spaceharvester.application.configuration.ImageSettings three =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 3);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text"), page("2", "Text")).iterator(), () -> three, "wiki"::equals);
+
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki", three, new RecordingContext());
+
+        assertThat(outcome.images()).isEqualTo(4);
+        assertThat(outcome.open()).as("Seite 2 wartet auf den nächsten Lauf").isEqualTo(1);
+        assertThat(describer.calls).isEqualTo(4);
+    }
+
+    @Test
+    void cancellingWhileAPageWaitsForASlotStartsNoFurtherPage() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        RecordingContext context = new RecordingContext();
+        // Während Seite 1 beim Modell ist, bricht der Benutzer ab; Seite 2 wartet da schon auf den einzigen Platz.
+        describer.during = () -> context.cancel = true;
+        com.aresstack.spaceharvester.application.configuration.ImageSettings on =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text"), page("2", "Text")).iterator(), () -> on, "wiki"::equals);
+
+        assertThatThrownBy(() -> automatic.run("wiki", on, context))
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobCancelledException.class);
+        assertThat(describer.calls).as("kein weiterer Aufruf nach dem Abbruch").isEqualTo(1);
+    }
+
+    @Test
     void aFailingModelGetsNoFurtherImagesOfTheSamePage() {
         source.image("1", "a1", "a1.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1});
         source.image("1", "a2", "a2.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1, 2});
@@ -912,7 +948,8 @@ class PageImageAnalysisTest {
     /** Hält Ereignisse und Zähler eines Laufs fest, ohne Auftragsverwaltung. */
     private static final class RecordingContext implements com.aresstack.spaceharvester.application.jobs.JobContext {
 
-        final List<com.aresstack.spaceharvester.application.jobs.JobEvent.Draft> events = new ArrayList<>();
+        final List<com.aresstack.spaceharvester.application.jobs.JobEvent.Draft> events =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
         long failed;
         boolean incomplete;
 
@@ -921,7 +958,7 @@ class PageImageAnalysisTest {
             return "job-1";
         }
 
-        boolean cancel;
+        volatile boolean cancel;
         final List<String> phases = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         @Override
