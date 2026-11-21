@@ -15,17 +15,22 @@ class HarvesterServicesTest {
     @Test
     void theFiveServicesAreDescribedWithTodaysStartTypes() {
         AtomicBoolean imagesAutomatic = new AtomicBoolean(false);
+        AtomicBoolean glossaryAutomatic = new AtomicBoolean(false);
         var jobs = new com.aresstack.spaceharvester.application.jobs.Jobs(
                 new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,
                 new com.aresstack.spaceharvester.application.jobs.JobLimits(2, 10, java.time.Duration.ofHours(1)),
                 java.time.Clock.systemUTC());
         ServicePlanner planner = Harvester.services(
-                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app"), imagesAutomatic::get, null, key -> Optional.empty());
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app"), imagesAutomatic::get,
+                glossaryAutomatic::get, null, key -> Optional.empty());
 
         assertThat(planner.services()).extracting(AnalysisService::id).containsExactlyInAnyOrder("index", "images",
                 "statements", "glossary", "knowledge-graph");
         assertThat(planner.services()).allSatisfy(service -> assertThat(service.kind()).isNull());
         assertThat(planner.service("statements").orElseThrow().start().get()).isEqualTo(ServiceStart.MANUAL);
+        assertThat(planner.service("glossary").orElseThrow().start().get()).as("terms.glossary.automatic aus")
+                .isEqualTo(ServiceStart.MANUAL);
+        glossaryAutomatic.set(true);
         assertThat(planner.service("glossary").orElseThrow().start().get()).isEqualTo(ServiceStart.AUTOMATIC);
         assertThat(planner.service("images").orElseThrow().start().get()).isEqualTo(ServiceStart.MANUAL);
         imagesAutomatic.set(true);
