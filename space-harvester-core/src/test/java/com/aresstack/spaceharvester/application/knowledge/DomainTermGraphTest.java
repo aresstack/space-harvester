@@ -38,6 +38,7 @@ class DomainTermGraphTest {
             KnowledgeGraph.TermExpansion.NONE);
     private final List<DomainTermGraph.Term> terms = new ArrayList<>();
     private final List<DomainTermGraph.Synonym> synonyms = new ArrayList<>();
+    private final List<DomainTermGraph.Term> technical = new ArrayList<>();
     private final DomainTermGraph fachsicht = new DomainTermGraph(graph, new DomainTermGraph.Vocabulary() {
         @Override
         public List<DomainTermGraph.Term> terms(AccessContext caller) {
@@ -47,6 +48,11 @@ class DomainTermGraphTest {
         @Override
         public List<DomainTermGraph.Synonym> synonyms(AccessContext caller) {
             return synonyms;
+        }
+
+        @Override
+        public List<DomainTermGraph.Term> technical(AccessContext caller) {
+            return technical;
         }
     });
 
@@ -102,6 +108,71 @@ class DomainTermGraphTest {
             assertThat(edge.from()).isEqualTo("sachbearbeiter");
             assertThat(edge.to()).as("nicht mit dem Fachbegriff verschmolzen").isEqualTo("gesuch");
         });
+    }
+
+    @Test
+    void aSynonymCountsOnlyWhereItsScopeOverlapsTheDomainTerm() {
+        terms.add(new DomainTermGraph.Term("Bank", new RelationScope("finanzen", null)));
+        term("Kunde");
+        synonyms.add(new DomainTermGraph.Synonym("Bank", "Sitzbank", new RelationScope("garten", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Bank", "Geldinstitut", new RelationScope("finanzen", null)));
+        analyse("garten", "1", "Der Kunde streicht die Sitzbank.");
+        analyse("finanzen", "2", "Der Kunde wählt das Geldinstitut.");
+
+        DomainTermGraph.View view = around("Bank");
+
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::label)
+                .as("„Sitzbank“ gilt nur im Garten, „Bank“ nur in den Finanzen").containsExactly("Bank", "Geldinstitut");
+        assertThat(view.edges()).filteredOn(edge -> edge.kind() == DomainTermGraph.EdgeKind.SYNONYM)
+                .extracting(DomainTermGraph.Edge::to).containsExactly("geldinstitut");
+        assertThat(DomainTermGraph.Lexicon.intersection(new RelationScope("a", "X"), new RelationScope("a", null)))
+                .contains(new RelationScope("a", "X"));
+        assertThat(DomainTermGraph.Lexicon.intersection(new RelationScope("a", "X"), new RelationScope("a", "Y")))
+                .isEmpty();
+        assertThat(DomainTermGraph.Lexicon.intersection(RelationScope.GLOBAL, new RelationScope("b", null)))
+                .contains(new RelationScope("b", null));
+    }
+
+    @Test
+    void aSynonymBetweenTwoDomainTermsMustHoldAtBothEndsWhateverItsDirection() {
+        terms.add(new DomainTermGraph.Term("Konto", new RelationScope("finanzen", null)));
+        terms.add(new DomainTermGraph.Term("Rechnung", new RelationScope("garten", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Konto", "Rechnung", new RelationScope("finanzen", null)));
+        assertThat(around("Konto").edges()).as("„Rechnung“ gilt nur im Garten").isEmpty();
+
+        synonyms.clear();
+        synonyms.add(new DomainTermGraph.Synonym("Rechnung", "Konto", new RelationScope("finanzen", null)));
+        assertThat(around("Konto").edges()).as("umgekehrt gespeichert dasselbe").isEmpty();
+
+        terms.add(new DomainTermGraph.Term("Rechnung", new RelationScope("finanzen", null)));
+        assertThat(around("Konto").edges()).as("gilt das Synonym an beiden Enden, verbindet es")
+                .singleElement().satisfies(edge -> assertThat(edge.kind()).isEqualTo(DomainTermGraph.EdgeKind.SYNONYM));
+        synonyms.clear();
+        synonyms.add(new DomainTermGraph.Synonym("Konto", "Rechnung", new RelationScope("finanzen", null)));
+        assertThat(around("Konto").edges()).as("in beiden Richtungen").hasSize(1);
+    }
+
+    @Test
+    void staleStatementsCountOnlyIfTheyWouldFitTheFullViewInItsOwnOrder() {
+        term("Kern");
+        for (int i = 0; i < DomainTermGraph.MAX_NODES - 1; i++) {
+            synonyms.add(new DomainTermGraph.Synonym("Kern", "Kernname" + (char) ('a' + i / 26) + (char) ('a' + i % 26),
+                    RelationScope.GLOBAL));
+        }
+        StringBuilder text = new StringBuilder();
+        for (char suffix = 'a'; suffix <= 'e'; suffix++) {
+            term("Ziel" + suffix);
+            text.append("Der Kern prüft die Ziel").append(suffix).append(". ");
+        }
+        analyse("wiki", "1", text.toString().strip());
+        cache.put(new PageKey("wiki", "1"), EnrichmentTestPages.text("wiki", "1", "2", "Ganz neuer Text."));
+
+        DomainTermGraph.View withStale = fachsicht.around(CALLER, "Kern", new DomainTermGraph.Options(2, true, null),
+                () -> false);
+        assertThat(withStale.nodes()).hasSize(DomainTermGraph.MAX_NODES);
+        assertThat(withStale.nodes()).extracting(DomainTermGraph.Node::label).noneMatch(label -> label.startsWith("Ziel"));
+        assertThat(around("Kern").skippedStale())
+                .as("auch mit „veraltete zeigen“ wären die Ziele abgeschnitten, also nicht ausgelassen").isZero();
     }
 
     @Test
@@ -161,9 +232,74 @@ class DomainTermGraphTest {
     void uncertainStatementsDoNotCount() {
         term("Beleg");
         term("Sachbearbeiter");
-        analyse("wiki", "1", "Er prüft den Beleg.");
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        assertThat(around("Beleg").edges()).as("Gegenprobe: plausibel zählt").hasSize(1);
 
-        assertThat(around("Beleg").edges()).isEmpty();
+        DomainTermGraph uncertain = new DomainTermGraph(caller -> graph.analysed(caller).stream().map(page -> {
+            ParsedStatements result = page.analysis().result();
+            List<ParsedStatements.Statement> doubtful = result.statements().stream().map(statement ->
+                    new ParsedStatements.Statement(statement.id(), statement.sentence(), statement.start(),
+                            statement.end(), statement.predicateText(), statement.predicateLemma(), statement.voice(),
+                            statement.clause(), statement.core(), statement.arguments(), statement.findings(),
+                            statement.paragraph(), ParsedStatements.Quality.UNCERTAIN, List.of("TEST"),
+                            statement.review(), statement.features(), statement.derivation(), statement.check()))
+                    .toList();
+            return new KnowledgeGraph.AnalysedPage(page.page(), page.analysis().withResult(new ParsedStatements(
+                    result.sentences(), result.mentions(), doubtful, result.attachments(), result.components(),
+                    result.conllu())));
+        }).toList(), vocabulary());
+
+        assertThat(uncertain.around(CALLER, "Beleg", DomainTermGraph.Options.DEFAULT, () -> false).edges())
+                .as("unsicher zählt nicht").isEmpty();
+    }
+
+    @Test
+    void theStatusNamesTheAnalyzerEvenWithoutEdgesAndCountsOnlyStaleStatementsThatWouldBeShown() {
+        term("Sachbearbeiter");
+        term("Beleg");
+        term("Kunde");
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("wiki", "2", "Der Kunde sendet den Beleg.");
+        cache.put(new PageKey("wiki", "1"), EnrichmentTestPages.text("wiki", "1", "2", "Ganz neuer Text."));
+        cache.put(new PageKey("wiki", "2"), EnrichmentTestPages.text("wiki", "2", "2", "Auch neu."));
+        DomainTermGraph chosen = new DomainTermGraph(graph::analysed, vocabulary(), () -> AnalyzerChoice.PARSER);
+
+        DomainTermGraph.View near = chosen.around(CALLER, "Sachbearbeiter",
+                new DomainTermGraph.Options(1, false, null), () -> false);
+
+        assertThat(near.edges()).isEmpty();
+        assertThat(near.analyzers()).as("auch ohne Kante").containsExactly("fake");
+        assertThat(near.analyzer()).isEqualTo(AnalyzerChoice.PARSER);
+        assertThat(near.skippedStale()).as("nur „prüft“ läge in Tiefe 1, „Kunde sendet“ nicht").isEqualTo(1);
+        assertThat(chosen.around(CALLER, "Sachbearbeiter", DomainTermGraph.Options.DEFAULT, () -> false)
+                .skippedStale()).as("in Tiefe 2 läge auch der Kunde").isEqualTo(2);
+        assertThat(around("Kunde").analyzer()).as("ohne Angabe unbekannt").isNull();
+    }
+
+    @Test
+    void aSynonymThatIsATechnicalEntryNeverBecomesANode() {
+        term("Antrag");
+        technical.add(new DomainTermGraph.Term("Formular-ID", new RelationScope(null, null)));
+        synonyms.add(new DomainTermGraph.Synonym("Antrag", "Formular-ID", new RelationScope(null, null)));
+        synonyms.add(new DomainTermGraph.Synonym("Antrag", "Gesuch", new RelationScope(null, null)));
+
+        assertThat(around("Antrag").nodes()).extracting(DomainTermGraph.Node::label)
+                .containsExactly("Antrag", "Gesuch");
+        assertThat(around("Formular-ID").outcome()).isEqualTo(DomainTermGraph.Outcome.NOT_A_TERM);
+    }
+
+    @Test
+    void suggestionsOfferOnlyConfirmedDomainTermsAndAdmittedSynonyms() {
+        term("Antrag");
+        term("Antragsteller");
+        term("Bescheid");
+        synonyms.add(new DomainTermGraph.Synonym("Antrag", "Folgeantrag", new RelationScope(null, null)));
+        synonyms.add(new DomainTermGraph.Synonym("Kantine", "Mensa", new RelationScope(null, null)));
+
+        assertThat(fachsicht.suggestions(CALLER, "antr", 8)).containsExactly("Antrag", "Antragsteller",
+                "Folgeantrag");
+        assertThat(fachsicht.suggestions(CALLER, "ens", 8)).as("Synonym ohne Fachbegriff fehlt").isEmpty();
+        assertThat(fachsicht.suggestions(CALLER, "antr", 1)).containsExactly("Antrag");
     }
 
     @Test
@@ -318,6 +454,11 @@ class DomainTermGraphTest {
             @Override
             public List<DomainTermGraph.Synonym> synonyms(AccessContext caller) {
                 return synonyms;
+            }
+
+            @Override
+            public List<DomainTermGraph.Term> technical(AccessContext caller) {
+                return technical;
             }
         };
     }

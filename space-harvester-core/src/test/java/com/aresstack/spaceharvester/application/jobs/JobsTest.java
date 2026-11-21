@@ -45,6 +45,34 @@ class JobsTest {
     }
 
     @Test
+    void aStopListenerRegisteredAfterCancelOrPauseRunsAtOnce() {
+        Jobs jobs = jobs(2, 5);
+        for (String action : List.of("cancel", "pause")) {
+            AtomicReference<String> id = new AtomicReference<>();
+            List<String> fired = new ArrayList<>();
+            JobStatus job = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> {
+                // Erst die Anforderung, dann die Anmeldung: der Zuhörer darf nicht auf ein späteres Ereignis warten.
+                if (action.equals("cancel")) {
+                    jobs.cancel(id.get(), "client-a");
+                } else {
+                    jobs.pause(id.get(), "client-a");
+                }
+                try (AutoCloseable ignored = context.whenStopRequested(() -> fired.add(action))) {
+                    assertThat(fired).as(action).containsExactly(action);
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+                context.checkpoint();
+            }));
+            id.set(job.id());
+
+            executor.runNext();
+
+            assertThat(fired).as(action).containsExactly(action);
+        }
+    }
+
+    @Test
     void submitReturnsQueuedJobAtOnceAndRunsItLater() {
         Jobs jobs = jobs(1, 5);
         FakePageReader reader = new FakePageReader(3);

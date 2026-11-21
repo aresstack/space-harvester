@@ -149,7 +149,7 @@ class ModelStatementAnalyzerTest {
         ModelStatementAnalyzer analyzer = analyzer(model);
 
         assertThat(analyzer.id()).isEqualTo(ModelStatementAnalyzer.ID);
-        assertThat(analyzer.version()).isEqualTo("statement-model:fake-chat@0000|prompt-1");
+        assertThat(analyzer.version()).isEqualTo("statement-model:fake-chat@0000|prompt-1|abgleich-2");
         assertThat(ModelStatementAnalyzer.instructions()).contains("satz").contains("aussagen");
     }
 
@@ -160,6 +160,93 @@ class ModelStatementAnalyzerTest {
         assertThat(ModelStatementAnalyzer.find("Die Stelle prüft den Antrag.", "den antrag")).containsExactly(17, 27);
         assertThat(ModelStatementAnalyzer.find("Die Stelle prüft Anträge.", "die Anträge")).containsExactly(17, 24);
         assertThat(ModelStatementAnalyzer.find("Die Stellenleitung prüft.", "Stelle")).isNull();
+    }
+
+    /** Codex zu #1023: fällt das innerste Ziel einer Kette weg, fallen alle, die darauf zeigen. */
+    @Test
+    void aClauseChainWithAMissingInnermostTargetFallsAwayCompletely() {
+        FakeStepModel model = new FakeStepModel(input -> """
+                {"satz": 1, "aussagen": [{"verb": "entscheiden", "handelnder": "Die Leitung", "betroffenes": "§prüfen"}, {"verb": "prüfen", "handelnder": "die Stelle", "betroffenes": "§fördern"}, {"verb": "fördern", "handelnder": "die Kommission"}]}
+                """);
+        List<StatementAnalyzer.Costs> costs = new ArrayList<>();
+
+        ParsedStatements result = analyzer(model).analyze("doc",
+                "Die Leitung entscheidet, ob die Stelle prüft, ob der Bund fördert.", () -> false, costs::add);
+
+        assertThat(result.statements()).isEmpty();
+        assertThat(costs).containsExactly(new StatementAnalyzer.Costs(1, 1, 0, 3, 1));
+    }
+
+    @Test
+    void aCompleteClauseChainKeepsEveryLink() {
+        FakeStepModel model = new FakeStepModel(input -> """
+                {"satz": 1, "aussagen": [{"verb": "entscheiden", "handelnder": "Die Leitung", "betroffenes": "§prüfen"}, {"verb": "prüfen", "handelnder": "die Stelle", "betroffenes": "§fördern"}, {"verb": "fördern", "handelnder": "der Bund"}]}
+                """);
+
+        ParsedStatements result = analyzer(model).analyze("doc",
+                "Die Leitung entscheidet, ob die Stelle prüft, ob der Bund fördert.", () -> false);
+
+        assertThat(result.statements()).extracting(ParsedStatements.Statement::predicateLemma)
+                .containsExactly("entscheiden", "prüfen", "fördern");
+        for (ParsedStatements.Statement statement : result.statements().subList(0, 2)) {
+            assertThat(statement.arguments()).filteredOn(a -> a.role() == ParsedStatements.Role.AFFECTED_OBJECT)
+                    .singleElement().satisfies(a -> assertThat(result.mentions()).filteredOn(m -> m.id()
+                            .equals(a.mention())).singleElement().extracting(ParsedStatements.Mention::kind)
+                            .isEqualTo(ParsedStatements.MentionKind.CLAUSE));
+        }
+    }
+
+    /** Codex zu #1023: „Sie“ am Satzanfang ist ein ungelöstes Pronomen, kein Substantiv. */
+    @Test
+    void aCapitalisedPronounAtTheStartStaysAnUnresolvedPronoun() {
+        FakeStepModel model = new FakeStepModel(input -> """
+                {"satz": 1, "aussagen": [{"verb": "prüfen", "handelnder": "Sie", "betroffenes": "Anträge"}]}
+                """);
+
+        ParsedStatements result = analyzer(model).analyze("doc", "Sie prüft Anträge.", () -> false);
+
+        assertThat(result.mentions()).filteredOn(m -> m.text().equals("Sie")).singleElement().satisfies(m -> {
+            assertThat(m.kind()).isEqualTo(ParsedStatements.MentionKind.PRONOUN);
+            assertThat(m.unresolved()).isTrue();
+        });
+        assertThat(result.mentions()).filteredOn(m -> m.text().equals("Anträge")).singleElement().satisfies(m -> {
+            assertThat(m.kind()).isEqualTo(ParsedStatements.MentionKind.NOUN);
+            assertThat(m.unresolved()).isFalse();
+        });
+    }
+
+    /** Codex zu #1023: Die Suche nach einer Präposition geht nicht über Verben und Pronomen hinweg. */
+    @Test
+    void thePrepositionScanStopsAtVerbsAndPronouns() {
+        String text = "Für sie erstellt er Bescheide.";
+        assertThat(ModelStatementAnalyzer.behindPreposition(text, text.indexOf("Bescheide"))).isFalse();
+        String np = "Die Stelle erstellt den Bescheid für den neuen Antragsteller.";
+        assertThat(ModelStatementAnalyzer.behindPreposition(np, np.indexOf("Antragsteller"))).isTrue();
+        String beim = "Das Amt fragt beim Antragsteller nach.";
+        assertThat(ModelStatementAnalyzer.behindPreposition(beim, beim.indexOf("Antragsteller"))).isTrue();
+        String direct = "Die Stelle erstellt den Bescheid.";
+        assertThat(ModelStatementAnalyzer.behindPreposition(direct, direct.indexOf("den Bescheid"))).isFalse();
+    }
+
+    /** Codex zu #1023: Entzug der Freigabe zwischen zwei Abschnitten schickt keinen weiteren Abschnitt. */
+    @Test
+    void withdrawingTheReleaseStopsBeforeTheNextRequest() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < ModelStatementAnalyzer.MAX_LINES + 5; i++) {
+            text.append("Die Stelle prüft den Antrag. ");
+        }
+        boolean[] released = {true};
+        FakeStepModel counting = new FakeStepModel(input -> {
+            released[0] = false; // nach dem ersten Aufruf entzogen
+            return "{\"satz\": 1, \"aussagen\": []}";
+        });
+
+        assertThatThrownBy(() -> analyzer(counting).analyze("doc", text.toString(), () -> false,
+                () -> released[0], costs -> { }))
+                .isInstanceOf(AnalyzerUnavailableException.class)
+                .extracting(e -> ((AnalyzerUnavailableException) e).reason())
+                .isEqualTo(AnalyzerUnavailableException.Reason.NOT_RELEASED);
+        assertThat(counting.inputs).hasSize(1);
     }
 
     static ModelStatementAnalyzer analyzer(FakeStepModel model) {

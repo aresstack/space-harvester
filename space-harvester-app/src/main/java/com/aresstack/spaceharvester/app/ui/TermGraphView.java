@@ -75,7 +75,9 @@ public final class TermGraphView {
     static final String CHECKED = "Nur geprüft";
     static final String CHECKED_TIP = "Nur Verbindungen mit geprüften Belegen; die Zahl zählt nur diese";
     static final String CHECKED_LOCKED = "Gilt nur mit „Nur Fachbegriffe“";
-    static final String OPTIONS_TIP = "Optionen: Vorschläge zeigen, Nur Fachbegriffe, Nur geprüft";
+    static final String OPTIONS_TIP = "Optionen: Nur Fachbegriffe, Nur geprüft";
+    static final String PROPOSALS_TIP = "Auch vorgeschlagene Beziehungen zeigen, gestrichelt";
+    static final String PROPOSALS_LOCKED = "Gilt nicht in der Fachsicht: sie zeigt nur Bestätigtes";
     static final String TRUNCATED = "Gezeigt werden die ersten " + GraphSource.MAX_NODES + " Begriffe.";
     /** Höchstens so viele Vorschläge zeigt die Begriffssuche am Startfeld. */
     static final int SUGGESTIONS = 8;
@@ -92,8 +94,8 @@ public final class TermGraphView {
     private final JPanel root = new JPanel(new BorderLayout(0, 8));
     private final PlaceholderField start = new PlaceholderField(18, "Startbegriff …");
     private final JComboBox<String> depth = Comic.combo();
-    private final javax.swing.JCheckBoxMenuItem proposals = new javax.swing.JCheckBoxMenuItem("Vorschläge zeigen");
-    /** Die Schalter hinter einem Icon-Knopf am Zeilenende, damit die Reiterzeile auch bei 960 px in eine Zeile passt. */
+    private final javax.swing.JCheckBox proposals = Comic.checkBox("Vorschläge zeigen");
+    /** Die Schalter der Fachsicht hinter einem Icon-Knopf am Zeilenende; die Bestandssicht bleibt unverändert. */
     private final IconButton options = new IconButton(Glyph.FILTER, OPTIONS_TIP);
     private final JPopupMenu optionsMenu = new JPopupMenu();
     private final ComposerButton showButton = Comic.button("Zeigen", "Den Graphen um den Startbegriff zeichnen");
@@ -101,7 +103,10 @@ public final class TermGraphView {
     private final Canvas canvas = new Canvas();
     private final JPopupMenu suggestions = new JPopupMenu();
     private String centre;
-    private int request;
+    /** Zähler der Graph-Anfragen; außerhalb des EDT gelesen, damit eine überholte Berechnung abbricht. */
+    private volatile int request;
+    /** Zähler der Klicks auf Kanten: nur das Overlay der zuletzt geklickten Kante erscheint. */
+    private int evidenceRequest;
     private int suggestRequest;
     private boolean quiet;
     /** Die Seiten der Auswahl links (ADR 0029), außerhalb des EDT gelesen; {@code null} heißt alle. */
@@ -122,14 +127,14 @@ public final class TermGraphView {
             }
             return runtime.workspace().termRelations(term, null, withProposals ? null : ReviewStatus.CONFIRMED,
                     null, TermRelations.MAX_LIMIT, null, scope.get().get()).relations();
-        }), context == null ? null : GraphSource.ofDomainTerms((term, levels, checkedOnly) -> {
+        }), context == null ? null : GraphSource.ofDomainTerms((term, levels, checkedOnly, cancelled) -> {
             AppRuntime runtime = context.runtime();
             if (runtime == null) {
                 throw new IllegalStateException(TermDirectory.NO_RUNTIME);
             }
             return runtime.workspace().domainTermGraph(term,
                     new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options(levels, false,
-                            scope.get().get(), checkedOnly), () -> false);
+                            scope.get().get(), checkedOnly), cancelled);
         }, com.aresstack.spaceharvester.app.ui.content.StatementProvenance::analyzer), scope);
     }
 
@@ -151,10 +156,11 @@ public final class TermGraphView {
         depth.addItem("Tiefe 1");
         depth.addItem("Tiefe 2");
         depth.setSelectedIndex(1);
-        proposals.setToolTipText("Auch vorgeschlagene Beziehungen zeigen, gestrichelt");
+        proposals.setOpaque(false);
+        proposals.setToolTipText(PROPOSALS_TIP);
         domain.setToolTipText("Fachsicht: nur bestätigte Fachbegriffe und Synonyme, Verben der Aussagen als Kanten");
         checkedState(false);
-        for (javax.swing.JCheckBoxMenuItem item : List.of(proposals, domain, checked)) {
+        for (javax.swing.JCheckBoxMenuItem item : List.of(domain, checked)) {
             // Wie die Suchoptionen: das Popup bleibt beim Umschalten offen.
             item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
         }
@@ -167,7 +173,7 @@ public final class TermGraphView {
         controls.setOpaque(false);
         controls.add(start);
         controls.add(depth);
-        optionsMenu.add(proposals);
+        controls.add(proposals);
         optionsMenu.add(domain);
         optionsMenu.add(checked);
         com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(optionsMenu, options);
@@ -184,11 +190,10 @@ public final class TermGraphView {
         start.addActionListener(e -> showTerm(start.getText()));
         showButton.addActionListener(e -> showTerm(start.getText()));
         depth.addActionListener(e -> reload());
-        proposals.addActionListener(e -> {
-            markOptions();
-            reload();
-        });
+        proposals.addActionListener(e -> reload());
         domain.addActionListener(e -> {
+            proposals.setEnabled(!domain.isSelected());
+            proposals.setToolTipText(domain.isSelected() ? PROPOSALS_LOCKED : PROPOSALS_TIP);
             checkedState(domain.isSelected());
             markOptions();
             reload();
@@ -198,6 +203,43 @@ public final class TermGraphView {
             reload();
         });
         evidence.onOpen(target -> onOpen.accept(target));
+        // Aufgeschobene Meldungen des Core holen nach, sobald Belege, Vorschläge oder das Startfeld frei sind.
+        javax.swing.event.PopupMenuListener closed = new javax.swing.event.PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) {
+                catchUp();
+            }
+
+            @Override
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) {
+            }
+        };
+        evidence.addPopupMenuListener(closed);
+        root.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && root.isShowing()) {
+                catchUp();
+            }
+        });
+        suggestions.addPopupMenuListener(closed);
+        start.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                catchUp();
+            }
+        });
+        // Nach einem Neustart der Laufzeit an der neuen anmelden, auch wenn der Reiter sichtbar bleibt.
+        if (context != null) {
+            context.onChange(changed -> javax.swing.SwingUtilities.invokeLater(() -> {
+                if (context.runtime() != watched) {
+                    watch();
+                    followCore();
+                }
+            }));
+        }
         start.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
@@ -278,7 +320,88 @@ public final class TermGraphView {
 
     /** Der Reiter oder Bereich wird sichtbar: ein schon gezeigter Graph lädt neu, Änderungen anderer Reiter folgen. */
     public void shown() {
+        watch();
         reload();
+    }
+
+    /** Laufzeit, für die {@link #watches} gelten. */
+    private AppRuntime watched;
+    private final List<com.aresstack.spaceharvester.application.observe.Subscription> watches = new ArrayList<>();
+
+    /**
+     * Die Fachsicht folgt Änderungen der Analysen, der KI-Freigabe und abgeschlossenen Aufträgen (neue Analysen) per
+     * Meldung des Core (ADR 0027), kein Polling. Einmal je Laufzeit angemeldet.
+     */
+    private void watch() {
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (runtime == watched) {
+            return;
+        }
+        // Neue Laufzeit (Neustart, Neuladen): alte Anmeldungen lösen, damit die alte Laufzeit nicht hängen bleibt.
+        watches.forEach(com.aresstack.spaceharvester.application.observe.Subscription::close);
+        watches.clear();
+        watched = runtime;
+        if (runtime == null) {
+            return;
+        }
+        Runnable later = () -> javax.swing.SwingUtilities.invokeLater(this::followCore);
+        watches.add(runtime.workspace().subscribeStatementAnalyses(later));
+        watches.add(runtime.workspace().subscribePageReleases(change -> later.run()));
+        watches.add(runtime.workspace().subscribeJobs(status -> {
+            if (status.state().terminal()) {
+                later.run();
+            }
+        }));
+    }
+
+    /** Eine Meldung des Core steht noch aus, weil der Nutzer gerade tippt oder Belege liest. */
+    private boolean coreDirty;
+    /** Belege werden gerade gelesen. */
+    private boolean evidencePending;
+    /** Liest die Sätze der Belege; {@code null} = über die Laufzeit. Tests setzen es fest. */
+    private java.util.function.Function<java.util.Map<com.aresstack.spaceharvester.application.knowledge
+            .KnowledgeGraph.PageRef, java.util.List<com.aresstack.spaceharvester.application.knowledge
+            .ParsedStatements.Statement>>, java.util.Map<String, com.aresstack.spaceharvester.application.standing
+            .SentenceText>> sentenceReader;
+    /** Ob die Ansicht zu sehen ist; Tests setzen es fest. */
+    private java.util.function.BooleanSupplier showing = () -> root.isShowing();
+    /** Ob der Nutzer gerade Belege liest, Vorschläge sieht oder tippt; Tests setzen es fest. */
+    private java.util.function.BooleanSupplier userBusy =
+            () -> evidence.isVisible() || evidencePending || suggestions.isVisible() || typing();
+
+    /**
+     * Eine Meldung des Core: eine gezeigte Fachsicht rechnet still neu. Sie lässt Startfeld, Vorschläge und Belege
+     * stehen; tippt der Nutzer gerade oder liest er Belege, wartet sie, bis er fertig ist.
+     */
+    private void followCore() {
+        if (!domainMode() || centre == null) {
+            return;
+        }
+        // Verborgen oder der Nutzer beschäftigt: vormerken und beim Sichtbarwerden bzw. danach nachholen.
+        if (!showing.getAsBoolean() || userBusy.getAsBoolean()) {
+            coreDirty = true;
+            return;
+        }
+        coreDirty = false;
+        fetch(domainSource, centre, false);
+    }
+
+    /** Ob im Startfeld gerade ein anderer Begriff als die Mitte getippt wird. */
+    private boolean typing() {
+        String text = start.getText() == null ? "" : start.getText().trim();
+        return start.isFocusOwner() && !text.equals(centre);
+    }
+
+    /** Eine aufgeschobene Meldung nachholen, sobald der Nutzer fertig ist. */
+    private void catchUp() {
+        if (coreDirty) {
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                // Inzwischen kann ein anderer Abruf die Meldung schon abgedeckt haben.
+                if (coreDirty) {
+                    followCore();
+                }
+            });
+        }
     }
 
     private void reload() {
@@ -295,9 +418,6 @@ public final class TermGraphView {
     /** Punkt am Filter-Symbol und Tooltip mit den aktiven Optionen, sobald eine vom Standard abweicht. */
     void markOptions() {
         List<String> active = new ArrayList<>();
-        if (proposals.isSelected()) {
-            active.add(proposals.getText());
-        }
         if (domain.isSelected()) {
             active.add(domain.getText());
             if (checked.isSelected()) {
@@ -332,22 +452,45 @@ public final class TermGraphView {
         }
         String wanted = term.trim();
         centre = wanted;
+        coreDirty = false;
         if (!wanted.equals(start.getText())) {
             quiet = true;
             start.setText(wanted);
             quiet = false;
         }
+        fetch(active, wanted, true);
+    }
+
+    /** Liest den Graphen um {@code wanted} im Hintergrund; {@code announce} zeigt „Lädt …“. */
+    private void fetch(GraphSource active, String wanted, boolean announce) {
         int current = ++request;
         int levels = depth.getSelectedIndex() + 1;
         boolean withProposals = proposals.isSelected();
         boolean checkedOnly = domainMode() && checked.isSelected();
-        hint.setText("Lädt …");
-        Background.run(() -> active.around(wanted, levels, withProposals, checkedOnly), graph -> {
-            if (current == request) {
-                show(graph);
+        if (announce) {
+            hint.setText("Lädt …");
+        }
+        java.util.function.BooleanSupplier overtaken = () -> current != request;
+        Background.run(() -> active.around(wanted, levels, withProposals, checkedOnly, overtaken), graph -> {
+            if (current != request) {
+                return;
             }
+            if (!announce && userBusy.getAsBoolean()) {
+                // Stilles Ergebnis, aber der Nutzer hat inzwischen Belege geöffnet oder tippt: zurückhalten und nach
+                // dem Schließen neu rechnen, statt sein Overlay zu schließen.
+                coreDirty = true;
+                return;
+            }
+            show(graph);
         }, failure -> {
-            if (current == request) {
+            if (current != request) {
+                return;
+            }
+            if (!announce && userBusy.getAsBoolean()) {
+                coreDirty = true;
+                return;
+            }
+            if (!(failure instanceof java.util.concurrent.CancellationException)) {
                 show(GraphSource.Graph.EMPTY);
                 hint.setText("Graph nicht lesbar: " + failure.getMessage());
             }
@@ -357,6 +500,7 @@ public final class TermGraphView {
     /** Zeigt einen fertigen Graphen. */
     void show(GraphSource.Graph graph) {
         evidence.setVisible(false);
+        canvas.domain(domainMode());
         canvas.graph(graph);
         boolean fach = domainMode();
         String text;
@@ -384,8 +528,14 @@ public final class TermGraphView {
                 + canvas.label(edge.to());
         int total = edgeCount(edge);
         AppRuntime runtime = context == null ? null : context.runtime();
-        if (runtime == null) {
-            evidence.fill(title, total, edge.evidence(), java.util.Map.of()).showAt(canvas, x, y);
+        int current = ++evidenceRequest;
+        java.util.function.Function<java.util.Map<com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph
+                .PageRef, java.util.List<com.aresstack.spaceharvester.application.knowledge.ParsedStatements
+                .Statement>>, java.util.Map<String, com.aresstack.spaceharvester.application.standing.SentenceText>>
+                reader = sentenceReader != null ? sentenceReader
+                : runtime == null ? null : runtime.workspace()::statementSentences;
+        if (reader == null) {
+            evidence.fill(title, total, edge.evidence(), java.util.Map.of(), true).showAt(canvas, x, y);
             return;
         }
         java.util.Map<com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph.PageRef,
@@ -393,15 +543,27 @@ public final class TermGraphView {
                 new java.util.LinkedHashMap<>();
         edge.evidence().forEach(item -> byPage.computeIfAbsent(item.page(), unused -> new ArrayList<>())
                 .add(item.statement()));
-        int current = request;
-        Background.run(() -> runtime.workspace().statementSentences(byPage), sentences -> {
-            if (current == request && canvas.isShowing()) {
-                evidence.fill(title, total, edge.evidence(), sentences).showAt(canvas, x, y);
+        int graphRequest = request;
+        evidencePending = true;
+        Background.run(() -> reader.apply(byPage), sentences -> {
+            // Nur die Antwort auf den letzten Klick beendet das Lesen; eine überholte lässt es stehen.
+            if (current != evidenceRequest) {
+                return;
             }
+            evidencePending = false;
+            if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
+                evidence.fill(title, total, edge.evidence(), sentences, false).showAt(canvas, x, y);
+            }
+            catchUp();
         }, failure -> {
-            if (current == request && canvas.isShowing()) {
-                evidence.fill(title, total, edge.evidence(), java.util.Map.of()).showAt(canvas, x, y);
+            if (current != evidenceRequest) {
+                return;
             }
+            evidencePending = false;
+            if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
+                evidence.fill(title, total, edge.evidence(), java.util.Map.of(), true).showAt(canvas, x, y);
+            }
+            catchUp();
         });
     }
 
@@ -433,16 +595,20 @@ public final class TermGraphView {
         }
         AppRuntime runtime = context.runtime();
         Supplier<PageSet> pages = scope.get();
-        Background.run(() -> runtime.workspace().terms(new TermQueries.TermSearch(null, null, null, q, false,
-                SUGGESTIONS, null, null, null, pages.get())).terms(), terms -> {
+        boolean fach = domainMode();
+        // Fachsicht: nur bestätigte Fachbegriffe und Synonyme, sonst alle Begriffe der Auswahl.
+        Background.run(() -> fach ? runtime.workspace().domainTermSuggestions(q, SUGGESTIONS)
+                : runtime.workspace().terms(new TermQueries.TermSearch(null, null, null, q, false,
+                SUGGESTIONS, null, null, null, pages.get())).terms().stream().map(TermQueries.TermSummary::term)
+                .toList(), terms -> {
             if (current != suggestRequest || !start.isShowing()) {
                 return;
             }
             suggestions.setVisible(false);
             suggestions.removeAll();
-            for (TermQueries.TermSummary term : terms) {
-                JMenuItem item = new JMenuItem(term.term());
-                item.addActionListener(e -> showTerm(term.term()));
+            for (String term : terms) {
+                JMenuItem item = new JMenuItem(term);
+                item.addActionListener(e -> showTerm(term));
                 suggestions.add(item);
             }
             if (!terms.isEmpty()) {
@@ -458,6 +624,41 @@ public final class TermGraphView {
         return centre;
     }
 
+    /** Wie sichtbar, und eine Meldung des Core trifft ein, während der Nutzer {@code busy} beschäftigt ist. */
+    void coreChanged(boolean busy) {
+        showing = () -> true;
+        userBusy = () -> busy;
+        followCore();
+    }
+
+    /** Wie sichtbar, und eine Meldung des Core trifft ein; ob der Nutzer beschäftigt ist, entscheidet die Ansicht. */
+    void coreChangedWhileShowing() {
+        showing = () -> true;
+        followCore();
+    }
+
+    /** Tests: der Nutzer öffnet Belege bzw. schließt sie wieder. */
+    void userBusy(boolean busy) {
+        userBusy = () -> busy;
+        if (!busy) {
+            catchUp();
+        }
+    }
+
+    /** Tests: Sätze der Belege ohne Laufzeit. */
+    void sentenceReader(java.util.function.Function<java.util.Map<com.aresstack.spaceharvester.application.knowledge
+            .KnowledgeGraph.PageRef, java.util.List<com.aresstack.spaceharvester.application.knowledge
+            .ParsedStatements.Statement>>, java.util.Map<String, com.aresstack.spaceharvester.application.standing
+            .SentenceText>> reader) {
+        sentenceReader = reader;
+    }
+
+    /** Der Nutzer ist fertig (Belege oder Vorschläge zu, Startfeld verlassen). */
+    void userDone() {
+        userBusy = () -> false;
+        catchUp();
+    }
+
     PlaceholderField startField() {
         return start;
     }
@@ -466,7 +667,7 @@ public final class TermGraphView {
         return depth;
     }
 
-    javax.swing.JCheckBoxMenuItem proposalsChoice() {
+    javax.swing.JCheckBox proposalsChoice() {
         return proposals;
     }
 
@@ -480,6 +681,10 @@ public final class TermGraphView {
 
     EvidencePopup evidencePopup() {
         return evidence;
+    }
+
+    boolean coreDirty() {
+        return coreDirty;
     }
 
     void showEvidenceFor(GraphSource.Edge edge) {
@@ -507,6 +712,13 @@ public final class TermGraphView {
             setPreferredSize(new Dimension(640, 420));
             setFont(Comic.semiBold(13f));
             javax.swing.ToolTipManager.sharedInstance().registerComponent(this);
+        }
+
+        /** Fachsicht: Bögen, freigestellte Beschriftungen und gedrehter Ring; die Bestandssicht zeichnet wie bisher. */
+        private boolean domain;
+
+        void domain(boolean domain) {
+            this.domain = domain;
         }
 
         void graph(GraphSource.Graph graph) {
@@ -628,7 +840,7 @@ public final class TermGraphView {
                 Point2D centre = graph.nodes().isEmpty() ? null : boxes.get(graph.nodes().get(0).key()) == null
                         ? null : new Point2D.Double(boxes.get(graph.nodes().get(0).key()).getCenterX(),
                         boxes.get(graph.nodes().get(0).key()).getCenterY());
-                if (centre != null && offset == 0 && depthOf(edge.from()) > 0 && depthOf(edge.to()) > 0
+                if (domain && centre != null && offset == 0 && depthOf(edge.from()) > 0 && depthOf(edge.to()) > 0
                         && new Line2D.Double(a, b).ptSegDist(centre) < 60) {
                     // Kante zwischen zwei Nachbarn, die durch die Mitte liefe: als Bogen nach außen.
                     double mx = (a.getX() + b.getX()) / 2;
@@ -673,7 +885,7 @@ public final class TermGraphView {
                 double h = metrics.getHeight() + 2;
                 Rectangle2D best = null;
                 int bestHits = Integer.MAX_VALUE;
-                for (double t : LABEL_POSITIONS) {
+                for (double t : domain ? LABEL_POSITIONS : new double[] {0.5}) {
                     Point2D middle = segment.at(t);
                     Rectangle2D candidate = new Rectangle2D.Double(middle.getX() - w / 2, middle.getY() - h / 2, w,
                             h);
@@ -695,7 +907,7 @@ public final class TermGraphView {
                         best = candidate;
                         bestHits = hits;
                     }
-                    if (hits == 0) {
+                    if (hits == 0 || !domain) {
                         break;
                     }
                 }
@@ -784,7 +996,7 @@ public final class TermGraphView {
             centres.put(graph.nodes().get(0).key(), new Point2D.Double(cx, cy));
             int n = first.size();
             // Ab vier Nachbarn um einen halben Schritt gedreht: kein breiter Kasten genau links oder rechts der Mitte.
-            double turn = n >= 4 && n % 2 == 0 ? Math.PI / n : 0;
+            double turn = domain && n >= 4 && n % 2 == 0 ? Math.PI / n : 0;
             for (int i = 0; i < n; i++) {
                 double angle = -Math.PI / 2 + turn + 2 * Math.PI * i / n;
                 angles.put(first.get(i).key(), angle);

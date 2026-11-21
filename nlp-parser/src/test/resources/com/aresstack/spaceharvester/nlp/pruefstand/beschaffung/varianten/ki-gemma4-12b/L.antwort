@@ -1,0 +1,6 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "Prokurist", "handelnder": "Herr Voss", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "Springerin", "handelnder": "Frau Albers", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "Engpass", "handelnder": "Herr Menzel", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "Kostenrisiko", "handelnder": "Frau Keller", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "Pflichtangabe", "handelnder": "-", "betroffenes": "Bestellnummer", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

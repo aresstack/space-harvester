@@ -158,6 +158,46 @@ class SynonymCandidatesTest {
         assertThat(collected.embeddingUsed()).isFalse();
     }
 
+    /** K3: Mit „nur bestätigte Fachbegriffe“ zählt nur ein Paar, von dem ein Begriff ein solcher Fachbegriff ist. */
+    @Test
+    void glossaryTermsOnlyKeepsPairsWithAConfirmedTechnicalTerm() {
+        cached("Die E-Mail geht an die Fachabteilung. Die Rückmeldung kommt aus der Fachabteilung.");
+        cached("Jede Email wird im Postfach archiviert. Die Rueckmeldung wird geprüft.");
+        candidates.glossaryTerms(scope -> Set.of(TermText.normalize("Rückmeldung")));
+        SynonymBudget onlyGlossary = SynonymBudget.DEFAULT.withGlossaryTermsOnly(true);
+
+        SynonymCandidates.Collected all = candidates.collect(SynonymScope.source("wiki"), SynonymBudget.DEFAULT, null);
+        SynonymCandidates.Collected technical = candidates.collect(SynonymScope.source("wiki"), onlyGlossary, null);
+
+        assertThat(find(all, "E-Mail", "Email")).isPresent();
+        assertThat(find(all, "Rückmeldung", "Rueckmeldung")).isPresent();
+        assertThat(find(technical, "E-Mail", "Email")).as("kein Fachbegriff beteiligt").isEmpty();
+        assertThat(find(technical, "Rückmeldung", "Rueckmeldung")).isPresent();
+        assertThat(candidates.state("wiki", true)).as("Fachbegriffe gehen in den Stand ein")
+                .isNotEqualTo(candidates.state("wiki", false));
+    }
+
+    @Test
+    void glossaryTermsOnlyKeepsThePairOrientationSoTheJudgmentCacheStillHits() {
+        cached("Die Rückmeldung kommt aus der Fachabteilung. Die Rückmeldung ist Pflicht.");
+        cached("Die Rueckmeldung wird geprüft.");
+        cached("Die Rückmeldung bleibt.");
+        // Der Fachbegriff ist der seltenere der beiden; ginge er beim Ordnen vor, drehte sich das Paar.
+        candidates.glossaryTerms(scope -> Set.of(TermText.normalize("Rueckmeldung")));
+        SynonymScope scope = SynonymScope.source("wiki");
+
+        SynonymCandidate off = find(candidates.collect(scope, SynonymBudget.DEFAULT, null), "Rückmeldung",
+                "Rueckmeldung").orElseThrow();
+        SynonymCandidate on = find(candidates.collect(scope, SynonymBudget.DEFAULT.withGlossaryTermsOnly(true),
+                null), "Rückmeldung", "Rueckmeldung").orElseThrow();
+
+        assertThat(on.fromTerm()).isEqualTo(off.fromTerm());
+        assertThat(on.toTerm()).isEqualTo(off.toTerm());
+        assertThat(SynonymDiscovery.fingerprint(scope, "m1", new SynonymDiscovery.Pair(0, on, on.fromContext(),
+                on.toContext()))).isEqualTo(SynonymDiscovery.fingerprint(scope, "m1",
+                new SynonymDiscovery.Pair(0, off, off.fromContext(), off.toContext())));
+    }
+
     @Test
     void umlautSpellingsAreVariantsButInflectionsAreNot() {
         cached("Die Rückmeldung kommt aus der Fachabteilung.");

@@ -29,9 +29,20 @@ interface GraphSource {
     Graph around(String start, int depth, boolean proposals) throws Exception;
 
     /**
-     * Wie {@link #around(String, int, boolean)}, mit „nur geprüft“ (Paket W2); nur die Fachsicht wertet es aus.
+     * Wie {@link #around(String, int, boolean)}; {@code cancelled} meldet, dass die Anfrage überholt ist, und eine
+     * Quelle, die lange rechnet, bricht dann ab ({@link java.util.concurrent.CancellationException}).
      */
-    default Graph around(String start, int depth, boolean proposals, boolean checkedOnly) throws Exception {
+    default Graph around(String start, int depth, boolean proposals, java.util.function.BooleanSupplier cancelled)
+            throws Exception {
+        return around(start, depth, proposals, false, cancelled);
+    }
+
+    /**
+     * Wie {@link #around(String, int, boolean, java.util.function.BooleanSupplier)}, mit „nur geprüft“ (Paket W2); nur
+     * die Fachsicht wertet es aus.
+     */
+    default Graph around(String start, int depth, boolean proposals, boolean checkedOnly,
+                         java.util.function.BooleanSupplier cancelled) throws Exception {
         return around(start, depth, proposals);
     }
 
@@ -182,7 +193,8 @@ interface GraphSource {
     /** Die Fachsicht des Core zu einem Startbegriff und einer Tiefe (Paket W1), auf Wunsch nur Geprüftes (W2). */
     @FunctionalInterface
     interface DomainFetch {
-        DomainTermGraph.View around(String start, int depth, boolean checkedOnly) throws Exception;
+        DomainTermGraph.View around(String start, int depth, boolean checkedOnly,
+                                    java.util.function.BooleanSupplier cancelled) throws Exception;
     }
 
     /**
@@ -197,13 +209,14 @@ interface GraphSource {
         return new GraphSource() {
             @Override
             public Graph around(String start, int depth, boolean proposals) throws Exception {
-                return around(start, depth, proposals, false);
+                return around(start, depth, proposals, false, () -> false);
             }
 
             @Override
-            public Graph around(String start, int depth, boolean proposals, boolean checkedOnly) throws Exception {
-                return domainGraph(fetch.around(start, Math.max(1, Math.min(2, depth)), checkedOnly), start,
-                        analyzerName);
+            public Graph around(String start, int depth, boolean proposals, boolean checkedOnly,
+                                java.util.function.BooleanSupplier cancelled) throws Exception {
+                return domainGraph(fetch.around(start, Math.max(1, Math.min(2, depth)), checkedOnly, cancelled),
+                        start, analyzerName);
             }
         };
     }
@@ -233,9 +246,18 @@ interface GraphSource {
             }
         }
         List<String> notes = new ArrayList<>();
-        if (!view.analyzers().isEmpty()) {
-            notes.add("Aussagen aus " + String.join(", ", view.analyzers().stream().map(analyzerName)
-                    .filter(Objects::nonNull).sorted().toList()));
+        // Immer die Ablage nennen, aus der gelesen wurde, auch ohne Kante (Auflage Architekt).
+        List<String> names = view.analyzers().stream().map(analyzerName).filter(Objects::nonNull).distinct().sorted()
+                .toList();
+        if (names.isEmpty() && view.analyzer() != null) {
+            String name = analyzerName.apply(view.analyzer()
+                    == com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL
+                    ? com.aresstack.spaceharvester.application.knowledge.ModelStatementAnalyzer.ID
+                    : com.aresstack.spaceharvester.app.nlp.MaltStatementAnalyzer.ID);
+            names = name == null ? List.of() : List.of(name);
+        }
+        if (!names.isEmpty()) {
+            notes.add("Aussagen aus " + String.join(", ", names));
         }
         if (view.skippedStale() > 0) {
             notes.add(view.skippedStale() + (view.skippedStale() == 1 ? " veraltete Aussage" : " veraltete Aussagen")

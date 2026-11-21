@@ -665,8 +665,9 @@ public final class ChatPanel extends JPanel {
             return;
         }
         DictationPhase idle = dictationPhase;
-        // Fehlt das eingestellte Whisper-Modell, fragt die App erst und lädt es; danach beginnt die Aufnahme.
-        context.whisperModel().ensure(this, status::setText, status::setText, () -> {
+        // Die Spracheingabe hat ihr eigenes Whisper-Modell (Vorgabe Tiny). Fehlt es, fragt die App erst und lädt es;
+        // danach beginnt die Aufnahme.
+        context.whisperModel().ensure(context.dictationWhisper(), this, status::setText, status::setText, () -> {
             if (dictationPhase != idle || !dictation.isAvailable() || turn != null) {
                 return;
             }

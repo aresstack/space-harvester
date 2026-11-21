@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.glossary.GlossaryDerivation;
 import com.aresstack.spaceharvester.application.glossary.GlossaryEntry;
 import com.aresstack.spaceharvester.application.glossary.GlossaryStore;
+import com.aresstack.spaceharvester.application.glossary.TechnicalTerms;
 import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -55,11 +56,14 @@ public class GlossaryController {
     private final Glossary glossary;
     private final GlossaryClassification classification;
     private final Jobs jobs;
+    private final TechnicalTerms technicalTerms;
 
-    public GlossaryController(Glossary glossary, GlossaryClassification classification, Jobs jobs) {
+    public GlossaryController(Glossary glossary, GlossaryClassification classification, Jobs jobs,
+                              TechnicalTerms technicalTerms) {
         this.glossary = glossary;
         this.classification = classification;
         this.jobs = jobs;
+        this.technicalTerms = technicalTerms;
     }
 
     @GetMapping
@@ -93,6 +97,30 @@ public class GlossaryController {
                 categories(category)));
         return new GlossaryListResponse(page.entries().stream().map(Entry::of).toList(), page.nextCursor(),
                 classification.available());
+    }
+
+    @GetMapping("/technical-terms")
+    @Operation(summary = "Suchmethode „Nur Fachbegriffe“: Fachbegriffe zu einem Suchtext, auch über Synonyme",
+            description = "Nur vorgeschlagene und bestätigte Glossareinträge ohne Einordnung technisch, nie abgelehnte; "
+                    + "Bereich über sourceId und spaceKey wie GET /api/v1/glossary. Ein Eintrag passt, "
+                    + "wenn q ein Präfix des Begriffs oder eines seiner Wörter ist oder eines seiner Synonyme "
+                    + "(vorgeschlagen oder bestätigt); viaSynonym nennt dann das Synonym. Ohne q alle. Die Synonyme "
+                    + "eines Eintrags liefert GET /api/v1/term-relations?term=…&type=synonym.")
+    @ApiResponse(responseCode = "200", description = "TechnicalTermsResponse")
+    @ApiResponse(responseCode = "400", description = "limit außerhalb 1 bis " + TechnicalTerms.MAX_LIMIT
+            + " oder beschädigter cursor (invalid-request)")
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found)")
+    public TechnicalTermsResponse technicalTerms(@Parameter(hidden = true) AccessContext caller,
+                                                 @RequestParam(required = false) String q,
+                                                 @RequestParam(required = false) String sourceId,
+                                                 @RequestParam(required = false) String spaceKey,
+                                                 @RequestParam(defaultValue = "50") int limit,
+                                                 @RequestParam(required = false) String cursor) {
+        TechnicalTerms.Page page = technicalTerms.search(caller, blankToNull(q),
+                new TechnicalTerms.Scope(blankToNull(sourceId), blankToNull(spaceKey)), limit, blankToNull(cursor));
+        return new TechnicalTermsResponse(page.hits().stream()
+                .map(hit -> new TechnicalTermHit(Entry.of(hit.entry()), hit.viaSynonym())).toList(),
+                page.nextCursor(), page.total());
     }
 
     @GetMapping("/{id}")
@@ -341,6 +369,13 @@ public class GlossaryController {
      * Ein Stapel Einträge; weiter mit nextCursor, bis er null ist. aiAvailable: ob „Fachbegriffe ermitteln“ starten
      * kann (im Dienst: ob ein Chat-Modell eingestellt ist).
      */
+    /** Ein Treffer von „Nur Fachbegriffe“; {@code viaSynonym} ist {@code null}, wenn der Begriff selbst passt. */
+    public record TechnicalTermHit(Entry entry, String viaSynonym) {
+    }
+
+    public record TechnicalTermsResponse(List<TechnicalTermHit> hits, String nextCursor, int total) {
+    }
+
     public record GlossaryListResponse(List<Entry> entries, String nextCursor, boolean aiAvailable) {
     }
 

@@ -33,15 +33,25 @@ public final class GlossaryVocabulary implements DomainTermGraph.Vocabulary {
 
     @Override
     public List<DomainTermGraph.Term> terms(AccessContext caller) {
+        return entries(caller, CATEGORIES);
+    }
+
+    private List<DomainTermGraph.Term> entries(AccessContext caller, Set<GlossaryDerivation.Category> categories) {
         List<DomainTermGraph.Term> terms = new ArrayList<>();
         String cursor = null;
         do {
             Glossary.Page page = glossary.entries(caller, new Glossary.Search(null, ReviewStatus.CONFIRMED, null,
-                    null, null, null, Glossary.MAX_LIMIT, cursor, CATEGORIES));
+                    null, null, null, Glossary.MAX_LIMIT, cursor, categories));
             page.entries().forEach(entry -> terms.add(new DomainTermGraph.Term(entry.term(), entry.scope())));
             cursor = page.nextCursor();
         } while (cursor != null);
         return terms;
+    }
+
+    /** Bestätigte Einträge der Einordnung „technisch“; sie werden auch über ein Synonym kein Knoten. */
+    @Override
+    public List<DomainTermGraph.Term> technical(AccessContext caller) {
+        return entries(caller, Set.of(GlossaryDerivation.Category.TECHNISCH));
     }
 
     @Override

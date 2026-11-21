@@ -79,6 +79,89 @@ public final class PillTabs extends JPanel {
         return this;
     }
 
+    /**
+     * Eine Zahl am Reiter (UX 21.11.2026): ein kleiner Chip in {@code tone} direkt hinter dem Namen, etwa „Hintergrund
+     * 1“; bei 0 kein Chip. Der Tooltip des Reiters sagt, was die Zahl zählt.
+     *
+     * @param tip Tooltip, solange die Zahl über 0 liegt; sonst bleibt {@code idleTip}
+     */
+    public void count(String name, int count, java.awt.Color tone, String tip, String idleTip) {
+        ComposerToggleButton button = buttons.get(name);
+        if (button == null) {
+            return;
+        }
+        button.setHorizontalTextPosition(javax.swing.SwingConstants.LEADING);
+        button.setIconTextGap(6);
+        button.setIcon(count > 0 ? new CountIcon(count, tone, button.getFont()) : null);
+        button.setToolTipText(count > 0 ? tip : idleTip);
+        button.revalidate();
+        button.repaint();
+    }
+
+    /** Die Zahl am Reiter, für Tests; 0 ohne Chip. */
+    public int count(String name) {
+        ComposerToggleButton button = buttons.get(name);
+        return button != null && button.getIcon() instanceof CountIcon icon ? icon.count : 0;
+    }
+
+    /** Der Zahlenchip am Reiter: eine gefüllte Pille mit der Zahl in Weiß. */
+    private static final class CountIcon implements javax.swing.Icon {
+        private final int count;
+        private final java.awt.Color tone;
+        private final java.awt.Font font;
+        private final String text;
+
+        CountIcon(int count, java.awt.Color tone, java.awt.Font font) {
+            this.count = count;
+            this.tone = tone;
+            this.font = font.deriveFont(java.awt.Font.BOLD, Math.max(10f, font.getSize2D() - 1f));
+            this.text = String.valueOf(count);
+        }
+
+        private int textWidth() {
+            java.awt.image.BufferedImage scratch = new java.awt.image.BufferedImage(1, 1,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            java.awt.Graphics g = scratch.getGraphics();
+            try {
+                return g.getFontMetrics(font).stringWidth(text);
+            } finally {
+                g.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return Math.max(getIconHeight(), textWidth() + 10);
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
+        }
+
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics graphics, int x, int y) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                int width = getIconWidth();
+                int height = getIconHeight();
+                g.setColor(tone);
+                g.fillRoundRect(x, y, width, height, height, height);
+                g.setFont(font);
+                java.awt.FontMetrics metrics = g.getFontMetrics();
+                g.setColor(java.awt.Color.WHITE);
+                g.drawString(text, x + (width - metrics.stringWidth(text)) / 2,
+                        y + (height - metrics.getHeight()) / 2 + metrics.getAscent());
+            } finally {
+                g.dispose();
+            }
+        }
+    }
+
     public void select(String name) {
         ComposerToggleButton button = buttons.get(name);
         if (button != null) {

@@ -48,7 +48,7 @@ class StatementAnalysisModelTest {
 
         assertThat(byModel.state()).isEqualTo(PageStatements.State.CURRENT);
         assertThat(byModel.analysis().analyzerId()).isEqualTo(ModelStatementAnalyzer.ID);
-        assertThat(byModel.analysis().analyzerVersion()).isEqualTo("statement-model:fake-chat@0000|prompt-1");
+        assertThat(byModel.analysis().analyzerVersion()).isEqualTo("statement-model:fake-chat@0000|prompt-1|abgleich-2");
         assertThat(parserStore.find(page.key())).get().extracting(PageStatementAnalysis::analyzerId)
                 .isEqualTo(parser.id());
         assertThat(modelStore.find(page.key())).get().extracting(PageStatementAnalysis::analyzerId)

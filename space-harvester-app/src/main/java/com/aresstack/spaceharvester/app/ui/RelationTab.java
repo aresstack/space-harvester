@@ -594,8 +594,10 @@ public final class RelationTab {
         Workspace workspace = runtime.workspace();
         SynonymRunForm form;
         try {
+            com.aresstack.spaceharvester.application.terms.SynonymBudget budget =
+                    workspace.synonymAvailability(SynonymScope.ALL).budget();
             form = new SynonymRunForm(workspace.sources(), workspace::spaces, workspace::synonymAvailability,
-                    workspace.synonymAvailability(SynonymScope.ALL).budget().maxJudgedPairs());
+                    budget.maxJudgedPairs(), budget.glossaryTermsOnly());
         } catch (RuntimeException e) {
             directory.message("Nicht möglich: " + e.getMessage());
             return;
@@ -625,7 +627,7 @@ public final class RelationTab {
         proposeSynonyms.setEnabled(false);
         Background.run(() -> {
             synonymRulesOnly = !workspace.synonymAvailability(request.scope()).embeddingModel();
-            return workspace.startSynonymDiscovery(request.scope(), request.maxJudgedPairs());
+            return workspace.startSynonymDiscovery(request);
         }, status -> {
             synonymJob = status.id();
             // Erst anmelden, dann einmal lesen: was zwischen Start und Anmeldung geschah, bringt das Lesen.

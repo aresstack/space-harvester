@@ -45,6 +45,9 @@ class ConfigurationParityTest {
             space-harvester-app:
               viewer:
                 background: dark
+              whisper:
+                model: small
+                dictation-model: tiny
             space-harvester:
               sources:
                 - id: confluence
@@ -111,6 +114,7 @@ class ConfigurationParityTest {
                   max-embedded-terms: 100
                   max-judged-pairs: 50
                   automatic: false
+                  glossary-terms-only: true
               glossary:
                 rules:
                   max-terms: 200
@@ -205,6 +209,7 @@ class ConfigurationParityTest {
         SynonymBudget budget = service2.terms().synonyms();
         assertThat(app.terms().synonyms()).isEqualTo(budget);
         assertThat(budget.automatic()).as("SY1: automatic aus beiden Loadern").isFalse();
+        assertThat(budget.glossaryTermsOnly()).as("K3: glossary-terms-only aus beiden Loadern").isTrue();
         // ADR 0032, FL5b: Regeln der Begriffsableitung, als YAML-Liste und als Text mit Kommas.
         com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings rules =
                 com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.DEFAULT.withMaxTerms(200)
@@ -213,7 +218,7 @@ class ConfigurationParityTest {
                         .with(com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.Kind
                                 .ROLE_WORDS, java.util.List.of("sachgebiet", "amt"), java.util.List.of());
         assertThat(app.terms().glossaryRules()).isEqualTo(service2.terms().glossaryRules()).isEqualTo(rules);
-        assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50, false));
+        assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50, false, true));
 
         // ADR 0030: Aufbewahrung des Änderungsprotokolls, beim Dienst über withSyncRules.
         assertThat(app.cache().changeLog()).isEqualTo(service2.changeLog())
@@ -267,6 +272,10 @@ class ConfigurationParityTest {
         // keine Bilder und bindet nichts darunter, der Schlüssel stört ihn nicht.
         assertThat(app.viewerBackground()).isEqualTo(ViewerBackground.DARK);
         assertThat(environment.getProperty("space-harvester-app.viewer.background")).isEqualTo("dark");
+        // Whisper-Modelle (Angelo 21.11.2026): Transkripte und Spracheingabe getrennt, nur die App.
+        assertThat(app.whisperModel()).isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.SMALL);
+        assertThat(app.dictationModel()).isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY);
+        assertThat(environment.getProperty("space-harvester-app.whisper.dictation-model")).isEqualTo("tiny");
         assertThat(service).isNotNull();
     }
 
