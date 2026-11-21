@@ -150,7 +150,20 @@ public final class Workspace {
         return harvester.navigation().position(caller, sourceId, pageId);
     }
 
-    /** Querverweise einer Seite, ausgehend und, wenn die Quelle sie kennt, eingehend ({@code PageNavigation.references}). */
+    /**
+     * Meldet einen Empfänger für jede Änderung des Verzeichnisses der Verweise an (Paket V1, ADR 0027), gebündelt auf
+     * dem Thread des Verzeichnisses, nie über den EDT.
+     */
+    public Subscription subscribeLinks(
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.links.PageLinks.LinksChanged>
+                    listener) {
+        return harvester.pageLinks().subscribe(listener);
+    }
+
+    /**
+     * Querverweise einer Seite, ausgehend und eingehend: von der Quelle oder aus dem Verzeichnis der lokal gespeicherten
+     * Seiten ({@code PageNavigation.references}).
+     */
     public PageNavigation.References references(String sourceId, String pageId) {
         return harvester.navigation().references(caller, sourceId, pageId);
     }

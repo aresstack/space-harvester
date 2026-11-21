@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
+import com.aresstack.spaceharvester.application.links.PageLinks;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
 
@@ -16,8 +17,10 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Der Reiter „Verweise“ (#177): Seiten, auf die diese Seite verweist, und, wenn die Quelle sie vollständig kennt, Seiten,
- * die auf sie verweisen. Eine gewählte Zeile öffnet die Seite ({@code onOpen}). Nur auf dem EDT.
+ * Der Reiter „Verweise“ (#177, Paket V2): Seiten, auf die diese Seite verweist, und Seiten, die auf sie verweisen. Die
+ * Rückrichtung kommt von der Quelle, wenn sie sie kennt, sonst aus dem Verzeichnis der lokal gespeicherten Seiten; wie
+ * vollständig sie dann ist („aus N von M Seiten“), steht in der Statuszeile, nicht in der Ansicht. Eine gewählte Zeile
+ * öffnet die Seite ({@code onOpen}). Nur auf dem EDT.
  */
 final class References extends JPanel {
 
@@ -25,6 +28,7 @@ final class References extends JPanel {
     private final JTable table = Comic.table(new JTable(model));
     private final TabHeader head = new TabHeader("Verweise dieser Seite");
     private String hint = " ";
+    private boolean loaded;
     private Consumer<String> onOpen = pageId -> { };
     private Consumer<String> onStatus = text -> { };
 
@@ -51,7 +55,13 @@ final class References extends JPanel {
         onStatus = Objects.requireNonNull(listener, "listener");
     }
 
+    /** Ob die Tabelle einen geladenen Stand zeigt; dann lädt eine Änderung still nach, ohne sie zu leeren. */
+    boolean showing() {
+        return loaded;
+    }
+
     void message(String text) {
+        loaded = false;
         model.set(List.of());
         hint = text;
         onStatus.accept(text);
@@ -74,6 +84,7 @@ final class References extends JPanel {
             references.incoming().forEach(node -> rows.add(new Row("verwiesen von", node)));
         }
         model.set(rows);
+        loaded = true;
         hint = hint(references);
         onStatus.accept(hint);
     }
@@ -85,9 +96,27 @@ final class References extends JPanel {
         if (references.incoming() == null) {
             return text + "; eingehende Verweise kennt die Quelle nicht vollständig.";
         }
+        PageLinks.Coverage coverage = references.coverage();
+        if (coverage != null && coverage.shown() && coverage.reconciling()) {
+            // Zahlen, die vollständig wirken, kämen hier zu früh.
+            return text + "; Verzeichnis der Verweise wird noch aufgebaut.";
+        }
         int in = references.incoming().size();
-        return text + (in == 0 ? "; keine Seite verweist auf sie." : "; " + (in == 1 ? "1 Seite verweist"
-                : in + " Seiten verweisen") + " auf sie.");
+        String incoming = in == 0 ? "; keine Seite verweist auf sie" : "; " + (in == 1 ? "1 Seite verweist"
+                : in + " Seiten verweisen") + " auf sie";
+        return text + incoming + coverage(coverage) + ".";
+    }
+
+    /**
+     * „ (geprüft: 120 von 340 Seiten sind lokal gespeichert)“, wenn die Rückrichtung aus den lokal gespeicherten Seiten
+     * stammt.
+     */
+    private static String coverage(PageLinks.Coverage coverage) {
+        if (coverage == null || !coverage.shown()) {
+            return "";
+        }
+        return " (geprüft: " + coverage.indexed() + " von " + coverage.known()
+                + (coverage.known() == 1 ? " Seite ist" : " Seiten sind") + " lokal gespeichert)";
     }
 
     // ---- für Tests
