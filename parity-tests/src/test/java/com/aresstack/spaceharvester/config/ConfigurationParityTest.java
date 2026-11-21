@@ -144,6 +144,8 @@ class ConfigurationParityTest {
                   scope: all
                   parallel: 4
                   model: check-model
+                analyzer: model
+                analyzer-model: statement-model
               images:
                 automatic: true
                 max-per-run: 120
@@ -251,6 +253,10 @@ class ConfigurationParityTest {
         // Fahrplan B1: automatische Bildbeschreibung, beim Dienst über withSyncRules.
         assertThat(app.images()).isEqualTo(service2.images())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 120));
+        // Fahrplan A2/A3: Aussagenanalyse (Analysator = gelesene Ablage, eigenes Modell).
+        assertThat(app.analyzer()).isEqualTo(service2.analyzer())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.AnalyzerSettings(
+                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, "statement-model"));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder

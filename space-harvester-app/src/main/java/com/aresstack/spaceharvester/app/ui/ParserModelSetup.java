@@ -141,7 +141,7 @@ public final class ParserModelSetup {
         }, ok -> {
             running = null;
             active = null;
-            update(probe("Parsermodell installiert; „Mit MaltParser analysieren“ ist bereit.", false));
+            update(probe("Parsermodell installiert; „Analysieren“ mit MaltParser ist bereit.", false));
         }, error -> {
             running = null;
             active = null;

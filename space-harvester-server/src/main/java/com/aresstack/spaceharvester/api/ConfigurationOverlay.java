@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationProbl
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
@@ -57,7 +58,8 @@ public final class ConfigurationOverlay {
             EnrichmentSettings.DOCUMENTS_ENABLED, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
             SimplificationSettings.MODE, SimplificationSettings.PARALLEL, SimplificationSettings.MODEL,
             StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS, CheckSettings.SCOPE, CheckSettings.PARALLEL,
-            CheckSettings.MODEL, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN));
+            CheckSettings.MODEL, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN, AnalyzerSettings.ANALYZER,
+            AnalyzerSettings.MODEL));
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
     private static final Set<String> LISTS = withGlossaryRules(false, Set.of(
@@ -164,6 +166,8 @@ public final class ConfigurationOverlay {
         put(properties, CheckSettings.MODEL, configuration.check().model());
         put(properties, ImageSettings.AUTOMATIC, configuration.images().automatic());
         put(properties, ImageSettings.MAX_PER_RUN, configuration.images().maxPerRun());
+        put(properties, AnalyzerSettings.ANALYZER, configuration.analyzer().analyzer().value());
+        put(properties, AnalyzerSettings.MODEL, configuration.analyzer().model());
         GlossaryRuleSettings rules = configuration.terms().glossaryRules();
         put(properties, GlossaryRuleSettings.MAX_TERMS, rules.maxTerms());
         for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {

@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationManag
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.ImageSettings;
@@ -138,7 +139,8 @@ class ConfigurationManagerConfiguration {
                 EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, ChangeLogSettings.RETENTION,
                 ChangeLogSettings.SHOW_AFTER_UPDATE, SimplificationSettings.MODE, SimplificationSettings.PARALLEL,
                 SimplificationSettings.MODEL, CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL,
-                GlossaryRuleSettings.MAX_TERMS, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN)) {
+                GlossaryRuleSettings.MAX_TERMS, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN,
+                AnalyzerSettings.ANALYZER, AnalyzerSettings.MODEL)) {
             binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
                     .ifBound(value -> properties.setProperty(key, value));
         }
@@ -165,7 +167,7 @@ class ConfigurationManagerConfiguration {
                 .withExport(read.export()).withTerms(read.terms()).withEnrichment(read.enrichment())
                 .withChangeLog(read.changeLog()).withSimplification(read.simplification())
                 .withStanding(read.standing())
-                .withCheck(read.check()).withImages(read.images());
+                .withCheck(read.check()).withImages(read.images()).withAnalyzer(read.analyzer());
     }
 
     private static final Bindable<Map<String, Map<String, String>>> SOURCE_RULES = Bindable.of(
