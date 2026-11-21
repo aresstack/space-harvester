@@ -159,6 +159,65 @@ class PageNavigationTest {
     }
 
     @Test
+    void withoutIncomingFromTheSourceTheDirectoryOfStoredPagesAnswersWithItsCoverage() {
+        com.aresstack.spaceharvester.application.links.InMemoryLinkIndex index =
+                new com.aresstack.spaceharvester.application.links.InMemoryLinkIndex(List.of(
+                        entry("104", com.aresstack.spaceharvester.application.links.LinkTarget.page("101")),
+                        entry("300", com.aresstack.spaceharvester.application.links.LinkTarget.page("101"))));
+        com.aresstack.spaceharvester.application.links.PageLinks.StoredPages stored =
+                new com.aresstack.spaceharvester.application.links.PageLinks.StoredPages() {
+                    @Override
+                    public Optional<com.aresstack.spaceharvester.application.snapshot.PageHeader> header(
+                            com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                        return Optional.of(com.aresstack.spaceharvester.application.snapshot.PageSnapshot.of("wiki",
+                                new com.aresstack.spaceharvester.application.sources.PageMetadata(key.pageId(),
+                                        "test:" + key.pageId(), "Seite " + key.pageId(), "DEV", null, "1",
+                                        java.time.Instant.EPOCH, null, null),
+                                new com.aresstack.spaceharvester.application.snapshot.NativePayload(new byte[0],
+                                        "text/plain", "test"), java.time.Instant.EPOCH).header());
+                    }
+
+                    @Override
+                    public Optional<com.aresstack.spaceharvester.application.snapshot.PageSnapshot> snapshot(
+                            com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                        return Optional.empty();
+                    }
+
+                    @Override
+                    public List<com.aresstack.spaceharvester.application.links.PageLinks.StoredPage> pages(
+                            String sourceId, String afterPageId, int limit) {
+                        return List.of();
+                    }
+
+                    @Override
+                    public long known(String sourceId) {
+                        return 3;
+                    }
+                };
+        try (com.aresstack.spaceharvester.application.links.PageLinks links =
+                     new com.aresstack.spaceharvester.application.links.PageLinks(stored, index, List.of(),
+                             new AccessGuard(policy))) {
+            PageNavigation withLinks = new PageNavigation(catalog, null, new AccessGuard(policy),
+                    com.aresstack.spaceharvester.application.acquisition.FindingCatalog.NONE, links);
+
+            PageNavigation.References references = withLinks.references(CLIENT, "wiki", "101");
+
+            // 300 ist gesperrt; die Zähler bleiben verborgen, weil die Richtlinie quellenweit nichts entscheidet.
+            assertThat(references.outgoing()).extracting(PageNode::pageId).containsExactly("102");
+            assertThat(references.incoming()).extracting(PageNode::pageId).containsExactly("104");
+            assertThat(references.coverage())
+                    .isEqualTo(com.aresstack.spaceharvester.application.links.PageLinks.Coverage.HIDDEN);
+        }
+    }
+
+    private static com.aresstack.spaceharvester.application.links.LinkIndex.Entry entry(String pageId,
+            com.aresstack.spaceharvester.application.links.LinkTarget target) {
+        return new com.aresstack.spaceharvester.application.links.LinkIndex.Entry(
+                new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", pageId), "DEV",
+                "Seite " + pageId, "sha256:" + pageId, List.of(target));
+    }
+
+    @Test
     void titleMatchesComeInTheOrderOfTheSourceWithTheirSpaceAndWithoutLockedPages() {
         PageNavigation.TitleMatches matches = navigation.findByTitle(CLIENT, "wiki", Set.of(), "plan", 10);
 

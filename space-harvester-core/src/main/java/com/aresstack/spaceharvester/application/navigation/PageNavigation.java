@@ -5,7 +5,9 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
+import com.aresstack.spaceharvester.application.links.PageLinks;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
@@ -43,6 +45,7 @@ public class PageNavigation {
     private final PageCacheReader cache;
     private final AccessGuard access;
     private final FindingCatalog findings;
+    private final PageLinks links;
 
     /** Remember navigation paths independently of downloaded documents. */
     private final Map<PageKey, SeenPage> browsedPages = new java.util.concurrent.ConcurrentHashMap<>();
@@ -60,6 +63,16 @@ public class PageNavigation {
      *                 aufzuhalten
      */
     public PageNavigation(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, FindingCatalog findings) {
+        this(catalog, cache, access, findings, null);
+    }
+
+    /**
+     * @param links Verzeichnis der Verweise (Paket V1) für die Rückrichtung, wenn die Quelle sie nicht kennt;
+     *              {@code null} ohne
+     */
+    public PageNavigation(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, FindingCatalog findings,
+                          PageLinks links) {
+        this.links = links;
         this.findings = Objects.requireNonNull(findings, "findings");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.cache = cache;
@@ -373,8 +386,9 @@ public class PageNavigation {
     }
 
     /**
-     * Querverweise einer Seite: ausgehend in Reihenfolge der Seite und, wenn die Quelle sie vollständig kennt,
-     * eingehend. Ziele, die der Aufrufer nicht sehen darf, fehlen.
+     * Querverweise einer Seite: ausgehend in Reihenfolge der Seite live aus der Quelle, eingehend aus der Quelle, wenn
+     * sie sie vollständig kennt, sonst aus dem Verzeichnis der Verweise über die lokal gespeicherten Seiten (Paket V1,
+     * mit {@link References#coverage()}). Ziele, die der Aufrufer nicht sehen darf, fehlen.
      *
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException verdeckt, ohne {@code content}
      */
@@ -384,8 +398,33 @@ public class PageNavigation {
         String spaceKey = source.pageMetadata(pageId).partitionKey();
         access.requireConcealed(caller, ResourceScope.page(sourceId, spaceKey, pageId), AccessKind.CONTENT);
         HarvestSource.PageReferences references = source.references(pageId);
-        return new References(sourceId, pageId, visibleTargets(caller, source, references.outgoing()),
-                references.incoming() == null ? null : visibleTargets(caller, source, references.incoming()));
+        List<PageNode> outgoing = visibleTargets(caller, source, references.outgoing());
+        if (references.incoming() != null || links == null) {
+            return new References(sourceId, pageId, outgoing,
+                    references.incoming() == null ? null : visibleTargets(caller, source, references.incoming()));
+        }
+        PageLinks.Links local = links.links(caller, new PageKey(sourceId, pageId), spaceKey);
+        return new References(sourceId, pageId, outgoing,
+                visible(caller, sourceId, local.incoming().stream().map(this::cachedNode).toList()), local.coverage());
+    }
+
+    /** Ein Knoten aus den Kopfdaten im Cache; Titel und Space fehlen, wenn der Cache die Seite nicht kennt. */
+    private PageNode cachedNode(PageKey key) {
+        if (cache != null) {
+            try {
+                Optional<PageHeader> header = cache.header(key);
+                if (header.isEmpty()) {
+                    header = cache.page(key).map(page -> page.header());
+                }
+                if (header.isPresent()) {
+                    return new PageNode(key.pageId(), header.get().metadata().title(),
+                            header.get().metadata().partitionKey(), null);
+                }
+            } catch (RuntimeException e) {
+                // ohne Cache bleibt der Knoten ohne Titel
+            }
+        }
+        return new PageNode(key.pageId(), null, null, null);
     }
 
     /**
@@ -500,13 +539,21 @@ public class PageNavigation {
     /**
      * Querverweise einer Seite.
      *
-     * @param incoming eingehende Verweise oder {@code null}, wenn die Quelle sie nicht vollständig kennt
+     * @param incoming eingehende Verweise oder {@code null}, wenn weder die Quelle noch das Verzeichnis sie kennt
+     * @param coverage {@code null}, wenn {@code incoming} von der Quelle stammt (oder fehlt); sonst wie weit das
+     *                 Verzeichnis der Verweise die Quelle kennt („aus N von M Seiten“)
      */
-    public record References(String sourceId, String pageId, List<PageNode> outgoing, List<PageNode> incoming) {
+    public record References(String sourceId, String pageId, List<PageNode> outgoing, List<PageNode> incoming,
+                             PageLinks.Coverage coverage) {
 
         public References {
             outgoing = List.copyOf(outgoing);
             incoming = incoming == null ? null : List.copyOf(incoming);
+        }
+
+        /** Rückrichtung von der Quelle selbst oder ohne. */
+        public References(String sourceId, String pageId, List<PageNode> outgoing, List<PageNode> incoming) {
+            this(sourceId, pageId, outgoing, incoming, null);
         }
     }
 }

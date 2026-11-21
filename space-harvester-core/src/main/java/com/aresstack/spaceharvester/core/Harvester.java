@@ -76,6 +76,8 @@ import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
 import com.aresstack.spaceharvester.application.holdings.Holdings;
+import com.aresstack.spaceharvester.application.holdings.HoldingsChanges;
+import com.aresstack.spaceharvester.application.links.PageLinks;
 import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
@@ -192,6 +194,8 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageReleases;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneHoldingsCatalog;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneLinkIndex;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageLinkPages;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
@@ -231,6 +235,7 @@ import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphE
 import com.aresstack.spaceharvester.application.metadata.SourceQueryExports;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalyzer;
+import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageLinks;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
@@ -315,6 +320,7 @@ public final class Harvester implements AutoCloseable {
     private final PageAddresses addresses;
     private final ReadingViews readingViews;
     private final PageNavigation navigation;
+    private final PageLinks pageLinks;
     private final PageSearch search;
     private final KeywordSearch keywordSearch;
     private final AcquisitionScheduler acquisition;
@@ -637,7 +643,15 @@ public final class Harvester implements AutoCloseable {
             LuceneHoldingsCatalog holdingsCatalog = new LuceneHoldingsCatalog(cache);
             this.holdings = new Holdings(catalog, holdingsCatalog, access, builder.maxTreeNodes);
             opened.add(holdings);
-            cache.changes(holdings);
+            // Paket V1: Verzeichnis der Verweise aus den gespeicherten Seiten; hört wie der Bestand auf jeden Commit.
+            LuceneLinkIndex linkIndex = LuceneLinkIndex.open(cacheDirectory.resolve("links"));
+            opened.add(linkIndex);
+            this.pageLinks = new PageLinks(new LucenePageLinkPages(cache), linkIndex,
+                    List.of(new ConfluenceStorageLinks()), access);
+            opened.add(pageLinks);
+            HoldingsChanges cacheChanges = HoldingsChanges.all(holdings, pageLinks);
+            cache.changes(cacheChanges);
+            pageLinks.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList());
             // ADR 0028: Eintragen aus der Auswahl, gebündelte Liste und Entfernen für die Oberfläche.
             this.pageReleaseService = new PageReleaseService(pageReleases, holdings, access, cache::findHeader,
                     key -> enrichmentStore.find(key).stream().anyMatch(found -> "embedding".equals(found.processorId())
@@ -685,7 +699,7 @@ public final class Harvester implements AutoCloseable {
                         }
                     }, clock);
             opened.add(findings);
-            this.navigation = new PageNavigation(catalog, reader, access, findings);
+            this.navigation = new PageNavigation(catalog, reader, access, findings, pageLinks);
             this.search = new PageSearch(catalog, index, access);
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
@@ -1205,7 +1219,7 @@ public final class Harvester implements AutoCloseable {
                 this.backgroundFill = fill;
                 filling.set(fill);
                 // ADR 0027: jeder Commit des Seiten-Cache weckt die Suche nach Lücken, nie in Abständen.
-                cache.changes(holdings.andThen(fill::wake));
+                cache.changes(cacheChanges.andThen(fill::wake));
             } else {
                 this.backgroundFill = null;
             }
@@ -1621,6 +1635,11 @@ public final class Harvester implements AutoCloseable {
      * Live-Navigation (#177): Kindseiten in der Reihenfolge der Quelle mit {@code hasChildren}, Lage einer Seite mit
      * Space-Namen und Vorfahren, Querverweise; Rechte je Knoten.
      */
+    /** Verzeichnis der Verweise zwischen lokal gespeicherten Seiten, beide Richtungen (Paket V1). */
+    public PageLinks pageLinks() {
+        return pageLinks;
+    }
+
     public PageNavigation navigation() {
         return navigation;
     }
