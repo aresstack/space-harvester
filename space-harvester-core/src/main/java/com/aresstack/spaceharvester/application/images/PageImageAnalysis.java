@@ -140,7 +140,7 @@ public class PageImageAnalysis {
      */
     public PageImages describe(PageSnapshot snapshot) {
         try (ModelPriority.Interactive ignored = priority.interactive()) {
-            return describe(snapshot, false, entry -> { });
+            return describe(snapshot, false, entry -> { }, null);
         }
     }
 
@@ -150,7 +150,7 @@ public class PageImageAnalysis {
      */
     public PageImages describe(PageSnapshot snapshot, java.util.function.Consumer<ImagePayload.Entry> progress) {
         try (ModelPriority.Interactive ignored = priority.interactive()) {
-            return describe(snapshot, false, progress);
+            return describe(snapshot, false, progress, null);
         }
     }
 
@@ -161,7 +161,27 @@ public class PageImageAnalysis {
      */
     public PageImages describeInBackground(PageSnapshot snapshot,
                                            java.util.function.Consumer<ImagePayload.Entry> progress) {
-        return describe(snapshot, false, progress);
+        return describe(snapshot, false, progress, null);
+    }
+
+    /**
+     * Wie {@link #describeInBackground(PageSnapshot, java.util.function.Consumer)}, die Bilder der Seite aber
+     * gleichzeitig über {@code images} (Angelo 21.11.2026: „nicht nur ein Bild nach dem anderen“): Jedes Bild geht als
+     * eigene Aufgabe an den Läufer, der Kontingent, Spur und Vorrang regelt. {@code progress} erfährt die Einträge in
+     * ihrer Reihenfolge im aufrufenden Thread. Scheitert ein Eintrag oder wirft {@code progress}, beginnt kein weiteres
+     * Bild; die laufenden enden, bevor die Ausnahme weitergeht.
+     */
+    public PageImages describeInBackground(PageSnapshot snapshot,
+                                           java.util.function.Consumer<ImagePayload.Entry> progress,
+                                           ImageRunner images) {
+        return describe(snapshot, false, progress, Objects.requireNonNull(images, "images"));
+    }
+
+    /** Führt die Beschreibung eines Bildes aus, etwa in einem eigenen Thread mit eigenem Kontingent. */
+    @FunctionalInterface
+    public interface ImageRunner {
+        java.util.concurrent.CompletableFuture<ImagePayload.Entry> run(
+                java.util.function.Supplier<ImagePayload.Entry> image);
     }
 
     /** Vorrang der interaktiven Beschreibungen vor dem Hintergrundlauf. */
@@ -176,19 +196,19 @@ public class PageImageAnalysis {
      */
     public PageImages describeOnce(PageSnapshot snapshot) {
         try (ModelPriority.Interactive ignored = priority.interactive()) {
-            return describe(snapshot, true, entry -> { });
+            return describe(snapshot, true, entry -> { }, null);
         }
     }
 
     /** Wie {@link #describeOnce(PageSnapshot)} mit {@code progress} wie bei {@link #describe(PageSnapshot, java.util.function.Consumer)}. */
     public PageImages describeOnce(PageSnapshot snapshot, java.util.function.Consumer<ImagePayload.Entry> progress) {
         try (ModelPriority.Interactive ignored = priority.interactive()) {
-            return describe(snapshot, true, progress);
+            return describe(snapshot, true, progress, null);
         }
     }
 
     private PageImages describe(PageSnapshot snapshot, boolean releasedOnce,
-                                java.util.function.Consumer<ImagePayload.Entry> progress) {
+                                java.util.function.Consumer<ImagePayload.Entry> progress, ImageRunner runner) {
         PageKey key = snapshot.key();
         ImageDescriber model = assets.describerInUse().orElseThrow(() -> new ImageDescriptionException(
                 ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
@@ -212,11 +232,15 @@ public class PageImageAnalysis {
             }
         }
         prepare(model);
-        for (int index = 0; index < items.size(); index++) {
-            ImagePayload.Entry entry = describe(index, snapshot, items.get(index), releasedOnce, false,
-                    model.retries());
-            entries.add(entry);
-            progress.accept(entry);
+        if (runner == null) {
+            for (int index = 0; index < items.size(); index++) {
+                ImagePayload.Entry entry = describe(index, snapshot, items.get(index), releasedOnce, false,
+                        model.retries());
+                entries.add(entry);
+                progress.accept(entry);
+            }
+        } else {
+            entries.addAll(describeTogether(snapshot, items, releasedOnce, model.retries(), progress, runner));
         }
         Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, version, input.sha256(),
                 snapshot.revision(), Enrichment.Status.OK, ImagePayload.write(entries, versions), warnings, null,
@@ -232,6 +256,55 @@ public class PageImageAnalysis {
         }
         Input after = input(snapshot);
         return PageImages.read(key, after.views(), after.sha256());
+    }
+
+    /**
+     * Die Bilder einer Seite gleichzeitig über {@code runner}. Erst wenn jede Aufgabe beendet ist, kehrt der Aufruf
+     * zurück oder wirft: Kein Bild arbeitet über die Seite hinaus weiter.
+     */
+    private List<ImagePayload.Entry> describeTogether(PageSnapshot snapshot, List<Describable> items,
+                                                      boolean releasedOnce, int retries,
+                                                      java.util.function.Consumer<ImagePayload.Entry> progress,
+                                                      ImageRunner runner) {
+        java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+        List<java.util.concurrent.CompletableFuture<ImagePayload.Entry>> running = new ArrayList<>(items.size());
+        RuntimeException failure = null;
+        for (int index = 0; index < items.size() && failure == null; index++) {
+            int at = index;
+            Describable item = items.get(index);
+            try {
+                running.add(runner.run(() -> stop.get() ? null
+                        : describe(at, snapshot, item, releasedOnce, false, retries)));
+            } catch (RuntimeException e) {
+                failure = e;
+                stop.set(true);
+            }
+        }
+        List<ImagePayload.Entry> entries = new ArrayList<>(items.size());
+        for (java.util.concurrent.CompletableFuture<ImagePayload.Entry> image : running) {
+            try {
+                ImagePayload.Entry entry = image.join();
+                if (failure == null && entry != null) {
+                    entries.add(entry);
+                    progress.accept(entry);
+                }
+            } catch (java.util.concurrent.CompletionException | java.util.concurrent.CancellationException e) {
+                if (failure == null) {
+                    failure = e.getCause() instanceof RuntimeException cause ? cause
+                            : new IllegalStateException(e.getCause());
+                    stop.set(true);
+                }
+            } catch (RuntimeException e) {
+                if (failure == null) {
+                    failure = e;
+                    stop.set(true);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+        return entries;
     }
 
     /** Worauf sich das Ergebnis bezieht und die gespeicherten Ergebnisse mit ihrer Frische dazu. */

@@ -815,7 +815,9 @@ public final class Workspace {
     public PageImages describeImages(String sourceId, String pageId) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
-        PageImages images = harvester.imageAnalysis().describe(page.snapshot());
+        // D2: der Knopf je Seite als gewöhnlicher Auftrag „Bilder beschreiben“, Vorrang wie bisher.
+        PageImages images = harvester.imageDescriptions().describePage(caller.jobOwner(), page.snapshot(),
+                entry -> { });
         harvester.enrichments().flush();
         return images;
     }
@@ -828,8 +830,9 @@ public final class Workspace {
                                      java.util.function.Consumer<ImagePayload.Entry> progress) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        // „Nur diese Seite einmalig“ bleibt direkt: die Einmal-Erlaubnis darf keinen Auftrag überdauern.
         PageImages images = once ? harvester.imageAnalysis().describeOnce(page.snapshot(), progress)
-                : harvester.imageAnalysis().describe(page.snapshot(), progress);
+                : harvester.imageDescriptions().describePage(caller.jobOwner(), page.snapshot(), progress);
         harvester.enrichments().flush();
         return images;
     }
@@ -1947,6 +1950,9 @@ public final class Workspace {
             // Aufträge des Aufrufers (Zusammenfassen, Synonymlauf, Aussagenanalyse) setzt der Core selbst fort.
             return harvester.jobActions().perform(jobId, status.owner(), JobAction.RESUME);
         }
+        if (imageRun(status)) {
+            return harvester.imageDescriptions().resume(caller, jobId);
+        }
         return switch (status.type()) {
             case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
             case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
@@ -1955,6 +1961,13 @@ public final class Workspace {
                     JobAction.RESUME);
             default -> harvester.resumeExport(jobId);
         };
+    }
+
+    /** Ein Unterauftrag „Bilder beschreiben“ im Hintergrund (D2). */
+    private boolean imageRun(JobStatus status) {
+        return status.type() == JobType.BACKGROUND && harvester.imageDescriptions() != null
+                && com.aresstack.spaceharvester.application.images.ImageDescriptionJobs.KIND.equals(
+                status.parameter(com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND));
     }
 
     /**
@@ -1975,7 +1988,12 @@ public final class Workspace {
      *                                                                                   nicht anbietet
      */
     public JobStatus performJobAction(String jobId, JobAction action) {
-        String owner = job(jobId).owner();
+        JobStatus current = job(jobId);
+        String owner = current.owner();
+        if (action == JobAction.RESUME && imageRun(current)) {
+            // D2: ein vom Benutzer gestarteter Lauf „Bilder beschreiben“ läuft mit dessen Rechten weiter.
+            return harvester.imageDescriptions().resume(caller, jobId);
+        }
         JobStatus status = Harvester.OWNER.equals(owner) ? harvester.performJobAction(jobId, action)
                 : harvester.jobActions().perform(jobId, owner, action);
         if (action == JobAction.DELETE) {
