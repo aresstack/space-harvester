@@ -76,6 +76,8 @@ final class AnalysisView extends JPanel {
     private final JPanel stepArea = new JPanel(new BorderLayout());
     private final InfoPopup popup = new InfoPopup();
     private final RelationTab relations;
+    private final SubpageSection below = new SubpageSection(RELATIONS, 8, "Begriff", "Beziehung", "Zu Begriff",
+            "Status");
     private Runner runner = new Runner() {
         @Override
         public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
@@ -123,7 +125,16 @@ final class AnalysisView extends JPanel {
         relations.heading(heading(), null);
         relations.onChanged(this::count);
         add(relations.component(), BorderLayout.CENTER);
+        if (withSteps) {
+            // Fahrplan P3: die Beziehungen der Unterseiten abgetrennt unter denen der Seite.
+            add(below, BorderLayout.SOUTH);
+        }
         fitSteps();
+    }
+
+    /** Der Abschnitt „Aus Unterseiten“ (nur auf der Seite). */
+    SubpageSection below() {
+        return below;
     }
 
     /** Die Analyseschritte der gezeigten Seite; {@code result} liefert je Schritt das Ergebnis in Worten. */

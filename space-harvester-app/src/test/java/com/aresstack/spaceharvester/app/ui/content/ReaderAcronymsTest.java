@@ -298,6 +298,28 @@ class ReaderAcronymsTest {
                 .noneMatch(text -> text.startsWith("API"));
         assertThat(onEdt(() -> panel.terms().alsoBelowTexts())).contains("+1");
 
+        // P3 Beziehungen: die der Unterseite („ZV · Zahlungsverkehr“) abgetrennt, Herkunft die Unterseite; die von
+        // Hand angelegte Beziehung zu „API“ betrifft die Seite selbst und steht nur oben.
+        workspace.addRelation(new com.aresstack.spaceharvester.application.terms.TermRelations.NewRelation("ZV",
+                "Zahlungsverkehr", com.aresstack.spaceharvester.application.terms.RelationType.ABBREVIATION,
+                com.aresstack.spaceharvester.application.terms.RelationScope.GLOBAL, null, List.of()));
+        workspace.addRelation(new com.aresstack.spaceharvester.application.terms.TermRelations.NewRelation("API",
+                "Schnittstelle", com.aresstack.spaceharvester.application.terms.RelationType.RELATED,
+                com.aresstack.spaceharvester.application.terms.RelationScope.GLOBAL, null, List.of()));
+        List<SubpageSection.Row> relations = PageDetailPanel.belowRelations(workspace, "wiki", "200",
+                onEdt(() -> panel.subpages().below()));
+        assertThat(relations).anySatisfy(row -> {
+            assertThat(row.cells().get(0) + " " + row.cells().get(2)).contains("ZV");
+            assertThat(row.originText()).isEqualTo("Zahlungen");
+        });
+        assertThat(relations).noneSatisfy(row -> assertThat(row.cells().get(0)).isEqualTo("API"));
+        onEdt(() -> {
+            panel.selectTab("Beziehungen");
+            return null;
+        });
+        awaitTrue(() -> onEdt(() -> panel.analysisView().below().count() > 0));
+        assertThat(onEdt(() -> panel.analysisView().below().table().getColumnName(4))).isEqualTo("Unterseite");
+
         onEdt(() -> {
             panel.subpages().box().setSelected(false);
             return null;
