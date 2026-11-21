@@ -317,6 +317,122 @@ class DomainTermGraphTest {
     }
 
     @Test
+    void anEdgeCarriesTheHighestTrustAndACheckedStatementOutranksADeviatingOne() {
+        term("Sachbearbeiter");
+        term("Beleg");
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("wiki", "2", "Der Sachbearbeiter prüft den Beleg.");
+        DomainTermGraph checked = withTrust(Set.of("1"), Map.of("2", DomainTermGraph.Agreement.DIFFERS));
+
+        DomainTermGraph.Edge edge = checked.around(CALLER, "Sachbearbeiter", DomainTermGraph.Options.DEFAULT,
+                () -> false).edges().getFirst();
+
+        assertThat(edge.evidence()).extracting(DomainTermGraph.Evidence::trust)
+                .containsExactly(DomainTermGraph.Trust.GEPRUEFT, DomainTermGraph.Trust.ABWEICHEND);
+        assertThat(edge.trust()).isEqualTo(DomainTermGraph.Trust.GEPRUEFT);
+        assertThat(edge.differs()).as("geprüft geht vor: kein „abweichend“").isFalse();
+    }
+
+    @Test
+    void agreeingAnalyzersRankAboveUncheckedAndADeviationWithoutCheckMarksTheEdge() {
+        term("Sachbearbeiter");
+        term("Beleg");
+        term("Kunde");
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("wiki", "2", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("wiki", "3", "Der Kunde sendet den Beleg.");
+        DomainTermGraph compared = withTrust(Set.of(), Map.of("1", DomainTermGraph.Agreement.AGREES,
+                "3", DomainTermGraph.Agreement.DIFFERS));
+
+        List<DomainTermGraph.Edge> edges = compared.around(CALLER, "Beleg", DomainTermGraph.Options.DEFAULT,
+                () -> false).edges();
+
+        assertThat(edges).filteredOn(e -> "prüft".equals(e.verb())).singleElement().satisfies(edge -> {
+            assertThat(edge.trust()).isEqualTo(DomainTermGraph.Trust.EINIG);
+            assertThat(edge.differs()).isFalse();
+        });
+        assertThat(edges).filteredOn(e -> "sendet".equals(e.verb())).singleElement().satisfies(edge -> {
+            assertThat(edge.trust()).isEqualTo(DomainTermGraph.Trust.UNGEPRUEFT);
+            assertThat(edge.differs()).isTrue();
+        });
+        assertThat(around("Beleg").edges()).as("ohne Vergleich alles ungeprüft")
+                .allSatisfy(edge -> assertThat(edge.trust()).isEqualTo(DomainTermGraph.Trust.UNGEPRUEFT))
+                .noneMatch(DomainTermGraph.Edge::differs);
+    }
+
+    @Test
+    void checkedOnlyDropsEdgesWithoutCheckedEvidenceAndTheCountFollows() {
+        term("Sachbearbeiter");
+        term("Beleg");
+        term("Kunde");
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("wiki", "2", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("wiki", "3", "Der Kunde sendet den Beleg.");
+        DomainTermGraph compared = withTrust(Set.of("1"), Map.of("2", DomainTermGraph.Agreement.AGREES,
+                "3", DomainTermGraph.Agreement.AGREES));
+
+        DomainTermGraph.View view = compared.around(CALLER, "Beleg",
+                new DomainTermGraph.Options(2, false, null, true), () -> false);
+
+        assertThat(view.edges()).singleElement().satisfies(edge -> {
+            assertThat(edge.verb()).isEqualTo("prüft");
+            assertThat(edge.count()).as("N zählt nur Geprüftes").isEqualTo(1);
+            assertThat(edge.evidence()).extracting(e -> e.page().key().pageId()).containsExactly("1");
+        });
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::label).containsExactly("Beleg", "Sachbearbeiter");
+    }
+
+    @Test
+    void checkedOnlyAlsoCountsOnlyCheckedStaleStatements() {
+        term("Sachbearbeiter");
+        term("Beleg");
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("wiki", "2", "Der Sachbearbeiter prüft den Beleg.");
+        cache.put(new PageKey("wiki", "2"), EnrichmentTestPages.text("wiki", "2", "2", "Ganz neuer Text."));
+        DomainTermGraph.Options checkedOnly = new DomainTermGraph.Options(2, false, null, true);
+
+        assertThat(withTrust(Set.of("1"), Map.of()).around(CALLER, "Sachbearbeiter", checkedOnly, () -> false)
+                .skippedStale()).as("veraltet, aber ungeprüft: zählt in „Nur geprüft“ nicht").isZero();
+        assertThat(withTrust(Set.of("1", "2"), Map.of()).around(CALLER, "Sachbearbeiter", checkedOnly, () -> false)
+                .skippedStale()).as("veraltet und geprüft: zählt").isEqualTo(1);
+    }
+
+    @Test
+    void aConfirmedReviewOrAPassedCheckIsCheckedWhateverTheComparisonSays() {
+        ParsedStatements.Statement plain = new ParsedStatements.Statement("doc#s1.v1", 0, 0, 1, "prüft", "prüfen",
+                ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(), Set.of(), 0,
+                ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED);
+        ParsedStatements.Statement confirmed = new ParsedStatements.Statement("doc#s1.v2", 0, 0, 1, "prüft",
+                "prüfen", ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(), Set.of(), 0,
+                ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.CONFIRMED);
+        assertThat(DomainTermGraph.trust(confirmed, DomainTermGraph.Agreement.DIFFERS))
+                .isEqualTo(DomainTermGraph.Trust.GEPRUEFT);
+        assertThat(DomainTermGraph.trust(plain, DomainTermGraph.Agreement.DIFFERS))
+                .isEqualTo(DomainTermGraph.Trust.ABWEICHEND);
+        assertThat(DomainTermGraph.trust(plain.withCheck(new ParsedStatements.Check(ParsedStatements.Verdict.STIMMT,
+                "v1", false)), DomainTermGraph.Agreement.DIFFERS)).isEqualTo(DomainTermGraph.Trust.GEPRUEFT);
+        assertThat(DomainTermGraph.trust(plain.withCheck(new ParsedStatements.Check(ParsedStatements.Verdict.FALSCH,
+                "v1", false)), DomainTermGraph.Agreement.AGREES)).isEqualTo(DomainTermGraph.Trust.EINIG);
+        assertThat(DomainTermGraph.trust(plain, null)).isEqualTo(DomainTermGraph.Trust.UNGEPRUEFT);
+    }
+
+    /** Statements auf {@code checked} gelten als geprüft (Prüfschritt „stimmt“), {@code agreement} je Seite. */
+    private DomainTermGraph withTrust(Set<String> checked, Map<String, DomainTermGraph.Agreement> agreement) {
+        return new DomainTermGraph(caller -> graph.analysed(caller).stream().map(page -> {
+            if (!checked.contains(page.page().key().pageId())) {
+                return page;
+            }
+            ParsedStatements result = page.analysis().result();
+            ParsedStatements passed = new ParsedStatements(result.sentences(), result.mentions(),
+                    result.statements().stream().map(statement -> statement.withCheck(new ParsedStatements.Check(
+                            ParsedStatements.Verdict.STIMMT, "v1", false))).toList(), result.attachments(),
+                    result.components(), result.conllu());
+            return new KnowledgeGraph.AnalysedPage(page.page(), page.analysis().withResult(passed));
+        }).toList(), vocabulary(), (caller, page, statement) ->
+                agreement.getOrDefault(page.key().pageId(), DomainTermGraph.Agreement.NOT_COMPARABLE));
+    }
+
+    @Test
     void onlyStatementsFromTheOriginalSentenceAreEvidenceSoACorrectionDoesNotCountTwice() {
         term("Sachbearbeiter");
         term("Beleg");
@@ -333,7 +449,7 @@ class DomainTermGraphTest {
             ParsedStatements doubled = new ParsedStatements(result.sentences(), result.mentions(), statements,
                     result.attachments(), result.components(), result.conllu());
             return new KnowledgeGraph.AnalysedPage(page.page(), page.analysis().withResult(doubled));
-        }).toList(), vocabulary());
+        }).toList(), vocabulary(), DomainTermGraph.Comparison.NONE);
 
         DomainTermGraph.Edge edge = corrected.around(CALLER, "Sachbearbeiter", DomainTermGraph.Options.DEFAULT,
                 () -> false).edges().getFirst();

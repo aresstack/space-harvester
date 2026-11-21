@@ -82,6 +82,20 @@ module_classes=(
   speech-api:com/aresstack/enterpriseai/speech/api/SpeechSynthesisPort
   speech-api:com/aresstack/enterpriseai/speech/api/SpeechSynthesisException
   speech-api:com/aresstack/enterpriseai/speech/api/SynthesizedSpeech
+  # Update-Zusammenfassung als Podcast vorlesen: Aufbereitung, Stückelung samt Stimmstabilitäts-Fix (Stücke um 500
+  # Zeichen gegen den Stimmwechsel generativer TTS-Modelle wie Orpheus), Satzanalyse und Synthese-Ablauf wie im
+  # Upstream; der Space Harvester sammelt die Stücke über eine eigene AudioPlayback und legt sie ab
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/ReadAloudService
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/AudioPlayback
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/SpeechRate
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/SpeechText
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/SpeechChunking
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/SpeechTextPreparation
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/TextAnalysisService
+  speech-api:com/aresstack/enterpriseai/speech/api/TextAnalysisEngine
+  speech-api:com/aresstack/enterpriseai/speech/api/TextAnalysisEngineLoader
+  speech-api:com/aresstack/enterpriseai/speech/api/TaggedToken
+  speech-api:com/aresstack/enterpriseai/speech/api/WordClass
 )
 
 # Aus astu nur die Klassen, die die Module oben (inklusive Tests) transitiv brauchen.

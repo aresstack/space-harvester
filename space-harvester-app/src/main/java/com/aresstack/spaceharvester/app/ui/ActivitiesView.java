@@ -492,6 +492,10 @@ public final class ActivitiesView implements View {
     record Note(String label, String text, boolean skipped) {
     }
 
+    static final String MODEL_NOT_RELEASED_LABEL = "Ohne KI-Freigabe";
+    static final String MODEL_NO_MODEL_LABEL = "Ohne Modell";
+    static final String MODEL_COSTS_LABEL = "KI-Analysator";
+
     /**
      * Die Zahlen der Vorstufe „Sätze vereinfachen“ einer Aussagenanalyse für die Angaben am Auftrag (ADR 0032, FL3):
      * Seiten ohne KI-Freigabe und, getrennt davon, Seiten ohne eingestelltes Modell, jeweils ohne Vorstufe analysiert.
@@ -530,6 +534,16 @@ public final class ActivitiesView implements View {
                 || code.equals(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs
                 .CHECK_NOT_RELEASED)) {
             return new Note(CHECK_LABEL, message, false);
+        }
+        // KI-Analysator (Fahrplan A2/A3): je Grund eine gelbe Zahl, die Kosten nur hier im Overlay des Auftrags.
+        if (code.equals(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.MODEL_NOT_RELEASED)) {
+            return new Note(MODEL_NOT_RELEASED_LABEL, message, true);
+        }
+        if (code.equals(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.MODEL_NO_MODEL)) {
+            return new Note(MODEL_NO_MODEL_LABEL, message, true);
+        }
+        if (code.equals(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.MODEL_COSTS)) {
+            return new Note(MODEL_COSTS_LABEL, message, false);
         }
         if (code.startsWith(com.aresstack.spaceharvester.application.glossary.GlossaryClassification.MODEL_SKIPPED
                 + ":") || code.startsWith(com.aresstack.spaceharvester.application.glossary.GlossaryClassification
@@ -1677,6 +1691,7 @@ public final class ActivitiesView implements View {
                 case PRESENTATION_EXPORT -> new Counters("Folien", "Bearbeitet", "In der Datei", "Ohne Standbild");
                 case SEARCH_QUALITY -> new Counters("Fragen", "Gestellt", "Im Chat-Kontext gefunden",
                         "Suche gescheitert");
+                case UPDATE_PODCAST -> new Counters("Themen", "Gesprochen", "Fertig", "Abschnitte ohne Audio");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }

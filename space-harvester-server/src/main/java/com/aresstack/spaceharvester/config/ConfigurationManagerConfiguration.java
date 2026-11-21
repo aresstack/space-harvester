@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationManag
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.ImageSettings;
@@ -133,11 +134,13 @@ class ConfigurationManagerConfiguration {
         for (String key : List.of(ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MAX_SIZE,
                 TermSettings.SYNONYMS_MAX_TERMS, TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS,
                 TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, TermSettings.SYNONYMS_AUTOMATIC,
-                TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY, EnrichmentSettings.DOCUMENTS_ENABLED,
+                TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY, TermSettings.GLOSSARY_AUTOMATIC,
+                EnrichmentSettings.DOCUMENTS_ENABLED,
                 EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, ChangeLogSettings.RETENTION,
                 ChangeLogSettings.SHOW_AFTER_UPDATE, SimplificationSettings.MODE, SimplificationSettings.PARALLEL,
                 SimplificationSettings.MODEL, CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL,
-                GlossaryRuleSettings.MAX_TERMS, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN)) {
+                GlossaryRuleSettings.MAX_TERMS, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN,
+                AnalyzerSettings.ANALYZER, AnalyzerSettings.MODEL)) {
             binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
                     .ifBound(value -> properties.setProperty(key, value));
         }
@@ -164,7 +167,7 @@ class ConfigurationManagerConfiguration {
                 .withExport(read.export()).withTerms(read.terms()).withEnrichment(read.enrichment())
                 .withChangeLog(read.changeLog()).withSimplification(read.simplification())
                 .withStanding(read.standing())
-                .withCheck(read.check()).withImages(read.images());
+                .withCheck(read.check()).withImages(read.images()).withAnalyzer(read.analyzer());
     }
 
     private static final Bindable<Map<String, Map<String, String>>> SOURCE_RULES = Bindable.of(

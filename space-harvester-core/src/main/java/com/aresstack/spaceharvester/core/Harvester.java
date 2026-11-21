@@ -233,6 +233,7 @@ import com.aresstack.spaceharvester.application.images.ImageProcessor;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerStores;
 import com.aresstack.spaceharvester.application.knowledge.ModelStatementAnalyzer;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysis;
@@ -321,9 +322,6 @@ public final class Harvester implements AutoCloseable {
     private final PageQueries pages;
     private final Holdings holdings;
     private final AiRelease aiRelease;
-    /** Aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2); Vorgabe MaltParser. */
-    private volatile com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice statementAnalyzerChoice =
-            com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER;
     private final PageReleaseService pageReleaseService;
     private final ExportAssetCollection assetCollection;
     private final PageAddresses addresses;
@@ -362,6 +360,8 @@ public final class Harvester implements AutoCloseable {
     /** Seiten-Cache samt Änderungsprotokoll und Update-Marken (ADR 0030). */
     private final LucenePageCache pageCache;
     private final ChangeLog changeLog;
+    /** Die Update-Zusammenfassung als Podcast (Angelo 21.11.2026). */
+    private final com.aresstack.spaceharvester.application.podcast.UpdatePodcasts podcasts;
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
     private final ChangeEvents changeEvents;
@@ -388,6 +388,7 @@ public final class Harvester implements AutoCloseable {
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    private final com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison analyzerComparison;
     private final com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
     private final com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice;
@@ -828,6 +829,10 @@ public final class Harvester implements AutoCloseable {
                     scheduler, AccessContext.technicalClient(OWNER),
                     key -> texts.cachedVersion(key, cache::findHeader, cache::find).isPresent(),
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
+            // K4: Fachbegriffe nach der Anreicherung als Hintergrundauftrag, nur mit terms.glossary.automatic.
+            TermSettings automaticTerms = builder.terms;
+            this.glossaryClassification.background(backgroundJobs, AccessContext.technicalClient(OWNER),
+                    () -> (this.settings != null ? this.settings.terms() : automaticTerms).glossaryAutomatic());
             SearchHitPrefetch prefetch = null;
             // ADR 0015: Folgt das Vorabladen der Konfiguration, gibt es den Lader immer; ob ein Stapel lädt, liest die
             // Suche je Stapel aus search.prefetch-hits.
@@ -953,7 +958,9 @@ public final class Harvester implements AutoCloseable {
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                     // SY1: danach der automatische Synonymlauf der Quelle als Hintergrundauftrag.
                     // B1: danach die automatische Bildbeschreibung der Quelle als eigener Auftrag (Standard aus).
+                    // K4: danach die Fachbegriffe der Quelle als Hintergrundauftrag (Standard aus).
                     List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId),
+                            sourceId -> glossaryClassification.automatic(sourceId),
                             sourceId -> {
                                 var automatic = this.automaticImages;
                                 if (automatic != null) {
@@ -988,6 +995,22 @@ public final class Harvester implements AutoCloseable {
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault());
             opened.add(changeLog);
+            // Podcast der Update-Zusammenfassung (Angelo 21.11.2026): Plan und Texte über ai.chat-model, Audio über die
+            // TTS-Modelle des Dienstes; Ablage unter data/podcasts, damit ein neuer Lauf dort weitermacht.
+            java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastAi =
+                    () -> liveAi ? this.settings.ai() : startAi;
+            this.podcasts = new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts(jobs,
+                    new ChatStepModel(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.VERSION,
+                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                    new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
+                            builder.userAgent, sentences),
+                    new com.aresstack.spaceharvester.application.podcast.PodcastStore(
+                            builder.dataDirectory.resolve("podcasts")),
+                    com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled(),
+                    () -> {
+                        com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
+                        return current == null ? 1 : current.parallel();
+                    });
             start.step("Änderungsprotokoll");
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
@@ -1063,6 +1086,8 @@ public final class Harvester implements AutoCloseable {
             PageImageAnalysis pageImages = this.imageAnalysis;
             AiRelease withdrawn = this.aiRelease;
             ChangeLog summaries = this.changeLog;
+            com.aresstack.spaceharvester.application.podcast.UpdatePodcasts podcastsAfterWithdrawal =
+                    this.podcasts;
             // ADR 0032, FL3: Vorstufe „Sätze vereinfachen“ nur auf Auftrag, an das Modell nur Seiten mit KI-Freigabe;
             // ihre Ablage zählt als Seiteninhalt und fällt mit der Seite, der Quelle und der Freigabe.
             this.simplifications = new Simplifications(new ChatStepModel(ChatStepModel.SIMPLIFICATION,
@@ -1116,6 +1141,12 @@ public final class Harvester implements AutoCloseable {
                 this.glossaryClassification.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
+                // Podcasts, deren Zusammenfassung dabei wegfiel, entfallen mit ihr.
+                podcastsAfterWithdrawal.prune(meta -> cache.summary(meta.sourceId(), meta.updateId(), meta.spaceKey())
+                        .map(stored -> com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.key(
+                                stored.sourceId(), stored.updateId(), stored.spaceKey(), stored.text(),
+                                String.valueOf(stored.createdAt())))
+                        .filter(meta.key()::equals).isPresent());
                 // SY2: Vektoren der Synonymerkennung aus diesen Seiten und der Stand ihrer Quellen.
                 synonymDiscovery.withdrawn(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
             });
@@ -1134,19 +1165,20 @@ public final class Harvester implements AutoCloseable {
                     graph.analysesChanged();
                 }
             };
-            KnowledgeGraphStore graphStore = new AnalyzerStores(
+            AnalyzerStores graphStore = new AnalyzerStores(
                     new com.aresstack.spaceharvester.application.knowledge.ObservedKnowledgeGraphStore(
                             new FileKnowledgeGraphStore(builder.dataDirectory.resolve("knowledge-graph")),
                             analysesChanged),
                     new com.aresstack.spaceharvester.application.knowledge.ObservedKnowledgeGraphStore(
                             new FileKnowledgeGraphStore(builder.dataDirectory.resolve("knowledge-graph-model")),
                             analysesChanged),
-                    () -> statementAnalyzerChoice);
+                    this::statementAnalyzerChoice);
             StatementAnalyzer statementAnalyzer = builder.statementAnalyzer;
             // Fahrplan Paket A2: zweiter Analysator über den eingestellten KI-Dienst, derselbe Modellweg wie Vorstufe
             // und Prüfschritt (Temperatur 0, Denken aus); nur auf Auftrag, an den Dienst nur Seiten mit KI-Freigabe.
             StatementAnalyzer modelAnalyzer = new ModelStatementAnalyzer(new ChatStepModel(ModelStatementAnalyzer.STEP,
-                    () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog, trustBundles,
+                    () -> liveAi ? this.settings.ai() : startAi,
+                    () -> this.settings == null ? null : this.settings.analyzer().model(), catalog, trustBundles,
                     builder.userAgent), sentences);
             java.util.function.Function<PageSnapshot, Optional<PageText>> readerText = snapshot -> {
                 try {
@@ -1155,13 +1187,29 @@ public final class Harvester implements AutoCloseable {
                     return Optional.empty();
                 }
             };
+            // ADR 0032, FL6 und W3: Entscheidungen zu Stand und Prüfung als Nutzerdaten. Die Prüfung durch Menschen wirkt
+            // an einer Stelle beim Lesen der Analysen (Aussagen-Reiter und Knowledge Graph), direkt aus der Ablage.
+            com.aresstack.spaceharvester.application.standing.StandingDecisionStore standingDecisions =
+                    new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
+                            builder.dataDirectory.resolve("standing"));
             this.statementAnalysis = new StatementAnalysis(readerText, graphStore, access, () -> statementAnalyzer,
-                    clock, simplified, checked, () -> modelAnalyzer, withdrawn::mayProcess);
+                    clock, simplified, checked, () -> modelAnalyzer, withdrawn::mayProcess,
+                    new com.aresstack.spaceharvester.application.standing.DecisionReviews(standingDecisions));
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
             observedGraph.set(this.knowledgeGraph);
             opened.add(this.knowledgeGraph::close);
+            // K2: je Ablage eine eigene Sicht mit denselben Rechten und demselben Stand je Seite, für den Abgleich.
+            // Die Sichten teilen das Gedächtnis der Eingabe-Hashes mit der Hauptsicht: Was diese vergisst (neues
+            // Transkript, Neuaufbau), vergessen sie mit, sonst gälte eine Videoseite dort weiter als AKTUELL.
+            java.util.Map<AnalyzerChoice, KnowledgeGraph> byAnalyzer = new java.util.EnumMap<>(AnalyzerChoice.class);
+            for (AnalyzerChoice choice : AnalyzerChoice.values()) {
+                byAnalyzer.put(choice, this.knowledgeGraph.sharingInputs(graphStore.store(choice)));
+            }
+            this.analyzerComparison = new com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison(
+                    access, cache::find, (who, choice, key) -> byAnalyzer.get(choice).page(who, key),
+                    graphStore::selected);
             this.verbQueries = new com.aresstack.spaceharvester.application.knowledge.VerbQueries(
                     this.knowledgeGraph);
             // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
@@ -1179,8 +1227,7 @@ public final class Harvester implements AutoCloseable {
                     () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules(), glossary);
             knowledgeGraph.subscribe(technicalTerms::forget);
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
-                    cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
-                    builder.dataDirectory.resolve("standing")), access,
+                    cache::findHeader, standingDecisions, access,
                     () -> com.aresstack.spaceharvester.application.standing.StandingWords.of(
                             this.settings.standing()), clock,
                     new com.aresstack.spaceharvester.application.standing.SentenceSource() {
@@ -1201,6 +1248,9 @@ public final class Harvester implements AutoCloseable {
                                     .filter(text -> text.inputSha256().equals(inputSha256)).map(PageText::text);
                         }
                     });
+            // Eine gesetzte oder zurückgenommene Prüfung ändert die wirksame Prüfung der Analysen: Graph, Fachsicht,
+            // Aussagen und Verben ziehen ohne Klick nach (W3, D6).
+            opened.add(statusQuo.subscribeReviews(knowledgeGraph::analysesChanged));
             this.readingAdvice = new com.aresstack.spaceharvester.application.standing.ReadingAdvice(statusQuo,
                     knowledgeGraph::analysed,
                     new com.aresstack.spaceharvester.application.standing.ChangeLogRecentChanges(changeLog), clock);
@@ -1459,7 +1509,14 @@ public final class Harvester implements AutoCloseable {
         SearchReranker nextReranker = reranker;
         ConfigurationListener.Preparation releases = releaseRecomputation.prepare(change);
         return () -> {
+            com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice storeBefore = statementAnalyzerChoice();
             settings = next;
+            // Eine andere Ablage der Aussagenanalyse (statements.analyzer): Graph, Stand, Glossar, Fachsicht und Verben
+            // lesen neu, ohne Klick (D6/D6a).
+            KnowledgeGraph graph = this.knowledgeGraph;
+            if (graph != null && storeBefore != next.analyzer().analyzer()) {
+                graph.analysesChanged();
+            }
             if (network != null) {
                 // Vor dem Austausch der Modelle; die schon gebauten halten Route und Vertrauen über den Katalog.
                 catalog.reconfigure(network);
@@ -1734,20 +1791,14 @@ public final class Harvester implements AutoCloseable {
      * Die Freigabeprüfung für den KI-Dienst mit der Liste der freigegebenen Seiten (ADR 0028): Quelle in
      * {@code ai.external-processing-sources} oder Seite auf der Liste.
      */
-    /** Aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2). */
+    /**
+     * Aus welcher Ablage Graph, Stand, Begriffe und Export lesen und welcher Analysator vorgewählt ist
+     * ({@code space-harvester.statements.analyzer}, Fahrplan Paket A2/A3); Vorgabe MaltParser.
+     */
     public com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice statementAnalyzerChoice() {
-        return statementAnalyzerChoice;
-    }
-
-    /** Stellt ein, aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2). */
-    public void statementAnalyzerChoice(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice choice) {
-        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice before = this.statementAnalyzerChoice;
-        this.statementAnalyzerChoice = java.util.Objects.requireNonNull(choice, "choice");
-        // Eine andere Ablage: Graph, Fachsicht und Verben lesen neu (D6).
-        KnowledgeGraph graph = this.knowledgeGraph;
-        if (before != choice && graph != null) {
-            graph.analysesChanged();
-        }
+        HarvesterConfiguration current = this.settings;
+        return current == null ? com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER
+                : current.analyzer().analyzer();
     }
 
     public AiRelease aiRelease() {
@@ -2072,6 +2123,11 @@ public final class Harvester implements AutoCloseable {
     /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */
     public com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries() {
         return verbQueries;
+    }
+
+    /** Abgleich der beiden Aussagenanalysatoren je Seite (K2); rechnet auf Abruf, speichert nichts. */
+    public com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison analyzerComparison() {
+        return analyzerComparison;
     }
 
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */
@@ -2404,6 +2460,11 @@ public final class Harvester implements AutoCloseable {
     /** Änderungsprotokoll und Updates je Quelle (ADR 0030), mit den Rechten des Aufrufers je Seite. */
     public ChangeLog changeLog() {
         return changeLog;
+    }
+
+    /** Die Update-Zusammenfassung als Podcast (Angelo 21.11.2026). */
+    public com.aresstack.spaceharvester.application.podcast.UpdatePodcasts podcasts() {
+        return podcasts;
     }
 
     /** Die Zeilen des Änderungsprotokolls einer Quelle (ADR 0030) ohne Rechteprüfung, für Tests. */

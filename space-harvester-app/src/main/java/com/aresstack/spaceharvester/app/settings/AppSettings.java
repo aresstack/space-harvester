@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
@@ -75,6 +76,8 @@ import java.util.Set;
  * @param dictationModel  das Whisper-Modell für die Spracheingabe im Chat
  *                        ({@code space-harvester-app.whisper.dictation-model}); ohne Angabe Tiny, unabhängig von
  *                        {@code whisperModel} (Angelo 21.11.2026: die Spracheingabe soll schnell sein); nur die App
+ * @param analyzer        Aussagenanalyse: vorgewählter Analysator = gelesene Ablage und Modell
+ *                        ({@code space-harvester.statements.analyzer}, {@code analyzer-model}), wie beim Dienst
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
@@ -89,9 +92,10 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           CheckSettings check, ViewerBackground viewerBackground, VideoSettings video,
                           com.aresstack.spaceharvester.app.transcription.WhisperModel whisperModel,
                           ImageSettings images,
-                          com.aresstack.spaceharvester.app.transcription.WhisperModel dictationModel) {
+                          com.aresstack.spaceharvester.app.transcription.WhisperModel dictationModel,
+                          AnalyzerSettings analyzer) {
 
-    /** Mit dem Whisper-Modell der Spracheingabe ohne Angabe (Tiny), für Aufrufer ohne Bedarf. */
+    /** Mit dem Whisper-Modell der Spracheingabe ohne Angabe (Tiny) und der Vorgabe der Aussagenanalyse. */
     public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                        ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                        Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
@@ -108,10 +112,10 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
                 disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
                 inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check,
-                viewerBackground, video, whisperModel, images, null);
+                viewerBackground, video, whisperModel, images, null, AnalyzerSettings.DEFAULT);
     }
 
-    /** Ohne automatische Bildbeschreibung ({@link ImageSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
+    /** Ohne automatische Bildbeschreibung und mit der Vorgabe der Aussagenanalyse, für Aufrufer ohne Bedarf. */
     public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                        ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                        Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
@@ -127,7 +131,28 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
                 disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
                 inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check,
-                viewerBackground, video, whisperModel, ImageSettings.DEFAULT);
+                viewerBackground, video, whisperModel, ImageSettings.DEFAULT, null, AnalyzerSettings.DEFAULT);
+    }
+
+    /** Mit der Vorgabe der Aussagenanalyse ({@link AnalyzerSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                       LocalFileSettings localFiles, Map<String, String> sourceKeePass,
+                       List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
+                       EnrichmentSettings enrichment, AnalyticsSettings analytics,
+                       SimplificationSettings simplification, StandingSettings standing,
+                       CheckSettings check, ViewerBackground viewerBackground, VideoSettings video,
+                       com.aresstack.spaceharvester.app.transcription.WhisperModel whisperModel,
+                       ImageSettings images, com.aresstack.spaceharvester.app.transcription.WhisperModel
+                               dictationModel) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check,
+                viewerBackground, video, whisperModel, images, dictationModel, AnalyzerSettings.DEFAULT);
     }
 
     public AppSettings {
@@ -162,6 +187,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 ? com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT : whisperModel;
         images = images == null ? ImageSettings.DEFAULT : images;
         dictationModel = dictationModel == null ? com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT : dictationModel;
+        analyzer = analyzer == null ? AnalyzerSettings.DEFAULT : analyzer;
     }
 
     /** Dieselbe Konfiguration mit anderer automatischer Bildbeschreibung ({@code space-harvester.images.*}). */
@@ -169,7 +195,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
                 localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification,
-                standing, check, viewerBackground, video, whisperModel, value, dictationModel);
+                standing, check, viewerBackground, video, whisperModel, value, dictationModel, analyzer);
     }
 
     /** Mit dem Whisper-Modell ohne Angabe (Tiny), für Aufrufer ohne Bedarf. */
@@ -389,7 +415,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
                 inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video,
-                whisperModel, images, dictationModel);
+                whisperModel, images, dictationModel, analyzer);
     }
 
     /** Dieselbe Konfiguration mit anderen Grenzen für Bilder- und Anhängeaufträge ({@link JobLimits#withParallel}). */
@@ -398,7 +424,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 jobLimits.withParallel(preparations, downloads), ai, outputDirectory, problems, disabledSources, tls,
                 cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass, inactiveRoots, terms,
                 consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video,
-                whisperModel, images, dictationModel);
+                whisperModel, images, dictationModel, analyzer);
     }
 
     /**
@@ -410,7 +436,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 jobLimits.withParallel(preparations, downloads).withConnections(connections), ai, outputDirectory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles,
                 sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video,
-                whisperModel, images, dictationModel);
+                whisperModel, images, dictationModel, analyzer);
     }
 
     /**
@@ -426,7 +452,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
                 other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms,
                 other.consoleOutput, other.enrichment, other.analytics, other.simplification, other.standing, other.check, other.viewerBackground, other.video,
-                other.whisperModel, other.images, other.dictationModel);
+                other.whisperModel, other.images, other.dictationModel, other.analyzer);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
@@ -434,7 +460,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles, sourceKeePass,
                 inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video,
-                whisperModel, images, dictationModel);
+                whisperModel, images, dictationModel, analyzer);
     }
 
     /** Dieselbe Konfiguration mit anderer Terminal-Ausgabe; die Laufzeit braucht sie nicht. */
@@ -442,7 +468,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
                 localFiles, sourceKeePass, inactiveRoots, terms, output, enrichment, analytics, simplification, standing, check, viewerBackground, video,
-                whisperModel, images, dictationModel);
+                whisperModel, images, dictationModel, analyzer);
     }
 
     /** Dieselbe Konfiguration mit anderem Hintergrund des Bildbetrachters; die Laufzeit braucht ihn nicht. */
@@ -451,7 +477,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
                 localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification,
                 standing, check, background, video,
-                whisperModel, images, dictationModel);
+                whisperModel, images, dictationModel, analyzer);
     }
 
     /** Dieselbe Konfiguration mit anderen Werten für Videos; der Player liest sie beim nächsten Öffnen. */
@@ -460,7 +486,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
                 localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification,
                 standing, check, viewerBackground, video,
-                whisperModel, images, dictationModel);
+                whisperModel, images, dictationModel, analyzer);
     }
 
     /** Dieselbe Konfiguration mit anderem Whisper-Modell; es gilt beim nächsten Gebrauch. */
@@ -468,7 +494,15 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
                 localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification,
-                standing, check, viewerBackground, video, model, images, dictationModel);
+                standing, check, viewerBackground, video, model, images, dictationModel, analyzer);
+    }
+
+    /** Dieselbe Konfiguration mit anderer Aussagenanalyse (Analysator, Ablage und Modell, Fahrplan A2/A3). */
+    public AppSettings withAnalyzer(AnalyzerSettings value) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
+                outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
+                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification,
+                standing, check, viewerBackground, video, whisperModel, images, dictationModel, value);
     }
 
     /** Dieselbe Konfiguration mit anderem Whisper-Modell für die Spracheingabe; es gilt ab der nächsten Aufnahme. */
@@ -476,7 +510,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
                 localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification,
-                standing, check, viewerBackground, video, whisperModel, images, model);
+                standing, check, viewerBackground, video, whisperModel, images, model, analyzer);
     }
 
     /** Dieselbe Konfiguration mit anderem Export „Analytics“; die Laufzeit braucht ihn nicht. */
@@ -484,7 +518,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
                 localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground, video,
-                whisperModel, images, dictationModel);
+                whisperModel, images, dictationModel, analyzer);
     }
 
     /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */
