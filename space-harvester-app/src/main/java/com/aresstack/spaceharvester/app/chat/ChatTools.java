@@ -37,8 +37,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * nur aus dem Cache, nie bei der Quelle.
  *
  * <ul>
- *   <li>{@value #LIST}: die Kinder eines Knotens (ohne Angabe die Startseiten des Bereichs), blätternd, mit
- *   Kennzeichen „hat Unterseiten“, wie der Baum links.</li>
+ *   <li>{@value #LIST}: die Kinder eines Knotens (ohne Angabe die Startseiten des Bereichs), nach Titel, blätternd,
+ *   mit Kennzeichen „hat Unterseiten“, wie der Baum links; Titel aus den Kopfdaten, nie aus dem Lesetext.</li>
  *   <li>{@value #READ}: der Lesetext einer Seite in Stücken von {@value #READ_CHARS} Zeichen mit Versatz.</li>
  *   <li>{@value #SEARCH}: dieselbe Suche wie die Suche mit Auswahl links, nie über den Bereich hinaus.</li>
  * </ul>
@@ -80,6 +80,9 @@ final class ChatTools {
     private final Sources sources;
     private volatile ProgressiveSearch search;
     private volatile boolean cancelled;
+    /** Je Turn einmal geladen: Bestand und Titel je Space (aus den Kopfdaten, ohne Lesetext). */
+    private final Map<String, Map<String, PageHolding>> holdings = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Map<String, String>> titles = new java.util.concurrent.ConcurrentHashMap<>();
 
     ChatTools(Workspace workspace, PageSelection scope, Set<PageKey> granted, Sources sources) {
         this.workspace = Objects.requireNonNull(workspace, "workspace");
@@ -242,11 +245,9 @@ final class ChatTools {
             if (parent != null && !space.sourceId().equals(parent.sourceId())) {
                 continue;
             }
-            Map<String, PageHolding> pages;
-            try {
-                pages = workspace.holdings(space.sourceId(), space.spaceKey()).pages();
-            } catch (RuntimeException gone) {
-                continue;
+            Map<String, PageHolding> pages = holdings(space.sourceId(), space.spaceKey());
+            if (parent != null && !pages.containsKey(parent.pageId())) {
+                continue; // der Knoten liegt in einem anderen Space dieser Quelle
             }
             for (PageHolding page : pages.values()) {
                 if (page.state() == HoldingState.REMOVED || !scope.contains(space.sourceId(), page.pageId())) {
@@ -256,12 +257,18 @@ final class ChatTools {
                         ? page.parentPageId() == null || !scope.contains(space.sourceId(), page.parentPageId())
                         : parent.pageId().equals(page.parentPageId());
                 if (match) {
-                    entries.add(new Entry(new PageKey(space.sourceId(), page.pageId()), page.subtree().pages()));
+                    String title = titles(space.sourceId(), space.spaceKey()).get(page.pageId());
+                    entries.add(new Entry(new PageKey(space.sourceId(), page.pageId()), title,
+                            page.subtree().pages()));
                 }
             }
+            if (parent != null) {
+                break;
+            }
         }
-        // Feste Reihenfolge fürs Blättern: die größten Teilbäume zuerst, dann nach Kennung.
-        entries.sort(Comparator.comparingInt(Entry::size).reversed().thenComparing(entry -> ref(entry.key())));
+        // Feste Reihenfolge fürs Blättern: nach Titel wie im Baum, dann nach Kennung.
+        entries.sort(Comparator.comparing((Entry entry) -> entry.title() == null ? "\uffff"
+                : entry.title().toLowerCase(java.util.Locale.ROOT)).thenComparing(entry -> ref(entry.key())));
         int sheets = Math.max(1, (entries.size() + PAGE_SIZE - 1) / PAGE_SIZE);
         if (entries.isEmpty()) {
             return parent == null ? "Der Bereich enthält keine Seiten." : "Diese Seite hat keine Unterseiten.";
@@ -273,12 +280,8 @@ final class ChatTools {
         b.append(parent == null ? "Startseiten des Bereichs" : "Unterseiten").append(", Blatt ").append(sheet)
                 .append(" von ").append(sheets).append(" (").append(entries.size()).append(" Einträge)\n");
         for (Entry entry : entries.subList((sheet - 1) * PAGE_SIZE, Math.min(entries.size(), sheet * PAGE_SIZE))) {
-            if (cancelled) {
-                break;
-            }
-            Page page = page(entry.key());
             b.append("- ").append(ref(entry.key())).append(" | ")
-                    .append(page == null ? "(nicht lokal gespeichert)" : oneLine(page.title()));
+                    .append(entry.title() == null ? "(nicht lokal gespeichert)" : oneLine(entry.title()));
             if (entry.size() > 1) {
                 b.append(" | hat Unterseiten (").append(entry.size() - 1).append(')');
             }
@@ -290,7 +293,40 @@ final class ChatTools {
         return b.toString().stripTrailing();
     }
 
-    private record Entry(PageKey key, int size) {
+    /** Der Bestand eines Space, je Turn einmal. */
+    private Map<String, PageHolding> holdings(String sourceId, String spaceKey) {
+        return holdings.computeIfAbsent(sourceId + "\u0000" + spaceKey, key -> {
+            try {
+                return workspace.holdings(sourceId, spaceKey).pages();
+            } catch (RuntimeException gone) {
+                return Map.of();
+            }
+        });
+    }
+
+    /** Die Titel eines Space aus den Kopfdaten der Seitenliste des Cache, je Turn einmal, ohne Lesetext. */
+    private Map<String, String> titles(String sourceId, String spaceKey) {
+        return titles.computeIfAbsent(sourceId + "\u0000" + spaceKey, key -> {
+            Map<String, String> found = new java.util.HashMap<>();
+            try {
+                String cursor = null;
+                do {
+                    var listing = workspace.cachedPages(sourceId, spaceKey, cursor, 1000);
+                    for (var listed : listing.pages()) {
+                        PageMetadata metadata = listed.header().metadata();
+                        found.put(listed.header().key().pageId(), metadata.title() == null
+                                ? listed.header().key().pageId() : metadata.title());
+                    }
+                    cursor = listing.nextCursor();
+                } while (cursor != null && !cancelled);
+            } catch (RuntimeException gone) {
+                // ohne Liste bleiben die Einträge ohne Titel
+            }
+            return found;
+        });
+    }
+
+    private record Entry(PageKey key, String title, int size) {
     }
 
     // ------------------------------------------------------------------ Suche

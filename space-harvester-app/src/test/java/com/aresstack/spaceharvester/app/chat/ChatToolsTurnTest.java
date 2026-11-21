@@ -213,6 +213,37 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void toolsRunOffTheStreamThreadOfTheAdapterAndOffTheEventThread() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean returned = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread[] stream = new Thread[1];
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> {
+                    stream[0] = Thread.currentThread();
+                    listener.toolCalls("", List.of(new AiChat.ToolCall("c1", ChatTools.LIST, "{}")));
+                    returned.set(true);
+                },
+                (request, listener) -> {
+                    // Liefen die Werkzeuge im Rückruf, wäre der erste Rückruf hier noch nicht zurück.
+                    long end = System.currentTimeMillis() + 5_000;
+                    while (!returned.get() && System.currentTimeMillis() < end) {
+                        Thread.onSpinWait();
+                    }
+                    listener.completed(returned.get() ? "frei" : "blockiert");
+                }));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(events.completed).isEqualTo("frei");
+        assertThat(events.usingThreads).singleElement().satisfies(thread -> {
+            assertThat(thread).isNotSameAs(stream[0]);
+            assertThat(thread.getName()).isEqualTo("chat-turn-tools");
+        });
+    }
+
+    @Test
     void cancellingBetweenRoundsStopsTheLoop() throws Exception {
         Events events = new Events();
         ChatTurn[] turn = new ChatTurn[1];
@@ -279,6 +310,7 @@ class ChatToolsTurnTest {
 
         final CountDownLatch done = new CountDownLatch(1);
         final List<String> using = new ArrayList<>();
+        final List<Thread> usingThreads = new CopyOnWriteArrayList<>();
         ChatKnowledge.Context context;
         String completed;
         String failed;
@@ -292,6 +324,7 @@ class ChatToolsTurnTest {
         @Override
         public void using(String what) {
             using.add(what);
+            usingThreads.add(Thread.currentThread());
         }
 
         @Override

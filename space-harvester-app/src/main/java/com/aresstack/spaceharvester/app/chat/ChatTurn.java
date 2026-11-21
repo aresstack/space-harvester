@@ -392,18 +392,12 @@ public final class ChatTurn {
 
             @Override
             public void toolCalls(String text, List<AiChat.ToolCall> calls) {
-                List<AiChat.Message> next = new ArrayList<>(messages);
-                next.add(AiChat.Message.assistant(text == null ? "" : text, calls));
-                for (AiChat.ToolCall call : calls) {
-                    if (cancelRequested) {
-                        break;
-                    }
-                    String what = ChatTools.describe(call);
-                    onUi(() -> listener.using(what));
-                    next.add(AiChat.Message.tool(call.id(), tools.run(call)));
-                }
-                round(next, round + 1);
+                // Nie auf dem Strom-Thread des Adapters (und nie auf dem EDT): Suche und Lesen können dauern.
+                Thread worker = new Thread(() -> runTools(messages, text, calls, round), "chat-turn-tools");
+                worker.setDaemon(true);
+                worker.start();
             }
+
 
             @Override
             public void failed(AiChatException error) {
@@ -438,6 +432,21 @@ public final class ChatTurn {
         if (cancelRequested) {
             task.cancel();
         }
+    }
+
+    /** Führt die Aufrufe einer Runde aus (auf eigenem Thread) und stellt die nächste Anfrage. */
+    private void runTools(List<AiChat.Message> messages, String text, List<AiChat.ToolCall> calls, int round) {
+        List<AiChat.Message> next = new ArrayList<>(messages);
+        next.add(AiChat.Message.assistant(text == null ? "" : text, calls));
+        for (AiChat.ToolCall call : calls) {
+            if (cancelRequested) {
+                break;
+            }
+            String what = ChatTools.describe(call);
+            onUi(() -> listener.using(what));
+            next.add(AiChat.Message.tool(call.id(), tools.run(call)));
+        }
+        round(next, round + 1);
     }
 
     /** Nimmt eine gelesene Seite als Quelle auf (oder findet sie wieder) und meldet die Liste; gibt ihre Nummer. */
