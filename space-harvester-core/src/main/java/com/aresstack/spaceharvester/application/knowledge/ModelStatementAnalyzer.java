@@ -56,6 +56,11 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
     /** Längster Satz, der an das Modell geht; längere Zeilen (Tabellen, Daten) gehen nicht hinaus. */
     static final int MAX_SENTENCE_CHARS = 600;
 
+    /**
+     * Stand des Wortabgleichs (Pronomen, Präpositionen, Teilsätze), unabhängig von der Anweisung: eine Änderung macht
+     * gespeicherte Analysen veraltet, ohne eine neue Messung der Anweisung zu verlangen.
+     */
+    static final String MATCHING_VERSION = "2";
     private static final String INSTRUCTIONS = resource("anweisung-v1.txt");
     private static final Pattern WORD = Pattern.compile("[\\p{L}\\p{N}][\\p{L}\\p{N}-]*");
     private static final Set<String> PREPOSITIONS = Set.of("an", "am", "auf", "aus", "bei", "beim", "bis", "durch",
@@ -67,7 +72,11 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
             "sein", "seine", "seinen", "seinem", "seiner", "ihr", "ihre", "ihren", "ihrem", "ihrer", "unser",
             "unsere", "unseren", "unserem", "unserer");
     private static final Set<String> PRONOUNS = Set.of("er", "sie", "es", "ihn", "ihm", "ihnen", "wer", "was", "wen",
-            "wem", "man", "dies", "diese", "dieser", "dieses", "der", "die", "das");
+            "wem", "man", "dies", "diese", "dieser", "dieses", "der", "die", "das", "ich", "du", "wir", "ihr", "mich",
+            "dich", "mir", "dir", "uns", "euch", "sich", "jemand", "niemand");
+    /** Personalpronomen: Sie beenden die Suche nach einer Präposition vor einem Beteiligten. */
+    private static final Set<String> PERSONAL_PRONOUNS = Set.of("er", "sie", "es", "ihn", "ihm", "ihnen", "man",
+            "wer", "was", "wen", "wem", "ich", "du", "wir", "uns", "euch", "mich", "dich", "mir", "dir", "sich");
     /** Trennbare Verbzusätze, die vor dem Stamm wegfallen, wenn das Prädikat im Satz gesucht wird. */
     private static final List<String> PARTICLES = List.of("zurück", "weiter", "fest", "frei", "nach", "vor", "ein",
             "aus", "auf", "an", "ab", "mit", "zu", "bei", "dar", "her", "hin", "los", "um", "durch", "über", "unter",
@@ -98,7 +107,7 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
     /** Modell samt Fingerabdruck des Dienstes und Version der Anweisung; ändert sie sich, veralten die Analysen. */
     @Override
     public String version() {
-        return model.version() + "|prompt-" + PROMPT_VERSION;
+        return model.version() + "|prompt-" + PROMPT_VERSION + "|abgleich-" + MATCHING_VERSION;
     }
 
     @Override
@@ -125,6 +134,19 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
     @Override
     public ParsedStatements analyze(String documentId, String text, BooleanSupplier cancelled,
                                     Consumer<Costs> costs) {
+        return analyze(documentId, text, cancelled, () -> true, costs);
+    }
+
+    /**
+     * Wie oben; {@code released} wird vor jedem Modellaufruf geprüft (ADR 0028).
+     *
+     * @throws AnalyzerUnavailableException mit {@link AnalyzerUnavailableException.Reason#NOT_RELEASED}, sobald die
+     *                                      Freigabe vor einem Aufruf fehlt
+     */
+    @Override
+    public ParsedStatements analyze(String documentId, String text, BooleanSupplier cancelled,
+                                    BooleanSupplier released, Consumer<Costs> costs) {
+        Objects.requireNonNull(released, "released");
         Objects.requireNonNull(documentId, "documentId");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(cancelled, "cancelled");
@@ -142,6 +164,10 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
         for (int from = 0; from < asked.size(); from += MAX_LINES) {
             if (cancelled.getAsBoolean()) {
                 throw new CancellationException("Analyse abgebrochen");
+            }
+            if (!released.getAsBoolean()) {
+                throw new AnalyzerUnavailableException(AnalyzerUnavailableException.Reason.NOT_RELEASED,
+                        "Seite nicht für den KI-Dienst freigegeben", null);
             }
             List<ParsedStatements.Sentence> chunk = asked.subList(from, Math.min(asked.size(), from + MAX_LINES));
             String response = model.complete(INSTRUCTIONS, input(text, chunk));
@@ -244,12 +270,19 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
                     accepted.add(candidate);
                 }
             }
-            List<Accepted> kept = new ArrayList<>();
-            for (Accepted candidate : accepted) {
-                if (candidate.clauses().stream().allMatch(clause -> clauseTarget(accepted, candidate, clause) != null)) {
-                    kept.add(candidate);
-                } else {
-                    rejected++;
+            // Bis nichts mehr wegfällt: fällt das Ziel eines Teilsatzes weg, fällt auch die Aussage, die darauf zeigt
+            // (entscheiden → §prüfen → §fördern ohne fördern); geprüft wird gegen dieselbe Liste, aus der gebaut wird
+            List<Accepted> kept = new ArrayList<>(accepted);
+            boolean changed = true;
+            while (changed) {
+                changed = false;
+                for (java.util.Iterator<Accepted> it = kept.iterator(); it.hasNext(); ) {
+                    Accepted candidate = it.next();
+                    if (!candidate.clauses().stream().allMatch(clause -> clauseTarget(kept, candidate, clause) != null)) {
+                        it.remove();
+                        rejected++;
+                        changed = true;
+                    }
                 }
             }
             if (kept.isEmpty()) {
@@ -268,7 +301,7 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
                     if (participant.clause() != null) {
                         Accepted target = clauseTarget(kept, candidate, participant.clause());
                         if (target == null) {
-                            continue;
+                            throw new IllegalStateException("Teilsatz ohne Ziel nach der Prüfung");
                         }
                         mentionId = mention(sentence, target.predicateStart(), target.predicateEnd(),
                                 text.substring(target.predicateStart(), target.predicateEnd()), target.verb(),
@@ -320,7 +353,8 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
             if (!byId.containsKey(id)) {
                 String[] words = wording.strip().split("\\s+");
                 ParsedStatements.Mention mention = new ParsedStatements.Mention(id, sentence.index(), start, end,
-                        wording, words[words.length - 1], lemma, kind, false, Set.of());
+                        wording, words[words.length - 1], lemma, kind,
+                        kind == ParsedStatements.MentionKind.PRONOUN, Set.of());
                 byId.put(id, mention);
                 mentions.add(mention);
             }
@@ -447,17 +481,28 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
         while (matcher.find()) {
             before.add(matcher.group());
         }
-        for (int i = before.size() - 1, steps = 0; i >= 0 && steps < 4; i--, steps++) {
-            String word = before.get(i);
-            String lower = word.toLowerCase(Locale.ROOT);
-            if (PREPOSITIONS.contains(lower)) {
-                return true;
-            }
-            if (!DETERMINERS.contains(lower) && !Character.isLowerCase(word.charAt(0))) {
-                return false;
-            }
+        // Nur die Form einer Nominalgruppe von rechts: [Beiwort]* [Artikel]? Präposition. Verben (-t), Pronomen
+        // und Großgeschriebenes beenden die Suche („Für sie erstellt er Bescheide“ bleibt ein Objekt).
+        int i = before.size() - 1;
+        int steps = 0;
+        while (i >= 0 && steps < 4 && adjectiveLike(before.get(i))) {
+            i--;
+            steps++;
         }
-        return false;
+        if (i >= 0 && DETERMINERS.contains(before.get(i).toLowerCase(Locale.ROOT))
+                && !PREPOSITIONS.contains(before.get(i).toLowerCase(Locale.ROOT))) {
+            i--;
+        }
+        return i >= 0 && PREPOSITIONS.contains(before.get(i).toLowerCase(Locale.ROOT));
+    }
+
+    /** Kleingeschriebenes Beiwort mit Beugungsendung, kein Pronomen, Artikel oder Präposition. */
+    private static boolean adjectiveLike(String word) {
+        String lower = word.toLowerCase(Locale.ROOT);
+        return Character.isLowerCase(word.charAt(0)) && !PRONOUNS.contains(lower) && !PERSONAL_PRONOUNS.contains(lower)
+                && !PREPOSITIONS.contains(lower) && !DETERMINERS.contains(lower)
+                && (lower.endsWith("e") || lower.endsWith("en") || lower.endsWith("em") || lower.endsWith("er")
+                || lower.endsWith("es"));
     }
 
     /** Art einer Erwähnung nach ihrem Wortlaut. */
@@ -466,7 +511,8 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
         if (strip.startsWith("Frau ") || strip.startsWith("Herr ")) {
             return ParsedStatements.MentionKind.PROPER_NOUN;
         }
-        if (PRONOUNS.contains(strip.toLowerCase(Locale.ROOT)) && Character.isLowerCase(strip.charAt(0))) {
+        // auch am Satzanfang großgeschrieben („Sie prüft Anträge.“): ein Pronomen bleibt ein Pronomen
+        if (PRONOUNS.contains(strip.toLowerCase(Locale.ROOT))) {
             return ParsedStatements.MentionKind.PRONOUN;
         }
         return Character.isUpperCase(strip.charAt(0)) ? ParsedStatements.MentionKind.NOUN
