@@ -70,6 +70,6 @@ public final class ChatUpdateSummaryModel implements SummaryModel {
         if (current == null || !current.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "Kein Chat-Modell eingestellt");
         }
-        return remote.apply(current).termCompletions().apply(instructions, input);
+        return remote.apply(current).summaryCompletions().apply(instructions, input);
     }
 }
