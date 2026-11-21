@@ -298,6 +298,16 @@ class TermGraphViewTest {
     }
 
     @Test
+    void theRealFetchPassesCheckedOnlyAndTheHelpWaitsForTheComparison() {
+        assertThat(TermGraphView.domainOptions(2, null, true).checkedOnly()).isTrue();
+        assertThat(TermGraphView.domainOptions(1, null, false).checkedOnly()).isFalse();
+        assertThat(TermGraphView.domainOptions(2, null, true).includeStale()).as("nie veraltete Aussagen").isFalse();
+        assertThat(TermGraphView.HELP).as("einig/abweichend erst mit dem Vergleich Parser/KI")
+                .contains("geprüft", "gestrichelt").doesNotContainIgnoringCase("einig")
+                .doesNotContainIgnoringCase("abweichend");
+    }
+
+    @Test
     void theInventoryViewStaysAsItWasAndTheStatusAlwaysNamesTheAnalyzer() throws Exception {
         List<Object> seen = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {

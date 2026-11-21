@@ -135,10 +135,16 @@ public final class TermGraphView {
             if (runtime == null) {
                 throw new IllegalStateException(TermDirectory.NO_RUNTIME);
             }
-            return runtime.workspace().domainTermGraph(term,
-                    new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options(levels, false,
-                            scope.get().get(), checkedOnly), cancelled);
+            return runtime.workspace().domainTermGraph(term, domainOptions(levels, scope.get().get(), checkedOnly),
+                    cancelled);
         }, com.aresstack.spaceharvester.app.ui.content.StatementProvenance::analyzer), scope);
+    }
+
+    /** Optionen der Fachsicht: nie veraltete Aussagen, Bereich und „Nur geprüft“ wie gewählt. */
+    static com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options domainOptions(int levels,
+            PageSet pages, boolean checkedOnly) {
+        return new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options(levels, false, pages,
+                checkedOnly);
     }
 
     TermGraphView(AppContext context, GraphSource source) {

@@ -383,6 +383,21 @@ class DomainTermGraphTest {
     }
 
     @Test
+    void checkedOnlyAlsoCountsOnlyCheckedStaleStatements() {
+        term("Sachbearbeiter");
+        term("Beleg");
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("wiki", "2", "Der Sachbearbeiter prüft den Beleg.");
+        cache.put(new PageKey("wiki", "2"), EnrichmentTestPages.text("wiki", "2", "2", "Ganz neuer Text."));
+        DomainTermGraph.Options checkedOnly = new DomainTermGraph.Options(2, false, null, true);
+
+        assertThat(withTrust(Set.of("1"), Map.of()).around(CALLER, "Sachbearbeiter", checkedOnly, () -> false)
+                .skippedStale()).as("veraltet, aber ungeprüft: zählt in „Nur geprüft“ nicht").isZero();
+        assertThat(withTrust(Set.of("1", "2"), Map.of()).around(CALLER, "Sachbearbeiter", checkedOnly, () -> false)
+                .skippedStale()).as("veraltet und geprüft: zählt").isEqualTo(1);
+    }
+
+    @Test
     void aConfirmedReviewOrAPassedCheckIsCheckedWhateverTheComparisonSays() {
         ParsedStatements.Statement plain = new ParsedStatements.Statement("doc#s1.v1", 0, 0, 1, "prüft", "prüfen",
                 ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(), Set.of(), 0,
