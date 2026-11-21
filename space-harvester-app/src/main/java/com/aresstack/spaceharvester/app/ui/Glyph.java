@@ -37,6 +37,10 @@ public enum Glyph implements Icon {
     CLOUD, CHECK_CIRCLE, SYNC, WARNING, LOCK, CIRCLE_FULL, CIRCLE_HALF, CIRCLE_EMPTY,
     /** „Zusammenfassen“ (ADR 0030): drei Textzeilen, oben rechts ein Funkeln für die KI. */
     SUMMARIZE,
+    /** „Neue Beziehung …“ und ähnliches Anlegen: ein Plus. */
+    PLUS,
+    /** „Synonyme vorschlagen“ (KI-Vorschlag): ein großes und ein kleines Funkeln. */
+    SPARKLE,
     /** QR-Code (drei Suchmuster und ein paar Module): Zertifikat aus einem QR-Bild lesen (Strang ZX). */
     QR;
 
@@ -342,6 +346,14 @@ public enum Glyph implements Icon {
                     g.fill(new Arc2D.Double(4.3, 4.3, 7.4, 7.4, 90, 180, Arc2D.PIE));
                 }
                 case CIRCLE_EMPTY -> g.draw(new Ellipse2D.Double(2.5, 2.5, 11, 11));
+                case PLUS -> {
+                    g.draw(new Line2D.Double(8, 3, 8, 13));
+                    g.draw(new Line2D.Double(3, 8, 13, 8));
+                }
+                case SPARKLE -> {
+                    g.fill(sparkle(6.5, 9.5, 5.5));
+                    g.fill(sparkle(12.5, 3.5, 2.8));
+                }
                 case SELECT_ALL -> {
                     // Zweiter Kasten hinten rechts oben, vorne der Kasten mit Haken.
                     g.draw(new Line2D.Double(6, 1.5, 12.5, 1.5));
@@ -357,6 +369,19 @@ public enum Glyph implements Icon {
         } finally {
             g.dispose();
         }
+    }
+
+    /** Vierzackiges Funkeln um ({@code x}, {@code y}) mit Halbmesser {@code r}. */
+    private static Path2D sparkle(double x, double y, double r) {
+        double k = r * 0.16;
+        Path2D spark = new Path2D.Double();
+        spark.moveTo(x, y - r);
+        spark.quadTo(x + k, y - k, x + r, y);
+        spark.quadTo(x + k, y + k, x, y + r);
+        spark.quadTo(x - k, y + k, x - r, y);
+        spark.quadTo(x - k, y - k, x, y - r);
+        spark.closePath();
+        return spark;
     }
 
     @Override
