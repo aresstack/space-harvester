@@ -76,7 +76,8 @@ public final class PodcastWriter {
                 "Das erste Thema ist ein kurzer Einstieg mit Aufmacher: macht neugierig auf die spannendste Meldung.",
                 "jede Meldung kommt in genau einem Thema vor. Ordne so, wie es am spannendsten und interessantesten "
                         + "ist, nicht nach Umfang.",
-                "inhaltlich neu ist und was es bedeutet", "Heute schauen wir uns an, was es Neues gibt.", true),
+                "inhaltlich neu ist und was es bedeutet", "Heute schauen wir uns an, was es Neues gibt.",
+                "Nennt im Thema einmal knapp in einem Halbsatz, wo es steht (Space oder Seite), nicht öfter. ", true),
         /** Was auf einer Seite steht: das Wesentliche, Unwichtiges darf wegfallen. */
         EXPLAINER(EXPLAINER_STYLE, "Seite zum Erklären", "Teil", "Teile", "Kurz erklärt",
                 "Das erste Thema ist ein kurzer Einstieg: worum es geht und wozu man das braucht.",
@@ -84,7 +85,9 @@ public final class PodcastWriter {
                         + "Verzeichnisse, Historie, Formales) lässt du weg. Ordne so, dass man es gut versteht: erst das "
                         + "Große und Ganze, dann die Einzelheiten.",
                 "erklären: das Wesentliche verständlich und mit Beispielen aus dem Material, statt alles aufzuzählen",
-                "Heute erklären wir, worum es auf dieser Seite geht.", false);
+                "Heute erklären wir, worum es auf dieser Seite geht.",
+                "Steht etwas auf einer Unterseite, nennt sie einmal knapp; die erklärte Seite selbst nennt ihr nicht "
+                        + "immer wieder. ", false);
 
         final String style;
         final String heading;
@@ -95,11 +98,13 @@ public final class PodcastWriter {
         final String coverage;
         final String content;
         final String greeting;
+        /** Wie oft und wie der Ort vorkommt. */
+        final String place;
         /** Jede Meldung muss vorkommen (fehlende werden ergänzt). */
         final boolean complete;
 
         Format(String style, String heading, String one, String many, String episode, String opening,
-               String coverage, String content, String greeting, boolean complete) {
+               String coverage, String content, String greeting, String place, boolean complete) {
             this.style = style;
             this.heading = heading;
             this.one = one;
@@ -109,6 +114,7 @@ public final class PodcastWriter {
             this.coverage = coverage;
             this.content = content;
             this.greeting = greeting;
+            this.place = place;
             this.complete = complete;
         }
     }
@@ -392,8 +398,8 @@ public final class PodcastWriter {
                     + "ihren eigenen Themen. ");
         } else {
             prompt.append("Erzählt anschaulich, was die ").append(material.format().many)
-                    .append(" dieses Themas ").append(material.format().content).append(", mit den konkreten Fakten (Regeln, Stufen, Schritte) statt allgemeiner Worte. Nennt "
-                    + "im Thema einmal knapp in einem Halbsatz, wo es steht (Space oder Seite), nicht öfter. ");
+                    .append(" dieses Themas ").append(material.format().content).append(", mit den konkreten "
+                    + "Fakten (Regeln, Stufen, Schritte) statt allgemeiner Worte. ").append(material.format().place);
             if (segmentIndex == segments.size() - 1) {
                 prompt.append("Das ist der letzte Abschnitt des Themas: was aus seinen ")
                         .append(material.format().many).append(" Wichtiges noch nicht erzählt ist, gehört hierher. ");

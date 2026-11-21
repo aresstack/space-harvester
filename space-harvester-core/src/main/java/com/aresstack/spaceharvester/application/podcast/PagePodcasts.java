@@ -263,7 +263,7 @@ public final class PagePodcasts {
                 boolean rest = i == MAX_SECTIONS - 1;
                 int end = rest || i == main.size() - 1 ? text.text().length() : main.get(i + 1).start();
                 String body = text.text().substring(section.start(), end);
-                stories.add(story(section.heading(), body, here + ", Abschnitt „" + section.heading() + "“",
+                stories.add(story(section.heading(), body, "im Abschnitt „" + section.heading() + "“",
                         page.pageId(), SECTION_CHARS));
                 if (rest) {
                     break;
