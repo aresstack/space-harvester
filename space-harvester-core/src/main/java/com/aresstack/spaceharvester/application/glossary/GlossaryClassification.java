@@ -384,7 +384,7 @@ public class GlossaryClassification {
                                 } else {
                                     headers.apply(new PageKey(id, root))
                                             .ifPresent(header -> context.rootTitle(header.metadata().title()));
-                                    job(scope, subtrees.pages(caller, id, space, root), context, caller);
+                                    job(scope, subtrees.pages(caller, id, space, root), root, context, caller);
                                 }
                             }
                         }));
@@ -418,6 +418,11 @@ public class GlossaryClassification {
      * ergänzen statt abgleichen.
      */
     Outcome job(RelationScope scope, PageSet subtree, JobContext context, AccessContext caller) {
+        return job(scope, subtree, null, context, caller);
+    }
+
+    /** Wie oben; {@code rootPageId} ist die Startseite des Teilbaums (ihr Eimer im Modell-Cache). */
+    Outcome job(RelationScope scope, PageSet subtree, String rootPageId, JobContext context, AccessContext caller) {
         List<KnowledgeGraph.AnalysedPage> pages = analysed == null ? null
                 : GlossaryOverview.inScope(analysed.apply(caller), scope.sourceId(), scope.spaceKey());
         if (pages != null && subtree != null) {
@@ -457,7 +462,7 @@ public class GlossaryClassification {
                             ANALYSIS_MISSING + ":" + missing, "„" + PHASE + "“ nur über aktuelle Analysen: "
                             + missingAnalysis(missing), null, null, null));
                 }
-                classified = phase.run(scope, current, context, subtree);
+                classified = phase.run(scope, current, context, subtree, rootPageId);
                 if (context != null) {
                     context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
                             MODEL_DONE, "„" + PHASE + "“: " + classified.describe(), null, null, null));

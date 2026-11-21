@@ -176,6 +176,23 @@ class GlossaryModelPhaseTest {
         return new Argument(role, mention, "rel", null, Priority.CORE, Basis.PARSER, true);
     }
 
+    /** Welche Eimer ein Lauf im Modell-Cache ersetzt. */
+    private final List<String> buckets = new ArrayList<>();
+    private final ResolutionCache recording = new ResolutionCache() {
+        private final ResolutionCache inner = ResolutionCache.inMemory();
+
+        @Override
+        public Optional<List<String>> find(String fingerprint) {
+            return inner.find(fingerprint);
+        }
+
+        @Override
+        public void replace(String sourceId, java.util.Map<String, List<String>> entries) {
+            buckets.add(sourceId);
+            inner.replace(sourceId, entries);
+        }
+    };
+
     @BeforeEach
     void setUp() {
         store = new FileGlossaryStore(directory);
@@ -183,7 +200,7 @@ class GlossaryModelPhaseTest {
                 key -> Optional.empty(), Clock.fixed(T0, ZoneOffset.UTC));
         classification = new GlossaryClassification(catalog, new InMemoryEnrichmentStore(),
                 new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), key -> Optional.empty(),
-                key -> Optional.ofNullable(texts.get(key)), glossary, model, ResolutionCache.inMemory(), jobs,
+                key -> Optional.ofNullable(texts.get(key)), glossary, model, recording, jobs,
                 new TermProcessor().version(), GlossaryClassification.Budget.DEFAULT, caller -> List.copyOf(pages),
                 () -> settings, released::contains, Clock.fixed(T0, ZoneOffset.UTC));
         page("1", "Bewilligungsstelle", "prüft", "Zuwendung");
@@ -502,6 +519,19 @@ class GlossaryModelPhaseTest {
         verify(context, atLeastOnce()).record(events.capture());
         assertThat(events.getAllValues()).extracting(JobEvent.Draft::code).contains("GLOSSARY_ANALYSIS_MISSING:1")
                 .doesNotContain("GLOSSARY_ANALYSIS_MISSING:2");
+    }
+
+    @Test
+    void aSubtreeRunReplacesTheBucketOfItsStartPageAndLeavesTheSpaceBucket() {
+        // D4.2, Auflage zu #1044: ein Eimer je Startseite, nicht je Seitenmenge.
+        classification.job(WIKI, null, EDITOR);
+        classification.job(WIKI, com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(
+                List.of(new PageKey("wiki", "1"))), "1", null, EDITOR);
+        classification.job(WIKI, com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(
+                List.of(new PageKey("wiki", "1"), new PageKey("wiki", "2"))), "1", null, EDITOR);
+
+        assertThat(buckets).containsExactly("classify\u0000wiki\u0000", "classify\u0000wiki\u0000\u0000subtree\u00001",
+                "classify\u0000wiki\u0000\u0000subtree\u00001");
     }
 
     @Test

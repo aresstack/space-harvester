@@ -368,7 +368,8 @@ public class Glossary {
      * Ergebnis eines Laufs über eine Seite samt Unterseiten (D4.2): legt neue Vorschläge an und ERGÄNZT bestehende
      * nur. Belege von Seiten außerhalb bleiben (die des Teilbaums ersetzen nur die derselben Seite), die Unterstützung
      * kommt dazu, eine vorhandene Einordnung und Erläuterung bleiben. Entfernt und markiert nie etwas; Schutzregeln wie
-     * {@link #propose}.
+     * {@link #propose}. Belege einer Teilbaumseite, die den Begriff nicht mehr enthält, bleiben deshalb bis zum nächsten
+     * Lauf über den ganzen Space.
      */
     public synchronized ProposalRun supplement(RelationOrigin origin, String actor, RelationScope scope,
                                                String generation, List<Proposal> proposals) {
