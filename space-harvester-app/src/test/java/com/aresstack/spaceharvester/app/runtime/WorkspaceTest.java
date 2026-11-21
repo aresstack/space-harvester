@@ -933,6 +933,51 @@ class WorkspaceTest {
                 .doesNotContain(sync.id());
     }
 
+    /**
+     * AT zu #1059: Die Teile der Aussagenanalyse gehören dem Core. Wer lesen, aber nicht abgleichen darf, sieht sie in
+     * der Auftragsliste nicht ({@code sync}); das Ergebnis im Reiter „Aussagen“ liest er trotzdem, und verfolgen und
+     * abbrechen geht ohne Fehler.
+     */
+    @Test
+    void theOutcomeOfAStatementGroupIsReadWithoutTheRightToSync() throws Exception {
+        AppRuntime started = start();
+        var harvester = started.harvester();
+        String space = started.workspace().spaces("handbuch").get(0).key();
+        var background = harvester.backgroundJobs();
+        var group = background.start(com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId(),
+                com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.KIND, "Aussagen analysieren",
+                List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("handbuch", space,
+                        Map.of(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.SCOPE, "space",
+                                com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.ANALYZER,
+                                "parser",
+                                com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.OWNER,
+                                com.aresstack.spaceharvester.application.access.AccessContext.technicalClient(
+                                        com.aresstack.spaceharvester.core.Harvester.OWNER).jobOwner()))));
+        String partId = group.parts().get(0).id();
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
+        while (!harvester.jobs().status(partId).state().terminal() && Instant.now().isBefore(deadline)) {
+            Thread.sleep(50);
+        }
+        var finished = background.group(group.groupId()).orElseThrow();
+        assertThat(finished.finished()).isTrue();
+        Workspace readOnly = new Workspace(harvester,
+                new com.aresstack.spaceharvester.application.access.AccessGuard((context, scope, kind) ->
+                        kind == com.aresstack.spaceharvester.application.access.AccessKind.SYNC
+                                ? com.aresstack.spaceharvester.application.access.AccessDecision.DENY
+                                : com.aresstack.spaceharvester.application.access.AccessDecision.ALLOW),
+                new ActivityLog(home.resolve("nur-lesen.txt")));
+
+        assertThatThrownBy(() -> readOnly.events(partId)).as("so las der Reiter vorher")
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.UnknownJobException.class);
+        assertThat(readOnly.statementGroupOmitted(finished)).isZero();
+        readOnly.cancelStatementGroup(group.groupId()); // fertig: nichts zu tun, kein Fehler
+        java.util.concurrent.CompletableFuture<Boolean> onEdt = new java.util.concurrent.CompletableFuture<>();
+        try (var watch = readOnly.watchBackground(group.groupId(),
+                seen -> onEdt.complete(javax.swing.SwingUtilities.isEventDispatchThread() && seen.finished()))) {
+            assertThat(onEdt.get(10, java.util.concurrent.TimeUnit.SECONDS)).as("jetziger Stand auf dem EDT").isTrue();
+        }
+    }
+
     private AppRuntime start() throws Exception {
         runtime = AppRuntime.start(settings(Map.of("WIKI_TOKEN", TOKEN,
                 "CLIENT_PASSWORD", TestCertificates.CLIENT_PASSWORD)), new AppRuntime.SessionSecrets(), "test");

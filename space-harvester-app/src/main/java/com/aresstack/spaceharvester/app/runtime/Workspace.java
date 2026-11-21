@@ -1210,6 +1210,22 @@ public final class Workspace {
     private PageStatements analyzePage(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled,
             com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.SimplificationRequest stage) {
         AnalyzerChoice analyzer = statementAnalyzer();
+        // Die gezeigte Fassung, ohne erneuten Abruf bei der Quelle (wie vor D3)
+        JobStatus done = awaitPageJob(() -> harvester.statementAnalysisJobs().startShown(caller, snapshot,
+                new StatementAnalysisJobs.Options(true, 0, analyzer == AnalyzerChoice.MODEL ? null : stage,
+                        analyzer)), cancelled);
+        return pageResult(snapshot, done);
+    }
+
+    /**
+     * Startet den Auftrag einer Seite (Analysieren, Prüfen) und wartet auf sein Ende, über Meldungen des Core, ohne
+     * Abfragen; eine {@link Cancellation} bricht ihn ab.
+     *
+     * @throws java.util.concurrent.CancellationException wenn er gelöscht wurde, bevor er endete, oder der Thread
+     *                                                    unterbrochen wurde
+     */
+    private JobStatus awaitPageJob(java.util.function.Supplier<JobStatus> start,
+            java.util.function.BooleanSupplier cancelled) {
         java.util.concurrent.CountDownLatch ended = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.atomic.AtomicReference<String> id = new java.util.concurrent.atomic.AtomicReference<>();
         // Der letzte gemeldete Stand: Wird der Auftrag unter Aufträge gelöscht, gibt es ihn danach nicht mehr.
@@ -1231,12 +1247,8 @@ public final class Workspace {
                 }
             }
         });
-        JobStatus done;
         try {
-            // Die gezeigte Fassung, ohne erneuten Abruf bei der Quelle (wie vor D3)
-            JobStatus started = harvester.statementAnalysisJobs().startShown(caller, snapshot,
-                    new StatementAnalysisJobs.Options(true, 0, analyzer == AnalyzerChoice.MODEL ? null : stage,
-                            analyzer));
+            JobStatus started = start.get();
             id.set(started.id());
             if (cancelled instanceof Cancellation cancellation) {
                 cancellation.onRequest(() -> {
@@ -1253,18 +1265,27 @@ public final class Workspace {
                 ended.countDown();
             }
             ended.await();
-            done = currentStatus(started.id()).orElse(last.get());
+            JobStatus done = currentStatus(started.id()).orElse(last.get());
             if (done == null || !done.state().terminal()) {
                 // gelöscht, bevor er endete: wie ein Abbruch, die bisherige Analyse bleibt
                 throw new java.util.concurrent.CancellationException("Auftrag gelöscht");
             }
+            return done;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new java.util.concurrent.CancellationException("Unterbrochen");
         } finally {
             watch.close();
         }
-        return pageResult(snapshot, done);
+    }
+
+    /** Die Ereignisse eines eigenen Auftrags; leer, wenn er schon gelöscht ist. */
+    private List<JobEvent> ownEvents(String jobId) {
+        try {
+            return harvester.jobs().events(jobId);
+        } catch (UnknownJobException e) {
+            return List.of();
+        }
     }
 
     /** Das Ende des Auftrags einer Seite als Ergebnis wie beim Rechnen im Reiter: Stand, Abbruch, Auslassen, Fehler. */
@@ -1273,13 +1294,7 @@ public final class Workspace {
                 || done.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED) {
             throw new java.util.concurrent.CancellationException("Abgebrochen");
         }
-        List<JobEvent> events;
-        try {
-            events = harvester.jobs().events(done.id());
-        } catch (UnknownJobException e) {
-            events = List.of(); // schon gelöscht: der letzte Stand gilt
-        }
-        List<JobEvent> known = events;
+        List<JobEvent> known = ownEvents(done.id()); // schon gelöscht: der letzte Stand gilt
         java.util.function.Predicate<String> has = code -> known.stream().anyMatch(event -> code.equals(event.code()));
         if (done.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED) {
             String message = done.error() == null ? "Die Analyse ist gescheitert" : done.error().message();
@@ -1379,10 +1394,57 @@ public final class Workspace {
      */
     public PageStatements checkStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled,
             com.aresstack.spaceharvester.application.configuration.CheckSettings check) {
-        return harvester.statementAnalysis().check(caller, snapshot, cancelled,
-                new com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.CheckRequest(check.scope(),
-                        check.parallel()), costs -> {
-                });
+        // Ein normaler Auftrag als Klick über denselben Code wie „Prüfen“ im Baum (AT, #1055), mit der gezeigten Fassung
+        JobStatus done = awaitPageJob(() -> harvester.statementAnalysisJobs().startCheckShown(caller, snapshot,
+                new StatementAnalysisJobs.CheckOptions(0, check.scope(), check.parallel())), cancelled);
+        return checkResult(snapshot, done);
+    }
+
+    /** Das Ende des Prüfauftrags einer Seite als Ergebnis wie früher beim Prüfen im Reiter. */
+    private PageStatements checkResult(PageSnapshot snapshot, JobStatus done) {
+        if (done.state() == com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED
+                || done.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED) {
+            throw new java.util.concurrent.CancellationException("Abgebrochen");
+        }
+        List<JobEvent> known = ownEvents(done.id());
+        if (done.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED) {
+            if (done.error() != null && StatementAnalysisJobs.CHECK_UNAVAILABLE.equals(done.error().code())) {
+                throw new com.aresstack.spaceharvester.application.check.CheckUnavailableException(
+                        com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason.NO_MODEL);
+            }
+            throw new IllegalStateException(done.error() == null ? "Die Prüfung ist gescheitert"
+                    : done.error().message());
+        }
+        if (done.progress().failed() > 0) {
+            JobEvent failed = known.stream().filter(event -> "PAGE_FAILED".equals(event.code())).findFirst()
+                    .orElse(null);
+            if (failed != null && failed.category() == JobEvent.Category.ACCESS) {
+                statements(snapshot); // wirft ohne Leserecht die AccessDeniedException des Core
+            }
+            throw new IllegalStateException(failed == null || failed.message() == null
+                    ? "Die Seite wurde nicht geprüft" : failed.message());
+        }
+        if (done.progress().written() == 0) {
+            if (counted(known, StatementAnalysisJobs.CHECK_NOT_RELEASED) > 0) {
+                throw new com.aresstack.spaceharvester.application.check.CheckUnavailableException(
+                        com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason.NOT_RELEASED);
+            }
+            if (counted(known, StatementAnalysisJobs.CHECK_NOT_CURRENT) > 0) {
+                throw new com.aresstack.spaceharvester.application.check.CheckUnavailableException(
+                        com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason.NOT_CURRENT);
+            }
+        }
+        return statements(snapshot);
+    }
+
+    /** Die Zahl vorn in der Meldung des Ereignisses mit diesem Code; 0 ohne. */
+    private static long counted(List<JobEvent> events, String code) {
+        return events.stream().filter(event -> code.equals(event.code()) && event.message() != null)
+                .mapToLong(event -> {
+                    java.util.regex.Matcher number = java.util.regex.Pattern.compile("^\\s*(\\d+)")
+                            .matcher(event.message());
+                    return number.find() ? Long.parseLong(number.group(1)) : 0;
+                }).sum();
     }
 
     /** Warum der Prüfschritt für diese Seite nicht laufen kann (kein Modell, keine KI-Freigabe); sonst leer. */
@@ -2258,6 +2320,63 @@ public final class Workspace {
         java.util.Objects.requireNonNull(listener, "listener");
         return harvester.backgroundJobs().whenFinished(groupId,
                 group -> javax.swing.SwingUtilities.invokeLater(() -> listener.accept(group)));
+    }
+
+    /**
+     * Verfolgt eine Hintergrundgruppe (Reiter „Aussagen“, „mit Unterseiten“): {@code listener} läuft auf dem Event
+     * Dispatch Thread mit dem jetzigen Stand und danach bei jeder Änderung eines Unterauftrags, über Meldungen des
+     * Core, ohne Abfragen (ADR 0027), auch nach dem Anhalten, bis {@link Subscription#close()}.
+     */
+    public Subscription watchBackground(String groupId,
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+        java.util.Objects.requireNonNull(listener, "listener");
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background = harvester.backgroundJobs();
+        Subscription watch = background.watch(groupId,
+                group -> javax.swing.SwingUtilities.invokeLater(() -> listener.accept(group)));
+        background.group(groupId).ifPresent(group -> javax.swing.SwingUtilities.invokeLater(
+                () -> listener.accept(group)));
+        return watch;
+    }
+
+    /**
+     * Wie viele Seiten der KI-Analysator in einer Gruppe der Aussagenanalyse bewusst ausließ (ohne Freigabe oder Modell,
+     * {@link StatementAnalysisJobs#omitted}); nie auf dem EDT. Die Teile gehören dem Core: gelesen wird mit dem Recht,
+     * das auch der Lauf braucht ({@code metadata} auf den Space), nicht mit {@code sync} wie in der Auftragsliste; ein
+     * schon gelöschter Teil zählt nicht.
+     */
+    public long statementGroupOmitted(
+            com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+        long omitted = 0;
+        for (JobStatus part : group.parts()) {
+            if (StatementAnalysisJobs.isAnalysis(part) && access.permits(caller,
+                    scope(part.sourceId(), part.partitionKey()), AccessKind.METADATA)) {
+                omitted += StatementAnalysisJobs.omitted(ownEvents(part.id()));
+            }
+        }
+        return omitted;
+    }
+
+    /**
+     * Bricht eine Gruppe der Aussagenanalyse ab („Abbrechen“ im Reiter „Aussagen“), mit demselben Recht wie
+     * {@link #statementGroupOmitted}; die fertigen Analysen bleiben.
+     */
+    public void cancelStatementGroup(String groupId) {
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background = harvester.backgroundJobs();
+        com.aresstack.spaceharvester.application.background.BackgroundGroup group = background.group(groupId)
+                .orElse(null);
+        if (group == null || !StatementAnalysisJobs.KIND.equals(group.kind())) {
+            return;
+        }
+        for (JobStatus part : group.parts()) {
+            if (!part.state().terminal() && access.permits(caller, scope(part.sourceId(), part.partitionKey()),
+                    AccessKind.METADATA)) {
+                try {
+                    harvester.jobs().cancel(part.id(), Harvester.OWNER);
+                } catch (RuntimeException e) {
+                    // schon beendet
+                }
+            }
+        }
     }
 
     /** Die Aufträge eines Reiters: nur Hintergrundaufträge oder nur die übrigen. */

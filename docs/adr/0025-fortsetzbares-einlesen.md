@@ -224,10 +224,14 @@ wird automatisch verwaltet.
    sich als Art `images` an. Fahrplan D3: „Aussagen analysieren“ über Teilbaum, Space oder Quelle ist die Art
    `statements` (`StatementAnalysisJobs#background`); eine einzelne Seite bleibt ein normaler Auftrag
    `STATEMENT_ANALYSIS`, als Klick über `Jobs#submitInteractive` (ebenso „Prüfen“ einer Seite), derselbe Code rechnet
-   beide. Der Reiter „Aussagen“ rechnet dabei die gezeigte Fassung (`startShown`), ohne die Seite erneut abzurufen;
-   mit „mit Unterseiten“ zählt und fragt er wie der Baum (Sicherheitsgrenze, „wirklich“) und meldet das Ende der
-   Gruppe über `BackgroundJobs#whenFinished`. Eine Quelle mit Grenze zählt in jedem Teil alle ihre Spaces
-   (`limit-spaces`), die Grenze gilt also wie früher für die ganze Quelle.
+   beide. Der Reiter „Aussagen“ rechnet und prüft dabei die gezeigte Fassung (`startShown`, `startCheckShown`), ohne
+   die Seite erneut abzurufen; mit „mit Unterseiten“ zählt und fragt er wie der Baum (Sicherheitsgrenze, „wirklich“),
+   verfolgt die Gruppe über `BackgroundJobs#watch` (Fortschritt und Abbrechen im Reiter, nach dem Anhalten weiter, bis
+   sie fertig ist) und liest ihr Ergebnis abseits des EDT (`Workspace#statementGroupOmitted`, mit dem Recht
+   `metadata` auf den Space statt `sync`). Eine Quelle mit Grenze: Die Grenze gilt für die Summe aller Spaces. Jeder
+   Teil zählt nach seiner eigenen Ermittlung die schon ermittelten Seiten der übrigen Teile aus dem Auftragsspeicher
+   dazu, ohne fremde Spaces abzugehen; wer die Grenze damit überschreitet, scheitert vor seiner ersten Analyse
+   (`SCOPE_TOO_LARGE`), fertige Teile behalten ihre Analysen.
 2. **Gruppe statt Oberauftrag mit eigenem Platz.** Ein Start (`BackgroundJobs#start`) legt je Space einen Unterauftrag
    an; alle tragen dieselbe `background.group` und `background.title`. Die Gruppe (`BackgroundGroup`) ist kein eigener
    Auftrag, belegt nichts und hat ihren Zustand aus den Unteraufträgen. Jeder Unterauftrag hat einen eigenen Platz und

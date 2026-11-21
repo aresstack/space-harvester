@@ -102,6 +102,8 @@ public class StatementAnalysisJobs {
     public static final String CHECK_COSTS = "CHECK_COSTS";
     /** Code des Info-Ereignisses „so viele Seiten ohne KI-Freigabe nicht geprüft“. */
     public static final String CHECK_NOT_RELEASED = "CHECK_NOT_RELEASED";
+    /** Ereignis des Prüfauftrags: so viele Seiten ohne aktuelle Analyse nicht geprüft (Zahl vorn). */
+    public static final String CHECK_NOT_CURRENT = "CHECK_NOT_CURRENT";
     /**
      * Anfang des Codes der Angabe mit dem Grund zu {@value #ANALYZER_UNAVAILABLE}, dahinter
      * {@link AnalyzerUnavailableException.Reason#name()}, etwa {@code ANALYZER_REASON_MODEL_MISSING}.
@@ -129,8 +131,6 @@ public class StatementAnalysisJobs {
     public static final String SINCE = "since";
     /** Angabe: Eigentümer ({@link AccessContext#jobOwner()}) des Aufrufers, der startete. */
     public static final String OWNER = "owner";
-    /** Angabe der Teile einer Quelle mit Grenze: alle ihre Spaces, durch Zeilenumbruch getrennt. */
-    public static final String LIMIT_SPACES = "limit-spaces";
     /**
      * Angabe eines Teils aus dem Dienst-Planer (D1): Kennung des Start-Aufrufers in diesem Prozess, damit der erste Lauf
      * mit seinen Rechten rechnet; nach einem Neustart gilt die Regel für {@value #OWNER}.
@@ -318,7 +318,7 @@ public class StatementAnalysisJobs {
                 return group.start(groupId, KIND, title(analyzer), parts).parts().get(0);
             }
         }
-        JobTask task = JobTask.blocking(context -> run(caller, scope, fixed, null, List.of(), null, pages, context));
+        JobTask task = JobTask.blocking(context -> run(caller, scope, fixed, null, () -> 0, null, pages, context));
         if (scope instanceof Scope.SinglePage) {
             // Ein Klick auf eine Seite wartet nie hinter Hintergrund (AT, #1055).
             return jobs.submitInteractive(JobType.STATEMENT_ANALYSIS, scope.sourceId(), scope.spaceKey(),
@@ -373,10 +373,6 @@ public class StatementAnalysisJobs {
                     // Quelle gerade nicht erreichbar: ein normaler Auftrag, der wie bisher „unvollständig“ endet und
                     // sich wiederholen lässt, statt dass der Start scheitert.
                     return List.of();
-                }
-                if (options.maxPages() > 0) {
-                    // Die bestätigte Grenze gilt für die ganze Quelle: jeder Teil zählt alle ihre Spaces.
-                    common.put(LIMIT_SPACES, String.join("\n", spaces.stream().map(Partition::key).toList()));
                 }
                 for (Partition space : spaces) {
                     parts.add(spacePart(source.sourceId(), space.key(), common));
@@ -440,7 +436,7 @@ public class StatementAnalysisJobs {
                         ? "In dieser Laufzeit ist kein KI-Analysator eingerichtet"
                         : "In dieser Laufzeit ist kein Satzanalysator eingerichtet");
             }
-            run(caller, scope, options, since, limitSpaces(part), listed, fetch, context);
+            run(caller, scope, options, since, () -> siblings(part), listed, fetch, context);
         });
     }
 
@@ -455,11 +451,18 @@ public class StatementAnalysisJobs {
                 : java.util.Arrays.stream(value.split("\n")).filter(id -> !id.isBlank()).distinct().toList();
     }
 
-    /** Die Spaces, über die eine Quelle mit Grenze zählt ({@value #LIMIT_SPACES}); leer ohne. */
-    private static List<String> limitSpaces(BackgroundPart part) {
-        String value = part.parameter(LIMIT_SPACES);
-        return value == null || value.isBlank() ? List.of()
-                : java.util.Arrays.stream(value.split("\n")).filter(key -> !key.isBlank()).toList();
+    /**
+     * Die schon ermittelten Seiten der übrigen Teile der Gruppe, aus dem Auftragsspeicher: Eine Grenze gilt für die
+     * Summe aller Spaces wie beim früheren einzelnen Auftrag, ohne dass ein Teil fremde Spaces abgeht.
+     */
+    private long siblings(BackgroundPart part) {
+        BackgroundJobs group = background;
+        if (group == null) {
+            return 0;
+        }
+        return group.group(part.groupId()).map(found -> found.parts().stream()
+                .filter(status -> !status.id().equals(part.jobId()))
+                .mapToLong(status -> status.progress().discovered()).sum()).orElse(0L);
     }
 
     /** Die Optionen aus den Angaben; ein fehlender Analysator ist der MaltParser, nie die aktuelle Einstellung. */
@@ -608,14 +611,16 @@ public class StatementAnalysisJobs {
     }
 
     /**
-     * @param limitSpaces bei einem Space-Teil einer Quelle mit Grenze alle Spaces der Quelle: Die Grenze gilt für ihre
-     *                    Summe wie beim früheren einzelnen Auftrag; jeder Teil zählt sie vor der ersten Analyse
+     * @param siblings    die schon ermittelten Seiten der übrigen Teile derselben Gruppe (Auftragsspeicher): Eine
+     *                    Grenze gilt für die Summe aller Spaces; wer sie mit seinen Seiten überschreitet, scheitert vor
+     *                    seiner ersten Analyse, fertige Teile behalten ihre Analysen
      * @param listed      genau diese Seiten des Space (Teil des Dienst-Planers) statt des Umfangs, oder {@code null};
      *                    jede einzeln mit den Rechten des Aufrufers geprüft
      * @param pages       woher die Seiten kommen; für die gezeigte Seite ihre Fassung ({@link #startShown})
      */
-    private void run(AccessContext caller, Scope scope, Options options, Instant since, List<String> limitSpaces,
-                     List<String> listed, PageFetch pages, JobContext context) {
+    private void run(AccessContext caller, Scope scope, Options options, Instant since,
+                     java.util.function.LongSupplier siblings, List<String> listed, PageFetch pages,
+                     JobContext context) {
         context.phase(COMPONENT, PHASE_DISCOVERY);
         Walk walk = new Walk(caller, scope, options.maxPages() == 0 ? Integer.MAX_VALUE : bound(options.maxPages()),
                 context::checkpoint);
@@ -626,18 +631,8 @@ public class StatementAnalysisJobs {
             walk.run();
         }
         long total = walk.pages.size();
-        if (options.maxPages() > 0 && scope instanceof Scope.Space own) {
-            for (String other : limitSpaces) {
-                if (total > options.maxPages()) {
-                    break;
-                }
-                if (!other.equals(own.spaceKey())) {
-                    Walk count = new Walk(caller, new Scope.Space(own.sourceId(), other),
-                            bound(options.maxPages()), context::checkpoint);
-                    count.run();
-                    total += count.pages.size();
-                }
-            }
+        if (options.maxPages() > 0 && total <= options.maxPages()) {
+            total += siblings.getAsLong();
         }
         if (options.maxPages() > 0 && total > options.maxPages()) {
             throw new JobFailedException(SCOPE_TOO_LARGE, "Der Umfang hat mehr als " + options.maxPages()
@@ -837,13 +832,31 @@ public class StatementAnalysisJobs {
      * @throws CheckUnavailableException ohne eingestelltes Modell
      */
     public JobStatus startCheck(AccessContext caller, Scope scope, CheckOptions options) {
+        return startCheck(caller, scope, options, fetch);
+    }
+
+    /**
+     * Wie {@link #startCheck} für genau die gezeigte Seite (Reiter „Aussagen“, „Prüfen“): derselbe Auftrag
+     * {@code STATEMENT_CHECK} als Klick, er prüft aber die gezeigte Fassung, statt die Seite erneut abzurufen.
+     *
+     * @throws CheckUnavailableException ohne eingestelltes Modell
+     */
+    public JobStatus startCheckShown(AccessContext caller, PageSnapshot shown, CheckOptions options) {
+        Objects.requireNonNull(shown, "shown");
+        PageFetch pages = (who, sourceId, pageId) -> shown.key().sourceId().equals(sourceId)
+                && shown.key().pageId().equals(pageId) ? shown : fetch.page(who, sourceId, pageId);
+        return startCheck(caller, new Scope.SinglePage(shown.key().sourceId(), shown.spaceKey(),
+                shown.key().pageId()), options, pages);
+    }
+
+    private JobStatus startCheck(AccessContext caller, Scope scope, CheckOptions options, PageFetch pages) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(options, "options");
         if (!analysis.checkAvailable()) {
             throw new CheckUnavailableException(CheckUnavailableException.Reason.NO_MODEL);
         }
-        JobTask task = JobTask.blocking(context -> runCheck(caller, scope, options, context));
+        JobTask task = JobTask.blocking(context -> runCheck(caller, scope, options, pages, context));
         if (scope instanceof Scope.SinglePage) {
             // „Prüfen“ einer Seite ist ein Klick wie „Analysieren“ (AT, #1055).
             return jobs.submitInteractive(JobType.STATEMENT_CHECK, scope.sourceId(), scope.spaceKey(),
@@ -853,7 +866,8 @@ public class StatementAnalysisJobs {
                 task);
     }
 
-    private void runCheck(AccessContext caller, Scope scope, CheckOptions options, JobContext context) {
+    private void runCheck(AccessContext caller, Scope scope, CheckOptions options, PageFetch pages,
+                          JobContext context) {
         context.phase(COMPONENT, PHASE_DISCOVERY);
         Walk walk = new Walk(caller, scope, options.maxPages() == 0 ? Integer.MAX_VALUE : bound(options.maxPages()),
                 context::checkpoint);
@@ -875,7 +889,7 @@ public class StatementAnalysisJobs {
         for (Target target : walk.pages.values()) {
             context.checkpoint();
             try {
-                PageSnapshot snapshot = fetch.page(caller, target.sourceId(), target.pageId());
+                PageSnapshot snapshot = pages.page(caller, target.sourceId(), target.pageId());
                 java.util.Optional<CheckUnavailableException.Reason> unavailable =
                         analysis.checkUnavailable(snapshot.key());
                 if (unavailable.isPresent()) {
@@ -935,6 +949,10 @@ public class StatementAnalysisJobs {
                         + "(Seite neu analysieren)", null, null, null));
         context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
                 CHECK_NOT_RELEASED, notReleased + " Seiten ohne KI-Freigabe nicht geprüft", null, null, null));
+        if (notCurrent > 0) {
+            context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                    CHECK_NOT_CURRENT, notCurrent + " Seiten ohne aktuelle Analyse nicht geprüft", null, null, null));
+        }
         if (walk.incomplete) {
             throw new JobFailedException(INCOMPLETE, "Der Umfang konnte nicht vollständig ermittelt werden; die "
                     + "gefundenen Seiten wurden geprüft, weitere fehlen.");

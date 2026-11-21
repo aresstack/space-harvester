@@ -331,7 +331,7 @@ class StatementAnalysisBackgroundTest {
 
     /** Die bestätigte Grenze gilt für die ganze Quelle, nicht je Space: jeder Teil scheitert vor der ersten Analyse. */
     @Test
-    void theLimitOfASourceRunCountsAllItsSpaces() {
+    void theLimitOfASourceRunCountsAllItsSpacesWithoutWalkingForeignSpaces() {
         tree.space("DEV", "1", "2");
         tree.space("OPS", "3", "4");
         Service service = service(Runnable::run);
@@ -341,12 +341,29 @@ class StatementAnalysisBackgroundTest {
 
         List<JobStatus> parts = service.background().group(StatementAnalysisJobs.groupOf(first).orElseThrow())
                 .orElseThrow().parts();
-        assertThat(parts).hasSize(2).allSatisfy(part -> {
-            JobStatus done = service.jobs().status(part.id());
-            assertThat(done.state()).isEqualTo(JobState.FAILED);
-            assertThat(done.error().code()).isEqualTo(StatementAnalysisJobs.SCOPE_TOO_LARGE);
-        });
-        assertThat(parserStore.all()).as("nichts analysiert").isEmpty();
+        assertThat(service.jobs().status(parts.get(0).id()).state()).isEqualTo(JobState.COMPLETED);
+        JobStatus refused = service.jobs().status(parts.get(1).id());
+        assertThat(refused.state()).isEqualTo(JobState.FAILED);
+        assertThat(refused.error().code()).as("2 + 2 Seiten über der Grenze 3")
+                .isEqualTo(StatementAnalysisJobs.SCOPE_TOO_LARGE);
+        assertThat(parserStore.all()).as("der zweite Teil analysiert nichts").hasSize(2);
+        assertThat(tree.spaceListings).as("jeder Teil geht nur seinen eigenen Space ab (AT zu #1059)")
+                .containsExactlyInAnyOrderEntriesOf(Map.of("DEV", 1, "OPS", 1));
+    }
+
+    @Test
+    void underTheLimitEverySpaceIsAnalysedAndListedOnce() {
+        tree.space("DEV", "1", "2");
+        tree.space("OPS", "3", "4");
+        Service service = service(Runnable::run);
+
+        JobStatus first = service.analyses().start(APP, new StatementAnalysisJobs.Scope.Source("wiki"),
+                new StatementAnalysisJobs.Options(false, 4));
+
+        assertThat(service.background().group(StatementAnalysisJobs.groupOf(first).orElseThrow()).orElseThrow()
+                .completed()).isTrue();
+        assertThat(parserStore.all()).hasSize(4);
+        assertThat(tree.spaceListings).containsExactlyInAnyOrderEntriesOf(Map.of("DEV", 1, "OPS", 1));
     }
 
     /** Ist die Quelle beim Start nicht erreichbar, scheitert nicht der Start: ein normaler Auftrag endet unvollständig. */
@@ -464,9 +481,15 @@ class StatementAnalysisBackgroundTest {
             ids.forEach(id -> spaceOf.putIfAbsent(id, spaceOf.get(parent)));
         }
 
+        /** Wie oft die Wurzelseiten eines Space abgefragt wurden. */
+        final Map<String, Integer> spaceListings = new HashMap<>();
+
         @Override
         public PageNavigation.Children children(AccessContext caller, String sourceId, String spaceKey,
                                                 String parentPageId, String cursor) {
+            if (parentPageId == null) {
+                spaceListings.merge(spaceKey, 1, Integer::sum);
+            }
             String space = parentPageId == null ? spaceKey : spaceOf.get(parentPageId);
             access.require(caller, ResourceScope.space(sourceId, space), AccessKind.METADATA);
             List<String> all = parentPageId == null ? roots.getOrDefault(spaceKey, List.of())
