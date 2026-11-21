@@ -166,6 +166,10 @@ public class KnowledgeGraph {
     private final Function<DocumentKey, Optional<String>> documentInputs;
     private final com.aresstack.spaceharvester.application.observe.Listeners<Runnable> listeners =
             new com.aresstack.spaceharvester.application.observe.Listeners<>("Aussagenanalysen");
+    /** Bündelt Meldungen neuer und ersetzter Analysen: ein Auftrag über viele Seiten meldet höchstens alle 250 ms. */
+    private final com.aresstack.spaceharvester.application.observe.Coalescer<String, Object> changes =
+            new com.aresstack.spaceharvester.application.observe.Coalescer<>("knowledge-graph",
+                    (key, ignored) -> listeners.deliver(null, Runnable::run));
 
     /**
      * @param snapshots  Seite im Bestand; leer, wenn sie dort nicht (mehr) liegt
@@ -409,8 +413,18 @@ public class KnowledgeGraph {
     }
 
     /**
-     * Meldet sich, nachdem Analysen gelöscht wurden ({@link #delete}, {@link #deleteAll}), damit Stand, Graph und
-     * Glossar neu lesen. Kein Polling. Neue Analysen aus Aufträgen melden sich hier noch nicht.
+     * Merkt vor, dass sich gespeicherte Analysen geändert haben (neu, ersetzt, entfernt, andere Ablage eingestellt);
+     * die Beobachter ({@link #subscribe}) erfahren es gebündelt auf einem eigenen Thread. Kostet den Melder nichts,
+     * etwa aus {@link ObservedKnowledgeGraphStore} nach jedem Schreiben eines Auftrags.
+     */
+    public void analysesChanged() {
+        changes.mark("analyses");
+    }
+
+    /**
+     * Meldet sich, nachdem Analysen gelöscht wurden ({@link #delete}, {@link #deleteAll}, sofort) und nachdem Analysen
+     * neu geschrieben, ersetzt oder entfernt wurden ({@link #analysesChanged()}, gebündelt), damit Stand, Graph,
+     * Fachsicht, Verben und Glossar neu lesen. Kein Polling.
      */
     public com.aresstack.spaceharvester.application.observe.Subscription subscribe(Runnable listener) {
         return listeners.add(Objects.requireNonNull(listener, "listener"));

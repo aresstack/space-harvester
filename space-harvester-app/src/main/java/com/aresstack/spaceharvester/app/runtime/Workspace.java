@@ -1229,7 +1229,10 @@ public final class Workspace {
         return deleted;
     }
 
-    /** Meldet sich, nachdem Aussagen-Analysen gelöscht wurden ({@code KnowledgeGraph.subscribe}); kein Polling. */
+    /**
+     * Meldet sich, nachdem Aussagen-Analysen gelöscht, neu geschrieben oder ersetzt wurden oder eine andere Ablage
+     * eingestellt ist ({@code KnowledgeGraph.subscribe}), auf einem Thread des Core; kein Polling.
+     */
     public Subscription subscribeStatementAnalyses(Runnable listener) {
         return harvester.knowledgeGraph().subscribe(listener);
     }
