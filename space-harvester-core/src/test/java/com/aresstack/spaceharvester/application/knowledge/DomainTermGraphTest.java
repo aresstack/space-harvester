@@ -180,6 +180,47 @@ class DomainTermGraphTest {
                 .containsExactly("Sachbearbeiter", "Beleg", "Kunde");
     }
 
+    @Test
+    void onlyStatementsFromTheOriginalSentenceAreEvidenceSoACorrectionDoesNotCountTwice() {
+        term("Sachbearbeiter");
+        term("Beleg");
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        DomainTermGraph corrected = new DomainTermGraph(caller -> graph.analysed(caller).stream().map(page -> {
+            ParsedStatements result = page.analysis().result();
+            List<ParsedStatements.Statement> statements = new ArrayList<>(result.statements());
+            for (ParsedStatements.Statement statement : result.statements()) {
+                statements.add(statement.withDerivation(ParsedStatements.Derivation.modell(
+                        "Der Sachbearbeiter prüft den Beleg.", statement.id(), ParsedStatements.Origin.ORIGINAL)));
+                statements.add(statement.withDerivation(ParsedStatements.Derivation.vorstufe(
+                        ParsedStatements.StageFlag.FACT, "Der Sachbearbeiter prüft den Beleg.")));
+            }
+            ParsedStatements doubled = new ParsedStatements(result.sentences(), result.mentions(), statements,
+                    result.attachments(), result.components(), result.conllu());
+            return new KnowledgeGraph.AnalysedPage(page.page(), page.analysis().withResult(doubled));
+        }).toList(), vocabulary());
+
+        DomainTermGraph.Edge edge = corrected.around(CALLER, "Sachbearbeiter", DomainTermGraph.Options.DEFAULT,
+                () -> false).edges().getFirst();
+
+        assertThat(edge.count()).as("Korrektur und Vorstufe sind nie Beleg").isEqualTo(1);
+        assertThat(edge.evidence()).singleElement().satisfies(evidence -> assertThat(
+                evidence.statement().derivation().origin()).isEqualTo(ParsedStatements.Origin.ORIGINAL));
+    }
+
+    private DomainTermGraph.Vocabulary vocabulary() {
+        return new DomainTermGraph.Vocabulary() {
+            @Override
+            public List<DomainTermGraph.Term> terms(AccessContext caller) {
+                return terms;
+            }
+
+            @Override
+            public List<DomainTermGraph.Synonym> synonyms(AccessContext caller) {
+                return synonyms;
+            }
+        };
+    }
+
     private DomainTermGraph.View around(String start) {
         return fachsicht.around(CALLER, start, DomainTermGraph.Options.DEFAULT, () -> false);
     }
