@@ -120,7 +120,21 @@ public enum JobType {
      * ({@link Jobs#ALL_SOURCES}); Liste, Statuszeile und Meldungen nennen nur den Testbestand und Zahlen. Fortsetzen
      * misst nur die Fragen, die im Ergebnis fehlen.
      */
-    SEARCH_QUALITY;
+    SEARCH_QUALITY,
+    /**
+     * Hintergrundauftrag (Angelo 21.11.2026, ADR 0025 Nachtrag „Hintergrundaufträge“): alles, was die App von sich aus
+     * anstößt, etwa fehlende Seiten nachladen oder Bilder automatisch beschreiben. Welche Arbeit, sagt die Angabe
+     * {@code background.kind}; zusammengehörige Unteraufträge (je Space einer) tragen dieselbe {@code background.group}
+     * ({@code application.background.BackgroundJobs}). Nachrangig: startet erst, wenn kein anderer Auftrag wartet, und
+     * belegt nie alle Plätze. Ein durch Beenden des Dienstes unterbrochener Hintergrundauftrag läuft nach dem Neustart
+     * von selbst im selben Eintrag weiter; ein angehaltener bleibt angehalten.
+     */
+    BACKGROUND;
+
+    /** Hintergrundauftrag ({@link #BACKGROUND}): nachrangig, eigener Reiter in der Auftragsliste. */
+    public boolean background() {
+        return this == BACKGROUND;
+    }
 
     /** Gehört zu „In PPTX umwandeln“ (Angelo 20.11.2026). */
     public boolean presentation() {
@@ -161,7 +175,7 @@ public enum JobType {
     public boolean resumable() {
         return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD
                 || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT || presentation()
-                || this == SEARCH_QUALITY;
+                || this == SEARCH_QUALITY || this == BACKGROUND;
     }
 
     /** Export aus der Quelle per REST-Abfrage (Metadaten, Analytics): Gescheitertes fragt ein neuer Lauf erneut. */

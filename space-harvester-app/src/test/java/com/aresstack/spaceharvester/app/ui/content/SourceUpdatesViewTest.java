@@ -485,7 +485,7 @@ class SourceUpdatesViewTest {
 
         assertThat(summary.busy()).isFalse();
         List<String> texts = summary.reportTexts();
-        assertThat(texts).containsSubsequence("Zusammenfassung", "Erstellt am 16.11.2026, 19:00 mit gpt-test",
+        assertThat(texts).containsSubsequence("Zusammenfassung", "Erstellt am 16.11.2026, 19:00",
                 "Das Betriebshandbuch wurde überarbeitet.", "→ Betriebshandbuch");
         assertThat(texts).as("die Änderungen stehen unter „Text“").doesNotContain("Geändert (1)");
         assertThat(summary.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
@@ -665,6 +665,36 @@ class SourceUpdatesViewTest {
         assertThat(summary.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
         assertThat(summary.counts(summarized(actions.second()))).endsWith(" · zusammengefasst");
         assertThat(actions.summarizeCalls).as("eine vorhandene Zusammenfassung entsteht nie von selbst neu").isZero();
+    }
+
+    @Test
+    void aTopicalSummaryShowsTopicsUnderTheSpaceNameWithNumbersAndTheModelOnlyAsTooltip() {
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, null, "Neu ist ein Konzept zum Beispielarchiv.",
+                List.of(new SummaryStatement("Das Archiv wird auf ein neues Format umgestellt.",
+                        List.of(new SummaryPage("20", "Neue Seite", "BAU")), "Archivumstellung",
+                        "Ausführlich: Umstellung im März, offen ist die Schnittstelle.")),
+                "update-summary-v2:gpt-test", SECOND, 0, false, Map.of("BAU", "Bauwesen Beispiel"));
+        List<String[]> spaces = new ArrayList<>();
+        summary.onOpenSpace((source, space) -> spaces.add(new String[] {source, space}));
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("Seit dem letzten Update");
+
+        assertThat(summary.reportTexts()).containsSubsequence("Zusammenfassung",
+                "Neu ist ein Konzept zum Beispielarchiv.", "Bauwesen Beispiel", "1 neu", "Archivumstellung",
+                "Das Archiv wird auf ein neues Format umgestellt.", "→ Neue Seite");
+        assertThat(summary.reportTexts()).noneMatch(text -> text != null && text.contains("gpt-test"));
+        assertThat(SourceUpdatesView.summaryModelTip(actions.stored)).isEqualTo("Erstellt mit update-summary-v2:gpt-test");
+        assertThat(summary.clickSummaryText("Bauwesen Beispiel")).isTrue();
+        assertThat(spaces).singleElement().satisfies(opened -> assertThat(opened).containsExactly("wiki", "BAU"));
+    }
+
+    @Test
+    void topicsFromSeveralSpacesStandApartAndManyPagesAreFolded() {
+        SummaryStatement one = new SummaryStatement("A", List.of(new SummaryPage("1", "Eins", "BAU")), "A", null);
+        SummaryStatement both = new SummaryStatement("B", List.of(new SummaryPage("2", "Zwei", "BAU"),
+                new SummaryPage("3", "Drei", "DEV")), "B", null);
+        assertThat(SourceUpdatesView.topicsBySpace(List.of(one, both)))
+                .containsEntry("BAU", List.of(one)).containsEntry(SourceUpdatesView.ACROSS_SPACES, List.of(both));
     }
 
     @Test

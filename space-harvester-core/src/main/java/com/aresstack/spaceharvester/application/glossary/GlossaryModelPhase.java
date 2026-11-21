@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
 import com.aresstack.spaceharvester.application.terms.RelationOrigin;
 import com.aresstack.spaceharvester.application.terms.RelationScope;
@@ -163,6 +164,20 @@ final class GlossaryModelPhase {
 
     /** Die Phase über die analysierten Seiten eines Geltungsbereichs. */
     Run run(RelationScope scope, Collection<KnowledgeGraph.AnalysedPage> inScope, JobContext context) {
+        return run(scope, inScope, context, null, null);
+    }
+
+    /**
+     * Wie {@link #run(RelationScope, Collection, JobContext)} über die Seiten eines Teilbaums (D4.2): Offene Einträge,
+     * die dort nicht vorkommen, zählen nicht als ausgelassen; die Antworten liegen im Cache in einem Eimer der
+     * Startseite, damit sie die des ganzen Space nicht ersetzen und der nächste Lauf über dieselbe Seite den alten
+     * Eimer ersetzt (nachgeschlagen wird ohnehin über den Fingerabdruck des Kandidaten).
+     *
+     * @param subtree    Seite samt Unterseiten oder {@code null} für den ganzen Bereich
+     * @param rootPageId Startseite des Teilbaums
+     */
+    Run run(RelationScope scope, Collection<KnowledgeGraph.AnalysedPage> inScope, JobContext context,
+            PageSet subtree, String rootPageId) {
         String version = model.version();
         List<GlossaryEntry> open = new ArrayList<>();
         for (GlossaryEntry entry : glossary.inScope(scope)) {
@@ -177,7 +192,9 @@ final class GlossaryModelPhase {
         for (GlossaryEntry entry : open) {
             Candidate candidate = derived.candidate(entry.normalized());
             if (candidate == null) {
-                skipped++;
+                if (subtree == null) {
+                    skipped++;
+                }
             } else {
                 asked.add(candidate);
             }
@@ -271,7 +288,9 @@ final class GlossaryModelPhase {
         }
         try {
             cache.replace("classify\u0000" + scope.sourceId() + '\u0000'
-                    + (scope.spaceKey() == null ? "" : scope.spaceKey()), answered);
+                    + (scope.spaceKey() == null ? "" : scope.spaceKey())
+                    + (subtree == null ? "" : "\u0000subtree\u0000" + (rootPageId == null ? "" : rootPageId)),
+                    answered);
         } catch (RuntimeException e) {
             // Ohne Cache fragt der nächste Lauf erneut.
         }

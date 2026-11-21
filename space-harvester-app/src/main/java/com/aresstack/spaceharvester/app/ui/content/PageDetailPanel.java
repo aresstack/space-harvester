@@ -449,6 +449,12 @@ public final class PageDetailPanel extends JPanel {
                 }
             });
         }
+        // Spaces in der Zusammenfassung sind anklickbar: links im Baum wählen.
+        sourceView.onOpenSpace((spaceSource, spaceKey) -> {
+            if (context.navigator() != null) {
+                context.navigator().openSpace(spaceSource, spaceKey);
+            }
+        });
         for (SourceUpdatesView view : List.of(sourceView, sourceChanges)) {
             view.onRetry((retrySource, spaces) -> {
                 if (context.navigator() != null) {
@@ -746,6 +752,8 @@ public final class PageDetailPanel extends JPanel {
             }
         });
         overviewTerms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
+        overviewGraph.onOpen(target -> openAt(new StandingTab.Target(target.sourceId(), target.pageId(),
+                target.start(), target.end())));
         overviewTerms.onStatus(text -> tabStatus(OVERVIEW_TERMS, text));
         // Fachglossar und Graph hinten in derselben Reiterzeile (BG2c, aus dem früheren Bereich „Begriffe“): dieselben
         // Ansichten, ihre Werkzeuge oben rechts nur auf ihrem Reiter, beide nach der Auswahl links.
