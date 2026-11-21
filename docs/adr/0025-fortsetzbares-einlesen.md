@@ -254,6 +254,26 @@ wird automatisch verwaltet.
 7. **Desktop-App.** Die Auftragsverwaltung zeigt Hintergrundaufträge in einem eigenen Reiter „Hintergrund“, je Gruppe
    eine Zeile mit den Unteraufträgen darunter, farblich hervorgehoben (Form mit dem UX-Manager); die Liste der
    Benutzeraufträge bleibt frei davon.
+8. **Bilder beschreiben** (`ImageDescriptionJobs`, Art `images`, `Harvester#imageDescriptions()`, D2). Ein Unterauftrag
+   je Space; Angaben `root` (Startseite), `subtree`, `trigger` (`automatic` oder `user`). Die Automatik
+   (`AutomaticImageDescriptions`) startet über die Art mit dem technischen Aufrufer und bleibt bei fehlender Freigabe
+   still. Ein Lauf des Benutzers (Space, Seite, Seite samt Unterseiten über `Holdings#resolve`) trägt dessen
+   Eigentümer (`principal`, `principal.kind`, `via`) und läuft nach einem Neustart nur mit dessen Rechten weiter; lässt
+   sich daraus kein Aufrufer bauen (Endnutzer ohne Anmeldedaten), hält er an (gelb `IMAGES_RESUME_BY_HAND`), und ▶
+   läuft mit dem Benutzer, der es drückt. Nicht freigegebene Seiten zählen bei Läufen des Benutzers gelb
+   (`IMAGES_SKIPPED:NOT_RELEASED`). `autoResume` = ein Vision-Modell ist eingestellt. Jeder Unterauftrag beschreibt bis zu
+   `ai.parallel` Bilder zugleich in eigener Spur, auch die Bilder einer Seite; die Obergrenze `images.max-per-run` gilt
+   je Gruppe über alle Spaces. Der Knopf je Seite im Reiter „Bilder“ ist kein Hintergrundauftrag, sondern ein
+   gewöhnlicher Auftrag (`ENRICHMENT`, `task=images`) über denselben Lauf; „Nur diese Seite einmalig“ bleibt ohne
+   Auftrag, weil die Einmal-Erlaubnis keinen Neustart überdauern darf.
+   Ein Lauf des Benutzers legt Teile nur für Spaces an, in denen er Seiten der Auswahl sieht, und prüft jeden Umfang
+   (Space, Seite, Teilbaum) beim Arbeiten erneut mit seinen Rechten. Die Automatik hält sich nur hinter einem wartenden
+   oder angehaltenen Teil desselben Space zurück; neben einem laufenden darf einer warten. Die Vormerkung einer Seite
+   im Gruppenbudget geht bei Pause, Abbruch, Anmeldung und Fehler zurück. Beim Knopf bekommt jedes Bild seinen
+   Versuch: Scheitert das Modell, stehen die Bilder als `FAILED` und die Seite wird gespeichert; ohne Modell oder
+   Freigabe endet er gelb. `missing()` nennt dieselben Seiten, die ein Lauf an das Modell gäbe (auch gescheiterte und
+   ohne gespeicherte Lese-Ansicht). Mit `jobs.parallel-preparations=1` läuft „Bilder beschreiben“ als
+   Hintergrundauftrag nie (`SINGLE_SLOT`, gewollt seit #1030): Hintergrundaufträge brauchen mindestens zwei Plätze.
 9. **Folienwechsel erkennen** (Art `video-slides`, `VideoPresentations#detectSlides`, Inventur Nr. 25). Öffnet man ein
    Video ohne gespeicherte Marken, startet die App einen Unterauftrag mit der Angabe `page`. Seine Arbeit öffnet das
    Video über den `MediaSource` der App (`VideoMedia#slideChanges`, MP4-Index) und speichert die Marken (`VideoMarks`).
@@ -263,5 +283,46 @@ wird automatisch verwaltet.
    „Hintergrund“. Solange er wartet oder läuft, dreht an der Stelle der Folienknöpfe ein kleiner Ring
    (`controls.BackgroundWait`). Der Teil trägt seinen Eigentümer (`principal`, `principal.kind`, `via`) und liest die
    Seite mit dessen Rechten. Lässt sich daraus nach einem Neustart kein Aufrufer bauen (Endnutzer ohne Anmeldedaten),
-   hält er gelb an (`VIDEO_SLIDES_RESUME_BY_HAND`). `autoResume` ist erst wahr, wenn die App ihre Videos liefert.
+   hält er gelb an (`VIDEO_SLIDES_RESUME_BY_HAND`). Öffnet derselbe Eigentümer das Video wieder, setzt ▶ im Reiter
+   „Hintergrund“ mit seiner frischen Anmeldung fort; ein anderer übernimmt den Teil nie. `autoResume` ist erst wahr, wenn die App ihre Videos liefert.
    `mediaSource()` setzt dann nur die Teile dieser Art fort (`BackgroundJobs#resumeInterrupted(kind)`).
+
+## Nachtrag 21.11.2026: Dienst-Planer (D1)
+
+Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel
+ausdrücklich startet, soll nicht von Hand die Vorstufen anstoßen müssen; die Vorstufen verhalten sich wie
+Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
+
+1. **Beschreibung.** `AnalysisService` (`application.background.services`): Kennung, Titel, Starttyp
+   (`ServiceStart` AUTOMATIC/MANUAL/DISABLED, zur Laufzeit gelesen), Vorstufen als Kennungen, `BackgroundKind` der
+   Arbeit (oder noch keine) und `missing(caller, PageSet)` → `MissingPages` je Quelle und Space mit den Rechten des
+   Aufrufers; Seiten ohne Zugriff nur als Zahl, nie mit Titeln. „Lokal“ heißt bestätigter Text in aktueller Fassung
+   (Holdings `LOCAL`), `OUTDATED` zählt als fehlend.
+2. **Planer.** `ServicePlanner#register` weist einen Zyklus mit `IllegalStateException` ab und lässt alles, wie es war.
+   `ServicePlanner#start(caller, ziel, PageSet)` löst die Vorstufen topologisch auf und legt EINE Hintergrundgruppe an
+   (`BackgroundJobs#startSteps`, ganz oder gar nicht, Gruppenart = Art des Ziels), je Stufe und Space ein Unterauftrag.
+   Ein ausdrücklich gestartetes Ziel startet auch MANUAL-Vorstufen; DISABLED startet nie und wird gelb als „bewusst
+   ausgelassen“ gemeldet. AUTOMATIC heißt zusätzlich: startet auf seinen bisherigen Auslösern. Die Vorgaben der
+   Starttypen ändern am heutigen Verhalten nichts. Eine Vorstufe ohne fehlende Seiten legt nichts an; das Ziel legt
+   seinen Teil je Space immer an, sobald die Seitenmenge für den Aufrufer nicht leer ist. Läuft für eine Vorstufe schon ein Teil
+   gleicher Art für Quelle und Space (`BackgroundJobs#running`), wird er Vorgänger, auch aus einer fremden Gruppe
+   (gezeigt werden nur Art und Space); deckt er nicht alle fehlenden Seiten ab, entsteht für den Rest ein eigener Teil.
+   Das Ziel verwendet nie wieder, es legt seine Teile immer an.
+3. **Warten je Space.** Ein Teil trägt die IDs seiner Vorgänger (`Jobs.AFTER`, Liste) und startet erst, wenn keiner ihn
+   mehr hält (`Jobs.PredecessorGate`): offen, angehalten oder unterbrochen und fortsetzbar hält; fertig, gescheitert,
+   abgebrochen, gelöscht oder unterbrochen ohne angemeldete, fortsetzbare Art gibt frei. Ein gesperrter Teil zählt für
+   die Vorfahrt nicht als wartend und hält keinen anderen Auftrag auf; er meldet einmal „wartet auf „Vorstufe““
+   (`Jobs.WAITING_FOR`). Teile anderer Spaces warten nie mit.
+4. **Fehler und Pause.** Eine gescheiterte, abgebrochene oder gelöschte Vorstufe hält die Kette nicht auf: die
+   Folgestufe läuft über das Vorhandene und meldet gelb mit Grund (`BackgroundJobs.PREDECESSOR_MISSING`). Eine
+   angehaltene Vorstufe hält die Kette an. Abbruch der Gruppe bricht auch gesperrte Teile ab, Pause pausiert sie, und
+   Fortsetzen setzt die Sperre wieder ein; lässt sich ein Vorgänger nicht fortsetzen, bleiben seine Nachfolger stehen.
+   Jeder Übergang, der einen Nachfolger frei gibt (Abbruch eines wartenden, Löschen, Besen), weckt die Planung sofort.
+   Die Aufbewahrungsfrist löscht keinen angehaltenen Vorgänger, auf den noch ein Nachfolger wartet. Der Stand
+   beendeter Vorgänger liegt im Speicher, geprüft wird nur, solange der Hintergrund starten darf; ein Start gilt ganz
+   oder gar nicht, zurückgenommen wird vom letzten Teil her.
+5. **Neustart.** Die Vorgänger stehen in den Angaben; `resumeInterrupted` setzt die ältesten Teile zuerst fort, darum
+   läuft eine unterbrochene Kette in derselben Reihenfolge weiter.
+6. **Erste Dienste** (`Harvester#servicePlanner`) nur als Beschreibung: Indexieren (AUTOMATIC), Bilder beschreiben
+   (wie `images.automatic`), Aussagenanalyse (MANUAL), Glossar (AUTOMATIC), Wissensgraph (MANUAL, nach Aussagenanalyse
+   und Bildbeschreibung). Ihre Arten bauen die Stränge B1 (D2) und A2 (D3).

@@ -169,6 +169,16 @@ class EnrichmentConfiguration {
         return automatic;
     }
 
+    /**
+     * D2: Unterbrochene Läufe „Bilder beschreiben“ laufen nach dem Start im selben Eintrag weiter (ADR 0025, Nachtrag
+     * „Hintergrundaufträge“), solange ein Vision-Modell eingestellt ist.
+     */
+    @Bean
+    org.springframework.context.ApplicationListener<org.springframework.boot.context.event.ApplicationReadyEvent>
+    resumeInterruptedImageDescriptions(AutomaticImageDescriptions automatic) {
+        return event -> automatic.images().background().resumeInterrupted();
+    }
+
     /** Dokumentnavigation einer Seite für {@code GET …/navigation} (ADR 0020). */
     @Bean
     NavigationQueries navigationQueries(PageQueries pages, Enrichments enrichments) {

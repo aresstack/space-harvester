@@ -120,9 +120,11 @@ public final class MainWindow implements AppContext.Navigator {
     private final FindBar findBar;
     /** Platz der Zeitleiste über der Suchleiste ({@code TimelineEvent}). */
     private final JPanel timelineSlot = new JPanel(new BorderLayout());
-    private AppContext.Section current = AppContext.Section.SEARCH;
+    private AppContext.Section current = AppContext.Section.CONTENT;
+    /** Die Auswahl links beim letzten Verlassen der Suche; zurück in der Suche gilt sie wieder. */
+    private Explorer.Remembered searchSelection;
     /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
-    private AppContext.Section beforeSettings = AppContext.Section.SEARCH;
+    private AppContext.Section beforeSettings = AppContext.Section.CONTENT;
     private final JPanel top = new JPanel(new HeaderLayout(12));
     private final StatusView statusView;
     private final SourcesView sources;
@@ -142,7 +144,14 @@ public final class MainWindow implements AppContext.Navigator {
         settings = new SettingsView(context);
         settings.onLeave(() -> show(beforeSettings));
         explorer = new Explorer(context);
-        explorer.onScope(searchView::scope);
+        // Die Auswahl links ist der Bereich der Suche, aber nur, solange die Suche zu sehen ist. Was man woanders
+        // anklickt (etwa einen Treffer), ändert ihn nicht; zurück in der Suche gilt die gemerkte Auswahl
+        // (Angelo, 21.11.2026).
+        explorer.onScope(scopes -> {
+            if (current == AppContext.Section.SEARCH) {
+                searchView.scope(scopes);
+            }
+        });
         // Links gewählt bestimmt rechts (Angelo, 13.11.2026): der Reiter „Export“ folgt der Auswahl im Explorer.
         // Die Auswahl links bestimmt die Inhalte, darunter Begriffe, Fachglossar und Graph unter Analysen (ADR 0029).
         explorer.onSelection(content::selection);
@@ -219,7 +228,8 @@ public final class MainWindow implements AppContext.Navigator {
             }
         });
         frame.setVisible(true);
-        show(AppContext.Section.SEARCH);
+        // Die App startet in der Leseansicht; zur Suche geht es erst mit einer Eingabe oben (Angelo, 21.11.2026).
+        show(AppContext.Section.CONTENT);
         return frame;
     }
 
@@ -638,7 +648,18 @@ public final class MainWindow implements AppContext.Navigator {
         if (changed && current != AppContext.Section.SETTINGS) {
             beforeSettings = current;
         }
+        if (changed && current == AppContext.Section.SEARCH) {
+            searchSelection = explorer.remember();
+        }
         current = section;
+        if (changed && section == AppContext.Section.SEARCH) {
+            if (searchSelection == null) {
+                // Zum ersten Mal in der Suche: gesucht wird in dem, was links gewählt ist.
+                searchView.scope(explorer.scopes());
+            } else {
+                explorer.restore(searchSelection);
+            }
+        }
         // Keine zweite Leiste: Die Quellenkarten bzw. die Bereiche der Einstellungen ersetzen im Drawer den Explorer,
         // solange der Bereich offen ist.
         boolean ownDrawer = section == AppContext.Section.SOURCES || section == AppContext.Section.SETTINGS;
@@ -693,6 +714,15 @@ public final class MainWindow implements AppContext.Navigator {
         showSection(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
         explorer.reveal(sourceId, spaceKey);
+    }
+
+    @Override
+    public void openFromTree(String sourceId, String pageId) {
+        // In der Suche filtert die Auswahl links nur; die Suchansicht bleibt (Angelo, 21.11.2026).
+        if (current == AppContext.Section.SEARCH) {
+            return;
+        }
+        openPage(sourceId, pageId);
     }
 
     @Override
