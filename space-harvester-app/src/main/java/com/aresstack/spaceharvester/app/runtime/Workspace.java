@@ -1341,6 +1341,24 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #progressiveSearch(KeywordSearch.Query, ProgressiveSearchListener)}, mit bzw. ohne die Suchmethode
+     * „Nachbarseiten“ (R2).
+     */
+    public ProgressiveSearch progressiveSearch(KeywordSearch.Query query, ProgressiveSearchListener listener,
+                                               boolean neighbors) {
+        return harvester.progressiveSearch().searchAsync(caller, query,
+                harvester.searchProfile().withNeighbors(neighbors), listener);
+    }
+
+    /**
+     * Suchmethode „Nachbarseiten“ (R2) zur Schlagwortsuche nach einem Stapel: Nachbarn der angezeigten Treffer, die
+     * dieselbe Anfrage im selben Umfang treffen; beste Treffer zuerst übergeben. Läuft nie auf dem EDT.
+     */
+    public List<KeywordSearch.Hit> neighborSearch(KeywordSearch.Query query, List<KeywordSearch.Hit> shown) {
+        return harvester.neighborSearch().search(caller, query, shown);
+    }
+
+    /**
      * Liest einen Testbestand der Suchqualität (Q1) zur Vorschau: gültige Fragen und Zeilenfehler. Seitenadressen löst
      * es über die Adressmuster der Quellen auf, ohne Seiten zu laden.
      */

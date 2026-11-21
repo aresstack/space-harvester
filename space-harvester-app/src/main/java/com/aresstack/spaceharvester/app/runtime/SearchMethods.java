@@ -1,0 +1,50 @@
+package com.aresstack.spaceharvester.app.runtime;
+
+import java.util.Objects;
+import java.util.prefs.Preferences;
+
+/**
+ * Die zuschaltbaren Suchmethoden, wie der Benutzer sie in den Suchoptionen gesetzt hat (Angelo 21.11.2026: die
+ * bisherige Suche bleibt Standard, jede Erweiterung schaltet der Benutzer per Häkchen zu). Die Stellung bleibt über
+ * den Neustart erhalten; Suche und Chat lesen dieselbe.
+ */
+public final class SearchMethods {
+
+    static final String NEIGHBORS = "search.method.neighbors";
+
+    private static final SearchMethods USER = new SearchMethods(Preferences.userNodeForPackage(SearchMethods.class));
+
+    private final Preferences preferences;
+
+    SearchMethods(Preferences preferences) {
+        this.preferences = Objects.requireNonNull(preferences, "preferences");
+    }
+
+    /** Die Stellung des Benutzers. */
+    public static SearchMethods user() {
+        return USER;
+    }
+
+    /** Suchmethode „Nachbarseiten“ (R2); Standard aus. */
+    public boolean neighbors() {
+        try {
+            Boolean held = session;
+            return held != null ? held : preferences.getBoolean(NEIGHBORS, false);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    public void neighbors(boolean on) {
+        try {
+            preferences.putBoolean(NEIGHBORS, on);
+        } catch (RuntimeException e) {
+            // Ohne Ablage gilt die Stellung nur bis zum Ende der Sitzung; die Suche läuft trotzdem.
+            session = on;
+            return;
+        }
+        session = null;
+    }
+
+    private volatile Boolean session;
+}

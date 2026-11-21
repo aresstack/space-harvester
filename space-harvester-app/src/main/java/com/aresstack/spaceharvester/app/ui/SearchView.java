@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.runtime.SearchMethods;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.MarkedTextRenderer;
 import com.aresstack.spaceharvester.application.observe.Subscription;
@@ -69,6 +70,10 @@ public final class SearchView implements View {
     static final String DONE = "Die Suche ist abgeschlossen";
     /** Abstand der Abfragen des Ladestands ({@code KeywordSearch.progress}), solange Seiten in den Cache laden. */
     static final String SEMANTIC = "Semantische Suche";
+    /** Suchmethode „Nachbarseiten“ (R2). */
+    static final String NEIGHBORS = "Nachbarseiten einbeziehen";
+    /** Gelbe Zeile, wenn die Nachbarseiten nicht geprüft werden konnten; kein Fehler der Suche. */
+    static final String NEIGHBORS_UNCHECKED = "Nachbarseiten konnten nicht geprüft werden";
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
@@ -76,6 +81,14 @@ public final class SearchView implements View {
     /** Progressive Suche des Core (ADR 0017): Originalanfrage, dann Varianten bis zum Qualitätsziel. */
     final JCheckBox semantic = checkBox(SEMANTIC, "Sucht zusätzlich mit Varianten der Anfrage und ordnet alle Treffer "
             + "nach ihrer Nähe zur ursprünglichen Anfrage");
+    /**
+     * Suchmethode „Nachbarseiten“ (R2, Angelo 21.11.2026: zuschaltbar, Standard aus): nimmt Eltern-, Unter- und
+     * verlinkte Seiten der besten Treffer dazu, wenn sie die Anfrage auch treffen. Die Stellung bleibt erhalten
+     * ({@link SearchMethods}); der Chat folgt ihr.
+     */
+    final JCheckBox neighbors = checkBox(NEIGHBORS, NEIGHBORS_TIP);
+    /** Die Suche, nach deren Stapel die Nachbarseiten noch gesucht werden; -1 ohne. */
+    private int neighborsFor = -1;
     /** Die Suchanfragen der semantischen Suche als Schlagwörter; die ursprüngliche steht im Suchfeld. */
     final JPanel tags = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
     /** Die laufende semantische Suche; {@code null}, wenn keine läuft. */
@@ -188,6 +201,11 @@ public final class SearchView implements View {
         more.setVisible(false);
         semantic.setSelected(false);
         semantic.addItemListener(e -> mode());
+        neighbors.setSelected(SearchMethods.user().neighbors());
+        neighbors.addItemListener(e -> {
+            SearchMethods.user().neighbors(neighbors.isSelected());
+            mode();
+        });
         tags.setOpaque(false);
         tags.setVisible(false);
         for (DocumentKind kind : DocumentKind.values()) {
@@ -228,13 +246,18 @@ public final class SearchView implements View {
                 }
             }
         });
-        table.setToolTipText("Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs");
+        table.setToolTipText(ROW_TIP);
         table.getColumnModel().getColumn(HitsModel.EXCERPT).setCellRenderer(excerpts);
         table.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
             @Override
             public void mouseMoved(MouseEvent e) {
-                table.setCursor(onMark(e) ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                boolean mark = onMark(e);
+                table.setCursor(mark ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
                         : java.awt.Cursor.getDefaultCursor());
+                // Bei einem Nachbarn nennt der Tooltip der Marke die Ausgangsseite (UX-Manager 21.11.2026).
+                String tip = mark ? model.rows.get(table.convertRowIndexToModel(table.rowAtPoint(e.getPoint())))
+                        .markTip() : null;
+                table.setToolTipText(tip != null ? tip : ROW_TIP);
             }
         });
 
@@ -363,7 +386,10 @@ public final class SearchView implements View {
         options.add(caption("Dateitypen"));
         kindBoxes.values().forEach(box -> options.add(menuItem(box)));
         options.addSeparator();
+        // Die Suchmethoden als Gruppe (UX-Manager 21.11.2026); weitere kommen hier dazu.
+        options.add(caption("Suchmethoden"));
         options.add(menuItem(semantic));
+        options.add(menuItem(neighbors));
         options.add(notes);
         options.revalidate();
     }
@@ -554,6 +580,10 @@ public final class SearchView implements View {
         semantic.setToolTipText(available || runtime == null
                 ? semanticTip(runtime == null ? null : available, runtime != null && runtime.workspace().aiVariants())
                 : lockedTip(runtime.settings().ai()));
+        // Die Nachbarn kommen aus dem lokalen Bestand; ohne Laufzeit gibt es keinen.
+        neighbors.setEnabled(runtime != null);
+        neighbors.setToolTipText(runtime != null ? NEIGHBORS_TIP
+                : "Gesperrt: keine Wissensquelle eingerichtet, also keine Seiten mit Nachbarn");
         String tip = semantic.getToolTipText();
         semanticNote.setText(tip == null ? " " : "<html><div style='width:320px'>" + tip + "</div></html>");
         mode();
@@ -629,8 +659,16 @@ public final class SearchView implements View {
 
     /** Nennt den Modus der nächsten Suche neben dem Umfang. */
     private void mode() {
-        modeLabel.setText(semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche");
+        modeLabel.setText((semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
+                + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : ""));
     }
+
+    /** Tooltip der Trefferliste. */
+    static final String ROW_TIP = "Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs";
+
+    /** Ein Satz (UX-Manager 21.11.2026). */
+    static final String NEIGHBORS_TIP = "Nimmt Eltern-, Unter- und verlinkte Seiten der besten Treffer dazu, wenn sie "
+            + "die Anfrage auch treffen";
 
     private static JCheckBox checkBox(String text, String tooltip) {
         JCheckBox box = Comic.checkBox(text);
@@ -742,6 +780,7 @@ public final class SearchView implements View {
         stopLoading();
         showVariants(List.of());
         int id = ++request;
+        neighborsFor = neighbors.isSelected() && neighbors.isEnabled() ? id : -1;
         run.setEnabled(false);
         more.setVisible(false);
         feedback.clear();
@@ -885,7 +924,7 @@ public final class SearchView implements View {
                 });
             }
         };
-        running = runtime.workspace().progressiveSearch(q, listener);
+        running = runtime.workspace().progressiveSearch(q, listener, neighbors.isSelected() && neighbors.isEnabled());
     }
 
     /** Die ganze Liste nach einer Freigabe: neue Treffer eingeordnet, bekannte an ihrem neuen Platz, Auswahl bleibt. */
@@ -910,6 +949,10 @@ public final class SearchView implements View {
         });
         progressText.setText(completion(result.reason()) + " · "
                 + Texts.count(model.rows.size(), "Treffer", "Treffer"));
+        if (result.neighbors() == ProgressiveResult.Neighbors.UNCHECKED
+                && result.reason() != ProgressiveResult.Completion.CANCELLED) {
+            uncheckedNeighbors();
+        }
         if (result.reason() == ProgressiveResult.Completion.FAILED) {
             LOG.log(System.Logger.Level.WARNING, "Semantische Suche fehlgeschlagen: {0} Suchanfragen, keine lief",
                     result.variants().size());
@@ -1293,6 +1336,46 @@ public final class SearchView implements View {
         updateMore();
     }
 
+    /** Gelb in der Statuszeile: Ein fehlender Nachbar heißt dann nicht, dass es ihn nicht gibt (Auflage AT). */
+    private void uncheckedNeighbors() {
+        status.setText(status.getText().strip() + " · " + NEIGHBORS_UNCHECKED);
+        status.setForeground(Comic.ORANGE);
+    }
+
+    /**
+     * Suchmethode „Nachbarseiten“ zur Schlagwortsuche, einmal nach dem ersten fertig geladenen Stapel: Nachbarn der
+     * angezeigten Treffer, die dieselbe Anfrage treffen, rücken hinten nach; Auswahl und Position bleiben.
+     */
+    private void searchNeighbors() {
+        AppRuntime runtime = context.runtime();
+        KeywordSearch.Query q = lastQuery;
+        int id = request;
+        if (neighborsFor != id || runtime == null || q == null || model.rows.isEmpty()) {
+            return;
+        }
+        neighborsFor = -1;
+        List<KeywordSearch.Hit> shown = model.rows.stream().map(row -> new KeywordSearch.Hit(row.sourceId(),
+                row.pageId(), row.spaceKey(), row.title(), row.snippet(), null, null, row.modifiedAt(), null))
+                .toList();
+        Background.run(() -> runtime.workspace().neighborSearch(q, shown), found -> {
+            if (id != request) {
+                return;
+            }
+            Hit selected = selectedHit();
+            model.append(found.stream().map(Hit::of).toList());
+            select(selected);
+            status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer")
+                    + (found.isEmpty() ? "" : " · " + Texts.count(found.size(), "Nachbarseite", "Nachbarseiten")
+                    + " dazu"));
+            status.setForeground(Comic.MUTED);
+        }, error -> {
+            if (id == request) {
+                LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesucht ({0})", error.getClass().getName());
+                uncheckedNeighbors();
+            }
+        });
+    }
+
     /** Ende der Zeile: „Die Suche ist abgeschlossen“ mit der Zahl der Treffer, nach einem Abbruch als solcher. */
     private void finished(boolean cancelled) {
         if (awaitingHits) {
@@ -1309,6 +1392,11 @@ public final class SearchView implements View {
         // Die Zahl der Treffer nennt danach der Stand rechts daneben; keine zweite Zeile mit derselben Zahl.
         progressText.setVisible(false);
         updateMore();
+        if (!cancelled && running == null) {
+            searchNeighbors();
+        } else if (cancelled) {
+            neighborsFor = -1;
+        }
     }
 
     /** Leere Spur ohne Abbrechen; mittig der Endzustand, {@code null} ohne. */
@@ -1422,6 +1510,11 @@ public final class SearchView implements View {
         /** Die Marke des Treffergrunds vor dem Auszug oder {@code null} (R1). */
         MarkedTextRenderer.Mark mark() {
             return HitReasons.mark(reasons);
+        }
+
+        /** Tooltip der Marke; bei einem Nachbarn die Ausgangsseite, sonst {@code null}. */
+        String markTip() {
+            return HitReasons.tip(reasons);
         }
 
         /** Eine aufgelöste Adresse; statt eines Auszugs die Version. */
