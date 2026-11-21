@@ -241,6 +241,9 @@ final class AnalysisView extends JPanel {
         popup.showAt(steps, x, y);
     }
 
+    private com.aresstack.spaceharvester.app.ui.IconButton proposeIcon;
+    private com.aresstack.spaceharvester.app.ui.IconButton createIcon;
+
     /** „Synonyme vorschlagen“ für die Reiterzeile; nur sichtbar, solange „Analyse“ gewählt ist. */
     ComposerButton proposeButton() {
         return relations.proposeButton();
@@ -249,6 +252,35 @@ final class AnalysisView extends JPanel {
     /** „Neue Beziehung …“ für die Reiterzeile; nur sichtbar, solange „Analyse“ gewählt ist. */
     ComposerButton createButton() {
         return relations.createButton();
+    }
+
+    /**
+     * „Synonyme vorschlagen“ als Icon-Knopf für die enge Reiterzeile einer Seite (UX-Manager, 960 px): gleicher Wortlaut
+     * als Tooltip und zugänglicher Name, gleiche Aktion, gesperrt wie der Textknopf.
+     */
+    com.aresstack.spaceharvester.app.ui.IconButton proposeIcon() {
+        if (proposeIcon == null) {
+            proposeIcon = mirror(proposeButton(), com.aresstack.spaceharvester.app.ui.Glyph.SPARKLE);
+        }
+        return proposeIcon;
+    }
+
+    /** „Neue Beziehung …“ als Icon-Knopf (Plus) für die Reiterzeile einer Seite; wie {@link #proposeIcon()}. */
+    com.aresstack.spaceharvester.app.ui.IconButton createIcon() {
+        if (createIcon == null) {
+            createIcon = mirror(createButton(), com.aresstack.spaceharvester.app.ui.Glyph.PLUS);
+        }
+        return createIcon;
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.IconButton mirror(javax.swing.AbstractButton button,
+                                                                         javax.swing.Icon glyph) {
+        com.aresstack.spaceharvester.app.ui.IconButton icon =
+                new com.aresstack.spaceharvester.app.ui.IconButton(glyph, button.getText());
+        icon.setEnabled(button.isEnabled());
+        button.addPropertyChangeListener("enabled", e -> icon.setEnabled(button.isEnabled()));
+        icon.addActionListener(e -> button.doClick(0));
+        return icon;
     }
 
     // --------------------------------------------------------------------------------------------- Namen und Worte

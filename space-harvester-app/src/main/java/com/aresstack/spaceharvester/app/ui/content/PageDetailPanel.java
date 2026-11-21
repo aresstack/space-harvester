@@ -564,7 +564,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(GRAPH, graph)
                 .tab(RELATIONS, analysisView)
                 // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Beziehungen“ gewählt ist (BG2b).
-                .actions(subpages.box(), analysisView.proposeButton(), analysisView.createButton());
+                .actions(subpages.box(), analysisView.proposeIcon(), analysisView.createIcon());
         originalContent.setOpaque(false);
         fileContent.setOpaque(false);
         originalContent.add(readingPane, ORIGINAL_PAGE_CARD);
@@ -1049,8 +1049,8 @@ public final class PageDetailPanel extends JPanel {
      */
     private void showRelations() {
         boolean selected = RELATIONS.equals(analysisTabs.selected());
-        analysisView.proposeButton().setVisible(selected);
-        analysisView.createButton().setVisible(selected);
+        analysisView.proposeIcon().setVisible(selected);
+        analysisView.createIcon().setVisible(selected);
         analysisView.shown(ANALYSES.equals(tabs.selected()) && !wide && selected);
         statementsHelp.setVisible(ANALYSES.equals(tabs.selected()) && !wide
                 && STATEMENTS.equals(analysisTabs.selected()));
@@ -1607,20 +1607,19 @@ public final class PageDetailPanel extends JPanel {
                         com.aresstack.spaceharvester.application.terms.TermText.normalize(term), List.of()));
             }
             origins.put(relation, List.copyOf(where));
-            if (!where.isEmpty()) {
-                keys.add(where.iterator().next());
-            }
+            keys.addAll(where);
         }
         var nodes = workspace.pageNodes(keys);
         List<SubpageSection.Row> rows = new java.util.ArrayList<>();
         origins.forEach((relation, where) -> {
-            var origin = where.isEmpty() ? null : nodes.get(where.get(0));
-            if (origin != null) {
+            List<com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode> visible = where.stream()
+                    .map(nodes::get).filter(java.util.Objects::nonNull).toList();
+            if (!visible.isEmpty()) {
                 com.aresstack.spaceharvester.app.ui.Relation shown = com.aresstack.spaceharvester.app.ui.Relation.of(relation);
                 rows.add(new SubpageSection.Row(List.of(shown.fromTerm(),
                         com.aresstack.spaceharvester.app.ui.Relation.typeText(shown.type()),
                         shown.toTerm(), com.aresstack.spaceharvester.app.ui.Relation.statusText(shown.status())),
-                        origin, where.size() - 1, null));
+                        visible.get(0), visible.subList(1, visible.size()), null));
             }
         });
         return rows;

@@ -39,23 +39,34 @@ final class SubpageSection extends JPanel {
      *
      * @param cells  die Werte der Spalten vor „Unterseite“
      * @param origin die Unterseite, von der der Eintrag stammt
-     * @param more   auf wie vielen weiteren Unterseiten er außerdem vorkommt (0: nur hier)
+     * @param others die weiteren Unterseiten, auf denen er außerdem vorkommt (leer: nur hier)
      * @param target die Seite, die ein Klick auf die Zeile öffnet; {@code null}: die Unterseite
      */
-    record Row(List<String> cells, PageNode origin, int more, String target) {
+    record Row(List<String> cells, PageNode origin, List<PageNode> others, String target) {
 
         Row {
             cells = List.copyOf(cells);
             Objects.requireNonNull(origin, "origin");
+            others = List.copyOf(others);
         }
 
         Row(List<String> cells, PageNode origin) {
-            this(cells, origin, 0, null);
+            this(cells, origin, List.of(), null);
         }
 
+        /** Der Titel der Unterseite, so wie der Link ihn zeigt. */
         String originText() {
-            return Breadcrumbs.title(origin) + (more > 0 ? " (+" + more + ")" : "");
+            return Breadcrumbs.title(origin);
         }
+
+        int more() {
+            return others.size();
+        }
+    }
+
+    /** Tooltip des gedämpften „+N“ hinter dem Link. */
+    static String moreTip(int more) {
+        return "auch auf " + (more == 1 ? "1 weiteren Unterseite" : more + " weiteren Unterseiten");
     }
 
     private final Model model;
@@ -77,7 +88,12 @@ final class SubpageSection extends JPanel {
         this.maxRows = maxRows;
         setOpaque(false);
         model = new Model(columns);
-        table = Comic.table(new JTable(model));
+        table = Comic.table(new JTable(model) {
+            @Override
+            public String getToolTipText(MouseEvent event) {
+                return tip(event.getPoint());
+            }
+        });
         scroll = Comic.scroll(table);
         count = new CountChip(word, Comic.MUTED);
         count.setFocusable(false);
@@ -96,12 +112,18 @@ final class SubpageSection extends JPanel {
         add(title, BorderLayout.NORTH);
         add(busy, BorderLayout.CENTER);
         table.getColumnModel().getColumn(columns.length).setCellRenderer(new OriginRenderer());
+        javax.swing.ToolTipManager.sharedInstance().registerComponent(table);
         table.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 int row = table.rowAtPoint(e.getPoint());
-                if (row >= 0) {
+                if (row < 0) {
+                    return;
+                }
+                if (onMore(row, e.getPoint())) {
+                    showOthers(row, e.getX(), e.getY());
+                } else {
                     open(row, table.columnAtPoint(e.getPoint()));
                 }
             }
@@ -152,6 +174,75 @@ final class SubpageSection extends JPanel {
         onOpen.accept(origin ? chosen.origin().pageId() : chosen.target());
     }
 
+    /** Die Titel der weiteren Unterseiten einer Zeile (das „+N“). */
+    List<String> others(int row) {
+        return model.rows.get(row).others().stream().map(Breadcrumbs::title).toList();
+    }
+
+    /** Öffnet die {@code index}-te weitere Unterseite einer Zeile. */
+    void openOther(int row, int index) {
+        onOpen.accept(model.rows.get(row).others().get(index).pageId());
+    }
+
+    /** Das Menü hinter „+N“: je weitere Unterseite ein Eintrag, Klick öffnet sie. */
+    javax.swing.JPopupMenu othersMenu(int row) {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        List<String> titles = others(row);
+        for (int i = 0; i < titles.size(); i++) {
+            int index = i;
+            javax.swing.JMenuItem item = new javax.swing.JMenuItem(titles.get(i));
+            item.setFont(Comic.regular(13f));
+            item.addActionListener(e -> openOther(row, index));
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    private void showOthers(int row, int x, int y) {
+        othersMenu(row).show(table, x, y);
+    }
+
+    /** Ob {@code point} auf dem „+N“ der Zeile liegt. */
+    private boolean onMore(int row, java.awt.Point point) {
+        Row chosen = model.rows.get(row);
+        if (chosen.more() == 0 || table.columnAtPoint(point) != model.columns.length) {
+            return false;
+        }
+        java.awt.Rectangle cell = table.getCellRect(row, model.columns.length, false);
+        java.awt.Component title = table.prepareRenderer(new DefaultTableCellRenderer(), row, model.columns.length);
+        int start = cell.x + titleWidth(row, title.getPreferredSize().width) + 2;
+        return point.x >= start && point.x <= start + moreChip(chosen.more()).getPreferredSize().width;
+    }
+
+    private String tip(java.awt.Point point) {
+        int row = table.rowAtPoint(point);
+        if (row < 0) {
+            return null;
+        }
+        Row chosen = model.rows.get(row);
+        if (onMore(row, point)) {
+            return moreTip(chosen.more());
+        }
+        if (table.columnAtPoint(point) == model.columns.length) {
+            return chosen.originText() + " · Klick öffnet die Unterseite";
+        }
+        Object value = table.getValueAt(row, table.columnAtPoint(point));
+        return value == null || String.valueOf(value).isBlank() ? null : String.valueOf(value);
+    }
+
+    /** So breit steht der Titel der Unterseite vor dem „+N“: ganz, oder gekürzt, wenn beides nicht passt. */
+    private int titleWidth(int row, int preferred) {
+        int room = table.getColumnModel().getColumn(model.columns.length).getWidth()
+                - moreChip(model.rows.get(row).more()).getPreferredSize().width - 4;
+        return Math.max(0, Math.min(preferred, room));
+    }
+
+    private static CountChip moreChip(int more) {
+        CountChip chip = CountChip.choice("+" + more, Comic.MUTED);
+        String tip = moreTip(more);
+        return chip.tips(tip, tip);
+    }
+
     JTable table() {
         return table;
     }
@@ -170,6 +261,10 @@ final class SubpageSection extends JPanel {
             List<String> cells = new ArrayList<>();
             for (int c = 0; c < model.getColumnCount(); c++) {
                 cells.add(String.valueOf(model.getValueAt(i, c)));
+            }
+            int more = model.rows.get(i).more();
+            if (more > 0) {
+                cells.set(cells.size() - 1, cells.get(cells.size() - 1) + " (+" + more + ")");
             }
             text.append(String.join("\t", cells)).append('\n');
         }
@@ -190,16 +285,52 @@ final class SubpageSection extends JPanel {
         repaint();
     }
 
-    /** Die Herkunft als Link: gekürzt mit „…“, voller Titel im Tooltip. */
-    private static final class OriginRenderer extends DefaultTableCellRenderer {
+    /**
+     * Die Herkunft als Link (gekürzt mit „…“, voller Titel im Tooltip der Tabelle); kommt der Eintrag auf weiteren
+     * Unterseiten vor, steht dahinter ein gedämpftes „+N“ wie bei den Begriffen (UX-Manager).
+     */
+    private final class OriginRenderer implements javax.swing.table.TableCellRenderer {
+
+        private final DefaultTableCellRenderer link = new DefaultTableCellRenderer();
+        private final JPanel cell = new JPanel();
+
+        OriginRenderer() {
+            cell.setLayout(new javax.swing.BoxLayout(cell, javax.swing.BoxLayout.X_AXIS));
+        }
+
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
                                                        boolean focused, int row, int column) {
-            Component cell = super.getTableCellRendererComponent(table, value, selected, focused, row, column);
+            Component title = link.getTableCellRendererComponent(table, value, selected, focused, row, column);
             if (!selected) {
-                cell.setForeground(ResearchUiPalette.ACCENT_BLUE);
+                title.setForeground(ResearchUiPalette.ACCENT_BLUE);
             }
-            setToolTipText(value == null ? null : value + " · Klick öffnet die Unterseite");
+            link.setToolTipText(null);
+            link.setPreferredSize(null);
+            link.setMinimumSize(null);
+            link.setMaximumSize(null);
+            int more = model.rows.get(row).more();
+            if (more == 0) {
+                return title;
+            }
+            cell.removeAll();
+            cell.setOpaque(true);
+            cell.setBackground(title.getBackground());
+            CountChip chip = moreChip(more);
+            // Das „+N“ dicht hinter dem Titel (2 px), der Titel kürzt sich, wenn beides nicht passt.
+            int width = titleWidth(row, title.getPreferredSize().width);
+            Dimension size = new Dimension(width, table.getRowHeight(row));
+            title.setMinimumSize(size);
+            title.setMaximumSize(size);
+            ((javax.swing.JComponent) title).setPreferredSize(size);
+            cell.add(title);
+            cell.add(javax.swing.Box.createHorizontalStrut(2));
+            JPanel holder = new JPanel(new java.awt.GridBagLayout());
+            holder.setOpaque(false);
+            holder.add(chip);
+            holder.setMaximumSize(new Dimension(chip.getPreferredSize().width, table.getRowHeight(row)));
+            cell.add(holder);
+            cell.add(javax.swing.Box.createHorizontalGlue());
             return cell;
         }
     }

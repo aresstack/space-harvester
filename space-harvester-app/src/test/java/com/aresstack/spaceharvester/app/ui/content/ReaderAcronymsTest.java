@@ -54,6 +54,15 @@ class ReaderAcronymsTest {
     private static final String OTHER_PAGE = "<h1>Prüfung</h1><p>Die API (Automatische Prüfungs Instanz) prüft "
             + "jede Lieferung.</p>";
 
+    private static void layoutAll(java.awt.Component component) {
+        component.doLayout();
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                layoutAll(child);
+            }
+        }
+    }
+
     @TempDir
     Path home;
 
@@ -319,6 +328,22 @@ class ReaderAcronymsTest {
         });
         awaitTrue(() -> onEdt(() -> panel.analysisView().below().count() > 0));
         assertThat(onEdt(() -> panel.analysisView().below().table().getColumnName(4))).isEqualTo("Unterseite");
+        // UX-Manager: Bei 960 px stehen alle sieben Unterreiter in einer Zeile, auch mit Checkbox und den beiden
+        // Aktionen als Icon-Knöpfe; 900 px lässt Luft für die breitere Schrift der CI.
+        assertThat(onEdt(() -> {
+            panel.setSize(900, 700);
+            layoutAll(panel);
+            java.util.Set<Integer> rows = new java.util.HashSet<>();
+            for (String name : panel.analysisTabs().names()) {
+                javax.swing.AbstractButton tab = panel.analysisTabs().button(name);
+                rows.add(javax.swing.SwingUtilities.convertPoint(tab.getParent(), tab.getLocation(), panel).y);
+            }
+            return rows.size() + "/" + panel.analysisTabs().names().size();
+        })).isEqualTo("1/7");
+        assertThat(onEdt(() -> panel.analysisView().createIcon().getAccessibleContext().getAccessibleName()))
+                .isEqualTo("Neue Beziehung …");
+        assertThat(onEdt(() -> panel.analysisView().proposeIcon().getToolTipText()))
+                .isEqualTo("Synonyme vorschlagen");
 
         onEdt(() -> {
             panel.subpages().box().setSelected(false);
