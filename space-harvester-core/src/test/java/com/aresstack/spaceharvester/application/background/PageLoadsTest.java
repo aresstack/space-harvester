@@ -63,7 +63,39 @@ class PageLoadsTest {
         assertThat(done.written()).isEqualTo(2);
         assertThat(done.failed()).isEqualTo(1);
         assertThat(cache).contains(new PageKey("wiki", "1"), new PageKey("wiki", "3"));
-        assertThat(done.parts()).extracting(JobStatus::state).containsOnly(JobState.COMPLETED);
+        // Die gescheiterte Seite lässt ihren Unterauftrag scheitern, damit „Fortsetzen“ sie erneut versucht.
+        JobStatus beta = done.parts().stream().filter(part -> "BETA".equals(part.partitionKey())).findFirst()
+                .orElseThrow();
+        assertThat(beta.state()).isEqualTo(JobState.FAILED);
+        assertThat(beta.error().code()).isEqualTo(PageLoads.PAGES_MISSING);
+        assertThat(beta.lifecycle().actions()).contains(com.aresstack.spaceharvester.application.jobs.JobAction.RESUME);
+        assertThat(done.parts().stream().filter(part -> "ALPHA".equals(part.partitionKey())))
+                .extracting(JobStatus::state).containsOnly(JobState.COMPLETED);
+    }
+
+    @Test
+    void moreMissingPagesThanTheSchedulerHoldsStillLoadInWindows() throws Exception {
+        java.util.List<PageKey> many = new java.util.ArrayList<>();
+        java.util.Map<String, String> all = new java.util.HashMap<>();
+        for (int i = 0; i < 120; i++) {
+            many.add(new PageKey("wiki", "p" + i));
+        }
+        AcquisitionScheduler small = new AcquisitionScheduler((caller, key) -> cache.add(key),
+                new AcquisitionScheduler.Limits(2, 0, 2, 10));
+        try {
+            BackgroundJobs own = new BackgroundJobs(jobs, "app-small");
+            PageLoads windowed = new PageLoads(own, small, AccessContext.technicalClient("app"), cache::contains,
+                    key -> Optional.of("DELTA"));
+            BackgroundGroup group = windowed.load(AccessContext.technicalClient("app"), "Viele Seiten", many)
+                    .orElseThrow();
+            executor.runAll();
+
+            BackgroundGroup done = own.group(group.groupId()).orElseThrow();
+            assertThat(done.completed()).isTrue();
+            assertThat(done.written()).isEqualTo(120);
+        } finally {
+            small.close();
+        }
     }
 
     @Test

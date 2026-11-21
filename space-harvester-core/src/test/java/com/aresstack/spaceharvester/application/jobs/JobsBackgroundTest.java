@@ -37,6 +37,18 @@ class JobsBackgroundTest {
     }
 
     @Test
+    void aFollowUpArrivingAfterABackgroundJobLeavesTheUsersSlotFree() {
+        Jobs jobs = jobs(2, 5);
+        JobStatus background = jobs.submit(JobType.BACKGROUND, "wiki", "ALPHA", null, null, Map.of(), idle());
+        JobStatus enrichment = jobs.submit(JobType.ENRICHMENT, "wiki", "BETA", null, null, Map.of(), idle());
+
+        assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.RUNNING);
+        assertThat(jobs.status(enrichment.id()).state()).isEqualTo(JobState.QUEUED);
+        JobStatus sync = jobs.submit(JobType.SYNC, "wiki", "GAMMA", null, null, Map.of(), idle());
+        assertThat(jobs.status(sync.id()).state()).isEqualTo(JobState.RUNNING);
+    }
+
+    @Test
     void aBackgroundJobWaitsWhileAnotherJobWaits() {
         Jobs jobs = jobs(1, 5);
         JobStatus sync = jobs.submit(JobType.SYNC, "wiki", "ALPHA", null, null, Map.of(), idle());
