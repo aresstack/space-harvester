@@ -82,6 +82,7 @@ final class ChangeLogSchema {
     private static final String MARK_SPACE = M + "space";
     private static final String MARK_FAILED = M + "failedSyncs";
     private static final String MARK_INITIAL = M + "initial";
+    private static final String MARK_FAILED_SPACE = M + "failedSpace";
 
     /** Wert von {@link PageCacheSchema#TYPE} für Zusammenfassungen und Präfix ihrer IDs (ADR 0030, Abschnitt 5). */
     static final String SUMMARY = "summary";
@@ -308,6 +309,9 @@ final class ChangeLogSchema {
             doc.add(new StoredField(MARK_SPACE, space));
         }
         doc.add(new StoredField(MARK_FAILED, mark.failedSyncs()));
+        for (String space : mark.failedSpaces()) {
+            doc.add(new StoredField(MARK_FAILED_SPACE, space));
+        }
         if (mark.initial()) {
             doc.add(new StoredField(MARK_INITIAL, "true"));
         }
@@ -318,7 +322,7 @@ final class ChangeLogSchema {
         Number failed = doc.getField(MARK_FAILED) == null ? null : doc.getField(MARK_FAILED).numericValue();
         return new UpdateMark(doc.get(MARK_SOURCE_ID), Instant.parse(doc.get(MARK_AT_TEXT)), doc.get(MARK_USER),
                 Arrays.asList(doc.getValues(MARK_SPACE)), failed == null ? 0 : failed.intValue(),
-                doc.get(MARK_INITIAL) != null);
+                doc.get(MARK_INITIAL) != null, Arrays.asList(doc.getValues(MARK_FAILED_SPACE)));
     }
 
     static Document change(ChangeEntry entry) {

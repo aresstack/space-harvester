@@ -61,6 +61,8 @@ public final class ChangeLog implements AutoCloseable {
     private final Listeners<ChangeLogListener> listeners = new Listeners<>("Änderungsprotokoll");
     private final Coalescer<String, String> coalescer;
     private final Summaries summaries;
+    /** Zeitzone der Tage, wenn je Tag ein Update gilt ({@link #perDay}); {@code null}: jede Marke ein Update. */
+    private volatile ZoneId days;
     /** Hält „schon offen?“ und Einreihen von „Zusammenfassen“ zusammen. */
     private final Object summarizing = new Object();
     /** Entscheidungen „Erstbefüllung“ je Quelle, Marke und Seitenzahl; ändern sich erst mit neuen Seiten. */
@@ -111,6 +113,24 @@ public final class ChangeLog implements AutoCloseable {
     }
 
     /**
+     * Höchstens ein Update je Tag in {@code zone} (Angelo, 21.11.2026): alle Abgleiche eines Tages bilden ein Update mit
+     * einer Zusammenfassung, siehe {@link DailyUpdateMarks}. Ohne Aufruf ist jede Marke ein eigenes Update.
+     *
+     * @return dieses Protokoll
+     */
+    public ChangeLog perDay(ZoneId zone) {
+        this.days = Objects.requireNonNull(zone, "zone");
+        return this;
+    }
+
+    /** Die Marken einer Quelle, älteste zuerst; je Tag zusammengelegt, wenn {@link #perDay} gesetzt ist. */
+    private List<UpdateMark> marks(String sourceId) {
+        List<UpdateMark> stored = store.marks(sourceId);
+        ZoneId zone = days;
+        return zone == null ? stored : DailyUpdateMarks.perDay(stored, zone);
+    }
+
+    /**
      * Meldet neue Zeilen und Marken einer Quelle, oder aller Quellen, die der Aufrufer sehen darf (ADR 0027).
      *
      * @param sourceId eine Quelle, {@code null} für alle
@@ -146,7 +166,7 @@ public final class ChangeLog implements AutoCloseable {
     public Optional<UpdateMark> latestMark(AccessContext caller, String sourceId, String spaceKey) {
         Objects.requireNonNull(caller, "caller");
         requireReadable(caller, sourceId);
-        List<UpdateMark> marks = store.marks(sourceId);
+        List<UpdateMark> marks = marks(sourceId);
         for (int i = marks.size() - 1; i >= 0; i--) {
             if (spaceKey == null || marks.get(i).spaces().contains(spaceKey)) {
                 return Optional.of(marks.get(i));
@@ -602,7 +622,7 @@ public final class ChangeLog implements AutoCloseable {
     }
 
     private List<Span> spans(String sourceId) {
-        List<UpdateMark> marks = store.marks(sourceId);
+        List<UpdateMark> marks = marks(sourceId);
         List<Span> spans = new ArrayList<>();
         Instant previous = null;
         for (UpdateMark mark : marks) {

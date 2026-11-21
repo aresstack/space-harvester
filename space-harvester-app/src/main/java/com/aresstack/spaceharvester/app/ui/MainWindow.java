@@ -700,31 +700,47 @@ public final class MainWindow implements AppContext.Navigator {
                         Comic.RED));
     }
 
+    /** Kreispfeile hinter gescheiterten Abgleichen eines Updates: wie die Kreispfeile im Baum für diese Spaces. */
+    @Override
+    public void retrySyncs(String sourceId, List<String> spaceKeys) {
+        catchUp(sourceId, spaceKeys);
+    }
+
     /** Kreispfeile im Baum: Quelle oder Space holen nach wie die Quellenkarte, eine Seite liest ihren Teilbaum neu. */
     @Override
     public void refresh(String sourceId, String spaceKey, String pageId) {
         if (pageId == null) {
-            // Die Meldezeile der Quellen-Ansicht sieht man vom Baum aus nicht: der Ausgang kommt in die Statuszeile.
-            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey),
-                    new SourcesView.CatchUpReport() {
-                        @Override
-                        public void started(List<String> jobs) {
-                            notice(Texts.count(jobs.size(), "Space wird", "Spaces werden") + " nachgeholt",
-                                    Comic.MUTED);
-                            if (!jobs.isEmpty()) {
-                                showJob(jobs.get(0));
-                            }
-                        }
-
-                        @Override
-                        public void failed(String message) {
-                            notice(message, Comic.RED);
-                        }
-                    })) {
-                notice("Nachholen wird gestartet …", Comic.MUTED);
-            }
+            catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey));
             return;
         }
+        refreshPage(sourceId, spaceKey, pageId);
+    }
+
+    /** Holt die Spaces nach (ohne {@code spaceKeys} jeden der Quelle); der Ausgang kommt in die Statuszeile. */
+    private void catchUp(String sourceId, List<String> spaceKeys) {
+        // Die Meldezeile der Quellen-Ansicht sieht man vom Baum aus nicht: der Ausgang kommt in die Statuszeile.
+        if (sources.catchUp(sourceId, spaceKeys,
+                new SourcesView.CatchUpReport() {
+                    @Override
+                    public void started(List<String> jobs) {
+                        notice(Texts.count(jobs.size(), "Space wird", "Spaces werden") + " nachgeholt",
+                                Comic.MUTED);
+                        if (!jobs.isEmpty()) {
+                            showJob(jobs.get(0));
+                        }
+                    }
+
+                    @Override
+                    public void failed(String message) {
+                        notice(message, Comic.RED);
+                    }
+                })) {
+            notice("Nachholen wird gestartet …", Comic.MUTED);
+        }
+    }
+
+    /** Liest eine Seite samt Unterseiten neu aus der Quelle. */
+    private void refreshPage(String sourceId, String spaceKey, String pageId) {
         notice("Aktualisierung wird gestartet …", Comic.MUTED);
         Downloads.refreshSubtree(context, sourceId, spaceKey, pageId, started -> {
             notice("Aktualisierung der Seite samt Unterseiten gestartet", Comic.MUTED);

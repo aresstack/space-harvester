@@ -210,3 +210,19 @@ Die Stufen 1 bis 4 brauchen keine KI und sind für sich nützlich.
   „Erstbefüllung“ geführt, mit Zählern und ohne Seitenliste im Bericht.
 - Die Zusammenfassung kostet Aufrufe beim Chat-Modell, nur auf Wunsch und nur für freigegebene Seiten.
 - Gewollte Abweichung vom Enterprise AI Client (SH+), in PARITY.md nachzutragen.
+
+## Nachtrag 21.11.2026: ein Update je Tag, Abgleich wiederholen
+
+Angelo, 21.11.2026: Mehrere Abgleiche an einem Tag ergaben mehrere Updates mit je einer Zusammenfassung. Künftig gilt
+**höchstens ein Update je Tag**: Alle Runden eines Tages (Tag des Abgleichs in der Zeitzone des Rechners, nicht der
+Tag der Änderungen) bilden ein Update, das alles seit dem vorigen Tag mit Abgleich umfasst – wer drei Wochen weg war,
+sieht die drei Wochen in einem Update. Die Marken bleiben einzeln abgelegt; `ChangeLog.perDay(zone)` legt sie beim
+Lesen über `DailyUpdateMarks` zusammen, so gilt das auch für die schon vorhandenen. Die Erstbefüllung bleibt für sich.
+Das zusammengelegte Update trägt Zeitpunkt und Kennung der letzten Runde des Tages; frühere Zusammenfassungen einzelner
+Runden laufen mit der Aufbewahrung aus, für das Tages-Update entsteht beim Öffnen der Leseansicht eine neue.
+
+Die Marke führt die Spaces der gescheiterten Aufträge (`failedSpaces`). Hinter der roten Zeile „N Abgleiche sind dabei
+gescheitert.“ stehen am jüngsten Update die Kreispfeile „Abgleich wiederholen“: Sie holen diese Spaces nach wie die
+Kreispfeile im Baum (manuell, also eine neue Runde, die ins Update von heute fällt). Was am selben Tag erneut
+abgeglichen wurde, zählt nicht mehr als gescheitert. Ältere Marken ohne `failedSpaces` wiederholen alle Spaces ihrer
+Runde.
