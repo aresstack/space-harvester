@@ -758,6 +758,9 @@ public final class Harvester implements AutoCloseable {
             FileSynonymVectorCache synonymVectors = new FileSynonymVectorCache(
                     builder.dataDirectory.resolve("term-relations").resolve("synonyms"));
             synonymCandidates.vectors(synonymVectors);
+            // K3: Synonyme wahlweise nur aus bestätigten Fachbegriffen des Glossars.
+            Glossary synonymGlossary = this.glossary;
+            synonymCandidates.glossaryTerms(scope -> synonymGlossary.confirmedTerms(scope.relationScope()));
             this.synonymVectors = synonymVectors;
             this.synonymDiscovery = new SynonymDiscovery(catalog, synonymCandidates, access, termRelations, judge,
                     synonymCache, jobs,
