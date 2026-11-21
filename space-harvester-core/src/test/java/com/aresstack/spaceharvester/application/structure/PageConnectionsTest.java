@@ -5,6 +5,7 @@ import static com.aresstack.spaceharvester.application.query.InMemorySearchIndex
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -12,7 +13,10 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
@@ -33,6 +37,7 @@ import com.aresstack.spaceharvester.application.terms.RelationScope;
 import com.aresstack.spaceharvester.application.terms.RelationType;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
@@ -88,6 +93,23 @@ class PageConnectionsTest {
             key -> Optional.ofNullable(cache.get(key)).map(PageSnapshot::header),
             key -> Optional.ofNullable(cache.get(key)), PLAIN, processor.version());
 
+    private final EmbeddingProcessor embedding = new EmbeddingProcessor(new EmbeddingProvider() {
+        @Override
+        public String modelId() {
+            return "axes";
+        }
+
+        @Override
+        public int dimensions() {
+            return 3;
+        }
+
+        @Override
+        public List<float[]> embed(List<String> texts) {
+            throw new AssertionError("der Strukturgraph bettet nichts ein");
+        }
+    }, 1500, KnowledgeTextSegmentation.defaults());
+
     private static HarvestSource source(String id) {
         HarvestSource source = mock(HarvestSource.class);
         when(source.id()).thenReturn(id);
@@ -127,7 +149,74 @@ class PageConnectionsTest {
 
     private PageConnections connections(LinkDirectory links, PageConnections.Budget budget) {
         index.publish("wiki", STATE, pages.stream().map(page -> entry(page, confirmed("g1"))).toList());
-        return new PageConnections(catalog, index, guard, links, terms, relations, budget);
+        return new PageConnections(catalog, index, guard, links, terms, relations, null, budget);
+    }
+
+    private PageConnections withVectors() {
+        index.publish("wiki", STATE, pages.stream().map(page -> entry(page, confirmed("g1"))).toList());
+        return new PageConnections(catalog, index, guard, LinkDirectory.NONE, terms, relations,
+                new PageConnections.Vectors(store, store, embedding));
+    }
+
+    /** Speichert Stücke als {@code "Abschnitt|[x,y,z]"} bzw. {@code "null|[x,y,z]"}. */
+    private void embed(String pageId, String... chunks) {
+        StringBuilder json = new StringBuilder("{\"model\":\"axes\",\"dimensions\":3,\"chunks\":[");
+        for (int i = 0; i < chunks.length; i++) {
+            String[] parts = chunks[i].split("\\|");
+            String section = parts[0].equals("null") ? "null" : "\"" + parts[0] + "\"";
+            json.append(i == 0 ? "" : ",").append("{\"charStart\":").append(i * 10).append(",\"charEnd\":")
+                    .append(i * 10 + 10).append(",\"section\":").append(section).append(",\"vector\":")
+                    .append(parts[1]).append('}');
+        }
+        store.save(new Enrichment(key(pageId), "embedding", embedding.version(), "sha256:" + "1".repeat(64), "1",
+                Enrichment.Status.OK, json.append("]}").toString(), List.of(), null, T0));
+    }
+
+    @Test
+    void similarSectionsAreComputedFromStoredVectorsOnlyAndNeverShowHiddenPages() {
+        standard();
+        embed("1", "Betrieb|[1,0,0]", "null|[0,1,0]");
+        embed("2", "Buchung > Schlüssel|[0.95,0.1,0]");
+        embed("3", "null|[1,0,0]");
+        embed("0", "null|[0,0,1]");
+        hidden.add("3");
+
+        PageConnections.Connections result = withVectors().connections(CALLER, "wiki", "1",
+                PageConnections.Query.all().withKinds(List.of(ConnectionKind.SIMILAR_SECTION)));
+
+        assertThat(result.edges()).extracting(edge -> edge.target().key().pageId()).containsExactly("2");
+        Connection edge = result.edges().getFirst();
+        assertThat(edge.basis()).isEqualTo(Basis.COMPUTED);
+        assertThat(edge.provenance()).isInstanceOfSatisfying(Provenance.Similarity.class, similarity -> {
+            assertThat(similarity.seedChunk()).isZero();
+            assertThat(similarity.seedSection()).isEqualTo("Betrieb");
+            assertThat(similarity.targetChunk()).isZero();
+            assertThat(similarity.targetSection()).isEqualTo("Buchung > Schlüssel");
+            assertThat(similarity.similarity()).isGreaterThan(0.99).isLessThan(1.0);
+            assertThat(similarity.model()).isEqualTo(embedding.version());
+        });
+        assertThat(result.coverage()).containsEntry(ConnectionKind.SIMILAR_SECTION, Coverage.PARTIAL);
+    }
+
+    @Test
+    void withoutStoredVectorsSimilarSectionsAreFlaggedUnavailableAndCanBeSwitchedOff() {
+        standard();
+        embed("2", "null|[1,0,0]");
+
+        PageConnections.Connections notEmbedded = withVectors().connections(CALLER, "wiki", "1",
+                PageConnections.Query.all());
+        PageConnections.Connections noVectors = connections(LinkDirectory.NONE).connections(CALLER, "wiki", "1",
+                PageConnections.Query.all());
+        PageConnections.Connections off = withVectors().connections(CALLER, "wiki", "1",
+                PageConnections.Query.all().withKinds(List.of(ConnectionKind.PARENT)));
+
+        assertThat(notEmbedded.coverage()).containsEntry(ConnectionKind.SIMILAR_SECTION, Coverage.UNAVAILABLE);
+        assertThat(notEmbedded.of(ConnectionKind.SIMILAR_SECTION)).isEmpty();
+        assertThat(noVectors.coverage()).containsEntry(ConnectionKind.SIMILAR_SECTION, Coverage.UNAVAILABLE);
+        assertThat(off.coverage()).doesNotContainKey(ConnectionKind.SIMILAR_SECTION);
+        assertThat(new PageConnections.Query(Set.of(), 1, 1).minSimilarity()).isEqualTo(0.80, within(1e-9));
+        assertThatThrownBy(() -> new PageConnections.Query(Set.of(), 1, 1, 1.5))
+                .isInstanceOf(InvalidQueryException.class);
     }
 
     private static PageKey key(String pageId) {
