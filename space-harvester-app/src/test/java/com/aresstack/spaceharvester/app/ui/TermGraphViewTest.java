@@ -320,7 +320,8 @@ class TermGraphViewTest {
                 plain.analyzerId(), plain.fromText(), plain.toText(), DomainTermGraph.Trust.GEPRUEFT, differs);
 
         assertThat(EvidencePopup.otherText(deviating))
-                .isEqualTo("Sprachmodell (KI) liest anders: Verb „einreichen“ · keine Betroffenen");
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.content.StatementProvenance.LANGUAGE_MODEL
+                + " liest anders: Verb „einreichen“ · keine Betroffenen");
         assertThat(EvidencePopup.otherText(checked)).as("geprüft: ohne „abweichend“").isNull();
         assertThat(EvidencePopup.otherText(plain)).as("ohne Abgleich").isNull();
         List<List<String>> seen = new ArrayList<>();
@@ -330,7 +331,8 @@ class TermGraphViewTest {
             seen.add(popup.otherTexts());
         });
         assertThat(seen.getFirst()).containsExactly(
-                "Sprachmodell (KI) liest anders: Verb „einreichen“ · keine Betroffenen");
+                com.aresstack.spaceharvester.app.ui.content.StatementProvenance.LANGUAGE_MODEL
+                + " liest anders: Verb „einreichen“ · keine Betroffenen");
     }
 
     @Test
@@ -340,6 +342,7 @@ class TermGraphViewTest {
         assertThat(TermGraphView.domainOptions(2, null, true).includeStale()).as("nie veraltete Aussagen").isFalse();
         assertThat(TermGraphView.HELP).as("mit dem Vergleich Parser/KI alle vier Stufen")
                 .contains("kräftig", "geprüft", "dünn", "(einig)", "gestrichelt", "gepunktet mit „≠“", "(abweichend)")
+                .contains("Empfänger und Präpositionalobjekte werden nicht verglichen")
                 .doesNotContain("andere Seite");
     }
 
