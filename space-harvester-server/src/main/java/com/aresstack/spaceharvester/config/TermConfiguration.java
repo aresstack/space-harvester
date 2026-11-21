@@ -115,6 +115,13 @@ class TermConfiguration {
                 headers(repository.getIfAvailable(), reader.getIfAvailable()), Clock.systemUTC());
     }
 
+    /** Suchmethode „Nur Fachbegriffe“ (K5b): Glossar und Synonymbeziehungen, nichts gespeichert. */
+    @Bean
+    com.aresstack.spaceharvester.application.glossary.TechnicalTerms technicalTerms(Glossary glossary,
+                                                                                    TermRelations relations) {
+        return new com.aresstack.spaceharvester.application.glossary.TechnicalTerms(glossary, relations);
+    }
+
     /** „Fachbegriffe ermitteln“: dasselbe Chat-Modell wie die Akronymauflösung, nur auf Knopfdruck. */
     @Bean
     GlossaryClassification glossaryClassification(SourceCatalog catalog, AccessGuard access,
