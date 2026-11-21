@@ -321,6 +321,34 @@ class SourcesViewTest {
     }
 
     /** Detailfläche und Drawer mit den Quellenkarten in einem Behälter, wie das Hauptfenster sie zeigt. */
+    @Test
+    void certificateExportSitsUnderTheConnectionCheckAndIsGreyWithoutHttps() throws Exception {
+        start();
+        SourcesView[] view = new SourcesView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
+        Container root = all(view[0]);
+        JPanel card = find(root, JPanel.class).stream()
+                .filter(c -> c.getClass().getSimpleName().equals("SourceCard")).findFirst().orElseThrow();
+        java.lang.reflect.Method menu = card.getClass().getDeclaredMethod("menu");
+        menu.setAccessible(true);
+        javax.swing.JPopupMenu[] popup = new javax.swing.JPopupMenu[1];
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                popup[0] = (javax.swing.JPopupMenu) menu.invoke(card);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+        });
+        List<javax.swing.JMenuItem> items = find(popup[0], javax.swing.JMenuItem.class);
+        List<String> texts = items.stream().map(javax.swing.JMenuItem::getText).toList();
+        int check = texts.indexOf("Verbindung prüfen …");
+        assertThat(texts.get(check + 1)).isEqualTo("Zertifikate exportieren …");
+        javax.swing.JMenuItem export = items.get(check + 1);
+        // Dateiquellen haben kein https: gesperrt, nicht ausgeblendet, mit Grund.
+        assertThat(export.isEnabled()).isFalse();
+        assertThat(export.getToolTipText()).isEqualTo("Nur für Quellen mit https");
+    }
+
     private static Container all(SourcesView view) {
         javax.swing.JPanel both = new javax.swing.JPanel(new java.awt.BorderLayout());
         both.add(view.drawer(), java.awt.BorderLayout.WEST);

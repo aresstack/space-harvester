@@ -604,6 +604,16 @@ public final class Workspace {
         return harvester.sourceManagement().diagnose(sourceId);
     }
 
+    /**
+     * Zertifikatsexport einer Quelle als ZIP in den Ordner ({@code SourceManagement.exportCertificates}, Strang ZX);
+     * leer, wenn der Core die Quelle nicht kennt. Blockiert, also nur im Hintergrund.
+     */
+    public Optional<com.aresstack.spaceharvester.application.sources.CertificateExport> exportCertificates(
+            String sourceId, java.nio.file.Path directory, java.util.function.BooleanSupplier cancelled)
+            throws java.io.IOException {
+        return harvester.sourceManagement().exportCertificates(sourceId, directory, cancelled);
+    }
+
     /** Ob die Quelle im Core eingeschaltet ist ({@code SourceManagement.enabled}); {@code false} auch für unbekannte. */
     public boolean sourceEnabled(String sourceId) {
         return harvester.sourceManagement().enabled(sourceId);

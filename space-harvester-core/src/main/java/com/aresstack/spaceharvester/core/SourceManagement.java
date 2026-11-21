@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.core;
 
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.sources.CertificateExport;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
@@ -8,6 +9,7 @@ import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
+import com.aresstack.spaceharvester.source.SourceCertificates;
 import com.aresstack.spaceharvester.source.SourceDiagnostics;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.time.Duration;
@@ -42,12 +44,14 @@ public final class SourceManagement {
     private final Jobs jobs;
     private final SourceDataPurge purge;
     private final SourceDiagnostics diagnostics;
+    private final SourceCertificates certificates;
 
     SourceManagement(ConfiguredSourceCatalog catalog, Jobs jobs, SourceDataPurge purge) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.purge = Objects.requireNonNull(purge, "purge");
         this.diagnostics = new SourceDiagnostics(catalog);
+        this.certificates = new SourceCertificates(catalog);
     }
 
     /** Die Einstellungen aller Quellen in ihrer Reihenfolge; ihr {@code toString} zeigt keine Geheimnisse. */
@@ -103,6 +107,22 @@ public final class SourceManagement {
     /** {@link #diagnose(SourceSettingsConfig, boolean)} für eine vorhandene Quelle; leer ohne diese ID. */
     public Optional<SourceDiagnosis> diagnose(String sourceId) {
         return diagnostics.diagnose(sourceId);
+    }
+
+    /**
+     * Zertifikatsexport einer Quelle (Strang ZX): Serverkette samt fehlender CA-Zertifikate aus dem Vertrauen dieses
+     * Rechners und öffentlicher Teil des Client-Zertifikats als ZIP mit Anleitung. Blockiert (Netz).
+     *
+     * @param directory Zielordner; den Ausgabeordner liefert der Aufrufer
+     * @param cancelled vor dem Schreiben gefragt; {@code true} bricht ohne Datei ab
+     * @return leer ohne Quelle dieser ID
+     * @throws IllegalArgumentException wenn die Quelle keine https-Adresse hat
+     * @throws java.util.concurrent.CancellationException wenn abgebrochen wurde
+     */
+    public Optional<CertificateExport> exportCertificates(String sourceId, java.nio.file.Path directory,
+                                                          java.util.function.BooleanSupplier cancelled)
+            throws java.io.IOException {
+        return certificates.export(sourceId, directory, cancelled);
     }
 
     /**
