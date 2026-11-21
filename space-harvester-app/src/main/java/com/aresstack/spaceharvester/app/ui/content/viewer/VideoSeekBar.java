@@ -23,7 +23,7 @@ import java.util.function.DoubleConsumer;
  * Full-width, timeline-style video scrubber inspired by Audio Studio's waveform navigation.
  * Preview drag positions locally; commit only once on release to avoid flooding the BSCW range source.
  */
-final class VideoSeekBar extends JComponent {
+public final class VideoSeekBar extends JComponent {
 
     private static final int INSET = 14;
     private static final int TRACK_TOP = 13;
@@ -32,6 +32,13 @@ final class VideoSeekBar extends JComponent {
     private static final Color PLAYED = new Color(0x68BEDD);
     private static final Color LABEL = new Color(0xC9D6E1);
     private static final Color SLIDE = new Color(0xF4D35E);
+    /** Helle Fassung für die Zeitleiste des Podcasts über der Suchleiste (Angelo 21.11.2026). */
+    private static final Color LIGHT_TRACK = new Color(0xD5DCE4);
+    private static final Color LIGHT_LABEL = new Color(0x5B6876);
+    private static final Color LIGHT_SLIDE = new Color(0xE0A800);
+    private boolean light;
+    /** Beschriftung einer Stelle im Tooltip statt „Folie N“; {@code null} = Folien. */
+    private java.util.function.LongFunction<String> label;
     /** Slide changes in milliseconds, drawn as marks on the track. */
     private java.util.List<Long> slides = java.util.Collections.emptyList();
 
@@ -43,7 +50,7 @@ final class VideoSeekBar extends JComponent {
     private boolean dragging;
     private double dragShare;
 
-    VideoSeekBar(DoubleConsumer seek) {
+    public VideoSeekBar(DoubleConsumer seek) {
         this.seek = seek;
         setPreferredSize(new Dimension(680, 48));
         setFont(new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.PLAIN, 12));
@@ -86,7 +93,19 @@ final class VideoSeekBar extends JComponent {
         bindKey("RIGHT", 5000);
     }
 
-    void update(long elapsedMillis, long totalMillis) {
+    /**
+     * Helle Fassung auf hellem Grund, mit eigener Beschriftung je Stelle (etwa das Thema eines Podcasts); die Marken
+     * ({@link #slides}) sind dann Themenanfänge.
+     */
+    public VideoSeekBar light(java.util.function.LongFunction<String> label) {
+        this.light = true;
+        this.label = label;
+        putClientProperty(javax.accessibility.AccessibleContext.ACCESSIBLE_NAME_PROPERTY, "Position");
+        repaint();
+        return this;
+    }
+
+    public void update(long elapsedMillis, long totalMillis) {
         durationMillis = Math.max(0, totalMillis);
         playbackMillis = Math.max(0, Math.min(durationMillis, elapsedMillis));
         playbackShare = durationMillis > 0 ? playbackMillis / (double) durationMillis : 0;
@@ -106,7 +125,7 @@ final class VideoSeekBar extends JComponent {
         repaint();
     }
 
-    void reset() {
+    public void reset() {
         dragging = false;
         playbackMillis = 0;
         playbackShare = 0;
@@ -117,7 +136,7 @@ final class VideoSeekBar extends JComponent {
     }
 
     /** Show slide changes as marks on the track; their number appears in the tooltip. */
-    void slides(java.util.List<Long> changes) {
+    public void slides(java.util.List<Long> changes) {
         slides = changes == null ? java.util.Collections.emptyList() : java.util.List.copyOf(changes);
         repaint();
     }
@@ -137,7 +156,7 @@ final class VideoSeekBar extends JComponent {
         return slide;
     }
 
-    boolean isDragging() {
+    public boolean isDragging() {
         return dragging;
     }
 
@@ -169,10 +188,14 @@ final class VideoSeekBar extends JComponent {
     @Override
     public String getToolTipText(MouseEvent event) {
         if (!canSeek()) {
-            return "Die Videolänge wird ermittelt";
+            return light ? "Die Länge wird ermittelt" : "Die Videolänge wird ermittelt";
         }
         if (durationMillis > 0) {
             long at = Math.round(shareAt(event.getX()) * durationMillis);
+            if (label != null) {
+                String text = label.apply(at);
+                return text == null ? clock(at) : clock(at) + " · " + text;
+            }
             return slides.isEmpty() ? clock(at) : clock(at) + " · Folie " + slideAt(slides, at);
         }
         return Math.round(shareAt(event.getX()) * 100) + " %";
@@ -213,7 +236,7 @@ final class VideoSeekBar extends JComponent {
             int span = Math.max(1, getWidth() - 2 * INSET);
             double share = dragging ? dragShare : playbackShare;
             share = Math.max(0, Math.min(1, share));
-            g.setColor(TRACK);
+            g.setColor(light ? LIGHT_TRACK : TRACK);
             g.fill(new RoundRectangle2D.Double(INSET, TRACK_TOP, span, TRACK_HEIGHT, 8, 8));
             int playedWidth = (int) Math.round(span * share);
             if (playedWidth > 0) {
@@ -226,7 +249,7 @@ final class VideoSeekBar extends JComponent {
                 g.fillRect(x, TRACK_TOP + 2, 1, 3);
             }
             if (durationMillis > 0) {
-                g.setColor(SLIDE);
+                g.setColor(light ? LIGHT_SLIDE : SLIDE);
                 for (long change : slides) {
                     int x = INSET + (int) Math.round(span * Math.min(1d, change / (double) durationMillis));
                     g.fillRect(x, TRACK_TOP - 2, 2, TRACK_HEIGHT + 4);
@@ -240,7 +263,7 @@ final class VideoSeekBar extends JComponent {
                 g.setColor(Color.WHITE);
                 g.fill(new Ellipse2D.Double(x - 4, TRACK_TOP - 1, 8, 8));
             }
-            g.setColor(LABEL);
+            g.setColor(light ? LIGHT_LABEL : LABEL);
             g.setFont(getFont().deriveFont(12f));
             FontMetrics metrics = g.getFontMetrics();
             String played = clock(displayedMillis());
