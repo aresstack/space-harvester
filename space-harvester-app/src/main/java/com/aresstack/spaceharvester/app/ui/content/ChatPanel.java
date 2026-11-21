@@ -1390,6 +1390,8 @@ public final class ChatPanel extends JPanel {
         private final Path startedNode;
         private final AssistantMarkdownBubble bubble;
         private final StringBuilder text = new StringBuilder();
+        /** Die nummerierten Quellen dieser Antwort, wie zuletzt gemeldet; gehen mit der Antwort in den Verlauf. */
+        private List<ChatRecord.Source> sources = List.of();
         private final java.awt.event.ComponentListener follow;
         ChatTurn turn;
         boolean detached;
@@ -1456,6 +1458,7 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void context(ChatKnowledge.Context context) {
+            sources = context.accepted().stream().map(ChatRecord.Source::of).toList();
             if (!detached) {
                 status.setText(context.isEmpty() ? ANSWERING + " · ohne Auszüge aus dem Bestand"
                         : ANSWERING + " · " + Texts.count(context.accepted().size(), "Auszug", "Auszüge")
@@ -1484,7 +1487,7 @@ public final class ChatPanel extends JPanel {
             if (!detached) {
                 scrollDown();
             }
-            finish(ChatRecord.Message.assistant(full, false, System.currentTimeMillis()), " ");
+            finish(ChatRecord.Message.assistant(full, false, System.currentTimeMillis(), sources), " ");
         }
 
         @Override
@@ -1499,7 +1502,7 @@ public final class ChatPanel extends JPanel {
         public void cancelled(String partial) {
             show(partial.isEmpty() ? CANCELLED : partial + "\n\n" + CANCELLED);
             finish(partial.isEmpty() ? null
-                    : ChatRecord.Message.assistant(partial, true, System.currentTimeMillis()), CANCELLED);
+                    : ChatRecord.Message.assistant(partial, true, System.currentTimeMillis(), sources), CANCELLED);
         }
 
         private void finish(ChatRecord.Message answer, String note) {

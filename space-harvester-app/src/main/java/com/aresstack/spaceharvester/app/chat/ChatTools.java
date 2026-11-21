@@ -209,7 +209,7 @@ final class ChatTools {
         int from = Math.min(offset, text.length());
         int to = Math.min(text.length(), from + READ_CHARS);
         int number = sources.cite(new ChatKnowledge.Excerpt(page.title(), key.sourceId(), page.location(),
-                ChatKnowledge.excerpt(text, ChatKnowledge.MAX_HIT_CHARS)), key);
+                ChatKnowledge.excerpt(text, ChatKnowledge.MAX_HIT_CHARS), key.pageId()), key);
         String spaceKey = spaceOf(key);
         if (spaceKey == null) {
             spaceKey = page.spaceKey();
