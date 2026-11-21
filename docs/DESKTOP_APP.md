@@ -47,11 +47,19 @@ Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu lad
 
 ## Whisper-Modell
 
-Das **`space-harvester-app.jar`** enthält kein Whisper-Modell mehr. Unter **Einstellungen › Modelle** steht das
-**Whisper-Modell** zur Wahl: Tiny (Vorgabe, etwa 150 MB), Base, Small, Medium, Large v3 Turbo und Large v3; größere
-Modelle erkennen genauer und rechnen länger. Schlüssel in der Konfigurationsdatei: `space-harvester-app.whisper.model`.
+Das **`space-harvester-app.jar`** enthält kein Whisper-Modell mehr. Unter **Einstellungen › Modelle** stehen zwei
+Auswahlen mit denselben Modellen: Tiny (Vorgabe, etwa 150 MB), Base, Small, Medium, Large v3 Turbo und Large v3; größere
+Modelle erkennen genauer und rechnen länger.
 
-Wird das eingestellte Modell gebraucht (Spracheingabe im Chat, **Transkript erzeugen**, **In PPTX umwandeln**) und
+- **Whisper-Modell Transkripte** gilt für **Transkript erzeugen** und **In PPTX umwandeln**. Schlüssel:
+  `space-harvester-app.whisper.model`.
+- **Whisper-Modell Spracheingabe** gilt für das Mikrofon im Chat, wo schnelle Ergebnisse zählen; es bleibt Tiny, auch
+  wenn für Transkripte ein größeres Modell eingestellt ist. Schlüssel: `space-harvester-app.whisper.dictation-model`.
+
+Wer vor dieser Fassung unter `whisper.model` ein größeres Modell eingestellt hatte, diktiert danach mit Tiny; ein anderes
+Modell für die Spracheingabe lässt sich in der zweiten Zeile wählen.
+
+Wird ein eingestelltes Modell gebraucht (Spracheingabe im Chat, **Transkript erzeugen**, **In PPTX umwandeln**) und
 liegt noch nicht auf dem Rechner, fragt die App, ob sie es von Hugging Face laden soll. Nach **Ja** lädt sie es über
 Proxy und Zertifikate der App nach `%USERPROFILE%\.space-harvester\models\whisper-<Modell>`, prüft jede Datei gegen
 ihre Prüfsumme und macht dann weiter; das ist in der Regel nur einmal nötig. **Laden** neben der Auswahl holt es auch

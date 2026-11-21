@@ -45,6 +45,9 @@ class ConfigurationParityTest {
             space-harvester-app:
               viewer:
                 background: dark
+              whisper:
+                model: small
+                dictation-model: tiny
             space-harvester:
               sources:
                 - id: confluence
@@ -267,6 +270,10 @@ class ConfigurationParityTest {
         // keine Bilder und bindet nichts darunter, der Schlüssel stört ihn nicht.
         assertThat(app.viewerBackground()).isEqualTo(ViewerBackground.DARK);
         assertThat(environment.getProperty("space-harvester-app.viewer.background")).isEqualTo("dark");
+        // Whisper-Modelle (Angelo 21.11.2026): Transkripte und Spracheingabe getrennt, nur die App.
+        assertThat(app.whisperModel()).isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.SMALL);
+        assertThat(app.dictationModel()).isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY);
+        assertThat(environment.getProperty("space-harvester-app.whisper.dictation-model")).isEqualTo("tiny");
         assertThat(service).isNotNull();
     }
 

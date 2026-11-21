@@ -249,8 +249,9 @@ public final class AppSettingsLoader {
                 check(map(get(map(get(root, "statements")), "check")), problems),
                 viewerBackground(get(map(get(app, "viewer")), "background"), problems),
                 video(map(get(app, "video")), problems),
-                whisperModel(get(map(get(app, "whisper")), "model"), problems),
-                images(map(get(root, "images")), problems));
+                whisperModel(get(map(get(app, "whisper")), "model"), com.aresstack.spaceharvester.app.transcription.WhisperModel.KEY, problems),
+                images(map(get(root, "images")), problems),
+                whisperModel(get(map(get(app, "whisper")), "dictation-model"), com.aresstack.spaceharvester.app.transcription.WhisperModel.DICTATION_KEY, problems));
     }
 
     /**
@@ -269,8 +270,11 @@ public final class AppSettingsLoader {
         return new ImageSettings(automatic, (int) max);
     }
 
-    /** {@code space-harvester-app.whisper.model}: ein unbekannter Wert ist ein Problem und lässt Tiny stehen. */
-    private com.aresstack.spaceharvester.app.transcription.WhisperModel whisperModel(Object raw,
+    /**
+     * {@code space-harvester-app.whisper.model} (Transkripte) und {@code .dictation-model} (Spracheingabe im Chat): ein
+     * unbekannter Wert ist ein Problem und lässt Tiny stehen.
+     */
+    private com.aresstack.spaceharvester.app.transcription.WhisperModel whisperModel(Object raw, String key,
                                                                                     List<String> problems) {
         if (raw == null || raw.toString().isBlank()) {
             return com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT;
@@ -278,7 +282,7 @@ public final class AppSettingsLoader {
         com.aresstack.spaceharvester.app.transcription.WhisperModel model =
                 com.aresstack.spaceharvester.app.transcription.WhisperModel.of(raw.toString());
         if (model == null) {
-            problems.add(com.aresstack.spaceharvester.app.transcription.WhisperModel.KEY + " kennt „" + raw
+            problems.add(key + " kennt „" + raw
                     + "“ nicht; es gilt " + com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT.id());
             return com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT;
         }

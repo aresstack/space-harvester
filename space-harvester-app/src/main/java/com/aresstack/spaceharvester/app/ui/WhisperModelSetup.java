@@ -163,7 +163,7 @@ public final class WhisperModelSetup {
     }
 
     /** Ob {@code model} auf diesem Rechner liegt. */
-    private boolean installed(WhisperModel model) {
+    public boolean installed(WhisperModel model) {
         return installer().map(installer -> installer.installed(model)).orElse(false);
     }
 
@@ -172,8 +172,10 @@ public final class WhisperModelSetup {
         install(selected.get());
     }
 
-    /** Lädt {@code model}; nichts, wenn schon ein Download läuft oder es schon da ist. */
-    private void install(WhisperModel model) {
+    /**
+     * Lädt {@code model}, etwa das der Spracheingabe; nichts, wenn schon ein Download läuft oder es schon da ist.
+     */
+    public void install(WhisperModel model) {
         if (running != null) {
             return;
         }
