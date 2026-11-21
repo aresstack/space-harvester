@@ -382,6 +382,7 @@ public final class Harvester implements AutoCloseable {
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    private final com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
     private final com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice;
     private final StatementAnalysisJobs statementAnalysisJobs;
@@ -1092,6 +1093,8 @@ public final class Harvester implements AutoCloseable {
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            this.verbQueries = new com.aresstack.spaceharvester.application.knowledge.VerbQueries(
+                    this.knowledgeGraph);
             // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
             // gemerkten Eingabe-Hash, die Analysen rechnen neu.
             KnowledgeGraph transcriptGraph = this.knowledgeGraph;
@@ -1945,6 +1948,11 @@ public final class Harvester implements AutoCloseable {
      */
     public KnowledgeGraph knowledgeGraph() {
         return knowledgeGraph;
+    }
+
+    /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries() {
+        return verbQueries;
     }
 
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */

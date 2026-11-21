@@ -647,7 +647,10 @@ public final class PageDetailPanel extends JPanel {
         statementsView.onJump(this::jumpTo);
         statementsTab(statementsView);
         graphView.onJump(this::jumpTo);
-        statementsView.onAnalysed(graphView::analysisChanged);
+        statementsView.onAnalysed(() -> {
+            graphView.analysisChanged();
+            loadVerbs();
+        });
         graphView.onDeleted(statementsView::reload);
         knowledgeGraphTab(graphView);
         images.onDescribe(() -> describeImages(false));
@@ -1515,6 +1518,19 @@ public final class PageDetailPanel extends JPanel {
             public int pages() {
                 return below.size();
             }
+
+            @Override
+            public java.util.Map<String, Integer> verbPageCounts() {
+                java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+                for (com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb verb : workspace.verbs(
+                        below.pages().pages(), null,
+                        com.aresstack.spaceharvester.application.knowledge.VerbQueries.MAX_LIMIT, null).verbs()) {
+                    if (!verb.fromText()) {
+                        counts.put(verb.lemma(), verb.pages());
+                    }
+                }
+                return counts;
+            }
         });
         tabStatus(TERMS, subpagesStatus("Begriffe", below.size()));
     }
@@ -2286,6 +2302,32 @@ public final class PageDetailPanel extends JPanel {
         footTools.repaint();
     }
 
+    /** Zählt die Ladevorgänge der Verben; ein überholter zeigt sein Ergebnis nicht. */
+    private long verbsGeneration;
+
+    /**
+     * Lädt die Verben der gezeigten Seite aus ihrer Aussagenanalyse (K1) für den Reiter „Begriffe“, im Hintergrund;
+     * nach jeder neu gespeicherten Analyse noch einmal. Ohne Seite oder Analyse bleibt die Kennzahl auf „–“.
+     */
+    private void loadVerbs() {
+        long generation = ++verbsGeneration;
+        AppRuntime runtime = context.runtime();
+        String source = sourceId;
+        String page = pageId;
+        terms.showVerbs(null);
+        if (runtime == null || source == null || page == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().pageVerbs(source, page), found -> {
+            if (generation != verbsGeneration) {
+                return;
+            }
+            terms.showVerbs(found == null ? null : found.stream().map(verb -> new TermsTab.PageVerb(verb.verb(),
+                    verb.occurrences().stream().map(o -> new TermsTab.Span(o.start(), o.end())).toList())).toList());
+        }, error -> LOG.log(System.Logger.Level.INFO, "Verben der Seite nicht gelesen ({0})",
+                error.getClass().getName()));
+    }
+
     /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */
     private void showReader(ReaderDocument document, boolean live) {
         textBusy.setBusy(false);
@@ -2301,6 +2343,7 @@ public final class PageDetailPanel extends JPanel {
         terms.show(document == null ? null : document.acronyms(), document == null ? null : document.terms());
         passages.show(document == null ? null : document.passages());
         terms.showRelations(document == null ? null : document.relations());
+        loadVerbs();
         acronymDetail.setText(" ");
         if (document == null) {
             reader.setText("");

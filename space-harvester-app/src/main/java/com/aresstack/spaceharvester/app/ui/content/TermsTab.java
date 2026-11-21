@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
+import com.aresstack.spaceharvester.application.knowledge.VerbQueries;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.TermPayload;
@@ -74,6 +75,16 @@ final class TermsTab extends JPanel {
         /** Die Seiten mit Fundstellen eines Begriffs. */
         TermQueries.OccurrenceList occurrences(TermQueries.TermSummary term) throws Exception;
 
+        /** Verben aus den Aussagen (K1) zur Suche {@code q}; {@code null}: diese Auswahl kennt keine Verben. */
+        default Pager<VerbQueries.Verb> verbs(String q) {
+            return null;
+        }
+
+        /** Die Aussagen eines Verbs auf den Seiten der Auswahl (K1). */
+        default List<VerbQueries.Occurrence> verbOccurrences(VerbQueries.Verb verb) throws Exception {
+            return List.of();
+        }
+
         /**
          * Die echten Gesamtzahlen der Auswahl aus dem Core (BG1b); {@code null}: noch nicht lieferbar, die Kennzahlen
          * bleiben auf „…“. Kann bei großen Auswahlen etwa eine Sekunde dauern, läuft daher nur im Hintergrund.
@@ -87,10 +98,14 @@ final class TermsTab extends JPanel {
      * Die Gesamtzahlen einer Auswahl: Akronyme, Bezeichner (Nomen und Kennungen), Beziehungen; dazu aus dem Bestand,
      * wie viele ihrer Seiten lokal gespeichert sind ({@code stored}) von allen ({@code pages}), {@code -1} unbekannt.
      */
-    record Totals(int acronyms, int identifiers, int relations, int stored, int pages) {
+    record Totals(int acronyms, int identifiers, int relations, int stored, int pages, int verbs, int unanalysed) {
 
         Totals(int acronyms, int identifiers, int relations) {
             this(acronyms, identifiers, relations, -1, -1);
+        }
+
+        Totals(int acronyms, int identifiers, int relations, int stored, int pages) {
+            this(acronyms, identifiers, relations, stored, pages, -1, 0);
         }
     }
 
@@ -104,11 +119,16 @@ final class TermsTab extends JPanel {
         }
         java.text.NumberFormat number = java.text.NumberFormat.getIntegerInstance(java.util.Locale.GERMANY);
         String pages = totals.pages() == 1 ? " Seite" : " Seiten";
-        if (totals.stored() >= totals.pages()) {
-            return "Begriffe aus " + number.format(totals.pages()) + pages;
-        }
-        return "Begriffe aus " + number.format(totals.stored()) + " von " + number.format(totals.pages()) + pages
+        String line = totals.stored() >= totals.pages() ? "Begriffe aus " + number.format(totals.pages()) + pages
+                : "Begriffe aus " + number.format(totals.stored()) + " von " + number.format(totals.pages()) + pages
                 + " · übrige nicht lokal gespeichert";
+        return totals.unanalysed() <= 0 ? line : line + " · " + number.format(totals.unanalysed())
+                + (totals.unanalysed() == 1 ? " Seite ohne Aussagenanalyse" : " Seiten ohne Aussagenanalyse")
+                + ", ihre Verben fehlen";
+    }
+
+    /** Ein Verb einer einzelnen Seite mit den Stellen seiner Aussagen im Lesetext (K1). */
+    record PageVerb(VerbQueries.Verb verb, List<Span> spans) {
     }
 
     /** Führt Arbeit im Hintergrund aus und meldet das Ergebnis auf dem EDT; in Tests sofort. */
@@ -121,6 +141,7 @@ final class TermsTab extends JPanel {
     private final JLabel acronymCount = number();
     private final JLabel identifierCount = number();
     private final JLabel relationCount = number();
+    private final JLabel verbCount = number();
     private final JLabel completeness = badge();
     private final JLabel analysis = Comic.text("Analyse vom letzten Seitenabgleich");
     private final PlaceholderField filter = new PlaceholderField(12, "Begriffe filtern …");
@@ -128,6 +149,10 @@ final class TermsTab extends JPanel {
     private final JPanel chips = new JPanel(new WrapFlow());
     private final JLabel identifierTitle = Comic.text("Bezeichner");
     private final JPanel identifierChips = new JPanel(new WrapFlow());
+    private final JLabel verbTitle = Comic.text("Verben");
+    private final JPanel verbChips = new JPanel(new WrapFlow());
+    /** Die Verben der gezeigten Seite; {@code null}: unbekannt (keine aktuelle Aussagenanalyse). */
+    private List<PageVerb> shownVerbs;
     private final JLabel relationTitle = Comic.text("Beziehungen");
     private final JPanel relationLines = new JPanel();
     private final JLabel hint = Comic.muted(" ");
@@ -170,6 +195,11 @@ final class TermsTab extends JPanel {
 
         /** Zahl der Unterseiten. */
         int pages();
+
+        /** Je Verb (Grundform, K1) die Zahl der Unterseiten mit einer seiner Aussagen. */
+        default java.util.Map<String, Integer> verbPageCounts() throws Exception {
+            return java.util.Map.of();
+        }
     }
 
     private final JPanel belowPanel = new JPanel(new BorderLayout(0, 6));
@@ -183,6 +213,7 @@ final class TermsTab extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay belowBusy;
     private Below below;
     private java.util.Map<TermQueries.TermRef, Integer> belowCounts = java.util.Map.of();
+    private java.util.Map<String, Integer> belowVerbCounts = java.util.Map.of();
     private final List<Section<?>> belowSections = new ArrayList<>();
     private int belowRequest;
     private boolean belowLoading;
@@ -196,10 +227,11 @@ final class TermsTab extends JPanel {
 
         head.search(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter)).copy(this::copyText);
 
-        JPanel counts = new JPanel(new GridLayout(1, 3, 12, 0));
+        JPanel counts = new JPanel(new GridLayout(1, 4, 12, 0));
         counts.setOpaque(false);
         counts.add(count(acronymCount, "Akronyme"));
         counts.add(count(identifierCount, "Bezeichner"));
+        counts.add(count(verbCount, "Verben"));
         counts.add(count(relationCount, "Beziehungen"));
 
         analysisRow.setOpaque(false);
@@ -227,6 +259,12 @@ final class TermsTab extends JPanel {
         identifiers.setOpaque(false);
         identifiers.add(identifierTitle, BorderLayout.NORTH);
         identifiers.add(identifierChips, BorderLayout.CENTER);
+        verbChips.setOpaque(false);
+        verbTitle.setFont(Comic.semiBold(13f));
+        JPanel verbs = new JPanel(new BorderLayout(0, 4));
+        verbs.setOpaque(false);
+        verbs.add(verbTitle, BorderLayout.NORTH);
+        verbs.add(verbChips, BorderLayout.CENTER);
         relationTitle.setFont(Comic.semiBold(13f));
         relationLines.setOpaque(false);
         relationLines.setLayout(new BoxLayout(relationLines, BoxLayout.Y_AXIS));
@@ -236,8 +274,12 @@ final class TermsTab extends JPanel {
         relations.add(relationLines, BorderLayout.CENTER);
         JPanel lists = new JPanel(new BorderLayout(0, 10));
         lists.setOpaque(false);
+        JPanel words = new JPanel(new BorderLayout(0, 10));
+        words.setOpaque(false);
+        words.add(identifiers, BorderLayout.NORTH);
+        words.add(verbs, BorderLayout.CENTER);
         lists.add(acronyms, BorderLayout.NORTH);
-        lists.add(identifiers, BorderLayout.CENTER);
+        lists.add(words, BorderLayout.CENTER);
         lists.add(relations, BorderLayout.SOUTH);
         // Folgt der Breite des Sichtfensters: die Chips brechen um, statt einen waagerechten Balken zu erzeugen.
         JPanel column = new JPanel(new BorderLayout(0, 6));
@@ -362,6 +404,7 @@ final class TermsTab extends JPanel {
         selection = Objects.requireNonNull(chosen, "chosen");
         shown = null;
         shownTerms = null;
+        shownVerbs = null;
         head.title("Begriffe in " + chosen.title());
         head.status(null, null);
         analysisRow.setVisible(false);
@@ -394,7 +437,7 @@ final class TermsTab extends JPanel {
         runner.run(chosen::totals, counted -> {
             counted(chosen);
             if (selection == chosen && counted != null) {
-                totals(counted.acronyms(), counted.identifiers(), counted.relations());
+                totals(counted.acronyms(), counted.identifiers(), counted.verbs(), counted.relations());
                 String origin = coverage(counted);
                 onStatus.accept(origin == null ? " " : origin);
             }
@@ -402,7 +445,7 @@ final class TermsTab extends JPanel {
             counted(chosen);
             if (selection == chosen) {
                 String unreadable = "Gesamtzahl nicht lesbar: " + failure.getClass().getSimpleName();
-                for (JLabel count : List.of(acronymCount, identifierCount, relationCount)) {
+                for (JLabel count : List.of(acronymCount, identifierCount, verbCount, relationCount)) {
                     count.setToolTipText(unreadable);
                 }
             }
@@ -419,6 +462,14 @@ final class TermsTab extends JPanel {
      * geladenen Chips.
      */
     void totals(Integer acronyms, Integer identifiers, Integer relations) {
+        totals(acronyms, identifiers, null, relations);
+    }
+
+    /** Wie {@link #totals(Integer, Integer, Integer)} mit der Zahl der Verben (K1); {@code -1}: nicht bekannt. */
+    void totals(Integer acronyms, Integer identifiers, Integer verbs, Integer relations) {
+        verbCount.setText(verbs == null ? COUNTING : verbs < 0 ? NOT_YET : String.valueOf(verbs));
+        verbCount.setToolTipText(verbs == null ? "Die Gesamtzahl der Auswahl wird noch ermittelt"
+                : "Verben (Grundform) aus den Aussagen des eingestellten Analysators");
         acronymCount.setText(acronyms == null ? COUNTING : String.valueOf(acronyms));
         identifierCount.setText(identifiers == null ? COUNTING : String.valueOf(identifiers));
         relationCount.setText(relations == null ? COUNTING : String.valueOf(relations));
@@ -472,16 +523,22 @@ final class TermsTab extends JPanel {
         popup.setVisible(false);
         chips.removeAll();
         identifierChips.removeAll();
+        verbChips.removeAll();
         relationLines.removeAll();
         acronymTitle.setVisible(false);
         identifierTitle.setVisible(false);
+        verbTitle.setVisible(false);
         relationTitle.setVisible(false);
         hint.setText(" ");
         sections.clear();
         sections.add(new Section<>(current.acronyms(q), terms -> append(chips, acronymTitle, terms)));
         sections.add(new Section<>(current.identifiers(q), terms -> append(identifierChips, identifierTitle, terms)));
+        Pager<VerbQueries.Verb> verbs = current.verbs(q);
+        if (verbs != null) {
+            sections.add(new Section<>(verbs, this::appendVerbs));
+        }
         sections.add(new Section<>(current.relations(q), this::appendRelations));
-        for (JPanel list : List.of(chips, identifierChips, relationLines)) {
+        for (JPanel list : List.of(chips, identifierChips, verbChips, relationLines)) {
             list.revalidate();
             list.repaint();
         }
@@ -544,6 +601,106 @@ final class TermsTab extends JPanel {
         title.setVisible(list.getComponentCount() > 0);
         list.revalidate();
         list.repaint();
+    }
+
+    private void appendVerbs(List<VerbQueries.Verb> verbs) {
+        for (VerbQueries.Verb verb : verbs) {
+            verbChips.add(verbChip(verb));
+        }
+        loadedTerms += verbs.size();
+        verbTitle.setVisible(verbChips.getComponentCount() > 0);
+        verbChips.revalidate();
+        verbChips.repaint();
+    }
+
+    /** Ein Verb der Auswahl: Pille mit der Grundform, Klick zeigt die Seiten mit seinen Aussagen. */
+    private FindablePill verbChip(VerbQueries.Verb verb) {
+        FindablePill chip = chip(verb.lemma(), verbTooltip(verb, false), List.of());
+        chip.setEnabled(true);
+        for (java.awt.event.ActionListener listener : chip.getActionListeners()) {
+            chip.removeActionListener(listener);
+        }
+        Selection current = selection;
+        int mine = request;
+        chip.addActionListener(e -> verbOccurrences(current, verb, chip, () -> mine == request));
+        return chip;
+    }
+
+    /** Wie {@link #verbTooltip}, aber „auf 2 Unterseiten · Klick zeigt die Unterseiten“. */
+    static String belowVerbTooltip(VerbQueries.Verb verb) {
+        String counts = Texts.count(verb.statements(), "Aussage", "Aussagen") + " auf "
+                + Texts.count(verb.pages(), "Unterseite", "Unterseiten") + " · Klick zeigt die Unterseiten";
+        return verb.fromText() ? "Grundform nicht ermittelt, so steht es im Text · " + counts : counts;
+    }
+
+    /** „5 Aussagen auf 3 Seiten“, dazu „Grundform nicht ermittelt“, wenn der Analysator keine lieferte. */
+    static String verbTooltip(VerbQueries.Verb verb, boolean page) {
+        String counts = page ? Texts.count(verb.statements(), "Aussage", "Aussagen")
+                + " · Klick springt zur nächsten Aussage im Lesetext"
+                : Texts.count(verb.statements(), "Aussage", "Aussagen") + " auf "
+                + Texts.count(verb.pages(), "Seite", "Seiten") + " · Klick zeigt die Seiten";
+        return verb.fromText() ? "Grundform nicht ermittelt, so steht es im Text · " + counts : counts;
+    }
+
+    private void verbOccurrences(Selection current, VerbQueries.Verb verb, javax.swing.JComponent chip,
+                                 java.util.function.BooleanSupplier still) {
+        if (current == null) {
+            return;
+        }
+        runner.run(() -> current.verbOccurrences(verb), found -> {
+            if (!still.getAsBoolean()) {
+                return;
+            }
+            popup.clearLinks();
+            java.util.Map<String, List<VerbQueries.Occurrence>> byPage = new java.util.LinkedHashMap<>();
+            for (VerbQueries.Occurrence occurrence : found) {
+                byPage.computeIfAbsent(occurrence.page().key().sourceId() + "/" + occurrence.page().key().pageId(),
+                        key -> new ArrayList<>()).add(occurrence);
+            }
+            popup.text("Aussagen mit „" + verb.lemma() + "“", byPage.isEmpty() ? "Keine sichtbare Aussage."
+                    : Texts.count(byPage.size(), "Seite", "Seiten") + "; ein Klick öffnet die Seite.");
+            for (List<VerbQueries.Occurrence> hits : byPage.values()) {
+                VerbQueries.Occurrence first = hits.get(0);
+                TermQueries.Occurrence target = new TermQueries.Occurrence(first.page().key().sourceId(),
+                        first.page().spaceKey(), first.page().key().pageId(), first.page().title(), null,
+                        first.predicateText(), null, null, first.start(), first.end(), null, null, null, null);
+                popup.link(first.page().title() + " · " + Texts.count(hits.size(), "Aussage", "Aussagen"), () -> {
+                    popup.setVisible(false);
+                    onOpen.accept(target);
+                });
+            }
+            popup.showAt(chip, 0, chip.getHeight());
+        }, failure -> {
+            if (still.getAsBoolean()) {
+                hint.setText("Aussagen nicht lesbar: " + failure.getClass().getSimpleName());
+            }
+        });
+    }
+
+    /**
+     * Die Verben der gezeigten Seite aus ihrer Aussagenanalyse (K1); {@code null}: keine aktuelle Analyse. Ein Klick
+     * auf ein Verb springt zur nächsten seiner Aussagen im Lesetext.
+     */
+    void showVerbs(List<PageVerb> verbs) {
+        if (selection != null) {
+            return;
+        }
+        shownVerbs = verbs == null ? null : List.copyOf(verbs);
+        verbCount.setText(verbs == null ? NOT_YET : String.valueOf(verbs.size()));
+        verbCount.setToolTipText(verbs == null ? "Für diese Seite liegt keine aktuelle Aussagenanalyse vor"
+                : "Verben (Grundform) aus den Aussagen des eingestellten Analysators");
+        fill();
+    }
+
+    /** Für Tests: die Pillen der Verben. */
+    List<ResearchPillButton> verbChips() {
+        List<ResearchPillButton> found = new ArrayList<>();
+        for (java.awt.Component component : cells(verbChips)) {
+            if (component instanceof ResearchPillButton pill) {
+                found.add(pill);
+            }
+        }
+        return found;
     }
 
     private void appendRelations(List<Relation> relations) {
@@ -672,10 +829,20 @@ final class TermsTab extends JPanel {
                 identifiers++;
             }
         }
+        verbChips.removeAll();
+        int verbs = 0;
+        for (PageVerb verb : shownVerbs == null ? List.<PageVerb>of() : shownVerbs) {
+            if (!query.isEmpty() && !verb.verb().lemma().contains(query)) {
+                continue;
+            }
+            addVerbPill(chip(verb.verb().lemma(), verbTooltip(verb.verb(), true), verb.spans()), verb.verb());
+            verbs++;
+        }
         acronymTitle.setVisible(!visible.isEmpty());
         identifierTitle.setVisible(identifiers > 0);
-        hint.setText(hint(shown, visible.size() + identifiers, !query.isEmpty()));
-        for (JPanel list : List.of(chips, identifierChips)) {
+        verbTitle.setVisible(verbs > 0);
+        hint.setText(hint(shown, visible.size() + identifiers + verbs, !query.isEmpty()));
+        for (JPanel list : List.of(chips, identifierChips, verbChips)) {
             list.revalidate();
             list.repaint();
         }
@@ -692,6 +859,10 @@ final class TermsTab extends JPanel {
         }
         if (!identifiers.isEmpty()) {
             text.append("Bezeichner\n").append(String.join("\n", identifiers)).append("\n\n");
+        }
+        List<String> verbs = verbChips().stream().map(ResearchPillButton::getText).toList();
+        if (!verbs.isEmpty()) {
+            text.append("Verben\n").append(String.join("\n", verbs)).append("\n\n");
         }
         if (!relations.isEmpty()) {
             text.append("Beziehungen\n").append(String.join("\n", relations)).append("\n\n");
@@ -811,6 +982,11 @@ final class TermsTab extends JPanel {
 
     List<String> counts() {
         return List.of(acronymCount.getText(), identifierCount.getText(), relationCount.getText());
+    }
+
+    /** Für Tests: die Kennzahl „Verben“. */
+    String verbCountText() {
+        return verbCount.getText();
     }
 
     List<ResearchPillButton> chips() {
@@ -948,6 +1124,7 @@ final class TermsTab extends JPanel {
         belowRequest++;
         belowLoading = false;
         belowCounts = java.util.Map.of();
+        belowVerbCounts = java.util.Map.of();
         belowSections.clear();
         belowChips.removeAll();
         belowRelations.removeAll();
@@ -962,11 +1139,13 @@ final class TermsTab extends JPanel {
         }
         belowBusy.setBusy(true);
         // Die Zahlen gelten für die Unterseiten, nicht für den Filter: Ein neuer Filter verwirft sie nicht.
-        runner.run(chosen::pageCounts, counts -> {
+        runner.run(() -> new BelowCounts(chosen.pageCounts(), chosen.verbPageCounts()), both -> {
             if (chosen != below) {
                 return;
             }
+            java.util.Map<TermQueries.TermRef, Integer> counts = both.terms();
             belowCounts = counts == null ? java.util.Map.of() : java.util.Map.copyOf(counts);
+            belowVerbCounts = both.verbs() == null ? java.util.Map.of() : java.util.Map.copyOf(both.verbs());
             belowCount.count(belowEntries());
             fill();
             queryBelow();
@@ -976,6 +1155,10 @@ final class TermsTab extends JPanel {
                 hint.setText("Begriffe der Unterseiten nicht lesbar: " + failure.getClass().getSimpleName());
             }
         });
+    }
+
+    /** Die Zahlen der Unterseiten: je Begriff und je Verb. */
+    private record BelowCounts(java.util.Map<TermQueries.TermRef, Integer> terms, java.util.Map<String, Integer> verbs) {
     }
 
     /** Ob der Abschnitt „Aus Unterseiten“ gerade zu sehen ist. */
@@ -1002,7 +1185,7 @@ final class TermsTab extends JPanel {
     /** Für Tests: die „+N“-Zusätze an den eigenen Begriffen als Steuerelemente. */
     List<com.aresstack.spaceharvester.app.ui.controls.CountChip> alsoBelowChips() {
         List<com.aresstack.spaceharvester.app.ui.controls.CountChip> found = new ArrayList<>();
-        for (JPanel list : List.of(chips, identifierChips)) {
+        for (JPanel list : List.of(chips, identifierChips, verbChips)) {
             for (java.awt.Component component : cells(list)) {
                 if (component instanceof com.aresstack.spaceharvester.app.ui.controls.CountChip chip) {
                     found.add(chip);
@@ -1015,7 +1198,7 @@ final class TermsTab extends JPanel {
     /** Für Tests: die „+N“-Zusätze an den eigenen Begriffen, in Reihenfolge. */
     List<String> alsoBelowTexts() {
         List<String> found = new ArrayList<>();
-        for (JPanel list : List.of(chips, identifierChips)) {
+        for (JPanel list : List.of(chips, identifierChips, verbChips)) {
             for (java.awt.Component component : cells(list)) {
                 if (component instanceof com.aresstack.spaceharvester.app.ui.controls.CountChip chip) {
                     found.add(chip.getText());
@@ -1050,6 +1233,41 @@ final class TermsTab extends JPanel {
         return own;
     }
 
+    /** Die eigenen Verben der Seite (Grundformen mit ermittelter Grundform). */
+    private java.util.Set<String> ownVerbs() {
+        java.util.Set<String> own = new java.util.HashSet<>();
+        for (PageVerb verb : shownVerbs == null ? List.<PageVerb>of() : shownVerbs) {
+            if (!verb.verb().fromText()) {
+                own.add(verb.verb().lemma());
+            }
+        }
+        return own;
+    }
+
+    /** „+N“ an einem eigenen Verb, wenn es auch auf N Unterseiten vorkommt; Klick zeigt diese Unterseiten. */
+    private void addVerbPill(FindablePill pill, VerbQueries.Verb verb) {
+        Below current = below;
+        Integer count = current == null || verb.fromText() ? null : belowVerbCounts.get(verb.lemma());
+        if (count == null || count == 0) {
+            verbChips.add(pill);
+            return;
+        }
+        String tip = "auch auf " + (count == 1 ? "1 Unterseite" : count + " Unterseiten");
+        com.aresstack.spaceharvester.app.ui.controls.CountChip also =
+                com.aresstack.spaceharvester.app.ui.controls.CountChip.choice("+" + count, Comic.MUTED).tips(tip, tip);
+        also.setFocusable(false);
+        also.addActionListener(e -> {
+            also.setSelected(false);
+            verbOccurrences(current.terms(), verb, also, () -> below == current);
+        });
+        JPanel pair = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        pair.setOpaque(false);
+        pair.add(pill);
+        pair.add(javax.swing.Box.createHorizontalStrut(2));
+        pair.add(also);
+        verbChips.add(pair);
+    }
+
     private static TermQueries.TermRef ref(PageAcronyms.Acronym acronym) {
         return new TermQueries.TermRef(com.aresstack.spaceharvester.application.terms.TermText.normalize(
                 acronym.acronym()), TermKind.ACRONYM);
@@ -1061,6 +1279,12 @@ final class TermsTab extends JPanel {
         int count = 0;
         for (TermQueries.TermRef ref : belowCounts.keySet()) {
             if (!own.contains(ref)) {
+                count++;
+            }
+        }
+        java.util.Set<String> ownVerbs = ownVerbs();
+        for (String lemma : belowVerbCounts.keySet()) {
+            if (!ownVerbs.contains(lemma)) {
                 count++;
             }
         }
@@ -1135,6 +1359,26 @@ final class TermsTab extends JPanel {
         };
         belowSections.add(new Section<>(terms.acronyms(q), appendTerms));
         belowSections.add(new Section<>(terms.identifiers(q), appendTerms));
+        Pager<VerbQueries.Verb> belowVerbs = terms.verbs(q);
+        if (belowVerbs != null) {
+            java.util.Set<String> ownVerbs = ownVerbs();
+            int mine = belowRequest;
+            belowSections.add(new Section<>(belowVerbs, found -> {
+                for (VerbQueries.Verb verb : found) {
+                    if (verb.fromText() || !ownVerbs.contains(verb.lemma())) {
+                        FindablePill chip = chip(verb.lemma(), belowVerbTooltip(verb), List.of());
+                        chip.setEnabled(true);
+                        for (java.awt.event.ActionListener listener : chip.getActionListeners()) {
+                            chip.removeActionListener(listener);
+                        }
+                        chip.addActionListener(e -> verbOccurrences(terms, verb, chip, () -> mine == belowRequest));
+                        belowChips.add(chip);
+                    }
+                }
+                belowChips.revalidate();
+                belowChips.repaint();
+            }));
+        }
         belowSections.add(new Section<>(terms.relations(q), found -> {
             for (Relation relation : found) {
                 if (!ownRelationLines.contains(relation.line())) {
