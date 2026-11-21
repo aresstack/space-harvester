@@ -2,7 +2,12 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.runtime.SearchMethods;
+import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
+import com.aresstack.spaceharvester.app.ui.controls.MarkedTextRenderer;
 import com.aresstack.spaceharvester.application.observe.Subscription;
+import com.aresstack.spaceharvester.application.query.DocumentKind;
+import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
@@ -29,6 +34,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -64,6 +70,10 @@ public final class SearchView implements View {
     static final String DONE = "Die Suche ist abgeschlossen";
     /** Abstand der Abfragen des Ladestands ({@code KeywordSearch.progress}), solange Seiten in den Cache laden. */
     static final String SEMANTIC = "Semantische Suche";
+    /** Suchmethode „Nachbarseiten“ (R2). */
+    static final String NEIGHBORS = "Nachbarseiten einbeziehen";
+    /** Gelbe Zeile, wenn die Nachbarseiten nicht geprüft werden konnten; kein Fehler der Suche. */
+    static final String NEIGHBORS_UNCHECKED = "Nachbarseiten konnten nicht geprüft werden";
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
@@ -71,6 +81,16 @@ public final class SearchView implements View {
     /** Progressive Suche des Core (ADR 0017): Originalanfrage, dann Varianten bis zum Qualitätsziel. */
     final JCheckBox semantic = checkBox(SEMANTIC, "Sucht zusätzlich mit Varianten der Anfrage und ordnet alle Treffer "
             + "nach ihrer Nähe zur ursprünglichen Anfrage");
+    /**
+     * Suchmethode „Nachbarseiten“ (R2, Angelo 21.11.2026: zuschaltbar, Standard aus): nimmt Eltern-, Unter- und
+     * verlinkte Seiten der besten Treffer dazu, wenn sie die Anfrage auch treffen. Die Stellung bleibt erhalten
+     * ({@link SearchMethods}); der Chat folgt ihr.
+     */
+    final JCheckBox neighbors = checkBox(NEIGHBORS, NEIGHBORS_TIP);
+    /** Die Suche, nach deren Stapel die Nachbarseiten noch gesucht werden; -1 ohne. */
+    private int neighborsFor = -1;
+    /** Läuft die Nachbarsuche dieser Anfrage, wartet „Weitere laden“: Der nächste Stapel verwürfe sonst ihre Treffer. */
+    private int neighborsPending = -1;
     /** Die Suchanfragen der semantischen Suche als Schlagwörter; die ursprüngliche steht im Suchfeld. */
     final JPanel tags = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
     /** Die laufende semantische Suche; {@code null}, wenn keine läuft. */
@@ -80,18 +100,26 @@ public final class SearchView implements View {
     /** Der Modus der nächsten Suche: Schlagwortsuche oder semantisch, wie der Core ihn meldet. */
     final JLabel modeLabel = Comic.muted(" ");
     /**
-     * „Überall suchen“ (#515): übergeht bei der nächsten Suche die Auswahl im Explorer, ohne sie aufzuheben; nur der
-     * Benutzer schaltet es um, keine Baumauswahl und keine Konfigurationsänderung.
+     * Ein Häkchen je eingetragener Wissensquelle (Angelo 20.11.2026, ersetzt „Überall suchen“ aus #515): Vorgabe alle
+     * an; abgehakt nimmt die nächste Suche die Quelle aus, auch wenn sie im Explorer gewählt ist. Nur der Benutzer
+     * schaltet um, keine Baumauswahl und keine Konfigurationsänderung; eine neue Quelle kommt angehakt dazu. Gilt für
+     * die Sitzung, nicht darüber hinaus.
      */
-    final JCheckBox everywhere = checkBox("Überall suchen", "Sucht in allen Wissensquellen, unabhängig von der "
-            + "Auswahl im Explorer; die Auswahl bleibt bestehen");
+    final Map<String, JCheckBox> sourceBoxes = new LinkedHashMap<>();
+    /**
+     * Ein Häkchen je Dokumentart ({@link DocumentKind}: Seiten, PDF, Word, …), Vorgabe alle an; abgehakt fehlt die
+     * Art in der nächsten Suche. Gilt für die Sitzung wie die Quellen.
+     */
+    final Map<DocumentKind, JCheckBox> kindBoxes = new java.util.EnumMap<>(DocumentKind.class);
+    /** Die Dateitypen der nächsten Suche: „Dateitypen: alle“ oder die angehakten. */
+    final JLabel kindsLabel = Comic.muted(" ");
     /** Die Suchleiste der Kopfzeile des Hauptfensters: Suchfeld mit Pfeil für die Suchoptionen (#515). */
     private final com.aresstack.spaceharvester.app.ui.controls.InputFrame searchBar =
             com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(query);
     /** Pfeil rechts im Suchfeld: öffnet {@link #options}. */
     final javax.swing.JButton optionsButton =
             com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("\u25BE", "Suchoptionen");
-    /** Die Suchoptionen als Popup am Suchfeld: Überall suchen, Semantische Suche, Umfang, Modus, Hinweise. */
+    /** Die Suchoptionen als Popup am Suchfeld: Quellen, Dateitypen, Semantische Suche, Umfang, Modus, Hinweise. */
     final javax.swing.JPopupMenu options = new javax.swing.JPopupMenu();
     /** Warum die semantische Suche gesperrt ist bzw. woher ihre Varianten kommen, lesbar im Popup. */
     final JLabel semanticNote = Comic.muted(" ");
@@ -101,6 +129,11 @@ public final class SearchView implements View {
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
+    /** Einzelheiten des Treffergrunds (R1). */
+    private final InfoPopup reasons = new InfoPopup();
+    /** Auszug mit der Marke des Treffergrunds vorn. */
+    private final MarkedTextRenderer excerpts = new MarkedTextRenderer(row -> row < model.rows.size()
+            ? model.rows.get(row).mark() : null);
     /**
      * Drehender Ring über der Trefferliste, solange eine Suche läuft, mit roter Stopp-Fläche „Abbrechen“ in der Mitte
      * (Klick oder Esc). Die Treffer, die schon da sind, bleiben stehen und bedienbar, der Schleier lässt die Maus durch.
@@ -148,8 +181,6 @@ public final class SearchView implements View {
     private int request;
     /** Quellen aus der Auswahl im Explorer; leer für alle. */
     private final Set<String> chosen = new TreeSet<>();
-    /** Spaces aus der Auswahl im Explorer; leer für alle Spaces der Quellen. */
-    private final Set<String> spaces = new TreeSet<>();
     /** Gewählte Knoten mit Namen für die Umfangszeile. */
     private List<Explorer.Scope> scopes = List.of();
 
@@ -172,10 +203,20 @@ public final class SearchView implements View {
         more.setVisible(false);
         semantic.setSelected(false);
         semantic.addItemListener(e -> mode());
+        neighbors.setSelected(SearchMethods.user().neighbors());
+        neighbors.addItemListener(e -> {
+            SearchMethods.user().neighbors(neighbors.isSelected());
+            mode();
+        });
         tags.setOpaque(false);
         tags.setVisible(false);
-        everywhere.setSelected(false);
-        everywhere.addItemListener(e -> scope(scopes));
+        for (DocumentKind kind : DocumentKind.values()) {
+            JCheckBox box = checkBox(kind.label(), "Nur Dokumente dieser Art durchsuchen; abgehakt fehlt sie");
+            box.setSelected(true);
+            box.addItemListener(e -> kinds());
+            kindBoxes.put(kind, box);
+        }
+        kinds();
         context.onChange(ignored -> refreshSources());
         refreshSources();
         // Schon die Auswahl eines Treffers zeigt seine Seite im Explorer; ein Doppelklick öffnet sie.
@@ -189,6 +230,12 @@ public final class SearchView implements View {
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 1 && showReasons(e)) {
+                    return;
+                }
+                if (e.getClickCount() == 2) {
+                    reasons.setVisible(false);
+                }
                 int row = table.getSelectedRow();
                 if (e.getClickCount() == 2 && row >= 0) {
                     Hit hit = model.rows.get(table.convertRowIndexToModel(row));
@@ -201,7 +248,20 @@ public final class SearchView implements View {
                 }
             }
         });
-        table.setToolTipText("Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs");
+        table.setToolTipText(ROW_TIP);
+        table.getColumnModel().getColumn(HitsModel.EXCERPT).setCellRenderer(excerpts);
+        table.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                boolean mark = onMark(e);
+                table.setCursor(mark ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                        : java.awt.Cursor.getDefaultCursor());
+                // Bei einem Nachbarn nennt der Tooltip der Marke die Ausgangsseite (UX-Manager 21.11.2026).
+                String tip = mark ? model.rows.get(table.convertRowIndexToModel(table.rowAtPoint(e.getPoint())))
+                        .markTip() : null;
+                table.setToolTipText(tip != null ? tip : ROW_TIP);
+            }
+        });
 
         buildSearchBar();
         JPanel head = new JPanel(new BorderLayout(0, 8));
@@ -241,11 +301,36 @@ public final class SearchView implements View {
         statusInfo.add(status);
     }
 
+    /**
+     * Ein Klick auf die Marke des Treffergrunds vorn im Auszug zeigt die Einzelheiten im Overlay (R1).
+     *
+     * @return ob der Klick die Marke traf
+     */
+    private boolean showReasons(MouseEvent e) {
+        if (!onMark(e)) {
+            return false;
+        }
+        Hit hit = model.rows.get(table.convertRowIndexToModel(table.rowAtPoint(e.getPoint())));
+        reasons.text(HitReasons.HEADING, HitReasons.details(hit.reasons())).showAt(table, e.getX(), e.getY());
+        return true;
+    }
+
+    /** Ob die Maus auf der Marke des Treffergrunds steht; dasselbe Maß wie beim Zeichnen. */
+    private boolean onMark(MouseEvent e) {
+        int row = table.rowAtPoint(e.getPoint());
+        int column = table.columnAtPoint(e.getPoint());
+        if (row < 0 || column < 0 || table.convertColumnIndexToModel(column) != HitsModel.EXCERPT) {
+            return false;
+        }
+        return excerpts.markBounds(table, row, column).contains(e.getPoint());
+    }
+
     /** Hinweise zur Suche, früher im Tooltip des Infosymbols, jetzt lesbar im Popup. */
     static final String HELP = "<html><b>Hinweise zur Suche</b><br>"
             + "Schlagwortsuche über Titel und Inhalt, direkt in den Quellen.<br>"
             + "Wo gesucht wird, wählst du im Explorer links: eine Wissensquelle, einen Space<br>"
-            + "oder mit Strg-Klick mehrere; ohne Auswahl in allen. „Überall suchen“ übergeht die Auswahl.<br>"
+            + "oder mit Strg-Klick mehrere; ohne Auswahl in allen angehakten Quellen.<br>"
+            + "Die Häkchen oben nehmen Quellen und Dateitypen aus der Suche.<br>"
             + "Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage<br>"
             + "geordnet; braucht ein Embedding-Modell (Einstellungen › Modelle).<br>"
             + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) öffnet die Seite direkt.<br>"
@@ -275,25 +360,61 @@ public final class SearchView implements View {
         panel.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
         JLabel help = new JLabel(HELP);
         help.setForeground(Comic.MUTED);
-        // Menüpunkte mit demselben Modell wie die Häkchen: per Pfeiltasten erreichbar, Leertaste/Enter schaltet,
-        // das Popup bleibt beim Umschalten offen.
-        for (JCheckBox box : List.of(everywhere, semantic)) {
-            javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(box.getText());
-            item.setModel(box.getModel());
-            item.setToolTipText(box.getToolTipText());
-            box.addPropertyChangeListener("ToolTipText", e -> item.setToolTipText(box.getToolTipText()));
-            item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
-            item.setEnabled(box.isEnabled());
-            box.addPropertyChangeListener("enabled", e -> item.setEnabled(box.isEnabled()));
-            options.add(item);
-        }
-        for (JComponent part : List.of(semanticNote, scopeLabel, modeLabel, help)) {
+        for (JComponent part : List.of(semanticNote, scopeLabel, kindsLabel, modeLabel, help)) {
             part.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
             panel.add(part);
             panel.add(javax.swing.Box.createVerticalStrut(part == help ? 0 : 4));
         }
-        options.add(panel);
+        notes = panel;
+        rebuildOptions();
         options.getAccessibleContext().setAccessibleName("Suchoptionen");
+    }
+
+    /** Die Hinweise unter den Häkchen; bleiben beim Neuaufbau des Popups. */
+    private JPanel notes;
+
+    /**
+     * Baut das Popup neu, in der Reihenfolge der Entscheidung: wo (Quellen), was (Dateitypen), wie (Semantische
+     * Suche), darunter Umfang, Dateitypen, Modus und Hinweise. Läuft einmal beim Aufbau und wenn Quellen dazukommen
+     * oder wegfallen.
+     */
+    private void rebuildOptions() {
+        options.removeAll();
+        if (!sourceBoxes.isEmpty()) {
+            options.add(caption("Wissensquellen"));
+            sourceBoxes.values().forEach(box -> options.add(menuItem(box)));
+            options.addSeparator();
+        }
+        options.add(caption("Dateitypen"));
+        kindBoxes.values().forEach(box -> options.add(menuItem(box)));
+        options.addSeparator();
+        // Die Suchmethoden als Gruppe (UX-Manager 21.11.2026); weitere kommen hier dazu.
+        options.add(caption("Suchmethoden"));
+        options.add(menuItem(semantic));
+        options.add(menuItem(neighbors));
+        options.add(notes);
+        options.revalidate();
+    }
+
+    private static JLabel caption(String text) {
+        JLabel label = Comic.caption(text);
+        label.setBorder(BorderFactory.createEmptyBorder(6, 10, 2, 10));
+        return label;
+    }
+
+    /**
+     * Ein Menüpunkt mit demselben Modell wie das Häkchen: per Pfeiltasten erreichbar, Leertaste/Enter schaltet, das
+     * Popup bleibt beim Umschalten offen.
+     */
+    private static javax.swing.JCheckBoxMenuItem menuItem(JCheckBox box) {
+        javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(box.getText());
+        item.setModel(box.getModel());
+        item.setToolTipText(box.getToolTipText());
+        box.addPropertyChangeListener("ToolTipText", e -> item.setToolTipText(box.getToolTipText()));
+        item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
+        item.setEnabled(box.isEnabled());
+        box.addPropertyChangeListener("enabled", e -> item.setEnabled(box.isEnabled()));
+        return item;
     }
 
     /** Öffnet die Optionen rechtsbündig unter dem Suchfeld; Swing hält das Popup im Bildschirm. */
@@ -304,8 +425,13 @@ public final class SearchView implements View {
         java.awt.Dimension size = options.getPreferredSize();
         options.show(searchBar, Math.max(0, searchBar.getWidth() - size.width), searchBar.getHeight());
         // Der erste Menüpunkt ist gleich gewählt, damit die Tastatur sofort darauf wirkt.
-        javax.swing.MenuSelectionManager.defaultManager().setSelectedPath(
-                new javax.swing.MenuElement[] {options, (javax.swing.MenuElement) options.getComponent(0)});
+        for (java.awt.Component component : options.getComponents()) {
+            if (component instanceof javax.swing.MenuElement first) {
+                javax.swing.MenuSelectionManager.defaultManager().setSelectedPath(
+                        new javax.swing.MenuElement[] {options, first});
+                break;
+            }
+        }
     }
 
     /** Die Suchleiste für die Kopfzeile des Hauptfensters; es gibt nur dieses eine Suchfeld. */
@@ -358,30 +484,84 @@ public final class SearchView implements View {
         scopes = selection.stream().filter(scope -> scope.sourceId() != null && known.contains(scope.sourceId()))
                 .distinct().toList();
         chosen.clear();
-        spaces.clear();
-        for (Explorer.Scope scope : scopes) {
-            chosen.add(scope.sourceId());
-            if (scope.spaceKey() != null) {
-                spaces.add(scope.spaceKey());
+        scopes.forEach(scope -> chosen.add(scope.sourceId()));
+        Set<String> searched = searchedSources();
+        if (searched.isEmpty()) {
+            scopeLabel.setText("In: keine Wissensquelle angehakt");
+        } else if (scopes.isEmpty()) {
+            scopeLabel.setText(searched.size() == sourceBoxes.size() ? "In: Alle Wissensquellen"
+                    : "In: " + String.join(", ", searched.stream().map(this::title).toList()));
+        } else {
+            scopeLabel.setText("In: " + String.join(", ", scopes.stream()
+                    .filter(scope -> searched.contains(scope.sourceId()))
+                    .map(scope -> title(scope.sourceId())
+                            + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
+        }
+    }
+
+    /**
+     * Die Quellen, in denen die nächste Suche sucht: die angehakten, bei einer Auswahl im Explorer nur die gewählten
+     * darunter. Leer, wenn keine angehakte Quelle übrig bleibt; dann sucht die Ansicht nicht.
+     */
+    Set<String> searchedSources() {
+        Set<String> checked = new LinkedHashSet<>();
+        sourceBoxes.forEach((id, box) -> {
+            if (box.isSelected() && (chosen.isEmpty() || chosen.contains(id))) {
+                checked.add(id);
             }
-        }
-        if (scopes.stream().anyMatch(scope -> scope.spaceKey() == null)) {
-            // Eine ganze Quelle in der Auswahl: alle ihre Spaces, kein Space-Filter für die anderen.
-            spaces.clear();
-        }
-        scopeLabel.setText(everywhere.isSelected() || scopes.isEmpty() ? "In: Alle Wissensquellen"
-                : "In: " + String.join(", ", scopes.stream().map(scope -> title(scope.sourceId())
-                        + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
+        });
+        return checked;
     }
 
-    /** Die Quellen, in denen die nächste Suche sucht; leer heißt alle. „Überall suchen“ übergeht die Auswahl. */
+    /**
+     * Die Quellen für die Anfrage an den Core; leer heißt alle (globale Suche, ADR 0009), also ohne Auswahl im
+     * Explorer und mit allen Quellen angehakt.
+     */
     Set<String> chosenSources() {
-        return everywhere.isSelected() ? Set.of() : Set.copyOf(chosen);
+        Set<String> searched = searchedSources();
+        return chosen.isEmpty() && searched.size() == sourceBoxes.size() ? Set.of() : searched;
     }
 
-    /** Die Spaces, in denen die nächste Suche sucht; leer heißt alle. */
+    /**
+     * Die Spaces, in denen die nächste Suche sucht, aus der Auswahl im Explorer unter den angehakten Quellen; leer
+     * heißt alle. Eine ganze angehakte Quelle in der Auswahl: alle ihre Spaces, kein Space-Filter für die anderen.
+     */
     Set<String> chosenSpaces() {
-        return everywhere.isSelected() ? Set.of() : Set.copyOf(spaces);
+        Set<String> searched = searchedSources();
+        Set<String> spaces = new TreeSet<>();
+        for (Explorer.Scope scope : scopes) {
+            if (!searched.contains(scope.sourceId())) {
+                continue;
+            }
+            if (scope.spaceKey() == null) {
+                return Set.of();
+            }
+            spaces.add(scope.spaceKey());
+        }
+        return Set.copyOf(spaces);
+    }
+
+    /** Die Dokumentarten der nächsten Suche; leer heißt alle. Ohne jedes Häkchen sucht die Ansicht nicht. */
+    Set<DocumentKind> chosenKinds() {
+        Set<DocumentKind> checked = java.util.EnumSet.noneOf(DocumentKind.class);
+        kindBoxes.forEach((kind, box) -> {
+            if (box.isSelected()) {
+                checked.add(kind);
+            }
+        });
+        return checked.size() == kindBoxes.size() ? Set.of() : checked;
+    }
+
+    /** Ob mindestens eine Dokumentart angehakt ist. */
+    private boolean anyKind() {
+        return kindBoxes.values().stream().anyMatch(JCheckBox::isSelected);
+    }
+
+    /** Nennt die Dateitypen der nächsten Suche unter dem Umfang. */
+    private void kinds() {
+        Set<DocumentKind> checked = chosenKinds();
+        kindsLabel.setText(!anyKind() ? "Dateitypen: keiner angehakt" : checked.isEmpty() ? "Dateitypen: alle"
+                : "Dateitypen: " + String.join(", ", checked.stream().map(DocumentKind::label).toList()));
     }
 
     private Set<String> knownSources() {
@@ -393,6 +573,7 @@ public final class SearchView implements View {
     /** Woher die Varianten der semantischen Suche kommen; entfernte Quellen fallen aus dem Umfang. */
     private void refreshSources() {
         AppRuntime runtime = context.runtime();
+        syncSourceBoxes(runtime);
         boolean available = runtime != null && runtime.workspace().semanticRanking();
         semantic.setEnabled(available);
         if (!available) {
@@ -401,10 +582,45 @@ public final class SearchView implements View {
         semantic.setToolTipText(available || runtime == null
                 ? semanticTip(runtime == null ? null : available, runtime != null && runtime.workspace().aiVariants())
                 : lockedTip(runtime.settings().ai()));
+        // Die Nachbarn kommen aus dem lokalen Bestand; ohne Laufzeit gibt es keinen.
+        neighbors.setEnabled(runtime != null);
+        neighbors.setToolTipText(runtime != null ? NEIGHBORS_TIP
+                : "Gesperrt: keine Wissensquelle eingerichtet, also keine Seiten mit Nachbarn");
         String tip = semantic.getToolTipText();
         semanticNote.setText(tip == null ? " " : "<html><div style='width:320px'>" + tip + "</div></html>");
         mode();
         scope(scopes);
+    }
+
+    /**
+     * Ein Häkchen je Quelle der Laufzeit in ihrer Reihenfolge: neue kommen angehakt dazu, entfernte fallen weg,
+     * vorhandene behalten ihren Stand (auch beim Umbenennen). Das Popup baut sich nur neu, wenn sich die Liste ändert.
+     */
+    private void syncSourceBoxes(AppRuntime runtime) {
+        List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
+        Map<String, JCheckBox> current = new LinkedHashMap<>();
+        boolean changed = false;
+        for (HarvestSource source : sources) {
+            JCheckBox box = sourceBoxes.get(source.id());
+            if (box == null) {
+                box = checkBox(source.title(), "Diese Wissensquelle durchsuchen; abgehakt fehlt sie in der Suche");
+                box.setSelected(true);
+                box.addItemListener(e -> scope(scopes));
+                changed = true;
+            } else if (!box.getText().equals(source.title())) {
+                box.setText(source.title());
+                changed = true;
+            }
+            current.put(source.id(), box);
+        }
+        changed |= !current.keySet().equals(sourceBoxes.keySet());
+        if (changed) {
+            sourceBoxes.clear();
+            sourceBoxes.putAll(current);
+            if (notes != null) {
+                rebuildOptions();
+            }
+        }
     }
 
     /**
@@ -445,8 +661,16 @@ public final class SearchView implements View {
 
     /** Nennt den Modus der nächsten Suche neben dem Umfang. */
     private void mode() {
-        modeLabel.setText(semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche");
+        modeLabel.setText((semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
+                + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : ""));
     }
+
+    /** Tooltip der Trefferliste. */
+    static final String ROW_TIP = "Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs";
+
+    /** Ein Satz (UX-Manager 21.11.2026). */
+    static final String NEIGHBORS_TIP = "Nimmt Eltern-, Unter- und verlinkte Seiten der besten Treffer dazu, wenn sie "
+            + "die Anfrage auch treffen";
 
     private static JCheckBox checkBox(String text, String tooltip) {
         JCheckBox box = Comic.checkBox(text);
@@ -529,13 +753,24 @@ public final class SearchView implements View {
             open(runtime, text);
             return;
         }
+        if (searchedSources().isEmpty()) {
+            feedback.warning("Keine Wissensquelle angehakt", "In den Suchoptionen (Pfeil im Suchfeld) ist keine "
+                    + "Quelle angehakt, die zur Auswahl im Explorer passt.");
+            return;
+        }
+        if (!anyKind()) {
+            feedback.warning("Kein Dateityp angehakt", "In den Suchoptionen (Pfeil im Suchfeld) mindestens einen "
+                    + "Dateityp anhaken.");
+            return;
+        }
         KeywordSearch.Query q;
         try {
             // Eine gewählte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
             // Umfang als Schnappschuss beim Start: spätere Auswahl oder Optionen ändern diese Suche nicht.
             Set<String> sources = chosenSources();
             String sourceId = sources.size() == 1 ? sources.iterator().next() : null;
-            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), chosenSpaces());
+            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), chosenSpaces())
+                    .ofKinds(chosenKinds());
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
@@ -547,6 +782,7 @@ public final class SearchView implements View {
         stopLoading();
         showVariants(List.of());
         int id = ++request;
+        neighborsFor = neighbors.isSelected() && neighbors.isEnabled() ? id : -1;
         run.setEnabled(false);
         more.setVisible(false);
         feedback.clear();
@@ -690,7 +926,7 @@ public final class SearchView implements View {
                 });
             }
         };
-        running = runtime.workspace().progressiveSearch(q, listener);
+        running = runtime.workspace().progressiveSearch(q, listener, neighbors.isSelected() && neighbors.isEnabled());
     }
 
     /** Die ganze Liste nach einer Freigabe: neue Treffer eingeordnet, bekannte an ihrem neuen Platz, Auswahl bleibt. */
@@ -715,6 +951,10 @@ public final class SearchView implements View {
         });
         progressText.setText(completion(result.reason()) + " · "
                 + Texts.count(model.rows.size(), "Treffer", "Treffer"));
+        if (result.neighbors() == ProgressiveResult.Neighbors.UNCHECKED
+                && result.reason() != ProgressiveResult.Completion.CANCELLED) {
+            uncheckedNeighbors();
+        }
         if (result.reason() == ProgressiveResult.Completion.FAILED) {
             LOG.log(System.Logger.Level.WARNING, "Semantische Suche fehlgeschlagen: {0} Suchanfragen, keine lief",
                     result.variants().size());
@@ -1098,6 +1338,58 @@ public final class SearchView implements View {
         updateMore();
     }
 
+    /** Gelb in der Statuszeile: Ein fehlender Nachbar heißt dann nicht, dass es ihn nicht gibt (Auflage AT). */
+    private void uncheckedNeighbors() {
+        status.setText(status.getText().strip() + " · " + NEIGHBORS_UNCHECKED);
+        status.setForeground(Comic.ORANGE);
+    }
+
+    /**
+     * Suchmethode „Nachbarseiten“ zur Schlagwortsuche, einmal nach dem ersten fertig geladenen Stapel: Nachbarn der
+     * angezeigten Treffer, die dieselbe Anfrage treffen, rücken hinten nach; Auswahl und Position bleiben.
+     */
+    private void searchNeighbors() {
+        AppRuntime runtime = context.runtime();
+        KeywordSearch.Query q = lastQuery;
+        int id = request;
+        if (neighborsFor != id || runtime == null || q == null || model.rows.isEmpty()) {
+            return;
+        }
+        neighborsFor = -1;
+        List<KeywordSearch.Hit> shown = model.rows.stream().map(row -> new KeywordSearch.Hit(row.sourceId(),
+                row.pageId(), row.spaceKey(), row.title(), row.snippet(), null, null, row.modifiedAt(), null))
+                .toList();
+        neighborsPending = id;
+        updateMore();
+        int before = model.rows.size();
+        Background.run(() -> runtime.workspace().neighborSearch(q, shown), found -> {
+            if (id != request) {
+                return;
+            }
+            neighborsPending = -1;
+            updateMore();
+            if (found.isEmpty()) {
+                return;
+            }
+            Hit selected = selectedHit();
+            model.append(found.stream().map(Hit::of).toList());
+            select(selected);
+            // Nur die Zahl wächst; Quellenzustände und „unvollständig“ samt Farbe bleiben stehen.
+            String text = status.getText();
+            String count = Texts.count(before, "Treffer", "Treffer");
+            String rest = text.startsWith(count) ? text.substring(count.length()) : "";
+            status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · "
+                    + Texts.count(found.size(), "Nachbarseite", "Nachbarseiten") + " dazu" + rest);
+        }, error -> {
+            if (id == request) {
+                neighborsPending = -1;
+                updateMore();
+                LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesucht ({0})", error.getClass().getName());
+                uncheckedNeighbors();
+            }
+        });
+    }
+
     /** Ende der Zeile: „Die Suche ist abgeschlossen“ mit der Zahl der Treffer, nach einem Abbruch als solcher. */
     private void finished(boolean cancelled) {
         if (awaitingHits) {
@@ -1114,6 +1406,11 @@ public final class SearchView implements View {
         // Die Zahl der Treffer nennt danach der Stand rechts daneben; keine zweite Zeile mit derselben Zahl.
         progressText.setVisible(false);
         updateMore();
+        if (!cancelled && running == null) {
+            searchNeighbors();
+        } else if (cancelled) {
+            neighborsFor = -1;
+        }
     }
 
     /** Leere Spur ohne Abbrechen; mittig der Endzustand, {@code null} ohne. */
@@ -1138,7 +1435,7 @@ public final class SearchView implements View {
     private void updateMore() {
         boolean available = nextCursor != null && progressId == null;
         more.setVisible(available);
-        more.setEnabled(available);
+        more.setEnabled(available && neighborsPending != request);
     }
 
     /** „12 von 25 Seiten im Cache · 7 Treffer“: geladene gegen gefundene Seiten dieser Suche. */
@@ -1191,9 +1488,19 @@ public final class SearchView implements View {
      *
      * @param attachment Dateiname des Anhangs, in dessen Text der Treffer liegt (#183), oder {@code null}
      * @param passageId  Passage-ID des Absatzes, aus dem der Auszug stammt, oder {@code null}
+     * @param reasons    warum der Treffer gefunden wurde (R1), wie die Suche es meldet
      */
     record Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt,
-               String attachment, String passageId) {
+               String attachment, String passageId, List<HitReason> reasons) {
+
+        Hit {
+            reasons = reasons == null ? List.of() : List.copyOf(reasons);
+        }
+
+        Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt,
+            String attachment, String passageId) {
+            this(sourceId, pageId, title, spaceKey, snippet, modifiedAt, attachment, passageId, List.of());
+        }
 
         Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt) {
             this(sourceId, pageId, title, spaceKey, snippet, modifiedAt, null, null);
@@ -1214,6 +1521,16 @@ public final class SearchView implements View {
             return text.isEmpty() ? where : where + " · " + text;
         }
 
+        /** Die Marke des Treffergrunds vor dem Auszug oder {@code null} (R1). */
+        MarkedTextRenderer.Mark mark() {
+            return HitReasons.mark(reasons);
+        }
+
+        /** Tooltip der Marke; bei einem Nachbarn die Ausgangsseite, sonst {@code null}. */
+        String markTip() {
+            return HitReasons.tip(reasons);
+        }
+
         /** Eine aufgelöste Adresse; statt eines Auszugs die Version. */
         static Hit of(PageAddresses.Match match) {
             return new Hit(match.sourceId(), match.pageId(), match.title(), match.spaceKey(),
@@ -1223,13 +1540,16 @@ public final class SearchView implements View {
         static Hit of(KeywordSearch.Hit hit) {
             return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt(),
                     hit.attachment() == null ? null : hit.attachment().title().isBlank()
-                            ? hit.attachment().attachmentId() : hit.attachment().title(), hit.passageId());
+                            ? hit.attachment().attachmentId() : hit.attachment().title(), hit.passageId(),
+                    hit.reasons());
         }
     }
 
     static final class HitsModel extends AbstractTableModel {
 
         private static final String[] COLUMNS = {"Titel", "Quelle", "Space", "Auszug", "Geändert"};
+        /** Spalte des Auszugs, vorn mit der Marke des Treffergrunds. */
+        static final int EXCERPT = 3;
         List<Hit> rows = new ArrayList<>();
 
         void set(List<Hit> hits) {

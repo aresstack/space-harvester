@@ -102,6 +102,11 @@ public final class LocalFilesTextProjector implements PageTextProjector {
                 || type.endsWith("+json") || type.endsWith("+xml");
     }
 
+    /** Ob eine Datei dieses Typs lesbaren Text hat: Textdateien und Dokumente; Bilder, Medien, Archive nicht. */
+    public static boolean readable(String mediaType) {
+        return textual(mediaType) || document(mediaType);
+    }
+
     /** Dokumentformate, aus denen die Extraktion Text liest; Bilder, Audio, Video und Unbekanntes nicht. */
     private static boolean document(String mediaType) {
         String type = base(mediaType);

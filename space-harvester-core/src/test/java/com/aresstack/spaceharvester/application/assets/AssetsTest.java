@@ -76,6 +76,202 @@ class AssetsTest {
                 imageDescriber, documents, null, gate);
     }
 
+    /**
+     * Angelo 20.11.2026: Korrekturen des Transkripts liegen als Ergänzung neben ihm, je Modell eine, und stehen wie das
+     * Transkript unter „Anhänge“; das Transkript selbst bleibt unverändert.
+     */
+    @Test
+    void transcriptCorrectionsLieNextToTheTranscriptAsAttachments() {
+        Assets assets = assets(1000);
+        assets.putVideoTranscript("wiki", "101", "v1", "", "Vortrag – Transkript.txt", "[00:00:00] Zabak");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "Vortrag – Transkript (Korrektur a).txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:1", true), "[00:00:00] ZahlBuch");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "Vortrag – Transkript (Korrektur b).txt",
+                new Assets.TranscriptCorrection(null, "Korrektur b", "m|b", "sha:2", false), "[00:00:00] Zabak");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "Vortrag – Transkript (Korrektur a).txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:3", true), "[00:00:00] ZahlBuch!");
+
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Zabak");
+        List<Assets.TranscriptCorrection> corrections = assets.videoTranscriptCorrections("wiki", "101", "v1");
+        assertThat(corrections).extracting(Assets.TranscriptCorrection::label)
+                .as("je Modell eine, die neue ersetzt die alte").containsExactly("Korrektur a", "Korrektur b");
+        assertThat(corrections.get(0).input()).isEqualTo("sha:3");
+        assertThat(corrections.get(1).complete()).isFalse();
+        assertThat(assets.videoTranscriptText("wiki", "101", "v1", corrections.get(0).attachmentId()))
+                .contains("[00:00:00] ZahlBuch!");
+        assertThat(assets.videoTranscriptCorrection("wiki", "101", "v2", "m|a")).as("andere Fassung").isEmpty();
+        assertThat(assets.withVideoTranscript(list(), "v1").attachments().attachments())
+                .extracting(PageAttachment::title).containsExactly("Vortrag – Transkript.txt",
+                        "Vortrag – Transkript (Korrektur a).txt", "Vortrag – Transkript (Korrektur b).txt");
+    }
+
+    /**
+     * Angelo 20.11.2026: Die Analysen einer Videoseite lesen die zuletzt abgelegte Korrektur, ohne Korrektur das
+     * Transkript; jede Ablage meldet sich beim Hörer.
+     */
+    @Test
+    void analysesReadTheLatestCorrectionAndEveryStoreIsReported() {
+        Instant[] now = {NOW};
+        Clock ticking = new Clock() {
+            @Override
+            public java.time.ZoneId getZone() {
+                return ZoneOffset.UTC;
+            }
+
+            @Override
+            public Clock withZone(java.time.ZoneId zone) {
+                return this;
+            }
+
+            @Override
+            public Instant instant() {
+                return now[0];
+            }
+        };
+        Assets assets = new Assets(new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return Optional.of(source);
+            }
+        }, new FileSystemAssetStore(directory), 1000, ticking, null, null, null, LargeFileGate.defaults());
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> reported = new java.util.ArrayList<>();
+        assets.transcriptChanges(reported::add);
+
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).as("ohne Transkript").isEmpty();
+        assets.putVideoTranscript("wiki", "101", "v1", "", "T.txt", "[00:00:00] Original");
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).contains("[00:00:00] Original");
+        now[0] = NOW.plusSeconds(10);
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "B.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur b", "m|b", "sha:1", true), "[00:00:00] B");
+        now[0] = NOW.plusSeconds(20);
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "A.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:2", true), "[00:00:00] A");
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).as("die jüngste, nicht nach Name")
+                .contains("[00:00:00] A");
+        now[0] = NOW.plusSeconds(30);
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "B.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur b", "m|b", "sha:3", true), "[00:00:00] B2");
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).contains("[00:00:00] B2");
+        assertThat(reported).hasSize(4)
+                .allMatch(key -> key.equals(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki",
+                        "101")));
+    }
+
+    /** Angelo 20.11.2026: Löschen nimmt Transkript und alle Korrekturen; andere Fassungen bleiben. */
+    @Test
+    void deletingTheTranscriptRemovesAllCorrections() {
+        Assets assets = assets(1000);
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> reported = new java.util.ArrayList<>();
+        assets.putVideoTranscript("wiki", "101", "v1", "", "T.txt", "[00:00:00] Original");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "A.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:1", true), "[00:00:00] A");
+        assets.putVideoTranscript("wiki", "101", "v2", "", "T.txt", "[00:00:00] Andere Fassung");
+        assets.transcriptChanges(reported::add);
+
+        assertThat(assets.deleteVideoTranscript("wiki", "101", "v1")).isTrue();
+
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).isEmpty();
+        assertThat(assets.videoTranscriptCorrections("wiki", "101", "v1")).isEmpty();
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).isEmpty();
+        assertThat(assets.withVideoTranscript(list(), "v1").attachments().attachments()).isEmpty();
+        assertThat(assets.videoTranscript("wiki", "101", "v2")).contains("[00:00:00] Andere Fassung");
+        assertThat(reported).hasSize(1);
+        assertThat(assets.deleteVideoTranscript("wiki", "101", "v1")).as("nichts mehr da").isFalse();
+        assertThat(reported).hasSize(1);
+    }
+
+    /**
+     * Angelo 20.11.2026: je Whisper-Modell ein Original; das gewählte bestimmt Korrekturen und Analysen, Löschen nimmt
+     * nur das gezeigte samt seinen Korrekturen.
+     */
+    @Test
+    void eachWhisperModelHasItsOwnOriginalAndTheChosenOneFeedsTheAnalyses() {
+        Assets assets = assets(1000);
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> reported = new java.util.ArrayList<>();
+        assets.transcriptChanges(reported::add);
+        assets.putVideoTranscript("wiki", "101", "v1", "tiny", "Vortrag – Transkript.txt", "[00:00:00] Zabak");
+        assets.putVideoTranscript("wiki", "101", "v1", "small", "Vortrag – Transkript.txt", "[00:00:00] Zahlbuch");
+
+        assertThat(assets.videoTranscriptOriginals("wiki", "101", "v1")).extracting(Assets.TranscriptOriginal::whisper)
+                .containsExactly("small", "tiny");
+        assertThat(assets.chosenVideoTranscript("wiki", "101", "v1")).map(Assets.TranscriptOriginal::whisper)
+                .as("das erste bleibt gewählt").contains("tiny");
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Zabak");
+        assertThat(assets.videoTranscript("wiki", "101", "v1", "small")).contains("[00:00:00] Zahlbuch");
+        assets.putVideoTranscriptCorrection("wiki", "101", "v1", "K.txt",
+                new Assets.TranscriptCorrection(null, "Korrektur a", "m|a", "sha:1", true, "tiny"), "[00:00:00] ZahlBuch");
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).contains("[00:00:00] ZahlBuch");
+
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "small")).isTrue();
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "small")).as("schon gewählt").isFalse();
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "large-v3")).as("gibt es nicht").isFalse();
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).as("Korrektur gehört zu tiny")
+                .contains("[00:00:00] Zahlbuch");
+        assertThat(assets.videoTranscriptCorrection("wiki", "101", "v1", "m|a")).isEmpty();
+        assertThat(assets.videoTranscriptCorrection("wiki", "101", "v1", "tiny", "m|a")).isPresent();
+        assertThat(assets.withVideoTranscript(list(), "v1").attachments().attachments())
+                .extracting(PageAttachment::title).containsExactly("Vortrag – Transkript (Whisper small).txt",
+                        "Vortrag – Transkript (Whisper tiny).txt", "K.txt");
+
+        assertThat(assets.deleteVideoTranscript("wiki", "101", "v1", "tiny")).isTrue();
+        assertThat(assets.videoTranscriptOriginals("wiki", "101", "v1")).extracting(Assets.TranscriptOriginal::whisper)
+                .containsExactly("small");
+        assertThat(assets.videoTranscriptCorrections("wiki", "101", "v1")).isEmpty();
+        assertThat(assets.latestVideoTranscriptText("wiki", "101", "v1")).contains("[00:00:00] Zahlbuch");
+        assertThat(assets.deleteVideoTranscript("wiki", "101", "v1")).as("das gewählte").isTrue();
+        assertThat(assets.hasVideoTranscript("wiki", "101", "v1")).isFalse();
+        assertThat(reported).hasSize(6);
+    }
+
+    /** Ein älteres Transkript ohne Modell bleibt lesbar und gewählt, bis ein anderes gewählt wird. */
+    @Test
+    void anOlderTranscriptWithoutModelStaysChosen() {
+        Assets assets = assets(1000);
+        assets.putVideoTranscript("wiki", "101", "v1", "", "T.txt", "[00:00:00] Alt");
+        assets.putVideoTranscript("wiki", "101", "v1", "tiny", "T.txt", "[00:00:00] Neu");
+
+        assertThat(assets.videoTranscriptOriginals("wiki", "101", "v1")).extracting(Assets.TranscriptOriginal::whisper)
+                .containsExactly("", "tiny");
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Alt");
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "tiny")).isTrue();
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Neu");
+        assertThat(assets.chooseVideoTranscript("wiki", "101", "v1", "")).isTrue();
+        assertThat(assets.videoTranscript("wiki", "101", "v1")).contains("[00:00:00] Alt");
+    }
+
+    /** Angelo 20.11.2026: Folienkommentare liegen an der virtuellen Marke, je Modell einer, versioniert. */
+    @Test
+    void slideNotesLieAtTheirMarkOnePerModel() {
+        Assets assets = assets(1000);
+        assets.putVideoSlideNote("wiki", "101", "v1", new Assets.SlideNote(12_000, null, "Kommentar a", "n|a", "sha:1"),
+                "Folie eins, Modell a");
+        assets.putVideoSlideNote("wiki", "101", "v1", new Assets.SlideNote(12_000, null, "Kommentar b", "n|b", "sha:2"),
+                "Folie eins, Modell b");
+        assets.putVideoSlideNote("wiki", "101", "v1", new Assets.SlideNote(30_000, null, "Kommentar a", "n|a", "sha:3"),
+                "Folie zwei");
+        assets.putVideoSlideNote("wiki", "101", "v1", new Assets.SlideNote(12_000, null, "Kommentar a", "n|a", "sha:4"),
+                "Folie eins, Modell a, neu");
+
+        List<Assets.SlideNote> notes = assets.videoSlideNotes("wiki", "101", "v1");
+        assertThat(notes).extracting(Assets.SlideNote::millis, Assets.SlideNote::label).containsExactly(
+                org.assertj.core.groups.Tuple.tuple(12_000L, "Kommentar a"),
+                org.assertj.core.groups.Tuple.tuple(12_000L, "Kommentar b"),
+                org.assertj.core.groups.Tuple.tuple(30_000L, "Kommentar a"));
+        assertThat(assets.videoSlideNote("wiki", "101", "v1", 12_000, "n|a")).map(Assets.SlideNote::input)
+                .contains("sha:4");
+        assertThat(assets.videoSlideNoteText("wiki", "101", "v1", notes.get(0).attachmentId()))
+                .contains("Folie eins, Modell a, neu");
+
+        assets.removeVideoSlideNote("wiki", "101", "v1", 12_000, "n|b");
+        assertThat(assets.videoSlideNotes("wiki", "101", "v1")).hasSize(2);
+        assertThat(assets.videoSlideNotes("wiki", "101", "v2")).as("andere Fassung").isEmpty();
+    }
+
     @Test
     void aSignatureInTheContentOverridesAWrongMediaTypeOfTheSource() {
         FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
@@ -765,9 +961,19 @@ class AssetsTest {
 
     @Test
     void tooManyDifferentDescriptionsAtOnceAreRefusedNotQueued() throws Exception {
+        refusesBeyond(Assets.MAX_CONCURRENT_DESCRIPTIONS);
+    }
+
+    @Test
+    void theNumberOfDescriptionsAtOnceFollowsTheSetting() throws Exception {
+        // ai.parallel (Angelo 20.11.2026): so viele zugleich, wie eingestellt, keine feste Zahl.
+        describer.parallel = 2;
+        refusesBeyond(2);
+    }
+
+    private void refusesBeyond(int running) throws Exception {
         describer.gate = new CountDownLatch(1);
         Assets assets = assets(1000, describer);
-        int running = Assets.MAX_CONCURRENT_DESCRIPTIONS;
         List<PageAttachment> images = new ArrayList<>();
         for (int i = 0; i <= running; i++) {
             source.file("att" + i, "1", "bild-" + i);
@@ -806,10 +1012,16 @@ class AssetsTest {
         /** Hält jeden Lauf an, bis der Test ihn freigibt; {@code null} lässt sofort durch. */
         volatile CountDownLatch gate;
         volatile CountDownLatch started = new CountDownLatch(1);
+        volatile int parallel = Assets.MAX_CONCURRENT_DESCRIPTIONS;
 
         @Override
         public String id() {
             return "test";
+        }
+
+        @Override
+        public int parallel() {
+            return parallel;
         }
 
         @Override
@@ -864,6 +1076,35 @@ class AssetsTest {
         assertThat(assets.viewDiagram("wiki", "101", "7", new HarvestSource.ViewImage(
                 "https://wiki.example.org/download/attachments/101/foto.png", "Foto", null, "image/png", null)))
                 .isEmpty();
+    }
+
+    @Test
+    void theReadingViewListsTheAttachmentsOncePerPageVersionInsteadOfOncePerImage() {
+        Assets assets = assets(100_000);
+        source.listed.add(attachment("att-p", "foto.png", "image/png", "2"));
+        HarvestSource.ViewImage foto = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/foto.png", "Foto", null, "image/png", null);
+        HarvestSource.ViewImage karte = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/karte.png", "Karte", null, "image/png", null);
+
+        for (int round = 0; round < 3; round++) {
+            assertThat(assets.viewDiagramSvg("wiki", "101", "7", foto)).isEmpty();
+            assertThat(assets.viewDiagram("wiki", "101", "7", foto)).isEmpty();
+            assertThat(assets.viewDiagramSvg("wiki", "101", "7", karte)).isEmpty();
+            assertThat(assets.viewDiagram("wiki", "101", "7", karte)).isEmpty();
+        }
+        assertThat(source.listings).isEqualTo(1);
+
+        // Eine neue Seitenversion fragt neu.
+        assets.viewDiagram("wiki", "101", "8", foto);
+        assertThat(source.listings).isEqualTo(2);
+
+        // Antwortet die Quelle nicht, gilt die Liste eine Weile als leer: das Bild kommt dann aus der Ablage, ohne dass
+        // jedes weitere Bild auf die Quelle wartet.
+        source.listingUnreachable = true;
+        assertThat(assets.viewDiagram("wiki", "101", "9", foto)).isEmpty();
+        assertThat(assets.viewDiagramSvg("wiki", "101", "9", karte)).isEmpty();
+        assertThat(source.listings).isEqualTo(3);
     }
 
     @Test
@@ -1021,8 +1262,15 @@ class AssetsTest {
             return content.getBytes(StandardCharsets.UTF_8);
         }
 
+        int listings;
+        boolean listingUnreachable;
+
         @Override
         public PageAttachments attachments(String pageId) {
+            listings++;
+            if (listingUnreachable) {
+                throw new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "weg", null);
+            }
             return new PageAttachments(pageId, List.copyOf(listed), List.of(), "application/json", "test", List.of(),
                     NOW);
         }

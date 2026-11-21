@@ -120,7 +120,7 @@ class TermGraphViewTest {
             view.show(new GraphSource.Graph(List.of(new GraphSource.Node("x", "X", 0, null)), List.of(), false));
             seen.add(view.hint());
         });
-        assertThat(seen).containsExactly("false", TermGraphView.START, TermGraphView.NO_NEIGHBOURS);
+        assertThat(seen).containsExactly("false", " ", TermGraphView.NO_NEIGHBOURS);
     }
 
     private static TermRelation relation(String from, String to, RelationType type, ReviewStatus status) {

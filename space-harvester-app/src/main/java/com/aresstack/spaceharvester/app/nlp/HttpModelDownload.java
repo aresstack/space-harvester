@@ -29,7 +29,8 @@ import javax.net.ssl.TrustManager;
  * ({@link ProxyRoutes}, auch PAC), Anmeldung am Proxy und die TLS-Vertrauensregel der App. Folgt Weiterleitungen
  * (GitHub leitet Release-Downloads um). Meldet nie Zugangsdaten.
  */
-public final class HttpModelDownload implements ParserModelInstaller.Download {
+public final class HttpModelDownload implements ParserModelInstaller.Download,
+        com.aresstack.spaceharvester.app.hf.HuggingFaceClient.Transport {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
     /** Höchstens so lange auf die Antwortköpfe warten; ein hängender Datenstrom endet über „Abbrechen“. */
@@ -79,19 +80,35 @@ public final class HttpModelDownload implements ParserModelInstaller.Download {
         return builder.build();
     }
 
+    /** Für Hugging Face: jede Antwort samt Status, ab {@code rangeFrom} zum Fortsetzen eines Downloads. */
     @Override
-    public ParserModelInstaller.Body open(URI target) throws IOException {
-        HttpRequest request = HttpRequest.newBuilder(target).header("User-Agent", userAgent)
-                .timeout(RESPONSE_TIMEOUT).GET().build();
-        HttpResponse<InputStream> response;
+    public com.aresstack.spaceharvester.app.hf.HuggingFaceClient.Response get(URI target, long rangeFrom)
+            throws IOException {
+        HttpResponse<InputStream> response = send(target, rangeFrom);
+        return new com.aresstack.spaceharvester.app.hf.HuggingFaceClient.Response(response.statusCode(),
+                response.body(), response.headers().firstValueAsLong("Content-Length").orElse(-1L),
+                response.headers().firstValue("Content-Range").orElse(null), response.uri().getHost());
+    }
+
+    private HttpResponse<InputStream> send(URI target, long rangeFrom) throws IOException {
+        HttpRequest.Builder request = HttpRequest.newBuilder(target).header("User-Agent", userAgent)
+                .timeout(RESPONSE_TIMEOUT).GET();
+        if (rangeFrom > 0) {
+            request.header("Range", "bytes=" + rangeFrom + "-");
+        }
         try {
-            response = client().send(request, HttpResponse.BodyHandlers.ofInputStream());
+            return client().send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Download unterbrochen", e);
         } catch (java.io.UncheckedIOException e) {
             throw e.getCause();
         }
+    }
+
+    @Override
+    public ParserModelInstaller.Body open(URI target) throws IOException {
+        HttpResponse<InputStream> response = send(target, 0);
         if (response.statusCode() / 100 != 2) {
             response.body().close();
             throw new IOException("Download fehlgeschlagen: HTTP " + response.statusCode() + " von "

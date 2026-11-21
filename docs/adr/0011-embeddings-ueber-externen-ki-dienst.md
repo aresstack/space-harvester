@@ -96,3 +96,18 @@ beschrieben. Auch dafür gilt Punkt 4: Fragen gehen an den Dienst, Seiteninhalte
   Abgleich oder Abruf.
 - Die alten Schlüssel `space-harvester.embedding.*` gelten nicht mehr. Die App meldet einen vorhandenen Block als
   Hinweis; der Server ignoriert ihn.
+
+## Nachtrag: Ollama als KI-Dienst (19.11.2026)
+
+`space-harvester.ai.provider: ollama` macht einen Ollama-Server zum KI-Dienst, wie in AskAI; ohne Eintrag gilt
+`openai-compatible`. `base-url` ist dann der Server selbst (etwa `http://localhost:11434`), ein API-Key entfällt.
+
+- **Modelle:** `GET /api/tags` und je Modell `POST /api/show`. Die gemeldeten Fähigkeiten (`completion`, `vision`,
+  `embedding`) ordnet `ModelClassification` des Enterprise AI Client Chat, Bildverständnis und Embeddings zu.
+  `/v1/models` meldet sie nicht.
+- **Chat und Bilder:** über die eigene Schnittstelle `POST /api/chat`, mit der Kontextlänge je Anfrage
+  (`context-tokens` als `num_ctx`, Standard 8192 wie in AskAI). Die OpenAI-kompatible Schnittstelle `/v1` nimmt keine
+  Kontextlänge an. Ollama lädt ein Modell dann mit dessen voller Kontextlänge, und gemma4:12b bricht auf 16 GB
+  Grafikspeicher mit „out of memory“ ab. Das Ausgabelimit geht als `num_predict` mit, Bilder als Base64 in `images`.
+- **Embeddings:** unverändert über `POST /v1/embeddings`.
+- **Reranking:** Ollama bietet keinen Cross-Encoder; ohne `rerank-model` bleibt die Reihenfolge.

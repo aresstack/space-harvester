@@ -32,6 +32,82 @@ class ExplorerTest {
     }
 
     @Test
+    void nodeKindControlsIconsWithoutInspectingTheSourceType() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: "
+                + home.resolve("data").toString().replace('\\', '/') + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            javax.swing.JTree tree = explorer.tree();
+            javax.swing.tree.TreeCellRenderer renderer = tree.getCellRenderer();
+
+            Explorer.PageItem directory = new Explorer.PageItem("source", "space", "folder", "Ordner",
+                    true, HarvestSource.PageNode.Kind.FOLDER);
+            java.awt.Component folderComponent = renderer.getTreeCellRendererComponent(tree,
+                    new Explorer.Node(directory), false, false, false, 0, false);
+            Class<?> folderIcon = ((javax.swing.JLabel) folderComponent).getIcon().getClass();
+
+            Explorer.PageItem page = new Explorer.PageItem("source", "space", "page", "Seite",
+                    true, HarvestSource.PageNode.Kind.PAGE);
+            java.awt.Component pageComponent = renderer.getTreeCellRendererComponent(tree,
+                    new Explorer.Node(page), false, false, false, 0, false);
+            Class<?> pageIcon = ((javax.swing.JLabel) pageComponent).getIcon().getClass();
+
+            Explorer.PageItem file = new Explorer.PageItem("source", "space", "file", "Datei",
+                    false, HarvestSource.PageNode.Kind.FILE);
+            java.awt.Component fileComponent = renderer.getTreeCellRendererComponent(tree,
+                    new Explorer.Node(file), false, false, true, 0, false);
+            Class<?> fileIcon = ((javax.swing.JLabel) fileComponent).getIcon().getClass();
+
+            assertThat(folderIcon).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.folder().getClass());
+            assertThat(pageIcon).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.page().getClass());
+            assertThat(fileIcon).isEqualTo(pageIcon);
+            assertThat(folderIcon).isNotEqualTo(pageIcon);
+        });
+    }
+
+    @Test
+    void confirmedFileReplacesAnUnknownCachedNodeWithoutAnExpandHandle() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: "
+                + home.resolve("data").toString().replace('\\', '/') + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            Explorer.Node root = (Explorer.Node) explorer.tree().getModel().getRoot();
+            Explorer.Node parent = new Explorer.Node(new Explorer.SpaceItem("source", "space", "Space"));
+            Explorer.Node cached = new Explorer.Node(new Explorer.PageItem("source", "space", "doc",
+                    "Dokument.pdf", null, HarvestSource.PageNode.Kind.PAGE));
+            cached.add(new Explorer.Node(new Explorer.Note("Noch nicht geladen")));
+            parent.add(cached);
+            root.add(parent);
+            ((javax.swing.tree.DefaultTreeModel) explorer.tree().getModel()).reload();
+
+            Explorer.Node confirmed = new Explorer.Node(new Explorer.PageItem("source", "space", "doc",
+                    "Dokument.pdf", false, HarvestSource.PageNode.Kind.FILE));
+            confirmed.loaded = true;
+            explorer.merge(parent, new Explorer.Batch(List.of(confirmed), null), true);
+
+            assertThat(cached.item()).isInstanceOf(Explorer.PageItem.class);
+            assertThat(((Explorer.PageItem) cached.item()).kind()).isEqualTo(HarvestSource.PageNode.Kind.FILE);
+            assertThat(cached.loaded).isTrue();
+            assertThat(cached.getChildCount()).isZero();
+            assertThat(explorer.tree().getModel().isLeaf(cached)).isTrue();
+        });
+    }
+
+    @Test
     void theTitleFilterAsksTheSourceForPagesNeverLoaded() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
         Files.writeString(files.resolve("wartungsfenster.md"), "# Wartungsfenster\n\nText.\n");
@@ -192,7 +268,8 @@ class ExplorerTest {
         });
         assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
 
-        // Ein Klick auf die Seite wählt nur, erst der Doppelklick öffnet sie.
+        // Ein Klick öffnet die Seite (Angelo, 17.11.2026, einheitlich mit Quelle und Space); der Doppelklick klappt
+        // nur auf und zu und öffnet nichts ein zweites Mal.
         List<String> opened = new java.util.ArrayList<>();
         context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
                 getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
@@ -204,17 +281,46 @@ class ExplorerTest {
         SwingUtilities.invokeAndWait(() -> {
             javax.swing.JTree tree = explorer[0].tree();
             tree.setSize(400, 400);
+            javax.swing.tree.TreePath parent = tree.getSelectionPath().getParentPath();
+            assertThat(tree.isExpanded(parent)).isTrue();
             java.awt.Rectangle row = tree.getPathBounds(tree.getSelectionPath());
-            for (int clicks = 1; clicks <= 2; clicks++) {
-                tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
-                        System.currentTimeMillis(), 0, row.x + 5, row.y + row.height / 2, clicks, false,
-                        java.awt.event.MouseEvent.BUTTON1));
-                if (clicks == 1) {
-                    assertThat(opened).as("ein Klick öffnet nicht").isEmpty();
-                }
-            }
+            tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, row.x + 5, row.y + row.height / 2, 1, false,
+                    java.awt.event.MouseEvent.BUTTON1));
+            assertThat(opened).as("ein Klick öffnet").containsExactly(wanted);
+            java.awt.Rectangle spaceRow = tree.getPathBounds(parent);
+            tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, spaceRow.x + 5, spaceRow.y + spaceRow.height / 2, 2, false,
+                    java.awt.event.MouseEvent.BUTTON1));
+            assertThat(tree.isExpanded(parent)).as("Doppelklick klappt zu").isFalse();
+            tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, spaceRow.x + 5, spaceRow.y + spaceRow.height / 2, 2, false,
+                    java.awt.event.MouseEvent.BUTTON1));
+            assertThat(tree.isExpanded(parent)).as("Doppelklick klappt auf").isTrue();
+
+            // Angelo (20.11.2026): oft öffnete erst der zweite Klick. Wandert die Maus zwischen Drücken und Loslassen,
+            // meldet Swing keinen Klick; losgelassen auf derselben Zeile öffnet die Seite trotzdem.
+            java.awt.event.MouseAdapter mouse = explorer[0].treeMouse();
+            int x = row.x + 5;
+            int y = row.y + row.height / 2;
+            mouse.mousePressed(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_PRESSED, x, y, 1));
+            // Nach der Bewegung meldet AWT beim Loslassen die Klickzahl 0 (Codex zu #975); es zählt die vom Drücken.
+            mouse.mouseDragged(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_DRAGGED, x + 2, y + 1, 0));
+            mouse.mouseReleased(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_RELEASED, x + 2, y + 1, 0));
+            assertThat(opened).as("losgelassen nach kleiner Bewegung").containsExactly(wanted, wanted);
+            // Ohne Bewegung kommt der Klick von Swing; das Loslassen öffnet nicht ein zweites Mal.
+            mouse.mousePressed(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_PRESSED, x, y, 1));
+            mouse.mouseReleased(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_RELEASED, x, y, 1));
+            assertThat(opened).as("ohne Bewegung nur über den Klick").hasSize(2);
+            // Auf einer anderen Zeile losgelassen: nichts öffnen.
+            mouse.mousePressed(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_PRESSED, x, y, 1));
+            mouse.mouseDragged(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_DRAGGED, spaceRow.x + 5,
+                    spaceRow.y + spaceRow.height / 2, 1));
+            mouse.mouseReleased(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_RELEASED, spaceRow.x + 5,
+                    spaceRow.y + spaceRow.height / 2, 1));
+            assertThat(opened).as("auf anderer Zeile losgelassen").hasSize(2);
         });
-        assertThat(opened).containsExactly(wanted);
+        assertThat(opened).containsExactly(wanted, wanted);
 
         // Fußleiste: keine Anzahl der Wissensquellen; „Alles zuklappen“ und das Fadenkreuz zeigen die gezeigte Seite.
         SwingUtilities.invokeAndWait(() -> {
@@ -236,7 +342,7 @@ class ExplorerTest {
             Thread.sleep(50);
         }
         assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
-        assertThat(opened).as("das Fadenkreuz öffnet nicht").containsExactly(wanted);
+        assertThat(opened).as("das Fadenkreuz öffnet nicht").containsExactly(wanted, wanted);
 
         // Fadenkreuz bei gewählter Seite: das Zuklappen verbreitert den Suchumfang nicht auf die ganze Quelle.
         int before = scopeCalls[0];
@@ -331,12 +437,12 @@ class ExplorerTest {
                         .isLessThanOrEqualTo(visible);
             }
             assertThat(tree.getPreferredSize().width).as("keine waagerechte Scrollleiste").isLessThanOrEqualTo(visible);
-            // Die lange Zeile: Label mit rechtem Rand für die drei Spalten, Titel breiter als der Platz davor.
+            // Die lange Zeile: Label mit rechtem Rand für die zwei Spalten, Titel breiter als der Platz davor.
             javax.swing.tree.TreePath path = tree.getSelectionPath();
             javax.swing.JLabel label = (javax.swing.JLabel) tree.getCellRenderer().getTreeCellRendererComponent(tree,
                     path.getLastPathComponent(), true, false, true, tree.getRowForPath(path), false);
             java.awt.Rectangle bounds = tree.getPathBounds(path);
-            assertThat(label.getInsets().right).isEqualTo(30 + 30 + 22);
+            assertThat(label.getInsets().right).isEqualTo(30 + 22);
             label.setSize(bounds.width, bounds.height);
             int available = bounds.width - label.getInsets().right - label.getIcon().getIconWidth()
                     - label.getIconTextGap();
@@ -427,30 +533,32 @@ class ExplorerTest {
             assertThat(selections.get(selections.size() - 1)).isNull();
         });
 
-        // Der Download-Knopf daneben lädt jede Quelle mit allen Spaces (je Space ein Auftrag, wie einzeln).
-        List<String> downloaded = new java.util.ArrayList<>();
+        // „Alles indexieren“ im Kontextmenü der Überschrift indexiert jede Quelle mit allen Spaces (je Space ein
+        // Auftrag, wie einzeln).
+        List<String> indexed = new java.util.ArrayList<>();
         context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
                 getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("download") && args[1] instanceof List<?> keys) {
-                        downloaded.add(args[0] + ":" + keys);
+                    if (method.getName().equals("index")) {
+                        indexed.add(args[0] + ":" + args[1] + ":" + args[2]);
                     }
                     return null;
                 }));
         List<Boolean> answers = new java.util.ArrayList<>(List.of(false, true));
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(explorer[0].downloadAllButton().getToolTipText()).isEqualTo(Explorer.DOWNLOAD_ALL_TIP);
-            // Erst die Rückfrage (Ja/Nein, „wirklich“): bei Nein passiert nichts, bei Ja lädt jede Quelle.
-            explorer[0].confirmDownloadAll(parent -> answers.remove(0));
-            explorer[0].downloadAllButton().doClick();
-            assertThat(downloaded).isEmpty();
-            explorer[0].downloadAllButton().doClick();
+            javax.swing.JMenuItem all = (javax.swing.JMenuItem) explorer[0].headMenu().getComponent(0);
+            assertThat(all.getText()).isEqualTo(Explorer.INDEX_ALL);
+            // Erst die Rückfrage (Ja/Nein, „wirklich“): bei Nein passiert nichts, bei Ja indexiert jede Quelle.
+            explorer[0].confirmIndexAll(parent -> answers.remove(0));
+            all.doClick();
+            assertThat(indexed).isEmpty();
+            all.doClick();
         });
         assertThat(answers).isEmpty();
-        assertThat(Explorer.DOWNLOAD_ALL_QUESTION).containsIgnoringCase("wirklich");
-        assertThat(downloaded).containsExactly("handbuch:[]");
+        assertThat(Explorer.INDEX_ALL_QUESTION).containsIgnoringCase("wirklich");
+        assertThat(indexed).containsExactly("handbuch:null:null");
     }
 
-    /** Die Hervorhebung des Sterns folgt der Maus über dem Stern, nicht über dem Download-Symbol (Angelo, 16.11.2026). */
+    /** Die Hervorhebung des Sterns folgt der Maus über dem Stern (Angelo, 16.11.2026). */
     @Test
     void theStarHighlightsOnlyUnderTheMouse() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
@@ -511,40 +619,34 @@ class ExplorerTest {
             javax.swing.tree.TreePath path = tree.getSelectionPath();
             int row = tree.getRowForPath(path);
             java.awt.Rectangle bounds = tree.getPathBounds(path);
-            // Spalten von rechts: Download (30), Stern (30), Bestandszeichen (22).
+            // Spalten von rechts: Stern (30), Bestandszeichen (22); das Download-Symbol ist weg (Angelo, 20.11.2026).
             int y = bounds.y + bounds.height / 2;
             move(tree, bounds.x + bounds.width - 15, y);
-            assertThat(explorer[0].hoverRow()).isEqualTo(row);
-            assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
-            assertThat(tree.getToolTipText()).isEqualTo(Explorer.DOWNLOAD_TIP);
-            move(tree, bounds.x + bounds.width - 45, y);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(row);
-            assertThat(explorer[0].hoverRow()).isEqualTo(-1);
             assertThat(tree.getToolTipText()).isEqualTo(Explorer.STAR_TIP);
             move(tree, bounds.x + 5, y);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
-            assertThat(explorer[0].hoverRow()).isEqualTo(-1);
             // Der Zustandspunkt links vom Stern: Kreispfeile unter der Maus, Klick holt die Seite samt Teilbaum nach.
-            move(tree, bounds.x + bounds.width - 60 - 11, y);
+            move(tree, bounds.x + bounds.width - 30 - 11, y);
             assertThat(explorer[0].hoverBadgeRow()).isEqualTo(row);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
             assertThat(tree.getToolTipText()).endsWith(Explorer.REFRESH_TIP);
-            click(tree, bounds.x + bounds.width - 60 - 11, y);
+            click(tree, bounds.x + bounds.width - 30 - 11, y);
             assertThat(refreshed).containsExactly("handbuch/" + space.spaceKey() + "/" + page.pageId());
-            // Die Wurzel der Quelle (Zeile 0) trägt dieselben Spalten: Zustandspunkt, Stern, Download.
+            // Die Wurzel der Quelle (Zeile 0) trägt dieselben Spalten: Zustandspunkt und Stern.
             java.awt.Rectangle top = tree.getRowBounds(0);
             assertThat(((Explorer.Node) tree.getPathForRow(0).getLastPathComponent()).item())
                     .isInstanceOf(Explorer.SourceItem.class);
             int ty = top.y + top.height / 2;
-            move(tree, top.x + top.width - 60 - 11, ty);
+            move(tree, top.x + top.width - 30 - 11, ty);
             assertThat(explorer[0].hoverBadgeRow()).isZero();
-            click(tree, top.x + top.width - 60 - 11, ty);
+            click(tree, top.x + top.width - 30 - 11, ty);
             assertThat(refreshed).hasSize(2);
             assertThat(refreshed.get(1)).isEqualTo("handbuch/null/null");
             // Der Stern an der Quelle merkt die ganze Quelle als Favorit (Angelo, 16.11.2026).
-            move(tree, top.x + top.width - 45, ty);
+            move(tree, top.x + top.width - 15, ty);
             assertThat(explorer[0].hoverStarRow()).isZero();
-            click(tree, top.x + top.width - 45, ty);
+            click(tree, top.x + top.width - 15, ty);
             assertThat(context.favorites().contains("handbuch", null, null)).isTrue();
             assertThat(context.favorites().all().get(0).isSource()).isTrue();
             assertThat(context.favorites().all().get(0).title()).isEqualTo("Handbuch");
@@ -564,6 +666,12 @@ class ExplorerTest {
     private static void click(javax.swing.JTree tree, int x, int y) {
         tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
                 System.currentTimeMillis(), 0, x, y, 1, false, java.awt.event.MouseEvent.BUTTON1));
+    }
+
+    /** Ein Ereignis der linken Maustaste, zum direkten Aufruf des Listeners (ohne Fenster, ohne Toolkit). */
+    private static java.awt.event.MouseEvent mouseEvent(javax.swing.JTree tree, int id, int x, int y, int clicks) {
+        return new java.awt.event.MouseEvent(tree, id, System.currentTimeMillis(),
+                java.awt.event.InputEvent.BUTTON1_DOWN_MASK, x, y, clicks, false, java.awt.event.MouseEvent.BUTTON1);
     }
 
     private static void move(javax.swing.JTree tree, int x, int y) {

@@ -208,6 +208,46 @@ class WorkspaceTest {
     }
 
     @Test
+    void deletingTheAnalysesOfASelectionKeepsThePagesAndOnlyReportsRealDeletions() throws Exception {
+        Workspace workspace = start().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        assertThat(await(workspace, workspace.startSync("handbuch", space)).state()).isEqualTo(JobState.COMPLETED);
+        java.util.concurrent.atomic.AtomicInteger heard = new java.util.concurrent.atomic.AtomicInteger();
+        try (var ignored = workspace.subscribeStatementAnalyses(heard::incrementAndGet)) {
+            // Ohne Analysen nichts zu löschen, für einen Space wie für die ganze Quelle; der Beobachter schweigt.
+            assertThat(workspace.deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection
+                    .of(com.aresstack.spaceharvester.application.holdings.Selection.Root.space("handbuch", space))))
+                    .isZero();
+            assertThat(workspace.deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection
+                    .of(com.aresstack.spaceharvester.application.holdings.Selection.Root.source("handbuch"))))
+                    .isZero();
+            // „Alles löschen“ nimmt die KI-Urteile derselben Seiten mit; ohne Analysen bleibt es bei null.
+            assertThat(workspace.deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection
+                    .of(com.aresstack.spaceharvester.application.holdings.Selection.Root.source("handbuch")), true))
+                    .isZero();
+            assertThat(heard).hasValue(0);
+        }
+        assertThat(workspace.cachedPages("handbuch", space, null, 100).pages()).as("die Seiten bleiben").hasSize(2);
+
+        // Eine Analyse zu einer Seite, die der Bestand nicht mehr kennt: Die ganze Quelle nimmt sie mit (sie zählt in
+        // der gemeldeten Zahl des Core), der Space nicht; eine bekannte Seite gehört zu beiden.
+        var spaceSelection = com.aresstack.spaceharvester.application.holdings.Selection.of(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.space("handbuch", space));
+        var sourceSelection = com.aresstack.spaceharvester.application.holdings.Selection.of(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.source("handbuch"));
+        var gone = new com.aresstack.spaceharvester.application.snapshot.PageKey("handbuch", "gibt-es-nicht-mehr");
+        var known = workspace.cachedPages("handbuch", space, null, 100).pages().get(0).header().key();
+        var bySpace = Workspace.analysesOf(spaceSelection, workspace.resolveSelection(spaceSelection));
+        var bySource = Workspace.analysesOf(sourceSelection, workspace.resolveSelection(sourceSelection));
+        assertThat(bySource.test(gone)).isTrue();
+        assertThat(bySpace.test(gone)).isFalse();
+        assertThat(bySpace.test(known)).isTrue();
+        assertThat(bySource.test(known)).isTrue();
+        assertThat(bySource.test(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "100")))
+                .isFalse();
+    }
+
+    @Test
     void readsLocalFilesWithoutNetwork() throws Exception {
         Workspace workspace = start().workspace();
 

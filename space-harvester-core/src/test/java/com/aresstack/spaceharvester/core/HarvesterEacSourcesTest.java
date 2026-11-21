@@ -44,7 +44,8 @@ class HarvesterEacSourcesTest {
 
     @Test
     void theCopiedSourceTypesAreKnownWithoutOwnRegistration() {
-        assertThat(ConfiguredSourceCatalog.TYPES).contains("ftp", "jes", "ndv", "sharepoint", "betaview", "outlook");
+        assertThat(ConfiguredSourceCatalog.TYPES).contains("ftp", "jes", "ndv", "sharepoint", "betaview", "outlook",
+                "jira");
     }
 
     @Test
@@ -56,6 +57,7 @@ class HarvesterEacSourcesTest {
                     .containsExactly(
                             tuple("confluence", "Confluence", false, null, false),
                             tuple("files", "Ordner", false, "directory", false),
+                            tuple("bscw", "BSCW Classic (WebDAV)", true, null, false),
                             tuple("ftp", "FTP", false, "host", false),
                             tuple("jes", "JES", true, "host", false),
                             tuple("ndv", "NDV", true, "host", false),
@@ -63,6 +65,7 @@ class HarvesterEacSourcesTest {
                             tuple("betaview", "BetaView", true, "baseUrl", true),
                             tuple("outlook", "Outlook", false, "mailbox", false),
                             tuple("mediawiki", "MediaWiki", false, "apiUrl", true),
+                            tuple("jira", "Jira", false, "baseUrl", true),
                             tuple("git", "Git-Repository", false, "url", true));
         }
     }
@@ -90,6 +93,7 @@ class HarvesterEacSourcesTest {
 
             assertThat(types.get("confluence").authModes()).containsExactly(SourceType.AuthMode.NONE,
                     SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT);
+            assertThat(types.get("bscw").authModes()).containsExactly(SourceType.AuthMode.BASIC);
             assertThat(types.get("ftp").authModes()).containsExactly(SourceType.AuthMode.NONE,
                     SourceType.AuthMode.BASIC);
             assertThat(types.get("files").authModes()).containsExactly(SourceType.AuthMode.NONE);

@@ -22,6 +22,16 @@ public interface AssetStore {
      */
     void put(Asset asset, byte[] content);
 
+    /**
+     * Entfernt den Eintrag eines Anhangs in dieser Version, etwa ein gelöschtes Transkript; der Inhalt bleibt, bis ihn
+     * das Aufräumen einer Quelle nimmt (er kann noch an anderen Einträgen hängen). Der Standard kann nichts entfernen.
+     *
+     * @return ob ein Eintrag da war
+     */
+    default boolean remove(String sourceId, String attachmentId, String version) {
+        throw new AssetStoreException("Diese Ablage kann keine Einträge entfernen", null);
+    }
+
     /** Eine leere Datei für einen Download, der danach mit {@link #putFile} abgelegt wird (Streaming, ohne Grenze). */
     default java.nio.file.Path stagingFile() throws java.io.IOException {
         return java.nio.file.Files.createTempFile("asset-", ".part");

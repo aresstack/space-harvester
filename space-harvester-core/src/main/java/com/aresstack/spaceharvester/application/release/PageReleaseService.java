@@ -113,6 +113,28 @@ public final class PageReleaseService {
     }
 
     /**
+     * Trägt genau eine lokal gespeicherte Seite ein, ohne ihre Unterseiten, mit der Seite selbst als Knoten: so, wenn
+     * der Chat sie per Werkzeug an das Modell liefert (ADR 0033). Nicht lokal oder ohne Leserecht: nichts.
+     *
+     * @return der neue Eintrag, leer, wenn die Seite schon auf der Liste stand oder nicht lokal ist
+     */
+    public List<PageReleases.Entry> releasePage(AccessContext caller, String spaceKey, PageKey key) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(spaceKey, "spaceKey");
+        if (pages.contains(key)) {
+            return List.of();
+        }
+        for (Holdings.StoredPage page : holdings.storedPages(caller,
+                Selection.of(Selection.Root.subtree(key.sourceId(), spaceKey, key.pageId())))) {
+            if (page.key().equals(key)) {
+                return pages.add(List.of(new PageReleases.Entry(key, spaceKey, key.pageId(), PageReleases.CHAT,
+                        clock.instant())));
+            }
+        }
+        return List.of();
+    }
+
+    /**
      * Wie viele lokal gespeicherte Seiten der Auswahl neu auf die Liste kämen, damit der Chat es vor dem Senden nennen
      * kann; trägt nichts ein.
      */

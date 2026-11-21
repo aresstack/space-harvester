@@ -8,6 +8,15 @@
 space-harvester-app:
   # Lokaler Bestand (Lucene), Aufträge und Analysen; Standard: <Benutzerordner>/.space-harvester/data
   data-directory: ${SPACE_HARVESTER_DATA:}
+  # Fläche hinter dem Bild in „Bilder der Seite“ (Einstellungen › Allgemein › Darstellung):
+  # theme (Vorgabe, wie die App) | white | grey | dark | black
+  # viewer:
+  #   background: theme
+  # Whisper-Modell für Spracheingabe und Video-Transkripte (Einstellungen › Modelle); wird nach Rückfrage einmal von
+  # Hugging Face nach <Benutzerordner>/.space-harvester/models geladen:
+  # tiny (Vorgabe) | base | small | medium | large-v3-turbo | large-v3
+  # whisper:
+  #   model: tiny
   # Export „Analytics“ (Export-Reiter): Zeitraum und die Pfade des Confluence-Analytics-Plugins. Ohne Angabe gelten die
   # Pfade der Analytics-Oberfläche von Confluence 10.2; einstellbar unter Einstellungen › Allgemein › Analytics-Export.
   # Platzhalter {spaceKey}, {from}, {to}; {nextPageToken} in der Seitenliste ist das Token der vorigen Antwort, der

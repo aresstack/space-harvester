@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.app.nlp.MaltStatementAnalyzer;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
@@ -146,7 +147,9 @@ public final class AppRuntime implements AutoCloseable {
         AppSettings.Storage storage = new AppSettings.Storage(scratch.resolve("data"), scratch.resolve("exports"),
                 scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().largeAssetBytes(),
                 settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
-                settings.storage().maxTreeNodes(), null, settings.storage().extraction());
+                settings.storage().maxTreeNodes(), null, settings.storage().extraction(),
+                settings.storage().maxPageBytes(), settings.storage().maxTextFileBytes(),
+                settings.storage().checkTimeout(), settings.storage().largeFileTimeout());
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
         try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
                 .build()) {
@@ -209,6 +212,10 @@ public final class AppRuntime implements AutoCloseable {
                 .exportDirectory(storage.exportDirectory())
                 .assetDirectory(storage.assetDirectory())
                 .maxAssetBytes(storage.maxAssetBytes())
+                .maxPageBytes(storage.maxPageBytes())
+                .maxTextFileBytes(storage.maxTextFileBytes())
+                .checkTimeout(storage.checkTimeout())
+                .largeFileTimeout(storage.largeFileTimeout())
                 .largeAssetThresholdBytes(storage.largeAssetBytes())
                 .maxConcurrentLargeAssets(storage.maxLargeAssets())
                 .extractionLimits(storage.extraction())
@@ -255,7 +262,7 @@ public final class AppRuntime implements AutoCloseable {
                 .withLocalFiles(settings.localFiles()).withTerms(settings.terms())
                 .withEnrichment(settings.enrichment()).withChangeLog(settings.cache().changeLog())
                 .withSimplification(settings.simplification()).withStanding(settings.standing())
-                .withCheck(settings.check());
+                .withCheck(settings.check()).withImages(settings.images());
     }
 
     /**
@@ -360,8 +367,14 @@ public final class AppRuntime implements AutoCloseable {
         }
         AiServiceSettings service;
         try {
-            service = new AiServiceSettings(URI.create(ai.baseUrl()), apiKey, ai.chatModel(), ai.embeddingModel(),
-                    ai.embeddingDimensions(), ai.timeout(), null, Set.copyOf(ai.externalProcessingSources()));
+            // Ein Ollama-Server braucht keinen Key; ein gespeicherter Key des anderen Dienstes geht nicht an ihn.
+            String key = ai.provider() == AiProvider.OLLAMA ? null : apiKey;
+            service = new AiServiceSettings(URI.create(ai.baseUrl()), key, ai.chatModel(), ai.embeddingModel(),
+                    ai.embeddingDimensions(), ai.timeout(), null, Set.copyOf(ai.externalProcessingSources()))
+                    .withProvider(ai.provider()).withContextTokens(ai.contextTokens())
+                    .withLoadTimeout(ai.loadTimeout()).withRetries(ai.retries())
+                    .withLoadPollInterval(ai.loadPollInterval()).withStepThinking(ai.stepThinking())
+                    .withParallel(ai.parallel());
         } catch (IllegalArgumentException e) {
             LOG.log(System.Logger.Level.WARNING, "KI-Dienst nicht nutzbar: {0}", e.getMessage());
             return AiServiceSettings.NONE;

@@ -43,6 +43,8 @@ public final class ContentView implements View {
     private final SignInSlot signIn;
 
     private String sourceId;
+    /** „Wissensquellen“ im Explorer gewählt: die Bereichsanzeige nennt keine Quelle (Architekt 17.11.2026). */
+    private boolean allSources;
     private String spaceKey;
 
     public ContentView(AppContext context) {
@@ -101,8 +103,12 @@ public final class ContentView implements View {
         return root;
     }
 
+    /** Die Bereichsanzeige bei „Wissensquellen“: kein Verweis, keine Quelle. */
+    static final String ALL_SOURCES = "Wissensquellen";
+
     /** Ein Space wurde gewählt (z. B. „Inhalte öffnen“ eines Auftrags): ohne Seite, die wählt man im Explorer. */
     public void openSpace(String sourceId, String spaceKey) {
+        allSources = false;
         // Ein Space hat dieselbe Seite wie die Quelle, als Ausschnitt seiner Updates (ADR-0030-Nachtrag, TZ5).
         if (!detail.showsLevel(sourceId, spaceKey)) {
             detail.showSource(sourceId, spaceKey, spaceKey);
@@ -120,6 +126,7 @@ public final class ContentView implements View {
     }
 
     public void openSource(String sourceId, String title) {
+        allSources = false;
         if (!detail.showsLevel(sourceId, null)) {
             detail.showSource(sourceId, title);
         }
@@ -200,6 +207,10 @@ public final class ContentView implements View {
 
     private void renderCrumbs() {
         signIn.refresh();
+        if (allSources) {
+            crumbs.show(List.of(new LocationBar.Part(ALL_SOURCES, null, null)));
+            return;
+        }
         String source = currentSource();
         if (source == null) {
             crumbs.show(List.of(new LocationBar.Part(sources().isEmpty() ? "Keine Wissensquelle"
@@ -271,11 +282,34 @@ public final class ContentView implements View {
 
     /**
      * Die Reiter der Seitenansicht als Symbolknöpfe für die Icon-Leiste des Hauptfensters; sie schalten die Mitte um
-     * (Angelo, 13.11.2026). Unten in der Werkzeugleiste steht deshalb nichts mehr ({@link #tools()} bleibt leer).
+     * (Angelo, 13.11.2026).
      */
     public JComponent tabBar() {
         return detail.tabIcons();
     }
+
+    /**
+     * Die Werkzeuge der Seitenansicht in der unteren Leiste, je nach Reiter ({@link PageDetailPanel#footTools()}):
+     * in der Leseansicht einer Datei „Speichern“ und „Öffnen“
+     * neben der Lupe samt „Typ · Größe“ rechts, im Text eines Videos der Transkript-Knopf (Angelo, 19.11.2026).
+     */
+    @Override
+    public JComponent tools() {
+        return detail.footTools();
+    }
+
+    /**
+     * Der Chat als Seitenleiste für das Hauptfenster (Angelo, 21.11.2026): er steht neben der Arbeitsfläche und bleibt
+     * in jedem Bereich stehen; sein Wissen ist weiter die Auswahl links.
+     */
+    public ChatSidebar chatSidebar() {
+        if (chatSidebar == null) {
+            chatSidebar = new ChatSidebar(detail.chat());
+        }
+        return chatSidebar;
+    }
+
+    private ChatSidebar chatSidebar;
 
     /** Ob die Reiter ihre Auswahl zeigen: nur, solange die Mitte die Seitenansicht zeigt ({@link PillTabs#showSelection}). */
     public void tabsActive(boolean active) {
@@ -293,10 +327,23 @@ public final class ContentView implements View {
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
         detail.standing().selection(selection);
+        detail.overviewSelection(selection);
         // Eine Seite zeigt unter „Analysen“ ihre eigenen Analysen, jede weitere Ebene den Stand der Auswahl.
         detail.wide(selection == null || selection.global() || !selection.page());
-        // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind.
-        if (selection != null && !selection.global()) {
+        // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind; die Mitte
+        // zeigt leer statt einer alten Seite und unter Eigenschaften die Gesamtsicht (Angelo 17.11.2026).
+        if (selection != null && selection.global()) {
+            allSources = true;
+            if (context.runtime() != null) {
+                List<String> ids = context.runtime().workspace().sources().stream().map(HarvestSource::id).toList();
+                // Hat sich die Quellenliste geändert, baut sich die Gesamtsicht neu auf.
+                if (!detail.showsAllSources(ids)) {
+                    detail.showAllSources(ids, selection.title());
+                }
+            }
+            renderCrumbs();
+        } else if (selection != null) {
+            allSources = false;
             // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite
             // (etwa ein Download aus „Export“ eines nur gewählten Spaces fragt den Code hier ab, nicht erst in Aufträge).
             // Eine andere Quelle, oder eine Quelle bzw. ein Space statt einer Seite: Die Seitenreiter (Leseansicht bis

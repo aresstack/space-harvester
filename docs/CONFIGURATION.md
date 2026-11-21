@@ -403,6 +403,14 @@ Apache Tika gelesen; das JSON-Paket enthält Original und Text in `attachments.j
 
 - Ein Anhang mit anderem Medientyp oder über der Grenze wird nicht geladen; er steht mit Status `EXCLUDED` und Grund
   `media-type-excluded` bzw. `too-large` im Manifest, ohne Inhalt, und gilt nicht als fehlend.
+- **Videos sind standardmäßig ausgeschlossen**: Die Standardliste enthält kein `video/*`.
+  Das gilt auch für MP4-Anhänge in Confluence Data Center. Der Eintrag im Manifest ist ein
+  Metadaten-Platzhalter und **kein** gesichertes Original. Erst wenn ein Export bewusst
+  Videoinhalte enthalten soll, kann `video/*` in die Medientyp-Liste aufgenommen werden;
+  der Quellserver muss dann den vollständigen Anhang liefern können. Diese bestehende
+  Einstellung betrifft Confluence-**Anhänge**, nicht eigenständige BSCW-Dateiseiten.
+  BSCW-Videos bleiben im normalen Cache und Export Metadateneinträge; einzelne Dateien
+  lassen sich aus der Leseransicht ausdrücklich herunterladen.
 - Bilder, Grafiken und draw.io-Daten zählen nicht als Dokument; für sie gilt weiter ADR 0018.
 - `POST /api/v1/configuration` nimmt die drei Schlüssel an; `GET` zeigt sie unter `export`.
 

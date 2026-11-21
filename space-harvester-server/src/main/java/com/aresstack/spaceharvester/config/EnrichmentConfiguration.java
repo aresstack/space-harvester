@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.changelog.ChangeLog;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
@@ -39,6 +40,7 @@ import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
@@ -120,7 +122,8 @@ class EnrichmentConfiguration {
                                         ObjectProvider<ReleaseRecomputation> recomputation,
                                         ObjectProvider<AiRelease> release,
                                         ObjectProvider<DocumentEnrichments> documents,
-                                        ObjectProvider<ChangeLog> changeLog) {
+                                        ObjectProvider<ChangeLog> changeLog,
+                                        ObjectProvider<SynonymDiscovery> synonyms) {
         PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
         ReleaseRecomputation withdrawals = recomputation.getIfAvailable();
         AiRelease pages = release.getIfAvailable();
@@ -136,9 +139,34 @@ class EnrichmentConfiguration {
                 if (log != null) {
                     log.withdrawn(snapshots.stream().map(PageSnapshot::key).toList());
                 }
+                // SY2: Vektoren der Synonymerkennung aus diesen Seiten und der Stand ihrer Quellen.
+                SynonymDiscovery discovery = synonyms.getIfAvailable();
+                if (discovery != null) {
+                    discovery.withdrawn(snapshots.stream().map(PageSnapshot::key).toList(), pages::mayProcess);
+                }
             });
         }
         return analysis;
+    }
+
+    /**
+     * Bilder automatisch beschreiben (Fahrplan B1): nach dem Abgleich und nach neuer KI-Freigabe, nur mit
+     * {@code space-harvester.images.automatic} (Standard aus), höchstens {@code images.max-per-run} Bilder je Lauf.
+     */
+    @Bean
+    AutomaticImageDescriptions automaticImageDescriptions(Jobs jobs, PageImageAnalysis analysis,
+                                                          ObjectProvider<LucenePageCache> cache,
+                                                          ConfiguredSourceCatalog catalog, LiveConfiguration live,
+                                                          ObjectProvider<AiRelease> release) {
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs, analysis, sourceId -> {
+            LucenePageCache pages = cache.getIfAvailable();
+            return pages == null ? java.util.Collections.emptyIterator() : pages.snapshots(sourceId);
+        }, () -> live.current().images(), sourceId -> catalog.find(sourceId).isPresent());
+        AiRelease pages = release.getIfAvailable();
+        if (pages != null) {
+            pages.pages().subscribe(automatic::releasesChanged);
+        }
+        return automatic;
     }
 
     /** Dokumentnavigation einer Seite für {@code GET …/navigation} (ADR 0020). */
@@ -172,11 +200,28 @@ class EnrichmentConfiguration {
     EnrichmentsAfterSync enrichmentsAfterSync(Enrichments enrichments, ObjectProvider<SnapshotRepository> snapshots,
                                               ObjectProvider<Jobs> jobs, ObjectProvider<PageTextIndexing> texts,
                                               ObjectProvider<AcronymRelationRule> acronymRule,
-                                              ObjectProvider<DocumentEnrichments> documents) {
+                                              ObjectProvider<SynonymDiscovery> synonyms,
+                                              ObjectProvider<DocumentEnrichments> documents,
+                                              ObjectProvider<AutomaticImageDescriptions> images) {
         // Eigener Auftrag ENRICHMENT: Abgleich und Export warten nicht auf die Anreicherung; er hält auch den
         // Volltextindex nach (#180) und danach die Regelvorschläge der Begriffsbeziehungen (#120).
         AcronymRelationRule rule = acronymRule.getIfAvailable();
-        List<Consumer<String>> followUps = rule == null ? List.of() : List.of(rule::refresh);
+        List<Consumer<String>> followUps = new java.util.ArrayList<>();
+        if (rule != null) {
+            followUps.add(rule::refresh);
+        }
+        // SY1: danach der automatische Synonymlauf der Quelle als eigener Auftrag.
+        SynonymDiscovery discovery = synonyms.getIfAvailable();
+        if (discovery != null) {
+            followUps.add(discovery::automatic);
+        }
+        // Fahrplan B1: danach die automatische Bildbeschreibung der Quelle als eigener Auftrag (Standard aus).
+        followUps.add(sourceId -> {
+            AutomaticImageDescriptions automatic = images.getIfAvailable();
+            if (automatic != null) {
+                automatic.automatic(sourceId);
+            }
+        });
         return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable(),
                 texts.getIfAvailable(), followUps, documents.getIfAvailable());
     }

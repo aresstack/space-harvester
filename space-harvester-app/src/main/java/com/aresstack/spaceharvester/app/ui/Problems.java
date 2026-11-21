@@ -81,7 +81,8 @@ public final class Problems {
         String hint = base.hint();
         String message = base.message();
         if (e instanceof SourceAccessException source && (step == Step.PAGE || step == Step.PAGE_LIST)
-                && source.reason() == SourceAccessException.Reason.UNAVAILABLE) {
+                && source.reason() == SourceAccessException.Reason.UNAVAILABLE
+                && !"Proxy-Route nicht ermittelt".equals(base.title())) {
             message = (step == Step.PAGE ? "Der Abruf dieser Seite aus " : "Der Abruf der Seitenliste aus ")
                     + source.sourceId() + " ist gescheitert"
                     + (e.getMessage() == null || e.getMessage().isBlank() ? "." : ": " + e.getMessage());
@@ -100,9 +101,7 @@ public final class Problems {
                 case ACCESS_DENIED -> new Problem("Zugriff verweigert",
                         "Die Quelle " + source.sourceId() + " hat die Anmeldung abgelehnt oder die Rechte reichen nicht.",
                         "Benutzer, Passwort bzw. Token und Client-Zertifikat der Quelle prüfen.", technical);
-                case UNAVAILABLE -> new Problem("Quelle nicht erreichbar",
-                        "Die Quelle " + source.sourceId() + " antwortet nicht.",
-                        "Adresse, Netzwerk, Proxy/PAC und Zertifikate prüfen; danach erneut versuchen.", technical);
+                case UNAVAILABLE -> unavailableSource(source, technical);
                 case RATE_LIMITED -> new Problem("Quelle drosselt Anfragen",
                         "Die Quelle " + source.sourceId() + " hat zu viele Anfragen gemeldet.",
                         "Etwas warten und erneut versuchen.", technical);
@@ -195,6 +194,19 @@ public final class Problems {
         }
         return new Problem("Unerwarteter Fehler", "Die Aktion ist fehlgeschlagen.",
                 "Die technische Ansicht zeigt die Ursache.", technical);
+    }
+
+    private static Problem unavailableSource(SourceAccessException source, String technical) {
+        if (source.getMessage() != null && source.getMessage().contains("route-unavailable")) {
+            return new Problem("Proxy-Route nicht ermittelt",
+                    "Die automatische Proxy-Ermittlung hat für diese Quelle keinen Netzweg geliefert.",
+                    "Unter Einstellungen > Netzwerk > Erweitert eine Proxy-Ausnahme für den Zielhost setzen, "
+                            + "wenn er direkt erreichbar ist, oder eine funktionierende Proxy-Konfiguration wählen.",
+                    technical);
+        }
+        return new Problem("Quelle nicht erreichbar",
+                "Die Quelle " + source.sourceId() + " antwortet nicht.",
+                "Adresse, Netzwerk, Proxy/PAC und Zertifikate prüfen; danach erneut versuchen.", technical);
     }
 
     private static Throwable unwrap(Throwable error) {

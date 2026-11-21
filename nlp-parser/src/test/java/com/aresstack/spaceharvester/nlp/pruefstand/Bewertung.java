@@ -193,6 +193,10 @@ final class Bewertung {
     }
 
     static Zahlen bewerten(Textsatz satz, Variante variante, Text text, java.util.function.IntPredicate akzeptiert) {
+        if (variante.ki()) {
+            // Zweiter Analysator (Fahrplan Paket A2): Aussagen aus den gepinnten Modellantworten
+            return zaehlen(satz, variante, text, KiAnalyse.befunde(satz, variante, text));
+        }
         Aufbau aufbau = aufbauen(satz, variante, text, akzeptiert);
         ParsedDocument original = aufbau.original();
         ObjectCentricAnalysis analysis = aufbau.analysis();
@@ -201,6 +205,19 @@ final class Bewertung {
         List<Befund> ergaenzbar = aufbau.ergaenzbar();
         List<VorstufenSatz> vorstufe = aufbau.vorstufenSaetze();
 
+        Zahlen zahlen = zaehlen(satz, variante, text, befunde);
+        String prefix = variante.name() + " " + text.name();
+        if (vorstufe != null) {
+            ergaenzungen(original, analysis, mentions, ergaenzbar, zahlen, prefix);
+        }
+        return zahlen;
+    }
+
+    /**
+     * Zählt die Aussagen einer Variante gegen die Vorgabe eines Textes: Verb gefunden, vollständig richtig, streng,
+     * Merkmale und „falsch trotz PLAUSIBLE“; ohne Ergänzungen der Vorstufe.
+     */
+    static Zahlen zaehlen(Textsatz satz, Variante variante, Text text, List<Befund> befunde) {
         Zahlen zahlen = new Zahlen();
         String prefix = variante.name() + " " + text.name();
         for (Erwartung erwartung : satz.vorgabe().fuer(text.name())) {
@@ -282,9 +299,6 @@ final class Bewertung {
             }
         }
 
-        if (vorstufe != null) {
-            ergaenzungen(original, analysis, mentions, ergaenzbar, zahlen, prefix);
-        }
         return zahlen;
     }
 

@@ -141,7 +141,7 @@ class ReadingViewsTest {
         while (System.nanoTime() < until) {
             Thread.sleep(20);
         }
-        assertThat(source.attempts).isBetween(1, 2);
+        assertThat(source.attempts.get()).isBetween(1, 2);
         assertThat(views.cached(CALLER, "wiki", "200")).isEmpty();
     }
 
@@ -206,7 +206,7 @@ class ReadingViewsTest {
     private static final class Source implements HarvestSource {
 
         int reads;
-        volatile int attempts;
+        final java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
         boolean unreachable;
         boolean supported = true;
         String version = "3";
@@ -247,7 +247,7 @@ class ReadingViewsTest {
             if (!supported) {
                 return HarvestSource.super.readingPage(pageId);
             }
-            attempts++;
+            attempts.incrementAndGet();
             if (unreachable) {
                 throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "weg", null);
             }

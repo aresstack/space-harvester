@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.ui.controls.DurationField;
 import com.aresstack.spaceharvester.application.metadata.AnalyticsQueries;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -30,7 +31,7 @@ import java.util.Objects;
  * Einstellungen und Diagnose in Bereichen wie im AskAI-Client: Die Bereiche stehen untereinander im linken Drawer
  * ({@link #drawer()}, an Stelle des Explorers, solange die Einstellungen offen sind), rechts nur der gewählte Bereich.
  * „Allgemein“ (welche Datei gilt, was daran nicht stimmt, wo die Daten liegen, welche Ordner gelesen werden dürfen,
- * Versionen, was im Terminal erscheint), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle
+ * Versionen, was im Terminal erscheint, Darstellung: Hintergrund des Bildbetrachters), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle
  * Quellen), „Netzwerk“ (Proxy, Serverzertifikate und Wiederholungen), „Cache“ (Aktualisierung gespeicherter Seiten,
  * Frist für gesperrte Seiten) und „Sicherheit“
  * (KeePass-Kopplung für KI-Dienst und Quellen, Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“;
@@ -43,8 +44,12 @@ public final class SettingsView implements View {
     static final String GENERAL = "Allgemein";
     static final String AI = "KI-Dienst";
     static final String MODELS = "Modelle";
+    /** Bereich „Wortlisten“: die Wörter für den Stand und die Glossarregeln, aus „Modelle“ herausgezogen. */
+    static final String WORDS = "Wortlisten";
     static final String NETWORK = "Netzwerk";
     static final String CACHE = "Cache";
+    /** Bereich „Video“: Marken, Standbilder und Player ({@code space-harvester-app.video.*}). */
+    static final String VIDEO = "Video";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -102,6 +107,8 @@ public final class SettingsView implements View {
     /** Platte „Dateizugriff“ unter Allgemein: freigegebene Ordner für Ordner-Quellen. */
     final FileAccessEditor fileAccess;
     final StandingWordsEditor standingWords;
+    /** Bereich „Video“: alle Werte für Videos. */
+    final VideoSettingsPanel video;
     final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
@@ -112,11 +119,19 @@ public final class SettingsView implements View {
     private final ComposerButton openFile = Comic.button("Datei öffnen", "Konfiguration im Standardeditor öffnen");
     private final ComposerButton openFolder = Comic.button("Ordner öffnen", "Ordner der Konfiguration öffnen");
     private final ComposerButton openData = Comic.button("Ordner öffnen", "Datenordner des lokalen Bestands im Dateimanager öffnen");
-    final ComposerButton chooseOutput = Comic.button("Ausgabeordner ändern …",
-            "Ordner, in den „Exportieren“ unter Aufträge die Dateien legt");
-    final ComposerButton openOutput = Comic.button("Ausgabeordner öffnen", "Den Ausgabeordner anzeigen");
-    final ComposerButton resetOutput = Comic.button("Zurück auf Downloads", "Wieder den Ordner Downloads verwenden");
-    private final Facts output = new Facts();
+    private final ComposerButton editPageSize = Comic.button(SettingDialogs.PAGE_SIZE_TITLE + " …",
+            "Größere Dateien lädt die App nicht herunter, sondern legt nur ihre Kopfdaten ab");
+    /** Der Ausgabeordner als Feld; „Durchsuchen …“, „Öffnen“ und „Zurück auf Downloads“ sitzen im Feld. */
+    final com.aresstack.spaceharvester.app.ui.controls.FolderField outputFolder =
+            new com.aresstack.spaceharvester.app.ui.controls.FolderField(Comic.field(24));
+    final javax.swing.JButton openOutput = outputFolder.addButton(
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("Öffnen",
+                    "Den Ausgabeordner anzeigen"));
+    final javax.swing.JButton resetOutput = outputFolder.addButton(
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("Zurück auf Downloads",
+                    "Wieder den Downloads-Ordner des Benutzers verwenden"));
+    static final String OUTPUT_HINT = "Alle Exporte: Dateien aus dem Export-Reiter, Metadaten und Analytics, PPTX "
+            + "und PDF aus Videos; „Speichern unter“ beginnt hier";
     private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
     /**
      * Platte „Terminal-Ausgabe“ unter Allgemein (Angelo 12.11.2026): welche Meldungen im Terminal erscheinen,
@@ -127,6 +142,19 @@ public final class SettingsView implements View {
     private ConsoleOutput shownConsole;
     /** Während {@link #renderConsole} die Auswahl setzt, ist das keine Wahl des Benutzers. */
     private boolean showingConsole;
+    /** Platte „Darstellung“ unter Allgemein (Angelo 17.11.2026). */
+    static final String DISPLAY_TITLE = "Darstellung";
+    /** Zeile der Platte „Darstellung“ und Zeile auf der Abschlussseite des Assistenten. */
+    static final String VIEWER_TITLE = "Hintergrund des Bildbetrachters";
+    static final String VIEWER_HINT = "Die Fläche hinter dem Bild in „Bilder der Seite“. Gilt beim nächsten Öffnen, "
+            + "ohne Neustart.";
+    /** Auswahl „Hintergrund des Bildbetrachters“, {@code space-harvester-app.viewer.background}; Einträge in der
+     * Reihenfolge von {@link ViewerBackground}. */
+    final JComboBox<String> viewer = Comic.combo();
+    /** Was die Auswahl zeigt; eine Wahl desselben Werts schreibt nichts. */
+    private ViewerBackground shownViewer;
+    /** Während {@link #renderViewer} die Auswahl setzt, ist das keine Wahl des Benutzers. */
+    private boolean showingViewer;
     /** Platte „Analytics-Export“ unter Allgemein und Zeile auf der Abschlussseite des Assistenten. */
     static final String ANALYTICS_TITLE = "Analytics-Export";
     static final String ANALYTICS_HINT = "Leer heißt Vorgabe: der Pfad, den die Analytics-Oberfläche von Confluence "
@@ -156,6 +184,7 @@ public final class SettingsView implements View {
         this.ai = new AiSettingsPanel(context);
         this.fileAccess = new FileAccessEditor(context);
         this.standingWords = new StandingWordsEditor(context);
+        this.video = new VideoSettingsPanel(context);
         this.glossaryRules = new GlossaryRulesEditor(context);
         this.keePass = new KeePassPairingPanel(context);
         this.releases = new PageReleasesPanel(context);
@@ -175,7 +204,10 @@ public final class SettingsView implements View {
                 open(context.settings().storage().dataDirectory());
             }
         });
-        chooseOutput.addActionListener(e -> chooseOutput());
+        outputFolder.dialogTitle("Ausgabeordner wählen");
+        outputFolder.onChange(this::saveOutput);
+        outputFolder.onInvalid(input -> feedback.warning("Ausgabeordner nicht geändert",
+                "„" + input + "“ ist kein Ordner."));
         openOutput.addActionListener(e -> {
             if (context.settings() != null) {
                 open(context.settings().outputDirectory());
@@ -187,6 +219,11 @@ public final class SettingsView implements View {
         }
         console.setToolTipText("Welche Meldungen im Terminal erscheinen, aus dem die App gestartet wurde");
         console.addActionListener(e -> chooseConsole());
+        for (ViewerBackground background : ViewerBackground.values()) {
+            viewer.addItem(background.label());
+        }
+        viewer.setToolTipText("Farbe der Fläche hinter dem Bild im Bildbetrachter");
+        viewer.addActionListener(e -> chooseViewer());
         analyticsPeriod.onChange(this::saveAnalytics);
         for (PlaceholderField field : List.of(analyticsDetails, analyticsActivity, analyticsContentViews)) {
             field.setToolTipText("Pfad relativ zur Confluence der Quelle, unter /rest/");
@@ -225,17 +262,19 @@ public final class SettingsView implements View {
         JPanel data = new JPanel(new BorderLayout(0, 8));
         data.setOpaque(false);
         data.add(storage, BorderLayout.CENTER);
-        data.add(Comic.row(openData), BorderLayout.SOUTH);
-        JPanel outputPanel = new JPanel(new BorderLayout(0, 8));
-        outputPanel.setOpaque(false);
-        outputPanel.add(output, BorderLayout.CENTER);
-        outputPanel.add(Comic.row(chooseOutput, openOutput, resetOutput), BorderLayout.SOUTH);
+        data.add(Comic.row(openData, editPageSize), BorderLayout.SOUTH);
+        editPageSize.addActionListener(e -> SettingDialogs.pageSize(root, context,
+                () -> feedback.success(SettingDialogs.PAGE_SIZE_TITLE + " übernommen")).open());
+        SettingDialogs.Rows outputPanel = new SettingDialogs.Rows();
+        outputPanel.add("Ordner", outputFolder, OUTPUT_HINT);
         JPanel diagnosis = new JPanel(new BorderLayout(0, 8));
         diagnosis.setOpaque(false);
         diagnosis.add(runtime, BorderLayout.CENTER);
         diagnosis.add(Comic.row(about), BorderLayout.SOUTH);
         SettingDialogs.Rows consoleRows = new SettingDialogs.Rows();
         consoleRows.add("Anzeigen", console, CONSOLE_HINT);
+        SettingDialogs.Rows displayRows = new SettingDialogs.Rows();
+        displayRows.add(VIEWER_TITLE, viewer, VIEWER_HINT);
         SettingDialogs.Rows analyticsRows = new SettingDialogs.Rows();
         analyticsRows.add("Zeitraum", analyticsPeriod, "Bis heute zurück; Analytics bewahrt standardmäßig 12 Monate "
                 + "auf.");
@@ -248,21 +287,24 @@ public final class SettingsView implements View {
         page(GENERAL, Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
+                Comic.plate(DISPLAY_TITLE, Comic.BLUE, displayRows),
                 Comic.plate(ANALYTICS_TITLE, Comic.PETROL, analyticsRows),
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate(FileAccessEditor.HEADING, Comic.ORANGE, fileAccess.component()),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis),
                 Comic.plate(CONSOLE_TITLE, Comic.DARK, consoleRows)));
         page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
-        // Die Wörter für den Stand gehören zur Aussagenanalyse, deren Vorstufe unter „Modelle“ steht (ADR 0032).
-        page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent()),
-                Comic.plate(null, Comic.PETROL, standingWords.component()),
+        page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
+        // Die Wortlisten stehen in einem eigenen Bereich: Wörter für den Stand (Aussagenanalyse, ADR 0032) und
+        // Glossarregeln.
+        page(WORDS, Comic.column(Comic.plate(null, Comic.PETROL, standingWords.component()),
                 Comic.plate(null, Comic.PETROL, glossaryRules.component())));
         page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
                 withButtons(network, proxy, tls)),
                 Comic.plate(SettingDialogs.RETRY_TITLE, Comic.PETROL, withButtons(retry, editRetry))));
         page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache, viewChangeLog))));
+        page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
@@ -288,6 +330,9 @@ public final class SettingsView implements View {
             standingWords.render();
             glossaryRules.render();
             keePass.render();
+            if (!VIDEO.equals(selected)) {
+                video.render();
+            }
             // Eingaben in den offenen Bereichen „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
             // neue Stand.
             if (!AI.equals(selected) && !MODELS.equals(selected)) {
@@ -549,18 +594,22 @@ public final class SettingsView implements View {
 
         storage.reset();
         network.reset();
-        output.reset();
+        outputFolder.path(settings == null ? null : settings.outputDirectory());
+        outputFolder.editable(settings != null);
+        openOutput.setEnabled(settings != null);
         resetOutput.setVisible(settings != null
                 && !settings.outputDirectory().equals(AppSettings.defaultOutputDirectory()));
         if (settings != null) {
-            output.add("Ordner", settings.outputDirectory().toString())
-                    .add("Inhalt", "Dateien, die du unter Aufträge aus einem Download exportierst; ohne technische "
-                            + "Zwischendateien");
             AppSettings.Storage s = settings.storage();
             storage.add("Daten (Cache, Aufträge, Analysen)", s.dataDirectory().toString())
                     .add("Exporte", s.exportDirectory().toString())
                     .add("Anhänge", s.assetDirectory().toString())
                     .add("Größter Anhang", Texts.sizeLimit(s.maxAssetBytes()))
+                    .add(SettingDialogs.PAGE_SIZE_TITLE, Texts.bytes(s.maxPageBytes()))
+                    .add(SettingDialogs.TEXT_SIZE_TITLE, s.maxTextFileBytes() == 0 ? "nie"
+                            : "bis " + Texts.bytes(s.maxTextFileBytes()))
+                    .add(SettingDialogs.CHECK_TIMEOUT_TITLE, ConfigFileEditor.duration(s.checkTimeout())
+                            + ", große Dateien " + ConfigFileEditor.duration(s.largeFileTimeout()))
                     .add("Zeitgrenze der Suche", s.searchTimeout().toString().substring(2).toLowerCase(Locale.ROOT))
                     .add("Größter Seitenbaum", s.maxTreeNodes() + " Seiten")
                     .add("PDF-Schrift", s.pdfFont() == null ? "eingebaut" : s.pdfFont().toString());
@@ -603,6 +652,7 @@ public final class SettingsView implements View {
         }
         renderSecurity(settings);
         renderConsole(settings);
+        renderViewer(settings);
         renderAnalytics(settings);
         retry.reset();
         if (settings != null) {
@@ -707,23 +757,15 @@ public final class SettingsView implements View {
         }, feedback::problem);
     }
 
-    /** Ein Ordnerdialog genau hier, einmalig; „Exportieren“ unter Aufträge fragt nie nach einem Ordner. */
-    private void chooseOutput() {
-        AppSettings settings = context.settings();
-        javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(
-                settings == null ? null : settings.outputDirectory().toFile());
-        chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
-        chooser.setDialogTitle("Ausgabeordner wählen");
-        if (chooser.showDialog(root, "Übernehmen") == javax.swing.JFileChooser.APPROVE_OPTION) {
-            saveOutput(chooser.getSelectedFile().toPath());
-        }
-    }
-
     /** @param directory neuer Ordner oder {@code null} für Downloads */
     void saveOutput(Path directory) {
         feedback.working("Ausgabeordner wird gespeichert …");
         context.outputDirectory(directory, () -> feedback.success("Ausgabeordner: "
-                + context.settings().outputDirectory()), feedback::problem);
+                + context.settings().outputDirectory()), error -> {
+                    // Nicht gespeichert: das Feld zeigt wieder den geltenden Ordner.
+                    outputFolder.path(context.settings() == null ? null : context.settings().outputDirectory());
+                    feedback.problem(error);
+                });
     }
 
     /** Zeigt die Terminal-Ausgabe aus der Datei; eine offene Liste bleibt unberührt. */
@@ -741,6 +783,23 @@ public final class SettingsView implements View {
             showingConsole = false;
         }
         shownConsole = current;
+    }
+
+    /** Zeigt den Hintergrund des Bildbetrachters aus der Datei; eine offene Liste bleibt unberührt. */
+    private void renderViewer(AppSettings settings) {
+        ViewerBackground current = settings == null ? ViewerBackground.DEFAULT : settings.viewerBackground();
+        if (viewer.isPopupVisible()) {
+            return;
+        }
+        showingViewer = true;
+        try {
+            if (viewer.getSelectedIndex() != current.ordinal()) {
+                viewer.setSelectedIndex(current.ordinal());
+            }
+        } finally {
+            showingViewer = false;
+        }
+        shownViewer = current;
     }
 
     /** Zeigt den Export „Analytics“ aus der Datei; ein Feld, in dem gerade getippt wird, bleibt unberührt. */
@@ -813,6 +872,21 @@ public final class SettingsView implements View {
         }
         shownConsole = chosen;
         context.consoleOutput(chosen, () -> feedback.success(CONSOLE_TITLE + ": " + chosen.label()),
+                feedback::problem);
+    }
+
+    /** Speichert den gewählten Hintergrund des Bildbetrachters in der Datei, ohne Neustart der Laufzeit. */
+    private void chooseViewer() {
+        int index = viewer.getSelectedIndex();
+        if (showingViewer || index < 0) {
+            return;
+        }
+        ViewerBackground chosen = ViewerBackground.values()[index];
+        if (chosen == shownViewer) {
+            return;
+        }
+        shownViewer = chosen;
+        context.viewerBackground(chosen, () -> feedback.success(VIEWER_TITLE + ": " + chosen.label()),
                 feedback::problem);
     }
 

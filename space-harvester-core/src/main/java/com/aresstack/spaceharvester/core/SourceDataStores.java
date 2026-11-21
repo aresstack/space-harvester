@@ -109,6 +109,12 @@ public final class SourceDataStores {
         return add("Synonym-Cache", sourceId -> cache.removeSources(SynonymDiscovery.cacheKeysOf(sourceId)));
     }
 
+    /** Vektoren der Synonymerkennung mit Seiten dieser Quelle und ihr Stand (SY2). */
+    public SourceDataStores synonymVectors(com.aresstack.spaceharvester.application.terms.SynonymVectorCache cache) {
+        Objects.requireNonNull(cache, "cache");
+        return add("Synonym-Vektoren", cache::withdrawSource);
+    }
+
     /** KI-Einträge des Fachglossars dieser Quelle und alle Belege aus ihr; manuelle Einträge bleiben. */
     public SourceDataStores glossary(Glossary glossary) {
         Objects.requireNonNull(glossary, "glossary");

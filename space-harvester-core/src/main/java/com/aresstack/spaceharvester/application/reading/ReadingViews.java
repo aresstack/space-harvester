@@ -174,8 +174,15 @@ public class ReadingViews {
                     prefetchSlots.acquire();
                     try {
                         if (!gaveUp.get()) {
-                            // ADR 0030: was das Vorladen ablegt, schreibt als Hintergrund.
-                            ChangeTrigger.BACKGROUND.call(() -> view(caller, sourceId, pageId, false));
+                            try {
+                                // Mark the source unavailable before releasing a slot to another request.
+                                ChangeTrigger.BACKGROUND.call(() -> view(caller, sourceId, pageId, false));
+                            } catch (SourceAccessException e) {
+                                if (e.reason() != SourceAccessException.Reason.NOT_FOUND) {
+                                    gaveUp.set(true);
+                                }
+                                throw e;
+                            }
                         }
                     } finally {
                         prefetchSlots.release();
@@ -183,9 +190,6 @@ public class ReadingViews {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } catch (SourceAccessException e) {
-                    if (e.reason() != SourceAccessException.Reason.NOT_FOUND) {
-                        gaveUp.set(true);
-                    }
                     LOG.log(System.Logger.Level.DEBUG, "Vorladen einer Lese-Ansicht in {0} ausgelassen ({1})",
                             sourceId, e.getClass().getName());
                 } catch (RuntimeException e) {

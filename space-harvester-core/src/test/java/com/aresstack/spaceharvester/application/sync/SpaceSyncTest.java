@@ -214,6 +214,34 @@ class SpaceSyncTest {
     }
 
     @Test
+    void aPageTheSourceNowListsUnderAnotherIdReplacesItsOldIdInsteadOfBlockingTheGeneration() {
+        // Wie BSCW-Ordner, die früher mit Schrägstrich am Ende gespeichert wurden und heute ohne geführt werden.
+        source.put("4/", "DOC", null, "1", null);
+        firstRun();
+        source.remove("4/").put("4", "DOC", null, "1", null).alias("4/", "4");
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(plan.removals().get("4/").verdict()).isEqualTo(RemovalCheck.Verdict.DELETED);
+        assertThat(plan.unconfirmable()).isEmpty();
+        assertThat(sync.confirm(plan, Set.of()).pages()).containsKey("4").doesNotContainKey("4/");
+    }
+
+    @Test
+    void aPageTheSourceListsUnderAnotherIdThatTheListingMissedStillBlocksTheGeneration() {
+        source.put("4/", "DOC", null, "1", null);
+        firstRun();
+        source.remove("4/").put("4", "DOC", null, "1", null).alias("4/", "4");
+        source.tamper = batch -> new PageMetadataBatch(
+                batch.pages().stream().filter(page -> !page.pageId().equals("4")).toList(), batch.nextCursor());
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(plan.removals().get("4/").verdict()).isEqualTo(RemovalCheck.Verdict.STILL_PRESENT);
+        assertThatThrownBy(() -> sync.confirm(plan, Set.of())).isInstanceOf(UnconfirmableSyncException.class);
+    }
+
+    @Test
     void anAbortedRunRemovesNothingConfirmsNothingAndCanSimplyStartOver() {
         source.put("4", "DOC", "3", "1", null).put("5", "DOC", "3", "1", null);
         SyncBaseline first = firstRun();

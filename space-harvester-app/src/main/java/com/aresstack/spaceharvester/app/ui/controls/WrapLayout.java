@@ -16,6 +16,8 @@ import java.awt.Insets;
  */
 public final class WrapLayout extends FlowLayout {
 
+    private static final String REQUESTED = "WrapLayout.requested";
+
     public WrapLayout(int align, int hgap, int vgap) {
         super(align, hgap, vgap);
     }
@@ -33,7 +35,20 @@ public final class WrapLayout extends FlowLayout {
     public void layoutContainer(Container target) {
         super.layoutContainer(target);
         if (target.getWidth() > 0 && preferredLayoutSize(target).height > target.getHeight()) {
-            target.revalidate();
+            // Erst nach dem laufenden Auslegen: validateTree erklärt den Baum danach für gültig und schluckte ein
+            // sofortiges revalidate (Reiterzeile mit breiten Aktionen bei 960 Breite, AT 17.11.2026).
+            // Einmal je Größe: Kann der Behälter nicht wachsen, darf das nicht endlos neu auslegen.
+            String size = target.getWidth() + "x" + target.getHeight();
+            if (target instanceof javax.swing.JComponent component
+                    && !size.equals(component.getClientProperty(REQUESTED))) {
+                component.putClientProperty(REQUESTED, size);
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (target.getWidth() > 0 && preferredLayoutSize(target).height > target.getHeight()) {
+                        target.revalidate();
+                        target.repaint();
+                    }
+                });
+            }
         }
     }
 

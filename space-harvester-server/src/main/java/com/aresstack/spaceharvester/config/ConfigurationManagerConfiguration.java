@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
+import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
@@ -131,11 +132,12 @@ class ConfigurationManagerConfiguration {
         // Anhänge im Export (ADR 0023): Medientypen als Text mit Kommas oder als YAML-Liste.
         for (String key : List.of(ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MAX_SIZE,
                 TermSettings.SYNONYMS_MAX_TERMS, TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS,
-                TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, EnrichmentSettings.DOCUMENTS_ENABLED,
+                TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, TermSettings.SYNONYMS_AUTOMATIC,
+                EnrichmentSettings.DOCUMENTS_ENABLED,
                 EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, ChangeLogSettings.RETENTION,
                 ChangeLogSettings.SHOW_AFTER_UPDATE, SimplificationSettings.MODE, SimplificationSettings.PARALLEL,
                 SimplificationSettings.MODEL, CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL,
-                GlossaryRuleSettings.MAX_TERMS)) {
+                GlossaryRuleSettings.MAX_TERMS, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN)) {
             binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
                     .ifBound(value -> properties.setProperty(key, value));
         }
@@ -162,7 +164,7 @@ class ConfigurationManagerConfiguration {
                 .withExport(read.export()).withTerms(read.terms()).withEnrichment(read.enrichment())
                 .withChangeLog(read.changeLog()).withSimplification(read.simplification())
                 .withStanding(read.standing())
-                .withCheck(read.check());
+                .withCheck(read.check()).withImages(read.images());
     }
 
     private static final Bindable<Map<String, Map<String, String>>> SOURCE_RULES = Bindable.of(

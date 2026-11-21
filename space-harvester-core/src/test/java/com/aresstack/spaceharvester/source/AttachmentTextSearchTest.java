@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.assets.ImageDescription;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.passages.PassageId;
 import com.aresstack.spaceharvester.application.passages.PassagePayload;
@@ -325,6 +326,130 @@ class AttachmentTextSearchTest {
         assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
         assets.describe(list, "att6");
         assertThat(calls).hasValue(2);
+    }
+
+    @Test
+    void aDescriptionFromTheImagesTabReachesTheIndexAtOnceAndLeavesItWithTheRelease() {
+        // B2: Ein Bild der Lese-Ansicht, das ein Anhang der Seite ist, wird im Reiter „Bilder“ beschrieben; seine
+        // Beschreibung steht sofort im Volltextindex, nicht erst beim nächsten Ablegen der Anhänge.
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 7, 8, 9};
+        files.put("att7", png);
+        java.util.concurrent.atomic.AtomicBoolean released = new java.util.concurrent.atomic.AtomicBoolean(true);
+        ImageDescriber vision = new ImageDescriber() {
+            @Override
+            public String id() {
+                return "vision";
+            }
+
+            @Override
+            public String modelVersion() {
+                return "v1";
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType) {
+                return "Glasfaser zwischen zwei Rechenzentren";
+            }
+
+            @Override
+            public boolean mayDescribe(String sourceId) {
+                return released.get();
+            }
+        };
+        PageAttachmentList list = list("101", attachment("att7", "Netzplan Foto.png", "image/png"));
+        Assets assets = assets(vision);
+        KeywordSearch search = search(allow());
+        assets.harvest(list);
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        PageKey page = new PageKey("wiki", "101");
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/Netzplan%20Foto.png", "Netzplan Foto.png", "att7",
+                "image/png", "1");
+
+        Assets.DescribedImage described = assets.describeViewImage("wiki", "101", "1", image);
+        assertThat(assets.indexDescription(page, "DEV", described)).isTrue();
+
+        List<KeywordSearch.Hit> hits = search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits();
+        assertThat(hits).extracting(KeywordSearch.Hit::pageId).containsExactly("101");
+        assertThat(hits.getFirst().attachment()).isEqualTo(new KeywordSearch.AttachmentMatch("att7",
+                "Netzplan Foto.png"));
+        assertThat(assets.indexDescription(page, "DEV", described)).as("unverändert").isFalse();
+        // Ein späteres Ablegen der Anhänge schreibt denselben Stand und ändert nichts mehr.
+        Optional<String> state = index.attachmentInputSha256(page, "att7");
+        assets.harvest(list);
+        assertThat(index.attachmentInputSha256(page, "att7")).isEqualTo(state);
+
+        // „Neu beschreiben“: gleiches Bild, gleiches Modell, anderer Text; der neue Text ersetzt den alten.
+        Assets.DescribedImage again = new Assets.DescribedImage(described.asset(), new ImageDescription(
+                described.description().imageSha256(), described.description().describer(),
+                described.description().modelVersion(), "Richtfunk auf dem Dach",
+                described.description().createdAt()), true);
+        assertThat(assets.indexDescription(page, "DEV", again)).isTrue();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Richtfunk"), null, 10).hits())
+                .extracting(KeywordSearch.Hit::pageId).containsExactly("101");
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assertThat(assets.indexDescription(page, "DEV", described)).isTrue();
+
+        // Bilder, die kein Anhang im Index sind (eingebettete Adressen), legen keinen neuen Eintrag an.
+        assertThat(assets.indexDescription(new PageKey("wiki", "102"), "DEV", described)).isFalse();
+
+        // ADR 0028: Die Seite verliert die Freigabe; nur noch der Dateiname steht im Index.
+        released.set(false);
+        assets.withdrawDescriptions(Map.of(page, "DEV"), Set.of(), key -> false);
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Netzplan"), null, 10).hits())
+                .extracting(KeywordSearch.Hit::matchedIn).containsExactly(KeywordSearch.MatchedIn.ATTACHMENT);
+
+        // Die Freigabe fiel zwischen Beschreiben und Indexieren weg: Die Rücknahme ist schon gelaufen, der späte
+        // Aufruf schreibt nichts zurück; im Index steht nur der Dateiname.
+        assertThat(assets.indexDescription(page, "DEV", described)).isFalse();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Netzplan"), null, 10).hits()).hasSize(1);
+    }
+
+    @Test
+    void aReleaseWithdrawnWhileTheDescriptionIsWrittenLeavesOnlyTheFileName() {
+        // B2, ADR 0028: Die Seite steht auf der Liste freigegebener Seiten, verliert sie aber, während der Text in
+        // den Index geschrieben wird; die Nachprüfung nimmt ihn zurück.
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 3, 1, 4};
+        files.put("att9", png);
+        ImageDescriber vision = new ImageDescriber() {
+            @Override
+            public String id() {
+                return "vision";
+            }
+
+            @Override
+            public String modelVersion() {
+                return "v1";
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType) {
+                return "Glasfaser zwischen zwei Rechenzentren";
+            }
+
+            @Override
+            public boolean mayDescribe(String sourceId) {
+                return false;
+            }
+        };
+        PageAttachmentList list = list("101", attachment("att9", "Netzplan Foto.png", "image/png"));
+        Assets assets = assets(vision);
+        PageKey page = new PageKey("wiki", "101");
+        java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
+        // Freigegeben beim Beschreiben und bei der Prüfung vor dem Schreiben, danach nicht mehr.
+        assets.harvest(list);
+        assets.pageReleases(key -> checks.incrementAndGet() <= 2);
+        Assets.DescribedImage described = assets.describeViewImage("wiki", "101", "1", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/Netzplan%20Foto.png", "Netzplan Foto.png", "att9",
+                "image/png", "1"));
+
+        assertThat(assets.indexDescription(page, "DEV", described)).isFalse();
+
+        KeywordSearch search = search(allow());
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Netzplan"), null, 10).hits()).hasSize(1);
     }
 
     @Test

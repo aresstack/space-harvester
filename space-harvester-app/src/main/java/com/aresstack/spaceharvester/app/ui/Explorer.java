@@ -1,6 +1,5 @@
 package com.aresstack.spaceharvester.app.ui;
 
-import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons;
 import com.aresstack.spaceharvester.app.event.Severity;
 import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
@@ -93,14 +92,22 @@ public final class Explorer {
     /** Mindestbreite für den Titel vor den Spalten, damit auch bei sehr schmalem Baum wenigstens „…“ bleibt. */
     private static final int MIN_TITLE_WIDTH = 40;
     static final String ALL_TIP = "Alle Wissensquellen wählen: Chat, Export und Analysen beziehen sich dann auf alles";
-    static final String DOWNLOAD_ALL_TITLE = "Alles herunterladen?";
-    static final String DOWNLOAD_ALL_QUESTION = "Wirklich alle Wissensquellen herunterladen? Für jeden Space jeder "
-            + "Wissensquelle startet sofort ein eigener Auftrag.";
-    static final String DOWNLOAD_ALL_TIP = "Alles herunterladen: für jeden Space jeder Wissensquelle startet sofort ein "
-            + "eigener Auftrag, exportiert wird unter Aufträge";
-    static final String DOWNLOAD_TIP = "Herunterladen: Auftrag startet sofort, exportiert wird unter Aufträge";
-    static final String PAGE_ONLY = "Nur diese Seite herunterladen";
-    static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten; Auftrag startet sofort";
+    /*
+     * Indexieren statt Herunterladen (Angelo, 20.11.2026): Erst indexierte Seiten findet die Suche im Volltext. Die
+     * Knöpfe stehen nur im Kontextmenü, weil man meist alles indexiert.
+     */
+    static final String INDEX = "Indexieren";
+    static final String INDEX_TIP = "Lädt den Knoten samt allem darunter vollständig und hält ihn bei jeder "
+            + "Synchronisierung aktuell, auch neue Seiten; Bilder und Anhänge folgen danach";
+    static final String UNINDEX = "Nicht mehr indexieren";
+    static final String UNINDEX_TIP = "Neue Seiten darunter kommen nur noch in den Katalog; was schon geladen ist, "
+            + "bleibt und wird weiter aktuell gehalten";
+    static final String PAGE_ONLY = "Seite indexieren";
+    static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten laden; Auftrag startet sofort";
+    static final String INDEX_ALL = "Alles indexieren";
+    static final String INDEX_ALL_TITLE = "Alles indexieren?";
+    static final String INDEX_ALL_QUESTION = "Wirklich alle Wissensquellen indexieren? Jeder Space jeder "
+            + "Wissensquelle wird vollständig geladen und aktuell gehalten; je Space startet sofort ein Auftrag.";
     static final String ANALYZE = "Analysieren";
     static final String ANALYZE_TIP = "Aussagen lokal mit MaltParser analysieren; mehrere Seiten erst nach Bestätigung,"
             + " Fortschritt unter Aufträge";
@@ -177,8 +184,13 @@ public final class Explorer {
         }
     }
 
-    record PageItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren)
-            implements Item {
+    record PageItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren,
+                    HarvestSource.PageNode.Kind kind) implements Item {
+
+        PageItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren) {
+            this(sourceId, spaceKey, pageId, title, hasChildren, HarvestSource.PageNode.Kind.PAGE);
+        }
+
         @Override
         public String toString() {
             return title;
@@ -238,13 +250,11 @@ public final class Explorer {
     private final JLabel heading = Comic.caption("Wissensquellen");
     /** Rechts neben der Überschrift, tut dasselbe wie der Klick auf sie: zeigt, dass man hier wählen kann. */
     private final IconButton selectAll = new IconButton(Glyph.SELECT_ALL, ALL_TIP);
-    /** Ganz rechts in der Kopfzeile, in der Spalte der Download-Symbole: lädt alle Quellen, je Space ein Auftrag. */
-    private final IconButton downloadAll = new IconButton(ComposerIcons.download(), DOWNLOAD_ALL_TIP);
-    /** Zwischen „Alles auswählen“ und Download: das Bestandszeichen über alle Quellen, in der Spalte der Zeilen. */
+    /** Rechts von „Alles auswählen“: das Bestandszeichen über alle Quellen, in der Spalte der Zeilen. */
     private final JLabel allBadge = new JLabel();
-    /** Rückfrage vor dem Alles-Download (Ja/Nein); Tests setzen eine eigene Antwort. */
-    private java.util.function.Predicate<java.awt.Component> confirmDownloadAll =
-            parent -> Dialogs.confirm(parent, DOWNLOAD_ALL_TITLE, DOWNLOAD_ALL_QUESTION);
+    /** Rückfrage vor „Alles indexieren“ (Ja/Nein); Tests setzen eine eigene Antwort. */
+    private java.util.function.Predicate<java.awt.Component> confirmIndexAll =
+            parent -> Dialogs.confirm(parent, INDEX_ALL_TITLE, INDEX_ALL_QUESTION);
     /** Rückfrage vor dem Aktualisieren aller Quellen (Ja/Nein); Tests setzen eine eigene Antwort. */
     private java.util.function.Predicate<java.awt.Component> confirmRefreshAll =
             parent -> Dialogs.confirm(parent, REFRESH_ALL_TITLE, REFRESH_ALL_QUESTION);
@@ -283,12 +293,12 @@ public final class Explorer {
     private boolean revealing;
     /** Zähler der Reveal-Anfragen: Suchtreffer A, dann B – A darf B nicht mehr überschreiben. */
     private int revealRequest;
-    /** Zeile, über deren Download-Symbol die Maus steht; -1 sonst. */
-    private int hoverRow = -1;
     /** Zeile, über deren Stern die Maus steht; -1 sonst (Angelo, 16.11.2026: Hervorhebung nur auf dem Stern). */
     private int hoverStarRow = -1;
     /** Zeile, über deren Zustandspunkt die Maus steht; dort stehen dann die Kreispfeile zum Nachholen. */
     private int hoverBadgeRow = -1;
+    /** Maus am Baum: Klick, Loslassen nach kleiner Bewegung, Hover (für Tests erreichbar). */
+    private MouseAdapter treeMouse;
     /** „Analysieren“ über den Core ({@code Workspace}); Tests setzen eine eigene Umsetzung. */
     private Analyses analyses = new WorkspaceAnalyses();
     /** Bestätigung großer Analyseumfänge; Tests antworten ohne Dialog. */
@@ -435,41 +445,64 @@ public final class Explorer {
             if (!merging) {
                 selectionChanged();
             }
+            // Die Favoritenliste zeigt, welcher Favorit gerade geöffnet bzw. im Baum gewählt ist.
+            selectCurrentFavorite();
         });
         MouseAdapter mouse = new MouseAdapter() {
+            /** Die Zeile unter dem Drücken der linken Taste, bis zum Loslassen. */
+            private TreePath pressed;
+            /** Ob die Maus zwischen Drücken und Loslassen gewandert ist: Swing meldet dann keinen Klick. */
+            private boolean moved;
+            /** Klickzahl beim Drücken; beim Loslassen nach Bewegung setzt AWT sie (etwa unter X11) auf 0. */
+            private int pressedCount;
+
             @Override
             public void mouseClicked(MouseEvent event) {
-                TreePath path = tree.getPathForLocation(event.getX(), event.getY());
-                if (path == null || !javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    clicked(tree.getPathForLocation(event.getX(), event.getY()), event.getPoint(),
+                            event.getClickCount());
+                }
+            }
+
+            /**
+             * Ein Klick öffnet (Angelo, 17.11.2026: einheitlich für Quelle, Space und Seite, kein Doppelklick zum
+             * Lesen); der Doppelklick klappt auf und zu, der Griff davor ebenso.
+             */
+            private void clicked(TreePath path, java.awt.Point point, int count) {
+                if (path == null) {
                     return;
                 }
-                // Ein Klick wählt nur (Download-Symbol und „Weitere laden“ ausgenommen), erst Doppelklick öffnet.
-                boolean single = event.getClickCount() == 1;
-                if (onAction(path, event.getPoint())) {
-                    if (single) {
-                        download(((Node) path.getLastPathComponent()).item());
-                    }
-                } else if (onStar(path, event.getPoint())) {
+                boolean single = count == 1;
+                if (onStar(path, point)) {
                     if (single) {
                         toggleFavorite(((Node) path.getLastPathComponent()).item());
                     }
-                } else if (onBadge(path, event.getPoint())) {
+                } else if (onBadge(path, point)) {
                     if (single) {
                         refresh(((Node) path.getLastPathComponent()).item());
                     }
-                } else if (path.getLastPathComponent() instanceof Node node && node.item() instanceof MoreItem) {
-                    if (single) {
-                        activate(path);
-                    }
-                } else if (event.getClickCount() == 2) {
+                } else if (single) {
                     activate(path);
+                } else if (count == 2) {
+                    toggle(path);
                 }
             }
 
             @Override
             public void mousePressed(MouseEvent event) {
+                pressed = javax.swing.SwingUtilities.isLeftMouseButton(event)
+                        ? tree.getPathForLocation(event.getX(), event.getY()) : null;
+                pressedCount = Math.max(1, event.getClickCount());
+                moved = false;
                 if (event.isPopupTrigger()) {
                     popup(event);
+                }
+            }
+
+            @Override
+            public void mouseDragged(MouseEvent event) {
+                if (pressed != null) {
+                    moved = true;
                 }
             }
 
@@ -478,18 +511,25 @@ public final class Explorer {
                 if (event.isPopupTrigger()) {
                     popup(event);
                 }
+                // Angelo (20.11.2026): oft erst der zweite Klick öffnete. Wandert die Maus beim Klick auch nur einen
+                // Punkt, markiert Swing die Zeile schon beim Drücken, meldet aber keinen Klick; so blieb die alte Seite
+                // stehen. Losgelassen auf derselben Zeile gilt das als Klick.
+                TreePath path = tree.getPathForLocation(event.getX(), event.getY());
+                if (moved && pressed != null && pressed.equals(path)
+                        && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    clicked(path, event.getPoint(), pressedCount);
+                }
+                pressed = null;
+                moved = false;
             }
 
             @Override
             public void mouseMoved(MouseEvent event) {
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
-                int row = onAction(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
                 int starRow = onStar(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
                 int badgeRow = onBadge(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
-                tree.setToolTipText(row >= 0 ? DOWNLOAD_TIP : starRow >= 0 ? STAR_TIP
-                        : badgeRow >= 0 ? refreshTip(badgeTip(path)) : null);
-                if (row != hoverRow || starRow != hoverStarRow || badgeRow != hoverBadgeRow) {
-                    hoverRow = row;
+                tree.setToolTipText(starRow >= 0 ? STAR_TIP : badgeRow >= 0 ? refreshTip(badgeTip(path)) : null);
+                if (starRow != hoverStarRow || badgeRow != hoverBadgeRow) {
                     hoverStarRow = starRow;
                     hoverBadgeRow = badgeRow;
                     tree.repaint();
@@ -498,14 +538,14 @@ public final class Explorer {
 
             @Override
             public void mouseExited(MouseEvent event) {
-                if (hoverRow >= 0 || hoverStarRow >= 0 || hoverBadgeRow >= 0) {
-                    hoverRow = -1;
+                if (hoverStarRow >= 0 || hoverBadgeRow >= 0) {
                     hoverStarRow = -1;
                     hoverBadgeRow = -1;
                     tree.repaint();
                 }
             }
         };
+        treeMouse = mouse;
         tree.addMouseListener(mouse);
         tree.addMouseMotionListener(mouse);
         javax.swing.ToolTipManager.sharedInstance().registerComponent(tree);
@@ -565,7 +605,7 @@ public final class Explorer {
 
         JScrollPane treeScroll = Comic.scroll(tree);
         treeScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
-        // Jede Zeile ist genau so breit wie der sichtbare Bereich: Bestandszeichen, Stern und Download-Symbol stehen
+        // Jede Zeile ist genau so breit wie der sichtbare Bereich: Bestandszeichen und Stern stehen
         // in festen Spalten ganz rechts, ein zu langer Titel wird davor mit „…“ gekürzt. Bei neuer Breite neu
         // vermessen (auch beim Verschieben des Teilers).
         treeScroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
@@ -618,12 +658,12 @@ public final class Explorer {
         // Die Überschrift ist anklickbar: sie wählt alle Wissensquellen; dann ist der ganze Kopf samt Filterfeld
         // gelb hinterlegt, als ein Feld (Angelo, 16.11.2026).
         head.setOpaque(false);
-        // Rechts 2 px, damit der Download-Knopf in der Spalte der Download-Symbole des Baums steht.
         head.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 2));
         JPanel title = new JPanel(new BorderLayout(4, 0));
         title.setOpaque(false);
         title.add(heading, BorderLayout.CENTER);
-        // Rechtsbündig wie die Symbole der Zeilen (Angelo, 16.11.2026): links „Alles auswählen“, rechts Download.
+        // Rechtsbündig wie die Symbole der Zeilen (Angelo, 16.11.2026): „Alles auswählen“, dann das Bestandszeichen
+        // über der Spalte der Bestandszeichen; rechts davon bleibt die Spalte der Sterne frei.
         JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
         actions.setOpaque(false);
         actions.add(selectAll);
@@ -652,10 +692,9 @@ public final class Explorer {
             }
         });
         actions.add(allBadge);
-        actions.add(downloadAll);
+        actions.add(javax.swing.Box.createRigidArea(new java.awt.Dimension(ACTION_WIDTH, RoundHover.SIZE)));
         title.add(actions, BorderLayout.EAST);
         selectAll.addActionListener(e -> selectAll());
-        downloadAll.addActionListener(e -> downloadAll());
         head.add(title, BorderLayout.NORTH);
         head.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter), BorderLayout.CENTER);
         heading.setToolTipText(ALL_TIP);
@@ -666,6 +705,16 @@ public final class Explorer {
                 if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
                     selectAll();
                 }
+            }
+
+            @Override
+            public void mousePressed(MouseEvent event) {
+                headPopup(event);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent event) {
+                headPopup(event);
             }
         };
         heading.addMouseListener(chooseAll);
@@ -762,9 +811,9 @@ public final class Explorer {
         }
     }
 
-    /** Für Tests: ersetzt die Rückfrage vor dem Alles-Download. */
-    void confirmDownloadAll(java.util.function.Predicate<java.awt.Component> confirmer) {
-        this.confirmDownloadAll = Objects.requireNonNull(confirmer, "confirmer");
+    /** Für Tests: ersetzt die Rückfrage vor „Alles indexieren“. */
+    void confirmIndexAll(java.util.function.Predicate<java.awt.Component> confirmer) {
+        this.confirmIndexAll = Objects.requireNonNull(confirmer, "confirmer");
     }
 
     /** Je Quelle die Spaces, die der Baum schon kennt (aufgeklappte Quellen), für den Gesamtstand der Kopfzeile. */
@@ -824,16 +873,34 @@ public final class Explorer {
     }
 
     /**
-     * Lädt alle Wissensquellen des Baums nach Rückfrage (Angelo, 16.11.2026): je Space ein eigener Auftrag, wie
-     * einzeln angestoßen.
+     * Indexiert alle Wissensquellen des Baums nach Rückfrage (Kontextmenü der Überschrift): je Space ein eigener
+     * Auftrag, wie einzeln angestoßen.
      */
-    void downloadAll() {
-        if (shownSources.isEmpty() || !confirmDownloadAll.test(root)) {
+    void indexAll() {
+        if (shownSources.isEmpty() || !confirmIndexAll.test(root)) {
             return;
         }
         for (String sourceId : List.copyOf(shownSources)) {
-            context.navigator().download(sourceId, List.of());
+            context.navigator().index(sourceId, null, null);
         }
+    }
+
+    /** Kontextmenü der Überschrift „Wissensquellen“: „Alles indexieren“. */
+    private void headPopup(MouseEvent event) {
+        if (event.isPopupTrigger()) {
+            headMenu().show(event.getComponent(), event.getX(), event.getY());
+        }
+    }
+
+    /** Das Kontextmenü der Überschrift (für Tests ohne Mausereignis). */
+    javax.swing.JPopupMenu headMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem all = new javax.swing.JMenuItem(INDEX_ALL);
+        all.setToolTipText(INDEX_TIP);
+        all.setEnabled(!shownSources.isEmpty());
+        all.addActionListener(e -> indexAll());
+        menu.add(all);
+        return menu;
     }
 
     /** Ob die Überschrift „Wissensquellen“ gewählt ist (alle Quellen). */
@@ -872,8 +939,10 @@ public final class Explorer {
 
     /**
      * Zeigt eine geöffnete Seite im Baum: Quelle, Space und Vorfahren aufklappen (Kinder werden bei Bedarf geladen) und
-     * die Seite wählen. Fehlt ein Schritt im Baum (etwa auf einem noch nicht geladenen Stapel), bleibt der tiefste
-     * gefundene Knoten gewählt. Der Suchumfang ändert sich dadurch nicht.
+     * die Seite wählen. Findet der Baum die Seite nicht (etwa weil die Quelle nach einem Neustart ihren Pfad nicht mehr
+     * kennt), bleibt er bis zum tiefsten gefundenen Knoten aufgeklappt, wählt aber keinen Ersatz: Die Auswahl bestimmt
+     * die Mitte, ein gewählter Ordner oder Space würde die geöffnete Seite durch seine Ansicht ersetzen. Der Suchumfang
+     * ändert sich dadurch nicht.
      */
     public void revealPage(PageNavigation.Position position) {
         reveal(position, ++revealRequest);
@@ -888,14 +957,31 @@ public final class Explorer {
         if (source == null) {
             return;
         }
+        String pageId = position.page().pageId();
         List<java.util.function.Predicate<Item>> steps = new ArrayList<>();
         steps.add(item -> item instanceof SpaceItem s && s.spaceKey().equals(position.spaceKey()));
-        for (HarvestSource.PageNode ancestor : position.ancestors()) {
-            steps.add(item -> item instanceof PageItem p && p.pageId().equals(ancestor.pageId()));
+        for (String ancestorId : ancestorIds(position)) {
+            steps.add(item -> item instanceof PageItem p && p.pageId().equals(ancestorId));
         }
-        String pageId = position.page().pageId();
         steps.add(item -> item instanceof PageItem p && p.pageId().equals(pageId));
         descend(source, steps, 0, ticket);
+    }
+
+    /**
+     * Die Vorfahren für den Abstieg: der Pfad des Core, oder der beim Favorisieren gemerkte Pfad, wenn er länger ist.
+     * Quellen ohne dauerhaften Seitenbaum (BSCW über WebDAV) kennen nach einem Neustart den Pfad einer nur gestreamten
+     * Datei nicht mehr; der Favorit hat ihn sich gemerkt.
+     */
+    private List<String> ancestorIds(PageNavigation.Position position) {
+        List<String> fromCore = position.ancestors().stream().map(HarvestSource.PageNode::pageId).toList();
+        for (Favorites.Favorite favorite : context.favorites().all()) {
+            if (favorite.sourceId().equals(position.sourceId())
+                    && position.page().pageId().equals(favorite.pageId())
+                    && favorite.ancestorIds().size() > fromCore.size()) {
+                return favorite.ancestorIds();
+            }
+        }
+        return fromCore;
     }
 
     /** Wie {@link #revealPage(PageNavigation.Position)}; den Pfad der Seite holt der Core im Hintergrund. */
@@ -948,8 +1034,11 @@ public final class Explorer {
                     return;
                 }
             }
-            if (child == null || index == steps.size() - 1) {
-                select(child == null ? node : child);
+            if (child == null) {
+                // Seite nicht gefunden: aufgeklappt zeigen, wie weit der Pfad reicht, aber nichts anderes wählen.
+                tree.scrollPathToVisible(new TreePath(node.getPath()));
+            } else if (index == steps.size() - 1) {
+                select(child);
             } else {
                 descend(child, steps, index + 1, ticket);
             }
@@ -1089,11 +1178,7 @@ public final class Explorer {
     /** Fragt die Kinder bei der Quelle ab; über einem Stand aus dem Cache per Abgleich, sonst wie bisher. */
     private void loadLive(AppRuntime runtime, Node node) {
         Item item = node.item();
-        Background.run(() -> {
-            Batch batch = children(runtime, item, null);
-            prefetch(runtime, item, batch);
-            return batch;
-        }, batch -> {
+        Background.run(() -> children(runtime, item, null), batch -> {
             node.loading = false;
             node.loaded = true;
             if (node.fromCache) {
@@ -1104,6 +1189,11 @@ public final class Explorer {
                 append(node, batch);
                 model.nodeStructureChanged(node);
             }
+            // Prefetch is optional and must never postpone the visible navigation results.
+            Background.run(() -> {
+                prefetch(runtime, item, batch);
+                return null;
+            }, ignored -> { }, ignored -> { });
             // Neue Spaces im Baum zählen für den Gesamtstand der Kopfzeile.
             if (item instanceof SourceItem) {
                 statesChanged();
@@ -1141,8 +1231,9 @@ public final class Explorer {
             return;
         }
         List<String> pageIds = batch.nodes().stream().map(Node::item)
-                .filter(PageItem.class::isInstance).map(child -> ((PageItem) child).pageId())
-                .limit(PREFETCH_LIMIT).toList();
+                .filter(PageItem.class::isInstance).map(child -> (PageItem) child)
+                .filter(page -> page.kind() == HarvestSource.PageNode.Kind.PAGE)
+                .map(PageItem::pageId).limit(PREFETCH_LIMIT).toList();
         if (pageIds.isEmpty()) {
             return;
         }
@@ -1168,17 +1259,28 @@ public final class Explorer {
         }
     }
 
-    /** Ein Klick: Seite öffnen bzw. den nächsten Stapel holen. */
+    /**
+     * Ein Klick oder Enter: Seite öffnen bzw. den nächsten Stapel holen. Quelle und Space zeigt schon die Auswahl in
+     * der Mitte (die Quellenseite mit den Updates), ein Klick wechselt dort keinen Reiter.
+     */
     private void activate(TreePath path) {
         if (!(path.getLastPathComponent() instanceof Node node)) {
             return;
         }
         switch (node.item()) {
             case PageItem page -> context.navigator().openPage(page.sourceId(), page.pageId());
-            case SourceItem source -> context.navigator().openSource(source.sourceId(), source.title());
             case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
+        }
+    }
+
+    /** Doppelklick: den Knoten auf- oder zuklappen (Angelo, 17.11.2026). */
+    private void toggle(TreePath path) {
+        if (tree.isExpanded(path)) {
+            tree.collapsePath(path);
+        } else {
+            tree.expandPath(path);
         }
     }
 
@@ -1328,11 +1430,20 @@ public final class Explorer {
                     current.setUserObject(fresh.item());
                     model.nodeChanged(current);
                 }
-                if (!current.loaded && current.getChildCount() == 0 && fresh.getChildCount() > 0) {
-                    // Hat jetzt Kinder: den Platzhalter fürs Aufklappen nachtragen.
+                if (fresh.getChildCount() == 0) {
+                    // Mark a confirmed leaf as loaded so stale cache placeholders cannot reappear.
+                    if (!current.loaded && current.getChildCount() > 0) {
+                        model.removeNodeFromParent((Node) current.getFirstChild());
+                    }
+                    current.loaded = true;
+                } else if (current.getChildCount() == 0) {
+                    // A previous leaf can become a directory in a newer source listing.
+                    current.loaded = false;
                     model.insertNodeInto((Node) fresh.getFirstChild(), current, 0);
-                } else if (!current.loaded && current.getChildCount() > 0 && fresh.getChildCount() == 0) {
-                    model.removeNodeFromParent((Node) current.getFirstChild());
+                    if (tree.isExpanded(new TreePath(current.getPath()))) {
+                        // Schon aufgeklappt: Ohne erneutes Aufklappen käme kein Laden, „Lädt …“ bliebe stehen.
+                        load(current);
+                    }
                 }
                 if (parent.getIndex(current) != index) {
                     model.removeNodeFromParent(current);
@@ -1441,7 +1552,7 @@ public final class Explorer {
         List<Node> nodes = new ArrayList<>();
         for (HarvestSource.PageNode page : children.pages()) {
             PageItem item = new PageItem(sourceId, page.partitionKey() == null ? children.spaceKey()
-                    : page.partitionKey(), page.pageId(), page.title(), page.hasChildren());
+                    : page.partitionKey(), page.pageId(), page.title(), page.hasChildren(), page.kind());
             nodes.add(Boolean.FALSE.equals(page.hasChildren()) ? leaf(item) : expandable(item));
         }
         return new Batch(nodes, children.nextCursor());
@@ -1631,12 +1742,11 @@ public final class Explorer {
 
     /**
      * Eine Zeile über die volle Breite: links Symbol und Titel je Ebene (Datenbank für Quellen, Ordner für Spaces, Seite
-     * für Seiten; Hinweise gedämpft), rechtsbündig das Download-Symbol im Stil der Space-Aktionen ({@link RoundHover}).
+     * für Seiten; Hinweise gedämpft), rechtsbündig Bestandszeichen und Stern im Stil der Space-Aktionen
+     * ({@link RoundHover}).
      */
     private final class Renderer extends javax.swing.tree.DefaultTreeCellRenderer {
 
-        private final javax.swing.Icon download = ComposerIcons.download();
-        private boolean action;
         /** Ob die Zeile einen Stern trägt (Space oder Seite): gefüllt als Favorit, sonst nur beim Darüberfahren. */
         private boolean starred;
         private TreeStates.Badge badge = TreeStates.Badge.NONE;
@@ -1665,7 +1775,8 @@ public final class Explorer {
             switch (item) {
                 case SourceItem ignored -> setIcon(MainWindow.database());
                 case SpaceItem ignored -> setIcon(SidebarIcons.folder());
-                case PageItem ignored -> setIcon(SidebarIcons.page());
+                case PageItem page -> setIcon(page.kind() == HarvestSource.PageNode.Kind.FOLDER
+                        ? SidebarIcons.folder() : SidebarIcons.page());
                 case MoreItem ignored -> {
                     setIcon(null);
                     setForeground(Comic.BLUE);
@@ -1675,7 +1786,6 @@ public final class Explorer {
                     setForeground(Comic.MUTED);
                 }
             }
-            action = downloadable(item);
             starred = starrable(item);
             favorite = starred && isFavorite(item);
             badge = badge(item);
@@ -1683,7 +1793,7 @@ public final class Explorer {
             int depth = value instanceof Node node ? node.getLevel() : 1;
             // Die Spalten rechts liegen im rechten Rand des Labels: der Titel endet davor und wird nötigenfalls
             // mit „…“ gekürzt, statt die Symbole aus dem sichtbaren Bereich zu schieben.
-            int columns = (action ? ACTION_WIDTH : 0) + (starred ? ACTION_WIDTH + BADGE_WIDTH : 0);
+            int columns = starred ? ACTION_WIDTH + BADGE_WIDTH : 0;
             setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, columns));
             int visible = tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4;
             width = Math.max(visible, columns + MIN_TITLE_WIDTH);
@@ -1699,42 +1809,31 @@ public final class Explorer {
         @Override
         public void paint(java.awt.Graphics graphics) {
             super.paint(graphics);
-            if (!action) {
+            if (!starred) {
                 return;
-            }
-            int x = getWidth() - ACTION_WIDTH;
-            if (row == hoverRow) {
-                RoundHover.paint(graphics, x, 0, ACTION_WIDTH, getHeight(), false);
             }
             java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
             try {
-                g.setColor(Comic.INK);
-                download.paintIcon(this, g, x + (ACTION_WIDTH - download.getIconWidth()) / 2,
-                        (getHeight() - download.getIconHeight()) / 2);
-                // Der Stern links daneben (Angelo, 16.11.2026): immer sichtbar, damit man weiß, wo man klickt –
-                // als Favorit gefüllt in Tinte, sonst als gedämpfter Umriss, beim Darüberfahren in Tinte.
-                if (starred) {
-                    Glyph star = favorite ? Glyph.STAR_FILLED : Glyph.STAR;
-                    badgeHost.setForeground(favorite || row == hoverStarRow ? Comic.INK : Comic.MUTED);
-                    int sx = x - ACTION_WIDTH;
-                    star.paintIcon(badgeHost, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
-                            (getHeight() - star.getIconHeight()) / 2);
-                }
+                // Der Stern ganz rechts (Angelo, 16.11.2026): immer sichtbar, damit man weiß, wo man klickt – als
+                // Favorit gefüllt in Tinte, sonst als gedämpfter Umriss, beim Darüberfahren in Tinte.
+                int sx = getWidth() - ACTION_WIDTH;
+                Glyph star = favorite ? Glyph.STAR_FILLED : Glyph.STAR;
+                badgeHost.setForeground(favorite || row == hoverStarRow ? Comic.INK : Comic.MUTED);
+                star.paintIcon(badgeHost, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
+                        (getHeight() - star.getIconHeight()) / 2);
                 // Das Bestandszeichen links vom Stern, in seiner Farbe (Haken grün, Wolke gedämpft, Pfeile blau …);
                 // unter der Maus stattdessen die Kreispfeile zum Nachholen (Angelo, 16.11.2026).
-                if (starred) {
-                    int bx = x - ACTION_WIDTH - BADGE_WIDTH;
-                    javax.swing.Icon glyph = row == hoverBadgeRow ? Glyph.SYNC
-                            : badge.kind() == TreeStates.Kind.NONE ? null : badge.glyph();
-                    if (row == hoverBadgeRow) {
-                        RoundHover.paint(g, bx + (BADGE_WIDTH - RoundHover.SIZE) / 2, 0, RoundHover.SIZE,
-                                getHeight(), false);
-                    }
-                    if (glyph != null) {
-                        badgeHost.setForeground(row == hoverBadgeRow ? Comic.INK : badge.color());
-                        glyph.paintIcon(badgeHost, g, bx + (BADGE_WIDTH - glyph.getIconWidth()) / 2,
-                                (getHeight() - glyph.getIconHeight()) / 2);
-                    }
+                int bx = sx - BADGE_WIDTH;
+                javax.swing.Icon glyph = row == hoverBadgeRow ? Glyph.SYNC
+                        : badge.kind() == TreeStates.Kind.NONE ? null : badge.glyph();
+                if (row == hoverBadgeRow) {
+                    RoundHover.paint(g, bx + (BADGE_WIDTH - RoundHover.SIZE) / 2, 0, RoundHover.SIZE, getHeight(),
+                            false);
+                }
+                if (glyph != null) {
+                    badgeHost.setForeground(row == hoverBadgeRow ? Comic.INK : badge.color());
+                    glyph.paintIcon(badgeHost, g, bx + (BADGE_WIDTH - glyph.getIconWidth()) / 2,
+                            (getHeight() - glyph.getIconHeight()) / 2);
                 }
             } finally {
                 g.dispose();
@@ -1755,35 +1854,61 @@ public final class Explorer {
         return 20 * depth;
     }
 
-    /** Herunterladen gibt es für Quellen, Spaces und Seiten (Seite samt Unterseiten). */
-    static boolean downloadable(Item item) {
+    /** Indexieren gibt es für Quellen, Spaces und Seiten (Seite samt Unterseiten). */
+    static boolean indexable(Item item) {
         return item instanceof SourceItem || item instanceof SpaceItem || item instanceof PageItem;
     }
 
-    /** Startet den Download des Knotens sofort ({@link Downloads}); der Auftrag erscheint unter Aufträge. */
-    private void download(Item item) {
+    /**
+     * Ob genau dieser Knoten zum Indexieren markiert ist; eine Quelle, wenn jeder Space, den der Baum von ihr kennt,
+     * ganz markiert ist. Ohne Laufzeit nichts.
+     */
+    boolean indexed(Item item) {
+        com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return false;
+        }
+        return switch (item) {
+            case SourceItem source -> {
+                java.util.Set<String> spaces = treeSpaces().getOrDefault(source.sourceId(), java.util.Set.of());
+                yield !spaces.isEmpty() && spaces.stream()
+                        .allMatch(space -> runtime.workspace().indexed(source.sourceId(), space, null));
+            }
+            case SpaceItem space -> runtime.workspace().indexed(space.sourceId(), space.spaceKey(), null);
+            case PageItem page -> runtime.workspace().indexed(page.sourceId(), page.spaceKey(), page.pageId());
+            default -> false;
+        };
+    }
+
+    /** Markiert den Knoten zum Indexieren und startet den Abgleich; der Auftrag erscheint unter Aufträge. */
+    private void index(Item item) {
         switch (item) {
-            case SourceItem source -> context.navigator().download(source.sourceId(), List.of());
-            case SpaceItem space -> context.navigator().download(space.sourceId(), space.spaceKey());
-            case PageItem page -> context.navigator().downloadPage(page.sourceId(), page.spaceKey(), page.pageId());
+            case SourceItem source -> context.navigator().index(source.sourceId(), null, null);
+            case SpaceItem space -> context.navigator().index(space.sourceId(), space.spaceKey(), null);
+            case PageItem page -> context.navigator().index(page.sourceId(), page.spaceKey(), page.pageId());
             default -> {
             }
         }
     }
 
-    /** Ob der Punkt auf dem Download-Symbol der Zeile liegt. */
-    private boolean onAction(TreePath path, java.awt.Point point) {
-        java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
-        return bounds != null && path.getLastPathComponent() instanceof Node node && downloadable(node.item())
-                && point.x >= bounds.x + bounds.width - ACTION_WIDTH;
+    /** Hebt die Markierung auf; an einer Quelle für jeden Space, den der Baum von ihr kennt. */
+    private void unindex(Item item) {
+        switch (item) {
+            case SourceItem source -> treeSpaces().getOrDefault(source.sourceId(), java.util.Set.of())
+                    .forEach(space -> context.navigator().unindex(source.sourceId(), space, null));
+            case SpaceItem space -> context.navigator().unindex(space.sourceId(), space.spaceKey(), null);
+            case PageItem page -> context.navigator().unindex(page.sourceId(), page.spaceKey(), page.pageId());
+            default -> {
+            }
+        }
     }
 
     /** Ob der Punkt auf dem Bestandszeichen der Zeile liegt (links vom Stern). */
     private boolean onBadge(TreePath path, java.awt.Point point) {
         java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
         return bounds != null && path.getLastPathComponent() instanceof Node node && starrable(node.item())
-                && point.x >= bounds.x + bounds.width - 2 * ACTION_WIDTH - BADGE_WIDTH
-                && point.x < bounds.x + bounds.width - 2 * ACTION_WIDTH;
+                && point.x >= bounds.x + bounds.width - ACTION_WIDTH - BADGE_WIDTH
+                && point.x < bounds.x + bounds.width - ACTION_WIDTH;
     }
 
     private String badgeTip(TreePath path) {
@@ -1808,12 +1933,11 @@ public final class Explorer {
         return states;
     }
 
-    /** Ob der Punkt auf dem Stern der Zeile liegt (links vom Download-Symbol). */
+    /** Ob der Punkt auf dem Stern der Zeile liegt (ganz rechts). */
     private boolean onStar(TreePath path, java.awt.Point point) {
         java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
         return bounds != null && path.getLastPathComponent() instanceof Node node && starrable(node.item())
-                && point.x >= bounds.x + bounds.width - 2 * ACTION_WIDTH
-                && point.x < bounds.x + bounds.width - ACTION_WIDTH;
+                && point.x >= bounds.x + bounds.width - ACTION_WIDTH;
     }
 
     // ------------------------------------------------------------------ Favoriten
@@ -1915,7 +2039,37 @@ public final class Explorer {
         if (onlyFavorites && filter.getText().trim().isEmpty()) {
             note.setText(all.isEmpty() ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
+        selectCurrentFavorite();
         tree.repaint();
+    }
+
+    /**
+     * Markiert in der Favoritenliste den Favoriten des im Baum gewählten Knotens, also der geöffneten Seite. Ohne
+     * diese Markierung sah ein Klick auf den Favoriten der schon offenen Seite so aus, als passiere nichts.
+     */
+    private void selectCurrentFavorite() {
+        TreePath path = tree.getSelectionPath();
+        Item item = path != null && path.getLastPathComponent() instanceof Node node ? node.item() : null;
+        for (int index = 0; item != null && index < favoriteModel.size(); index++) {
+            if (matches(favoriteModel.get(index), item)) {
+                favorites.setSelectedIndex(index);
+                favorites.ensureIndexIsVisible(index);
+                return;
+            }
+        }
+        favorites.clearSelection();
+    }
+
+    private static boolean matches(Favorites.Favorite favorite, Item item) {
+        return switch (item) {
+            case SourceItem source -> favorite.isSource() && favorite.sourceId().equals(source.sourceId());
+            case SpaceItem space -> !favorite.isSource() && favorite.pageId() == null
+                    && favorite.sourceId().equals(space.sourceId())
+                    && java.util.Objects.equals(favorite.spaceKey(), space.spaceKey());
+            case PageItem page -> favorite.sourceId().equals(page.sourceId())
+                    && page.pageId().equals(favorite.pageId());
+            default -> false;
+        };
     }
 
     /** Ein Favorit in der Liste: die Seite öffnen bzw. den Space zeigen; der Baum folgt der geöffneten Seite. */
@@ -1965,11 +2119,25 @@ public final class Explorer {
             open.addActionListener(e -> context.navigator().openPage(page.sourceId(), page.pageId()));
             menu.add(open);
         }
-        if (downloadable(item)) {
-            javax.swing.JMenuItem download = new javax.swing.JMenuItem("Herunterladen");
-            download.setToolTipText(DOWNLOAD_TIP);
-            download.addActionListener(e -> download(item));
-            menu.add(download);
+        if (indexable(item)) {
+            boolean marked = indexed(item);
+            javax.swing.JMenuItem index = new javax.swing.JMenuItem(marked ? UNINDEX : INDEX);
+            index.setToolTipText(marked ? UNINDEX_TIP : INDEX_TIP);
+            index.addActionListener(e -> {
+                if (marked) {
+                    unindex(item);
+                } else {
+                    index(item);
+                }
+            });
+            menu.add(index);
+            if (item instanceof PageItem page && !leafPage(page)) {
+                javax.swing.JMenuItem only = new javax.swing.JMenuItem(PAGE_ONLY);
+                only.setToolTipText(PAGE_ONLY_TIP);
+                only.addActionListener(e -> context.navigator().downloadPage(page.sourceId(), page.spaceKey(),
+                        page.pageId(), false));
+                menu.add(only);
+            }
         }
         if (starrable(item)) {
             javax.swing.JMenuItem star = new javax.swing.JMenuItem(isFavorite(item) ? UNFAVORITE : FAVORITE);
@@ -2010,13 +2178,6 @@ public final class Explorer {
                 only.addActionListener(e -> check(item, true));
                 menu.add(only);
             }
-        }
-        if (item instanceof PageItem page) {
-            javax.swing.JMenuItem only = new javax.swing.JMenuItem(PAGE_ONLY);
-            only.setToolTipText(PAGE_ONLY_TIP);
-            only.addActionListener(e -> context.navigator().downloadPage(page.sourceId(), page.spaceKey(),
-                    page.pageId(), false));
-            menu.add(only);
         }
         return menu;
     }
@@ -2234,20 +2395,17 @@ public final class Explorer {
         return hoverBadgeRow;
     }
 
-    /** Für Tests: Zeile, über deren Download-Symbol die Maus steht. */
-    int hoverRow() {
-        return hoverRow;
+    /** Für Tests: der Maus-Listener des Baums, direkt aufrufbar ohne Fenster. */
+    MouseAdapter treeMouse() {
+        return treeMouse;
     }
+
 
     /** Für Tests: das Bestandszeichen der Kopfzeile. */
     JLabel allBadge() {
         return allBadge;
     }
 
-    /** Für Tests: der Download-Knopf ganz rechts in der Kopfzeile. */
-    IconButton downloadAllButton() {
-        return downloadAll;
-    }
 
     /** Für Tests: der Knopf neben der Überschrift. */
     IconButton selectAllButton() {

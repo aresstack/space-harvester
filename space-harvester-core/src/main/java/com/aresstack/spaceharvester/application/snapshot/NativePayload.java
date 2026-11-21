@@ -50,6 +50,19 @@ public final class NativePayload {
         return bytes.length;
     }
 
+    /** Inspect a file signature without copying the entire original document. */
+    public boolean startsWith(byte[] signature) {
+        if (signature == null || signature.length > bytes.length) {
+            return false;
+        }
+        for (int index = 0; index < signature.length; index++) {
+            if (bytes[index] != signature[index]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public String mediaType() {
         return mediaType;
     }

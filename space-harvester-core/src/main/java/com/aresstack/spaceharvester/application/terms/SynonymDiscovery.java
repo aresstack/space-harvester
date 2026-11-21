@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -111,6 +112,11 @@ public class SynonymDiscovery {
     private final Supplier<SynonymBudget> budget;
     private final Clock clock;
     private final Set<String> started = ConcurrentHashMap.newKeySet();
+    /**
+     * Wartender automatischer Lauf je Quelle (SY1), Quelle → Auftrag; höchstens einer je Quelle. Zählt nur, solange der
+     * Auftrag noch nicht gestartet ist: ein vor dem Start abgebrochener Auftrag sperrt die Quelle nicht.
+     */
+    private final Map<String, String> waiting = new ConcurrentHashMap<>();
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
     /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
     private volatile Predicate<PageKey> pageReleases = key -> false;
@@ -225,6 +231,111 @@ public class SynonymDiscovery {
         return status;
     }
 
+    /**
+     * Automatischer Lauf für eine Quelle (SY1, ADR 0019): Folgeschritt nach der Anreicherung einer Quelle, wie die
+     * Abkürzungsregel, als eigener Auftrag. Kein Zeitgeber. Nichts geschieht, wenn {@code terms.synonyms.automatic}
+     * aus ist, die Quelle unbekannt ist, schon ein Lauf für sie wartet oder sich seit dem letzten vollständigen Lauf
+     * nichts geändert hat ({@link SynonymCandidates#state}). Ohne Embedding-Modell oder Freigabe bleibt es bei
+     * Regelvorschlägen, ohne Fehler; der Abgleich lässt Bestätigtes und Abgelehntes stehen.
+     *
+     * @return der Auftrag, oder leer, wenn keiner nötig ist
+     */
+    public Optional<JobStatus> automatic(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        SynonymBudget chosen = budget.get();
+        if (!chosen.automatic() || catalog.find(sourceId).isEmpty()) {
+            return Optional.empty();
+        }
+        String state = candidates.state(sourceId);
+        if (state.equals(candidates.vectors().state(sourceId).orElse(null))) {
+            return Optional.empty();
+        }
+        synchronized (waiting) {
+            String pending = waiting.get(sourceId);
+            // Der Auftrag nimmt sich beim Start selbst heraus; steht er noch hier und ist nicht beendet, wartet er.
+            if (pending != null && stillWaiting(pending)) {
+                return Optional.empty();
+            }
+            waiting.remove(sourceId);
+            SynonymScope scope = SynonymScope.source(sourceId);
+            JobStatus status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, JobTask.blocking(context -> {
+                waiting.remove(sourceId, context.jobId());
+                synchronized (lock(scope)) {
+                    // Der Stand vor dem Lauf: Was sich währenddessen ändert, löst den nächsten Lauf aus.
+                    String before = candidates.state(sourceId);
+                    // SY2: Der Stand gilt nur, wenn jeder Begriff einen Vektor hat; sonst holt der nächste Anlass
+                    // die übrigen nach.
+                    if (run(scope, chosen, context).complete()) {
+                        candidates.vectors().state(sourceId, before);
+                    }
+                }
+            }));
+            started.add(status.id());
+            if (!finishedState(status.state())) {
+                waiting.put(sourceId, status.id());
+            }
+            LOG.log(System.Logger.Level.INFO, "Synonymerkennung für {0} automatisch eingeplant", sourceId);
+            return Optional.of(status);
+        }
+    }
+
+    private static boolean finishedState(JobState state) {
+        return state == JobState.COMPLETED || state == JobState.FAILED || state == JobState.CANCELLED;
+    }
+
+    private boolean stillWaiting(String jobId) {
+        try {
+            return !finishedState(jobs.status(jobId).state());
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Neue KI-Freigabe von Seiten einer Quelle (ADR 0028): Ihre Textstellen dürfen jetzt an das Embedding-Modell, also
+     * gilt der letzte Stand nicht mehr; danach wie {@link #automatic}.
+     */
+    public Optional<JobStatus> released(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        candidates.vectors().state(sourceId, null);
+        return automatic(sourceId);
+    }
+
+    /**
+     * Beobachter der Liste freigegebener Seiten: Für jede Quelle mit neu eingetragenen oder entfernten Seiten
+     * {@link #released}. Mit einer entfernten Seite fallen zuerst alle Vektoren weg, deren Eingabe aus ihr stammt
+     * (SY2, ADR 0028); der Lauf zieht danach nicht mehr gestützte KI-Vorschläge zurück.
+     */
+    public void releasesChanged(com.aresstack.spaceharvester.application.release.PageReleases.Change change) {
+        if (!change.removed().isEmpty()) {
+            candidates.vectors().withdraw(change.removed().stream().map(entry -> entry.key()).toList());
+        }
+        java.util.stream.Stream.concat(change.added().stream(), change.removed().stream())
+                .map(entry -> entry.key().sourceId()).distinct().forEach(sourceId -> {
+            try {
+                released(sourceId);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Synonymerkennung für {0} nicht eingeplant: {1}", sourceId,
+                        e.getClass().getSimpleName());
+            }
+        });
+    }
+
+    /**
+     * Rücknahme bei entzogener Freigabe einer Quelle ({@code ReleaseRecomputation.Withdrawal}, ADR 0028): Vektoren
+     * der Seiten, die nicht mehr an den KI-Dienst dürfen, fallen weg, ebenso der Stand ihrer Quellen. Seiten, die über
+     * die Liste freigegebener Seiten weiter dürfen, behalten ihre Vektoren.
+     */
+    public void withdrawn(List<PageKey> pages, Predicate<PageKey> mayProcess) {
+        List<PageKey> gone = pages.stream().filter(page -> !mayProcess.test(page)).toList();
+        if (gone.isEmpty()) {
+            return;
+        }
+        candidates.vectors().withdraw(gone);
+        gone.stream().map(PageKey::sourceId).distinct().forEach(sourceId -> candidates.vectors().state(sourceId,
+                null));
+    }
+
     /** Ob der Auftrag von {@link #start} stammt; andere Anreicherungsaufträge gehören nicht hierher. */
     public boolean started(String jobId) {
         return jobId != null && started.contains(jobId);
@@ -254,7 +365,12 @@ public class SynonymDiscovery {
      * @param embeddingUsed ob die semantische Vorauswahl lief
      */
     public record Outcome(int candidates, TermRelations.ProposalRun rules, TermRelations.ProposalRun ai, int asked,
-                          int reused, int skipped, int rejected, boolean embeddingUsed) {
+                          int reused, int skipped, int rejected, boolean embeddingUsed, boolean complete) {
+
+        public Outcome(int candidates, TermRelations.ProposalRun rules, TermRelations.ProposalRun ai, int asked,
+                       int reused, int skipped, int rejected, boolean embeddingUsed) {
+            this(candidates, rules, ai, asked, reused, skipped, rejected, embeddingUsed, true);
+        }
 
         /** Ob Vorschläge aus einem Modell abgeglichen wurden: Embedding (Stufe B) oder Chat-Prüfung (Stufe C). */
         public boolean aiUsed() {
@@ -339,7 +455,7 @@ public class SynonymDiscovery {
                     embedding == null ? "nicht gelaufen" : embedding.added() + " neu, " + embedding.updated()
                             + " geändert, " + embedding.withdrawn() + " entfallen");
             return new Outcome(collected.candidates().size(), rules, embedding, 0, reused, skipped, 0,
-                    collected.embeddingUsed());
+                    collected.embeddingUsed(), collected.complete());
         }
         // Stufe C: nur Paare mit Fundstellen aus freigegebenen Quellen, nur unbekannte Schlüssel; das Budget zählt
         // erst nach dem Cache, damit beantwortete Paare keine späteren verdrängen.
@@ -461,7 +577,7 @@ public class SynonymDiscovery {
                         + "entfallen, {10} unterdrückt", describe(scope), collected.candidates().size(), asked.size(),
                 reused, skipped, rejected, rules.added(), ai.added(), ai.updated(), ai.withdrawn(), ai.suppressed());
         return new Outcome(collected.candidates().size(), rules, ai, asked.size(), reused, skipped, rejected,
-                collected.embeddingUsed());
+                collected.embeddingUsed(), collected.complete());
     }
 
     /** Das Urteil des eingestellten Chat-Modells zu diesem Paar mit diesen Fundstellen, falls es schon gefragt war. */

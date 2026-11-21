@@ -61,6 +61,173 @@ class StandingTabTest {
     }
 
     @Test
+    void statementsFromStaleAnalysesStayHiddenUntilTheChipShowsThem() {
+        StatusQuoView base = view();
+        List<StatusQuoEntry> entries = new ArrayList<>(base.entries());
+        entries.set(0, stale(entries.get(0)));
+        entries.set(4, stale(entries.get(4)));
+        StatusQuoView view = new StatusQuoView(entries, base.states(), base.pages(), base.counts(),
+                base.certainCounts(), List.of());
+        Fixture fixture = new Fixture(view);
+        StandingTab tab = fixture.shownTab();
+
+        // Angelo 17.11.2026: alte Analysen (MaltParser) mischen sich nicht unter die aktuellen.
+        assertThat(lines(tab)).hasSize(3).noneMatch(StatusQuoEntry::analysisStale);
+        assertThat(tab.staleChip().isVisible()).isTrue();
+        assertThat(tab.staleChip().getText()).isEqualTo("veraltet 2");
+        assertThat(tab.staleChip().getToolTipText()).isEqualTo(StandingTab.STALE_TIP);
+        assertThat(fixture.status.get()).isEqualTo("3 Aussagen auf 2 Seiten");
+
+        assertThat(groups(tab)).containsExactly("gilt · 1", "geplant · 1", "unklar · 1");
+
+        tab.staleChip().doClick();
+        assertThat(lines(tab)).hasSize(5);
+        assertThat(tab.staleChip().getToolTipText()).isEqualTo(StandingTab.STALE_HIDE_TIP);
+        assertThat(fixture.status.get()).isEqualTo("5 Aussagen auf 2 Seiten");
+        // AT: eine eigene Gruppe am Ende; die Gruppen der Stände zählen weiter nur Aktuelles.
+        assertThat(groups(tab)).containsExactly("gilt · 1", "geplant · 1", "unklar · 1", "veraltet · 2");
+        assertThat(lines(tab).subList(3, 5)).allMatch(StatusQuoEntry::analysisStale);
+        // Ein Stand-Chip wirkt nicht auf die veraltete Gruppe, die Suche schon.
+        tab.chip(Standing.GEPLANT).doClick();
+        assertThat(groups(tab)).containsExactly("geplant · 1", "veraltet · 2");
+        tab.chip(Standing.GEPLANT).doClick();
+        tab.searchField().setText("Poststelle");
+        assertThat(groups(tab)).containsExactly("veraltet · 1");
+    }
+
+    @Test
+    void theTermsOfTheSelectionLeadTheSameTabRowAndTheStandIsOnlyReadOnItsOwnTabs() {
+        Fixture fixture = new Fixture(view());
+        List<Boolean> shown = new ArrayList<>();
+        fixture.tab.terms(new javax.swing.JPanel(), shown::add);
+        StandingTab tab = fixture.shownTab();
+        // Eine Zeile, „Begriffe“ vorn und gewählt; rechts nichts vom Stand, gelesen wird der Stand noch nicht.
+        assertThat(tab.tabs().names()).containsExactly(StandingTab.TERMS, StandingTab.STATEMENTS,
+                StandingTab.READING, StandingTab.CONFLICTS);
+        assertThat(tab.tabs().selected()).isEqualTo(StandingTab.TERMS);
+        assertThat(shown).last().isEqualTo(true);
+        assertThat(tab.searchField().getParent().isVisible()).isFalse();
+        assertThat(tab.bearerButton().isVisible()).isFalse();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isFalse();
+        assertThat(fixture.reads).hasValue(0);
+        // „Aussagen“: die Begriffe sind weg, der Stand wird gelesen, Werkzeuge und Papierkorb stehen rechts.
+        tab.tabs().select(StandingTab.STATEMENTS);
+        assertThat(shown).last().isEqualTo(false);
+        assertThat(fixture.reads).hasValue(1);
+        assertThat(tab.bearerButton().isVisible()).isTrue();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isTrue();
+        tab.shown(false);
+        tab.tabs().select(StandingTab.TERMS);
+        assertThat(shown).as("unsichtbar bleiben die Begriffe aus").last().isEqualTo(false);
+    }
+
+    @Test
+    void otherViewsHangBehindTheStandWithTheirOwnToolsAndAreToldWhenTheyAreSeen() {
+        Fixture fixture = new Fixture(view());
+        List<Boolean> glossary = new ArrayList<>();
+        javax.swing.JButton add = new javax.swing.JButton("+");
+        fixture.tab.tab(StandingTab.GLOSSARY, new javax.swing.JPanel(), glossary::add, add);
+        StandingTab tab = fixture.shownTab();
+        assertThat(tab.tabs().names()).containsExactly(StandingTab.STATEMENTS, StandingTab.READING,
+                StandingTab.CONFLICTS, StandingTab.GLOSSARY);
+        assertThat(add.isVisible()).isFalse();
+        int reads = fixture.reads.get();
+        tab.tabs().select(StandingTab.GLOSSARY);
+        assertThat(glossary).last().isEqualTo(true);
+        assertThat(add.isVisible()).isTrue();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isFalse();
+        assertThat(tab.bearerButton().isVisible()).isFalse();
+        assertThat(tab.ownTabSelected()).isFalse();
+        tab.tabs().select(StandingTab.CONFLICTS);
+        assertThat(glossary).last().isEqualTo(false);
+        assertThat(add.isVisible()).isFalse();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isTrue();
+        assertThat(tab.ownTabSelected()).isTrue();
+        assertThat(fixture.reads.get()).isGreaterThanOrEqualTo(reads);
+    }
+
+    @Test
+    void anEmptyListSaysWhyInItsArea() {
+        StatusQuoView base = view();
+        StandingTab none = new Fixture(new StatusQuoView(List.of(), List.of(), List.of(), Map.of(), Map.of(),
+                List.of())).shownTab();
+        assertThat(none.placeholder()).isEqualTo("Keine analysierten Aussagen in der Auswahl");
+        assertThat(none.staleChip().isVisible()).isFalse();
+        none.tabs().select(StandingTab.CONFLICTS);
+        assertThat(none.conflictPlaceholder()).isEqualTo("Keine möglichen Widersprüche");
+
+        StandingTab onlyStale = new Fixture(new StatusQuoView(base.entries().stream().map(StandingTabTest::stale)
+                .toList(), List.of(), base.pages(), Map.of(), Map.of(), List.of())).shownTab();
+        assertThat(onlyStale.placeholder()).isEqualTo("Keine aktuellen Aussagen. 5 stammen aus veralteten Analysen.");
+        onlyStale.staleChip().doClick();
+        assertThat(onlyStale.placeholder()).isNull();
+
+        StandingTab searched = new Fixture(base).shownTab();
+        searched.searchField().setText("gibtesnicht");
+        assertThat(searched.placeholder()).isEqualTo("Keine Treffer");
+        assertThat(StandingTab.empty(3, 1, false)).isEqualTo("Keine Treffer");
+        assertThat(StandingTab.empty(1, 1, false)).isEqualTo("Keine aktuellen Aussagen. Eine stammt aus veralteten "
+                + "Analysen.");
+    }
+
+    @Test
+    void theTrashDeletesTheAnalysesOfTheChosenNodeAfterYesAndRereads() {
+        Fixture fixture = new Fixture(view());
+        StandingTab tab = fixture.shownTab();
+        List<String> questions = new ArrayList<>();
+        tab.confirmDeleteWith(question -> {
+            questions.add(question);
+            return false;
+        });
+        assertThat(tab.deleteAnalysesButton().getToolTipText()).isEqualTo("Aussagen-Analysen löschen");
+
+        // Nein: nichts geschieht.
+        tab.deleteAnalysesButton().doClick();
+        assertThat(questions).containsExactly("Wirklich die Aussagen-Analysen von „DEV“ samt Unterseiten löschen? "
+                + "Die Seiten bleiben.");
+        assertThat(fixture.deletions).isEmpty();
+
+        // Ja: der gewählte Knoten geht an den Core, der Beobachter lässt neu lesen, die Zahl steht in der Statuszeile.
+        tab.confirmDeleteWith(question -> true);
+        fixture.deleted = 4;
+        int reads = fixture.reads.get();
+        tab.deleteAnalysesButton().doClick();
+        flush();
+        assertThat(fixture.deletions).containsExactly(SPACE);
+        assertThat(fixture.reads.get()).isGreaterThan(reads);
+        assertThat(lines(tab)).isEmpty();
+        assertThat(fixture.status.get()).isEqualTo("4 Aussagen-Analysen gelöscht · Keine analysierten Aussagen in "
+                + "der Auswahl");
+        assertThat(tab.placeholder()).isEqualTo("Keine analysierten Aussagen in der Auswahl");
+
+        // Nichts mehr da: kein Neulesen, eine Zeile dazu.
+        fixture.deleted = 0;
+        tab.deleteAnalysesButton().doClick();
+        assertThat(fixture.status.get()).startsWith("Keine Aussagen-Analysen unter „DEV“");
+
+        // ▾ „Alles löschen“: eigene Rückfrage mit „wirklich“, danach Analysen und KI-Urteile, Meldung nennt beides.
+        List<String> asked = new ArrayList<>();
+        tab.confirmDeleteWith(question -> asked.add(question));
+        fixture.deleted = 2;
+        javax.swing.JMenuItem item = (javax.swing.JMenuItem) tab.moreDeleteMenu().getComponent(0);
+        assertThat(item.isEnabled()).isTrue();
+        item.doClick();
+        flush();
+        assertThat(asked).singleElement().asString().startsWith("Wirklich alles ").contains("KI-Urteile");
+        assertThat(fixture.everything).containsExactly(SPACE);
+        assertThat(fixture.status.get()).startsWith("2 Aussagen-Analysen gelöscht · KI-Urteile aus „Aussagen prüfen“ "
+                + "gelöscht");
+
+        assertThat(StandingTab.deleteQuestion(ExportPanel.Selection.ALL))
+                .isEqualTo("Wirklich die Aussagen-Analysen aller Wissensquellen löschen? Die Seiten bleiben.");
+    }
+
+    private static StatusQuoEntry stale(StatusQuoEntry e) {
+        return new StatusQuoEntry(e.page(), e.statement(), e.kind(), e.subject(), e.subjectKey(), e.situation(),
+                e.quality(), e.standing(), e.decision(), true);
+    }
+
+    @Test
     void aChipFiltersOnItsStandingAndASecondClickShowsAllAgain() {
         StandingTab tab = new Fixture(view()).shownTab();
 
@@ -152,7 +319,7 @@ class StandingTabTest {
 
         assertThat(tab.popup().titleText()).isEqualTo("Antragsverfahren");
         assertThat(tab.popup().bodyText()).contains("Grund: Die Vorstufe (KI) kennzeichnet den Satz als Planung")
-                .contains("Herkunft: Vorstufe „Sätze vereinfachen“ (KI) · Kennzeichen: Planung")
+                .contains("Herkunft: Vorstufe „Sätze vereinfachen“ (KI) · Kennzeichen der Vorstufe: Planung")
                 .contains("Vereinfachter Satz: „Der Antrag wird geprüft“");
         assertThat(tab.popup().linkTexts()).containsExactly(StandingTab.OPEN_TEXT);
 
@@ -188,7 +355,7 @@ class StandingTabTest {
                 .doesNotContain(CheckTexts.VERDICT_LABEL);
         // Die Herkunft steht schon in der grauen Zeile unter dem Satz, als Wort.
         assertThat(StandingTab.meta(corrected)).isEqualTo("Antragsverfahren · Korrektur des Modells (KI)");
-        assertThat(StandingTab.meta(entry)).isEqualTo("Antragsverfahren · unsicher");
+        assertThat(StandingTab.meta(entry)).isEqualTo("Antragsverfahren · Vorschlag");
         StatusQuoEntry staged = new StatusQuoEntry(page("2", "Antragsverfahren"), statement("v6",
                 ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE, ParsedStatements.Quality.PLAUSIBLE,
                 ParsedStatements.Derivation.vorstufe(ParsedStatements.StageFlag.FACT, "Der Antrag wird geprüft")),
@@ -586,7 +753,11 @@ class StandingTabTest {
     // ---- Hilfen
 
     private static final class Fixture {
-        final StatusQuoView view;
+        StatusQuoView view;
+        final List<ExportPanel.Selection> deletions = new ArrayList<>();
+        final List<ExportPanel.Selection> everything = new ArrayList<>();
+        final AtomicReference<Runnable> analysesListener = new AtomicReference<>();
+        int deleted;
         final AtomicInteger reads = new AtomicInteger();
         final AtomicReference<Runnable> standingListener = new AtomicReference<>();
         final AtomicReference<String> status = new AtomicReference<>();
@@ -656,6 +827,38 @@ class StandingTabTest {
                 public ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled) {
                     topics.add(String.valueOf(topic));
                     return StandingTabTest.reading(topic, Fixture.this.view);
+                }
+
+                @Override
+                public int deleteAnalyses(ExportPanel.Selection selection) {
+                    deletions.add(selection);
+                    int count = deleted;
+                    if (count > 0) {
+                        Fixture.this.view = new StatusQuoView(List.of(), List.of(), List.of(), Map.of(), Map.of(),
+                                List.of());
+                        Runnable listener = analysesListener.get();
+                        if (listener != null) {
+                            listener.run();
+                        }
+                    }
+                    return count;
+                }
+
+                @Override
+                public boolean canDeleteEverything() {
+                    return true;
+                }
+
+                @Override
+                public int deleteEverything(ExportPanel.Selection selection) {
+                    everything.add(selection);
+                    return deleteAnalyses(selection);
+                }
+
+                @Override
+                public Subscription subscribeAnalyses(Runnable listener) {
+                    analysesListener.set(listener);
+                    return Subscription.NONE;
                 }
 
                 @Override

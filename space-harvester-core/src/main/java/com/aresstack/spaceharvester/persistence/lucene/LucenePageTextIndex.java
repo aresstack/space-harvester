@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.persistence.lucene;
 
+import com.aresstack.spaceharvester.application.query.DocumentKind;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
@@ -28,6 +29,9 @@ import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.PostingsEnum;
+import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
@@ -94,6 +98,8 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     private static final String SECTION = "section";
     private static final String PAGE_KIND = "page";
     private static final String ATTACHMENT_KIND = "attachment";
+    /** Medientyp der Quelle, nur gespeichert: entscheidet mit dem Namen über die Art ({@link DocumentKind}). */
+    private static final String MEDIA_TYPE = "mediaType";
     /** So viele Dokumente liest eine Suche höchstens, um je Seite das beste zu finden. */
     static final int MAX_DOCUMENTS = 8 * MAX_LIMIT;
     private static final char SEPARATOR = '\u0000';
@@ -170,6 +176,9 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         doc.add(new TextField(TITLE, entry.title(), Field.Store.YES));
         doc.add(new TextField(TEXT, text, Field.Store.YES));
         doc.add(new StoredField(INPUT_SHA256, entry.inputSha256()));
+        if (!entry.mediaType().isEmpty()) {
+            doc.add(new StoredField(MEDIA_TYPE, entry.mediaType()));
+        }
         try {
             writer.updateDocument(new Term(ID, id(entry.key())), doc);
             changed();
@@ -200,7 +209,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                 Document doc = stored.document(hit.doc);
                 found.add(new AttachmentEntry(page, spaceKey, doc.get(ATTACHMENT_ID), doc.get(TITLE), doc.get(TEXT),
                         doc.get(INPUT_SHA256), doc.get(PART_ID), doc.get(PART_TITLE),
-                        Integer.parseInt(Objects.requireNonNullElse(doc.get(SECTION), "0"))));
+                        Integer.parseInt(Objects.requireNonNullElse(doc.get(SECTION), "0")), doc.get(MEDIA_TYPE)));
             }
             return found;
         });
@@ -311,6 +320,9 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
             doc.add(new TextField(PART_TITLE, entry.partTitle(), Field.Store.YES));
         }
         doc.add(new StoredField(SECTION, Integer.toString(entry.section())));
+        if (!entry.mediaType().isEmpty()) {
+            doc.add(new StoredField(MEDIA_TYPE, entry.mediaType()));
+        }
         return doc;
     }
 
@@ -363,6 +375,13 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         Objects.requireNonNull(key, "key");
         requireOpen();
         return stored(id(key), INPUT_SHA256);
+    }
+
+    @Override
+    public Optional<String> mediaType(PageKey key) {
+        Objects.requireNonNull(key, "key");
+        requireOpen();
+        return stored(id(key), MEDIA_TYPE);
     }
 
     @Override
@@ -420,9 +439,23 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
 
     @Override
     public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet within, int limit) {
+        return search(text, sourceIds, spaces, within, Set.of(), limit);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Die Art entscheidet sich je Dokument aus den gespeicherten Feldern (Name, Medientyp), auch für Einträge, die
+     * vor dem Medientyp abgelegt wurden: dann nach dem Namen allein. Gefiltert wird beim Lesen der Rangfolge, die
+     * Schleife liest so lange weiter, bis genug Seiten passender Art beisammen sind.
+     */
+    @Override
+    public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet within,
+                              Set<DocumentKind> kinds, int limit) {
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(spaces, "spaces");
+        Objects.requireNonNull(kinds, "kinds");
         if (limit < 1 || limit > MAX_LIMIT) {
             throw new IllegalArgumentException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
         }
@@ -472,13 +505,18 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                     if (pages.containsKey(page)) {
                         continue;
                     }
+                    if (!kinds.isEmpty() && !kinds.contains(kind(doc))) {
+                        continue;
+                    }
                     String snippet = window(doc.get(TEXT), wanted);
-                    pages.put(page, ATTACHMENT_KIND.equals(doc.get(KIND))
+                    // Nur für ausgelieferte Treffer: je Wort und Feld ein Blick in die Postings dieses Dokuments.
+                    Words words = words(searcher, hit.doc, terms);
+                    pages.put(page, (ATTACHMENT_KIND.equals(doc.get(KIND))
                             ? new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), "", snippet,
                                     doc.get(ATTACHMENT_ID), doc.get(TITLE), null, doc.get(PART_ID),
                                     doc.get(PART_ID) == null ? null : doc.get(PART_TITLE))
                             : new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), doc.get(TITLE),
-                                    snippet));
+                                    snippet)).withWords(words));
                 }
                 if (pages.size() == limit || top.scoreDocs.length < documents || documents >= MAX_DOCUMENTS) {
                     return List.copyOf(pages.values());
@@ -486,6 +524,41 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                 documents = Math.min(documents * 2, MAX_DOCUMENTS);
             }
         });
+    }
+
+    /**
+     * Welche Wörter der Anfrage in diesem Dokument trafen (R1): dieselben Wortabfragen wie in der Rangfolge, über
+     * die Postings des Dokuments, nicht aus dem Auszug erschlossen. Titel heißt Titel der Seite, Dateiname des Anhangs
+     * oder Name der enthaltenen Datei.
+     */
+    private static Words words(IndexSearcher searcher, int doc, List<String> terms) throws IOException {
+        List<LeafReaderContext> leaves = searcher.getIndexReader().leaves();
+        LeafReaderContext leaf = leaves.get(ReaderUtil.subIndex(doc, leaves));
+        int local = doc - leaf.docBase;
+        List<String> inTitle = new ArrayList<>();
+        List<String> inText = new ArrayList<>();
+        for (String term : terms) {
+            if (contains(leaf, TITLE, term, local) || contains(leaf, PART_TITLE, term, local)) {
+                inTitle.add(term);
+            }
+            if (contains(leaf, TEXT, term, local)) {
+                inText.add(term);
+            }
+        }
+        return new Words(inTitle, inText);
+    }
+
+    private static boolean contains(LeafReaderContext leaf, String field, String term, int doc) throws IOException {
+        PostingsEnum postings = leaf.reader().postings(new Term(field, term), PostingsEnum.NONE);
+        return postings != null && postings.advance(doc) == doc;
+    }
+
+    /** Die Art des Dokuments: enthaltene Datei nach Anzeigename, sonst Name und gemeldeter Medientyp. */
+    private static DocumentKind kind(Document doc) {
+        if (doc.get(PART_ID) != null) {
+            return DocumentKind.of(doc.get(PART_TITLE), null);
+        }
+        return DocumentKind.of(doc.get(TITLE), doc.get(MEDIA_TYPE));
     }
 
     @Override

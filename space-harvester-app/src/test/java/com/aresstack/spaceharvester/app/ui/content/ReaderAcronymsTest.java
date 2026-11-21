@@ -229,6 +229,83 @@ class ReaderAcronymsTest {
         assertThat(acronym(synced, "CI").expansion()).isEqualTo("Continuous Integration");
     }
 
+    /** BG2a: die Begriffe einer Quelle aus dem Core, Listen und Gesamtzahlen über dieselbe Seitenmenge. */
+    @Test
+    void theTermsOfASourceComeFromTheCoreWithTheirRealTotals() throws Exception {
+        Workspace workspace = start(serve(confluence("200", "Schnittstellen", WIKI_PAGE)),
+                serve(confluence("200", "Prüfung", OTHER_PAGE)));
+        sync(workspace, "wiki");
+        sync(workspace, "zweites");
+
+        SelectionTerms wiki = new SelectionTerms(context.runtime(), new ExportPanel.Selection("wiki", null, null,
+                "Wiki"));
+        // startSync gleicht mit SYNC_CACHE ab: neue Seiten sind nur katalogisiert; erst das Lesen lädt und analysiert.
+        PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
+        open(panel, "wiki", "200", false);
+        open(panel, "zweites", "200", false);
+        TermsTab.Totals totals = wiki.totals();
+        List<TermQueries.TermSummary> acronyms = wiki.acronyms("").next(TermQueries.MAX_LIMIT);
+        assertThat(acronyms).extracting(TermQueries.TermSummary::term).contains("API", "SSO");
+        assertThat(acronyms).extracting(TermQueries.TermSummary::normalized).isSorted();
+        assertThat(totals.acronyms()).as("Gesamtzahl wie die Liste").isEqualTo(acronyms.size());
+        assertThat(totals.identifiers()).isEqualTo(wiki.identifiers("").next(TermQueries.MAX_LIMIT).size())
+                .isPositive();
+        assertThat(totals.relations()).isEqualTo(wiki.relations("").next(TermQueries.MAX_LIMIT).size());
+        // Die Fundstellen eines Begriffs bleiben in der Auswahl: API nur auf der Seite der Quelle „wiki“.
+        TermQueries.TermSummary api = acronyms.stream().filter(term -> term.term().equals("API")).findFirst()
+                .orElseThrow();
+        assertThat(wiki.occurrences(api).occurrences()).extracting(TermQueries.Occurrence::sourceId)
+                .containsOnly("wiki");
+        // „Wissensquellen“: keine Seitenmenge, beide Quellen zählen.
+        SelectionTerms all = new SelectionTerms(context.runtime(), ExportPanel.Selection.ALL);
+        assertThat(all.pages()).isNull();
+        assertThat(all.occurrences(api).occurrences()).extracting(TermQueries.Occurrence::sourceId)
+                .contains("wiki", "zweites");
+    }
+
+    /**
+     * Fahrplan P2 über die echte Laufzeit: „mit Unterseiten“ ist an einer Seite mit Unterseite frei, Standard aus;
+     * angehakt zeigt „Begriffe“ unter den eigenen die der Unterseite, dynamisch aus dem Core, und ein Begriff beider
+     * Seiten steht einmal oben mit „+1“. An der Unterseite selbst (ohne Unterseiten) ist die Checkbox gesperrt.
+     */
+    @Test
+    void withSubpagesTheTermsTabShowsTheTermsOfTheSubpagesBelowItsOwn() throws Exception {
+        FakeConfluence wiki = confluence("200", "Schnittstellen", WIKI_PAGE);
+        wiki.page("210", "Zahlungen", "DEV", "<p>Ansicht</p>").storage("<p>Der ZV (Zahlungsverkehr) nutzt die "
+                + "API.</p>");
+        wiki.child("200", "210");
+        Workspace workspace = start(serve(wiki), serve(confluence("300", "Leer", "<p>leer</p>")));
+        sync(workspace, "wiki");
+
+        PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
+        open(panel, "wiki", "210", false);
+        awaitTrue(() -> onEdt(() -> panel.subpages().known() != null));
+        assertThat(onEdt(() -> panel.subpages().box().isEnabled())).as("Blatt ohne Unterseiten").isFalse();
+        assertThat(onEdt(() -> panel.subpages().box().getToolTipText())).isEqualTo(Subpages.TIP_NO_CHILDREN);
+
+        open(panel, "wiki", "200", false);
+        awaitTrue(() -> onEdt(() -> panel.subpages().box().isEnabled()));
+        assertThat(onEdt(() -> panel.subpages().checked())).as("Standard aus").isFalse();
+        assertThat(onEdt(() -> panel.terms().showsBelow())).isFalse();
+
+        onEdt(() -> {
+            panel.subpages().box().setSelected(true);
+            return null;
+        });
+        awaitTrue(() -> onEdt(() -> panel.terms().belowChips().stream()
+                .anyMatch(chip -> chip.getText().startsWith("ZV"))));
+        assertThat(onEdt(() -> panel.terms().belowChips())).extracting(chip -> chip.getText())
+                .noneMatch(text -> text.startsWith("API"));
+        assertThat(onEdt(() -> panel.terms().alsoBelowTexts())).contains("+1");
+
+        onEdt(() -> {
+            panel.subpages().box().setSelected(false);
+            return null;
+        });
+        assertThat(onEdt(() -> panel.terms().showsBelow())).isFalse();
+        assertThat(onEdt(() -> panel.terms().alsoBelowTexts())).isEmpty();
+    }
+
     @Test
     void aPageMissingFromTheCacheIsLoadedStoredAndAnalysed() throws Exception {
         FakeConfluence wiki = confluence("200", "Schnittstellen", WIKI_PAGE);

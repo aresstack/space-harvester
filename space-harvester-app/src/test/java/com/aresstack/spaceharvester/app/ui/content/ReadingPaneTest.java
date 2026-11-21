@@ -223,4 +223,69 @@ class ReadingPaneTest {
             assertThat(pane.updateOffer()).as("eine andere Seite nimmt den Hinweis mit").isEmpty();
         });
     }
+
+    /**
+     * Angelo, 17.11.2026: Das HTML steht sofort, die Bilder kommen nach dem Anzeigen im Hintergrund. Beim Vorbereiten
+     * wird kein Bild geladen; im Text steht ein Platzhalter in der Größe aus dem HTML. Nach dem Anzeigen holt die
+     * Ansicht das Bild, setzt es in den Bildspeicher des Dokuments und führt die Bildzeile nach; ein Bild, das sich
+     * nicht laden lässt, wird als Platzhaltertext gezählt.
+     */
+    @Test
+    void imagesAreLoadedAfterTheHtmlIsShown() throws Exception {
+        HarvestSource.ViewImage logo = new HarvestSource.ViewImage("/download/attachments/42/logo.png", "logo.png",
+                "att1", "image/png", "1");
+        HarvestSource.ViewImage broken = new HarvestSource.ViewImage("/download/attachments/42/kaputt.png",
+                "kaputt.png", "att2", "image/png", "1");
+        byte[] png = png(1600, 400);
+        List<HarvestSource.ViewImage> asked = java.util.Collections.synchronizedList(new ArrayList<>());
+        ReadingView view = available("<p>Text</p><p><img src=\"/download/attachments/42/logo.png\" width=\"800\" "
+                + "height=\"200\"></p><p><img src=\"/download/attachments/42/kaputt.png\"></p>"
+                + "<p><img src=\"https://tracker.example/pixel.gif\" alt=\"Fremd\"></p>", List.of(logo, broken));
+
+        ReadingPane.Prepared prepared = ReadingPane.prepareDeferred(view, image -> java.util.Optional.empty(),
+                image -> {
+                    asked.add(image);
+                    return image.equals(logo) ? png : null;
+                }, source -> null, 1.0);
+
+        assertThat(asked).as("beim Vorbereiten wird kein Bild geladen").isEmpty();
+        assertThat(prepared.slots()).hasSize(2);
+        assertThat(prepared.images()).isZero();
+        assertThat(prepared.missing()).as("ohne passendes Bild der Ansicht sofort markiert").isEqualTo(1);
+        assertThat(prepared.html())
+                .contains("http://reading.invalid/image/0", "width=\"720\"", "height=\"180\"")
+                .contains("http://reading.invalid/image/1", "width=\"" + ReadingPane.PLACEHOLDER_WIDTH + "\"")
+                .contains("[Bild fehlt: Fremd]");
+        assertThat(prepared.scaled().get("http://reading.invalid/image/0").getWidth(null)).isEqualTo(720);
+
+        ReadingPane[] pane = new ReadingPane[1];
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            pane[0] = new ReadingPane();
+            pane[0].setSize(800, 600);
+            pane[0].show(prepared);
+            assertThat(pane[0].pendingImages()).isEqualTo(2);
+        });
+        long until = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < until) {
+            boolean[] done = new boolean[1];
+            javax.swing.SwingUtilities.invokeAndWait(() -> done[0] = pane[0].details().contains("1 Bild")
+                    && pane[0].details().contains("2 nicht darstellbar"));
+            if (done[0]) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        java.net.URL first = URI.create("http://reading.invalid/image/0").toURL();
+        java.net.URL second = URI.create("http://reading.invalid/image/1").toURL();
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            assertThat(asked).containsExactly(logo, broken);
+            assertThat(pane[0].pendingImages()).isZero();
+            assertThat(pane[0].details()).contains("1 Bild", "2 nicht darstellbar", "aus dem Bestand");
+            assertThat(pane[0].imageCache().get(first).getWidth(null))
+                    .as("das Bild steht im Bildspeicher des Dokuments").isEqualTo(720);
+            assertThat(pane[0].imageCache().get(second).getHeight(null))
+                    .as("der Platzhaltertext ist eine Textzeile").isLessThan(ReadingPane.PLACEHOLDER_HEIGHT);
+            assertThat(prepared.slots().get(0).result().original().getWidth()).isEqualTo(1600);
+        });
+    }
 }

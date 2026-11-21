@@ -37,9 +37,10 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                           SourceSettingsConfig.AuthType authType, String username, String secretVariable,
                           SourceSettingsConfig.CertificateStoreType certificateType, String certificatePath,
                           String certificatePasswordVariable, String certificateAlias, String thumbprint,
-                          String trustBundle, Map<String, String> extraOptions) {
+                          String trustBundle, Map<String, String> extraOptions, boolean baseUrlType) {
 
     public static final String CONFLUENCE = "confluence";
+    public static final String BSCW = "bscw";
     public static final String FILES = "files";
 
     /** Wie {@code ConfiguredSourceCatalog}; andere IDs weist der Core beim Start ab. */
@@ -64,6 +65,17 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         public Editable {
             plaintextSecrets = List.copyOf(plaintextSecrets);
         }
+    }
+
+    /** Retain the source editor's original construction contract. */
+    public SourceDraft(String id, String type, String title, String baseUrl, String directory, String include,
+                       SourceSettingsConfig.AuthType authType, String username, String secretVariable,
+                       SourceSettingsConfig.CertificateStoreType certificateType, String certificatePath,
+                       String certificatePasswordVariable, String certificateAlias, String thumbprint,
+                       String trustBundle, Map<String, String> extraOptions) {
+        this(id, type, title, baseUrl, directory, include, authType, username, secretVariable, certificateType,
+                certificatePath, certificatePasswordVariable, certificateAlias, thumbprint, trustBundle, extraOptions,
+                CONFLUENCE.equals(type) || baseUrl != null);
     }
 
     public SourceDraft(String id, String type, String title, String baseUrl, String directory, String include,
@@ -111,6 +123,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         }
         String type = text(raw, "type");
         boolean confluence = CONFLUENCE.equals(type);
+        boolean bscw = BSCW.equals(type);
         Map<String, String> options = new TreeMap<>();
         AppSettingsLoader.map(AppSettingsLoader.get(raw, "options")).forEach((key, value) -> {
             if (value != null) {
@@ -120,7 +133,11 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         boolean files = FILES.equals(type);
         String directory = files ? options.remove("directory") : null;
         String include = files ? options.remove("include") : null;
-        String address = confluence ? text(raw, "base-url") : null;
+        String legacyBscwUrl = bscw ? options.remove("rootUrl") : null;
+        String address = confluence || bscw ? text(raw, "base-url") : null;
+        if (bscw && address == null) {
+            address = legacyBscwUrl;
+        }
 
         List<String> plaintext = new ArrayList<>();
         SourceSettingsConfig.AuthType authType = SourceSettingsConfig.AuthType.NONE;
@@ -138,7 +155,8 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                     plaintext.add("auth." + key);
                 }
                 // Andere Typen dürfen das Passwort weglassen; dann fragt der Core das Programm (ADR 0022).
-                secretVariable = confluence || text(auth, key) != null ? suggestedVariable(id, authType) : null;
+                secretVariable = confluence || bscw || text(auth, key) != null
+                        ? suggestedVariable(id, authType) : null;
             }
         }
         SourceSettingsConfig.CertificateStoreType certificateType = null;
@@ -167,7 +185,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         SourceDraft draft = new SourceDraft(id, type, text(raw, "title"), address, directory, include,
                 authType, text(auth, "username"), secretVariable, certificateType, text(certificate, "path"),
                 certificatePasswordVariable, text(certificate, "alias"), text(certificate, "thumbprint"),
-                text(raw, "trust-bundle"), options);
+                text(raw, "trust-bundle"), options, confluence || bscw || text(raw, "base-url") != null);
         return new Editable(draft, plaintext);
     }
 
@@ -211,19 +229,23 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         return CONFLUENCE.equals(type);
     }
 
+    public boolean serverAddress() {
+        return baseUrlType;
+    }
+
     /**
      * Weder Confluence noch Ordner: die Felder des Typs unter {@code options}, Anmeldung nach den Anmeldearten des Typs
      * (ohne Passwort fragt der Core das Programm, ADR 0022).
      */
     public boolean generic() {
-        return type != null && !confluence() && !FILES.equals(type);
+        return type != null && !serverAddress() && !FILES.equals(type);
     }
 
     /** Derselbe Eintrag mit einer anderen Variable für Passwort bzw. Token ({@code null}: keine Zeile in der Datei). */
     public SourceDraft withSecretVariable(String variable) {
         return new SourceDraft(id, type, title, baseUrl, directory, include, authType, username, variable,
                 certificateType, certificatePath, certificatePasswordVariable, certificateAlias, thumbprint,
-                trustBundle, extraOptions);
+                trustBundle, extraOptions, baseUrlType);
     }
 
     /** Vorschlag für die Umgebungsvariable des Geheimnisses, z. B. {@code WIKI_TOKEN} für die Quelle {@code wiki}. */
@@ -243,7 +265,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         } else if (!ID.matcher(id).matches()) {
             problems.add("Die ID darf nur Kleinbuchstaben, Ziffern und Bindestrich enthalten (höchstens 63 Zeichen).");
         }
-        if (confluence()) {
+        if (serverAddress()) {
             if (baseUrl == null) {
                 problems.add("Die Adresse fehlt.");
             } else if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) {
@@ -260,12 +282,12 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         } else {
             problems.add("Die Art der Quelle fehlt.");
         }
-        if (confluence() || generic()) {
+        if (serverAddress() || generic()) {
             if (authType == SourceSettingsConfig.AuthType.BASIC && username == null) {
                 problems.add("Der Benutzername fehlt.");
             }
             // Andere Typen dürfen das Passwort weglassen (ADR 0022); ein angegebener Name muss aber gültig sein.
-            boolean secretNeeded = confluence() || authType == SourceSettingsConfig.AuthType.PAT
+            boolean secretNeeded = serverAddress() || authType == SourceSettingsConfig.AuthType.PAT
                     || secretVariable != null;
             if (authType != SourceSettingsConfig.AuthType.NONE && secretNeeded && !variable(secretVariable)) {
                 problems.add("Die Umgebungsvariable für " + secretName() + " fehlt oder ist kein gültiger Name "
@@ -305,11 +327,11 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         if (title != null) {
             yaml.append(in).append("title: ").append(scalar(title)).append('\n');
         }
-        if (confluence()) {
+        if (serverAddress()) {
             yaml.append(in).append("base-url: ").append(scalar(baseUrl)).append('\n');
         }
         // Confluence immer mit auth; andere Typen nur, wenn die Datei eine Anmeldung oder ein Zertifikat hatte (ADR 0022).
-        if (confluence() || generic() && (authType != SourceSettingsConfig.AuthType.NONE || certificateType != null
+        if (serverAddress() || generic() && (authType != SourceSettingsConfig.AuthType.NONE || certificateType != null
                 || trustBundle != null)) {
             yaml.append(in).append("auth:\n");
             yaml.append(in).append("  type: ").append(authType.name().toLowerCase(Locale.ROOT)).append('\n');

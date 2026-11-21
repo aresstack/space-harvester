@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiTypography;
+import com.aresstack.spaceharvester.app.ui.controls.ViewerWheel;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -57,7 +58,9 @@ import java.util.function.Consumer;
 /**
  * Der Anhang-Viewer im Comic-Overlay über dem Reiter „Anhänge“: zeigt einen Dateianhang der Seite. Bilder über den
  * Bildweg ({@link ReaderImageStore.Loaded}), PDF als Seitenbilder über Apache PDFBox ({@link PdfPages}; die Pfeile und
- * ← → blättern Seiten, Mausrad-Zoom am Cursor, + − 0 zoomen bzw. einpassen, beim Hineinzoomen wird die Seite schärfer
+ * ← → und das Mausrad blättern Seiten (bei hineingezoomter Seite verschiebt das Rad erst den Ausschnitt), Strg+Rad
+ * zoomt am Cursor, Shift+Rad verschiebt waagrecht ({@link ViewerWheel}), + − 0 zoomen bzw. einpassen, beim
+ * Hineinzoomen wird die Seite schärfer
  * nachgezeichnet), Text in einer Textfläche, Office-Dateien über die Vorschau der Quelle (PDF oder Bild), alles andere
  * mit Name, Typ und Größe. Unten stehen immer „Typ · Größe“, Seite und Zoom sowie Speichern und Öffnen der
  * Originaldatei. Geladen wird erst, wenn der Viewer geöffnet wird.
@@ -93,10 +96,20 @@ public final class AttachmentViewerPanel extends JPanel {
 
     private final Canvas canvas = new Canvas();
     private final JLayeredPane layers = new JLayeredPane();
+    /** Eine Meldung statt des Inhalts, etwa warum er sich nicht zeigen lässt. */
     private final JLabel busy = new JLabel(LOADING_ATTACHMENT_TEXT, SwingConstants.CENTER);
+    /** Solange geladen wird: die Sanduhr der Suche, ohne Esc, mit dem Ladetext darunter. */
+    private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay spinner =
+            new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(transparent());
     private final JLabel info = new JLabel(" ", SwingConstants.CENTER);
     private final JTextArea textArea = new JTextArea();
     private final JScrollPane textPane;
+    /** Ein Word-Dokument als HTML mit seinen Bildern an ihrer Stelle. */
+    private final javax.swing.JEditorPane documentArea = new javax.swing.JEditorPane();
+    private final JScrollPane documentPane;
+    /** Der Klartext der gezeigten Text- oder Dokumentansicht. */
+    private String shownText = "";
+    private final JPanel spreadsheetPane = new JPanel(new BorderLayout());
     private final ViewerButton previous;
     private final ViewerButton next;
     private final ViewerButton download;
@@ -111,15 +124,21 @@ public final class AttachmentViewerPanel extends JPanel {
     private final ReaderFileOpener fileOpener;
     private final Executor renderer;
     private final JLabel fileInfo = new JLabel(" ");
-    private final ComposerButton saveButton = new ComposerButton(ComposerIcons.download(), SAVE_TEXT, false,
+    private final ComposerButton saveButton = ComposerButton.iconButton(ComposerIcons.download(),
             "Originaldatei speichern");
-    private final ComposerButton openButton = new ComposerButton(ComposerIcons.openExternal(), OPEN_TEXT, false,
+    private final ComposerButton openButton = ComposerButton.iconButton(ComposerIcons.openExternal(),
             "Originaldatei mit dem Standardprogramm öffnen");
+    /**
+     * Die Leiste unten: links neben der Lupe „Speichern“ und „Öffnen“ als Symbolknöpfe, mittig Seite und Zoom, rechts
+     * „Typ · Größe“ (Angelo, 19.11.2026). In der Leseansicht steht sie in der Werkzeugleiste mit der Lupe
+     * ({@link #detachFooter()}), sonst (Anhang als Overlay) unter der Vorschau.
+     */
+    private final JPanel footer = new JPanel(new BorderLayout());
     /** Die Originaldatei, sobald geladen. */
     private byte[] original;
     private List<Consumer<byte[]>> originalWaiting;
     private List<Consumer<String>> originalFailed;
-    private PdfPages pdf;
+    private RenderedPages pages;
     private int pageCount;
     private int page;
     private double renderScale = PDF_BASE_SCALE;
@@ -141,7 +160,24 @@ public final class AttachmentViewerPanel extends JPanel {
      */
     public AttachmentViewerPanel(ReaderAttachment attachment, ReaderAttachmentLoader loader, ReaderFileOpener opener,
                                  Executor renderer) {
+        this(attachment, loader, opener, renderer, null);
+    }
+
+    /**
+     * Ohne Vorschau (Angelo, 20.11.2026): Name, Typ, Größe und {@code reason} statt des Inhalts, etwa für eine Datei
+     * über der Größengrenze; „Speichern“ und „Öffnen“ im Standardprogramm bleiben, über
+     * {@link ReaderAttachmentLoader#downloadTo} direkt auf die Platte, wenn der Lader das kann.
+     */
+    public static AttachmentViewerPanel withoutPreview(ReaderAttachment attachment, ReaderAttachmentLoader loader,
+                                                       ReaderFileOpener opener, Executor renderer, String reason) {
+        return new AttachmentViewerPanel(attachment, loader, opener, renderer,
+                reason == null || reason.isBlank() ? NO_PREVIEW_TEXT : reason);
+    }
+
+    private AttachmentViewerPanel(ReaderAttachment attachment, ReaderAttachmentLoader loader, ReaderFileOpener opener,
+                                  Executor renderer, String noPreview) {
         super(new BorderLayout(0, 4));
+        this.noPreview = noPreview;
         if (attachment == null || loader == null) {
             throw new IllegalArgumentException("attachment and loader must not be null");
         }
@@ -163,6 +199,14 @@ public final class AttachmentViewerPanel extends JPanel {
         textPane = com.aresstack.spaceharvester.app.ui.Comic.scroll(textArea);
         textPane.setBorder(BorderFactory.createEmptyBorder());
         textPane.setVisible(false);
+        documentArea.setEditable(false);
+        documentArea.setBorder(BorderFactory.createEmptyBorder(16, 20, 16, 20));
+        documentArea.setBackground(Color.WHITE);
+        documentPane = com.aresstack.spaceharvester.app.ui.Comic.scroll(documentArea);
+        documentPane.setBorder(BorderFactory.createEmptyBorder());
+        documentPane.setVisible(false);
+        spreadsheetPane.setVisible(false);
+        spreadsheetPane.setOpaque(true);
 
         previous = new ViewerButton(new ScaledIcon(ComposerIcons.chevronLeft(), 2),
                 "Vorherige Seite (Pfeiltaste links oder Bild auf)");
@@ -182,10 +226,15 @@ public final class AttachmentViewerPanel extends JPanel {
         layers.setLayout(null);
         layers.add(canvas, JLayeredPane.DEFAULT_LAYER);
         layers.add(busy, JLayeredPane.MODAL_LAYER);
+        spinner.setHighlight(com.aresstack.spaceharvester.app.ui.Comic.BLUE);
+        spinner.setCaptionColor(new Color(255, 255, 255, 210));
+        layers.add(spinner, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 1));
         for (JComponent button : new JComponent[] {previous, next, download, zoomOut, zoomIn, zoomFit}) {
             layers.add(button, JLayeredPane.PALETTE_LAYER);
         }
         layers.add(textPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 10));
+        layers.add(documentPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 10));
+        layers.add(spreadsheetPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 11));
         layers.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
@@ -193,8 +242,11 @@ public final class AttachmentViewerPanel extends JPanel {
                 int h = layers.getHeight();
                 canvas.setBounds(0, 0, w, h);
                 busy.setBounds(0, 0, w, h);
+                spinner.setBounds(0, 0, w, h);
                 int inset = 8; // die Textansicht eines Anhangs blättert nicht
                 textPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
+                documentPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
+                spreadsheetPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
                 previous.setBounds(0, h / 3, ARROW_W, h / 3);
                 next.setBounds(w - ARROW_W, h / 3, ARROW_W, h / 3);
                 download.setBounds(w - BUTTON - 8, 8, BUTTON, BUTTON);
@@ -209,24 +261,23 @@ public final class AttachmentViewerPanel extends JPanel {
 
         info.setFont(info.getFont().deriveFont(Font.ITALIC, 11f));
         info.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
-        JPanel bar = new JPanel(new BorderLayout());
-        bar.setOpaque(false);
-        // Wie Angelos Skizze: unten „Typ · Größe“ links, Seite und Zoom in der Mitte, rechts die Datei-Aktionen.
+        footer.setOpaque(false);
         fileInfo.setText(attachment.summary());
         fileInfo.setFont(ResearchUiTypography.semiBold(12f));
-        fileInfo.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
-        bar.add(fileInfo, BorderLayout.WEST);
-        saveButton.setFont(ResearchUiTypography.semiBold(12f));
-        openButton.setFont(ResearchUiTypography.semiBold(12f));
+        fileInfo.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 0));
+        saveButton.getAccessibleContext().setAccessibleName(SAVE_TEXT);
+        openButton.getAccessibleContext().setAccessibleName(OPEN_TEXT);
         saveButton.addActionListener(event -> saveAttachment());
         openButton.addActionListener(event -> openAttachment());
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         actions.setOpaque(false);
         actions.add(saveButton);
         actions.add(openButton);
-        bar.add(actions, BorderLayout.EAST);
-        bar.add(info, BorderLayout.CENTER);
-        add(bar, BorderLayout.SOUTH);
+        footer.add(actions, BorderLayout.WEST);
+        footer.add(info, BorderLayout.CENTER);
+        footer.add(fileInfo, BorderLayout.EAST);
+        footer.putClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL, Boolean.TRUE);
+        add(footer, BorderLayout.SOUTH);
 
         installCanvasInteractions();
         installHover();
@@ -236,25 +287,117 @@ public final class AttachmentViewerPanel extends JPanel {
 
     // ------------------------------------------------------------------ Bedienung (auch für Tests)
 
+    /**
+     * Die benachbarten Anhänge derselben Art, zu denen die Pfeile blättern, wenn der Anhang selbst keine weitere Seite
+     * hat, wie die Pfeile über die Bilder der Leseansicht.
+     */
+    public interface Neighbours {
+
+        /** Keine Nachbarn: die Pfeile blättern nur in den Seiten. */
+        Neighbours NONE = new Neighbours() {
+            @Override
+            public boolean hasPrevious() {
+                return false;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return false;
+            }
+
+            @Override
+            public void previous() {
+            }
+
+            @Override
+            public void next() {
+            }
+        };
+
+        boolean hasPrevious();
+
+        boolean hasNext();
+
+        void previous();
+
+        void next();
+    }
+
+    private Neighbours neighbours = Neighbours.NONE;
+
+    /** Die Nachbarn für die Pfeile; ohne Aufruf blättern sie nur in den Seiten. */
+    public void neighbours(Neighbours neighbours) {
+        this.neighbours = java.util.Objects.requireNonNull(neighbours, "neighbours");
+    }
+
     public boolean hasPrevious() {
-        return pdf != null && page > 0;
+        return pages != null && page > 0 || neighbours.hasPrevious();
     }
 
     public boolean hasNext() {
-        return pdf != null && page < pageCount - 1;
+        return pages != null && page < pageCount - 1 || neighbours.hasNext();
     }
 
-    /** Vorige PDF-Seite. */
+    /** Vorige PDF-Seite, auf der ersten Seite der vorige Anhang derselben Art. */
     public void previous() {
-        if (hasPrevious()) {
+        if (pages != null && page > 0) {
             showPage(page - 1);
+            SwingUtilities.invokeLater(this::refreshHover);
+        } else if (neighbours.hasPrevious()) {
+            handOver(neighbours::previous);
         }
     }
 
-    /** Nächste PDF-Seite. */
+    /**
+     * Zoom und Ausschnitt, wie der Benutzer sie eingestellt hat (Angelo, 20.11.2026): Sie bleiben beim Blättern auf eine
+     * andere PDF-Seite und beim Wechsel auf das vorige oder nächste Bild; „Einpassen“ (0) setzt sie zurück.
+     *
+     * @param zoom    Bildschirmpixel je Pixel des Bildes bzw. der in Grundgröße gezeichneten PDF-Seite
+     * @param offsetX linke Kante des Bildes im Viewer
+     * @param offsetY obere Kante des Bildes im Viewer
+     */
+    public record View(double zoom, double offsetX, double offsetY) {
+    }
+
+    /** Was {@link #handOver} dem nächsten Viewer mitgibt; nur auf dem EDT während des Wechsels gesetzt. */
+    private static View handedOver;
+    /** Zoom und Ausschnitt für das nächste Bild bzw. die nächste Seite; {@code null}: einpassen. */
+    private View pendingView = handedOver;
+
+    /** Der eingestellte Zoom samt Ausschnitt; {@code null}, solange eingepasst ist. */
+    public View view() {
+        if (!canvas.adjusted || canvas.staticImage == null) {
+            return null;
+        }
+        return new View(canvas.zoom * (pages == null ? 1.0 : renderScale / PDF_BASE_SCALE), canvas.offsetX,
+                canvas.offsetY);
+    }
+
+    /** Übernimmt Zoom und Ausschnitt für das nächste gezeigte Bild bzw. die nächste Seite ({@code null}: einpassen). */
+    public void keepView(View view) {
+        this.pendingView = view;
+    }
+
+    /**
+     * Wechselt zum Nachbarn: Der Aufrufer baut dafür einen neuen Viewer, auf dem EDT und gleich hier; er übernimmt
+     * Zoom und Ausschnitt dieses Viewers.
+     */
+    private void handOver(Runnable open) {
+        handedOver = view();
+        try {
+            open.run();
+        } finally {
+            handedOver = null;
+        }
+    }
+
+    /** Nächste PDF-Seite, auf der letzten Seite der nächste Anhang derselben Art. */
     public void next() {
-        if (hasNext()) {
+        if (pages != null && page < pageCount - 1) {
             showPage(page + 1);
+            SwingUtilities.invokeLater(this::refreshHover);
+        } else if (neighbours.hasNext()) {
+            handOver(neighbours::next);
         }
     }
 
@@ -281,6 +424,11 @@ public final class AttachmentViewerPanel extends JPanel {
     /** Ob die Textansicht zu sehen ist. */
     public boolean isShowingText() {
         return showingText;
+    }
+
+    /** Whether the locally rendered read-only spreadsheet is visible. */
+    public boolean isShowingSpreadsheet() {
+        return spreadsheetPane.isVisible();
     }
 
     /** Der Zoom in Prozent (bezogen auf die gezeichnete Seite bzw. das Bild). */
@@ -314,6 +462,20 @@ public final class AttachmentViewerPanel extends JPanel {
         sharpenPage();
     }
 
+    /** Die Leiste mit „Speichern“, „Öffnen“, Seite/Zoom und „Typ · Größe“. */
+    public JComponent footer() {
+        return footer;
+    }
+
+    /**
+     * Nimmt die Leiste aus der Vorschau, damit sie in der Werkzeugleiste mit der Lupe stehen kann; liefert sie.
+     */
+    public JComponent detachFooter() {
+        remove(footer);
+        revalidate();
+        return footer;
+    }
+
     /** Die Knöpfe „Speichern“ und „Öffnen“ des Anhang-Viewers. */
     ComposerButton saveButton() {
         return saveButton;
@@ -323,7 +485,7 @@ public final class AttachmentViewerPanel extends JPanel {
         return openButton;
     }
 
-    /** „Typ · Größe“ unten links. */
+    /** „Typ · Größe“ unten rechts. */
     public String fileInfoText() {
         return fileInfo.getText();
     }
@@ -332,9 +494,46 @@ public final class AttachmentViewerPanel extends JPanel {
         return info.getText();
     }
 
+    /** Für Tests: der Knopf „Öffnen“ der Leiste. */
+    javax.swing.AbstractButton openButtonForTest() {
+        return openButton;
+    }
+
     /** Der Text über dem Bild (Laden oder Fehlschlag mit Grund). */
     public String statusText() {
-        return busy.getText();
+        return spinner.isBusy() ? spinner.text() : busy.getText();
+    }
+
+    /** Ob gerade die Sanduhr zu sehen ist (für Tests). */
+    public boolean loadingShown() {
+        return spinner.isBusy();
+    }
+
+    /** Zeigt die Sanduhr mit {@code text} darunter, solange der Inhalt lädt. */
+    private void loading(String text) {
+        busy.setVisible(false);
+        spinner.setVeilColor(canvas.getBackground());
+        spinner.setText(text);
+        spinner.setBusy(true);
+    }
+
+    /** Der Inhalt steht: keine Sanduhr, keine Meldung. */
+    private void loaded() {
+        spinner.setBusy(false);
+        busy.setVisible(false);
+    }
+
+    /** Statt des Inhalts eine Meldung. */
+    private void message(String text) {
+        spinner.setBusy(false);
+        busy.setText(text);
+        busy.setVisible(true);
+    }
+
+    private static JComponent transparent() {
+        javax.swing.JPanel nothing = new javax.swing.JPanel();
+        nothing.setOpaque(false);
+        return nothing;
     }
 
     // ------------------------------------------------------------------ intern
@@ -349,8 +548,9 @@ public final class AttachmentViewerPanel extends JPanel {
             return;
         }
         String zoom = canvas.staticImage == null ? "" : "Zoom: " + canvas.getZoomPercent() + " %";
-        info.setText(pdf == null ? (zoom.isEmpty() ? " " : zoom)
-                : "Seite " + (page + 1) + " / " + pageCount + (zoom.isEmpty() ? "" : "  |  " + zoom));
+        String pageLabel = attachment.kind() == ReaderAttachmentKind.PRESENTATION ? "Folie " : "Seite ";
+        info.setText(pages == null ? (zoom.isEmpty() ? " " : zoom)
+                : pageLabel + (page + 1) + " / " + pageCount + (zoom.isEmpty() ? "" : "  |  " + zoom));
     }
 
     private void zoomBy(double factor) {
@@ -361,12 +561,13 @@ public final class AttachmentViewerPanel extends JPanel {
 
     /** Nach jedem Zoom: eine PDF-Seite wird nach kurzer Pause in der neuen Größe scharf nachgezeichnet. */
     private void zoomed() {
-        if (pdf != null) {
+        if (pages != null) {
             sharpen.restart();
         }
     }
 
     private void fit() {
+        pendingView = null;
         canvas.resetView();
         updateInfo();
     }
@@ -396,7 +597,37 @@ public final class AttachmentViewerPanel extends JPanel {
         zoomFit.setVisible(showZoom);
     }
 
+    /**
+     * Blendet die Knöpfe nach der Maus ein, wo sie gerade steht, ohne auf eine Bewegung zu warten: nach dem Blättern
+     * und wenn ein neuer Viewer erscheint (beim Blättern zum nächsten Anhang), sonst verschwände der Pfeil unter der
+     * ruhenden Maus und ließe sich nicht mehrmals hintereinander klicken.
+     */
+    void refreshHover() {
+        if (closed || !layers.isShowing()) {
+            return;
+        }
+        java.awt.PointerInfo info = java.awt.MouseInfo.getPointerInfo();
+        if (info == null) {
+            return;
+        }
+        Point p = new Point(info.getLocation());
+        SwingUtilities.convertPointFromScreen(p, layers);
+        hover(p);
+    }
+
     private void installHover() {
+        // Erscheint der Viewer oder ändert er seine Größe, gilt die ruhende Maus sofort.
+        layers.addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) {
+                SwingUtilities.invokeLater(this::refreshHover);
+            }
+        });
+        layers.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                refreshHover();
+            }
+        });
         MouseAdapter tracker = new MouseAdapter() {
             @Override
             public void mouseMoved(MouseEvent e) {
@@ -463,6 +694,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 if (canvas.dragStart != null) {
                     canvas.offsetX += e.getX() - canvas.dragStart.x;
                     canvas.offsetY += e.getY() - canvas.dragStart.y;
+                    canvas.adjusted = true;
                     canvas.dragStart = e.getPoint();
                     canvas.repaint();
                 }
@@ -470,11 +702,29 @@ public final class AttachmentViewerPanel extends JPanel {
         };
         canvas.addMouseListener(mouse);
         canvas.addMouseMotionListener(mouse);
-        canvas.addMouseWheelListener(e -> {
-            canvas.zoomAt(e.getWheelRotation() < 0 ? 1.15 : 1.0 / 1.15, e.getPoint());
-            updateInfo();
-            zoomed();
-        });
+        canvas.addMouseWheelListener(new ViewerWheel(new ViewerWheel.Target() {
+            @Override
+            public boolean pan(int dx, int dy) {
+                return canvas.pan(dx, dy);
+            }
+
+            @Override
+            public void zoom(double factor, Point at) {
+                canvas.zoomAt(factor, at);
+                updateInfo();
+                zoomed();
+            }
+
+            @Override
+            public void previous() {
+                AttachmentViewerPanel.this.previous();
+            }
+
+            @Override
+            public void next() {
+                AttachmentViewerPanel.this.next();
+            }
+        }));
     }
 
     /**
@@ -526,8 +776,8 @@ public final class AttachmentViewerPanel extends JPanel {
     public void close() {
         closed = true;
         sharpen.stop();
-        final PdfPages open = pdf;
-        pdf = null;
+        final RenderedPages open = pages;
+        pages = null;
         if (open != null) {
             renderer.execute(() -> closeQuietly(open));
         }
@@ -535,25 +785,62 @@ public final class AttachmentViewerPanel extends JPanel {
 
     // ------------------------------------------------------------------ Anhang laden und zeigen
 
+    /** Ohne Vorschau: der Grund statt des Inhalts ({@link #withoutPreview}); sonst {@code null}. */
+    private final String noPreview;
+
     /** Lädt und zeigt den Anhang je nach Typ. */
     private void loadAttachment() {
         loadGeneration++;
         showingText = false;
+        spreadsheetPane.setVisible(false);
         canvas.setStaticImage(null);
-        busy.setVisible(true);
+        loading(LOADING_ATTACHMENT_TEXT);
         updateInfo();
+        if (noPreview != null) {
+            showUnavailable(noPreview);
+            return;
+        }
         switch (attachment.kind()) {
             case OTHER:
                 showUnavailable(NO_PREVIEW_TEXT);
                 return;
+            case SPREADSHEET:
+                loading("Tabelle wird geladen …");
+                requestOriginal(bytes -> decodeAside(() -> {
+                    try {
+                        return SpreadsheetPreviewData.read(attachment.fileName(), attachment.mediaType(), bytes);
+                    } catch (IOException failure) {
+                        throw new IllegalStateException(failure.getMessage(), failure);
+                    }
+                }, this::showSpreadsheet), reason -> showUnavailable(
+                        "Tabelle nicht lesbar: " + reasonText(reason)));
+                return;
+            case PRESENTATION:
+                loading("PowerPoint wird geladen …");
+                requestOriginal(this::openPresentation, reason -> showUnavailable(
+                        "PowerPoint nicht geladen: " + reasonText(reason)));
+                return;
             case OFFICE:
-                // Office zeichnet der Client nicht selbst: Vorschau der Quelle (PDF oder Bild).
-                busy.setText(LOADING_PREVIEW_TEXT);
+                if (WordDocumentPreview.supports(attachment.fileName(), attachment.mediaType())) {
+                    loading("Word-Vorschau wird geladen …");
+                    requestOriginal(bytes -> decodeAside(
+                            () -> {
+                                try {
+                                    return WordDocumentPreview.render(attachment.fileName(), bytes);
+                                } catch (IOException failure) {
+                                    throw new IllegalStateException(failure.getMessage(), failure);
+                                }
+                            }, this::showDocument), reason -> showUnavailable(
+                            "Word-Dokument nicht lesbar: " + reasonText(reason)));
+                    return;
+                }
+                // Use the source-generated preview for remaining Office formats.
+                loading(LOADING_PREVIEW_TEXT);
                 attachmentLoader.preview(attachment, bytes -> show(bytes, true),
                         reason -> showUnavailable(NO_PREVIEW_TEXT + "\n" + (reason == null ? "" : reason)));
                 return;
             default:
-                busy.setText(LOADING_ATTACHMENT_TEXT);
+                loading(LOADING_ATTACHMENT_TEXT);
                 requestOriginal(bytes -> show(bytes, false), reason -> showUnavailable(
                         ReaderImageStore.Loaded.FAILED_TEXT.replace("Bild", "Anhang") + ":\n"
                                 + (reason == null ? ReaderImageStore.Loaded.NO_REASON : reason)));
@@ -586,7 +873,9 @@ public final class AttachmentViewerPanel extends JPanel {
      */
     private <T> void decodeAside(java.util.function.Supplier<T> work, Consumer<T> apply) {
         final int generation = loadGeneration;
-        busy.setVisible(true);
+        if (!spinner.isBusy()) {
+            loading(spinner.text());
+        }
         renderer.execute(() -> {
             T result;
             try {
@@ -613,18 +902,37 @@ public final class AttachmentViewerPanel extends JPanel {
             showUnavailable(loaded.failure());
             return;
         }
-        busy.setVisible(false);
+        loaded();
         if (loaded.isAnimatedGif()) {
             canvas.setAnimatedImage(loaded.bytes(), loaded.image());
         } else {
             canvas.setStaticImage(loaded.image());
         }
+        // Vom vorigen Bild übernommen: derselbe Zoom, derselbe Ausschnitt.
+        canvas.apply(pendingView);
+        pendingView = null;
+        updateInfo();
+    }
+
+    private void showSpreadsheet(SpreadsheetPreviewData data) {
+        spreadsheetPane.removeAll();
+        spreadsheetPane.add(new SpreadsheetPreviewPanel(data), BorderLayout.CENTER);
+        spreadsheetPane.setVisible(true);
+        loaded();
+        showingText = false;
+        textPane.setVisible(false);
+        documentPane.setVisible(false);
+        spreadsheetPane.revalidate();
+        spreadsheetPane.repaint();
         updateInfo();
     }
 
     private void showText(String text) {
+        spreadsheetPane.setVisible(false);
+        documentPane.setVisible(false);
         showingText = true;
-        busy.setVisible(false);
+        loaded();
+        shownText = text;
         textArea.setText(text);
         textArea.setCaretPosition(0);
         textPane.setVisible(true);
@@ -632,9 +940,58 @@ public final class AttachmentViewerPanel extends JPanel {
         updateInfo();
     }
 
-    /** Die gezeigte Textansicht ({@code ""} außerhalb). */
+    /**
+     * Zeigt ein Word-Dokument wie gesetzt: Überschriften, Absätze, Tabellen und die Bilder an ihrer Stelle (aus dem
+     * Speicher, wie in der Leseansicht), nicht nur den Text.
+     */
+    private void showDocument(WordDocumentPreview.Rendered document) {
+        spreadsheetPane.setVisible(false);
+        textPane.setVisible(false);
+        showingText = true;
+        loaded();
+        shownText = document.text();
+        javax.swing.text.html.HTMLEditorKit kit = new javax.swing.text.html.HTMLEditorKit();
+        kit.getStyleSheet().addRule("body { font-family: " + com.aresstack.spaceharvester.app.ui.Comic.regular(13.5f)
+                .getFamily() + "; font-size: 13pt; }");
+        kit.getStyleSheet().addRule("table { border-collapse: collapse; } td, th { border: 1px solid #c8c8c8; "
+                + "padding: 3px; }");
+        documentArea.setEditorKit(kit);
+        javax.swing.text.html.HTMLDocument html = (javax.swing.text.html.HTMLDocument) kit.createDefaultDocument();
+        java.util.Hashtable<java.net.URL, java.awt.Image> images = new java.util.Hashtable<>();
+        document.images().forEach((src, image) -> {
+            try {
+                images.put(java.net.URI.create(src).toURL(), image);
+            } catch (IOException | IllegalArgumentException e) {
+                // Eigene Adressen sind immer gültig.
+            }
+        });
+        html.putProperty("imageCache", images);
+        html.setAsynchronousLoadPriority(-1);
+        try {
+            kit.read(new java.io.StringReader(document.html()), html, 0);
+        } catch (IOException | javax.swing.text.BadLocationException e) {
+            showText(document.text());
+            return;
+        }
+        documentArea.setDocument(html);
+        documentArea.setCaretPosition(0);
+        documentPane.setVisible(true);
+        hover(pointer);
+        updateInfo();
+    }
+
+    /** Die gezeigte Text- oder Dokumentansicht als Klartext ({@code ""} außerhalb). */
     public String textContent() {
-        return showingText ? textArea.getText() : "";
+        return showingText ? shownText : "";
+    }
+
+    /** Ob ein Word-Dokument mit seinen Bildern gezeigt wird, und wie viele Bilder es zeigt (für Tests). */
+    public int documentImages() {
+        if (!documentPane.isVisible() || !(documentArea.getDocument() instanceof javax.swing.text.html.HTMLDocument html)) {
+            return -1;
+        }
+        Object images = html.getProperty("imageCache");
+        return images instanceof java.util.Map<?, ?> map ? map.size() : 0;
     }
 
     /** Statt einer Vorschau: Name, Typ, Größe und der Grund; Speichern und Öffnen bleiben unten. */
@@ -643,8 +1000,10 @@ public final class AttachmentViewerPanel extends JPanel {
             return;
         }
         showingText = false;
+        spreadsheetPane.setVisible(false);
+        textPane.setVisible(false);
+        documentPane.setVisible(false);
         canvas.setStaticImage(null);
-        busy.setVisible(true);
         StringBuilder html = new StringBuilder("<html><div style='text-align:center;width:560px'><b>")
                 .append(escape(attachment.fileName())).append("</b><br>").append(escape(attachment.summary()));
         for (String line : String.valueOf(reason).split("\n")) {
@@ -653,15 +1012,14 @@ public final class AttachmentViewerPanel extends JPanel {
             }
         }
         html.append("<br><br>").append(escape("Mit „" + SAVE_TEXT + "“ oder „" + OPEN_TEXT
-                + "“ unten rechts bekommst du die Originaldatei.")).append("</div></html>");
-        busy.setText(html.toString());
+                + "“ unten links bekommst du die Originaldatei.")).append("</div></html>");
+        message(html.toString());
         updateInfo();
     }
 
     /** Öffnet das PDF auf dem Zeichen-Thread und zeigt Seite 1. */
     private void openPdf(final byte[] bytes) {
-        busy.setText("PDF wird geöffnet …");
-        busy.setVisible(true);
+        loading("PDF wird geöffnet …");
         renderer.execute(() -> {
             PdfPages opened = null;
             String failure = null;
@@ -671,7 +1029,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 failure = "PDF nicht lesbar: " + (e.getMessage() == null ? e.getClass().getSimpleName()
                         : e.getMessage());
             }
-            final PdfPages document = opened;
+            final RenderedPages document = opened;
             final String reason = failure;
             onEdt(() -> {
                 if (closed) {
@@ -684,7 +1042,7 @@ public final class AttachmentViewerPanel extends JPanel {
                     showUnavailable(reason);
                     return;
                 }
-                pdf = document;
+                pages = document;
                 pageCount = document.pageCount();
                 if (pageCount == 0) {
                     showUnavailable("Das PDF hat keine Seiten.");
@@ -695,16 +1053,58 @@ public final class AttachmentViewerPanel extends JPanel {
         });
     }
 
+    /** Open and render presentations through the same paginated view as PDFs. */
+    private void openPresentation(final byte[] bytes) {
+        loading("Präsentation wird geöffnet …");
+        renderer.execute(() -> {
+            RenderedPages opened = null;
+            String failure = null;
+            try {
+                opened = PresentationPages.open(bytes);
+            } catch (IOException | RuntimeException e) {
+                failure = "PowerPoint nicht lesbar: " + (e.getMessage() == null
+                        ? e.getClass().getSimpleName() : e.getMessage());
+            }
+            final RenderedPages document = opened;
+            final String reason = failure;
+            onEdt(() -> {
+                if (closed) {
+                    if (document != null) {
+                        renderer.execute(() -> closeQuietly(document));
+                    }
+                    return;
+                }
+                if (document == null) {
+                    showUnavailable(reason);
+                    return;
+                }
+                pages = document;
+                pageCount = document.pageCount();
+                if (pageCount == 0) {
+                    showUnavailable("Die Präsentation hat keine Folien.");
+                    return;
+                }
+                showPage(0);
+            });
+        });
+    }
+
     /** Zeichnet Seite {@code target} in der Grundschärfe und passt sie ein. */
     private void showPage(final int target) {
-        if (pdf == null) {
+        if (pages == null) {
             return;
         }
         page = Math.max(0, Math.min(target, pageCount - 1));
+        // Beim Blättern bleiben Zoom und Ausschnitt (Angelo, 20.11.2026); die neue Seite kommt in Grundgröße.
+        View kept = view();
+        if (kept != null) {
+            pendingView = kept;
+        }
         renderScale = PDF_BASE_SCALE;
         sharpen.stop();
-        busy.setText("Seite " + (page + 1) + " wird gezeichnet …");
-        busy.setVisible(canvas.staticImage == null);
+        if (canvas.staticImage == null) {
+            loading("Seite " + (page + 1) + " wird gezeichnet …");
+        }
         hover(pointer);
         render(page, PDF_BASE_SCALE, true);
     }
@@ -714,7 +1114,7 @@ public final class AttachmentViewerPanel extends JPanel {
      * schärfere Fassung die alte, ohne dass sich Größe oder Ausschnitt auf dem Schirm ändern.
      */
     private void render(final int target, final double scale, final boolean fresh) {
-        final PdfPages document = pdf;
+        final RenderedPages document = pages;
         final int generation = ++renderGeneration;
         renderer.execute(() -> {
             BufferedImage image = null;
@@ -728,17 +1128,21 @@ public final class AttachmentViewerPanel extends JPanel {
             final BufferedImage drawn = image;
             final String reason = failure;
             onEdt(() -> {
-                if (closed || document != pdf || generation != renderGeneration) {
+                if (closed || document != pages || generation != renderGeneration) {
                     return; // inzwischen geblättert, gezoomt oder geschlossen
                 }
                 if (drawn == null) {
-                    busy.setText(reason);
-                    busy.setVisible(true);
+                    message(reason);
                     return;
                 }
-                busy.setVisible(false);
+                loaded();
                 if (fresh) {
                     canvas.setStaticImage(drawn);
+                    if (pendingView != null) {
+                        canvas.apply(pendingView);
+                        pendingView = null;
+                        zoomed();
+                    }
                 } else {
                     canvas.replaceImage(drawn, drawn.getWidth() / (double) Math.max(1, canvas.imgW));
                     renderScale = scale;
@@ -750,10 +1154,10 @@ public final class AttachmentViewerPanel extends JPanel {
 
     /** Nach dem Zoomen: ist die Seite größer gezeigt als gezeichnet, in der gezeigten Größe nachzeichnen. */
     private void sharpenPage() {
-        if (pdf == null || canvas.staticImage == null) {
+        if (pages == null || canvas.staticImage == null) {
             return;
         }
-        double wanted = Math.min(renderScale * canvas.zoom, pdf.maxScale(page));
+        double wanted = Math.min(renderScale * canvas.zoom, pages.maxScale(page));
         if (wanted > renderScale * 1.1) {
             render(page, wanted, false);
         }
@@ -786,6 +1190,9 @@ public final class AttachmentViewerPanel extends JPanel {
                 return;
             }
             original = bytes;
+            if (attachment.size() == 0 && bytes.length > 0) {
+                fileInfo.setText(attachment.typeLabel() + " · " + ReaderAttachment.size(bytes.length));
+            }
             for (Consumer<byte[]> listener : listeners) {
                 listener.accept(bytes);
             }
@@ -805,10 +1212,13 @@ public final class AttachmentViewerPanel extends JPanel {
     }
 
     private void saveAttachment() {
+        if (original == null && attachmentLoader.downloadsToFile()) {
+            saveToFile();
+            return;
+        }
         requestOriginal(bytes -> {
-            JFileChooser chooser = new JFileChooser();
+            JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(safeFileName(attachment.fileName()));
             chooser.setDialogTitle("Anhang speichern");
-            chooser.setSelectedFile(new File(safeFileName(attachment.fileName())));
             if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
                 return;
             }
@@ -820,7 +1230,60 @@ public final class AttachmentViewerPanel extends JPanel {
                 "Download-Fehler", JOptionPane.ERROR_MESSAGE));
     }
 
+    /** Speichern einer großen Datei: direkt aus der Quelle in die gewählte Datei, ohne Umweg über den Speicher. */
+    private void saveToFile() {
+        JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(safeFileName(attachment.fileName()));
+        chooser.setDialogTitle("Anhang speichern");
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        File target = chooser.getSelectedFile();
+        loading("Wird gespeichert …");
+        attachmentLoader.downloadTo(attachment, target.toPath(), () -> {
+            loadAttachment();
+            JOptionPane.showMessageDialog(this, FILE_SAVED_PREFIX + target.getName(), "Download",
+                    JOptionPane.INFORMATION_MESSAGE);
+        }, reason -> {
+            loadAttachment();
+            JOptionPane.showMessageDialog(this, SAVE_FAILED_PREFIX + reasonText(reason), "Download-Fehler",
+                    JOptionPane.ERROR_MESSAGE);
+        });
+    }
+
+    /** Öffnen einer großen Datei: direkt aus der Quelle in einen eigenen temporären Ordner, dann im Standardprogramm. */
+    private void openFromFile() {
+        File copy;
+        try {
+            File folder = Files.createTempDirectory("space-harvester-anhang").toFile();
+            folder.deleteOnExit();
+            copy = new File(folder, safeFileName(attachment.fileName()));
+            copy.deleteOnExit();
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, OPEN_FAILED_PREFIX + e.getMessage(), "Öffnen",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        loading("Wird geladen …");
+        attachmentLoader.downloadTo(attachment, copy.toPath(), () -> {
+            loadAttachment();
+            try {
+                fileOpener.open(copy);
+            } catch (IOException | RuntimeException e) {
+                JOptionPane.showMessageDialog(this, OPEN_FAILED_PREFIX + reasonText(e.getMessage()), "Öffnen",
+                        JOptionPane.ERROR_MESSAGE);
+            }
+        }, reason -> {
+            loadAttachment();
+            JOptionPane.showMessageDialog(this, OPEN_FAILED_PREFIX + reasonText(reason), "Öffnen",
+                    JOptionPane.ERROR_MESSAGE);
+        });
+    }
+
     private void openAttachment() {
+        if (original == null && attachmentLoader.downloadsToFile()) {
+            openFromFile();
+            return;
+        }
         requestOriginal(bytes -> {
             String problem = openOriginal();
             if (problem != null) {
@@ -936,7 +1399,7 @@ public final class AttachmentViewerPanel extends JPanel {
         return null;
     }
 
-    private static void closeQuietly(PdfPages document) {
+    private static void closeQuietly(RenderedPages document) {
         try {
             document.close();
         } catch (IOException ignored) {
@@ -970,6 +1433,8 @@ public final class AttachmentViewerPanel extends JPanel {
         double offsetY;
         Point dragStart;
         private boolean fitted;
+        /** Ob der Benutzer gezoomt oder den Ausschnitt verschoben hat; „Einpassen“ setzt es zurück. */
+        boolean adjusted;
 
         Canvas() {
             setBackground(new Color(30, 30, 30));
@@ -1015,7 +1480,21 @@ public final class AttachmentViewerPanel extends JPanel {
             resetView();
         }
 
+        /** Setzt Zoom und Ausschnitt; {@code null} lässt das eingepasste Bild. */
+        void apply(View view) {
+            if (view == null || staticImage == null) {
+                return;
+            }
+            zoom = Math.max(0.05, Math.min(view.zoom(), 20.0));
+            offsetX = view.offsetX();
+            offsetY = view.offsetY();
+            fitted = true;
+            adjusted = true;
+            repaint();
+        }
+
         void resetView() {
+            adjusted = false;
             zoom = 1.0;
             if (imgW > 0 && imgH > 0 && getWidth() > 0 && getHeight() > 0) {
                 zoom = Math.min(getWidth() / (double) imgW, getHeight() / (double) imgH);
@@ -1035,11 +1514,29 @@ public final class AttachmentViewerPanel extends JPanel {
             }
             double oldZoom = zoom;
             zoom = Math.max(0.05, Math.min(zoom * factor, 20.0));
+            adjusted = true;
             double px = pivot != null ? pivot.x : getWidth() / 2.0;
             double py = pivot != null ? pivot.y : getHeight() / 2.0;
             offsetX = px - (px - offsetX) * (zoom / oldZoom);
             offsetY = py - (py - offsetY) * (zoom / oldZoom);
             repaint();
+        }
+
+        /** Verschiebt den Ausschnitt um Bildschirmpixel; siehe {@link ViewerWheel#panTo}. */
+        boolean pan(int dx, int dy) {
+            if (imgW <= 0) {
+                return false;
+            }
+            double nx = ViewerWheel.panTo(offsetX, offsetX + dx, imgW * zoom, getWidth());
+            double ny = ViewerWheel.panTo(offsetY, offsetY + dy, imgH * zoom, getHeight());
+            if (nx == offsetX && ny == offsetY) {
+                return false;
+            }
+            offsetX = nx;
+            offsetY = ny;
+            adjusted = true;
+            repaint();
+            return true;
         }
 
         int getZoomPercent() {

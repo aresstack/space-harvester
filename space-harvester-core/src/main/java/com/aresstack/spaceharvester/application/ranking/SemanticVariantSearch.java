@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.application.ranking;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.query.DocumentKind;
+import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
@@ -78,8 +80,10 @@ public final class SemanticVariantSearch implements VariantSearch {
                        SearchRunId partOf) {
         PageSearchQuery scope = scope(variant);
         // Ausgeschlossene Spaces laden nicht und sind keine Kandidaten: Erlaubte Treffer füllen das Limit.
+        // Mit Arten das ganze Fenster der Rangfolge, damit nach dem Filter noch genug Treffer bleiben.
+        int window = variant.kinds().isEmpty() ? Math.min(limit, Reranking.MAX_WINDOW) : Reranking.MAX_WINDOW;
         RelevanceSearch.RelevanceResults found = relevance.search(caller, scope, original, variant.text(),
-                variant.excludedSpaceKeys(), Math.min(limit, Reranking.MAX_WINDOW), partOf);
+                variant.excludedSpaceKeys(), window, partOf);
         List<KeywordSearch.Hit> hits = new ArrayList<>(found.hits().size());
         Map<PageKey, Double> scores = new HashMap<>();
         for (RelevanceSearch.RankedHit ranked : found.hits()) {
@@ -91,6 +95,13 @@ public final class SemanticVariantSearch implements VariantSearch {
             PageKey key = header.key();
             RelevanceSearch.Relevance best = ranked.relevance();
             boolean inDocument = best != null && best.attachmentId() != null;
+            if (!variant.kinds().isEmpty() && !variant.kinds().contains(kind(metadata, best, inDocument))) {
+                // Nur die gewählten Arten (Seiten, PDF, …), nach Name und gemeldetem Medientyp wie im Volltextindex.
+                continue;
+            }
+            if (hits.size() == limit) {
+                break;
+            }
             // Liegt das ähnlichste Stück in einem Anhang (ADR 0026, AP9a): Ausschnitt aus dessen Abschnitt und der
             // Anhang wie bei Treffern der Volltextsuche (#723).
             hits.add(new KeywordSearch.Hit(key.sourceId(), key.pageId(), metadata.partitionKey(), metadata.title(),
@@ -99,7 +110,9 @@ public final class SemanticVariantSearch implements VariantSearch {
                     metadata.parentPageId(),
                     inDocument ? new KeywordSearch.AttachmentMatch(best.attachmentId(), best.attachmentTitle(),
                             best.partId(), best.partTitle()) : null,
-                    best == null ? null : best.passageId()));
+                    best == null ? null : best.passageId(),
+                    // R1: gefunden über die Ähnlichkeit der Vektoren zu dieser Suchanfrage, ohne Wortangabe.
+                    List.of(HitReason.semantic(variant.text()))));
             if (ranked.relevance() != null) {
                 scores.put(key, ranked.relevance().similarity());
             }
@@ -117,6 +130,15 @@ public final class SemanticVariantSearch implements VariantSearch {
     @Override
     public void requireAvailable(AccessContext caller, KeywordSearch.Query query) {
         relevance.requireAvailable(caller, scope(query));
+    }
+
+    /** Die Art des Treffers: enthaltene Datei, Anhang oder die Seite selbst (mit dem Medientyp der Quelle, #964). */
+    private static DocumentKind kind(PageMetadata metadata, RelevanceSearch.Relevance best, boolean inDocument) {
+        if (inDocument) {
+            return best.partId() != null ? DocumentKind.of(best.partTitle(), null)
+                    : DocumentKind.of(best.attachmentTitle(), null);
+        }
+        return DocumentKind.of(metadata.title(), metadata.attributes().get(PageMetadata.REMOTE_MEDIA_TYPE));
     }
 
     private static PageSearchQuery scope(KeywordSearch.Query query) {

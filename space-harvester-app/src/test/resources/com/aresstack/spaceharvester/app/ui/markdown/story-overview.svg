@@ -1,0 +1,86 @@
+<svg width="900" height="620"
+     xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     viewBox="0 0 900 620"
+     style="font-family:Arial,Helvetica,sans-serif; background:#f9f9f9">
+
+  <!-- Definition der Pfeilspitze -->
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10"
+            refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <!-- Titel -->
+  <text x="450" y="30" text-anchor="middle" font-size="24" fill="#333">
+    Die Schatten von Lyrion – Story‑Übersicht
+  </text>
+
+  <!-- Figuren (Rechtecke) -->
+  <g id="characters" fill="#e0f7fa" stroke="#00796b" stroke-width="2">
+    <rect x="50"  y="80"  width="150" height="60" rx="8"/>
+    <rect x="250" y="80"  width="150" height="60" rx="8"/>
+    <rect x="450" y="80"  width="150" height="60" rx="8"/>
+    <rect x="650" y="80"  width="150" height="60" rx="8"/>
+    <rect x="350" y="500" width="200" height="60" rx="8"/>
+  </g>
+
+  <g id="charLabels" fill="#000" font-size="14" text-anchor="middle">
+    <text x="125" y="115">Mira Valen<br/>(Heldin)</text>
+    <text x="325" y="115">Lord Kael Dorn<br/>(Antagonist)</text>
+    <text x="525" y="115">Eldric der Weise<br/>(Mentor)</text>
+    <text x="725" y="115">Lysandra<br/>(Verbündete)</text>
+    <text x="450" y="535">Thorn – der Rabe<br/>(Begleiter)</text>
+  </g>
+
+  <!-- Ereignisse (Kreise) -->
+  <g id="events" fill="#fff3e0" stroke="#e65100" stroke-width="2">
+    <circle cx="150" cy="250" r="40"/>
+    <circle cx="350" cy="250" r="40"/>
+    <circle cx="550" cy="250" r="40"/>
+    <circle cx="750" cy="250" r="40"/>
+    <circle cx="450" cy="380" r="50"/>
+  </g>
+
+  <g id="eventLabels" fill="#000" font-size="13" text-anchor="middle">
+    <text x="150" y="255">Entdeckung<br/>Symbol</text>
+    <text x="350" y="255">Kristallbruch<br/>Schattensturm</text>
+    <text x="550" y="255">Auftrag<br/>Schattenpfad</text>
+    <text x="750" y="255">Konfrontation<br/>Höhle</text>
+    <text x="450" y="385">Lösung<br/>Kristall reparieren</text>
+  </g>
+
+  <!-- Verbindungen (Pfeile) -->
+  <g id="arrows" stroke="#555" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <!-- Mira → Entdeckung -->
+    <path d="M125,140 C125,180 150,180 150,210"/>
+    <!-- Entdeckung → Kristallbruch -->
+    <path d="M150,290 C150,320 350,320 350,290"/>
+    <!-- Kristallbruch → Auftrag -->
+    <path d="M350,210 C350,180 550,180 550,210"/>
+    <!-- Auftrag → Konfrontation -->
+    <path d="M550,290 C550,320 750,320 750,290"/>
+    <!-- Konfrontation → Lösung -->
+    <path d="M750,210 C750,180 450,180 450,330"/>
+    <!-- Lösung → Mira (Rückkehr) -->
+    <path d="M450,430 C450,460 125,460 125,430"/>
+    <!-- Eldric → Mira (Mentor) -->
+    <path d="M525,140 C525,180 125,180 125,140"/>
+    <!-- Lysandra ↔ Mira (Verbündete) -->
+    <path d="M725,140 C725,180 325,180 325,140"/>
+    <!-- Thorn → Lösung (Begleiter) -->
+    <path d="M450,560 C450,590 450,590 450,430"/>
+  </g>
+
+  <!-- Legende -->
+  <g id="legend" font-size="12">
+    <rect x="20" y="560" width="20" height="20" fill="#e0f7fa" stroke="#00796b"/>
+    <text x="45" y="575">Figuren</text>
+    <rect x="150" y="560" width="20" height="20" fill="#fff3e0" stroke="#e65100"/>
+    <text x="175" y="575">Ereignisse</text>
+    <line x1="260" y1="570" x2="280" y2="570" stroke="#555" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="285" y="575">Handlungsfluss</text>
+  </g>
+
+</svg>

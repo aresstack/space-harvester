@@ -1,0 +1,1325 @@
+package com.aresstack.spaceharvester.application.presentation;
+
+import com.aresstack.spaceharvester.ai.AiServiceException;
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.assets.Asset;
+import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.images.ImagePayload;
+import com.aresstack.spaceharvester.application.images.ImageStatus;
+import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
+import com.aresstack.spaceharvester.application.images.PageImages;
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
+import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobTask;
+import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.marks.VideoMarks;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.stepmodel.StepModel;
+import com.aresstack.spaceharvester.document.PptxExportWriter;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+
+/**
+ * „In PPTX umwandeln“ (Angelo 20.11.2026): aus einem Video mit Folienmarken eine PowerPoint-Datei mit je Folie ihrem
+ * Standbild und dem Vortragstext als Notiz. Der Vorgang besteht aus fünf eigenen Aufträgen in der Auftragsliste; was
+ * nicht aufeinander wartet, läuft parallel:
+ *
+ * <ol>
+ *     <li>{@link JobType#VIDEO_TRANSCRIPT} „Transkript ziehen“: das abgelegte Transkript, von der App lokal
+ *     vervollständigt ({@link VideoMedia#transcribe}),</li>
+ *     <li>{@link JobType#VIDEO_SLIDES} „Folien beschreiben“, zugleich mit 1: fehlende Standbilder ziehen und jede
+ *     Folie mit dem Vision-Modell beschreiben (dieselben Beschreibungen wie unter „Analysen › Bilder“),</li>
+ *     <li>{@link JobType#TRANSCRIPT_CORRECTION} „Transkript korrigieren“, nach 1 und 2: das Text-Modell
+ *     ({@code ai.chat-model}) korrigiert Spracherkennungsfehler, mit den Folienbeschreibungen als Hilfe,</li>
+ *     <li>{@link JobType#SLIDE_NOTES} „Folienkommentare“, nach 3: je Folie Standbild und der Transkriptauszug ihrer
+ *     Zeit einzeln an das Vision-Modell, das den Vortragstext schreibt,</li>
+ *     <li>{@link JobType#PRESENTATION_EXPORT} „PPTX erzeugen“, nach 4: die Datei im Ausgabeordner.</li>
+ * </ol>
+ *
+ * <p>Die Modellaufrufe je Folie und je Transkriptpaket laufen parallel ({@link Options#parallel()}). Was ein Auftrag
+ * fertig hat, bleibt abgelegt; Fortsetzen im selben Eintrag fragt nur, was fehlt (ADR 0025). An den KI-Dienst gehen
+ * nur Seiten mit KI-Freigabe (ADR 0028); verliert die Seite sie, fallen die Modelltexte weg ({@link #withdraw}).</p>
+ */
+public final class VideoPresentations {
+
+    /** Komponente in den Diagnoseereignissen. */
+    static final String COMPONENT = "Präsentation";
+    /** Angabe der Aufträge: die Seite des Videos. */
+    public static final String PAGE_PARAMETER = "page";
+    /** Angabe von {@link JobType#PRESENTATION_EXPORT}: die erzeugte Datei. */
+    public static final String FILE_PARAMETER = "file";
+    /** Angabe am Auftrag „PPTX erzeugen“: das Format der Datei ({@link Format#extension()}); fehlend heißt PPTX. */
+    public static final String FORMAT_PARAMETER = "format";
+    /** Angabe aller Aufträge eines Vorgangs: der Auftrag „PPTX erzeugen“, an dem die Datei hängt. */
+    public static final String RUN_PARAMETER = "presentation";
+    /**
+     * Das Original (Whisper-Modell, {@code ""}: ein älteres ohne Modell), auf dem alle Schritte eines Vorgangs
+     * arbeiten; beim Start festgelegt, damit eine spätere Wahl in der Transkriptansicht den laufenden Vorgang nicht
+     * auf ein anderes Original umlenkt.
+     */
+    public static final String WHISPER_PARAMETER = "whisper";
+
+    /** Kennung des Text-Schritts „Transkript korrigieren“ für die Modellversion. */
+    public static final String CORRECTION_STEP = "transcript-correction";
+    /** Verfahren der Folienkommentare; ändern sich Anweisung oder Auswertung, steigt die Version. */
+    static final String NOTES_VERSION = "slide-notes-v1";
+    /** Verfahren der Korrektur; ändern sich Anweisung oder Auswertung, steigt die Version. */
+    static final String CORRECTION_VERSION = "transcript-correction-v1";
+    /** So viele Zeichen Transkript gehen höchstens in eine Korrekturanfrage. */
+    static final int CORRECTION_CHUNK_CHARS = 3000;
+    /** So viele Zeichen Transkript gehen höchstens in die Anfrage zu einer Folie. */
+    static final int NOTES_EXCERPT_CHARS = 12_000;
+
+    static final String CORRECTION_INSTRUCTIONS = "Du korrigierst ein automatisch erstelltes Transkript "
+            + "(Spracherkennung) eines Vortrags. Korrigiere nur Erkennungsfehler: falsch verstandene Wörter, "
+            + "Fachbegriffe, Namen, Abkürzungen und Zeichensetzung. Die Beschreibungen der Folien, die während des "
+            + "Vortrags zu sehen waren, helfen dir bei der Schreibweise von Fachbegriffen und Namen. Ändere nicht den "
+            + "Inhalt, kürze nicht, fasse nicht zusammen und ergänze nichts. Gib jeden Abschnitt mit genau derselben "
+            + "Zeitangabe in eckigen Klammern am Zeilenanfang zurück, in derselben Reihenfolge, je Abschnitt eine "
+            + "Zeile, getrennt durch eine Leerzeile. Antworte nur mit dem korrigierten Transkript.";
+
+    static final String NOTES_INSTRUCTIONS = "Dies ist eine Folie aus der Videoaufzeichnung eines Vortrags. Darunter "
+            + "steht, was der Vortragende gesagt hat, während die Folie zu sehen war. Schreibe daraus auf Deutsch den "
+            + "Vortragstext für die Notizen dieser Folie: was der Vortragende zu dieser Folie erklärt, in ganzen "
+            + "Sätzen, sachlich und in der Reihenfolge des Vortrags, mit Bezug auf die Inhalte der Folie. Erfinde "
+            + "nichts, was weder auf der Folie steht noch gesagt wurde. Antworte nur mit dem Vortragstext, ohne "
+            + "Überschrift.";
+
+    private static final System.Logger LOG = System.getLogger(VideoPresentations.class.getName());
+
+    /** Liest eine Seite für den Aufrufer, mit Rechteprüfung. */
+    @FunctionalInterface
+    public interface PageFetch {
+        PageSnapshot page(AccessContext caller, String sourceId, String pageId);
+    }
+
+    /** Das Format der erzeugten Datei; die vier Schritte davor sind für beide dieselben. */
+    public enum Format {
+        /** PowerPoint: je Folie das Standbild, der Kommentar als Notiz. */
+        PPTX("pptx", "PPTX"),
+        /** PDF: je Folie eine Seite, der Kommentar unter dem Standbild. */
+        PDF("pdf", "PDF");
+
+        private final String extension;
+        private final String label;
+
+        Format(String extension, String label) {
+            this.extension = extension;
+            this.label = label;
+        }
+
+        /** Dateiendung ohne Punkt und Wert von {@link #FORMAT_PARAMETER}. */
+        public String extension() {
+            return extension;
+        }
+
+        /** Name für Meldungen, etwa „PDF“. */
+        public String label() {
+            return label;
+        }
+
+        /** Liest {@link #extension()}; fehlend oder unbekannt heißt {@link #PPTX} (Aufträge vor dieser Angabe). */
+        public static Format parse(String value) {
+            return value != null && PDF.extension.equalsIgnoreCase(value.strip()) ? PDF : PPTX;
+        }
+    }
+
+    /**
+     * Einstellungen eines Vorgangs.
+     *
+     * @param parallel so viele Modellaufrufe laufen je Auftrag zugleich, mindestens 1
+     * @param format   das Format der Datei
+     */
+    /**
+     * @param directory Ausgabeordner der Datei (Angelo 20.11.2026: der eingestellte, Vorgabe Downloads); die Datei
+     *                  heißt dort wie das Video, ein schon vorhandener Name bekommt „ (2)“. {@code null}: unter dem
+     *                  Ordner des Konstruktors je Seite.
+     */
+    public record Options(int parallel, Format format, Path directory) {
+
+        /** Vier Aufrufe zugleich in jeder Phase, PowerPoint; ein Vorgang nimmt die Einstellung ({@link #options}). */
+        public static final Options DEFAULT = new Options(4);
+
+        public Options(int parallel) {
+            this(parallel, Format.PPTX);
+        }
+
+        public Options(int parallel, Format format) {
+            this(parallel, format, null);
+        }
+
+        public Options {
+            Objects.requireNonNull(format, "format");
+            if (parallel < 1 || parallel > 32) {
+                throw new IllegalArgumentException("parallel muss zwischen 1 und 32 liegen");
+            }
+        }
+
+        /** Dieselben Einstellungen mit anderem Dateiformat. */
+        public Options withFormat(Format format) {
+            return new Options(parallel, format, directory);
+        }
+
+        /** Dieselben Einstellungen mit anderem Ausgabeordner. */
+        public Options withDirectory(Path directory) {
+            return new Options(parallel, format, directory);
+        }
+    }
+
+    /**
+     * Die Aufträge eines Vorgangs; bei der Korrektur allein ({@link #startCorrection}) ohne {@code notes} und
+     * {@code file} ({@code null}).
+     */
+    public record Run(JobStatus transcript, JobStatus slides, JobStatus correction, JobStatus notes, JobStatus file) {
+
+        /** Alle in der Reihenfolge des Ablaufs. */
+        public List<JobStatus> all() {
+            return java.util.stream.Stream.of(transcript, slides, correction, notes, file).filter(Objects::nonNull)
+                    .toList();
+        }
+    }
+
+    private final Jobs jobs;
+    private final PageFetch fetch;
+    private final Assets assets;
+    private final PageImageAnalysis images;
+    private final VideoMarks slides;
+    private final StepModel textModel;
+    private final PresentationStore store;
+    private final Predicate<PageKey> released;
+    private final Path outputDirectory;
+    /**
+     * Die Arbeit der Aufträge, damit „Nur Fehler“ auch nach ihrem Ende im selben Eintrag läuft; nach einem Neustart
+     * aus den Angaben des Auftrags wiederhergestellt ({@link #rebuild}).
+     */
+    private final Map<String, JobTask> tasks = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Dateien, die ein Vorgang seit dem Start der App im Ausgabeordner belegt hat (siehe {@link #reserveName}). */
+    private final java.util.Set<Path> reservedFiles = new java.util.HashSet<>();
+
+    /**
+     * @param slides          die Folien der Videos ({@link VideoMarks#slides})
+     * @param textModel       das Text-Modell für „Transkript korrigieren“
+     * @param released        ob eine Seite an den KI-Dienst darf ({@code AiRelease::mayProcess})
+     * @param outputDirectory wohin die Dateien kommen
+     */
+    public VideoPresentations(Jobs jobs, PageFetch fetch, Assets assets, PageImageAnalysis images, VideoMarks slides,
+                              StepModel textModel, PresentationStore store, Predicate<PageKey> released,
+                              Path outputDirectory) {
+        this.jobs = Objects.requireNonNull(jobs, "jobs");
+        this.fetch = Objects.requireNonNull(fetch, "fetch");
+        this.assets = Objects.requireNonNull(assets, "assets");
+        this.images = Objects.requireNonNull(images, "images");
+        this.slides = Objects.requireNonNull(slides, "slides");
+        this.textModel = Objects.requireNonNull(textModel, "textModel");
+        this.store = Objects.requireNonNull(store, "store");
+        this.released = Objects.requireNonNull(released, "released");
+        this.outputDirectory = Objects.requireNonNull(outputDirectory, "outputDirectory");
+    }
+
+    /**
+     * Die Einstellungen eines neuen Vorgangs: so viele Aufrufe zugleich, wie für den KI-Dienst eingestellt
+     * ({@code ai.parallel}, über {@link ImageDescriber#parallel()}), höchstens {@code 32}.
+     */
+    public Options options(Format format) {
+        int parallel = assets.describerInUse().map(ImageDescriber::parallel).orElse(Options.DEFAULT.parallel());
+        return new Options(Math.max(1, Math.min(32, parallel)), format);
+    }
+
+    /**
+     * Was „In PPTX umwandeln“ für diese Seite jetzt fehlt; leer, wenn es starten kann. Fragt weder Quelle noch Modell.
+     */
+    public Optional<PresentationUnavailableException.Reason> unavailable(AccessContext caller, String sourceId,
+                                                                         String pageId) {
+        PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
+        if (assets.describerInUse().isEmpty()) {
+            return Optional.of(PresentationUnavailableException.Reason.NO_VISION_MODEL);
+        }
+        if (!textModel.available()) {
+            return Optional.of(PresentationUnavailableException.Reason.NO_TEXT_MODEL);
+        }
+        if (!released.test(snapshot.key())) {
+            return Optional.of(PresentationUnavailableException.Reason.NOT_RELEASED);
+        }
+        if (slides.find(snapshot.key(), snapshot.revision()).isEmpty()) {
+            return Optional.of(PresentationUnavailableException.Reason.NO_SLIDES);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Startet die fünf Aufträge für das Video dieser Seite; der Aufrufer wartet nicht. Die Rechte auf die Seite prüft
+     * {@link PageFetch}; Transkript und Standbilder ablegen darf nur, wer die Seite abgleichen darf, das prüft der
+     * Aufrufer.
+     *
+     * @param media was die App mit dem Video kann; {@link VideoMedia#NONE} nimmt nur Abgelegtes
+     * @throws PresentationUnavailableException wenn etwas fehlt ({@link #unavailable})
+     */
+    public Run start(AccessContext caller, String sourceId, String pageId, VideoMedia media, Options options) {
+        return submit(caller, sourceId, pageId, media, options, true);
+    }
+
+    /**
+     * „Korrigieren“ in der Transkriptansicht (Angelo 20.11.2026): dieselbe Korrektursitzung wie vor „In PPTX
+     * umwandeln“, mit allen Bildern (Transkript, Standbilder, Folien beschreiben, Transkript korrigieren), aber ohne
+     * Folienkommentare und Datei. Die Analysen der Seite rechnen danach über die neue Korrektur.
+     *
+     * @throws PresentationUnavailableException wenn etwas fehlt ({@link #unavailable})
+     */
+    public Run startCorrection(AccessContext caller, String sourceId, String pageId, VideoMedia media,
+                               Options options) {
+        return submit(caller, sourceId, pageId, media, options, false);
+    }
+
+    private Run submit(AccessContext caller, String sourceId, String pageId, VideoMedia media, Options options,
+                       boolean presentation) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(media, "media");
+        Objects.requireNonNull(options, "options");
+        Optional<PresentationUnavailableException.Reason> missing = unavailable(caller, sourceId, pageId);
+        if (missing.isPresent()) {
+            throw new PresentationUnavailableException(missing.get());
+        }
+        PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
+        String space = snapshot.metadata().partitionKey();
+        String owner = caller.jobOwner();
+        String title = snapshot.metadata().title();
+        Path file = !presentation ? null : options.directory() == null
+                ? outputDirectory.resolve(pageFolder(snapshot.key())).resolve(fileName(title, options.format()))
+                : reserveName(options.directory().toAbsolutePath(), fileName(title, options.format()));
+        String run = java.util.UUID.randomUUID().toString();
+        // Das gewählte Original, ohne eines das Modell der App: dabei bleibt der Vorgang bis zur Datei.
+        String whisper = assets.chosenVideoTranscript(sourceId, pageId, snapshot.revision())
+                .map(Assets.TranscriptOriginal::whisper).orElse(media.whisper());
+        Map<String, String> parameters = Map.of(PAGE_PARAMETER, pageId, RUN_PARAMETER, run, WHISPER_PARAMETER,
+                whisper);
+        JobTask transcribing = JobTask.blocking(context -> transcribe(caller, sourceId, pageId, media, whisper,
+                context));
+        JobTask describing = JobTask.blocking(context -> describeSlides(caller, sourceId, pageId, media, options,
+                context));
+        JobTask correcting = JobTask.blocking(context -> correct(caller, sourceId, pageId, whisper, options,
+                context));
+        JobTask commenting = JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, whisper, options,
+                context));
+        JobTask writing = JobTask.blocking(context -> writeFile(caller, sourceId, pageId, file, options.format(),
+                context));
+        // Die beiden ersten belegen sofort einen Platz: Scheitert ein späterer Schritt am Platz, werden die schon
+        // angenommenen wieder abgebrochen, statt eine Transkription ohne Nachfolger laufen zu lassen.
+        List<JobStatus> submitted = new ArrayList<>(5);
+        try {
+            JobStatus transcript = remember(jobs.submit(JobType.VIDEO_TRANSCRIPT, sourceId, space, pageId, owner,
+                    parameters, transcribing), transcribing, submitted);
+            JobStatus described = remember(jobs.submit(JobType.VIDEO_SLIDES, sourceId, space, pageId, owner,
+                    parameters, describing), describing, submitted);
+            JobStatus correction = remember(jobs.submitAfter(JobType.TRANSCRIPT_CORRECTION, sourceId, space, pageId,
+                    owner, parameters, correcting, List.of(transcript.id(), described.id())), correcting, submitted);
+            if (!presentation) {
+                return new Run(transcript, described, correction, null, null);
+            }
+            JobStatus notes = remember(jobs.submitAfter(JobType.SLIDE_NOTES, sourceId, space, pageId, owner,
+                    parameters, commenting, correction.id()), commenting, submitted);
+            Map<String, String> fileParameters = new HashMap<>(parameters);
+            fileParameters.put(FILE_PARAMETER, file.toString());
+            fileParameters.put(FORMAT_PARAMETER, options.format().extension());
+            JobStatus output = remember(jobs.submitAfter(JobType.PRESENTATION_EXPORT, sourceId, space, pageId, owner,
+                    fileParameters, writing, notes.id()), writing, submitted);
+            return new Run(transcript, described, correction, notes, output);
+        } catch (RuntimeException e) {
+            for (JobStatus job : submitted) {
+                tasks.remove(job.id());
+                try {
+                    jobs.cancel(job.id(), owner);
+                } catch (RuntimeException ignored) {
+                    // schon beendet oder gelöscht
+                }
+            }
+            throw e;
+        }
+    }
+
+    private JobStatus remember(JobStatus status, JobTask task, List<JobStatus> submitted) {
+        submitted.add(status);
+        tasks.put(status.id(), task);
+        return status;
+    }
+
+    /**
+     * Setzt einen Auftrag des Vorgangs im selben Eintrag fort (ADR 0025): angehalten, abgebrochen oder gescheitert wie
+     * jeder Auftrag, fertig mit Fehlern („Nur Fehler neu versuchen“) mit derselben Arbeit; sie fragt nur, was fehlt.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wenn sich die Arbeit nach einem
+     *                                                                                Neustart nicht wiederherstellen
+     *                                                                                lässt (ohne Seite, Datei oder
+     *                                                                                mit Endnutzer-Anmeldung)
+     */
+    public JobStatus resume(String jobId, String owner) {
+        if (jobs.resumable(jobId, owner)) {
+            return jobs.resume(jobId, owner);
+        }
+        // Nach einem Neustart der App kennt sie die Arbeit nicht mehr: aus den Angaben des Auftrags neu bauen, wie
+        // die Aufträge des Core (Angelo 20.11.2026). Jeder Schritt fragt nur, was fehlt.
+        JobTask task = tasks.computeIfAbsent(jobId, id -> rebuild(jobs.status(id, owner)));
+        return jobs.rerun(jobId, owner, task);
+    }
+
+    /**
+     * Wer die Videos eines Vorgangs nach einem Neustart liefert; die App setzt das beim Start. Ohne zählt nur
+     * Abgelegtes ({@link VideoMedia#NONE}).
+     */
+    @FunctionalInterface
+    public interface MediaSource {
+        VideoMedia open(String sourceId, String pageId) throws Exception;
+    }
+
+    private volatile MediaSource media = (sourceId, pageId) -> VideoMedia.NONE;
+
+    /** Setzt, wer nach einem Neustart die Videos liefert ({@link #resume}). */
+    public void mediaSource(MediaSource source) {
+        this.media = Objects.requireNonNull(source, "source");
+    }
+
+    /** Die Arbeit eines Auftrags aus seinen Angaben, für Aufträge aus der Zeit vor dem letzten Neustart. */
+    JobTask rebuild(JobStatus status) {
+        String jobId = status.id();
+        String sourceId = status.sourceId();
+        String pageId = status.parameter(PAGE_PARAMETER);
+        if (pageId == null) {
+            throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                    "der Auftrag kennt sein Video nicht mehr; „In PPTX umwandeln“ neu starten, es fragt nur, was fehlt");
+        }
+        AccessContext caller = caller(status.owner()).orElseThrow(() ->
+                new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                        "die Anmeldung des Auftraggebers ist nach dem Neustart nicht mehr da; „In PPTX umwandeln“ neu "
+                                + "starten, es fragt nur, was fehlt"));
+        Format format = Format.parse(status.parameter(FORMAT_PARAMETER));
+        Options options = options(format);
+        MediaSource source = media;
+        // Aufträge von vor dieser Angabe kennen ihr Original nicht: sie nehmen das gewählte.
+        String whisper = status.parameter(WHISPER_PARAMETER);
+        return switch (status.type()) {
+            case VIDEO_TRANSCRIPT -> JobTask.blocking(context -> transcribe(caller, sourceId, pageId,
+                    source.open(sourceId, pageId), whisper, context));
+            case VIDEO_SLIDES -> JobTask.blocking(context -> describeSlides(caller, sourceId, pageId,
+                    source.open(sourceId, pageId), options, context));
+            case TRANSCRIPT_CORRECTION -> JobTask.blocking(context -> correct(caller, sourceId, pageId, whisper,
+                    options, context));
+            case SLIDE_NOTES -> JobTask.blocking(context -> writeNotes(caller, sourceId, pageId, whisper, options,
+                    context));
+            case PRESENTATION_EXPORT -> {
+                String file = status.parameter(FILE_PARAMETER);
+                if (file == null) {
+                    throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                            "der Auftrag kennt seine Datei nicht mehr; „In PPTX umwandeln“ neu starten");
+                }
+                Path target = Path.of(file);
+                yield JobTask.blocking(context -> writeFile(caller, sourceId, pageId, target, format, context));
+            }
+            default -> throw new com.aresstack.spaceharvester.application.jobs.JobNotResumableException(jobId,
+                    "kein Auftrag von „In PPTX umwandeln“");
+        };
+    }
+
+    /**
+     * Der Aufrufer zu einem Auftraggeber ({@link AccessContext#jobOwner()}): ein technischer Client lässt sich aus
+     * seiner Kennung wiederherstellen, ein Endnutzer nicht (seine Anmeldung lebt nur in der Sitzung).
+     */
+    static Optional<AccessContext> caller(String owner) {
+        String prefix = AccessContext.PrincipalKind.TECHNICAL_CLIENT.name() + ":";
+        if (owner == null || !owner.startsWith(prefix) || owner.length() == prefix.length()) {
+            return Optional.empty();
+        }
+        AccessContext caller = AccessContext.technicalClient(owner.substring(prefix.length()));
+        return caller.jobOwner().equals(owner) ? Optional.of(caller) : Optional.empty();
+    }
+
+    /**
+     * Die Datei eines fertigen Auftrags „PPTX erzeugen“; leer, solange sie nicht geschrieben ist.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException wenn der Auftrag nicht diesem
+     *                                                                           Auftraggeber gehört
+     */
+    public Optional<Path> file(String jobId, String owner) {
+        JobStatus status = jobs.status(jobId, owner);
+        if (status.type() != JobType.PRESENTATION_EXPORT || status.state() != JobState.COMPLETED) {
+            return Optional.empty();
+        }
+        String file = status.parameters().get(FILE_PARAMETER);
+        return file == null ? Optional.empty() : Optional.of(Path.of(file)).filter(Files::isRegularFile);
+    }
+
+    /**
+     * Nimmt die Modelltexte der Seiten zurück, die jetzt nicht mehr an den KI-Dienst dürfen (ADR 0028); die erzeugten
+     * Dateien bleiben, sie gehören dem Benutzer.
+     */
+    public void withdraw(java.util.Collection<PageKey> pages, Predicate<PageKey> stillReleased) {
+        for (PageKey page : pages) {
+            if (!stillReleased.test(page) && store.has(page)) {
+                store.remove(page);
+            }
+        }
+    }
+
+    // --- 1. Transkript ziehen -------------------------------------------------------------------------------------
+
+    void transcribe(AccessContext caller, String sourceId, String pageId, VideoMedia media,
+                            JobContext context) throws Exception {
+        transcribe(caller, sourceId, pageId, media, null, context);
+    }
+
+    /**
+     * Zieht das Transkript in das Original {@code runWhisper}, auf dem der Vorgang arbeitet; {@code null}: das gewählte,
+     * ohne eines das Modell der App.
+     */
+    void transcribe(AccessContext caller, String sourceId, String pageId, VideoMedia media, String runWhisper,
+                    JobContext context) throws Exception {
+        context.phase(COMPONENT, "Transkript");
+        PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
+        context.rootTitle(snapshot.metadata().title());
+        String version = snapshot.revision();
+        String name = transcriptName(snapshot.metadata().title());
+        // Das gewählte Original wird wiederverwendet und nur verlängert, mit seinem Whisper-Modell (ein älteres ohne
+        // Modell mit dem der App); ohne Original transkribiert die App mit ihrem Modell neu (Angelo 20.11.2026).
+        String whisper = runWhisper != null ? runWhisper : assets.chosenVideoTranscript(sourceId, pageId, version)
+                .map(Assets.TranscriptOriginal::whisper).orElse(media.whisper());
+        String existing = assets.videoTranscript(sourceId, pageId, version, whisper).orElse(null);
+        VideoMedia transcribing = whisper.isEmpty() ? media : media.withWhisper(whisper);
+        TranscriptProgress progress = new TranscriptProgress(context);
+        String text = transcribing.transcribe(existing, partial -> {
+            if (extendsTranscript(partial, existing)) {
+                assets.putVideoTranscript(sourceId, pageId, version, whisper, name, partial);
+            }
+        }, progress, context::cancelRequested);
+        context.checkpoint();
+        if (text == null || TranscriptSections.parse(text).isEmpty()) {
+            throw new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript, und die App konnte "
+                    + "keines erzeugen.");
+        }
+        // Das vorhandene Transkript wird nur verlängert, nie durch ein kürzeres ersetzt (Angelo 20.11.2026).
+        if (!text.equals(existing) && extendsTranscript(text, existing)) {
+            assets.putVideoTranscript(sourceId, pageId, version, whisper, name, text);
+        }
+        progress.finish();
+    }
+
+    /**
+     * Ob {@code candidate} das vorhandene Transkript fortsetzt statt es zu ersetzen: Es beginnt mit dessen fertigem Teil
+     * und reicht mindestens so weit.
+     */
+    static boolean extendsTranscript(String candidate, String existing) {
+        if (candidate == null || candidate.isBlank()) {
+            return false;
+        }
+        if (existing == null || existing.isBlank()) {
+            return true;
+        }
+        String kept = TranscriptSections.completedPart(existing).strip();
+        return candidate.strip().startsWith(kept)
+                && TranscriptSections.reach(candidate) >= TranscriptSections.reach(existing);
+    }
+
+    /**
+     * Der Fortschritt von „Transkript ziehen“ in Sekunden Video: bekannt ist die Länge, erreicht die Zeit, bis zu der
+     * das Transkript reicht. Ohne bekannte Länge ein Transkript.
+     */
+    private static final class TranscriptProgress implements VideoMedia.Progress {
+
+        private final JobContext context;
+        private final AtomicLong total = new AtomicLong();
+        private final AtomicLong done = new AtomicLong();
+
+        TranscriptProgress(JobContext context) {
+            this.context = context;
+        }
+
+        @Override
+        public void duration(long millis) {
+            long seconds = Math.max(1, millis / 1000);
+            if (millis > 0 && total.compareAndSet(0, seconds)) {
+                context.discovered(seconds);
+            }
+        }
+
+        @Override
+        public void reached(long millis) {
+            long known = total.get();
+            if (known == 0) {
+                return;
+            }
+            long seconds = Math.min(known, Math.max(0, millis / 1000));
+            long before = done.getAndAccumulate(seconds, Math::max);
+            if (seconds > before) {
+                context.processed(seconds - before);
+            }
+        }
+
+        void finish() {
+            long known = total.get();
+            if (known == 0) {
+                context.discovered(1);
+                context.processed(1);
+                context.written(1);
+                return;
+            }
+            long before = done.getAndSet(known);
+            if (known > before) {
+                context.processed(known - before);
+            }
+            context.written(known);
+        }
+    }
+
+    // --- 2. Folien beschreiben ------------------------------------------------------------------------------------
+
+    private void describeSlides(AccessContext caller, String sourceId, String pageId, VideoMedia media,
+                                Options options, JobContext context) throws Exception {
+        context.phase(COMPONENT, "Standbilder");
+        PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
+        context.rootTitle(snapshot.metadata().title());
+        PageKey key = snapshot.key();
+        String version = snapshot.revision();
+        List<Long> marks = slides.find(key, version);
+        List<Long> missing = assets.missingVideoFrames(sourceId, pageId, version, marks);
+        if (!missing.isEmpty()) {
+            media.frames(missing, (millis, png) -> {
+                if (png != null && png.length > 0) {
+                    assets.putVideoFrame(sourceId, pageId, version, new Assets.VideoFrame(millis, png));
+                }
+            }, context::cancelRequested);
+            context.checkpoint();
+            // Ein neues Standbild kann eine Marke als Wiederholung derselben Folie entfallen lassen.
+            marks = slides.find(key, version);
+        }
+        int limit = assets.slideThresholds().maxFrames();
+        List<Long> slideMarks = marks.size() > limit ? marks.subList(0, limit) : marks;
+        context.discovered(slideMarks.size());
+        context.phase(COMPONENT, "Folien beschreiben");
+        Map<String, ImagePayload.Entry> known = new HashMap<>();
+        for (ImagePayload.Entry entry : images.read(snapshot).images()) {
+            if (entry.assetId() != null) {
+                known.putIfAbsent(entry.assetId(), entry);
+            }
+        }
+        List<Integer> open = new ArrayList<>();
+        long withoutFrame = 0;
+        for (int index = 0; index < slideMarks.size(); index++) {
+            long millis = slideMarks.get(index);
+            Optional<Asset> frame = assets.videoFrameAsset(sourceId, pageId, version, millis);
+            ImagePayload.Entry entry = known.get(Assets.markAttachmentId(pageId, millis));
+            if (frame.isEmpty()) {
+                // Ohne Standbild keine Folie in der Datei.
+                context.processed(1);
+                context.failed(1);
+                withoutFrame++;
+                slideFailed(context, millis, "not-ready");
+            } else if (entry != null && entry.status() == ImageStatus.DESCRIBED && entry.description() != null
+                    && Objects.equals(entry.sha256(), frame.get().sha256())) {
+                context.processed(1);
+                context.written(1);
+            } else {
+                open.add(index);
+            }
+        }
+        AtomicLong failed = new AtomicLong(withoutFrame);
+        // Nie mehr zugleich, als die Bildbeschreibung annimmt: Ein weiterer Aufruf käme sofort als „belegt“ zurück.
+        int parallel = Math.min(options.parallel(),
+                assets.describerInUse().map(ImageDescriber::parallel).orElse(Assets.MAX_CONCURRENT_DESCRIPTIONS));
+        Map<Integer, ImagePayload.Entry> retry = new java.util.concurrent.ConcurrentHashMap<>();
+        inParallel(open, parallel, context, index -> {
+            ImagePayload.Entry entry = describeSlide(snapshot, pageId, slideMarks, index, context);
+            if (entry != null && entry.status() == ImageStatus.DESCRIBED) {
+                context.processed(1);
+                context.written(1);
+            } else {
+                retry.put(index, entry == null ? missingEntry() : entry);
+            }
+        });
+        // Nachzügler einzeln: Laufen zwei Anfragen und Whisper zugleich, braucht ein lokales Modell oft länger als die
+        // Lesefrist; allein bekommt jede Folie das Modell für sich (Angelo 20.11.2026).
+        List<Integer> late = retry.entrySet().stream()
+                .filter(failure -> PageImageAnalysis.modelFailure(failure.getValue().reason()))
+                .map(Map.Entry::getKey).sorted().toList();
+        inParallel(late, 1, context, index -> {
+            ImagePayload.Entry entry = describeSlide(snapshot, pageId, slideMarks, index, context);
+            if (entry != null) {
+                retry.put(index, entry);
+            }
+        });
+        retry.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(failure -> {
+            context.processed(1);
+            if (failure.getValue().status() == ImageStatus.DESCRIBED) {
+                context.written(1);
+            } else {
+                context.failed(1);
+                failed.incrementAndGet();
+                slideFailed(context, slideMarks.get(failure.getKey()), failure.getValue().reason());
+            }
+        });
+        if (failed.get() > 0) {
+            context.incomplete();
+        }
+    }
+
+    /**
+     * Beschreibt eine Folie; ist die Bildbeschreibung belegt (etwa von „Analysen › Bilder“ zugleich), kurz warten und
+     * dieselbe Folie erneut. Ihr Eintrag im Ergebnis, {@code null} ohne.
+     */
+    private ImagePayload.Entry describeSlide(PageSnapshot snapshot, String pageId, List<Long> slideMarks, int index,
+                                             JobContext context) {
+        String id = Assets.markAttachmentId(pageId, slideMarks.get(index));
+        ImagePayload.Entry entry = null;
+        for (int attempt = 0; ; attempt++) {
+            PageImages result = images.describeOne(snapshot, index, false, false);
+            entry = result.images().stream().filter(found -> id.equals(found.assetId())).findFirst().orElse(null);
+            if (entry == null || !BUSY.equals(entry.reason()) || attempt >= BUSY_ATTEMPTS || !pause(context)) {
+                return entry;
+            }
+        }
+    }
+
+    /** Eine Folie ohne Eintrag im Ergebnis: ohne Standbild. */
+    private static ImagePayload.Entry missingEntry() {
+        return ImagePayload.Entry.without(0, null, null, null, null, null, ImageStatus.PENDING, "not-ready");
+    }
+
+    /** Grund einer Folie, die die Bildbeschreibung gerade nicht annimmt. */
+    private static final String BUSY = "model-busy";
+    /** So oft wird eine belegte Folie erneut versucht, je nach {@link #BUSY_WAIT_MILLIS}. */
+    static final int BUSY_ATTEMPTS = 40;
+    static final long BUSY_WAIT_MILLIS = 3_000;
+
+    /** Wartet vor einem neuen Versuch; {@code false} nach Abbruch oder Anhalten. */
+    private static boolean pause(JobContext context) {
+        if (context.cancelRequested()) {
+            return false;
+        }
+        try {
+            Thread.sleep(BUSY_WAIT_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return !context.cancelRequested();
+    }
+
+    /** Hält im Auftrag fest, welche Folie warum ohne Beschreibung blieb. */
+    private static void slideFailed(JobContext context, long millis, String reason) {
+        context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, "SLIDE_NOT_DESCRIBED",
+                "Folie " + TranscriptSections.clock(millis) + " nicht beschrieben: " + slideReason(reason)));
+    }
+
+    /** Der Grund einer nicht beschriebenen Folie in Worten. */
+    static String slideReason(String reason) {
+        if (reason == null) {
+            return "unbekannter Grund";
+        }
+        return switch (reason) {
+            case "not-ready" -> "kein Standbild gezogen";
+            case BUSY -> "die Bildbeschreibung war die ganze Zeit belegt";
+            case PageImageAnalysis.MODEL_TIMEOUT -> "das Vision-Modell hat innerhalb der Frist je Anfrage nicht "
+                    + "geantwortet (ai.timeout, Standard 30 s)";
+            case PageImageAnalysis.MODEL_EMPTY -> "das Vision-Modell hat leer geantwortet";
+            case PageImageAnalysis.MODEL_UNREACHABLE -> "der KI-Dienst war nicht erreichbar";
+            case PageImageAnalysis.MODEL_FAILED -> "das Vision-Modell hat keine verwertbare Antwort geliefert";
+            case "too-large" -> "das Standbild ist zu groß";
+            default -> reason;
+        };
+    }
+
+    // --- 3. Transkript korrigieren --------------------------------------------------------------------------------
+
+    private void correct(AccessContext caller, String sourceId, String pageId, String runWhisper, Options options,
+                         JobContext context) {
+        context.phase(COMPONENT, "Transkript korrigieren");
+        PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
+        context.rootTitle(snapshot.metadata().title());
+        PageKey key = snapshot.key();
+        String version = snapshot.revision();
+        requireReleased(key);
+        if (!textModel.available()) {
+            throw new JobFailedException("NO_TEXT_MODEL", "Für „Transkript korrigieren“ ist kein Text-Modell "
+                    + "(Chat-Modell) eingestellt.");
+        }
+        // Korrigiert wird das Original des Vorgangs (Angelo 20.11.2026: Auswahl je Whisper-Modell).
+        Assets.TranscriptOriginal original = original(sourceId, pageId, version, runWhisper).orElseThrow(() ->
+                new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript."));
+        String transcript = assets.videoTranscript(sourceId, pageId, version, original.whisper()).orElseThrow(() ->
+                new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript."));
+        List<TranscriptSections.Section> sections = TranscriptSections.parse(transcript);
+        Map<Long, String> descriptions = slideDescriptions(snapshot);
+        List<Long> marks = new ArrayList<>(descriptions.keySet());
+        String model = CORRECTION_VERSION + "|" + textModel.version();
+        String input = Assets.sha256((model + "\n" + transcript + "\n" + descriptions)
+                .getBytes(StandardCharsets.UTF_8));
+        // Die Korrektur liegt als Ergänzung neben dem Transkript, je Modell eine (Angelo, 20.11.2026).
+        Optional<Assets.TranscriptCorrection> stored = assets.videoTranscriptCorrection(sourceId, pageId, version,
+                original.whisper(), model);
+        List<List<TranscriptSections.Section>> chunks = TranscriptSections.chunks(sections, CORRECTION_CHUNK_CHARS);
+        context.discovered(chunks.size());
+        if (stored.isPresent() && stored.get().complete() && stored.get().input().equals(input)) {
+            context.processed(chunks.size());
+            context.written(chunks.size());
+            return;
+        }
+        List<List<TranscriptSections.Section>> corrected = new ArrayList<>(chunks);
+        AtomicLong failed = new AtomicLong();
+        List<Integer> indices = new ArrayList<>();
+        for (int i = 0; i < chunks.size(); i++) {
+            indices.add(i);
+        }
+        Map<Integer, String> reasons = new java.util.concurrent.ConcurrentHashMap<>();
+        Consumer<Integer> attempt = index -> {
+            Outcome<List<TranscriptSections.Section>> outcome = call(retries(), context, key, () -> {
+                String answer = textModel.complete(CORRECTION_INSTRUCTIONS,
+                        correctionInput(chunks.get(index), descriptions, marks));
+                if (answer == null || answer.isBlank()) {
+                    return Outcome.failed("das Text-Modell hat leer geantwortet");
+                }
+                List<TranscriptSections.Section> result = acceptCorrection(chunks.get(index), answer);
+                return result == null ? Outcome.failed("die Antwort hatte nicht dieselben Abschnitte und Zeitmarken")
+                        : Outcome.of(result);
+            });
+            if (outcome.value() != null) {
+                synchronized (corrected) {
+                    corrected.set(index, outcome.value());
+                }
+                reasons.remove(index);
+            } else {
+                reasons.put(index, outcome.reason());
+            }
+        };
+        inParallel(indices, options.parallel(), context, index -> {
+            attempt.accept(index);
+            if (!reasons.containsKey(index)) {
+                context.processed(1);
+                context.written(1);
+            }
+        });
+        // Nachzügler einzeln, wie bei „Folien beschreiben“: allein bekommt jedes Paket das Modell für sich.
+        List<Integer> late = reasons.keySet().stream().sorted().toList();
+        inParallel(late, 1, context, attempt);
+        for (int index : late) {
+            context.processed(1);
+            String reason = reasons.get(index);
+            if (reason == null) {
+                context.written(1);
+            } else {
+                context.failed(1);
+                failed.incrementAndGet();
+                List<TranscriptSections.Section> chunk = chunks.get(index);
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, "CORRECTION_FAILED",
+                        "Transkriptpaket " + (index + 1) + " von " + chunks.size() + " ("
+                                + TranscriptSections.clock(chunk.get(0).startMillis()) + "–"
+                                + TranscriptSections.clock(chunk.get(chunk.size() - 1).endMillis())
+                                + ") nicht korrigiert: " + reason));
+            }
+        }
+        requireReleased(key);
+        List<TranscriptSections.Section> all = new ArrayList<>();
+        corrected.forEach(all::addAll);
+        // Gescheiterte Pakete bleiben unkorrigiert stehen; ein neuer Lauf fragt dann alles erneut.
+        String label = "Korrektur " + modelName(textModel.version());
+        assets.putVideoTranscriptCorrection(sourceId, pageId, version,
+                baseName(snapshot.metadata().title()) + " – Transkript ("
+                        + (original.whisper().isEmpty() ? "" : "Whisper " + original.whisper() + ", ") + label + ").txt",
+                new Assets.TranscriptCorrection(null, label, model, input, failed.get() == 0, original.whisper()),
+                TranscriptSections.render(all));
+        if (failed.get() > 0) {
+            context.incomplete();
+        }
+    }
+
+    /** Folien, deren Zeit sich mit dem Paket überschneidet, mit ihrer Beschreibung, dann das Paket. */
+    static String correctionInput(List<TranscriptSections.Section> chunk, Map<Long, String> descriptions,
+                                  List<Long> marks) {
+        long from = chunk.get(0).startMillis();
+        long to = Math.max(chunk.get(chunk.size() - 1).endMillis(), chunk.get(chunk.size() - 1).startMillis()) + 1;
+        StringBuilder input = new StringBuilder("Folien:\n");
+        boolean any = false;
+        for (int i = 0; i < marks.size(); i++) {
+            long start = marks.get(i);
+            long end = i + 1 < marks.size() ? marks.get(i + 1) : Long.MAX_VALUE;
+            if (start < to && end > from) {
+                input.append('[').append(TranscriptSections.clock(start)).append("] ")
+                        .append(descriptions.get(start).strip()).append('\n');
+                any = true;
+            }
+        }
+        if (!any) {
+            input.append("(keine)\n");
+        }
+        input.append("\nTranskript:\n").append(TranscriptSections.render(chunk));
+        return input.toString();
+    }
+
+    /**
+     * Die Antwort des Modells, wenn sie dieselben Abschnitte mit denselben Anfängen trägt; ein einzelner Abschnitt
+     * darf ohne Zeitangabe zurückkommen. Sonst {@code null}: das Paket bleibt, wie es war.
+     */
+    static List<TranscriptSections.Section> acceptCorrection(List<TranscriptSections.Section> chunk, String answer) {
+        if (answer == null || answer.isBlank()) {
+            return null;
+        }
+        List<TranscriptSections.Section> parsed = TranscriptSections.parse(answer.strip());
+        if (parsed.size() == 1 && chunk.size() == 1 && parsed.get(0).startMillis() == 0
+                && !answer.strip().startsWith("[")) {
+            TranscriptSections.Section only = chunk.get(0);
+            return List.of(new TranscriptSections.Section(only.startMillis(), only.endMillis(),
+                    parsed.get(0).text()));
+        }
+        if (parsed.size() != chunk.size()) {
+            return null;
+        }
+        List<TranscriptSections.Section> result = new ArrayList<>(chunk.size());
+        for (int i = 0; i < chunk.size(); i++) {
+            TranscriptSections.Section original = chunk.get(i);
+            TranscriptSections.Section answered = parsed.get(i);
+            if (answered.startMillis() / 1000 != original.startMillis() / 1000) {
+                return null;
+            }
+            result.add(new TranscriptSections.Section(original.startMillis(), original.endMillis(), answered.text()));
+        }
+        return result;
+    }
+
+    // --- 4. Folienkommentare --------------------------------------------------------------------------------------
+
+    private void writeNotes(AccessContext caller, String sourceId, String pageId, String runWhisper,
+                            Options options, JobContext context) {
+        context.phase(COMPONENT, "Folienkommentare");
+        PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
+        context.rootTitle(snapshot.metadata().title());
+        PageKey key = snapshot.key();
+        String version = snapshot.revision();
+        requireReleased(key);
+        ImageDescriber vision = assets.describerInUse().orElseThrow(() -> new JobFailedException("NO_VISION_MODEL",
+                "Für „Folienkommentare“ ist kein Vision-Modell eingestellt."));
+        List<TranscriptSections.Section> sections = TranscriptSections.parse(transcriptFor(key, version,
+                runWhisper));
+        List<Long> marks = slideMarks(key, version);
+        context.discovered(marks.size());
+        String model = NOTES_VERSION + "|" + vision.id() + "|" + vision.modelVersion();
+        // Die Kommentare liegen an den virtuellen Marken, je Modell einer (Angelo, 20.11.2026).
+        Map<Long, Assets.SlideNote> stored = new HashMap<>();
+        for (Assets.SlideNote note : assets.videoSlideNotes(sourceId, pageId, version)) {
+            if (note.model().equals(model)) {
+                stored.put(note.millis(), note);
+            }
+        }
+        String label = "Kommentar " + vision.modelVersion();
+        List<Integer> open = new ArrayList<>();
+        Map<Integer, String> inputs = new HashMap<>();
+        Map<Integer, Assets.AssetContent> frames = new HashMap<>();
+        long missingFrames = 0;
+        for (int i = 0; i < marks.size(); i++) {
+            long millis = marks.get(i);
+            Optional<Assets.AssetContent> frame = assets.videoFrame(sourceId, pageId, version, millis);
+            if (frame.isEmpty()) {
+                context.processed(1);
+                context.failed(1);
+                missingFrames++;
+                continue;
+            }
+            String excerpt = excerpt(sections, millis, i + 1 < marks.size() ? marks.get(i + 1) : Long.MAX_VALUE);
+            String input = Assets.sha256((model + "\n" + frame.get().asset().sha256() + "\n" + excerpt)
+                    .getBytes(StandardCharsets.UTF_8));
+            Assets.SlideNote note = stored.get(millis);
+            if (note != null && note.input().equals(input)) {
+                context.processed(1);
+                context.written(1);
+                continue;
+            }
+            if (note != null) {
+                // Veraltet (anderes Standbild, Transkript oder Modell): fällt weg, damit die Datei ihn nie zeigt,
+                // auch wenn der neue Text scheitert.
+                assets.removeVideoSlideNote(sourceId, pageId, version, millis, model);
+            }
+            open.add(i);
+            inputs.put(i, excerpt + "\u0000" + input);
+            frames.put(i, frame.get());
+        }
+        AtomicLong failed = new AtomicLong(missingFrames);
+        Map<Integer, String> reasons = new java.util.concurrent.ConcurrentHashMap<>();
+        Consumer<Integer> attempt = index -> {
+            long millis = marks.get(index);
+            String[] parts = inputs.get(index).split("\u0000", 2);
+            String instruction = NOTES_INSTRUCTIONS + "\n\nGesagt:\n"
+                    + (parts[0].isBlank() ? "(Während dieser Folie wurde nichts gesagt.)" : parts[0]);
+            byte[] png = frames.get(index).content();
+            Outcome<String> outcome = call(vision.retries(), context, key, () -> {
+                String answer = vision.describe(png, "image/png", instruction);
+                return answer == null || answer.isBlank() ? Outcome.failed("das Vision-Modell hat leer geantwortet")
+                        : Outcome.of(answer.strip());
+            });
+            if (outcome.value() != null && released.test(key)) {
+                assets.putVideoSlideNote(sourceId, pageId, version,
+                        new Assets.SlideNote(millis, null, label, model, parts[1]), outcome.value());
+                reasons.remove(index);
+            } else {
+                reasons.put(index, outcome.value() != null ? "die Seite ist nicht mehr für den KI-Dienst freigegeben"
+                        : outcome.reason() + " (" + imageFacts(png) + ", Prompt " + instruction.length()
+                        + " Zeichen)");
+            }
+        };
+        inParallel(open, options.parallel(), context, index -> {
+            attempt.accept(index);
+            if (!reasons.containsKey(index)) {
+                context.processed(1);
+                context.written(1);
+            }
+        });
+        // Nachzügler einzeln, wie bei „Folien beschreiben“ (Angelo 20.11.2026: Folie 00:05:00 scheiterte zweimal).
+        List<Integer> late = reasons.keySet().stream().sorted().toList();
+        inParallel(late, 1, context, attempt);
+        for (int index : late) {
+            context.processed(1);
+            String reason = reasons.get(index);
+            if (reason == null) {
+                context.written(1);
+            } else {
+                context.failed(1);
+                failed.incrementAndGet();
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, "SLIDE_NOTE_MISSING",
+                        "Kein Vortragstext für Folie " + TranscriptSections.clock(marks.get(index)) + ": " + reason));
+            }
+        }
+        requireReleased(key);
+        if (failed.get() > 0) {
+            context.incomplete();
+        }
+    }
+
+    /** Der Transkriptauszug zur Zeit einer Folie, höchstens {@link #NOTES_EXCERPT_CHARS} Zeichen. */
+    static String excerpt(List<TranscriptSections.Section> sections, long from, long to) {
+        String text = TranscriptSections.render(TranscriptSections.between(sections, from, to)).strip();
+        return text.length() <= NOTES_EXCERPT_CHARS ? text : text.substring(0, NOTES_EXCERPT_CHARS) + " …";
+    }
+
+    // --- 5. PPTX erzeugen -----------------------------------------------------------------------------------------
+
+    private void writeFile(AccessContext caller, String sourceId, String pageId, Path file, Format format,
+                           JobContext context) throws IOException {
+        context.phase(COMPONENT, format.label() + " erzeugen");
+        PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
+        context.rootTitle(snapshot.metadata().title());
+        PageKey key = snapshot.key();
+        String version = snapshot.revision();
+        List<Long> marks = slideMarks(key, version);
+        context.discovered(marks.size());
+        // Je Folie der Kommentar des eingestellten Vision-Modells, sonst der zuletzt abgelegte eines anderen.
+        String noteModel = assets.describerInUse().map(vision -> NOTES_VERSION + "|" + vision.id() + "|"
+                + vision.modelVersion()).orElse(null);
+        Map<Long, String> notes = new HashMap<>();
+        for (Assets.SlideNote note : assets.videoSlideNotes(sourceId, pageId, version)) {
+            if (notes.containsKey(note.millis()) && !note.model().equals(noteModel)) {
+                continue;
+            }
+            assets.videoSlideNoteText(sourceId, pageId, version, note.attachmentId())
+                    .ifPresent(text -> notes.put(note.millis(), text));
+        }
+        List<PptxExportWriter.Slide> content = new ArrayList<>();
+        boolean incomplete = false;
+        for (long millis : marks) {
+            context.checkpoint();
+            Optional<Assets.AssetContent> frame = assets.videoFrame(sourceId, pageId, version, millis);
+            context.processed(1);
+            if (frame.isEmpty()) {
+                context.failed(1);
+                incomplete = true;
+                continue;
+            }
+            String note = notes.get(millis);
+            incomplete |= note == null;
+            content.add(new PptxExportWriter.Slide(frame.get().content(), Assets.markTitle(millis), note));
+            context.written(1);
+        }
+        if (content.isEmpty()) {
+            throw new JobFailedException("NO_SLIDES", "Keine Folie hat ein Standbild; es wurde keine Datei erzeugt.");
+        }
+        Files.createDirectories(file.getParent());
+        // Je Lauf eine eigene Teildatei: zwei Läufe desselben Videos überschreiben sich nie halb.
+        Path partial = Files.createTempFile(file.getParent(), "presentation-", ".part");
+        try {
+            try (OutputStream out = Files.newOutputStream(partial)) {
+                if (format == Format.PDF) {
+                    new com.aresstack.spaceharvester.document.PdfSlidesWriter().write(content, out);
+                } else {
+                    new PptxExportWriter().write(content, out);
+                }
+            }
+            Files.move(partial, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } finally {
+            Files.deleteIfExists(partial);
+        }
+        if (incomplete) {
+            context.incomplete();
+        }
+    }
+
+    // --- gemeinsam ------------------------------------------------------------------------------------------------
+
+    /** Die Folien mit ihrer Position, höchstens so viele, wie ein Video Marken haben darf. */
+    private List<Long> slideMarks(PageKey key, String version) {
+        List<Long> marks = slides.find(key, version);
+        int limit = assets.slideThresholds().maxFrames();
+        return marks.size() > limit ? marks.subList(0, limit) : marks;
+    }
+
+    /** Das Modell aus der Kennung eines Schritts ({@code id:modell@fingerabdruck}), etwa {@code gemma4:12b}. */
+    static String modelName(String version) {
+        int start = version.indexOf(':');
+        int end = version.lastIndexOf('@');
+        return start >= 0 && end > start ? version.substring(start + 1, end) : version;
+    }
+
+    /**
+     * Das Original {@code whisper} eines Vorgangs, {@code null}: das gewählte.
+     */
+    private Optional<Assets.TranscriptOriginal> original(String sourceId, String pageId, String version,
+                                                         String whisper) {
+        if (whisper == null) {
+            return assets.chosenVideoTranscript(sourceId, pageId, version);
+        }
+        return assets.videoTranscriptOriginals(sourceId, pageId, version).stream()
+                .filter(original -> original.whisper().equals(whisper)).findFirst();
+    }
+
+    /** Die Korrektur des eingestellten Text-Modells am Original des Vorgangs, sonst dieses Original. */
+    private String transcriptFor(PageKey key, String version, String runWhisper) {
+        String model = CORRECTION_VERSION + "|" + textModel.version();
+        Assets.TranscriptOriginal original = original(key.sourceId(), key.pageId(), version, runWhisper)
+                .orElseThrow(() -> new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript."));
+        return assets.videoTranscriptCorrection(key.sourceId(), key.pageId(), version, original.whisper(), model)
+                .flatMap(correction -> assets.videoTranscriptText(key.sourceId(), key.pageId(), version,
+                        correction.attachmentId()))
+                .or(() -> assets.videoTranscript(key.sourceId(), key.pageId(), version, original.whisper()))
+                .orElseThrow(() -> new JobFailedException("NO_TRANSCRIPT", "Für dieses Video gibt es kein Transkript."));
+    }
+
+    /** Die Beschreibungen der Folien aus „Folien beschreiben“ je Position, in zeitlicher Reihenfolge. */
+    private Map<Long, String> slideDescriptions(PageSnapshot snapshot) {
+        Map<Long, String> descriptions = new java.util.TreeMap<>();
+        for (ImagePayload.Entry entry : images.read(snapshot).images()) {
+            if (entry.status() == ImageStatus.DESCRIBED && entry.description() != null
+                    && Assets.videoMark(entry.assetId())) {
+                descriptions.put(Assets.markMillis(entry.assetId()), entry.description());
+            }
+        }
+        return new LinkedHashMap<>(descriptions);
+    }
+
+    private void requireReleased(PageKey key) {
+        if (!released.test(key)) {
+            throw new JobFailedException("NOT_RELEASED", "Diese Seite ist nicht für den KI-Dienst freigegeben; was "
+                    + "schon fertig ist, bleibt.");
+        }
+    }
+
+    /** Ergebnis eines Modellaufrufs samt Versuchen: der Wert oder warum keiner kam. */
+    record Outcome<T>(T value, String reason) {
+
+        static <T> Outcome<T> of(T value) {
+            return new Outcome<>(value, null);
+        }
+
+        static <T> Outcome<T> failed(String reason) {
+            return new Outcome<>(null, reason);
+        }
+    }
+
+    /**
+     * Ruft das Modell bis zu {@code retries + 1} Mal, bis {@code once} einen Wert liefert. Ohne Wert der Grund des
+     * letzten Versuchs samt Zahl der Versuche und Dauer; Ausnahmen werden zu ihrem Grund ({@link #callFailure}).
+     */
+    private <T> Outcome<T> call(int retries, JobContext context, PageKey key,
+                                java.util.function.Supplier<Outcome<T>> once) {
+        return call(retries, context, () -> released.test(key), once);
+    }
+
+    /** Wie oben; {@code allowed} prüft vor jedem Versuch die KI-Freigabe. */
+    static <T> Outcome<T> call(int retries, JobContext context, java.util.function.BooleanSupplier allowed,
+                               java.util.function.Supplier<Outcome<T>> once) {
+        long started = System.nanoTime();
+        String reason = "abgebrochen";
+        int attempts = 0;
+        for (int attempt = 0; attempt <= retries && !context.cancelRequested() && allowed.getAsBoolean(); attempt++) {
+            attempts++;
+            try {
+                Outcome<T> outcome = once.get();
+                if (outcome.value() != null) {
+                    return outcome;
+                }
+                reason = outcome.reason();
+            } catch (RuntimeException e) {
+                reason = callFailure(e);
+                LOG.log(System.Logger.Level.DEBUG, "Modellaufruf gescheitert ({0})", e.getClass().getName());
+            }
+        }
+        if (attempts == 0) {
+            return Outcome.failed(context.cancelRequested() ? "abgebrochen"
+                    : "die Seite ist nicht für den KI-Dienst freigegeben");
+        }
+        long seconds = java.util.concurrent.TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - started);
+        return Outcome.failed(reason + "; " + attempts + (attempts == 1 ? " Versuch, " : " Versuche, ") + seconds
+                + " s");
+    }
+
+    /** Warum ein Modellaufruf scheiterte, in Worten; nennt nie Text, Antwort oder Schlüssel. */
+    static String callFailure(Throwable e) {
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (cause instanceof AiServiceException failure) {
+                return switch (failure.reason()) {
+                    case TIMEOUT -> "keine Antwort innerhalb der Frist (" + failure.getMessage() + ")";
+                    case UNREACHABLE -> "der KI-Dienst war nicht erreichbar (" + failure.getMessage() + ")";
+                    case UNAUTHORIZED -> "der KI-Dienst lehnt den Zugang ab";
+                    case NOT_CONFIGURED -> "kein Modell eingestellt";
+                    case INVALID_RESPONSE -> "unbrauchbare Antwort (" + failure.getMessage() + ")";
+                };
+            }
+        }
+        return "Fehler " + e.getClass().getSimpleName();
+    }
+
+    /** Größe und Maße eines PNG-Standbilds für die Meldung; ein leeres oder fremdes Bild sagt das. */
+    static String imageFacts(byte[] png) {
+        if (png == null || png.length == 0) {
+            return "Standbild leer";
+        }
+        String size = png.length >= 1024 ? (png.length / 1024) + " KiB" : png.length + " Bytes";
+        if (png.length >= 24 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G') {
+            int width = java.nio.ByteBuffer.wrap(png, 16, 4).getInt();
+            int height = java.nio.ByteBuffer.wrap(png, 20, 4).getInt();
+            return "Standbild " + width + "×" + height + ", " + size;
+        }
+        return "Standbild kein PNG, " + size;
+    }
+
+    private int retries() {
+        return assets.describerInUse().map(ImageDescriber::retries).orElse(1);
+    }
+
+    /**
+     * Führt {@code work} je Eintrag mit höchstens {@code parallel} Aufrufen zugleich aus. Nach Abbruch oder Anhalten
+     * beginnt kein neuer; laufende enden noch, und was sie liefern, bleibt.
+     */
+    static <T> void inParallel(List<T> items, int parallel, JobContext context, Consumer<T> work) {
+        if (items.isEmpty()) {
+            context.checkpoint();
+            return;
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(parallel, items.size()),
+                Thread.ofPlatform().daemon().name("video-presentation-", 0).factory());
+        try {
+            List<Future<?>> running = new ArrayList<>(items.size());
+            for (T item : items) {
+                running.add(pool.submit(() -> {
+                    if (!context.cancelRequested()) {
+                        work.accept(item);
+                    }
+                }));
+            }
+            for (Future<?> future : running) {
+                try {
+                    future.get();
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof RuntimeException runtime) {
+                        throw runtime;
+                    }
+                    throw new IllegalStateException(e.getCause());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new JobCancelledException(context.jobId());
+                }
+            }
+        } finally {
+            pool.shutdown();
+        }
+        context.checkpoint();
+    }
+
+    /** Der Dateiname der Präsentation nach dem Video, etwa {@code Vortrag.pptx}. */
+    static String fileName(String title) {
+        return fileName(title, Format.PPTX);
+    }
+
+    /** Wie {@link #fileName(String)} mit der Endung des Formats, etwa {@code Vortrag.pdf}. */
+    static String fileName(String title, Format format) {
+        return baseName(title) + "." + format.extension();
+    }
+
+    /** Der Dateiname des Transkripts nach dem Video, wie in der App, etwa {@code Vortrag – Transkript.txt}. */
+    static String transcriptName(String title) {
+        return baseName(title) + " – Transkript.txt";
+    }
+
+    private static String baseName(String title) {
+        String base = title == null || title.isBlank() ? "Video" : title.strip();
+        int dot = base.lastIndexOf('.');
+        if (dot > 0 && base.length() - dot <= 5) {
+            base = base.substring(0, dot);
+        }
+        base = base.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").strip();
+        if (base.length() > 100) {
+            base = base.substring(0, 100).strip();
+        }
+        return base.isEmpty() ? "Video" : base;
+    }
+
+    /** Ein Ordner je Seite, damit gleichnamige Videos verschiedener Seiten sich nicht überschreiben. */
+    /**
+     * Wie {@link #freeName}, aber auch nicht der Name eines Vorgangs, der seine Datei noch nicht geschrieben hat:
+     * zwei gleich benannte Videos, die gleichzeitig laufen, bekommen verschiedene Dateien.
+     */
+    private Path reserveName(Path directory, String name) {
+        synchronized (reservedFiles) {
+            Path file = freeName(directory, name, candidate -> reservedFiles.contains(candidate.normalize()));
+            reservedFiles.add(file.normalize());
+            return file;
+        }
+    }
+
+    /** {@code name} in {@code directory}, oder wie ein Browser {@code Name (2).pptx}, wenn die Datei schon da ist. */
+    static Path freeName(Path directory, String name) {
+        return freeName(directory, name, candidate -> false);
+    }
+
+    static Path freeName(Path directory, String name, Predicate<Path> taken) {
+        Path file = directory.resolve(name);
+        int dot = name.lastIndexOf('.');
+        String stem = dot > 0 ? name.substring(0, dot) : name;
+        String extension = dot > 0 ? name.substring(dot) : "";
+        for (int n = 2; (Files.exists(file) || taken.test(file)) && n < 1000; n++) {
+            file = directory.resolve(stem + " (" + n + ")" + extension);
+        }
+        return file;
+    }
+
+    private static String pageFolder(PageKey key) {
+        return Assets.sha256((key.sourceId() + "\n" + key.pageId()).getBytes(StandardCharsets.UTF_8))
+                .substring("sha256:".length(), "sha256:".length() + 12);
+    }
+}

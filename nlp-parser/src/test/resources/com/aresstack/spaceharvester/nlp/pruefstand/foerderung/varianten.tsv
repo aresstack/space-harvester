@@ -6,3 +6,4 @@ gezielt-hand	Vorstufe von Hand nur für die Sätze der Auswahl „nur wo nötig�
 gezielt-gemma4-12b	Vorstufe gemma4:12b nur für die Sätze der Auswahl „nur wo nötig“; PLAUSIBLE-Aussagen des Originals bleiben	gezielt:vorstufe-gemma4-12b
 immer-hand	Vorstufe von Hand für alle Sätze, zusammengeführt; PLAUSIBLE-Aussagen des Originals bleiben	immer:vorstufe-hand
 immer-gemma4-12b	Vorstufe gemma4:12b für alle Sätze, zusammengeführt; PLAUSIBLE-Aussagen des Originals bleiben	immer:vorstufe-gemma4-12b
+ki-gemma4-12b	Zweiter Analysator (Fahrplan A2): gemma4:12b über Ollama, Anweisung v1, Temperatur 0, Denken aus, Wortabgleich des Core (Angelos Rechner, 21.11.2026); Eingabe = Sätze des Pins „heute“	ki:

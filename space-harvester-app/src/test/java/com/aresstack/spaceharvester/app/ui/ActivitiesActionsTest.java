@@ -306,6 +306,60 @@ class ActivitiesActionsTest {
         assertThat(ActivitiesView.groupIcon(false, false, false)).isNull();
     }
 
+    /**
+     * Angelo 20.11.2026: Bei „In PPTX umwandeln“ ist „PPTX erzeugen“ der Oberschritt, darunter ausklappbar die übrigen
+     * vier Schritte desselben Laufs in ihrer Reihenfolge; ein anderer Lauf bleibt getrennt.
+     */
+    @Test
+    void thePresentationStepsAreGroupedUnderPptxErzeugen() {
+        JobStatus file = run("f1", JobType.PRESENTATION_EXPORT, "r1");
+        JobStatus notes = run("n1", JobType.SLIDE_NOTES, "r1");
+        JobStatus correction = run("c1", JobType.TRANSCRIPT_CORRECTION, "r1");
+        JobStatus slides = run("s1", JobType.VIDEO_SLIDES, "r1");
+        JobStatus transcript = run("t1", JobType.VIDEO_TRANSCRIPT, "r1");
+        JobStatus otherRun = run("t2", JobType.VIDEO_TRANSCRIPT, "r2");
+        List<JobStatus> jobs = List.of(file, notes, correction, slides, transcript, otherRun);
+
+        assertThat(ActivitiesView.grouped(jobs, java.util.Set.of())).extracting(JobStatus::id)
+                .containsExactly("f1", "t1", "s1", "c1", "n1", "t2");
+        assertThat(ActivitiesView.grouped(jobs, java.util.Set.of("f1"))).extracting(JobStatus::id)
+                .containsExactly("f1", "t2");
+    }
+
+    /** Angelo 20.11.2026: Im Detail von „PPTX erzeugen“ steht der Ordner der Datei, im Download der Ausgabeordner. */
+    @Test
+    void theDetailNamesTheFolderAJobWritesTo() {
+        java.nio.file.Path exports = java.nio.file.Path.of("ausgabe").toAbsolutePath();
+        java.nio.file.Path pptx = exports.resolve("praesentationen").resolve("KickOff.pptx");
+        JobStatus file = withParameters(run("f1", JobType.PRESENTATION_EXPORT, "r1"), Map.of(
+                com.aresstack.spaceharvester.application.presentation.VideoPresentations.FILE_PARAMETER,
+                pptx.toString()));
+
+        assertThat(ActivitiesView.outputDirectory(file, exports)).isEqualTo(pptx.getParent());
+        assertThat(ActivitiesView.outputDirectory(run("e1", JobType.EXPORT, "r1"), exports)).isEqualTo(exports);
+        assertThat(ActivitiesView.outputDirectory(run("t1", JobType.VIDEO_TRANSCRIPT, "r1"), exports)).isNull();
+        assertThat(ActivitiesView.outputDirectory(run("f2", JobType.PRESENTATION_EXPORT, "r2"), exports)).isNull();
+        java.nio.file.Path chosen = java.nio.file.Path.of("anderswo").toAbsolutePath();
+        for (JobType type : List.of(JobType.CONVERSION, JobType.METADATA_EXPORT, JobType.ANALYTICS_EXPORT)) {
+            assertThat(ActivitiesView.outputDirectory(withParameters(run("c1", type, "r3"),
+                    Map.of("directory", chosen.toString())), exports)).isEqualTo(chosen);
+            assertThat(ActivitiesView.outputDirectory(run("c2", type, "r4"), exports)).isEqualTo(exports);
+        }
+    }
+
+    private static JobStatus withParameters(JobStatus job, Map<String, String> parameters) {
+        return new JobStatus(job.id(), job.type(), "wiki", "OPS", "local", JobState.COMPLETED,
+                new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, null, null, parameters,
+                false, false, null);
+    }
+
+    private static JobStatus run(String id, JobType type, String run) {
+        return new JobStatus(id, type, "wiki", "OPS", "local", JobState.RUNNING, new JobProgress(0, 0, 0, 0), null,
+                false, Instant.EPOCH, null, null, null, null,
+                Map.of(com.aresstack.spaceharvester.application.presentation.VideoPresentations.RUN_PARAMETER, run),
+                false, false, null);
+    }
+
     /** Rückmeldung nach dem Ändern der Grenzen, mit Verbindungsbudget (Angelo 11.11.2026). */
     @Test
     void theFeedbackNamesTheConnectionBudget() {
@@ -446,6 +500,17 @@ class ActivitiesActionsTest {
     }
 
     /** @param pausing laufend mit angefordertem Anhalten (cancelRequested + pauseRequested) */
+    /** Der Besen löscht nur abgeschlossene Aufträge (Angelo 17.11.2026); angehaltene lassen sich fortsetzen. */
+    @Test
+    void theBroomOnlyCountsFinishedJobs() {
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.COMPLETED, false))).isTrue();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.FAILED, false))).isTrue();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.CANCELLED, false))).isTrue();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.PAUSED, false))).isFalse();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.RUNNING, false))).isFalse();
+        assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.QUEUED, false))).isFalse();
+    }
+
     private static JobStatus job(JobType type, JobState state, boolean pausing) {
         return new JobStatus("j1", type, "wiki", "OPS", "local", state, new JobProgress(0, 0, 0, 0),
                 state == JobState.FAILED ? new JobError("X", "kaputt") : null, pausing, Instant.EPOCH, null, null,

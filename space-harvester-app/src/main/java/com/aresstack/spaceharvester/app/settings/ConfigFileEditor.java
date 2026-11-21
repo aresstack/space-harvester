@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.settings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
+import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
@@ -381,6 +382,64 @@ public final class ConfigFileEditor {
     }
 
     /**
+     * Der Entwurf {@code base} mit neuer größter Datei im Cache ({@code space-harvester.cache.max-page-size}); nur dieser
+     * Wert ändert sich. Geschrieben in MB, wenn er sich darin ausdrücken lässt.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withMaxPageSize(Path file, Draft base, long bytes) {
+        return withMaxPageSize(file, base, bytes, loader.read(file, base.text()).storage().maxTextFileBytes());
+    }
+
+    /**
+     * Die Grenzen großer Dateien zusammen: größte Datei im Cache, Grenze des Textauszugs und die Fristen der Prüfung
+     * gegen die Quelle ({@code space-harvester.cache.check-timeout}, {@code large-file-timeout}); nur diese Werte ändern
+     * sich.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withLargeFiles(Path file, Draft base, long bytes, long textBytes, java.time.Duration checkTimeout,
+                                java.time.Duration largeFileTimeout) {
+        Draft sizes = withMaxPageSize(file, base, bytes, textBytes);
+        String text = nested(sizes.text(), "cache", "check-timeout", indent -> indent + "check-timeout: "
+                + duration(checkTimeout) + "\n");
+        text = nested(text, "cache", "large-file-timeout", indent -> indent + "large-file-timeout: "
+                + duration(largeFileTimeout) + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.storage().checkTimeout().equals(checkTimeout)
+                || !settings.storage().largeFileTimeout().equals(largeFileTimeout)) {
+            throw new IllegalArgumentException("Die Fristen ließen sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester.cache von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Wie {@link #withMaxPageSize(Path, Draft, long)}, dazu die größte Datei für den Textauszug
+     * ({@code space-harvester.cache.max-text-file-size}, {@code 0} nie).
+     */
+    public Draft withMaxPageSize(Path file, Draft base, long bytes, long textBytes) {
+        String text = nested(base.text(), "cache", "max-page-size", indent -> indent + "max-page-size: " + size(bytes)
+                + "\n");
+        text = nested(text, "cache", "max-text-file-size", indent -> indent + "max-text-file-size: " + size(textBytes)
+                + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.storage().maxPageBytes() != bytes || settings.storage().maxTextFileBytes() != textBytes) {
+            throw new IllegalArgumentException("Die größte Datei im Cache ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.cache.max-page-size von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Eine Größe, wie sie {@code AppSettingsLoader} liest: in MB oder KB, wenn sie sich darin ausdrücken lässt. */
+    private static String size(long bytes) {
+        return bytes > 0 && bytes % (1L << 20) == 0 ? (bytes >> 20) + "MB"
+                : bytes > 0 && bytes % 1024 == 0 ? (bytes >> 10) + "KB" : String.valueOf(bytes);
+    }
+
+    /**
      * Der Entwurf {@code base} mit neuer Hintergrundfüllung für alle Quellen ({@code space-harvester.sync.background-fill},
      * {@code background-parallelism}, ADR 0016); nur diese beiden Werte ändern sich.
      *
@@ -464,6 +523,7 @@ public final class ConfigFileEditor {
      * Der Entwurf {@code base} mit neuem Budget der Synonymerkennung ({@code space-harvester.terms.synonyms.*},
      * #336), dieselben Schlüssel wie im Dienst; nur der Block {@code synonyms} unter {@code terms} ändert sich.
      * {@code max-judged-pairs} über 0 schaltet die Prüfung der Kandidatenpaare durch das Text-Modell zu.
+     * {@code automatic} steht nur in der Datei, wenn es von der Vorgabe (an) abweicht.
      *
      * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
      */
@@ -473,7 +533,9 @@ public final class ConfigFileEditor {
             return indent + "synonyms:\n"
                     + inner + SynonymBudget.MAX_TERMS + ": " + budget.maxTerms() + "\n"
                     + inner + SynonymBudget.MAX_EMBEDDED_TERMS + ": " + budget.maxEmbeddedTerms() + "\n"
-                    + inner + SynonymBudget.MAX_JUDGED_PAIRS + ": " + budget.maxJudgedPairs() + "\n";
+                    + inner + SynonymBudget.MAX_JUDGED_PAIRS + ": " + budget.maxJudgedPairs() + "\n"
+                    + (budget.automatic() == SynonymBudget.DEFAULT.automatic() ? ""
+                    : inner + SynonymBudget.AUTOMATIC + ": " + budget.automatic() + "\n");
         });
         AppSettings settings = loader.read(file, text);
         List<String> before = loader.read(file, base.text()).problems();
@@ -508,6 +570,27 @@ public final class ConfigFileEditor {
             throw new IllegalArgumentException("Die Vorstufe „Sätze vereinfachen“ ließ sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.statements.simplification von Hand "
                     + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer automatischer Bildbeschreibung ({@code space-harvester.images.automatic} und
+     * {@code .max-per-run}, Fahrplan B1), dieselben Schlüssel wie im Dienst; nur diese beiden Werte ändern sich.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withImages(Path file, Draft base, ImageSettings images) {
+        String text = nested(base.text(), "images", "automatic",
+                indent -> indent + "automatic: " + images.automatic() + "\n");
+        text = nested(text, "images", "max-per-run", indent -> indent + "max-per-run: " + images.maxPerRun() + "\n");
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.images().equals(images)) {
+            throw new IllegalArgumentException("Die automatische Bildbeschreibung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.images von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
     }
@@ -735,6 +818,70 @@ public final class ConfigFileEditor {
         if (newProblem || !settings.analytics().equals(analytics)) {
             throw new IllegalArgumentException("Der Export „Analytics“ ließ sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte " + AnalyticsSettings.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit dem Hintergrund des Bildbetrachters ({@code space-harvester-app.viewer.background},
+     * nur die App, Angelo 17.11.2026); nur dieser Wert ändert sich. Die Vorgabe ({@link ViewerBackground#DEFAULT})
+     * entfernt den Block {@code viewer}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withViewerBackground(Path file, Draft base, ViewerBackground background) {
+        String value = background == ViewerBackground.DEFAULT ? null
+                : "viewer:\n  background: " + background.key();
+        String text = appValue(base.text(), "viewer", value);
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || settings.viewerBackground() != background) {
+            throw new IllegalArgumentException("Der Hintergrund des Bildbetrachters ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte " + ViewerBackground.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit den Werten für Videos ({@code space-harvester-app.video.*}, nur die App); nur dieser
+     * Block ändert sich, und nur abweichende Werte stehen darin. Lauter Defaults entfernen den Block.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withVideo(Path file, Draft base, VideoSettings video) {
+        String text = appValue(base.text(), "video", video.yaml());
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.video().equals(video)) {
+            throw new IllegalArgumentException("Die Werte für Videos ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte " + VideoSettings.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit dem Whisper-Modell ({@code space-harvester-app.whisper.model}, nur die App); nur
+     * dieser Wert ändert sich. Die Vorgabe (Tiny) entfernt den Block {@code whisper}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withWhisperModel(Path file, Draft base,
+                                  com.aresstack.spaceharvester.app.transcription.WhisperModel model) {
+        String value = model == com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT ? null
+                : "whisper:\n  model: " + model.id();
+        String text = appValue(base.text(), "whisper", value);
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || settings.whisperModel() != model) {
+            throw new IllegalArgumentException("Das Whisper-Modell ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte "
+                    + com.aresstack.spaceharvester.app.transcription.WhisperModel.KEY + " von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);

@@ -9,6 +9,14 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         mavenCentral()
+        // Unreleased win-directml-java builds (publishToMavenLocal), only when explicitly enabled.
+        if (providers.gradleProperty('aresstackMavenLocal').getOrElse('false').toBoolean()) {
+            mavenLocal {
+                content {
+                    includeGroup 'com.aresstack'
+                }
+            }
+        }
     }
 }
 

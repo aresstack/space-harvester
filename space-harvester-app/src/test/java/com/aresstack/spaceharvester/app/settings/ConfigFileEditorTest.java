@@ -563,7 +563,7 @@ class ConfigFileEditorTest {
     void theSynonymBudgetGoesUnderTermsSynonymsAndKeepsTheOtherKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  terms:\n    synonyms:\n      max-terms: 300   # bleibt\n"
-                + "      max-judged-pairs: 5\n  jobs:\n    max-concurrent: 3\n");
+                + "      max-judged-pairs: 5\n  jobs:\n    max-queued: 3\n");
         var budget = new com.aresstack.spaceharvester.application.terms.SynonymBudget(300, 500, 40);
         editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
                 budget));
@@ -572,14 +572,14 @@ class ConfigFileEditorTest {
 
         String text = Files.readString(file);
         assertThat(text).contains("    synonyms:\n      max-terms: 300\n      max-embedded-terms: 500\n"
-                + "      max-judged-pairs: 40\n", "max-concurrent: 3").doesNotContain("max-judged-pairs: 5");
+                + "      max-judged-pairs: 40\n", "max-queued: 3").doesNotContain("max-judged-pairs: 5");
         assertThat(text.indexOf("synonyms:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("synonyms:"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.terms().synonyms()).isEqualTo(budget);
-        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
 
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");
         editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
                 com.aresstack.spaceharvester.application.terms.SynonymBudget.DEFAULT.withMaxJudgedPairs(20)));
         assertThat(loader.load(file).terms().synonyms().maxJudgedPairs()).as("Block ohne terms neu angelegt")
@@ -590,7 +590,7 @@ class ConfigFileEditorTest {
     void theCheckStepGoesUnderStatementsCheckAndLeavesTheStageAlone() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: always\n"
-                + "      model: einfach\n  jobs:\n    max-concurrent: 3\n");
+                + "      model: einfach\n  jobs:\n    max-queued: 3\n");
         var all = new com.aresstack.spaceharvester.application.configuration.CheckSettings(
                 com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "pruef:1b");
         editor.save(file, editor.withCheck(file, new ConfigFileEditor.Draft(Files.readString(file), null), all));
@@ -598,14 +598,14 @@ class ConfigFileEditorTest {
 
         String text = Files.readString(file);
         assertThat(text).contains("    check:\n      scope: all\n      parallel: 4\n      model: \"pruef:1b\"\n",
-                "      mode: always\n      model: einfach\n", "max-concurrent: 3");
+                "      mode: always\n      model: einfach\n", "max-queued: 3");
         assertThat(text.indexOf("check:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("check:"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.check()).isEqualTo(all);
         assertThat(settings.simplification().model()).as("Vorstufe unberührt").isEqualTo("einfach");
 
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");
         var plain = new com.aresstack.spaceharvester.application.configuration.CheckSettings(
                 com.aresstack.spaceharvester.application.check.CheckScope.UNCERTAIN_AND_STAGE, 1, null);
         editor.save(file, editor.withCheck(file, new ConfigFileEditor.Draft(Files.readString(file), null), plain));
@@ -615,10 +615,39 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theAutomaticImageDescriptionGoesUnderImagesAndKeepsTheOtherKeys() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");
+        assertThat(loader.load(file).images()).as("Standard aus").isEqualTo(
+                com.aresstack.spaceharvester.application.configuration.ImageSettings.DEFAULT);
+        var on = new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 120);
+
+        editor.save(file, editor.withImages(file, new ConfigFileEditor.Draft(Files.readString(file), null), on));
+        editor.save(file, editor.withImages(file, new ConfigFileEditor.Draft(Files.readString(file), null), on));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("automatic: true", "max-per-run: 120", "max-queued: 3");
+        assertThat(text.indexOf("images:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("images:"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.images()).isEqualTo(on);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
+
+        var unlimited = new com.aresstack.spaceharvester.application.configuration.ImageSettings(false, 0);
+        editor.save(file, editor.withImages(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                unlimited));
+        assertThat(loader.load(file).images()).isEqualTo(unlimited);
+
+        Files.writeString(file, "space-harvester:\n  images:\n    max-per-run: -1\n");
+        assertThat(loader.load(file).problems()).anySatisfy(problem ->
+                assertThat(problem).contains("space-harvester.images.max-per-run"));
+    }
+
+    @Test
     void theSimplificationStageGoesUnderStatementsSimplificationAndKeepsTheOtherKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: where-needed\n"
-                + "      model: alt\n  jobs:\n    max-concurrent: 3\n");
+                + "      model: alt\n  jobs:\n    max-queued: 3\n");
         var always = new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
                 com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 4,
                 "gemma4:12b");
@@ -629,15 +658,15 @@ class ConfigFileEditorTest {
 
         String text = Files.readString(file);
         assertThat(text).contains("    simplification:\n      mode: always\n      parallel: 4\n"
-                + "      model: \"gemma4:12b\"\n", "max-concurrent: 3").doesNotContain("model: alt");
+                + "      model: \"gemma4:12b\"\n", "max-queued: 3").doesNotContain("model: alt");
         assertThat(text.indexOf("simplification:")).as("zweimal gespeichert, ein Block")
                 .isEqualTo(text.lastIndexOf("simplification:"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.simplification()).isEqualTo(always);
-        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
 
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");
         var plain = new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
                 com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.WHERE_NEEDED, 1,
                 null);
@@ -650,39 +679,39 @@ class ConfigFileEditorTest {
     @Test
     void retriesGoUnderJobsRetryAndKeepTheOtherJobLimits() throws Exception {
         Path file = home.resolve("app.yml");
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3   # bleibt\n");
         var retry = new com.aresstack.spaceharvester.application.jobs.RetrySettings(4, Duration.ofMillis(500),
                 Duration.ofSeconds(20), 7, Duration.ofSeconds(15), Duration.ofMinutes(20));
         editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null), retry));
         editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null), retry));
 
         String text = Files.readString(file);
-        assertThat(text).contains("max-concurrent: 3   # bleibt", "    retry:\n      max-attempts: 4\n",
+        assertThat(text).contains("max-queued: 3   # bleibt", "    retry:\n      max-attempts: 4\n",
                 "      initial-delay: 500ms\n", "      max-delay: 20s\n", "      pause-after-failures: 7\n",
                 "      resume-initial-delay: 15s\n", "      resume-max-delay: 20m\n");
         assertThat(text.indexOf("retry:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("retry:"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.jobLimits().retry()).isEqualTo(retry);
-        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
     }
 
     @Test
     void downloadLimitsGoUnderJobsAndZeroDownloadsIsAllowed() throws Exception {
         Path file = home.resolve("app.yml");
-        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3   # bleibt\n");
         editor.save(file, editor.withParallel(file, new ConfigFileEditor.Draft(Files.readString(file), null), 3, 0));
         editor.save(file, editor.withParallel(file, new ConfigFileEditor.Draft(Files.readString(file), null), 3, 0));
 
         String text = Files.readString(file);
-        assertThat(text).contains("max-concurrent: 3   # bleibt", "    parallel-preparations: 3\n",
+        assertThat(text).contains("max-queued: 3   # bleibt", "    parallel-preparations: 3\n",
                 "    parallel-downloads: 0\n");
         assertThat(text.indexOf("parallel-downloads")).isEqualTo(text.lastIndexOf("parallel-downloads"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.jobLimits().parallelPreparations()).isEqualTo(3);
         assertThat(settings.jobLimits().parallelDownloads()).isZero();
-        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
         assertThatThrownBy(() -> editor.withParallel(file, new ConfigFileEditor.Draft(text, null), 0, 4))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> editor.withParallel(file, new ConfigFileEditor.Draft(text, null), 2, -1))
@@ -772,6 +801,57 @@ class ConfigFileEditorTest {
         assertThat(Files.readString(file)).isEqualTo(original);
     }
 
+    /** Angelo 17.11.2026: der Hintergrund des Bildbetrachters steht nur in der Datei, wenn er von der Vorgabe abweicht. */
+    @Test
+    void theViewerBackgroundIsWrittenUnderTheAppRootAndRemovedForTheDefault() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester-app:\n  output-directory: D:\\out   # bleibt\nspace-harvester:\n"
+                + "  sources: []\n");
+        editor.save(file, editor.withViewerBackground(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                ViewerBackground.BLACK));
+        String text = Files.readString(file);
+        assertThat(text).contains("  output-directory: D:\\out   # bleibt\n", "  viewer:\n    background: black\n");
+        assertThat(loader.load(file).viewerBackground()).isEqualTo(ViewerBackground.BLACK);
+
+        editor.save(file, editor.withViewerBackground(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                ViewerBackground.GREY));
+        text = Files.readString(file);
+        assertThat(text).contains("  viewer:\n    background: grey\n").doesNotContain("black");
+        assertThat(text.split("viewer:", -1)).hasSize(2);
+
+        editor.save(file, editor.withViewerBackground(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                ViewerBackground.THEME));
+        text = Files.readString(file);
+        assertThat(text).doesNotContain("viewer").contains("  output-directory: D:\\out   # bleibt\n", "sources: []");
+        assertThat(loader.load(file).viewerBackground()).isEqualTo(ViewerBackground.THEME);
+    }
+
+    @Test
+    void theWhisperModelIsWrittenUnderTheAppRootAndRemovedForTheDefault() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester-app:\n  output-directory: D:\\out   # bleibt\nspace-harvester:\n"
+                + "  sources: []\n");
+        assertThat(loader.load(file).whisperModel())
+                .isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY);
+
+        editor.save(file, editor.withWhisperModel(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.LARGE_V3_TURBO));
+        String text = Files.readString(file);
+        assertThat(text).contains("  output-directory: D:\\out   # bleibt\n", "  whisper:\n    model: large-v3-turbo\n");
+        assertThat(loader.load(file).whisperModel())
+                .isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.LARGE_V3_TURBO);
+
+        editor.save(file, editor.withWhisperModel(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY));
+        text = Files.readString(file);
+        assertThat(text).doesNotContain("whisper").contains("  output-directory: D:\\out   # bleibt\n", "sources: []");
+
+        Files.writeString(file, "space-harvester-app:\n  whisper:\n    model: riesig\nspace-harvester:\n  sources: []\n");
+        AppSettings unknown = loader.load(file);
+        assertThat(unknown.whisperModel()).isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY);
+        assertThat(unknown.problems()).anyMatch(problem -> problem.contains("space-harvester-app.whisper.model"));
+    }
+
     @Test
     void theAnalyticsExportIsWrittenAsABlockUnderTheAppRootAndRemovedWhenAllIsDefault() throws Exception {
         Path file = home.resolve("app.yml");
@@ -850,6 +930,31 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theLargestFileInTheCacheIsWrittenInMegabytesAndReadBack() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  cache:\n    max-age: 6h   # bleibt\n");
+        assertThat(loader.load(file).storage().maxPageBytes()).as("Vorgabe")
+                .isEqualTo(AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES);
+
+        editor.save(file, editor.withMaxPageSize(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                100L << 20));
+
+        assertThat(Files.readString(file)).contains("max-age: 6h   # bleibt", "    max-page-size: 100MB");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.storage().maxPageBytes()).isEqualTo(100L << 20);
+        editor.save(file, editor.withLargeFiles(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                100L << 20, 0, java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(15)));
+        AppSettings timed = loader.load(file);
+        assertThat(timed.problems()).isEmpty();
+        assertThat(timed.storage().maxTextFileBytes()).as("Textauszug abgeschaltet").isZero();
+        assertThat(timed.storage().checkTimeout()).isEqualTo(java.time.Duration.ofMinutes(1));
+        assertThat(timed.storage().largeFileTimeout()).isEqualTo(java.time.Duration.ofMinutes(15));
+        Files.writeString(file, "space-harvester:\n  cache:\n    max-page-size: 4GB\n");
+        assertThat(loader.load(file).problems()).anyMatch(problem -> problem.contains("max-page-size"));
+    }
+
+    @Test
     void theBackgroundFillUsesTheCoreKeysGloballyAndPerSource() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sync:\n    withheld-retention: 14d   # bleibt\n");
@@ -910,6 +1015,25 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theRequestsAtOnceGoIntoTheAiBlockAndBackIntoTheDraft() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("http://localhost:11434", "gemma4:12b", null, null, null, java.util.List.of(), null,
+                null, null, "gemma4:12b").withProvider(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA)
+                .withParallel("6");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("parallel: 6");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().parallel()).isEqualTo(6);
+        assertThat(AiDraft.of(settings.ai()).parallelCount()).isEqualTo(6);
+        assertThat(ai.withParallel("0").problems()).anyMatch(p -> p.contains("gleichzeitigen Anfragen"));
+        assertThat(ai.withParallel("33").problems()).anyMatch(p -> p.contains("gleichzeitigen Anfragen"));
+        assertThat(ai.withParallel(null).problems()).isEmpty();
+    }
+
+    @Test
     void theVisionModelGoesIntoTheAiBlockAndSurvivesOtherModelChanges() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sources: []\n");
@@ -925,6 +1049,38 @@ class ConfigFileEditorTest {
         assertThat(ai.withModels("gpt-y", null, null, null, null, null).visionModel()).isEqualTo("gpt-vision");
         assertThat(new AiDraft(null, null, null, null, null, null, null, null, null, "gpt-vision").problems())
                 .anyMatch(p -> p.contains("Basisadresse"));
+    }
+
+    @Test
+    void anOllamaServerGoesIntoTheAiBlockAsProvider() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("http://localhost:11434", "gemma4:12b", "bge-m3:latest", "1024", null,
+                java.util.List.of(), null, null, null, "gemma4:12b")
+                .withProvider(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA).withContextTokens("16384");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("provider: \"ollama\"", "base-url: \"http://localhost:11434\"",
+                "context-tokens: 16384");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().provider()).isEqualTo(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA);
+        assertThat(settings.ai().contextTokens()).isEqualTo(16384);
+        assertThat(ai.withContextTokens("100").problems()).anyMatch(p -> p.contains("Kontextlänge"));
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(ai.withProvider(null).yaml("")).as("OpenAI-kompatibel ist die Vorgabe").doesNotContain("provider");
+        assertThat(new AiDraft(null, null, null, null, null, null)
+                .withProvider(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA).problems())
+                .anyMatch(p -> p.contains("Basisadresse"));
+        Files.writeString(file, """
+                space-harvester:
+                  ai:
+                    provider: lmstudio
+                    base-url: "http://x:1"
+                """);
+        AppSettings unknown = loader.load(file);
+        assertThat(unknown.problems()).anyMatch(p -> p.contains("provider"));
+        assertThat(unknown.ai().provider()).isEqualTo(com.aresstack.spaceharvester.ai.AiProvider.OPENAI_COMPATIBLE);
     }
 
     @Test

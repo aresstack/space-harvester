@@ -33,6 +33,8 @@ public class SpaceSync {
     private final RemovalCheck removalCheck;
     private final Clock clock;
     private final Function<String, Duration> withheldRetention;
+    /** Was indexiert wird; jeder Lauf liest die Markierungen neu. */
+    private volatile IndexMarks marks = IndexMarks.NONE;
 
     public SpaceSync(SourceQueries queries, SyncBaselineStore store, Clock clock) {
         this(queries, store, clock, DEFAULT_WITHHELD_RETENTION);
@@ -77,6 +79,11 @@ public class SpaceSync {
         this.withheldRetention = Objects.requireNonNull(withheldRetention, "withheldRetention");
     }
 
+    /** Seiten unter diesen Markierungen lädt jeder Lauf vollständig ({@link SyncPlan#withIndexed}). */
+    public void indexMarks(IndexMarks marks) {
+        this.marks = Objects.requireNonNull(marks, "marks");
+    }
+
     static Function<String, Duration> fixed(Duration withheldRetention) {
         Objects.requireNonNull(withheldRetention, "withheldRetention");
         if (withheldRetention.isNegative()) {
@@ -108,16 +115,33 @@ public class SpaceSync {
 
     /** Wie {@link #plan(String, String, boolean)}, in der Betriebsart {@code mode}. */
     public SyncPlan plan(String sourceId, String spaceKey, SyncMode mode) {
+        return plan(sourceId, spaceKey, mode, () -> { });
+    }
+
+    /** Check cancellation between the page batches of an inventory. */
+    private SyncPlan plan(String sourceId, String spaceKey, SyncMode mode, Runnable checkpoint) {
         SyncBaseline baseline = store.confirmed(sourceId, spaceKey).orElse(null);
-        Inventory inventory = collector.collect(sourceId, spaceKey);
+        Inventory inventory = collector.collect(sourceId, spaceKey, checkpoint);
         SyncPlan plan = SyncPlanner.plan(baseline, inventory,
                 inventory.confirmed() ? store.knownPages(sourceId, spaceKey) : Map.of(), mode);
         if (!plan.inventory().confirmed()) {
             return plan;
         }
+        plan = indexed(plan);
         Map<String, RemovalCheck.Result> removals = removalCheck.verify(plan);
         SyncPlan checked = removals.isEmpty() ? plan : plan.withRemovals(removals);
         return checked.withPurgesDue(clock.instant().minus(retention(sourceId)));
+    }
+
+    /** Lädt die Seiten unter markierten Wurzeln vollständig; die Vorfahren kommen aus der Inventur. */
+    private SyncPlan indexed(SyncPlan plan) {
+        Set<String> roots = marks.roots(plan.inventory().sourceId(), plan.inventory().spaceKey());
+        if (roots.isEmpty()) {
+            return plan;
+        }
+        Map<String, String> parents = new java.util.HashMap<>();
+        plan.inventory().pages().forEach(entry -> parents.put(entry.page().pageId(), entry.page().parentPageId()));
+        return plan.withIndexed(IndexScope.of(roots, parents::get));
     }
 
     /**
@@ -190,7 +214,7 @@ public class SpaceSync {
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode,
                        java.util.function.Function<Inventory, java.util.function.Predicate<String>> loading,
                        boolean reloadAll) {
-        SyncPlan planned = plan(sourceId, spaceKey, mode);
+        SyncPlan planned = plan(sourceId, spaceKey, mode, listener::checkpoint);
         java.util.function.Predicate<String> inScope = loading == null || !planned.inventory().confirmed()
                 ? pageId -> true : loading.apply(planned.inventory());
         SyncPlan limited = loading == null || !planned.inventory().confirmed() ? planned
@@ -222,11 +246,17 @@ public class SpaceSync {
      * @param failedPageIds Seiten, deren Abgleich fehlgeschlagen ist
      * @param confirmed     die neu bestätigte Generation oder {@code null}
      * @param notConfirmed  warum keine Generation bestätigt und nichts geschrieben wurde, sonst {@code null}
+     * @param cause         der Fehler der Quelle hinter {@code notConfirmed}, soweit bekannt, sonst {@code null}
      */
-    public record SyncRun(SyncPlan plan, Set<String> failedPageIds, SyncBaseline confirmed, String notConfirmed) {
+    public record SyncRun(SyncPlan plan, Set<String> failedPageIds, SyncBaseline confirmed, String notConfirmed,
+                          RuntimeException cause) {
 
         public SyncRun {
             failedPageIds = Set.copyOf(failedPageIds);
+        }
+
+        public SyncRun(SyncPlan plan, Set<String> failedPageIds, SyncBaseline confirmed, String notConfirmed) {
+            this(plan, failedPageIds, confirmed, notConfirmed, null);
         }
 
         public SyncSummary summary() {

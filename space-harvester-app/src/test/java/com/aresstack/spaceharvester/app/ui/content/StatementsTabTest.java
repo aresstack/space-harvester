@@ -70,6 +70,39 @@ class StatementsTabTest {
     }
 
     @Test
+    void theTrashDeletesTheStoredAnalysisOfThisPageAfterYes() {
+        List<String> statuses = new ArrayList<>();
+        tab.onStatus(statuses::add);
+        tab.page(page("1"), text());
+        runner.runAll();
+        assertThat(tab.deleteButton().isEnabled()).as("ohne Analyse nichts zu löschen").isFalse();
+
+        actions.stored = analysed();
+        tab.reload();
+        runner.runAll();
+        assertThat(tab.deleteButton().isEnabled()).isTrue();
+        assertThat(tab.deleteButton().getToolTipText()).isEqualTo("Aussagen-Analyse dieser Seite löschen");
+        List<String> questions = new ArrayList<>();
+        tab.confirmDeleteWith(question -> {
+            questions.add(question);
+            return false;
+        });
+        tab.deleteButton().doClick();
+        runner.runAll();
+        assertThat(questions).containsExactly("Wirklich die Aussagen-Analyse dieser Seite samt Anhängen löschen? "
+                + "Die Seite bleibt.");
+        assertThat(actions.deletions).isEmpty();
+
+        tab.confirmDeleteWith(question -> true);
+        tab.deleteButton().doClick();
+        runner.runAll();
+        assertThat(actions.deletions).containsExactly(page("1").key());
+        assertThat(statuses).contains("2 Aussagen-Analysen gelöscht");
+        assertThat(tab.stateLabel()).isEqualTo("Nicht analysiert");
+        assertThat(tab.deleteButton().isEnabled()).isFalse();
+    }
+
+    @Test
     void aClickOnAStatementJumpsToItsSentenceInTheReaderText() {
         List<List<TermsTab.Span>> jumps = new ArrayList<>();
         tab.onJump(jumps::add);
@@ -154,6 +187,85 @@ class StatementsTabTest {
     }
 
     @Test
+    void anUncertainStatementIsMarkedAsProposalWithOriginAndCheckStatusAndStaysVisible() {
+        actions.stored = analysed();
+        tab.page(page("1"), text());
+        runner.runAll();
+
+        List<String> lines = tab.lines();
+        assertThat(lines.getFirst()).isEqualTo("Kernaussagen");
+        assertThat(lines.get(1)).as("A1: gekennzeichnet, nicht ausgeblendet")
+                .startsWith("Vorschlag · Originalsatz, MaltParser · nicht geprüft | übermittelt (übermitteln)");
+        assertThat(tab.copyText()).startsWith("Kernaussagen (1, davon 1 Vorschlag)");
+        assertThat(tab.chips()).hasSize(1);
+        assertThat(tab.chips().getFirst().getText()).isEqualTo("Herkunft");
+    }
+
+    @Test
+    void theChipShowsOriginAndCheckDetailsInTheOverlay() {
+        ParsedStatements.Statement checked = plausible(analysed().analysis().result().statements().getFirst())
+                .withCheck(new ParsedStatements.Check(ParsedStatements.Verdict.FALSCH, "modell|v1", false));
+        actions.stored = with(analysed(), checked);
+        tab.page(page("1"), text());
+        runner.runAll();
+
+        assertThat(tab.lines().get(1)).startsWith("Vorschlag · Originalsatz, MaltParser · vom Prüfschritt verworfen")
+                .doesNotContain("Urteil des Modells", "Stufe:");
+        tab.chips().getFirst().doClick();
+
+        assertThat(tab.popup().titleText()).isEqualTo("Herkunft und Prüfstatus");
+        assertThat(tab.popup().bodyText()).contains("Kennzeichen: Vorschlag",
+                "Stufe: unsicher (vom Parser: plausibel)", "Gründe: der Prüfschritt hält die Aussage für falsch",
+                "Prüfschritt: vom Prüfschritt verworfen", "Urteil des Modells: falsch", "Urteil von Hand: keins",
+                "Herkunft: Originalsatz, MaltParser", "Handelnder „Der Sachbearbeiter“: Parserkante (nsubj), sicher",
+                "Zeit „Montag“: Wortliste, unsicher");
+    }
+
+    @Test
+    void copyingStillDeliversOriginVerdictAndStageThatMovedIntoTheOverlay() {
+        ParsedStatements.Statement first = plausible(analysed().analysis().result().statements().getFirst());
+        ParsedStatements.Statement staged = first.withDerivation(ParsedStatements.Derivation.vorstufe(
+                ParsedStatements.StageFlag.PLANNING, "Der Sachbearbeiter übermittelt den Beleg."))
+                .withCheck(new ParsedStatements.Check(ParsedStatements.Verdict.FALSCH, "modell|v1", false));
+        actions.stored = with(analysed(), staged);
+        tab.page(page("1"), text());
+        runner.runAll();
+
+        assertThat(tab.lines().get(1)).as("Auflage AT: die Vorstufe sieht nie wie das Original aus")
+                .startsWith("Vorschlag · Vorstufe „Sätze vereinfachen“ (KI), MaltParser · vom Prüfschritt verworfen")
+                .doesNotContain("Herkunft:", "Urteil des Modells", "Stufe:");
+        assertThat(tab.copyText()).contains(
+                "Herkunft: Vorstufe „Sätze vereinfachen“ · Kennzeichen: Planung oder Absicht",
+                "Urteil des Modells: falsch", "Stufe: unsicher (vom Parser: plausibel)",
+                "Vereinfachter Satz: „Der Sachbearbeiter übermittelt den Beleg.“", "Beleg (Originalsatz): „");
+    }
+
+    @Test
+    void aPlausibleStatementHasNoMarkerButStillSaysItIsUnchecked() {
+        actions.stored = with(analysed(), plausible(analysed().analysis().result().statements().getFirst()));
+        tab.page(page("1"), text());
+        runner.runAll();
+
+        assertThat(tab.lines().get(1)).startsWith("Originalsatz, MaltParser · nicht geprüft | ");
+        assertThat(tab.copyText()).startsWith("Kernaussagen (1)\n");
+    }
+
+    private static ParsedStatements.Statement plausible(ParsedStatements.Statement s) {
+        return new ParsedStatements.Statement(s.id(), s.sentence(), s.start(), s.end(), s.predicateText(),
+                s.predicateLemma(), s.voice(), s.clause(), s.core(), s.arguments(), s.findings(), s.paragraph(),
+                ParsedStatements.Quality.PLAUSIBLE, List.of(), s.review(), s.features(), s.derivation());
+    }
+
+    private static PageStatements with(PageStatements base, ParsedStatements.Statement statement) {
+        PageStatementAnalysis a = base.analysis();
+        ParsedStatements r = a.result();
+        return new PageStatements(base.state(), base.reason(), new PageStatementAnalysis(a.key(), a.spaceKey(),
+                a.title(), a.revision(), a.inputSha256(), a.analyzerId(), a.analyzerVersion(), a.analyzedAt(),
+                new ParsedStatements(r.sentences(), r.mentions(), List.of(statement), r.attachments(), r.components(),
+                        r.conllu())));
+    }
+
+    @Test
     void checkingIsOfferedOnlyForACurrentAnalysisAndSaysWhyItCouldNotRun() {
         List<String> status = new ArrayList<>();
         tab.onStatus(status::add);
@@ -172,7 +284,7 @@ class StatementsTabTest {
         runner.runAll();
         assertThat(actions.checks).isEqualTo(1);
         assertThat(tab.cancelOffered()).isFalse();
-        assertThat(tab.lines().get(1)).contains("Urteil des Modells: falsch");
+        assertThat(tab.lines().get(1)).contains("vom Prüfschritt verworfen");
         assertThat(status.getLast()).contains(", geprüft: 1 Urteil. Grammatische");
 
         actions.checkUnavailable = Optional.of(
@@ -181,7 +293,7 @@ class StatementsTabTest {
         runner.runAll();
         assertThat(actions.checks).as("ohne Freigabe geht nichts an das Modell").isEqualTo(1);
         assertThat(status.getLast()).isEqualTo(CheckTexts.NOT_RELEASED);
-        assertThat(tab.lines().get(1)).as("die Aussagen bleiben stehen").contains("Urteil des Modells: falsch");
+        assertThat(tab.lines().get(1)).as("die Aussagen bleiben stehen").contains("vom Prüfschritt verworfen");
         actions.checkUnavailable = Optional.of(
                 com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason.NO_MODEL);
         tab.clickCheck();
@@ -453,8 +565,17 @@ class StatementsTabTest {
         int simplified;
         Optional<String> stageUnavailable = Optional.empty();
         int checks;
+        final List<PageKey> deletions = new ArrayList<>();
         Optional<com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason> checkUnavailable =
                 Optional.empty();
+
+        @Override
+        public int deleteAnalysis(PageKey key) {
+            deletions.add(key);
+            int count = stored.analysis() == null ? 0 : 2;
+            stored = PageStatements.missing(PageStatements.NOT_ANALYSED);
+            return count;
+        }
 
         @Override
         public Optional<com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason>

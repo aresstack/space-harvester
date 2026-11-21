@@ -140,7 +140,7 @@ class SourcesViewTest {
                 .filter(job -> job.type() == JobType.SYNC).toList();
         assertThat(syncs).hasSize(1);
         assertThat(syncs.get(0).parameters()).as("Betriebsart der Quelle, hier die Vorgabe")
-                .containsEntry("mode", "CATALOG_ONLY");
+                .containsEntry("mode", "SYNC_CACHE");
         await(arrow::isEnabled);
         assertThat(context.runtime().workspace().job(syncs.get(0).id()).state().terminal()).isTrue();
     }
@@ -321,6 +321,41 @@ class SourcesViewTest {
     }
 
     /** Detailfläche und Drawer mit den Quellenkarten in einem Behälter, wie das Hauptfenster sie zeigt. */
+    @Test
+    void certificateExportSitsUnderTheConnectionCheckAndIsGreyWithoutHttps() throws Exception {
+        start();
+        SourcesView[] view = new SourcesView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
+        Container root = all(view[0]);
+        JPanel card = find(root, JPanel.class).stream()
+                .filter(c -> c.getClass().getSimpleName().equals("SourceCard")).findFirst().orElseThrow();
+        java.lang.reflect.Method menu = card.getClass().getDeclaredMethod("menu");
+        menu.setAccessible(true);
+        javax.swing.JPopupMenu[] popup = new javax.swing.JPopupMenu[1];
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                popup[0] = (javax.swing.JPopupMenu) menu.invoke(card);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+        });
+        List<javax.swing.JMenuItem> items = find(popup[0], javax.swing.JMenuItem.class);
+        List<String> texts = items.stream().map(javax.swing.JMenuItem::getText).toList();
+        int check = texts.indexOf("Verbindung prüfen …");
+        assertThat(texts.get(check + 1)).isEqualTo("Zertifikate exportieren …");
+        javax.swing.JMenuItem export = items.get(check + 1);
+        // Dateiquellen haben kein https: gesperrt, nicht ausgeblendet, mit Grund.
+        assertThat(export.isEnabled()).isFalse();
+        assertThat(export.getToolTipText()).isEqualTo("Nur für Quellen mit https");
+        javax.swing.JMenu codes = find(popup[0], javax.swing.JMenu.class).get(0);
+        assertThat(popup[0].getComponentIndex(codes)).isEqualTo(popup[0].getComponentIndex(export) + 1);
+        assertThat(codes.getText()).isEqualTo("Zertifikate als QR-Code");
+        assertThat(codes.isEnabled()).isFalse();
+        assertThat(codes.getToolTipText()).isEqualTo("Nur für Quellen mit https");
+        assertThat(java.util.Arrays.stream(codes.getMenuComponents()).map(c -> ((javax.swing.JMenuItem) c).getText()))
+                .containsExactly("Anzeigen …", "Als Bilder speichern");
+    }
+
     private static Container all(SourcesView view) {
         javax.swing.JPanel both = new javax.swing.JPanel(new java.awt.BorderLayout());
         both.add(view.drawer(), java.awt.BorderLayout.WEST);

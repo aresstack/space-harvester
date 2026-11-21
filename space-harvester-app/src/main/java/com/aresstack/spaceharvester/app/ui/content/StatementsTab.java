@@ -3,6 +3,12 @@ package com.aresstack.spaceharvester.app.ui.content;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Dialogs;
+import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.IconButton;
+import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.app.ui.controls.ActionChip;
+import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.ParserModelSetup;
 import com.aresstack.spaceharvester.app.ui.Problems;
@@ -37,6 +43,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -52,6 +59,12 @@ import java.util.function.Supplier;
 final class StatementsTab extends JPanel {
 
     static final String ANALYZE = "Mit MaltParser analysieren";
+    static final String DELETE_TIP = "Aussagen-Analyse dieser Seite löschen";
+    static final String DELETE_QUESTION = "Wirklich die Aussagen-Analyse dieser Seite samt Anhängen löschen? Die Seite "
+            + "bleibt.";
+    /** Im Menü neben dem Papierkorb (Angelo 17.11.2026): auch die KI-Urteile des Prüfschritts löschen. */
+    static final String DELETE_EVERYTHING_QUESTION = "Wirklich alles zu dieser Seite löschen, also die "
+            + "Aussagen-Analyse samt Anhängen und die KI-Urteile aus „Aussagen prüfen“? Die Seite bleibt.";
     static final String CANCEL = "Abbrechen";
     static final String NOT_ANALYSED = "Noch nicht analysiert. „" + ANALYZE + "“ zerlegt die Sätze dieser Seite "
             + "lokal; beim ersten Mal wird das Modell geladen (einige Sekunden).";
@@ -97,6 +110,16 @@ final class StatementsTab extends JPanel {
     /** „Aussagen prüfen“ (ADR 0032, FL4) für die offene Seite; nur mit aktueller Analyse. */
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton check = Comic.button(CheckTexts.JOB,
             "Lässt das Chat-Modell die Aussagen dieser Seite beurteilen; nur für Seiten mit KI-Freigabe");
+    /** „Aussagen-Analyse löschen“ für die offene Seite (Angelo 17.11.2026); nur mit gespeicherter Analyse. */
+    private final IconButton delete = new IconButton(Glyph.TRASH, DELETE_TIP);
+    /** Rechts neben dem Papierkorb das Dreieck wie neben dem Besen der Aufträge; darin „Alles löschen“. */
+    private final IconButton moreDelete = new IconButton(
+            new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), StandingTab.MORE_DELETE_TIP);
+    private Predicate<String> confirmDelete = question -> Dialogs.confirm(this,
+            question.equals(DELETE_EVERYTHING_QUESTION) ? StandingTab.DELETE_EVERYTHING_TITLE
+                    : "Aussagen-Analyse löschen?", question);
+    /** Ob eine Analyse gespeichert ist (aktuell oder veraltet): nur dann lässt sie sich löschen. */
+    private boolean stored;
     /** Ob die angezeigte Analyse aktuell ist: nur dann lässt sie sich prüfen. */
     private boolean current;
     /** „mit Vorstufe“ (ADR 0032, FL3): gilt für den nächsten Klick auf „Mit MaltParser analysieren“. */
@@ -107,6 +130,8 @@ final class StatementsTab extends JPanel {
             "Syntaxdetails anzeigen", "Vollständige UD-Abhängigkeiten (CoNLL-U) zur Diagnose");
     private final List<String> lines = new ArrayList<>();
     private final List<Runnable> jumps = new ArrayList<>();
+    private final List<ActionChip> chips = new ArrayList<>();
+    private final InfoPopup popup = new InfoPopup();
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
     private Runnable onAnalysed = () -> { };
     private Consumer<String> onStatus = text -> { };
@@ -152,8 +177,13 @@ final class StatementsTab extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         simplify.setToolTipText(SIMPLIFY_TIP);
-        head.badge("Experimentell", Comic.PETROL).action(progress, cancel, analyze).copy(copyText::toString);
+        head.badge("Experimentell", Comic.PETROL).action(progress, cancel, analyze, delete, moreDelete)
+                .copy(copyText::toString);
         analyze.addActionListener(e -> analyze());
+        delete.addActionListener(e -> deleteAnalysis());
+        moreDelete.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
+                moreDeleteMenu(), moreDelete).show(moreDelete, 0, moreDelete.getHeight()));
+        delete.setEnabled(false);
         check.addActionListener(e -> check());
         check.setEnabled(false);
         cancel.addActionListener(e -> cancelRun());
@@ -406,11 +436,14 @@ final class StatementsTab extends JPanel {
         list.removeAll();
         lines.clear();
         jumps.clear();
+        chips.clear();
         setState(" ", Comic.MUTED);
         hint.setText(message);
         analyze.setEnabled(false);
         current = false;
+        stored = false;
         check.setEnabled(false);
+        delete.setEnabled(false);
         list.revalidate();
         list.repaint();
     }
@@ -527,6 +560,75 @@ final class StatementsTab extends JPanel {
     }
 
     /** Eine Meldung zum letzten Vorgang in der Statuszeile; die Aussagen bleiben stehen. */
+    /**
+     * Löscht nach der Rückfrage die gespeicherte Aussagen-Analyse der offenen Seite samt Anhängen und enthaltenen
+     * Dateien; die Seite bleibt. Danach zeigt der Reiter „Nicht analysiert“, Graph und Stand lesen neu.
+     */
+    void deleteAnalysis() {
+        delete(false);
+    }
+
+    /** „Alles löschen“ im Menü neben dem Papierkorb: wie {@link #deleteAnalysis}, dazu die KI-Urteile der Seite. */
+    void deleteEverything() {
+        delete(true);
+    }
+
+    /** Das Menü hinter dem Dreieck neben dem Papierkorb. */
+    javax.swing.JPopupMenu moreDeleteMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        Actions actions = workspace.get();
+        boolean possible = actions != null && actions.canDeleteEverything();
+        javax.swing.JMenuItem everything = new javax.swing.JMenuItem(StandingTab.DELETE_EVERYTHING, Glyph.TRASH);
+        everything.setFont(Comic.regular(13f));
+        everything.setToolTipText(possible ? StandingTab.DELETE_EVERYTHING_TIP : StandingTab.DELETE_EVERYTHING_MISSING);
+        everything.setEnabled(possible && snapshot != null && running == null);
+        everything.addActionListener(e -> deleteEverything());
+        menu.add(everything);
+        return menu;
+    }
+
+    private void delete(boolean everything) {
+        Actions actions = workspace.get();
+        PageSnapshot page = snapshot;
+        if (actions == null || page == null || running != null || !everything && !stored
+                || everything && !actions.canDeleteEverything()
+                || !confirmDelete.test(everything ? DELETE_EVERYTHING_QUESTION : DELETE_QUESTION)) {
+            return;
+        }
+        delete.setEnabled(false);
+        int mine = generation;
+        runner.run(() -> everything ? actions.deleteEverything(page.key()) : actions.deleteAnalysis(page.key()),
+                deleted -> {
+            if (mine != generation) {
+                return;
+            }
+            status((deleted == 0 ? "Keine Aussagen-Analyse zu dieser Seite"
+                    : Texts.count(deleted, "Aussagen-Analyse", "Aussagen-Analysen") + " gelöscht")
+                    + (everything ? " · KI-Urteile aus „Aussagen prüfen“ gelöscht" : ""));
+            reload();
+            onAnalysed.run();
+        }, error -> {
+            if (mine != generation) {
+                return;
+            }
+            delete.setEnabled(stored);
+            status("Aussagen-Analyse nicht gelöscht: " + error.getClass().getSimpleName());
+        });
+    }
+
+    /** Für Tests: statt des Dialogs; bekommt die Frage. */
+    void confirmDeleteWith(Predicate<String> confirm) {
+        confirmDelete = Objects.requireNonNull(confirm, "confirm");
+    }
+
+    IconButton deleteButton() {
+        return delete;
+    }
+
+    IconButton moreDeleteButton() {
+        return moreDelete;
+    }
+
     private void status(String message) {
         explanation = message;
         onStatus.accept(message);
@@ -538,6 +640,7 @@ final class StatementsTab extends JPanel {
             running = null;
             analyze.setEnabled(snapshot != null && !modelMissing());
             check.setEnabled(snapshot != null && current);
+            delete.setEnabled(snapshot != null && stored);
             cancel.setVisible(false);
             progress.setText(" ");
         }
@@ -608,6 +711,7 @@ final class StatementsTab extends JPanel {
         list.removeAll();
         lines.clear();
         jumps.clear();
+        chips.clear();
         copyText.setLength(0);
         hint.setText(" ");
         list.revalidate();
@@ -618,10 +722,13 @@ final class StatementsTab extends JPanel {
     void render(PageStatements statements, List<KnowledgeGraph.Link> links) {
         analyze.setEnabled(running == null && snapshot != null && !modelMissing());
         current = statements.state() == PageStatements.State.CURRENT && statements.analysis() != null;
+        stored = statements.analysis() != null;
         check.setEnabled(running == null && snapshot != null && current);
+        delete.setEnabled(running == null && snapshot != null && stored);
         list.removeAll();
         lines.clear();
         jumps.clear();
+        chips.clear();
         copyText.setLength(0);
         syntaxPanel.setVisible(statements.analysis() != null);
         switch (statements.state()) {
@@ -645,8 +752,9 @@ final class StatementsTab extends JPanel {
                     .filter(ParsedStatements.Statement::core).toList();
             List<ParsedStatements.Statement> other = result.statements().stream()
                     .filter(statement -> !statement.core()).toList();
-            section("Kernaussagen", core, result, mentions, stale, offsets);
-            section("Weitere Aussagen", other, result, mentions, stale, offsets);
+            String analyzer = StatementProvenance.analyzer(statements.analysis().analyzerId());
+            section("Kernaussagen", core, result, mentions, stale, offsets, analyzer);
+            section("Weitere Aussagen", other, result, mentions, stale, offsets, analyzer);
             if (result.statements().isEmpty()) {
                 list.add(Comic.muted("Keine Aussagen mit Vollverb erkannt."));
             }
@@ -664,21 +772,27 @@ final class StatementsTab extends JPanel {
     }
 
     private void section(String heading, List<ParsedStatements.Statement> statements, ParsedStatements result,
-                         Map<String, ParsedStatements.Mention> mentions, boolean stale, boolean offsets) {
+                         Map<String, ParsedStatements.Mention> mentions, boolean stale, boolean offsets,
+                         String analyzer) {
         if (statements.isEmpty()) {
             return;
         }
-        JLabel label = Comic.text(heading + " (" + statements.size() + ")");
+        String title = heading + " (" + count(statements) + ")";
+        JLabel label = Comic.text(title);
         label.setFont(Comic.semiBold(13f));
         label.setAlignmentX(LEFT_ALIGNMENT);
         list.add(label);
         lines.add(heading);
-        copyText.append(heading).append(" (").append(statements.size()).append(")\n\n");
+        copyText.append(title).append("\n\n");
         for (ParsedStatements.Statement statement : statements) {
-            List<String> body = describe(statement, result, mentions, offsets ? sentence(result, statement) : null);
-            lines.add(String.join(" | ", body));
+            List<String> body = describe(statement, result, mentions, offsets ? sentence(result, statement) : null,
+                    analyzer);
+            // Kopieren liefert alles, die Zeile zeigt das Knappe; Herkunft, Urteil und Stufe stehen im Overlay (A1).
+            List<String> shown = shown(body);
+            lines.add(String.join(" | ", shown));
             copyText.append(String.join("\n", body)).append("\n\n");
-            list.add(entry(body, stale, offsets ? span(result, statement) : null));
+            String details = StatementProvenance.details(statement, analyzer, mentions);
+            list.add(entry(shown, stale, offsets ? span(result, statement) : null, details));
             list.add(Box.createVerticalStrut(4));
         }
         list.add(Box.createVerticalStrut(8));
@@ -708,6 +822,29 @@ final class StatementsTab extends JPanel {
         }
     }
 
+    /** Anzahl im Abschnittskopf, mit den gekennzeichneten: „12, davon 3 Vorschläge“ (A1). */
+    static String count(List<ParsedStatements.Statement> statements) {
+        long proposals = statements.stream()
+                .filter(s -> StatementProvenance.PROPOSAL.equals(StatementProvenance.marker(s))).count();
+        long invalid = statements.stream()
+                .filter(s -> StatementProvenance.INVALID.equals(StatementProvenance.marker(s))).count();
+        List<String> parts = new ArrayList<>();
+        if (proposals > 0) {
+            parts.add(proposals + (proposals == 1 ? " Vorschlag" : " Vorschläge"));
+        }
+        if (invalid > 0) {
+            parts.add(invalid + " " + StatementProvenance.INVALID);
+        }
+        return statements.size() + (parts.isEmpty() ? "" : ", davon " + String.join(", ", parts));
+    }
+
+    /** Die Zeilen in der Ansicht: ohne Herkunft, Urteil und Stufe, die im Overlay „Herkunft“ stehen (A1). */
+    static List<String> shown(List<String> body) {
+        return body.stream().filter(line -> !line.startsWith(CheckTexts.ORIGIN_LABEL + ": ")
+                && !line.startsWith(CheckTexts.VERDICT_LABEL + ": ")
+                && !line.startsWith(CheckTexts.QUALITY_LABEL + ": ")).toList();
+    }
+
     static String link(KnowledgeGraph.Link link) {
         String target = (link.target().title() == null ? link.target().key().pageId() : link.target().title())
                 + " (" + link.target().key().sourceId() + ")";
@@ -719,10 +856,20 @@ final class StatementsTab extends JPanel {
                 + kind + stale;
     }
 
-    /** Die Zeilen einer Aussage: Prädikat, Beteiligte je Rolle, Form, nominale Bezüge, Hinweise, Beleg. */
+    /** Wie {@link #describe(ParsedStatements.Statement, ParsedStatements, Map, String, String)} ohne Analysator. */
     static List<String> describe(ParsedStatements.Statement statement, ParsedStatements result,
                                  Map<String, ParsedStatements.Mention> mentions, String evidence) {
+        return describe(statement, result, mentions, evidence, null);
+    }
+
+    /**
+     * Die Zeilen einer Aussage: Kennzeichen, Herkunft und Prüfstatus knapp (A1), Prädikat, Beteiligte je Rolle, Form,
+     * nominale Bezüge, Hinweise, Beleg.
+     */
+    static List<String> describe(ParsedStatements.Statement statement, ParsedStatements result,
+                                 Map<String, ParsedStatements.Mention> mentions, String evidence, String analyzer) {
         List<String> body = new ArrayList<>();
+        body.add(StatementProvenance.line(statement, analyzer));
         String lemma = statement.predicateLemma();
         body.add(statement.predicateText() + (lemma == null || lemma.equals(statement.predicateText()) ? ""
                 : " (" + lemma + ")"));
@@ -952,6 +1099,11 @@ final class StatementsTab extends JPanel {
     }
 
     private JComponent entry(List<String> body, boolean stale, List<TermsTab.Span> jump) {
+        return entry(body, stale, jump, null);
+    }
+
+    /** Ein Eintrag; mit {@code details} rechts der Chip „Herkunft“, der sie im Overlay zeigt (A1). */
+    private JComponent entry(List<String> body, boolean stale, List<TermsTab.Span> jump, String details) {
         JTextArea area = note();
         area.setText(String.join("\n", body));
         area.setForeground(stale ? Comic.MUTED : Comic.INK);
@@ -961,6 +1113,15 @@ final class StatementsTab extends JPanel {
                 BorderFactory.createMatteBorder(0, 3, 0, 0, stale ? Comic.MUTED : Comic.PETROL),
                 BorderFactory.createEmptyBorder(4, 8, 4, 4)));
         row.add(area, BorderLayout.CENTER);
+        if (details != null) {
+            ActionChip chip = new ActionChip(StatementProvenance.CHIP, StatementProvenance.HEADING + " zeigen");
+            chip.addActionListener(e -> showDetails(chip, details));
+            JPanel side = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+            side.setOpaque(false);
+            side.add(chip);
+            row.add(side, BorderLayout.EAST);
+            chips.add(chip);
+        }
         row.setAlignmentX(LEFT_ALIGNMENT);
         if (jump != null && !jump.isEmpty()) {
             area.setToolTipText("Zum Beleg im Reiter „Text“ springen");
@@ -975,6 +1136,23 @@ final class StatementsTab extends JPanel {
             });
         }
         return row;
+    }
+
+    private void showDetails(JComponent owner, String details) {
+        popup.clearLinks().text(StatementProvenance.HEADING, details);
+        if (owner.isShowing()) {
+            popup.showAt(owner, 0, owner.getHeight());
+        }
+    }
+
+    /** Das Overlay „Herkunft und Prüfstatus“ (Tests). */
+    InfoPopup popup() {
+        return popup;
+    }
+
+    /** Die Chips „Herkunft“ der Einträge in Reihenfolge (Tests). */
+    List<ActionChip> chips() {
+        return List.copyOf(chips);
     }
 
     private void setState(String label, Color tone) {
@@ -1022,6 +1200,24 @@ final class StatementsTab extends JPanel {
             return Optional.empty();
         }
 
+        /**
+         * Löscht die gespeicherte Aussagen-Analyse der Seite samt Anhängen und enthaltenen Dateien; die Seite bleibt.
+         * Liefert die Zahl der gelöschten Analysen.
+         */
+        default int deleteAnalysis(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+            return 0;
+        }
+
+        /** Ob der Core auch die KI-Urteile des Prüfschritts löschen kann („Alles löschen“). */
+        default boolean canDeleteEverything() {
+            return false;
+        }
+
+        /** Wie {@link #deleteAnalysis}, dazu die KI-Urteile der Seite. */
+        default int deleteEverything(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+            throw new UnsupportedOperationException(StandingTab.DELETE_EVERYTHING_MISSING);
+        }
+
         /** „Aussagen prüfen“: Das Modell beurteilt die Aussagen der gespeicherten, aktuellen Analyse der Seite. */
         default PageStatements checkStatements(PageSnapshot page, java.util.function.BooleanSupplier cancelled) {
             return statements(page);
@@ -1035,6 +1231,21 @@ final class StatementsTab extends JPanel {
                 return null;
             }
             return new Actions() {
+                @Override
+                public int deleteAnalysis(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                    return workspace.deleteStatementAnalysis(key);
+                }
+
+                @Override
+                public boolean canDeleteEverything() {
+                    return true;
+                }
+
+                @Override
+                public int deleteEverything(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                    return workspace.deleteStatementAnalysis(key, true);
+                }
+
                 @Override
                 public Optional<CheckUnavailableException.Reason> checkUnavailable(
                         com.aresstack.spaceharvester.application.snapshot.PageKey key) {

@@ -125,7 +125,10 @@ class SourcesApiTest {
                 .containsPattern("\\{\"id\":\"sharepoint\"(?:(?!\\{\"id\").)*\"tls\":true")
                 .containsPattern("\\{\"id\":\"ftp\"(?:(?!\\{\"id\").)*\"tls\":false")
                 .doesNotContain("vaultValue")
-                .contains("{\"id\":\"outlook\",\"displayName\":\"Outlook\",\"needsCredentials\":false,\"addressOption\":\"mailbox\",");
+                .contains("{\"id\":\"outlook\",\"displayName\":\"Outlook\",\"needsCredentials\":false,\"addressOption\":\"mailbox\",")
+                .contains("{\"id\":\"jira\",\"displayName\":\"Jira\",\"needsCredentials\":false,\"addressOption\":\"baseUrl\",")
+                .containsPattern("\\{\"id\":\"jira\"(?:(?!\\{\"id\").)*\"tls\":true")
+                .doesNotContain("clientCertificate.alias");
     }
 
     @Test

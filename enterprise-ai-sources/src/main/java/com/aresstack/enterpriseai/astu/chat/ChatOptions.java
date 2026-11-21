@@ -214,11 +214,14 @@ public final class ChatOptions {
             return this;
         }
 
-        /** {@code low}, {@code medium}, {@code high} oder {@code null} (Standard des Modells). */
+        /**
+         * {@code none} (kein Nachdenken), {@code low}, {@code medium}, {@code high} oder {@code null} (Standard des
+         * Modells).
+         */
         public Builder reasoningEffort(String value) {
             String effort = blankToNull(value);
-            if (effort != null && !effort.matches("low|medium|high")) {
-                throw new IllegalArgumentException("reasoningEffort must be low, medium or high");
+            if (effort != null && !effort.matches("none|low|medium|high")) {
+                throw new IllegalArgumentException("reasoningEffort must be none, low, medium or high");
             }
             this.reasoningEffort = effort;
             return this;

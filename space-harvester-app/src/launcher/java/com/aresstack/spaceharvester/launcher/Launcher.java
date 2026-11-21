@@ -27,6 +27,10 @@ import javax.swing.JOptionPane;
  *
  * <p>Das zu verwendende Java 21 lässt sich mit der Systemeigenschaft {@code space-harvester.java} oder der
  * Umgebungsvariable {@code SPACE_HARVESTER_JAVA} nennen (sein Ordner oder seine {@code java}-Datei).</p>
+ *
+ * <p>Die Spracherkennung rechnet mit der Vector API von Java ({@code jdk.incubator.vector}) etwa doppelt so schnell.
+ * Fehlt das Modul in der laufenden JVM, startet der Launcher dasselbe Java einmal mit
+ * {@code --add-modules jdk.incubator.vector} neu; {@code -Dspace-harvester.simd=false} unterdrückt das.</p>
  */
 public final class Launcher {
     /** Die Java-Version, für die die App übersetzt ist. */
@@ -34,6 +38,8 @@ public final class Launcher {
     /** Der Loader von Spring Boot; er startet {@code Start-Class} aus dem Manifest. */
     private static final String MAIN = "org.springframework.boot.loader.launch.JarLauncher";
     private static final String RELAUNCHED_PROPERTY = "space-harvester.relaunched";
+    /** Das Modul der Vector API; Whisper nutzt es für SIMD und rechnet ohne es skalar. */
+    private static final String VECTOR_MODULE = "jdk.incubator.vector";
 
     private Launcher() {
     }
@@ -65,6 +71,13 @@ public final class Launcher {
             }
             // Fehler der zweiten JVM meldet diese selbst; nur ihr Exit-Code wird weitergegeben.
             System.exit(relaunch(sameKind(found), args));
+        }
+        if (!Boolean.getBoolean(RELAUNCHED_PROPERTY) && !"false".equalsIgnoreCase(System.getProperty("space-harvester.simd"))
+                && !vectorModuleLoaded()) {
+            String own = ownCommand();
+            if (own != null) {
+                System.exit(relaunch(own, args));
+            }
         }
         Class<?> mainClass = Class.forName(MAIN, true, Launcher.class.getClassLoader());
         Method main = mainClass.getMethod("main", String[].class);
@@ -103,6 +116,7 @@ public final class Launcher {
                 command.add(jvmArg);
             }
         }
+        command.add("--add-modules=" + VECTOR_MODULE);
         command.add("-D" + RELAUNCHED_PROPERTY + "=true");
         command.add("-cp");
         command.add(System.getProperty("java.class.path"));
@@ -117,6 +131,18 @@ public final class Launcher {
             }
         }, "space-harvester-launcher-cleanup"));
         return child.waitFor();
+    }
+
+    /** Ob die Vector API in dieser JVM geladen ist; reflektiv, weil der Launcher für Java 8 übersetzt ist. */
+    private static boolean vectorModuleLoaded() {
+        try {
+            Class<?> layerClass = Class.forName("java.lang.ModuleLayer");
+            Object boot = layerClass.getMethod("boot").invoke(null);
+            Object module = layerClass.getMethod("findModule", String.class).invoke(boot, VECTOR_MODULE);
+            return (Boolean) module.getClass().getMethod("isPresent").invoke(module);
+        } catch (Throwable notAvailable) {
+            return true; // Ohne Modulsystem gibt es nichts nachzuladen; nicht endlos neu starten.
+        }
     }
 
     /** Für ein gefundenes Java: javaw.exe, wenn diese JVM ohne Konsole läuft, damit sich keine öffnet. */

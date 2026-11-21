@@ -19,16 +19,48 @@ import java.util.Objects;
  * @param failure    nur bei {@link Completion#FAILED}: woran die Suchanfragen scheiterten, soweit der KI-Dienst es
  *                   meldete ({@link AiServiceException.Reason}) oder die Frist ablief; sonst und wenn unbekannt
  *                   {@code null}. Nennt nie Ursachentexte, Key oder Anfrage.
+ * @param neighbors  ob die Suchmethode „Nachbarseiten“ (R2) lief und ihre Kandidaten prüfen konnte
  */
 public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
-                                Duration elapsed, AiServiceException.Reason failure) {
+                                Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors,
+                                int neighborQueries, int failedNeighborQueries) {
+
+    /**
+     * Mit dem Stand der Nachbarseiten, ohne Zählung ihrer Suchanfrage.
+     */
+    public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
+                             Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors) {
+        this(hits, variants, reason, loads, elapsed, failure, neighbors, 0, 0);
+    }
 
     public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
                              Duration elapsed) {
         this(hits, variants, reason, loads, elapsed, null);
     }
 
+    public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
+                             Duration elapsed, AiServiceException.Reason failure) {
+        this(hits, variants, reason, loads, elapsed, failure, Neighbors.OFF);
+    }
+
+    /** Stand der Suchmethode „Nachbarseiten“ (R2). */
+    public enum Neighbors {
+        /** Nicht zugeschaltet. */
+        OFF,
+        /** Zugeschaltet und gelaufen; fehlt ein Nachbar, traf er die Anfrage nicht oder es gab keinen. */
+        CHECKED,
+        /**
+         * Zugeschaltet, aber nicht (ganz) geprüft: Frist, Fehler oder Abbruch. Ein fehlender Nachbar heißt dann nicht,
+         * dass es ihn nicht gibt.
+         */
+        UNCHECKED
+    }
+
     public ProgressiveResult {
+        neighbors = neighbors == null ? Neighbors.OFF : neighbors;
+        if (neighborQueries < 0 || failedNeighborQueries < 0 || failedNeighborQueries > neighborQueries) {
+            throw new IllegalArgumentException("Zählung der Nachbarsuche ungültig");
+        }
         if (reason != Completion.FAILED) {
             failure = null;
         }
@@ -77,11 +109,17 @@ public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Co
      * @param foundBy   Priorität der Suchanfrage, die ihn zuerst freigab
      * @param confirmed ob der Treffer aus dem Cache stammt (Volltextindex, semantisch die Vektoren), nicht nur aus der
      *                  Suche der Quelle
+     * @param reranked  ob {@code score} vom Reranker ({@link HitScorer}) stammt; der Reranker ordnet nur um und ist
+     *                  keine Ursache des Treffers (R1, Ursachen in {@link KeywordSearch.Hit#reasons()})
      */
-    public record RankedHit(KeywordSearch.Hit hit, double score, int foundBy, boolean confirmed) {
+    public record RankedHit(KeywordSearch.Hit hit, double score, int foundBy, boolean confirmed, boolean reranked) {
 
         public RankedHit {
             Objects.requireNonNull(hit, "hit");
+        }
+
+        public RankedHit(KeywordSearch.Hit hit, double score, int foundBy, boolean confirmed) {
+            this(hit, score, foundBy, confirmed, false);
         }
     }
 }

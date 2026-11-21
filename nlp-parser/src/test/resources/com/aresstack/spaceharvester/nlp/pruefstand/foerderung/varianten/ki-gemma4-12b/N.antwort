@@ -1,0 +1,6 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "prüfen", "handelnder": "Beauftragte", "betroffenes": "Antrag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "unterschreiben", "handelnder": "Beauftragter", "betroffenes": "Bescheid", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "informieren", "handelnder": "Stelle", "betroffenes": "Angestellten", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "Vorsitzende", "handelnder": "Frau Lang", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "Bevollmächtigter", "handelnder": "Herr Wolf", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

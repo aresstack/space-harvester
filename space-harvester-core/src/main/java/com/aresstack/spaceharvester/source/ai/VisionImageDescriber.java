@@ -61,11 +61,45 @@ public final class VisionImageDescriber implements ImageDescriber {
 
     @Override
     public String describe(byte[] image, String mediaType) {
+        return describe(image, mediaType, null);
+    }
+
+    @Override
+    public boolean loaded() {
+        AiServiceSettings current = settings.get();
+        return current == null || !current.vision()
+                || RemoteAi.of(current, catalog, trustBundles, userAgent).visionLoaded();
+    }
+
+    /** Wartet wie der Chat, bis das Vision-Modell läuft ({@link RemoteAi#awaitModel}). */
+    @Override
+    public void load() {
+        AiServiceSettings current = settings.get();
+        if (current != null && current.vision()) {
+            RemoteAi.of(current, catalog, trustBundles, userAgent).awaitModel(current.visionModel(), () -> { },
+                    () -> false);
+        }
+    }
+
+    @Override
+    public int retries() {
+        AiServiceSettings current = settings.get();
+        return current == null ? 0 : current.retries();
+    }
+
+    @Override
+    public int parallel() {
+        AiServiceSettings current = settings.get();
+        return current == null ? AiServiceSettings.DEFAULT_PARALLEL : current.parallel();
+    }
+
+    @Override
+    public String describe(byte[] image, String mediaType, String instruction) {
         AiServiceSettings current = settings.get();
         if (current == null || !current.vision()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_CONFIGURED,
                     "Kein Vision-Modell eingestellt", null);
         }
-        return RemoteAi.of(current, catalog, trustBundles, userAgent).describeImage(image, mediaType);
+        return RemoteAi.of(current, catalog, trustBundles, userAgent).describeImage(image, mediaType, instruction);
     }
 }

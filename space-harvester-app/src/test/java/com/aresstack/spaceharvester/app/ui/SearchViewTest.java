@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.application.query.DocumentKind;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.awt.Component;
@@ -390,9 +391,9 @@ class SearchViewTest {
         assertThat(sourcesSeen).containsExactly("beta");
         assertThat(view[0].statusText()).doesNotContain("Dateien");
 
-        // „Überall suchen“ übergeht die Auswahl: Suche ohne sourceIds.
+        // Ohne Auswahl im Explorer und mit allen Quellen angehakt: Suche ohne sourceIds.
         SwingUtilities.invokeAndWait(() -> {
-            view[0].everywhere.doClick();
+            view[0].scope(List.of());
             view[0].search("betrieb");
         });
         assertThat(view[0].chosenSources()).isEmpty();
@@ -401,32 +402,75 @@ class SearchViewTest {
     }
 
     /**
-     * Abnahmetest aus #515: „Überall suchen“ bleibt aktiviert, auch wenn danach andere Knoten im Explorer gewählt
-     * werden, und hebt die Auswahl nicht auf; erst ausgeschaltet gilt wieder die aktuelle Auswahl.
+     * Angelo 20.11.2026: statt „Überall suchen“ ein Häkchen je eingetragener Quelle, Vorgabe alle an; abgehakt fehlt
+     * die Quelle in der Suche, auch wenn der Explorer sie wählt; die Häkchen bleiben beim Wechsel der Auswahl.
      */
     @Test
-    void searchEverywhereStaysOnWhileTheExplorerSelectionChangesAndOffUsesTheCurrentSelection() throws Exception {
+    void everySourceHasACheckboxCheckedByDefaultAndUncheckedSourcesLeaveTheSearch() throws Exception {
         start(false);
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
         await(() -> context.runtime() != null);
         SwingUtilities.invokeAndWait(() -> {
-            view[0].scope(List.of(new Explorer.Scope("beta", null)));
-            view[0].everywhere.doClick();
-            assertThat(view[0].everywhere.isSelected()).isTrue();
-            assertThat(view[0].chosenSources()).isEmpty();
-            // Neue Auswahl im Explorer: die Option bleibt, die nächste Suche geht über alle Quellen.
-            view[0].scope(List.of(new Explorer.Scope("alpha", null)));
-            assertThat(view[0].everywhere.isSelected()).isTrue();
+            assertThat(view[0].sourceBoxes.keySet()).containsExactly("alpha", "beta", "dateien");
+            assertThat(view[0].sourceBoxes.values()).extracting(AbstractButton::getText)
+                    .containsExactly("Alpha", "Beta", "Dateien");
+            assertThat(view[0].sourceBoxes.values()).allMatch(AbstractButton::isSelected);
             assertThat(view[0].chosenSources()).isEmpty();
             assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
-            // Ausgeschaltet gilt sofort die aktuelle (inzwischen andere) Auswahl.
-            view[0].everywhere.doClick();
+            // Eine Quelle abgehakt: die nächste Suche nennt die übrigen ausdrücklich.
+            view[0].sourceBoxes.get("alpha").doClick();
+            assertThat(view[0].chosenSources()).containsExactly("beta", "dateien");
+            assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Beta, Dateien");
+            // Die Auswahl im Explorer grenzt unter den angehakten ein.
+            view[0].scope(List.of(new Explorer.Scope("beta", "DEV")));
+            assertThat(view[0].chosenSources()).containsExactly("beta");
+            assertThat(view[0].chosenSpaces()).containsExactly("DEV");
+            assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Beta › DEV");
+            // Eine ganze abgehakte Quelle in der Auswahl hebt den Space-Filter der angehakten nicht auf.
+            view[0].scope(List.of(new Explorer.Scope("alpha", null), new Explorer.Scope("beta", "DEV")));
+            assertThat(view[0].chosenSources()).containsExactly("beta");
+            assertThat(view[0].chosenSpaces()).containsExactly("DEV");
+            // Die gewählte Quelle ist abgehakt: nichts zu durchsuchen, das Häkchen bleibt.
+            view[0].scope(List.of(new Explorer.Scope("alpha", null)));
+            assertThat(view[0].sourceBoxes.get("alpha").isSelected()).isFalse();
+            assertThat(view[0].searchedSources()).isEmpty();
+            assertThat(view[0].scopeLabel.getText()).isEqualTo("In: keine Wissensquelle angehakt");
+            view[0].search("betrieb");
+            assertThat(view[0].statusText()).doesNotContain("Treffer");
+            // Wieder angehakt gilt die Auswahl.
+            view[0].sourceBoxes.get("alpha").doClick();
             assertThat(view[0].chosenSources()).containsExactly("alpha");
             assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alpha");
-            // Ohne Auswahl bleibt es bei allen Quellen.
-            view[0].scope(List.of());
-            assertThat(view[0].chosenSources()).isEmpty();
+        });
+    }
+
+    /** Ein Häkchen je Dateityp, Vorgabe alle; die abgehakten fehlen in der Anfrage, die Zeile nennt die Auswahl. */
+    @Test
+    void everyDocumentKindHasACheckboxAndTheCheckedOnesGoIntoTheQuery() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].kindBoxes.keySet()).containsExactly(DocumentKind.values());
+            assertThat(view[0].kindBoxes.values()).allMatch(AbstractButton::isSelected);
+            assertThat(view[0].kindBoxes.get(DocumentKind.PAGE).getText()).isEqualTo("Seiten (HTML)");
+            assertThat(view[0].chosenKinds()).isEmpty();
+            assertThat(view[0].kindsLabel.getText()).isEqualTo("Dateitypen: alle");
+            for (DocumentKind kind : DocumentKind.values()) {
+                if (kind != DocumentKind.PDF && kind != DocumentKind.WORD) {
+                    view[0].kindBoxes.get(kind).doClick();
+                }
+            }
+            assertThat(view[0].chosenKinds()).containsExactly(DocumentKind.PDF, DocumentKind.WORD);
+            assertThat(view[0].kindsLabel.getText()).isEqualTo("Dateitypen: PDF, Word");
+            // Ohne jedes Häkchen sucht die Ansicht nicht, statt still nichts zu finden.
+            view[0].kindBoxes.get(DocumentKind.PDF).doClick();
+            view[0].kindBoxes.get(DocumentKind.WORD).doClick();
+            assertThat(view[0].kindsLabel.getText()).isEqualTo("Dateitypen: keiner angehakt");
+            view[0].search("betrieb");
+            assertThat(view[0].statusText()).doesNotContain("Treffer");
         });
     }
 
@@ -439,20 +483,30 @@ class SearchViewTest {
         await(() -> context.runtime() != null);
         SwingUtilities.invokeAndWait(() -> {
             assertThat(find(view[0].options, AbstractButton.class)).extracting(AbstractButton::getText)
-                    .contains("Überall suchen", SearchView.SEMANTIC);
+                    .contains("Alpha", "Beta", "Dateien", "Seiten (HTML)", "PDF", "Word", "PowerPoint", "Excel",
+                            "Bilder", "Videos", SearchView.SEMANTIC);
+            assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
+                    .contains("WISSENSQUELLEN", "DATEITYPEN", "SUCHMETHODEN");
+            // Suchmethoden als Gruppe: Semantische Suche, darunter Nachbarseiten (R2), Standard aus.
+            List<String> methods = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
+                    .filter(text -> text.equals(SearchView.SEMANTIC) || text.equals(SearchView.NEIGHBORS)).toList();
+            assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS);
+            assertThat(view[0].neighbors.isEnabled()).isTrue();
+            assertThat(view[0].neighbors.getToolTipText()).isEqualTo(SearchView.NEIGHBORS_TIP);
             assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
                     .anySatisfy(text -> assertThat(text).contains("Hinweise zur Suche", "space-harvester://"));
             assertThat(view[0].optionsButton.getAccessibleContext().getAccessibleName()).isEqualTo("Suchoptionen");
             // Die Optionen sind Menüpunkte mit dem Modell der Häkchen: per Tastatur erreichbar und gleich geschaltet.
             javax.swing.JCheckBoxMenuItem item = find(view[0].options, javax.swing.JCheckBoxMenuItem.class).get(0);
             item.doClick();
-            assertThat(view[0].everywhere.isSelected()).isTrue();
+            assertThat(view[0].sourceBoxes.get("alpha").isSelected()).isFalse();
             item.doClick();
+            assertThat(view[0].sourceBoxes.get("alpha").isSelected()).isTrue();
             // Keine zweite Eingabezeile und keine Umfang-/Modus-Zeile über der Tabelle.
             assertThat(find(whole(view[0]), javax.swing.JTextField.class)).isEmpty();
             assertThat(SwingUtilities.isDescendingFrom(view[0].scopeLabel, view[0].component())).isFalse();
             view[0].search("betrieb");
-            view[0].everywhere.doClick();
+            view[0].kindBoxes.get(DocumentKind.IMAGE).doClick();
             assertThat(view[0].queryText()).isEqualTo("betrieb");
         });
     }

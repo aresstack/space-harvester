@@ -1,0 +1,11 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "verursachen", "handelnder": "Transport", "betroffenes": "Kosten", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "tragen", "handelnder": "Kostenstelle", "betroffenes": "Ausgaben", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "bestimmen", "handelnder": "Preisindex", "betroffenes": "Aufschlag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "gewichten", "handelnder": "Punktesystem", "betroffenes": "Preis", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "nennen", "handelnder": "Monatsreport", "betroffenes": "Bestellungen", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "annehmen", "handelnder": "Poststelle", "betroffenes": "Pakete", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 7, "aussagen": [{"verb": "umfassen", "handelnder": "Lieferantennetzwerk", "betroffenes": "Firmen", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 8, "aussagen": [{"verb": "erhalten", "handelnder": "Stammkunde", "betroffenes": "Rabatt", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 9, "aussagen": [{"verb": "brauchen", "handelnder": "Export", "betroffenes": "Genehmigung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 10, "aussagen": [{"verb": "abzeichnen", "handelnder": "Sachgebietsleiter", "betroffenes": "Rechnung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

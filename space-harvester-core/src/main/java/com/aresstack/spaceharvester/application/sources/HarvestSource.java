@@ -26,6 +26,14 @@ public interface HarvestSource {
     String title();
 
     /**
+     * Indicate whether the source persists its technical navigation root as a page.
+     * Represent that page through the partition row, not another folder in the explorer.
+     */
+    default boolean navigationRootIsPage() {
+        return false;
+    }
+
+    /**
      * Was die Quelle kann (#18). Standard: Partitionen und beide Metadatenabfragen, Originale nur, wenn die Quelle
      * {@link #storedPage} überschreibt und das hier meldet.
      */
@@ -105,6 +113,30 @@ public interface HarvestSource {
     default StoredPage storedPage(String pageId) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann native Seitenantworten nicht liefern", null);
+    }
+
+    /**
+     * Lädt das Original einer Datei nach {@code target} statt in den Speicher, für den Textauszug von Dateien über der
+     * Größengrenze des Caches ({@code LargeFiles}). Den Medientyp liest die Quelle vor dem Herunterladen aus ihren
+     * Kopfdaten; erfüllt er {@code wanted} nicht (Archive, Bilder, Medien, Unbekanntes), lädt sie nichts.
+     * Standard: kann es nicht, leer.
+     *
+     * @param maxBytes größte Datei, die geladen wird
+     * @return der Medientyp des geladenen Originals; leer, wenn nichts geladen wurde
+     * @throws SourceAccessException wie {@link #storedPage(String)}
+     */
+    default Optional<String> downloadOriginal(String pageId, java.nio.file.Path target,
+                                              java.util.function.Predicate<String> wanted, long maxBytes) {
+        return Optional.empty();
+    }
+
+    /**
+     * Read only the requested byte range of a remotely stored media file.
+     * The caller must authorize access to this resource before reading.
+     */
+    default byte[] mediaRange(String pageId, long offset, int maximumBytes) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle unterstützt kein Streaming von Mediendateien", null);
     }
 
     /**
@@ -344,6 +376,27 @@ public interface HarvestSource {
     }
 
     /**
+     * Ob die Quelle die IDs aller Seiten einer Partition ohne Metadaten liefern kann ({@link #pageIds}); dann erkennt
+     * das Nachholen gelöschte Seiten mit dieser schlanken Liste statt mit der Seitenliste samt Kopfdaten.
+     */
+    default boolean listsPageIds() {
+        return false;
+    }
+
+    /**
+     * Ein Stapel reiner Seiten-IDs einer Partition (Confluence: {@code /rest/api/content} ohne {@code expand}, 200 je
+     * Anfrage).
+     *
+     * @param cursor {@code null} für den ersten Stapel, sonst {@link PageIdBatch#nextCursor()}
+     * @throws SourceAccessException {@code UNSUPPORTED} ohne {@link #listsPageIds()} oder für einen fremden Cursor,
+     *                               sonst wie {@link #pageMetadata(String, String, int)}
+     */
+    default PageIdBatch pageIds(String partitionKey, String cursor, int limit) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle liefert keine reine ID-Liste", null);
+    }
+
+    /**
      * Ob die Quelle Änderungsereignisse lesen kann, die sie selbst verschickt (Confluence-Webhooks, ADR 0014); dann
      * liest {@link #changeEvents} den Rumpf eines Aufrufs.
      */
@@ -437,11 +490,23 @@ public interface HarvestSource {
      * @param partitionKey Partition der Seite, wenn bekannt, sonst {@code null}
      * @param hasChildren  ob die Seite Kinder hat, soweit die Quelle das ohne Laden weiß; {@code null} unbekannt
      */
-    record PageNode(String pageId, String title, String partitionKey, Boolean hasChildren) {
+    record PageNode(String pageId, String title, String partitionKey, Boolean hasChildren, Kind kind) {
+
+        /** Source-neutral presentation role. A page can have children without becoming a folder. */
+        public enum Kind {
+            PAGE,
+            FOLDER,
+            FILE
+        }
+
+        public PageNode(String pageId, String title, String partitionKey, Boolean hasChildren) {
+            this(pageId, title, partitionKey, hasChildren, Kind.PAGE);
+        }
 
         public PageNode {
             Objects.requireNonNull(pageId, "pageId");
             title = title == null || title.isBlank() ? pageId : title;
+            kind = kind == null ? Kind.PAGE : kind;
         }
     }
 

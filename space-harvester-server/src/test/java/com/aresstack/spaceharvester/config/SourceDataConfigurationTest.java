@@ -54,7 +54,8 @@ class SourceDataConfigurationTest {
                     ConfiguredSourceCatalog.of(List.of(), "test"), none(LuceneFillQueue.class), release,
                     none(LucenePageCache.class), none(LucenePageTextIndex.class), none(LuceneEnrichmentStore.class),
                     none(AssetStore.class), none(ExportArtifactWriter.class), none(TermRelations.class),
-                    none(FileResolutionCache.class), none(FileResolutionCache.class), none(Glossary.class),
+                    none(FileResolutionCache.class), none(FileResolutionCache.class),
+                    none(com.aresstack.spaceharvester.persistence.files.FileSynonymVectorCache.class), none(Glossary.class),
                     none(FactEditStore.class), none(InventoryLog.class), none(AcquisitionScheduler.class));
 
             assertThat(purge.purge("wiki").complete()).isTrue();

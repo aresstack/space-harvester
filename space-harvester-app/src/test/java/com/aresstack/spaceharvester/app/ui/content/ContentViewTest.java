@@ -136,7 +136,10 @@ class ContentViewTest {
             titleLabel.setText("Sehr langer Titel ".repeat(40));
             heading.setSize(300, heading.getPreferredSize().height);
             heading.doLayout();
-            return heading.getComponentCount() == 1 && titleLabel.getWidth() == 300;
+            // Neben der Überschrift liegt nur noch der (unsichtbare) Chat-Kopf; sichtbar ist allein die Überschrift.
+            long visible = java.util.Arrays.stream(heading.getComponents()).filter(java.awt.Component::isVisible)
+                    .count();
+            return visible == 1 && titleLabel.isVisible() && titleLabel.getWidth() == 300;
         })).isTrue();
         // Eine Kopfzeile (Angelo, 16.11.2026): Überschrift, Stern und das Dreieck stehen in der Zeile der
         // Bereichsanzeige; „Lesezeichen kopieren“ und „Im Browser öffnen“ liegen im Menü am Dreieck.
@@ -238,9 +241,14 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
+                .containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
-                .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
+                .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph", "Beziehungen");
+        // „Info“ hat die Eigenschaften als ersten Unterreiter (Angelo, 19.11.2026); „Beziehungen“ steht unter
+        // „Analysen“ (Angelo, 20.11.2026).
+        assertThat(onEdt(() -> detail.advancedTabs().names())).containsExactly("Eigenschaften",
+                "Technische Angaben", "Originaldaten");
+        assertThat(onEdt(() -> detail.advancedTabs().selected())).isEqualTo("Eigenschaften");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
         // Die Hauptreiter sind quadratische Symbolknöpfe für die Icon-Leiste des Hauptfensters; ihr Name steht im
         // Tooltip, die Reiterzeile oben entfällt, die Unterreiter von „Analysen“ stehen ganz oben.
@@ -254,7 +262,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
+        })).containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -269,6 +277,24 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.export().selection().sourceId())).isEqualTo("handbuch");
+        // „Wissensquellen“ (Angelo 17.11.2026): keine alte Quelle in der Mitte, die Gesamtsicht unter Eigenschaften,
+        // die Bereichsanzeige ohne Quelle; danach wieder eine Quelle.
+        onEdt(() -> {
+            view.selection(ExportPanel.Selection.ALL);
+            return null;
+        });
+        List<String> all = context.runtime().workspace().sources().stream()
+                .map(com.aresstack.spaceharvester.application.sources.HarvestSource::id).toList();
+        assertThat(onEdt(() -> detail.showsAllSources(all))).isTrue();
+        assertThat(onEdt(() -> detail.sourceProperties().allIds())).contains("handbuch", "notizen");
+        assertThat(onEdt(() -> detail.showsAllSources(List.of("handbuch")))).as("andere Quellenliste").isFalse();
+        assertThat(onEdt(view::crumbs)).isEqualTo(ContentView.ALL_SOURCES);
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.sourceProperties().showsAll())).isFalse();
+        assertThat(onEdt(view::crumbs)).isEqualTo("handbuch");
         // Der Stand (ADR 0032) hat kein eigenes Symbol: „Analysen“ zeigt ihn, solange links keine Seite gewählt ist
         // (Quelle, Space, Wissensquellen-Kopf), mit Hilfe als ?-Knopf oben rechts (Angelo 17.11.2026).
         onEdt(() -> {
@@ -276,7 +302,49 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
+        // EINE Reiterzeile (AT 17.11.2026): „Begriffe“ vorn wie auf der Seite, dahinter die Reiter des Stands.
         assertThat(onEdt(() -> detail.standing().isVisible())).isTrue();
+        // Fachglossar, Graph und die Beziehungen der Auswahl hinten in derselben Zeile (BG2c).
+        assertThat(onEdt(() -> detail.standing().tabs().names())).containsExactly("Begriffe", "Aussagen",
+                "Zuerst lesen", "Mögliche Widersprüche", "Fachglossar", "Graph", "Beziehungen");
+        assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Begriffe");
+        assertThat(onEdt(() -> detail.overviewTerms().showsSelection())).isTrue();
+        assertThat(onEdt(() -> detail.overviewTerms().title())).isEqualTo("Begriffe in handbuch");
+        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo(PageDetailPanel.OVERVIEW_TERMS);
+        onEdt(() -> {
+            detail.standing().tabs().select("Aussagen");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Stand");
+        // Fachglossar: seine Werkzeuge oben rechts, der Papierkorb des Stands nicht; Stand in der Statuszeile getrennt.
+        onEdt(() -> {
+            detail.standing().tabs().select("Fachglossar");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo(PageDetailPanel.OVERVIEW_GLOSSARY);
+        assertThat(onEdt(() -> detail.overviewGlossary().addButton().isVisible())).isTrue();
+        assertThat(onEdt(() -> detail.standing().deleteAnalysesButton().isVisible())).isFalse();
+        onEdt(() -> {
+            detail.standing().tabs().select("Graph");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.overviewGlossary().addButton().isVisible())).isFalse();
+        assertThat(onEdt(() -> detail.overviewGraph().tools().isVisible())).isTrue();
+        onEdt(() -> {
+            detail.standing().tabs().select("Aussagen");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.overviewGraph().tools().isVisible())).isFalse();
+        // Der gewählte Reiter bleibt beim Wechsel der Auswahl.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("notizen", null, null, "notizen"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Aussagen");
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         // Eine Seite links: „Analysen“ zeigt wieder die Analysen der Seite.
         onEdt(() -> {
@@ -292,13 +360,28 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
+        // Ohne Seite (BG2b): die Beziehungen der Auswahl als Reiter „Beziehungen“ beim Stand unter „Analysen“.
+        onEdt(() -> {
+            detail.tabs().select("Analysen");
+            detail.standing().tabs().select("Beziehungen");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.wideAdvanced().names())).containsExactly("Eigenschaften",
+                "Technische Angaben", "Originaldaten");
+        assertThat(onEdt(() -> detail.wideAnalysis().isVisible() && !detail.wideAnalysis().showsSteps())).isTrue();
+        assertThat(onEdt(() -> detail.wideAnalysis().proposeButton().isVisible()
+                && detail.wideAnalysis().createButton().isVisible())).isTrue();
+        assertThat(onEdt(() -> detail.analysisView().proposeButton().isShowing())).isFalse();
         onEdt(() -> {
             detail.tabs().select("Leseansicht");
             return null;
         });
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
-        assertThat(onEdt(() -> view.tools())).as("unten in der Werkzeugleiste steht nichts mehr").isNull();
+        // Die Schnellaktionen des Chats stehen in seiner Seitenleiste, nicht mehr unten in der Werkzeugleiste.
+        assertThat(onEdt(() -> view.tools() == view.detail().footTools()
+                && view.detail().footTools().getComponentCount() == 0))
+                .as("unten keine Chat-Chips").isTrue();
         // Ohne gezeigte Mitte verschwindet nur die dunkle Füllung, der gewählte Reiter bleibt.
         onEdt(() -> {
             view.tabsActive(false);
@@ -357,16 +440,17 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
         onEdt(() -> {
-            view.detail().tabs().select("Eigenschaften");
+            view.detail().selectTab("Eigenschaften");
             return null;
         });
-        assertThat(onEdt(() -> view.detail().sourceProperties().isVisible())).as("„Eigenschaften“: die Quelle")
-                .isTrue();
+        assertThat(onEdt(() -> view.detail().tabs().selected())).isEqualTo("Info");
+        assertThat(onEdt(() -> view.detail().wideAdvanced().isVisible()
+                && view.detail().sourceProperties().isVisible())).as("„Info › Eigenschaften“: die Quelle").isTrue();
         assertThat(onEdt(() -> view.detail().sourceProperties().sourceId())).isEqualTo("handbuch");
         assertThat(onEdt(() -> view.detail().sourceProperties().tools().isVisible())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isFalse();
         onEdt(() -> {
-            view.detail().tabs().select("Erweitert");
+            view.detail().wideAdvanced().select("Technische Angaben");
             return null;
         });
         assertThat(onEdt(() -> view.detail().sourceView().isVisible())).as("übrige Reiter leer").isFalse();
@@ -402,9 +486,19 @@ class ContentViewTest {
         assertThat(onEdt(() -> barIcons(view.detail()))).containsExactly(bar);
     }
 
+    private static List<String> chipLabels(ChatPanel chat) {
+        return find((java.awt.Container) chat.quickActions(), javax.swing.AbstractButton.class).stream()
+                .map(javax.swing.AbstractButton::getText).toList();
+    }
+
+    private static boolean chipsEnabled(ChatPanel chat) {
+        List<javax.swing.AbstractButton> chips = find((java.awt.Container) chat.quickActions(),
+                javax.swing.AbstractButton.class);
+        return !chips.isEmpty() && chips.stream().allMatch(javax.swing.AbstractButton::isEnabled);
+    }
+
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
-        return java.util.stream.Stream.of("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert",
-                "Export", "Chat").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
+        return java.util.stream.Stream.of("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 
     @Test
@@ -413,13 +507,46 @@ class ContentViewTest {
         ChatPanel chat = detail.chat();
         assertThat(onEdt(chat::knowledge)).isEqualTo(ChatPanel.NO_SELECTION);
         assertThat(onEdt(() -> chat.sendButton().isEnabled())).isFalse();
+        // Der Chat ist kein Reiter mehr, sondern eine Seitenleiste (Angelo, 21.11.2026): die Seitenansicht behält ihre
+        // Überschrift, „Chat: ‹Name› ▾“ samt Neuer Chat, Chat löschen und Einklappen steht im Kopf der Leiste.
+        ChatSidebar sidebar = onEdt(view::chatSidebar);
         onEdt(() -> {
-            detail.tabs().select("Chat");
             view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
             return null;
         });
-        assertThat(onEdt(chat::isVisible)).isTrue();
+        assertThat(onEdt(() -> sidebar.chat() == chat && view.chatSidebar() == sidebar
+                && javax.swing.SwingUtilities.isDescendingFrom(chat, sidebar)
+                && javax.swing.SwingUtilities.isDescendingFrom(chat.header(), sidebar)
+                && javax.swing.SwingUtilities.isDescendingFrom(chat.headerActions(), sidebar)
+                && !javax.swing.SwingUtilities.isDescendingFrom(chat, detail)
+                && sidebar.collapseButton().getParent() == chat.headerActions().getParent()
+                && ChatSidebar.COLLAPSE.equals(sidebar.collapseButton().getToolTipText()))).isTrue();
+        assertThat(onEdt(() -> sidebar.getMinimumSize().width)).isEqualTo(ChatSidebar.MIN_WIDTH);
+        List<String> actions = onEdt(() -> find((java.awt.Container) chat.headerActions(),
+                javax.swing.AbstractButton.class).stream()
+                .map(button -> button.getAccessibleContext().getAccessibleName() + ":" + button.isEnabled()).toList());
+        assertThat(actions).containsExactly(ChatPanel.NEW_CHAT + ":true", ChatPanel.DELETE + ":false");
         // Den Text zeigt der Chat schon vor dem Auflösen der Auswahl; Senden geht erst danach.
+        await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
+        // Schnellaktionen über der Eingabe der Leiste, umbrechend; bei einer Quelle „Bereich zusammenfassen“ und
+        // „Was ist neu?“.
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(chat.quickActions(), chat)
+                && chat.quickActions().isVisible()
+                && ((javax.swing.JComponent) chat.quickActions()).getLayout()
+                        instanceof com.aresstack.spaceharvester.app.ui.controls.WrapLayout)).isTrue();
+        assertThat(onEdt(() -> chipLabels(chat))).containsExactly(ChatPanel.SUMMARIZE_AREA, ChatPanel.WHATS_NEW);
+        await(() -> chipsEnabled(chat));
+        // Bei einer Seite: nur die Seite, die Seite samt Unterseiten, Was ist neu – nie die Eltern.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", space("handbuch"), "p1", "Seite 1"));
+            return null;
+        });
+        assertThat(onEdt(() -> chipLabels(chat))).containsExactly(ChatPanel.SUMMARIZE_PAGE,
+                ChatPanel.SUMMARIZE_SUBTREE, ChatPanel.WHATS_NEW);
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
         await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
         // Senden ohne Chat-Modell: nichts geht ab, die Statuszeile sagt, was fehlt; Text und Anhang bleiben stehen.
         onEdt(() -> {
@@ -451,6 +578,8 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Text");
         assertThat(onEdt(() -> detail.tabs().button("Text").isSelected())).isTrue();
+        // Ohne Auswahl gibt es keine Chips; die Seitenüberschrift der Ansicht hat mit dem Chat nichts mehr zu tun.
+        assertThat(onEdt(() -> detail.titleLabel().isVisible() && !chat.quickActions().isVisible())).isTrue();
         onEdt(() -> {
             detail.tabs().select("Leseansicht");
             return null;
@@ -650,8 +779,32 @@ class ContentViewTest {
         assertThat(PageDetailPanel.sameDomain(java.net.URI.create("https://wiki.example.org/x").toURL(), null)).isFalse();
     }
 
+    @Test
+    void aForeignLinkOpensInternallyWhenASourceKnowsThePage() {
+        var issue = new com.aresstack.spaceharvester.application.query.PageAddresses.Match("jira", "ABC-1", "ABC",
+                "ABC-1 Drucker streikt", "1", java.net.URI.create("https://jira.example.org/browse/ABC-1"), null);
+        assertThat(PageDetailPanel.internalTarget(new com.aresstack.spaceharvester.application.query.PageAddresses
+                .Resolution(List.of(issue), List.of()))).contains(issue);
+        assertThat(PageDetailPanel.internalTarget(new com.aresstack.spaceharvester.application.query.PageAddresses
+                .Resolution(List.of(), List.of("jira")))).isEmpty();
+        assertThat(PageDetailPanel.internalTarget(null)).isEmpty();
+    }
+
     private static boolean shown(PageDetailPanel detail, String pageId) {
         return detail.shownPage() != null && pageId.equals(detail.shownPage().header().metadata().pageId());
+    }
+
+    private static <T> List<T> find(java.awt.Container container, Class<T> type) {
+        List<T> found = new java.util.ArrayList<>();
+        for (java.awt.Component component : container.getComponents()) {
+            if (type.isInstance(component)) {
+                found.add(type.cast(component));
+            }
+            if (component instanceof java.awt.Container inner) {
+                found.addAll(find(inner, type));
+            }
+        }
+        return found;
     }
 
     private static String labelText(java.awt.Container container) {

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.spaceharvester.app.settings.AiAccess;
@@ -16,6 +17,7 @@ import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
 import com.aresstack.spaceharvester.application.check.CheckScope;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
+import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
@@ -62,7 +64,53 @@ final class AiSettingsPanel {
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 10));
+    /** „Anbieter“: OpenAI-kompatibler Dienst oder Ollama-Server ({@code provider}); Ollama braucht keinen Key. */
+    final JComboBox<String> provider = Comic.combo();
+    static final String OPENAI_HINT = "OpenAI-kompatibel, z. B. https://api.openai.com/v1";
+    static final String OLLAMA_HINT = "Ollama-Server, z. B. " + AiProvider.OLLAMA_DEFAULT_URL
+            + "; Chat, Embeddings und Bilder über dessen /v1, ohne API-Key";
     final JTextField baseUrl = Comic.field(32);
+    /** Kontextlänge je Anfrage an Ollama ({@code context-tokens}); leer: Standard des Core. */
+    final JTextField contextTokens = Comic.field(8);
+    static final String CONTEXT_TOKENS_LABEL = "Kontextlänge";
+    static final String CONTEXT_TOKENS_HINT = "Tokens je Anfrage (num_ctx); leer: 8192. Größer braucht mehr "
+            + "Grafikspeicher, Ollama lädt das Modell dafür neu";
+    /** So viele Sekunden darf Ollama ein Modell laden ({@code load-timeout}); leer: Standard des Core. */
+    final JTextField loadTimeout = Comic.field(8);
+    static final String LOAD_TIMEOUT_LABEL = "Ladefrist";
+    static final String LOAD_TIMEOUT_HINT = "Sekunden, die Ollama zum Laden eines Modells haben darf; leer: "
+            + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_LOAD_TIMEOUT.toSeconds();
+    /** Abstand der Frage an Ollama, ob ein angestoßenes Modell läuft ({@code load-poll-interval}). */
+    final JTextField loadPollInterval = Comic.field(8);
+    static final String LOAD_POLL_LABEL = "Abfrageabstand";
+    static final String LOAD_POLL_HINT = "Sekunden zwischen den Fragen an Ollama (/api/ps), ob ein Modell nach dem "
+            + "Anstoß zum Laden läuft; leer: "
+            + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_LOAD_POLL_INTERVAL.toSeconds();
+    /** Wiederholungen einer fehlgeschlagenen Bildbeschreibung ({@code retries}); leer: Standard des Core. */
+    final JTextField retries = Comic.field(4);
+    static final String RETRIES_LABEL = "Wiederholungen";
+    static final String RETRIES_HINT = "So oft wird ein Bild erneut beschrieben, wenn das Modell scheitert; leer: "
+            + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_RETRIES;
+    /**
+     * Gleichzeitige Anfragen an den KI-Dienst ({@code parallel}, Angelo 20.11.2026: „Warum verwendet er nur eine
+     * Verbindung zum KI-Server?“); leer: Standard des Core.
+     */
+    final JTextField parallel = Comic.field(4);
+    static final String PARALLEL_LABEL = "Gleichzeitige Anfragen";
+    static final String PARALLEL_HINT = "So viele Anfragen schickt ein Auftrag zugleich an den KI-Dienst "
+            + "(Bildbeschreibungen, „In PPTX umwandeln“); bei Ollama höchstens OLLAMA_NUM_PARALLEL; leer: "
+            + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_PARALLEL;
+    /**
+     * Nachdenken des Chat-Modells bei Analyseschritten ({@code step-thinking}, Angelo 20.11.2026): Ein Modell mit
+     * Nachdenk-Modus schreibt sonst vor jeder Antwort Tausende Token, und „Transkript korrigieren“ kommt nicht voran.
+     */
+    final JComboBox<String> stepThinking = Comic.combo();
+    static final String THINKING_LABEL = "Nachdenken bei Analyseschritten";
+    static final String THINKING_HINT = "Transkript korrigieren, Folienkommentare und Prüfschritte; „aus“ antwortet "
+            + "direkt (Standard), sonst denkt ein Modell mit Nachdenk-Modus erst nach";
+    /** Anzeige und Wert in der Datei, in derselben Reihenfolge. */
+    static final java.util.List<String> THINKING_NAMES = java.util.List.of("aus", "wenig", "mittel", "viel");
+    static final java.util.List<String> THINKING_KEYS = java.util.List.of("none", "low", "medium", "high");
     final JPasswordField apiKey = new JPasswordField(32);
     final JTextField chatModel = Comic.field(24);
     final JTextField embeddingModel = Comic.field(24);
@@ -144,14 +192,66 @@ final class AiSettingsPanel {
     final HelpButton judgedPairsHelp = new HelpButton(Dialogs.CLOSE_SIZE, JUDGED_PAIRS_LABEL, JUDGED_PAIRS_HELP);
     static final String JUDGED_PAIRS_LABEL = "Synonymprüfung";
     static final String JUDGED_PAIRS_UNIT = "Paare je Lauf";
-    static final String JUDGED_PAIRS_HELP = "Die Synonymerkennung (Begriffe › Synonyme, Knopf „Synonyme "
-            + "vorschlagen“) findet Kandidatenpaare über Regeln und das Embedding-Modell. Steht hier eine Zahl über "
+    static final String JUDGED_PAIRS_HELP = "Die Synonymerkennung (Knopf „Synonyme vorschlagen“ bei den "
+            + "Beziehungen) findet Kandidatenpaare über Regeln und das Embedding-Modell. Steht hier eine Zahl über "
             + "0, gehen je Lauf höchstens so viele Kandidatenpaare zusätzlich mit kurzen Fundstellen aus freigegebenen "
             + "Quellen an das Text-Modell, das die Bedeutung prüft (Synonym, Schreibvariante, verwandt). Bei 0 bleibt "
             + "die Prüfung aus; ähnliche Embedding-Paare werden dann direkt Vorschläge.\n\n"
             + "Der Wert ist die Vorbelegung des Startdialogs „Synonyme vorschlagen“ und lässt sich dort je Lauf "
             + "ändern. Er gilt ohne Neustart beim nächsten Lauf. Schlüssel in der Konfigurationsdatei: "
             + "space-harvester.terms.synonyms.max-judged-pairs.";
+    /**
+     * Lauf nach jedem Abgleich ({@code space-harvester.terms.synonyms.automatic}, SY1/SY3, Angelo 17.11.2026): nach
+     * der Anreicherung einer Quelle und nach neuer KI-Freigabe einer Seite startet ein Synonymlauf für die Quelle;
+     * aus heißt nur noch auf Klick. Gilt ohne Neustart beim nächsten Abgleich.
+     */
+    final javax.swing.JCheckBox automaticSynonyms = Comic.checkBox(AUTOMATIC_SYNONYMS_TEXT);
+    final HelpButton automaticSynonymsHelp = new HelpButton(Dialogs.CLOSE_SIZE, AUTOMATIC_SYNONYMS_LABEL,
+            AUTOMATIC_SYNONYMS_HELP);
+    static final String AUTOMATIC_SYNONYMS_LABEL = "Synonyme";
+    static final String AUTOMATIC_SYNONYMS_TEXT = "Nach jedem Abgleich vorschlagen";
+    /** Die Zeile auf der Abschlussseite des Assistenten. */
+    static final String AUTOMATIC_SYNONYMS_ON = "nach jedem Abgleich";
+    static final String AUTOMATIC_SYNONYMS_OFF = "nur auf Klick";
+    static final String AUTOMATIC_SYNONYMS_HELP = "Mit Häkchen schlägt Space Harvester nach jedem Abgleich einer "
+            + "Quelle und immer dann, wenn eine Seite neu für die KI freigegeben wird, von selbst Synonyme für diese "
+            + "Quelle vor; der Lauf erscheint unter Aufträge. Ohne Häkchen gibt es Vorschläge nur über „Synonyme "
+            + "vorschlagen“ an der Liste der Beziehungen.\n\n"
+            + "Für Vorschläge aus der Bedeutung braucht es ein Embedding-Modell und für die KI freigegebene Seiten. "
+            + "Fehlt eins davon, findet der Lauf nur Schreibvarianten und Stellen wie „auch genannt“ oder "
+            + "„kurz: …“.\n\n"
+            + "Bestätigt wird dabei nichts: Alles bleibt ein Vorschlag, den du in der Liste der Beziehungen annimmst "
+            + "oder ablehnst. Was du dort entschieden hast, bleibt bestehen. Gilt ohne Neustart beim nächsten Abgleich. "
+            + "Schlüssel in der Konfigurationsdatei: space-harvester.terms.synonyms.automatic.";
+    /**
+     * Bilder automatisch beschreiben ({@code space-harvester.images.automatic} und {@code .max-per-run}, Fahrplan B1):
+     * nach dem Abgleich einer Quelle und nach neuer KI-Freigabe beschreibt ein eigener Auftrag die Bilder freigegebener
+     * Seiten, höchstens so viele je Lauf. Standard aus. Gilt ohne Neustart beim nächsten Abgleich.
+     */
+    final javax.swing.JCheckBox automaticImages = Comic.checkBox(AUTOMATIC_IMAGES_TEXT);
+    final JSpinner imagesPerRun = countSpinner(0, MAX_IMAGES_PER_RUN, 50);
+    final HelpButton automaticImagesHelp = new HelpButton(Dialogs.CLOSE_SIZE, AUTOMATIC_IMAGES_LABEL,
+            AUTOMATIC_IMAGES_HELP);
+    static final String AUTOMATIC_IMAGES_LABEL = "Bilder";
+    static final String AUTOMATIC_IMAGES_TEXT = "Nach jedem Abgleich beschreiben";
+    static final String IMAGES_PER_RUN_BEFORE = "höchstens";
+    static final String IMAGES_PER_RUN_AFTER = "je Lauf";
+    static final int MAX_IMAGES_PER_RUN = 1_000_000;
+    /** Die Zeile auf der Abschlussseite des Assistenten. */
+    static final String AUTOMATIC_IMAGES_OFF = "nur auf Klick";
+    static final String AUTOMATIC_IMAGES_HELP = "Mit Häkchen beschreibt Space Harvester nach jedem Abgleich einer "
+            + "Quelle und immer dann, wenn eine Seite neu für die KI freigegeben wird, von selbst die Bilder dieser "
+            + "Quelle mit dem Vision-Modell; der Lauf erscheint unter Aufträge als „Bilder beschreiben“ und lässt sich "
+            + "dort abbrechen. Was schon beschrieben ist, bleibt.\n\n"
+            + "Beschrieben werden nur Bilder von Seiten mit KI-Freigabe und nur solche, die für das eingestellte "
+            + "Vision-Modell noch keine Beschreibung haben; ein Bild geht nie zweimal an das Modell. Je Lauf gehen "
+            + "höchstens so viele Bilder an das Modell, wie hinter „" + IMAGES_PER_RUN_BEFORE + "“ steht (0 = "
+            + "unbegrenzt); der Rest folgt beim nächsten Abgleich, und der Auftrag nennt die Zahl der offenen "
+            + "Bilder. Die Grenze kann um die Bilder einer Seite überzogen werden.\n\n"
+            + "Ohne Vision-Modell wird nichts beschrieben; der Auftrag endet gelb. Ohne Häkchen gibt es "
+            + "Beschreibungen nur über den Knopf im Reiter „Bilder“ der Seite. Gilt ohne Neustart beim nächsten "
+            + "Abgleich. Schlüssel in der Konfigurationsdatei: space-harvester.images.automatic und "
+            + "space-harvester.images.max-per-run.";
     /**
      * Vorstufe „Sätze vereinfachen“ der Aussagenanalyse ({@code space-harvester.statements.simplification.*},
      * ADR 0032): Betriebsart, Abschnitte zugleich und das Modell nur für diesen Schritt.
@@ -207,6 +307,12 @@ final class AiSettingsPanel {
     final ComposerButton parserInstall = Comic.button(ParserModelSetup.INSTALL,
             "Lädt das freigegebene deutsche MaltParser-Modell aus dem GitHub-Release, prüft die Prüfsumme und "
                     + "entpackt es ins Datenverzeichnis");
+    /** Auswahl des Whisper-Modells; eine Änderung wird sofort gespeichert und gilt beim nächsten Gebrauch. */
+    final JComboBox<String> whisperChoice = Comic.combo();
+    final ComposerButton whisperInstall = Comic.button(WhisperModelSetup.INSTALL,
+            "Lädt das gewählte Whisper-Modell von Hugging Face in den Benutzerordner und prüft die Prüfsummen");
+    /** Während {@link #render} die Auswahl setzt, ist das keine Eingabe des Benutzers. */
+    private boolean showingWhisper;
     private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
     List<AiModel> loaded = List.of();
@@ -236,6 +342,12 @@ final class AiSettingsPanel {
         root.setOpaque(false);
         Comic.style(apiKey);
         PasswordReveal.install(apiKey);
+        for (AiProvider each : AiProvider.values()) {
+            provider.addItem(each.displayName());
+        }
+        rows.add("Anbieter", provider, "Ollama läuft meist auf diesem Rechner und meldet seine Modelle mit ihren "
+                + "Fähigkeiten (Text, Bild, Embedding)");
+        provider.addActionListener(e -> updateProvider());
         access.addItem(KEEPASS);
         access.addItem(MANUAL);
         entry.setEditable(true);
@@ -263,7 +375,10 @@ final class AiSettingsPanel {
                 }
             });
         }
-        rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
+        rows.add("Basisadresse", baseUrl, OPENAI_HINT);
+        rows.add(CONTEXT_TOKENS_LABEL, contextTokens, CONTEXT_TOKENS_HINT);
+        rows.add(LOAD_TIMEOUT_LABEL, loadTimeout, LOAD_TIMEOUT_HINT);
+        rows.add(LOAD_POLL_LABEL, loadPollInterval, LOAD_POLL_HINT);
         rows.add("API-Key", apiKey, " ");
         modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über das Auswahlmenü rechts");
         modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
@@ -273,6 +388,9 @@ final class AiSettingsPanel {
                 + "lässt die Prüfung aus");
         modelRows.add(JUDGED_PAIRS_LABEL, Comic.row(judgedPairs, Comic.text(JUDGED_PAIRS_UNIT), judgedPairsHelp),
                 null);
+        automaticSynonyms.setToolTipText("Synonymlauf für eine Quelle nach jedem Abgleich und nach neuer KI-Freigabe; "
+                + "ohne Häkchen nur auf Klick");
+        modelRows.add(AUTOMATIC_SYNONYMS_LABEL, Comic.row(automaticSynonyms, automaticSynonymsHelp), null);
         simplifyMode.addItem(SIMPLIFY_WHERE_NEEDED);
         simplifyMode.addItem(SIMPLIFY_ALWAYS);
         simplifyMode.setToolTipText("Welche Sätze die Vorstufe der Aussagenanalyse vereinfacht");
@@ -291,10 +409,49 @@ final class AiSettingsPanel {
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
                 "Beschreibt die Bilder einer Seite (Leseansicht › Bilder); leer: keine Bildbeschreibung");
+        automaticImages.setToolTipText("Bilder freigegebener Seiten nach jedem Abgleich und nach neuer KI-Freigabe "
+                + "beschreiben; ohne Häkchen nur auf Klick");
+        imagesPerRun.setToolTipText("Höchstens so viele Bilder gehen je Lauf und Quelle an das Vision-Modell; "
+                + "0 = unbegrenzt");
+        // Eine Zeile (UX-Manager 21.11.): Die Obergrenze gehört zur Checkbox und bleibt immer bedienbar.
+        modelRows.add(AUTOMATIC_IMAGES_LABEL, Comic.row(automaticImages, Comic.text(IMAGES_PER_RUN_BEFORE),
+                imagesPerRun, Comic.text(IMAGES_PER_RUN_AFTER), automaticImagesHelp), null);
+        modelRows.add(RETRIES_LABEL, retries, RETRIES_HINT);
+        modelRows.add(PARALLEL_LABEL, parallel, PARALLEL_HINT);
+        THINKING_NAMES.forEach(stepThinking::addItem);
+        modelRows.add(THINKING_LABEL, stepThinking, THINKING_HINT);
         {
             modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
                             + "bleibt");
+            for (com.aresstack.spaceharvester.app.transcription.WhisperModel each
+                    : com.aresstack.spaceharvester.app.transcription.WhisperModel.values()) {
+                whisperChoice.addItem(each.described());
+            }
+            modelRows.add(WhisperModelSetup.LABEL, Comic.row(whisperChoice, whisperInstall),
+                    "Für Spracheingabe und Video-Transkripte, läuft lokal; größere Modelle erkennen genauer und "
+                            + "rechnen länger. Wird nur nach Rückfrage oder auf Klick einmal von Hugging Face geladen");
+            whisperChoice.addActionListener(e -> {
+                int index = whisperChoice.getSelectedIndex();
+                if (showingWhisper || index < 0 || context.settings() == null) {
+                    return;
+                }
+                com.aresstack.spaceharvester.app.transcription.WhisperModel chosen =
+                        com.aresstack.spaceharvester.app.transcription.WhisperModel.values()[index];
+                if (chosen != context.whisper()) {
+                    context.whisper(chosen, () -> modelsFeedback.success(WhisperModelSetup.LABEL + ": "
+                            + chosen.label()), modelsFeedback::problem);
+                }
+            });
+            whisperInstall.addActionListener(e -> {
+                WhisperModelSetup setup = context.whisperModel();
+                if (setup.status().state() == WhisperModelSetup.State.INSTALLING) {
+                    setup.cancel();
+                } else {
+                    setup.install();
+                }
+            });
+            context.whisperModel().listen(this::whisperModel);
             parserStatus.setEditable(false);
             parserStatus.setFocusable(false);
             modelRows.add(ParserModelSetup.LABEL, Comic.fieldWithButton(parserStatus, parserInstall),
@@ -384,7 +541,15 @@ final class AiSettingsPanel {
     void render() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
+        provider.setSelectedItem(current.provider().displayName());
         baseUrl.setText(current.baseUrl() == null ? "" : current.baseUrl());
+        contextTokens.setText(current.contextTokens() == null ? "" : current.contextTokens());
+        loadTimeout.setText(current.loadTimeout() == null ? "" : current.loadTimeout());
+        retries.setText(current.retries() == null ? "" : current.retries());
+        parallel.setText(current.parallel() == null ? "" : current.parallel());
+        int thinking = current.thinking() == null ? 0 : THINKING_KEYS.indexOf(current.thinking());
+        stepThinking.setSelectedIndex(Math.max(0, thinking));
+        loadPollInterval.setText(current.loadPollInterval() == null ? "" : current.loadPollInterval());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
         dimensions.setText(current.embeddingDimensions() == null ? "" : current.embeddingDimensions());
@@ -392,6 +557,10 @@ final class AiSettingsPanel {
         visionModel.setText(current.visionModel() == null ? "" : current.visionModel());
         chatMaxTokens.setText(current.chatMaxTokens() == null ? "" : current.chatMaxTokens());
         judgedPairs.setValue(Math.min(savedBudget(settings).maxJudgedPairs(), SynonymRunForm.MAX_PAIRS));
+        automaticSynonyms.setSelected(savedBudget(settings).automatic());
+        ImageSettings images = savedImages(settings);
+        automaticImages.setSelected(images.automatic());
+        imagesPerRun.setValue(Math.min(images.maxPerRun(), MAX_IMAGES_PER_RUN));
         SimplificationSettings simplification = savedSimplification(settings);
         simplifyMode.setSelectedItem(simplification.mode() == SimplificationSettings.Mode.ALWAYS ? SIMPLIFY_ALWAYS
                 : SIMPLIFY_WHERE_NEEDED);
@@ -429,7 +598,42 @@ final class AiSettingsPanel {
         updateAccess();
         refreshPairing();
         shownAccess = accessDraft();
-        removeKey.setVisible(context.aiKeyAvailable() && !keePassChosen());
+        updateProvider();
+    }
+
+    /** Der gewählte Anbieter. */
+    AiProvider chosenProvider() {
+        for (AiProvider each : AiProvider.values()) {
+            if (each.displayName().equals(provider.getSelectedItem())) {
+                return each;
+            }
+        }
+        return AiProvider.OPENAI_COMPATIBLE;
+    }
+
+    boolean ollamaChosen() {
+        return chosenProvider() == AiProvider.OLLAMA;
+    }
+
+    /**
+     * Ollama: ohne Zugangsdaten (KeePass, API-Key), die Adresse mit dem Server dieses Rechners vorbelegt, solange
+     * keine eingetragen ist. Sonst die Zeilen wie zuvor.
+     */
+    private void updateProvider() {
+        boolean ollama = ollamaChosen();
+        rows.visible(access, !ollama);
+        rows.visible(entryRow, !ollama && keePassChosen());
+        rows.visible(apiKey, !ollama);
+        rows.visible(contextTokens, ollama);
+        rows.visible(loadTimeout, ollama);
+        rows.visible(loadPollInterval, ollama);
+        rows.hint(baseUrl, ollama ? OLLAMA_HINT : OPENAI_HINT);
+        if (ollama && baseUrl.getText().isBlank()) {
+            baseUrl.setText(AiProvider.OLLAMA_DEFAULT_URL);
+        }
+        removeKey.setVisible(!ollama && context.aiKeyAvailable() && !keePassChosen());
+        root.revalidate();
+        root.repaint();
     }
 
     private String manualHint() {
@@ -507,7 +711,7 @@ final class AiSettingsPanel {
 
     private void updateAccess() {
         boolean keePass = keePassChosen();
-        rows.visible(entryRow, keePass);
+        rows.visible(entryRow, keePass && !ollamaChosen());
         if (keePass) {
             entryChosen();
         } else {
@@ -635,7 +839,11 @@ final class AiSettingsPanel {
     AiDraft draft() {
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
                 timeout, releasedDraft(), rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
-                visionModel.getText(), chatMaxTokens.getText());
+                visionModel.getText(), chatMaxTokens.getText(), chosenProvider(),
+                ollamaChosen() ? contextTokens.getText() : null, ollamaChosen() ? loadTimeout.getText() : null,
+                retries.getText(), ollamaChosen() ? loadPollInterval.getText() : null,
+                stepThinking.getSelectedIndex() <= 0 ? null : THINKING_KEYS.get(stepThinking.getSelectedIndex()),
+                parallel.getText());
     }
 
     /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */
@@ -716,8 +924,11 @@ final class AiSettingsPanel {
     boolean changed() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess)
+        return !draft().equals(current) || !ollamaChosen() && (typedKey().length > 0
+                || !accessDraft().equals(shownAccess))
                 || judgedPairs() != savedBudget(settings).maxJudgedPairs()
+                || automaticSynonyms() != savedBudget(settings).automatic()
+                || !images().equals(savedImages(settings))
                 || !simplification().equals(savedSimplification(settings))
                 || !check().equals(savedCheck(settings));
     }
@@ -767,34 +978,39 @@ final class AiSettingsPanel {
                     String.join(" ", draft.problems()));
             return;
         }
-        char[] key = typedKey();
+        // Ollama braucht keinen Key: weder ein eingetippter noch die Bezugsart zählen, die gespeicherte bleibt.
+        boolean ollama = draft.ollama();
+        char[] key = ollama ? new char[0] : typedKey();
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        AiAccess chosen = accessDraft();
+        AiAccess chosen = ollama ? shownAccess : accessDraft();
         int judged = judgedPairs();
+        boolean automatic = automaticSynonyms();
         SimplificationSettings simplification = simplification();
         CheckSettings check = check();
+        ImageSettings images = images();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)
-                && judged == savedBudget(settings).maxJudgedPairs()
-                && simplification.equals(savedSimplification(settings)) && check.equals(savedCheck(settings))) {
+                && judged == savedBudget(settings).maxJudgedPairs() && automatic == savedBudget(settings).automatic()
+                && simplification.equals(savedSimplification(settings)) && check.equals(savedCheck(settings))
+                && images.equals(savedImages(settings))) {
             if (!quiet) {
                 feedback.info("Nichts geändert", null);
             }
             then.run();
             return;
         }
-        if (chosen.mode() == AiAccess.Mode.KEEPASS && chosen.entry() == null) {
+        if (!ollama && chosen.mode() == AiAccess.Mode.KEEPASS && chosen.entry() == null) {
             Arrays.fill(key, '\0');
             feedback.warning("Eintrag fehlt", "Bitte einen KeePass-Eintrag wählen oder einen neuen Namen eintippen.");
             return;
         }
         boolean known = chosen.entry() != null && titles.contains(chosen.entry()) || chosen.equals(savedAccess());
-        if (chosen.fromKeePass() && !known && key.length == 0) {
+        if (!ollama && chosen.fromKeePass() && !known && key.length == 0) {
             feedback.warning("API-Key fehlt", "Für den neuen KeePass-Eintrag „" + chosen.entry() + "“ bitte den "
                     + "API-Key eingeben; er wird nur in KeePass gespeichert.");
             return;
         }
-        if (chosen.fromKeePass() && known && Boolean.FALSE.equals(keePassKeyPresent)) {
+        if (!ollama && chosen.fromKeePass() && known && Boolean.FALSE.equals(keePassKeyPresent)) {
             // Zuletzt ohne Passwort gelesen: erst neu lesen, denn vielleicht ist es inzwischen in KeePass nachgetragen.
             String title = chosen.entry();
             Background.run(() -> {
@@ -830,6 +1046,12 @@ final class AiSettingsPanel {
         boolean vault = context.aiVault().available();
         AppRuntime runtime = context.runtime();
         Background.run(() -> {
+            if (ollama) {
+                Measured measured = measure(context, runtime, draft, new char[0], false);
+                store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check,
+                        images);
+                return measured;
+            }
             if (chosen.fromKeePass()) {
                 // Neuer Eintrag: Basisadresse und Key gehen nach KeePass, nie in Tresor oder Datei.
                 if (!known) {
@@ -839,7 +1061,8 @@ final class AiSettingsPanel {
                 try {
                     Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
                             false);
-                    store(context, measured.draft(), new char[0], chosen, judged, simplification, check);
+                    store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check,
+                        images);
                     return measured;
                 } finally {
                     if (resolved != null) {
@@ -848,13 +1071,15 @@ final class AiSettingsPanel {
                 }
             }
             Measured measured = measure(context, runtime, draft, key, true);
-            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, simplification, check);
+            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, automatic, simplification,
+                    check, images);
             return measured;
         }, measured -> {
-            if (!chosen.fromKeePass() && !vault && key.length > 0) {
+            if (!ollama && !chosen.fromKeePass() && !vault && key.length > 0) {
                 context.sessionAiKey(key);
             }
             boolean serviceChanged = key.length > 0 || !chosen.equals(shownAccess)
+                    || draft.provider() != current.provider()
                     || !java.util.Objects.equals(blankToNull(draft.baseUrl()), blankToNull(current.baseUrl()));
             Arrays.fill(key, '\0');
             if (save != null) {
@@ -933,16 +1158,28 @@ final class AiSettingsPanel {
      */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs)
             throws IOException {
-        store(context, draft, key, access, judgedPairs, null, null);
+        store(context, draft, key, access, judgedPairs, null, null, null);
     }
 
     /**
-     * Wie {@link #store(AppContext, AiDraft, char[], AiAccess, Integer)}, dazu die Vorstufe „Sätze vereinfachen“
-     * ({@code statements.simplification.*}) und der Prüfschritt ({@code statements.check.*}); {@code null} oder
-     * unverändert lässt den jeweiligen Block in Ruhe.
+     * Wie {@link #store(AppContext, AiDraft, char[], AiAccess, Integer)}, dazu der Lauf nach jedem Abgleich
+     * ({@code terms.synonyms.automatic}), die Vorstufe „Sätze vereinfachen“ ({@code statements.simplification.*}) und
+     * der Prüfschritt ({@code statements.check.*}); {@code null} oder unverändert lässt den jeweiligen Block in Ruhe.
      */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
-                      SimplificationSettings simplification, CheckSettings check) throws IOException {
+                      Boolean automatic, SimplificationSettings simplification, CheckSettings check)
+            throws IOException {
+        store(context, draft, key, access, judgedPairs, automatic, simplification, check, null);
+    }
+
+    /**
+     * Wie {@link #store(AppContext, AiDraft, char[], AiAccess, Integer, Boolean, SimplificationSettings,
+     * CheckSettings)}, dazu die automatische Bildbeschreibung ({@code images.*}); {@code null} oder unverändert lässt
+     * sie in Ruhe.
+     */
+    static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
+                      Boolean automatic, SimplificationSettings simplification, CheckSettings check,
+                      ImageSettings images) throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
@@ -950,14 +1187,24 @@ final class AiSettingsPanel {
                 draft);
         written = editor.withAiAccess(context.configFile(), written, access);
         SynonymBudget budget = savedBudget(context.settings());
-        if (judgedPairs != null && judgedPairs != budget.maxJudgedPairs()) {
-            written = editor.withSynonymBudget(context.configFile(), written, budget.withMaxJudgedPairs(judgedPairs));
+        SynonymBudget wanted = budget;
+        if (judgedPairs != null) {
+            wanted = wanted.withMaxJudgedPairs(judgedPairs);
+        }
+        if (automatic != null) {
+            wanted = wanted.withAutomatic(automatic);
+        }
+        if (!wanted.equals(budget)) {
+            written = editor.withSynonymBudget(context.configFile(), written, wanted);
         }
         if (simplification != null && !simplification.equals(savedSimplification(context.settings()))) {
             written = editor.withSimplification(context.configFile(), written, simplification);
         }
         if (check != null && !check.equals(savedCheck(context.settings()))) {
             written = editor.withCheck(context.configFile(), written, check);
+        }
+        if (images != null && !images.equals(savedImages(context.settings()))) {
+            written = editor.withImages(context.configFile(), written, images);
         }
         boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
         if (key.length == 0) {
@@ -989,6 +1236,21 @@ final class AiSettingsPanel {
     }
 
     /** Die Vorstufe „Sätze vereinfachen“ aus der Datei; ohne Datei die Vorgabe des Core. */
+    static ImageSettings savedImages(AppSettings settings) {
+        return settings == null ? ImageSettings.DEFAULT : settings.images();
+    }
+
+    /** Die eingestellte automatische Bildbeschreibung. */
+    ImageSettings images() {
+        return new ImageSettings(automaticImages.isSelected(), ((Number) imagesPerRun.getValue()).intValue());
+    }
+
+    /** Die Zeile zur automatischen Bildbeschreibung, für die Abschlussseite des Assistenten. */
+    static String automaticImagesSummary(ImageSettings images) {
+        return !images.automatic() ? AUTOMATIC_IMAGES_OFF : "nach jedem Abgleich, " + (images.unlimited()
+                ? "unbegrenzt" : "höchstens " + images.maxPerRun() + " je Lauf");
+    }
+
     static SimplificationSettings savedSimplification(AppSettings settings) {
         return settings == null ? SimplificationSettings.DEFAULT : settings.simplification();
     }
@@ -1024,6 +1286,16 @@ final class AiSettingsPanel {
         return (check.scope() == CheckScope.ALL ? CHECK_ALL : CHECK_UNCERTAIN_AND_STAGE)
                 + " · " + check.parallel() + " " + CHECK_PARALLEL_UNIT + " · "
                 + (check.model() == null ? "mit dem Text-Modell" : "Modell " + check.model());
+    }
+
+    /** Ob nach jedem Abgleich einer Quelle ein Synonymlauf startet. */
+    boolean automaticSynonyms() {
+        return automaticSynonyms.isSelected();
+    }
+
+    /** Die Zeile zum Lauf nach jedem Abgleich, für die Abschlussseite des Assistenten. */
+    static String automaticSynonymsSummary(SynonymBudget budget) {
+        return budget.automatic() ? AUTOMATIC_SYNONYMS_ON : AUTOMATIC_SYNONYMS_OFF;
     }
 
     /** Die eingestellten Paare je Synonymlauf für das Text-Modell; 0 = Prüfung aus. */
@@ -1100,9 +1372,12 @@ final class AiSettingsPanel {
 
     /** Die Eingaben als Einstellungen des Core, mit dem API-Key nur im Speicher. */
     static AiServiceSettings service(AiDraft draft, char[] key) {
-        return new AiServiceSettings(URI.create(draft.baseUrl().strip()), key == null || key.length == 0 ? null
-                : new String(key), blankToNull(draft.chatModel()), blankToNull(draft.embeddingModel()),
-                draft.dimensions(), draft.timeout(), null, Set.of());
+        return new AiServiceSettings(URI.create(draft.baseUrl().strip()),
+                key == null || key.length == 0 || draft.ollama() ? null : new String(key),
+                blankToNull(draft.chatModel()), blankToNull(draft.embeddingModel()), draft.dimensions(),
+                draft.timeout(), null, Set.of()).withProvider(draft.provider()).withContextTokens(draft.context())
+                .withLoadTimeout(draft.loadDuration()).withRetries(draft.retryCount())
+                .withLoadPollInterval(draft.pollDuration()).withParallel(draft.parallelCount());
     }
 
     static final String CHAT_MAX_TOKENS_LABEL = "Ausgabelimit";
@@ -1213,8 +1488,9 @@ final class AiSettingsPanel {
         modelsFeedback.working(outcome != null && modelRetry.attempts() > 1
                 ? "Modelle werden geladen … (Versuch " + modelRetry.attempts() + ")" : "Modelle werden geladen …");
         boolean[] keyGiven = {false};
+        boolean ollama = draft.ollama();
         Background.run(() -> {
-            char[] key = currentKey(typed, chosenAccess, knownEntry);
+            char[] key = ollama ? null : currentKey(typed, chosenAccess, knownEntry);
             keyGiven[0] = key != null && key.length > 0;
             try {
                 return runtime.workspace().aiModels(service(draft, key));
@@ -1246,7 +1522,8 @@ final class AiSettingsPanel {
 
     /** Wofür eine Modellliste gilt: Adresse und Bezugsart des Keys (nie der Key selbst). */
     private static String serviceKey(AiDraft draft, AiAccess access) {
-        return String.valueOf(blankToNull(draft.baseUrl())) + "|" + access.mode() + "|" + access.entry();
+        return draft.provider().key() + "|" + blankToNull(draft.baseUrl()) + "|" + access.mode() + "|"
+                + access.entry();
     }
 
     private String currentService() {
@@ -1334,6 +1611,29 @@ final class AiSettingsPanel {
             modelsFeedback.working(LABEL_PARSER + status.message());
         } else if (status.message() != null && status.failed()) {
             modelsFeedback.warning("Parsermodell nicht installiert", status.message());
+        } else if (status.message() != null) {
+            modelsFeedback.success(status.message());
+        }
+    }
+
+    /** Zeigt Auswahl und Stand des Whisper-Modells; Fortschritt und Fehler im Statusbereich der Modelle. */
+    void whisperModel(WhisperModelSetup.Status status) {
+        boolean installing = status.state() == WhisperModelSetup.State.INSTALLING;
+        showingWhisper = true;
+        try {
+            whisperChoice.setSelectedIndex(context.whisper().ordinal());
+        } finally {
+            showingWhisper = false;
+        }
+        // Während eines Downloads bleibt die Auswahl stehen, damit klar ist, welches Modell lädt.
+        whisperChoice.setEnabled(!installing);
+        whisperInstall.setText(installing ? WhisperModelSetup.CANCEL : WhisperModelSetup.INSTALL);
+        whisperInstall.setVisible(status.state() != WhisperModelSetup.State.INSTALLED);
+        if (installing) {
+            modelsFeedback.working(WhisperModelSetup.LABEL + " „" + status.model().label() + "“: "
+                    + status.message());
+        } else if (status.message() != null && status.failed()) {
+            modelsFeedback.warning("Whisper-Modell nicht geladen", status.message());
         } else if (status.message() != null) {
             modelsFeedback.success(status.message());
         }

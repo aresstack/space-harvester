@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
@@ -40,17 +41,6 @@ import org.junit.jupiter.api.io.TempDir;
  * Ausgabeordner ab, ohne Dateidialog und ohne technische Dateien. Aufträge hat keine Formate mehr.
  */
 class ExportPanelTest {
-
-    @Test
-    void theHoldingsLineCountsLocalPagesAndNamesAGapInTheResolution() {
-        PageSet pages = PageSet.of(Map.of("wiki", List.of("1", "2", "3")));
-        assertThat(ExportPanel.holdingsText(new PageSelection(pages, new HoldingCounts(3, 2, 0, 0), List.of(), true)))
-                .isEqualTo("2 von 3 Seiten lokal");
-        assertThat(ExportPanel.holdingsText(new PageSelection(pages, new HoldingCounts(3, 3, 0, 0), List.of(), false)))
-                .isEqualTo("3 von 3 Seiten lokal · " + ExportPanel.INCOMPLETE);
-        assertThat(ExportPanel.holdingsText(new PageSelection(PageSet.EMPTY, HoldingCounts.ZERO, List.of(), true)))
-                .isEqualTo("keine Seite bekannt");
-    }
 
     @TempDir
     Path home;
@@ -121,6 +111,76 @@ class ExportPanelTest {
         await(() -> panel[0].exportBlocked("pdf") == null);
         await(() -> panel[0].shownDataset() != null);
         await(() -> panel[0].files.getText().contains(".pdf"));
+    }
+
+    /**
+     * Architekt 17.11.2026: „Gestartet“ und das Ergebnis eines Exports stehen in der Statuszeile des Hauptfensters,
+     * nicht auf der Platte. Die Laufmeldung bleibt, bis das Ergebnis sie ersetzt; das Ergebnis bleibt mit ✕.
+     */
+    @Test
+    void startAndResultOfAnExportGoToTheStatusLineAndOnlyTheResultIsClosable() throws Exception {
+        Path out = startHandbuch();
+        Workspace workspace = context.runtime().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        List<StatusMessageEvent.Payload> messages = new java.util.concurrent.CopyOnWriteArrayList<>();
+        context.events().subscribe(StatusMessageEvent.class, event -> messages.add(event.getPayload()));
+        ExportPanel[] panel = new ExportPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ExportPanel(context);
+            panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
+        });
+        await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0].output("pdf");
+            // Architekt: Die Statuszeile gehört dem Hauptfenster; ein Auswahlwechsel beendet weder die Laufmeldung
+            // des gestarteten Exports noch sein Ergebnis, das Ergebnis ersetzt „gestartet“ auch bei anderer Auswahl.
+            panel[0].selection(null);
+        });
+        await(() -> messages.stream().anyMatch(m -> m.getText().startsWith("PDF-Dokument wird eingeplant")));
+        StatusMessageEvent.Payload started = messages.stream()
+                .filter(m -> m.getText().startsWith("PDF-Dokument wird eingeplant")).findFirst().orElseThrow();
+        assertThat(started.isClosable()).as("Laufmeldung ohne ✕, das Ergebnis ersetzt sie").isFalse();
+        assertThat(started.getDurationMs()).isEqualTo(Integer.MAX_VALUE);
+        await(() -> Files.isDirectory(out) && list(out).stream().anyMatch(p -> p.toString().endsWith(".pdf")));
+        await(() -> messages.stream().anyMatch(m -> m.getText().contains("gespeichert in")));
+        StatusMessageEvent.Payload result = messages.stream()
+                .filter(m -> m.getText().contains("gespeichert in")).findFirst().orElseThrow();
+        assertThat(result.getText()).contains(".pdf");
+        assertThat(result.isClosable()).as("Ergebnis bleibt, bis es der Benutzer wegklickt").isTrue();
+        assertThat(result.getDurationMs()).isEqualTo(Integer.MAX_VALUE);
+        assertThat(messages).as("der Auswahlwechsel leert die Statuszeile nicht")
+                .noneMatch(m -> m.getText().isEmpty() && m.getReplaces() == null);
+        SwingUtilities.invokeAndWait(() -> assertThat(panel[0].feedbackVisibleForTest())
+                .as("die Platte zeigt nur Warnungen und Probleme").isFalse());
+    }
+
+    /** Scheitert ein Export, während etwas anderes gewählt ist, steht er orange mit ✕ in der Statuszeile. */
+    @Test
+    void aFailedExportAtAnotherSelectionIsAnOrangeClosableStatusMessage() throws Exception {
+        Path out = startHandbuch();
+        Workspace workspace = context.runtime().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        // Der Ausgabeordner ist eine Datei: der Auftrag „Datei erzeugen“ (oder sein Start) scheitert.
+        Files.writeString(out, "kein Ordner");
+        List<StatusMessageEvent.Payload> messages = new java.util.concurrent.CopyOnWriteArrayList<>();
+        context.events().subscribe(StatusMessageEvent.class, event -> messages.add(event.getPayload()));
+        ExportPanel[] panel = new ExportPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ExportPanel(context);
+            panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
+        });
+        await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0].output("pdf");
+            panel[0].selection(null);
+        });
+        await(() -> messages.stream().anyMatch(m -> m.getSeverity() == com.aresstack.spaceharvester.app.event.Severity.WARN));
+        StatusMessageEvent.Payload failed = messages.stream()
+                .filter(m -> m.getSeverity() == com.aresstack.spaceharvester.app.event.Severity.WARN).findFirst().orElseThrow();
+        assertThat(failed.getText()).startsWith("PDF-Dokument");
+        assertThat(failed.isClosable()).as("bleibt mit ✕, verschwindet nicht von selbst").isTrue();
+        SwingUtilities.invokeAndWait(() -> assertThat(panel[0].feedbackVisibleForTest())
+                .as("bei anderer Auswahl keine Platte; der Grund steht unter Aufträge").isFalse());
     }
 
     @Test
@@ -293,6 +353,122 @@ class ExportPanelTest {
                 Seite 102: fehlendes Diagramm „mermaid“ (Darstellung fehlgeschlagen)
                 Seite 103: fehlender Anhang „liste.xlsx“
                 … und 2 weitere Hinweise""");
+    }
+
+    /**
+     * Angelo 17.11.2026: Auf der Quelle und bei „Wissensquellen“ ist der Export echt wie der Knopf in der Seitenleiste:
+     * je Space ein eigener Auftrag und eine getrennte Datei, die Dateiliste nennt sie je Space. Nur „Wissensquellen“
+     * fragt vorher zurück (Architekt 17.11.2026); ein Nein startet nichts.
+     */
+    @Test
+    void theRootStartsOneJobPerSpaceWithSeparateFilesAndOnlyAllSourcesAskFirst() throws Exception {
+        Path out = startTwo();
+        Workspace workspace = context.runtime().workspace();
+        ExportPanel[] panel = new ExportPanel[1];
+        List<String> asked = new java.util.ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ExportPanel(context);
+            panel[0].confirmAll((title, question) -> {
+                asked.add(question);
+                return !question.contains("Word");
+            });
+            // Eine Quelle, deren Space nie geladen wurde.
+            panel[0].selection(new ExportPanel.Selection("anhang", null, null, "Anhang"));
+        });
+        await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).contains(ExportPanel.NOTHING_YET));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].coreSelectionForTest().roots()).as("je Space der Quelle eine Wurzel, auch ohne Bestand")
+                    .hasSize(1).allMatch(root -> root.sourceId().equals("anhang") && root.spaceKey() != null);
+            panel[0].selection(ExportPanel.Selection.ALL);
+        });
+        await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).stream()
+                .filter(text -> text.equals(ExportPanel.NOTHING_YET)).count() == 2);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].coreSelectionForTest().roots()).as("Analytics, Metadaten und Formate je Space")
+                    .hasSize(2).extracting(root -> root.sourceId()).containsExactlyInAnyOrder("handbuch", "anhang");
+            assertThat(panel[0].exportBlocked("pdf")).as("Format-Knöpfe frei wie beim Space").isNull();
+            assertThat(panel[0].sourceBlocked("analytics")).as("Dateiquellen ohne REST")
+                    .isEqualTo(ExportPanel.ONLY_CONFLUENCE);
+            panel[0].output("docx");
+            assertThat(asked).hasSize(1).first().asString().contains("Word-Dokument für alle Wissensquellen")
+                    .contains("jeden ihrer 2 Spaces").contains("je Space entsteht eine eigene Datei");
+            assertThat(workspace.jobs()).as("Nein startet nichts").isEmpty();
+            panel[0].output("pdf");
+            assertThat(panel[0].exportBlocked("pdf")).contains(ExportPanel.IN_PROGRESS);
+        });
+        await(() -> Files.isDirectory(out) && list(out).stream().filter(p -> p.toString().endsWith(".pdf")).count() == 2);
+        await(() -> workspace.jobs().stream().filter(job -> job.type() == JobType.CONVERSION)
+                .allMatch(job -> job.state() == JobState.COMPLETED));
+        assertThat(workspace.jobs()).filteredOn(job -> job.type() == JobType.CONVERSION).hasSize(2)
+                .extracting(JobStatus::sourceId).containsExactlyInAnyOrder("handbuch", "anhang");
+        await(() -> panel[0].exportBlocked("pdf") == null);
+        await(() -> texts(panel[0].spaces).stream().filter(text -> text.contains(".pdf")).count() == 2);
+        assertThat(texts(panel[0].spaces)).as("je Space eine Zeile mit Quellentitel")
+                .anyMatch(text -> text.startsWith("Handbuch › ")).anyMatch(text -> text.startsWith("Anhang › "));
+
+        // Eine einzelne Quelle startet ohne Rückfrage, nur für ihre Spaces.
+        asked.clear();
+        SwingUtilities.invokeAndWait(() -> panel[0].selection(new ExportPanel.Selection("anhang", null, null, "Anhang")));
+        await(() -> texts(panel[0].spaces).stream().filter(text -> text.contains(".pdf")).count() == 1);
+        SwingUtilities.invokeAndWait(() -> panel[0].output("analysis"));
+        await(() -> workspace.jobs().stream().filter(job -> job.type() == JobType.CONVERSION
+                && "analysis".equals(job.parameter(ExportConversions.FORMAT))).count() == 1);
+        assertThat(asked).isEmpty();
+        assertThat(workspace.jobs()).filteredOn(job -> job.type() == JobType.CONVERSION
+                && "analysis".equals(job.parameter(ExportConversions.FORMAT))).extracting(JobStatus::sourceId)
+                .containsExactly("anhang");
+    }
+
+    /** Zwei Quellen „handbuch“ und „anhang“ aus je einem Ordner mit einer Seite; Dateiquellen haben je einen Space. */
+    private Path startTwo() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("seite.md"), "# Seite\n\nText.\n");
+        Path more = Files.createDirectories(home.resolve("anhang"));
+        Files.writeString(more.resolve("anhang.md"), "# Anhang\n\nMehr Text.\n");
+        Path out = home.resolve("Ausgabe");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                  output-directory: "%s"
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                    - id: anhang
+                      type: files
+                      title: Anhang
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), out, files, more));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        await(() -> context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED
+                && context.connection("anhang").state() == AppContext.Connection.State.CONNECTED);
+        return out;
+    }
+
+    /** Die Texte der Werte in einer Faktenliste, Zeile für Zeile (Beschriftungen zuerst). */
+    private static List<String> texts(java.awt.Container container) {
+        List<String> texts = new java.util.ArrayList<>();
+        for (java.awt.Component component : container.getComponents()) {
+            if (!component.isVisible()) {
+                continue;
+            }
+            if (component instanceof javax.swing.JLabel label) {
+                texts.add(label.getText());
+            } else if (component instanceof javax.swing.text.JTextComponent area) {
+                texts.add(area.getText());
+            } else if (component instanceof java.awt.Container inner) {
+                texts.addAll(texts(inner));
+            }
+        }
+        return texts;
     }
 
     private static List<Path> list(Path directory) {

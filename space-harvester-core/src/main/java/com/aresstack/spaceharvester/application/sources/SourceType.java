@@ -22,7 +22,7 @@ import java.util.Objects;
  *                         Confluence, das sein eigenes Formular hat
  */
 public record SourceType(String id, String displayName, boolean needsCredentials, String addressOption,
-                         List<SourceField> fields, List<AuthMode> authModes, boolean tls) {
+                         List<SourceField> fields, List<AuthMode> authModes, boolean tls, boolean baseUrl) {
 
     /** Werte von {@code auth.type} in der Quellenkonfiguration. */
     public enum AuthMode {
@@ -39,6 +39,12 @@ public record SourceType(String id, String displayName, boolean needsCredentials
         Objects.requireNonNull(displayName, "displayName");
         fields = fields == null ? List.of() : List.copyOf(fields);
         authModes = authModes == null || authModes.isEmpty() ? List.of(AuthMode.NONE) : List.copyOf(authModes);
+    }
+
+    /** Preserve the original descriptor constructor for existing source types. */
+    public SourceType(String id, String displayName, boolean needsCredentials, String addressOption,
+                      List<SourceField> fields, List<AuthMode> authModes, boolean tls) {
+        this(id, displayName, needsCredentials, addressOption, fields, authModes, tls, false);
     }
 
     /** Ohne TLS-Angaben. */

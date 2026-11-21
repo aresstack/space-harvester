@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
@@ -32,7 +33,8 @@ import org.springframework.core.io.ByteArrayResource;
  * Ein neuer gemeinsamer Schlüssel unter {@code space-harvester} gehört in beide Loader und hierher. Der KI-API-Key
  * bleibt bewusst außen vor: die App bezieht ihn aus KeePass oder dem Tresor ({@code AiAccess}), nie aus der YAML.
  * Die Terminal-Ausgabe ({@code logging.threshold.console}) liest der Dienst über Spring Boot selbst; verglichen wird
- * mit dem, was Spring Boot daraus an Logback gibt.
+ * mit dem, was Spring Boot daraus an Logback gibt. Schlüssel unter {@code space-harvester-app} gehören nur der App
+ * (etwa der Hintergrund des Bildbetrachters); hier steht nur, dass sie den Dienst nicht stören.
  */
 class ConfigurationParityTest {
 
@@ -40,6 +42,9 @@ class ConfigurationParityTest {
             logging:
               threshold:
                 console: warn
+            space-harvester-app:
+              viewer:
+                background: dark
             space-harvester:
               sources:
                 - id: confluence
@@ -56,6 +61,8 @@ class ConfigurationParityTest {
                 embedding-dimensions: 1536
                 rerank-model: rerank-model
                 vision-model: vision-model
+                step-thinking: low
+                parallel: 6
                 external-processing-sources:
                   - confluence
               cache:
@@ -103,6 +110,7 @@ class ConfigurationParityTest {
                   max-terms: 300
                   max-embedded-terms: 100
                   max-judged-pairs: 50
+                  automatic: false
               glossary:
                 rules:
                   max-terms: 200
@@ -130,6 +138,9 @@ class ConfigurationParityTest {
                   scope: all
                   parallel: 4
                   model: check-model
+              images:
+                automatic: true
+                max-per-run: 120
             """;
 
     private static final String TOKEN = "parity-token";
@@ -163,6 +174,8 @@ class ConfigurationParityTest {
         assertThat(appAi.embeddingDimensions()).isEqualTo(ai.embeddingDimensions());
         assertThat(appAi.rerankModel()).isEqualTo(ai.rerankModel());
         assertThat(appAi.visionModel()).isEqualTo(ai.visionModel());
+        assertThat(appAi.stepThinking()).isEqualTo(ai.stepThinking()).isEqualTo("low");
+        assertThat(appAi.parallel()).isEqualTo(ai.parallel()).isEqualTo(6);
         assertThat(appAi.externalProcessingSources()).containsExactlyInAnyOrderElementsOf(
                 ai.externalProcessingSources());
         assertThat(appAi.externalProcessingSources()).isEqualTo(List.of("confluence"));
@@ -191,6 +204,7 @@ class ConfigurationParityTest {
                 HarvesterConfiguration.DEFAULT, binder);
         SynonymBudget budget = service2.terms().synonyms();
         assertThat(app.terms().synonyms()).isEqualTo(budget);
+        assertThat(budget.automatic()).as("SY1: automatic aus beiden Loadern").isFalse();
         // ADR 0032, FL5b: Regeln der Begriffsableitung, als YAML-Liste und als Text mit Kommas.
         com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings rules =
                 com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.DEFAULT.withMaxTerms(200)
@@ -199,7 +213,7 @@ class ConfigurationParityTest {
                         .with(com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.Kind
                                 .ROLE_WORDS, java.util.List.of("sachgebiet", "amt"), java.util.List.of());
         assertThat(app.terms().glossaryRules()).isEqualTo(service2.terms().glossaryRules()).isEqualTo(rules);
-        assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
+        assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50, false));
 
         // ADR 0030: Aufbewahrung des Änderungsprotokolls, beim Dienst über withSyncRules.
         assertThat(app.cache().changeLog()).isEqualTo(service2.changeLog())
@@ -225,6 +239,9 @@ class ConfigurationParityTest {
         assertThat(app.check()).isEqualTo(service2.check())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.CheckSettings(
                         com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "check-model"));
+        // Fahrplan B1: automatische Bildbeschreibung, beim Dienst über withSyncRules.
+        assertThat(app.images()).isEqualTo(service2.images())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 120));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder
@@ -245,6 +262,12 @@ class ConfigurationParityTest {
         // Terminal-Ausgabe (Angelo 12.11.2026): dieselbe Stufe wie die Konsolen-Schwelle, die Spring Boot setzt.
         assertThat(app.consoleOutput()).isEqualTo(ConsoleOutput.WARN);
         assertThat(springConsoleThreshold(environment)).isEqualToIgnoringCase(app.consoleOutput().name());
+
+        // Hintergrund des Bildbetrachters (Angelo 17.11.2026): nur die App unter space-harvester-app; der Dienst zeigt
+        // keine Bilder und bindet nichts darunter, der Schlüssel stört ihn nicht.
+        assertThat(app.viewerBackground()).isEqualTo(ViewerBackground.DARK);
+        assertThat(environment.getProperty("space-harvester-app.viewer.background")).isEqualTo("dark");
+        assertThat(service).isNotNull();
     }
 
     @Test

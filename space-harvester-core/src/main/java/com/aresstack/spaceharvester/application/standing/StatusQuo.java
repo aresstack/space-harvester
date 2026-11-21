@@ -145,9 +145,12 @@ public final class StatusQuo {
                 }
                 StandingDecision decision = statementDecisions.get(statement.id());
                 StatementStanding standing = StandingRules.statement(statement, decision, cap);
-                counts.merge(standing.standing(), 1, Integer::sum);
-                if (quality.get() == ParsedStatements.Quality.PLAUSIBLE) {
-                    certain.merge(standing.standing(), 1, Integer::sum);
+                // Eine veraltete Analyse zeigt ihre Einträge (analysisStale), zählt aber nicht als aktuelle Aussage.
+                if (!stale) {
+                    counts.merge(standing.standing(), 1, Integer::sum);
+                    if (quality.get() == ParsedStatements.Quality.PLAUSIBLE) {
+                        certain.merge(standing.standing(), 1, Integer::sum);
+                    }
                 }
                 StatementKind kind = StandingRules.kind(statement);
                 ParsedStatements.Mention subject = subject(statement, kind, mentions);
@@ -163,7 +166,8 @@ public final class StatusQuo {
                 .thenComparingInt(entry -> entry.statement().start()));
         Map<Standing, Integer> counts = new EnumMap<>(Standing.class);
         Map<Standing, Integer> certain = new EnumMap<>(Standing.class);
-        for (StatusQuoEntry entry : entries) {
+        List<StatusQuoEntry> current = entries.stream().filter(entry -> !entry.analysisStale()).toList();
+        for (StatusQuoEntry entry : current) {
             counts.merge(entry.standing().standing(), 1, Integer::sum);
             if (!entry.uncertain()) {
                 certain.merge(entry.standing().standing(), 1, Integer::sum);
@@ -174,7 +178,8 @@ public final class StatusQuo {
                 .filter(decision -> !ids.contains(decision.statementId())).forEach(staleDecisions::add));
         staleDecisions.sort(Comparator.comparing((StandingDecision decision) -> decision.page().sourceId())
                 .thenComparing(decision -> decision.page().pageId()).thenComparing(StandingDecision::statementId));
-        return new StatusQuoView(entries, states(entries), pageStandings, counts, certain, staleDecisions);
+        return new StatusQuoView(entries, states(current), pageStandings, counts, certain, staleDecisions,
+                entries.size() - current.size());
     }
 
     /**

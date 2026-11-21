@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.ui.controls.DurationField;
 import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.spaceharvester.app.ui.controls.ScrollColumn;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.spaceharvester.app.ui.controls.FileField;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ProxyDraft;
@@ -574,6 +575,16 @@ final class SettingDialogs {
                 current.useWindowsCaStores());
         JTextField file = Comic.field(32);
         file.setText(current.caCertificatesFile() == null ? "" : current.caCertificatesFile().toString());
+        // Durchsuchen und „Zertifikat aus QR-Bild lesen …“ (Strang ZX) als Knöpfe im Feld; leer = ohne CA-Datei.
+        FileField caFile = new FileField(file).clearable("CA-Datei entfernen");
+        caFile.path(current.caCertificatesFile());
+        caFile.extensions("Zertifikate (PEM, DER)", "pem", "crt", "cer", "der");
+        caFile.dialogTitle("CA-Datei wählen");
+        caFile.onChange(path -> file.setText(path == null ? "" : path.toString()));
+        IconButton qr = new IconButton(Glyph.QR, CertificateQrImport.TOOLTIP);
+        qr.getAccessibleContext().setAccessibleName(CertificateQrImport.TOOLTIP);
+        qr.setEnabled(context.settings() != null);
+        caFile.addButton(qr);
         JPanel switches = new JPanel();
         switches.setOpaque(false);
         switches.setLayout(new BoxLayout(switches, BoxLayout.Y_AXIS));
@@ -583,7 +594,7 @@ final class SettingDialogs {
         Rows rows = new Rows();
         rows.add("Vertrauen", switches, "Ein Zertifikat gilt, sobald eine eingeschaltete Quelle es akzeptiert. "
                 + "Die Windows-Speicher gibt es nur unter Windows.");
-        rows.add("CA-Datei", row(file, browse(file)), "PEM oder DER, z. B. die CA eines TLS-prüfenden Firmen-Proxys; "
+        rows.add("CA-Datei", caFile, "PEM oder DER, z. B. die CA eines TLS-prüfenden Firmen-Proxys; "
                 + "leer ohne");
         Supplier<TrustSettings> draft = () -> new TrustSettings(jvm.isSelected(), root.isSelected(),
                 stores.isSelected(), file.getText().isBlank() ? null : java.nio.file.Path.of(file.getText().strip()));
@@ -593,6 +604,12 @@ final class SettingDialogs {
                 + "KI-Dienst (space-harvester.network.tls)."), BorderLayout.NORTH);
         body.add(rows, BorderLayout.CENTER);
         Shell shell = new Shell(parent, TLS_TITLE, body);
+        qr.addActionListener(e -> CertificateQrImport.choose(qr, file,
+                context.settings().storage().dataDirectory(), shell.feedback::problem,
+                message -> {
+                    caFile.path(java.nio.file.Path.of(file.getText()));
+                    shell.feedback.info(message, null);
+                }));
         shell.onSaveFile(() -> {
             try {
                 return TrustPolicy.problems(draft.get());
@@ -622,6 +639,114 @@ final class SettingDialogs {
      */
     static Shell cache(Component parent, AppContext context, Runnable saved) {
         return syncRules(parent, context, null, saved);
+    }
+
+    static final String PAGE_SIZE_TITLE = "Größte Datei im Cache";
+    static final String TEXT_SIZE_TITLE = "Große Dateien ganz laden bis";
+    static final String CHECK_TIMEOUT_TITLE = "Frist der Prüfung gegen die Quelle";
+    static final String LARGE_TIMEOUT_TITLE = "Frist für große Dateien";
+
+    /** Eine Frist wie 30s, 2m oder 1h; sonst {@code null}. */
+    static java.time.Duration timeout(String text) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,6})\\s*(s|m|h)?")
+                .matcher(text == null ? "" : text.strip().toLowerCase(java.util.Locale.ROOT));
+        if (!m.matches() || Long.parseLong(m.group(1)) == 0) {
+            return null;
+        }
+        long amount = Long.parseLong(m.group(1));
+        return switch (m.group(2) == null ? "s" : m.group(2)) {
+            case "m" -> java.time.Duration.ofMinutes(amount);
+            case "h" -> java.time.Duration.ofHours(amount);
+            default -> java.time.Duration.ofSeconds(amount);
+        };
+    }
+
+    /** Eine Größe wie 20MB, 512KB oder Bytes ohne Einheit; sonst {@code -1}. */
+    static long pageSize(String text) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,10})\\s*(b|kb|mb|gb)?")
+                .matcher(text == null ? "" : text.strip().toLowerCase(java.util.Locale.ROOT));
+        if (!m.matches()) {
+            return -1;
+        }
+        long amount = Long.parseLong(m.group(1));
+        String unit = m.group(2) == null ? "b" : m.group(2);
+        return amount << switch (unit) {
+            case "kb" -> 10;
+            case "mb" -> 20;
+            case "gb" -> 30;
+            default -> 0;
+        };
+    }
+
+    /**
+     * Größte Datei im Cache ({@code space-harvester.cache.max-page-size}, Angelo 20.11.2026) und bis zu welcher Größe
+     * von größeren Dateien der Textauszug abgelegt wird ({@code max-text-file-size}): Suche und Text-Ansicht brauchen
+     * nur ihn; darüber und ohne lesbaren Text nur die Kopfdaten, die Lese-Ansicht öffnet das Original in der Quelle.
+     * Gilt ab dem Neustart der Laufzeit; schon abgelegte zu große Dateien lädt das nächste Öffnen nach, wenn sie passen.
+     */
+    static Shell pageSize(Component parent, AppContext context, Runnable saved) {
+        long current = context.settings() != null ? context.settings().storage().maxPageBytes()
+                : AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES;
+        JTextField size = Comic.field(10);
+        size.setText(current % (1L << 20) == 0 ? (current >> 20) + "MB" : String.valueOf(current));
+        long currentText = context.settings() != null ? context.settings().storage().maxTextFileBytes()
+                : AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES;
+        JTextField textSize = Comic.field(10);
+        textSize.setText(currentText % (1L << 20) == 0 ? (currentText >> 20) + "MB" : String.valueOf(currentText));
+        Rows rows = new Rows();
+        rows.add(PAGE_SIZE_TITLE, size, "Das Original größerer Dateien legt die App nicht ab; die Lese-Ansicht öffnet "
+                + "es in der Quelle. Eine Größe wie 20MB oder 100MB, höchstens 2047MB; Vorgabe "
+                + Texts.bytes(AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES));
+        AppSettings.Storage storage = context.settings() != null ? context.settings().storage() : null;
+        java.time.Duration currentCheck = storage != null ? storage.checkTimeout()
+                : AppSettings.Storage.DEFAULT_CHECK_TIMEOUT;
+        java.time.Duration currentLarge = storage != null ? storage.largeFileTimeout()
+                : AppSettings.Storage.DEFAULT_LARGE_FILE_TIMEOUT;
+        JTextField check = Comic.field(10);
+        check.setText(ConfigFileEditor.duration(currentCheck));
+        JTextField large = Comic.field(10);
+        large.setText(ConfigFileEditor.duration(currentLarge));
+        rows.add(TEXT_SIZE_TITLE, textSize, "Bis zu dieser Größe lädt die App größere Dateien ganz: mit lesbarem Text "
+                + "(PDF, Office, Text) einmal für den Textauszug, den Suche und Text-Ansicht nutzen, und zum Anzeigen "
+                + "von Bildern, PDF und Office direkt aus der Quelle, ohne sie abzulegen. Darüber und für Archive, "
+                + "Figma oder Videos nur die Kopfdaten. 0 nie; Vorgabe "
+                + Texts.bytes(AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES));
+        rows.add(CHECK_TIMEOUT_TITLE, check, "So lange wartet das Öffnen oder Beschaffen einer Seite auf die Quelle, "
+                + "z. B. 30s oder 2m; Vorgabe " + ConfigFileEditor.duration(AppSettings.Storage.DEFAULT_CHECK_TIMEOUT));
+        rows.add(LARGE_TIMEOUT_TITLE, large, "Dieselbe Frist für eine Datei über der Grenze, deren Textauszug das "
+                + "ganze Original braucht, z. B. 10m; Vorgabe "
+                + ConfigFileEditor.duration(AppSettings.Storage.DEFAULT_LARGE_FILE_TIMEOUT));
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        body.setOpaque(false);
+        body.add(wrapped("Gilt für alle Quellen. Große Dateien belegen den Cache und laden lange; ihr Text ist für die "
+                + "Suche oft ohnehin wenig ergiebig."), BorderLayout.NORTH);
+        body.add(rows, BorderLayout.CENTER);
+        Shell shell = new Shell(parent, PAGE_SIZE_TITLE, body);
+        shell.onSaveFile(() -> {
+            List<String> problems = new ArrayList<>();
+            long bytes = pageSize(size.getText());
+            if (bytes <= 0 || bytes > AppSettings.Storage.MAX_PAGE_BYTES_LIMIT) {
+                problems.add("Die größte Datei ist eine Größe wie 20MB oder 100MB, höchstens 2047MB.");
+            }
+            if (pageSize(textSize.getText()) < 0) {
+                problems.add("Der Textauszug gilt bis zu einer Größe wie 200MB; 0 heißt nie.");
+            }
+            if (timeout(check.getText()) == null || timeout(large.getText()) == null) {
+                problems.add("Die Fristen sind Dauern wie 30s, 2m oder 1h, größer als 0.");
+            }
+            return problems;
+        }, () -> {
+            ConfigFileEditor editor = new ConfigFileEditor(context.loader());
+            String text = Files.isRegularFile(context.configFile())
+                    ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
+            ConfigFileEditor.Draft written = editor.withLargeFiles(context.configFile(),
+                    new ConfigFileEditor.Draft(text, null), pageSize(size.getText()), pageSize(textSize.getText()),
+                    timeout(check.getText()), timeout(large.getText()));
+            editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
+        }, () -> pageSize(size.getText()) == current && pageSize(textSize.getText()) == currentText
+                && currentCheck.equals(timeout(check.getText())) && currentLarge.equals(timeout(large.getText())),
+                context, saved);
+        return shell;
     }
 
     static final String RETRY_TITLE = "Wiederholungen";
@@ -1319,7 +1444,7 @@ final class SettingDialogs {
                                     String trustBundle) {
         return new SourceDraft(d.id(), d.type(), d.title(), d.baseUrl(), d.directory(), d.include(), authType,
                 username, variable, certificateType, certificatePath, certificatePasswordVariable, alias, thumbprint,
-                trustBundle, d.extraOptions());
+                trustBundle, d.extraOptions(), d.baseUrlType());
     }
 
     private static JPanel row(JTextField field, ComposerButton button) {

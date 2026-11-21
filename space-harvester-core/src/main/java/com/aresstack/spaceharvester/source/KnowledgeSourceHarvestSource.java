@@ -20,6 +20,8 @@ import com.aresstack.enterpriseai.source.api.PageNavigationSource;
 import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
 import com.aresstack.enterpriseai.source.api.ChangeListingSource;
+import com.aresstack.enterpriseai.source.api.PartitionIdListingSource;
+import com.aresstack.enterpriseai.source.api.PartitionIds;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
@@ -49,6 +51,7 @@ import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachments;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.PageIdBatch;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.SignInChallenge;
 import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
@@ -317,6 +320,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return title;
     }
 
+    @Override
+    public boolean navigationRootIsPage() {
+        return port instanceof VirtualNavigationRootSource;
+    }
+
     /** Lokale Dateien: Eine fehlende Datei in einem lesbaren Verzeichnis ist gelöscht (ADR 0014). */
     @Override
     public boolean confirmsDeletion() {
@@ -429,6 +437,21 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 }
                 return List.copyOf(found.values());
             }
+            if (port instanceof KnownTitleLookup known) {
+                List<PageNode> found = new ArrayList<>();
+                for (SourcePartition partition : port.partitions()) {
+                    if (!spaces.permits(partition.key())) {
+                        continue;
+                    }
+                    for (KnowledgeResource resource : known.knownTitles(term, limit)) {
+                        PageMetadata metadata = pageMetadata(resource, partition.key());
+                        if (found.size() < limit) {
+                            found.add(pageNode(metadata));
+                        }
+                    }
+                }
+                return List.copyOf(found);
+            }
             if (discovering()) {
                 return titlesOfDiscovery(needle, spaces, limit);
             }
@@ -441,8 +464,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                         for (KnowledgeResource resource : batch.resources()) {
                             PageMetadata metadata = pageMetadata(resource, partition.key());
                             if (found.size() < limit && contains(metadata.title(), needle)) {
-                                found.add(new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(),
-                                        null));
+                                found.add(pageNode(metadata));
                             }
                         }
                         if (batch.complete()) {
@@ -467,7 +489,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             PageMetadataBatch batch = pageMetadata(id, cursor, TITLE_SCAN_BATCH);
             for (PageMetadata metadata : batch.pages()) {
                 if (found.size() < limit && contains(metadata.title(), needle)) {
-                    found.add(new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(), null));
+                    found.add(pageNode(metadata));
                 }
             }
             cursor = batch.nextCursor();
@@ -476,6 +498,19 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             }
         }
         return List.copyOf(found);
+    }
+
+    private static PageNode pageNode(PageMetadata metadata) {
+        String resourceKind = metadata.attributes().get(PageMetadata.RESOURCE_KIND);
+        if (PageMetadata.FOLDER_KIND.equals(resourceKind)) {
+            return new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(),
+                    Boolean.TRUE, PageNode.Kind.FOLDER);
+        }
+        if (PageMetadata.FILE_KIND.equals(resourceKind) || PageMetadata.LINK_KIND.equals(resourceKind)) {
+            return new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(),
+                    Boolean.FALSE, PageNode.Kind.FILE);
+        }
+        return new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(), null);
     }
 
     private static boolean contains(String title, String needle) {
@@ -584,6 +619,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             return List.of(new Partition(id, title, null));
         }
         try {
+            if (port instanceof SourceConnectionVerifier verifier) {
+                verifier.verifyConnection();
+            }
             return port.partitions().stream().map(this::partition).toList();
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
@@ -809,6 +847,31 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
     }
 
+    /**
+     * Nur ohne Startpunkte und Tiefe ({@link #restriction}) und ohne Discovery: Die reine ID-Liste kennt den Umfang
+     * nicht; Quellen mit Umfang nutzen weiter die Seitenliste, die ihn anwendet ({@link #pageMetadata(String, String,
+     * int)}), damit Seiten außerhalb des Umfangs aus dem Katalog fallen.
+     */
+    @Override
+    public boolean listsPageIds() {
+        return port instanceof PartitionIdListingSource && restriction == null && !discovering();
+    }
+
+    @Override
+    public PageIdBatch pageIds(String partitionKey, String cursor, int limit) {
+        if (!listsPageIds() || !(port instanceof PartitionIdListingSource ids)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
+                    "Quelle liefert keine reine ID-Liste", null);
+        }
+        PartitionIds batch;
+        try {
+            batch = ids.resourceIds(partitionKey, cursor == null ? "" : cursor, limit);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return new PageIdBatch(batch.localIds(), batch.nextCursor());
+    }
+
     private ChangeListingSource changes() {
         if (!(port instanceof ChangeListingSource changes)) {
             throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
@@ -836,6 +899,18 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     @Override
+    public byte[] mediaRange(String pageId, long offset, int maximumBytes) {
+        if (!(port instanceof SourceMediaRange ranged)) {
+            return HarvestSource.super.mediaRange(pageId, offset, maximumBytes);
+        }
+        try {
+            return ranged.readRange(pageId, offset, maximumBytes);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+    }
+
+    @Override
     public StoredPage storedPage(String pageId) {
         if (discovering() && !(port instanceof StoredContentSource)) {
             // Kein natives Format: abgelegt wird der Lesetext des Adapters, mit den Kopfdaten aus demselben Laden.
@@ -854,6 +929,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw accessFailure(e);
         }
         return storedPage(content);
+    }
+
+    /** Über den Adapter, wenn er Originale als Datei liefern kann ({@link OriginalFileSource}). */
+    @Override
+    public Optional<String> downloadOriginal(String pageId, java.nio.file.Path target,
+                                             java.util.function.Predicate<String> wanted, long maxBytes) {
+        if (!(port instanceof OriginalFileSource files)) {
+            return Optional.empty();
+        }
+        try {
+            return files.downloadOriginal(pageId, target, wanted, maxBytes);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
     }
 
     @Override
@@ -1281,7 +1370,15 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             case NO -> Boolean.FALSE;
             case UNKNOWN -> null;
         };
-        return new PageNode(nativeId(node.resource()), node.title(), partitionKey, children);
+        PageNode.Kind kind = PageNode.Kind.PAGE;
+        if (port instanceof ResourceNodeKindSource presentation) {
+            try {
+                kind = presentation.kind(node.resource());
+            } catch (KnowledgeSourceException failure) {
+                throw accessFailure(failure);
+            }
+        }
+        return new PageNode(nativeId(node.resource()), node.title(), partitionKey, children, kind);
     }
 
     private List<PageNode> links(List<SourceLink> links) {

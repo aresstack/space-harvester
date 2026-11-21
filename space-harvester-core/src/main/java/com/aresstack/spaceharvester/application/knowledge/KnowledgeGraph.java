@@ -164,6 +164,8 @@ public class KnowledgeGraph {
     private final Map<PageKey, InputMemo> inputs = new ConcurrentHashMap<>();
     /** {@code PageText#inputSha256()} eines Anhangs oder einer enthaltenen Datei; leer, solange keiner vorliegt. */
     private final Function<DocumentKey, Optional<String>> documentInputs;
+    private final com.aresstack.spaceharvester.application.observe.Listeners<Runnable> listeners =
+            new com.aresstack.spaceharvester.application.observe.Listeners<>("Aussagenanalysen");
 
     /**
      * @param snapshots  Seite im Bestand; leer, wenn sie dort nicht (mehr) liegt
@@ -371,11 +373,28 @@ public class KnowledgeGraph {
      * @return Zahl der gelöschten Analysen (Seiten und Dokumente)
      */
     public int deleteAll(AccessContext caller) {
+        return delete(caller, key -> true);
+    }
+
+    /**
+     * Löscht die gespeicherten Aussagenanalysen der Seiten aus {@code pages}, die der Aufrufer lesen darf, samt den
+     * Analysen ihrer Anhänge und enthaltenen Dateien (Knopf „Analysen löschen“ am gewählten Knoten). Seiten selbst
+     * bleiben. Synchron; danach erfahren Beobachter ({@link #subscribe}) davon.
+     *
+     * @param pages die Seiten der Auswahl, etwa aus dem Bestand aufgelöst (ADR 0029)
+     * @return Zahl der gelöschten Analysen (Seiten und Dokumente)
+     */
+    public int delete(AccessContext caller, java.util.function.Predicate<PageKey> pages) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(pages, "pages");
         int deleted = 0;
         List<PageStatementAnalysis> all = new ArrayList<>(store.all());
         all.addAll(store.documents());
         for (PageStatementAnalysis analysis : all) {
             PageKey key = analysis.key();
+            if (!pages.test(key)) {
+                continue;
+            }
             String spaceKey = snapshots.apply(key).map(PageSnapshot::spaceKey).orElse(analysis.spaceKey());
             if (access.canRead(caller, key.sourceId(), spaceKey, key.pageId())) {
                 store.removeDocument(analysis.document());
@@ -383,7 +402,26 @@ public class KnowledgeGraph {
                 deleted++;
             }
         }
+        if (deleted > 0) {
+            listeners.deliver(null, Runnable::run);
+        }
         return deleted;
+    }
+
+    /**
+     * Meldet sich, nachdem Analysen gelöscht wurden ({@link #delete}, {@link #deleteAll}), damit Stand, Graph und
+     * Glossar neu lesen. Kein Polling. Neue Analysen aus Aufträgen melden sich hier noch nicht.
+     */
+    public com.aresstack.spaceharvester.application.observe.Subscription subscribe(Runnable listener) {
+        return listeners.add(Objects.requireNonNull(listener, "listener"));
+    }
+
+    /**
+     * Vergisst den gemerkten Eingabe-Hash einer Seite, deren Text sich ohne neue Payload geändert hat, etwa das
+     * Transkript eines Videos.
+     */
+    public void forgetInput(PageKey key) {
+        inputs.remove(key);
     }
 
     /** Vergisst gemerkte Eingabe-Hashes, etwa nach einem Neuaufbau des Caches. */

@@ -21,8 +21,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param catchUpOnStart    ob der Dienst beim Start für jeden Space mit bestätigter Generation die verpassten
  *                          Änderungen nachholt (ADR 0014; Standard {@code false}, Änderungsquellen sind optional); eine
  *                          Änderungssuche und eine Papierkorbabfrage je Space, kein Vollabruf
- * @param mode              Betriebsart des Zeitplans und des Nachholens beim Start (ADR 0014): {@code catalog-only}
- *                          (Standard), {@code sync-cache} oder {@code full}
+ * @param mode              Betriebsart des Zeitplans und des Nachholens beim Start (ADR 0014): {@code catalog-only},
+ *                          {@code sync-cache} (Standard) oder {@code full}
  */
 @ConfigurationProperties("space-harvester.sync")
 public record SyncProperties(Duration interval, List<String> spaces, Duration withheldRetention,
@@ -33,7 +33,9 @@ public record SyncProperties(Duration interval, List<String> spaces, Duration wi
             throw new IllegalArgumentException(
                     "space-harvester.sync.mode und space-harvester.sync.load-unknown widersprechen sich");
         }
-        mode = mode != null ? mode : loadUnknown == null ? SyncMode.CATALOG_ONLY : SyncMode.loadingUnknown(loadUnknown);
+        mode = mode != null ? mode : loadUnknown == null
+                ? com.aresstack.spaceharvester.application.configuration.SyncSettings.DEFAULT_MODE
+                : SyncMode.loadingUnknown(loadUnknown);
         loadUnknown = mode.loadsUnknown();
         catchUpOnStart = catchUpOnStart != null && catchUpOnStart;
         spaces = spaces == null ? List.of() : List.copyOf(spaces);

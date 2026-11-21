@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.UnaryOperator;
 
 /**
- * Nimmt Aufträge an, führt höchstens {@link JobLimits#maxConcurrent()} gleichzeitig aus und hält ihren Zustand fest.
+ * Nimmt Aufträge an, führt sie nach den Einstellungen „Vorbereitung“ und „Downloads“ gleichzeitig aus und hält ihren Zustand fest.
  *
  * <p>Ein Auftrag ist sofort nach {@link #submit} als {@link JobState#QUEUED} abrufbar; der Aufrufer wartet nie auf die
  * Arbeit. Abbruch ist kooperativ: ein wartender Auftrag endet sofort, ein laufender beim nächsten
@@ -66,7 +66,7 @@ import java.util.function.UnaryOperator;
  */
 public class Jobs implements AutoCloseable {
 
-    static final String INTERRUPTED = "INTERRUPTED";
+    static final String INTERRUPTED = JobLifecycleState.INTERRUPTED;
     static final String TIMEOUT = "TIMEOUT";
     static final String UNEXPECTED = "UNEXPECTED";
     static final String SHUTDOWN = "SHUTDOWN";
@@ -135,7 +135,7 @@ public class Jobs implements AutoCloseable {
 
     /**
      * @param executor führt {@link JobTask#start} aus; die Parallelität begrenzt {@code Jobs} selbst, der Executor muss
-     *                 also mindestens {@link JobLimits#maxConcurrent()} Aufgaben gleichzeitig annehmen
+     *                 also mindestens so viele Aufgaben wie Plätze gleichzeitig annehmen
      */
     public Jobs(JobStore store, Executor executor, JobLimits limits, Clock clock) {
         this(store, new InMemoryJobEventStore(), RouteLookup.NONE, executor, limits, clock);
@@ -165,7 +165,7 @@ public class Jobs implements AutoCloseable {
      * @param partitionKey Partition (Space) oder {@code null}
      * @param owner        auslösender Client oder {@code null} für interne Aufträge; siehe {@link JobStatus#owner()}
      * @return der Auftrag im Zustand {@link JobState#QUEUED}
-     * @throws JobCapacityExceededException wenn bereits {@code maxConcurrent + maxQueued} Aufträge offen sind
+     * @throws JobCapacityExceededException wenn bereits {@code parallelPreparations + maxQueued} Aufträge offen sind
      * @throws IllegalStateException         nach {@link #close()}
      */
     public JobStatus submit(JobType type, String sourceId, String partitionKey, String owner, JobTask task) {
@@ -400,7 +400,7 @@ public class Jobs implements AutoCloseable {
 
     /** Unter dem Sperrobjekt: ob noch ein Auftrag dieser Art für diesen Eigentümer Platz hat. */
     private void requireCapacity(JobType type, String owner) {
-        int capacity = limits.maxConcurrent() + limits.maxQueued();
+        int capacity = parallelPreparations + limits.maxQueued();
         // Folgeaufträge (Anreicherung, Bilder) entstehen, während ihr Auslöser noch einen Platz belegt. Sie haben
         // daher einen eigenen Vorrat derselben Größe und eine eigene Grenze je Eigentümer: zwei je erlaubtem
         // Auslöser, sonst nähme etwa maxOpenPerOwner=1 nie einen an, und ein Client belegt den Vorrat nicht allein.
@@ -1299,7 +1299,8 @@ public class Jobs implements AutoCloseable {
         for (JobStatus status : store.all()) {
             if (!status.state().terminal()) {
                 store.save(status.interrupted(new JobError(INTERRUPTED, "Der Dienst wurde während des Auftrags "
-                        + "beendet; der Auftrag wird nicht fortgesetzt und muss neu gestartet werden"), now));
+                        + "beendet" + (status.type().resumable() ? "; Fortsetzen macht dort weiter, wo er stand"
+                        : "; der Auftrag muss neu gestartet werden")), now));
                 // Nach der höchsten Nummer, nicht nach der Anzahl: gelöschte Ereignisse hinterlassen Lücken.
                 long next = events.events(status.id()).stream().mapToLong(JobEvent::sequence).max().orElse(0) + 1;
                 appendQuietly(new JobEvent(status.id(), next, now, status.type(),
@@ -1407,8 +1408,10 @@ public class Jobs implements AutoCloseable {
      * dem Sperrobjekt.
      */
     private Job next() {
-        boolean general = running < limits.maxConcurrent();
-        boolean followUps = general && runningFollowUps < Math.max(1, limits.maxConcurrent() - 1);
+        // #944 (Angelo 17.11.2026): keine festen Auftragsplätze mehr. Abgleiche, Seitenexporte und Folgeaufträge
+        // laufen nach derselben Einstellung „Vorbereitung“ wie die Downloads, sofort wirksam.
+        boolean general = running < parallelPreparations;
+        boolean followUps = general && runningFollowUps < Math.max(1, parallelPreparations - 1);
         boolean preparations = preparing < parallelPreparations;
         Job pick = null;
         for (Job job : queued) {
@@ -1485,7 +1488,10 @@ public class Jobs implements AutoCloseable {
         }
     }
 
-    /** Wie viele Bilder- und Anhängeaufträge gerade laden (höchstens {@link #parallelDownloads()}, bis auf Restläufer). */
+    /**
+     * Wie viele Downloads ({@link JobType#download()}) gerade laden (höchstens {@link #parallelDownloads()}, bis auf
+     * Restläufer).
+     */
     public int downloadingNow() {
         synchronized (lock) {
             return downloading;

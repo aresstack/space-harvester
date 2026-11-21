@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.AnalyticsSettings;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -43,7 +44,7 @@ public final class AppContext {
     public enum Section {
         // Reihenfolge der Tastenkürzel Strg+1 …: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche
         // ist die Startansicht.
-        SEARCH("Suche"), CONTENT("Inhalte"), TERMS("Begriffe"), ACTIVITIES("Aufträge"), STATUS("Status"),
+        SEARCH("Suche"), CONTENT("Inhalte"), ACTIVITIES("Aufträge"), STATUS("Status"),
         SOURCES("Wissensquellen verwalten"), SETTINGS("Einstellungen");
 
         /** Rechts in der Icon-Leiste, abgetrennt von allem anderen. */
@@ -52,11 +53,11 @@ public final class AppContext {
         }
 
         /**
-         * Rechts in der Icon-Leiste, links vom Trenner der Verwaltung (Angelo, 13.11.2026): Begriffe und Aufträge
-         * stehen nicht mehr bei den Reitern der Mitte.
+         * Rechts in der Icon-Leiste, links vom Trenner der Verwaltung (Angelo, 13.11.2026): Aufträge stehen nicht bei
+         * den Reitern der Mitte. Den Bereich „Begriffe“ gibt es nicht mehr; seine Reiter stehen unter Analysen (BG2c).
          */
         public boolean trailing() {
-            return this == TERMS || this == ACTIVITIES;
+            return this == ACTIVITIES;
         }
 
         /**
@@ -163,11 +164,30 @@ public final class AppContext {
         }
 
         /**
+         * Indexieren (Angelo, 20.11.2026): markiert den Knoten und startet sofort den Abgleich, der ihn vollständig lädt;
+         * danach hält ihn jede Synchronisierung aktuell, auch neue Seiten. Ohne {@code spaceKey} jeder Space der
+         * Quelle, ohne {@code pageId} der ganze Space, sonst die Seite samt Unterseiten.
+         */
+        default void index(String sourceId, String spaceKey, String pageId) {
+        }
+
+        /** Hebt die Markierung genau dieses Knotens auf (Space bzw. Seite); Geladenes bleibt. */
+        default void unindex(String sourceId, String spaceKey, String pageId) {
+        }
+
+        /**
          * Holt die Änderungen eines Knotens samt Teilbaum aus der Quelle nach (Kreispfeile im Baum, Angelo
          * 16.11.2026): ohne {@code spaceKey} jeden Space der Quelle, mit {@code spaceKey} diesen Space (Nachholen wie
          * auf der Quellenkarte), mit {@code pageId} die Seite samt Unterseiten neu aus der Quelle.
          */
         default void refresh(String sourceId, String spaceKey, String pageId) {
+        }
+
+        /**
+         * Wiederholt gescheiterte Abgleiche (Angelo, 21.11.2026): holt die Spaces wie die Kreispfeile im Baum nach,
+         * ohne {@code spaceKeys} jeden Space der Quelle.
+         */
+        default void retrySyncs(String sourceId, java.util.List<String> spaceKeys) {
         }
 
         void search(String text);
@@ -223,6 +243,11 @@ public final class AppContext {
         this.configFile = configFile;
         this.version = version;
         this.vault = vault;
+        // Speichern-Dialoge öffnen im eingestellten Ausgabeordner, Vorgabe Downloads (Angelo 20.11.2026).
+        com.aresstack.spaceharvester.app.ui.controls.SaveChooser.directory(() -> {
+            AppSettings current = settings;
+            return current == null ? null : current.outputDirectory();
+        });
     }
 
     public SecretVault vault() {
@@ -455,6 +480,96 @@ public final class AppContext {
     }
 
     private volatile AnalyticsSettings analyticsWanted;
+
+    /**
+     * Speichert den Hintergrund des Bildbetrachters ({@code space-harvester-app.viewer.background}) in der Datei, ohne
+     * Neustart der Laufzeit: der Betrachter liest die Farbe beim nächsten Öffnen aus den Einstellungen. Schnell
+     * aufeinanderfolgende Änderungen schreiben immer die jüngste zuletzt.
+     */
+    public void viewerBackground(ViewerBackground background, Runnable done, Consumer<Throwable> failed) {
+        viewerWanted = background;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                ViewerBackground wanted = viewerWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withViewerBackground(configFile,
+                        new ConfigFileEditor.Draft(text, null), wanted), !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withViewerBackground(saved);
+            }
+            fire();
+            done.run();
+        }, error -> {
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private volatile ViewerBackground viewerWanted;
+
+    /**
+     * Speichert die Werte für Videos ({@code space-harvester-app.video.*}) in der Datei, ohne Neustart der Laufzeit:
+     * Player, Standbilder und Marken lesen sie beim nächsten Gebrauch aus den Einstellungen. Schnell aufeinanderfolgende
+     * Änderungen schreiben immer die jüngste zuletzt.
+     */
+    public void video(com.aresstack.spaceharvester.app.settings.VideoSettings video, Runnable done,
+                      Consumer<Throwable> failed) {
+        videoWanted = video;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                com.aresstack.spaceharvester.app.settings.VideoSettings wanted = videoWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withVideo(configFile, new ConfigFileEditor.Draft(text, null), wanted),
+                        !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withVideo(saved);
+            }
+            fire();
+            done.run();
+        }, error -> {
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    /**
+     * Whisper und Standbilder eines Videos für einen Auftrag von „In PPTX umwandeln“, der nach einem Neustart
+     * fortgesetzt wird; dieselben Angaben wie beim Start aus dem Player.
+     */
+    private com.aresstack.spaceharvester.application.presentation.VideoMedia presentationMedia(String sourceId,
+                                                                                          String pageId) {
+        AppRuntime current = runtime;
+        if (current == null) {
+            throw new IllegalStateException("Die Quellen sind nicht verbunden.");
+        }
+        com.aresstack.spaceharvester.application.sources.PageMetadata metadata =
+                current.workspace().page(sourceId, pageId, false).header().metadata();
+        return new com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia(
+                current.workspace().openMediaRange(sourceId, pageId),
+                com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia.size(metadata),
+                com.aresstack.spaceharvester.app.ui.content.viewer.VideoPresentationMedia.mediaType(metadata), video(),
+                new com.aresstack.spaceharvester.app.transcription.TranscribeAudioUseCase(
+                        new com.aresstack.spaceharvester.app.transcription.VlcPcmAudioDecoder(),
+                        new com.aresstack.spaceharvester.app.transcription.WhisperSpeechTranscriber()));
+    }
+
+    private volatile com.aresstack.spaceharvester.app.settings.VideoSettings videoWanted;
+
+    /** Die Werte für Videos; ohne geladene Einstellungen die Defaults. */
+    public com.aresstack.spaceharvester.app.settings.VideoSettings video() {
+        AppSettings current = settings;
+        return current == null ? com.aresstack.spaceharvester.app.settings.VideoSettings.DEFAULT : current.video();
+    }
 
     /**
      * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab
@@ -785,6 +900,12 @@ public final class AppContext {
             boolean restarted = started.runtime() != previous;
             settings = started.settings();
             runtime = started.runtime();
+            if (runtime != null) {
+                // Der Vergleich der Standbilder im Core folgt den Werten für Videos, auch nach dem Speichern.
+                runtime.workspace().slideThresholds(() -> video().slideThresholds());
+                // „In PPTX umwandeln“ nach einem Neustart fortsetzen: das Video kommt wie beim Start aus der Quelle.
+                runtime.workspace().presentationMedia(this::presentationMedia);
+            }
             startProblem = started.problem();
             reloads.decrementAndGet();
             if (restarted) {
@@ -937,6 +1058,72 @@ public final class AppContext {
         return parserModel;
     }
 
+    private WhisperModelSetup whisperModel;
+
+    /**
+     * Das Whisper-Modell für Spracheingabe und Transkripte, gemeinsam für Einstellungen, Chat und Videos. Es liegt
+     * nicht im Programm, sondern wird nach Rückfrage von Hugging Face nach {@code ~/.space-harvester/models} geladen,
+     * über Proxy und TLS der App.
+     */
+    public synchronized WhisperModelSetup whisperModel() {
+        if (whisperModel == null) {
+            whisperModel = new WhisperModelSetup(() -> {
+                AppSettings current = settings();
+                if (current == null) {
+                    return java.util.Optional.empty();
+                }
+                return java.util.Optional.of(new com.aresstack.spaceharvester.app.transcription.WhisperModelInstaller(
+                        com.aresstack.spaceharvester.app.transcription.WhisperModelLocation.modelsDirectory(),
+                        new com.aresstack.spaceharvester.app.hf.HuggingFaceClient(
+                                new com.aresstack.spaceharvester.app.nlp.HttpModelDownload(
+                                        AppRuntime.proxy(current.proxy(), secrets()), current.tls(),
+                                        "space-harvester-app/" + version()))));
+            }, this::whisper);
+            // Die Einstellungen laden erst nach dem Fenster: danach (und nach jeder Änderung) neu prüfen.
+            WhisperModelSetup setup = whisperModel;
+            onChange(context -> setup.refresh());
+        }
+        return whisperModel;
+    }
+
+    /** Das eingestellte Whisper-Modell; ohne geladene Einstellungen Tiny. */
+    public com.aresstack.spaceharvester.app.transcription.WhisperModel whisper() {
+        AppSettings current = settings;
+        return current == null ? com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT
+                : current.whisperModel();
+    }
+
+    /**
+     * Speichert das Whisper-Modell ({@code space-harvester-app.whisper.model}) in der Datei, ohne Neustart der
+     * Laufzeit: Spracheingabe und Transkripte nehmen es beim nächsten Gebrauch.
+     */
+    public void whisper(com.aresstack.spaceharvester.app.transcription.WhisperModel model, Runnable done,
+                        Consumer<Throwable> failed) {
+        whisperWanted = model;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                com.aresstack.spaceharvester.app.transcription.WhisperModel wanted = whisperWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withWhisperModel(configFile,
+                        new ConfigFileEditor.Draft(text, null), wanted), !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withWhisperModel(saved);
+            }
+            fire();
+            done.run();
+        }, error -> {
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private volatile com.aresstack.spaceharvester.app.transcription.WhisperModel whisperWanted;
+
     /** Beendet die Laufzeit (beim Schließen des Fensters); schließt Lucene-Indizes und gibt ihre Sperren frei. */
     public void shutdown() {
         if (runtime != null) {
@@ -946,6 +1133,8 @@ public final class AppContext {
     }
 
     private void fire() {
+        // Spracheingabe und Transkripte lesen das eingestellte Modell beim nächsten Gebrauch.
+        com.aresstack.spaceharvester.app.transcription.WhisperModelLocation.select(whisper());
         Runnable notify = () -> new ArrayList<>(listeners).forEach(listener -> listener.accept(this));
         if (SwingUtilities.isEventDispatchThread()) {
             notify.run();

@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.CountChip;
+import com.aresstack.spaceharvester.app.ui.controls.PlaceholderList;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
@@ -72,6 +73,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -86,6 +88,10 @@ import java.util.function.Supplier;
  */
 final class StandingTab extends JPanel {
 
+    /** Die Begriffe der Auswahl, vorn in derselben Reiterzeile wie auf der Seite (BG2a, AT 17.11.2026). */
+    static final String TERMS = "Begriffe";
+    static final String GLOSSARY = "Fachglossar";
+    static final String GRAPH = "Graph";
     static final String STATEMENTS = "Aussagen";
     static final String READING = "Zuerst lesen";
     static final String CONFLICTS = "Mögliche Widersprüche";
@@ -103,6 +109,21 @@ final class StandingTab extends JPanel {
     static final String HISTORY_TIP = "Protokoll: wer wann welchen Stand gesetzt oder gelöscht hat";
     static final String CLEAR_QUESTION = "Wirklich die Entscheidung von Hand löschen? Danach gilt wieder der "
             + "berechnete Stand.";
+    static final String NO_STATEMENTS = "Keine analysierten Aussagen in der Auswahl";
+    static final String NO_MATCH = "Keine Treffer";
+    static final String STALE_WORD = "veraltet";
+    static final String DELETE_ANALYSES_TITLE = "Aussagen-Analysen löschen?";
+    static final String DELETE_ANALYSES_TIP = "Aussagen-Analysen löschen";
+    /** Im Menü neben dem Papierkorb (Angelo 17.11.2026): auch die KI-Urteile des Prüfschritts löschen. */
+    static final String DELETE_EVERYTHING = "Alles löschen";
+    static final String DELETE_EVERYTHING_TITLE = "Alles löschen?";
+    static final String DELETE_EVERYTHING_TIP = "Aussagen-Analysen samt den KI-Urteilen aus „Aussagen prüfen“ löschen";
+    static final String DELETE_EVERYTHING_MISSING = "Noch nicht möglich: Der Core kann die KI-Urteile noch nicht "
+            + "löschen";
+    static final String MORE_DELETE_TIP = "Weitere Löschaktionen";
+    static final String STALE_TIP = "Aussagen aus veralteten Analysen einblenden; sie zählen nirgends mit";
+    static final String STALE_HIDE_TIP = "Aussagen aus veralteten Analysen wieder ausblenden";
+    static final String NO_CONFLICTS = "Keine möglichen Widersprüche";
     static final String NO_RIGHT_TO_DECIDE = "Keine Berechtigung, den Stand in dieser Quelle zu setzen";
     static final String NO_RIGHT_TO_HISTORY = "Keine Berechtigung, das Protokoll in dieser Quelle zu lesen";
     static final String NOT_WATCHING = "Stand erneuert sich nicht von selbst (Anmeldung beim Core fehlgeschlagen)";
@@ -114,7 +135,8 @@ final class StandingTab extends JPanel {
             + "(Präsens, Futur, Präteritum, „nicht mehr“); eine überholte Seite (Label, Titel, Lage) oder ein Entwurf "
             + "zieht nur Aussagen mit, die selbst nichts über die Zeit sagen.\n\n"
             + "Verneinung und Verbindlichkeit („muss nicht“) ändern den Stand nie und stehen deshalb in jeder Zeile. "
-            + "„unsicher“ heißt: Der Parser ist sich nicht sicher, die Aussage zählt nicht für den Stand der Seite.\n\n"
+            + "„" + StatementProvenance.PROPOSAL + "“ heißt: Der Parser ist sich nicht sicher oder der Prüfschritt "
+            + "hat die Aussage verworfen; sie bleibt sichtbar, zählt aber nicht für den Stand der Seite.\n\n"
             + "Ein Klick auf eine Zeile zeigt Grund und Herkunft, ein Doppelklick springt an die Stelle im Lesetext. "
             + "Die Suche findet Handelnde, Träger, Prädikate, die übrigen Beteiligten in Grundform, Seitentitel und "
             + "vereinfachte Sätze, nicht aber Wörter, die nur im Originalsatz stehen. "
@@ -125,6 +147,9 @@ final class StandingTab extends JPanel {
             + "aus dem Core und stehen je Seite im Overlay an der Summe. Dort lässt sich auch der Stand der ganzen "
             + "Seite von Hand setzen; ein Klick auf den Titel öffnet die Seite, ein Thema im Feld oben rechts (▾ für "
             + "Vorschläge) zeigt nur Seiten, die es erwähnen.\n\n"
+            + "Der Papierkorb löscht die Aussagen-Analysen der Auswahl; die KI-Urteile aus „Aussagen prüfen“ bleiben "
+            + "stehen und greifen nach einer neuen Analyse wieder, solange Satz, Zusammenhang, Aussage, Modell und "
+            + "Anweisung gleich sind. „Alles löschen“ im Menü ▾ daneben löscht auch diese Urteile.\n\n"
             + "„Mögliche Widersprüche“ ist nur ein Hinweis: sichere Aussagen derselben Sachlage, die beide gelten, "
             + "mit gleicher Verbindlichkeit, eine bejaht, eine verneint. Setzt man eine davon von Hand auf "
             + "„überholt“, verschwindet der Hinweis. „Ablösungen“ stehen getrennt darunter und sind kein Konflikt: "
@@ -158,6 +183,27 @@ final class StandingTab extends JPanel {
 
         /** Die Leseempfehlung der Auswahl ({@code ReadingAdvice}), mit Thema oder ({@code null}) ohne; nie auf dem EDT. */
         ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled);
+
+        /**
+         * Löscht die Aussagen-Analysen der Auswahl samt Unterseiten, Anhängen und enthaltenen Dateien; die Seiten
+         * bleiben. Liefert die Zahl der gelöschten Analysen; nie auf dem EDT.
+         */
+        int deleteAnalyses(ExportPanel.Selection selection);
+
+        /** Meldet sich, nachdem Aussagen-Analysen gelöscht wurden (Beobachter, kein Zeitgeber). */
+        Subscription subscribeAnalyses(Runnable listener);
+
+        /** Ob der Core auch die KI-Urteile des Prüfschritts löschen kann („Alles löschen“). */
+        default boolean canDeleteEverything() {
+            return false;
+        }
+
+        /**
+         * Wie {@link #deleteAnalyses}, dazu die KI-Urteile des Prüfschritts derselben Seiten; nie auf dem EDT.
+         */
+        default int deleteEverything(ExportPanel.Selection selection) {
+            throw new UnsupportedOperationException(DELETE_EVERYTHING_MISSING);
+        }
 
         static Actions of(AppRuntime runtime) {
             if (runtime == null) {
@@ -206,6 +252,26 @@ final class StandingTab extends JPanel {
                     return runtime.workspace().readingList(
                             runtime.workspace().resolveSelection(selection.toCore(runtime)), topic, cancelled);
                 }
+
+                @Override
+                public int deleteAnalyses(ExportPanel.Selection selection) {
+                    return runtime.workspace().deleteStatementAnalyses(selection.toCore(runtime));
+                }
+
+                @Override
+                public boolean canDeleteEverything() {
+                    return true;
+                }
+
+                @Override
+                public int deleteEverything(ExportPanel.Selection selection) {
+                    return runtime.workspace().deleteStatementAnalyses(selection.toCore(runtime), true);
+                }
+
+                @Override
+                public Subscription subscribeAnalyses(Runnable listener) {
+                    return runtime.workspace().subscribeStatementAnalyses(listener);
+                }
             };
         }
     }
@@ -219,9 +285,13 @@ final class StandingTab extends JPanel {
     record Target(String sourceId, String pageId, int start, int end) {
     }
 
-    /** Was die Liste gerade filtert. {@code only == null} zeigt jeden Stand. */
-    record Filter(Standing only, boolean actions, boolean states, boolean certainOnly, String text, boolean byBearer) {
-        static final Filter ALL = new Filter(null, true, true, false, "", false);
+    /**
+     * Was die Liste gerade filtert. {@code only == null} zeigt jeden Stand; {@code stale} zeigt auch Aussagen aus
+     * veralteten Analysen (Chip „veraltet N“), sonst bleiben sie weg.
+     */
+    record Filter(Standing only, boolean actions, boolean states, boolean certainOnly, String text, boolean byBearer,
+                  boolean stale) {
+        static final Filter ALL = new Filter(null, true, true, false, "", false, true);
     }
 
     /** Eine Zeile der Liste: Gruppenkopf, Aussage oder Entscheidung ohne Aussage. */
@@ -244,18 +314,31 @@ final class StandingTab extends JPanel {
     private final Runner runner;
     private final PillTabs tabs = new PillTabs();
     private final Map<Standing, CountChip> chips = new EnumMap<>(Standing.class);
+    private final CountChip staleChip = new CountChip(STALE_WORD, Comic.MUTED);
     private final JPopupMenu filterMenu = new JPopupMenu();
     private final JCheckBoxMenuItem showActions = new JCheckBoxMenuItem("Handlungen", true);
     private final JCheckBoxMenuItem showStates = new JCheckBoxMenuItem("Zustände", true);
     private final JCheckBoxMenuItem certainOnly = new JCheckBoxMenuItem("Nur sichere Aussagen", false);
     private final IconButton filter = new IconButton(Glyph.FILTER, FILTER_TIP);
     private final IconButton bearer = new IconButton(Glyph.NEIGHBOURS, BY_BEARER_TIP);
+    /** „Aussagen-Analysen löschen“ absteigend ab dem gewählten Knoten (Angelo 17.11.2026); die Seiten bleiben. */
+    private final IconButton deleteAnalyses = new IconButton(Glyph.TRASH, DELETE_ANALYSES_TIP);
+    /** Rechts neben dem Papierkorb das Dreieck wie neben dem Besen der Aufträge (Angelo 17.11.2026). */
+    private final IconButton moreDelete = new IconButton(
+            new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), MORE_DELETE_TIP);
+    private Predicate<String> confirmDelete = question -> Dialogs.confirm(this,
+            question.startsWith(EVERYTHING_PREFIX) ? DELETE_EVERYTHING_TITLE : DELETE_ANALYSES_TITLE, question);
+    private static final String EVERYTHING_PREFIX = "Wirklich alles ";
+    private volatile boolean deleting;
+    /** Ergebnis des letzten Löschens; steht vor der Zählung in der Statuszeile, bis eine andere Auswahl kommt. */
+    private String deletedNotice;
+    private Subscription analysesWatch = Subscription.NONE;
     private final JTextField search = new JTextField(9);
     private final DefaultListModel<Row> model = new DefaultListModel<>();
-    private final JList<Row> list = new JList<>(model);
+    private final PlaceholderList<Row> list = new PlaceholderList<>(model);
     private final JScrollPane scroll;
     private final DefaultListModel<Row> conflictModel = new DefaultListModel<>();
-    private final JList<Row> conflictList = new JList<>(conflictModel);
+    private final PlaceholderList<Row> conflictList = new PlaceholderList<>(conflictModel);
     private StatementConflicts conflicts;
     /** Die Liste, an der das Overlay zuletzt aufging (Aussagen oder Widersprüche). */
     private JComponent popupOwner = list;
@@ -269,6 +352,13 @@ final class StandingTab extends JPanel {
     private boolean byBearer;
     private boolean shown;
     private boolean dirty;
+    /**
+     * Reiter anderer Ansichten in derselben Zeile (Begriffe vorn, Fachglossar und Graph hinten, BG2c): je Name, wer
+     * erfährt, ob er zu sehen ist (Reiter sichtbar und gewählt). Auf ihnen wird der Stand nicht gelesen.
+     */
+    private final Map<String, Consumer<Boolean>> foreign = new LinkedHashMap<>();
+    /** Die Werkzeuge der fremden Reiter oben rechts; zu sehen nur auf ihrem Reiter. */
+    private final Map<String, List<JComponent>> foreignTools = new LinkedHashMap<>();
     private int generation;
     private AtomicBoolean cancelled = new AtomicBoolean();
     private Subscription standingWatch = Subscription.NONE;
@@ -363,6 +453,10 @@ final class StandingTab extends JPanel {
             });
             chips.put(standing, chip);
         }
+        // Unabhängig vom Stand-Chip: blendet die Aussagen aus veralteten Analysen zusätzlich ein.
+        staleChip.tips(STALE_TIP, STALE_HIDE_TIP);
+        staleChip.setVisible(false);
+        staleChip.addActionListener(e -> refilter());
         for (JCheckBoxMenuItem box : List.of(showActions, showStates, certainOnly)) {
             if (box == certainOnly) {
                 filterMenu.addSeparator();
@@ -401,6 +495,7 @@ final class StandingTab extends JPanel {
         JPanel counts = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         counts.setOpaque(false);
         chips.values().forEach(counts::add);
+        counts.add(staleChip);
         reading = new ReadingFirstView(runner, popup);
         reading.pageControls(this::pageControls);
         reading.onStatus(text -> {
@@ -416,7 +511,10 @@ final class StandingTab extends JPanel {
         JScrollPane conflictScroll = Comic.scroll(conflictList);
         conflictScroll.getViewport().addChangeListener(e -> fetchSentences(conflictList, conflictModel));
         tabs.tab(CONFLICTS, conflictScroll);
-        tabs.actions(counts, filter, bearer, field, topic);
+        deleteAnalyses.addActionListener(e -> deleteAnalyses());
+        moreDelete.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
+                moreDeleteMenu(), moreDelete).show(moreDelete, 0, moreDelete.getHeight()));
+        tabs.actions(counts, filter, bearer, field, topic, deleteAnalyses, moreDelete);
         // Zahlen, Filter und Suche gehören zu „Aussagen“, das Themenfeld zu „Zuerst lesen“; anderswo stünden sie
         // ohne Wirkung da.
         tabs.onSelect(name -> {
@@ -425,8 +523,18 @@ final class StandingTab extends JPanel {
                 tool.setVisible(statements);
             }
             topic.setVisible(READING.equals(name));
+            // Fremde Reiter bringen ihre Werkzeuge selbst mit; Papierkorb und ▾ gehören nur zum Stand.
+            deleteAnalyses.setVisible(!foreign.containsKey(name));
+            moreDelete.setVisible(!foreign.containsKey(name));
+            foreignTools.forEach((tab, tools) -> tools.forEach(tool -> tool.setVisible(tab.equals(name))));
             popup.setVisible(false);
             reading.shown(shown && READING.equals(name));
+            tellForeign(name);
+            if (foreign.containsKey(name)) {
+                onStatus.accept(" ");
+                return;
+            }
+            loadIfShown();
             if (READING.equals(name)) {
                 reading.status();
             } else {
@@ -434,6 +542,39 @@ final class StandingTab extends JPanel {
             }
         });
         add(tabs, BorderLayout.CENTER);
+    }
+
+    /**
+     * Setzt die Begriffe der Auswahl als ersten Reiter „Begriffe“ vor „Aussagen“, in dieselbe Reiterzeile (keine
+     * zweite Ebene). {@code onShown} erfährt, ob sie gerade zu sehen sind, damit sie erst dann laden.
+     */
+    void terms(JComponent view, Consumer<Boolean> onShown) {
+        foreign.put(TERMS, Objects.requireNonNull(onShown, "onShown"));
+        tabs.first(TERMS, view);
+    }
+
+    /**
+     * Hängt den Reiter einer anderen Ansicht hinten an dieselbe Reiterzeile (etwa Fachglossar und Graph, BG2c); ihre
+     * {@code tools} stehen oben rechts, nur solange er gewählt ist. {@code onShown} erfährt, ob er zu sehen ist.
+     */
+    void tab(String name, JComponent view, Consumer<Boolean> onShown, JComponent... tools) {
+        foreign.put(name, Objects.requireNonNull(onShown, "onShown"));
+        foreignTools.put(name, List.of(tools));
+        for (JComponent tool : tools) {
+            tool.setVisible(name.equals(tabs.selected()));
+        }
+        tabs.tab(name, view);
+        tabs.actions(tools);
+    }
+
+    /** Ob ein Reiter des Stands gewählt ist (Aussagen, Zuerst lesen, Mögliche Widersprüche), kein fremder. */
+    boolean ownTabSelected() {
+        return !foreign.containsKey(tabs.selected());
+    }
+
+    /** Sagt jedem fremden Reiter, ob er jetzt zu sehen ist. */
+    private void tellForeign(String selected) {
+        foreign.forEach((name, onShown) -> onShown.accept(shown && name.equals(selected)));
     }
 
     /** Die Statuszeile des Hauptfensters: Umfang der Sicht oder ein Problem. */
@@ -452,6 +593,7 @@ final class StandingTab extends JPanel {
             return;
         }
         this.selection = selection;
+        deletedNotice = null;
         dirty = true;
         reading.source(selection == null ? null : (topic, stop) -> {
             Actions current = actions.get();
@@ -480,11 +622,13 @@ final class StandingTab extends JPanel {
             popup.setVisible(false);
         }
         reading.shown(shown && READING.equals(tabs.selected()));
+        tellForeign(tabs.selected());
         loadIfShown();
     }
 
     private void loadIfShown() {
-        if (shown && dirty && selection != null) {
+        // Auf fremden Reitern wird der Stand nicht gelesen; erst wenn einer seiner Reiter gewählt wird.
+        if (shown && dirty && selection != null && !foreign.containsKey(tabs.selected())) {
             load();
         }
     }
@@ -623,8 +767,20 @@ final class StandingTab extends JPanel {
         }
         standingWatch.close();
         jobWatch.close();
+        analysesWatch.close();
         watched = current;
         watchFailed = false;
+        try {
+            // A local deletion refreshes the view after it completes; avoid racing its own observer.
+            analysesWatch = current.subscribeAnalyses(() -> {
+                if (!deleting) {
+                    SwingUtilities.invokeLater(this::changed);
+                }
+            });
+        } catch (RuntimeException e) {
+            analysesWatch = Subscription.NONE;
+            watchFailed = true;
+        }
         try {
             standingWatch = current.subscribeStanding(() -> SwingUtilities.invokeLater(this::changed));
         } catch (RuntimeException e) {
@@ -679,16 +835,22 @@ final class StandingTab extends JPanel {
             }
         }
         return new Filter(only, showActions.isSelected(), showStates.isSelected(), certainOnly.isSelected(),
-                search.getText(), byBearer);
+                search.getText(), byBearer, staleChip.isSelected());
     }
 
     private void counts(StatusQuoView view) {
         for (Map.Entry<Standing, CountChip> chip : chips.entrySet()) {
             chip.getValue().count(view == null ? 0 : view.counts().getOrDefault(chip.getKey(), 0));
         }
+        int stale = view == null ? 0 : view.staleEntries();
+        staleChip.count(stale);
+        staleChip.setVisible(stale > 0);
     }
 
     private void status() {
+        if (foreign.containsKey(tabs.selected())) {
+            return;
+        }
         if (READING.equals(tabs.selected())) {
             reading.status();
             return;
@@ -699,10 +861,11 @@ final class StandingTab extends JPanel {
         if (CONFLICTS.equals(tabs.selected())) {
             int found = conflicts == null ? 0 : conflicts.contradictions().size();
             int replaced = conflicts == null ? 0 : conflicts.replacements().size();
-            String text = (found == 0 ? "Keine möglichen Widersprüche"
+            conflictList.placeholder(NO_CONFLICTS);
+            String text = (found == 0 ? NO_CONFLICTS
                     : Texts.count(found, "möglicher Widerspruch", "mögliche Widersprüche"))
                     + " · " + Texts.count(replaced, "Ablösung", "Ablösungen");
-            onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
+            onStatus.accept(noticed(watchFailed ? text + " · " + NOT_WATCHING : text));
             return;
         }
         int shownLines = 0;
@@ -711,13 +874,139 @@ final class StandingTab extends JPanel {
                 shownLines++;
             }
         }
-        int all = view.entries().size();
+        int stale = view.staleEntries();
+        boolean staleShown = staleChip.isSelected();
+        int all = view.entries().size() - (staleShown ? 0 : stale);
         int pages = view.pages().size();
-        String text = all == 0 ? "Keine analysierten Aussagen in der Auswahl"
+        list.placeholder(empty(view.entries().size(), stale, staleShown));
+        String text = all == 0 ? empty(view.entries().size(), stale, staleShown)
                 : (shownLines == all ? Texts.count(all, "Aussage", "Aussagen")
                 : shownLines + " von " + Texts.count(all, "Aussage", "Aussagen"))
                 + " auf " + Texts.count(pages, "Seite", "Seiten");
-        onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
+        onStatus.accept(noticed(watchFailed ? text + " · " + NOT_WATCHING : text));
+    }
+
+    /** Das Ergebnis des letzten Löschens vor der Zählung, solange dieselbe Auswahl gilt. */
+    private String noticed(String text) {
+        return deletedNotice == null ? text : deletedNotice + " · " + text;
+    }
+
+    /** Die Rückfrage vor dem Löschen, mit dem Namen des gewählten Knotens. */
+    static String deleteQuestion(ExportPanel.Selection selection) {
+        if (selection.global()) {
+            return "Wirklich die Aussagen-Analysen aller Wissensquellen löschen? Die Seiten bleiben.";
+        }
+        return "Wirklich die Aussagen-Analysen von „" + selection.title() + "“ samt Unterseiten löschen? Die Seiten "
+                + "bleiben.";
+    }
+
+    /** Die Rückfrage vor „Alles löschen“: Analysen und KI-Urteile. */
+    static String deleteEverythingQuestion(ExportPanel.Selection selection) {
+        String where = selection.global() ? "aller Wissensquellen" : "von „" + selection.title() + "“ samt Unterseiten";
+        return EVERYTHING_PREFIX + where + " löschen, also die Aussagen-Analysen und die KI-Urteile aus „Aussagen "
+                + "prüfen“? Die Seiten bleiben.";
+    }
+
+    /** Das Menü hinter dem Dreieck neben dem Papierkorb. */
+    javax.swing.JPopupMenu moreDeleteMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        Actions current = actions.get();
+        boolean possible = current != null && current.canDeleteEverything();
+        javax.swing.JMenuItem everything = new javax.swing.JMenuItem(DELETE_EVERYTHING, Glyph.TRASH);
+        everything.setFont(Comic.regular(13f));
+        everything.setToolTipText(possible ? DELETE_EVERYTHING_TIP : DELETE_EVERYTHING_MISSING);
+        everything.setEnabled(possible && selection != null && !deleting);
+        everything.addActionListener(e -> deleteEverything());
+        menu.add(everything);
+        return menu;
+    }
+
+    /**
+     * „Aussagen-Analysen löschen“: nach der Rückfrage im Hintergrund unter dem Ladekreis, absteigend ab dem gewählten
+     * Knoten (Wissensquellen-Kopf, Quelle, Space, Ordner). Danach liest der Reiter über den Beobachter neu. Die
+     * KI-Urteile des Prüfschritts bleiben.
+     */
+    void deleteAnalyses() {
+        delete(false);
+    }
+
+    /** „Alles löschen“ im Menü neben dem Papierkorb: wie {@link #deleteAnalyses}, dazu die KI-Urteile. */
+    void deleteEverything() {
+        delete(true);
+    }
+
+    private void delete(boolean everything) {
+        Actions current = actions.get();
+        ExportPanel.Selection chosen = selection;
+        if (current == null || chosen == null || deleting || everything && !current.canDeleteEverything()
+                || !confirmDelete.test(everything ? deleteEverythingQuestion(chosen) : deleteQuestion(chosen))) {
+            return;
+        }
+        watch(current);
+        deleting = true;
+        deleteAnalyses.setEnabled(false);
+        moreDelete.setEnabled(false);
+        busy.setText(everything ? "Aussagen-Analysen und KI-Urteile werden gelöscht …"
+                : "Aussagen-Analysen werden gelöscht …");
+        busy.setBusy(true);
+        runner.run(() -> everything ? current.deleteEverything(chosen) : current.deleteAnalyses(chosen), deleted -> {
+            deleting = false;
+            deleteAnalyses.setEnabled(true);
+            moreDelete.setEnabled(true);
+            busy.setText(BUSY);
+            busy.setBusy(false);
+            if (!chosen.equals(selection)) {
+                return;
+            }
+            deletedNotice = deleted == 0
+                    ? (chosen.global() ? "Keine Aussagen-Analysen vorhanden"
+                    : "Keine Aussagen-Analysen unter „" + chosen.title() + "“")
+                    : Texts.count(deleted, "Aussagen-Analyse", "Aussagen-Analysen") + " gelöscht";
+            if (everything) {
+                deletedNotice += " · KI-Urteile aus „Aussagen prüfen“ gelöscht";
+            }
+            // Nach erfolgreichem Löschen immer neu lesen, auch wenn der Beobachter sich schon vor dem Ergebnis
+            // gemeldet hat; sonst überschreibt der alte Stand die frischen Zahlen.
+            if (deleted > 0) {
+                changed();
+            } else {
+                status();
+            }
+        }, failure -> {
+            deleting = false;
+            deleteAnalyses.setEnabled(true);
+            moreDelete.setEnabled(true);
+            busy.setText(BUSY);
+            busy.setBusy(false);
+            onStatus.accept("Aussagen-Analysen nicht gelöscht: " + failure.getClass().getSimpleName());
+        });
+    }
+
+    /** Für Tests: statt des Dialogs; bekommt die Frage. */
+    void confirmDeleteWith(Predicate<String> confirm) {
+        confirmDelete = Objects.requireNonNull(confirm, "confirm");
+    }
+
+    IconButton deleteAnalysesButton() {
+        return deleteAnalyses;
+    }
+
+    IconButton moreDeleteButton() {
+        return moreDelete;
+    }
+
+    /**
+     * Der Satz in der leeren Liste: ganz ohne Analyse, nur veraltete (solange ausgeblendet) oder ohne Treffer.
+     */
+    static String empty(int entries, int stale, boolean staleShown) {
+        if (entries == 0) {
+            return NO_STATEMENTS;
+        }
+        if (!staleShown && entries == stale) {
+            return "Keine aktuellen Aussagen. " + (stale == 1 ? "Eine stammt" : stale + " stammen")
+                    + " aus veralteten Analysen.";
+        }
+        return NO_MATCH;
     }
 
     /**
@@ -814,6 +1103,7 @@ final class StandingTab extends JPanel {
                     kept.forEach(entry -> rows.add(new Line(entry, true)));
                 }
             }
+            staleGroup(view, filter, rows);
             return rows;
         }
         Map<Standing, List<StatusQuoEntry>> groups = new LinkedHashMap<>();
@@ -821,7 +1111,7 @@ final class StandingTab extends JPanel {
             groups.put(standing, new ArrayList<>());
         }
         for (StatusQuoEntry entry : view.entries()) {
-            if (keeps(entry, filter)) {
+            if (!entry.analysisStale() && keeps(entry, filter)) {
                 groups.get(entry.standing().standing()).add(entry);
             }
         }
@@ -831,10 +1121,28 @@ final class StandingTab extends JPanel {
                 entries.forEach(entry -> rows.add(new Line(entry, false)));
             }
         });
+        staleGroup(view, filter, rows);
         return rows;
     }
 
+    /**
+     * Eingeblendete Einträge aus veralteten Analysen als eigene Gruppe „veraltet“ am Ende: Ihr Stand sagt nichts aus,
+     * also stehen sie unter keinem Stand und die Gruppen der Stände zählen wie die Chips nur Aktuelles.
+     */
+    private static void staleGroup(StatusQuoView view, Filter filter, List<Row> rows) {
+        List<StatusQuoEntry> stale = view.entries().stream()
+                .filter(entry -> entry.analysisStale() && keeps(entry, filter)).toList();
+        if (!stale.isEmpty()) {
+            rows.add(new Group(STALE_WORD, Comic.MUTED, stale.size()));
+            stale.forEach(entry -> rows.add(new Line(entry, false)));
+        }
+    }
+
     static boolean keeps(StatusQuoEntry entry, Filter filter) {
+        if (entry.analysisStale()) {
+            // Nur die Suche wirkt auf sie; Stand-Chips und Filter beziehen sich auf aktuelle Aussagen.
+            return filter.stale() && matches(entry, filter);
+        }
         if (filter.only() != null && entry.standing().standing() != filter.only()) {
             return false;
         }
@@ -849,6 +1157,10 @@ final class StandingTab extends JPanel {
         if (filter.certainOnly() && entry.uncertain()) {
             return false;
         }
+        return matches(entry, filter);
+    }
+
+    private static boolean matches(StatusQuoEntry entry, Filter filter) {
         String text = filter.text() == null ? "" : filter.text().strip().toLowerCase(Locale.ROOT);
         return text.isEmpty() || haystack(entry).contains(text);
     }
@@ -949,11 +1261,12 @@ final class StandingTab extends JPanel {
         if (entry.kind() == StatementKind.STATE) {
             parts.add("Zustand");
         }
-        if (entry.uncertain()) {
-            parts.add("unsicher");
-        }
-        if (entry.analysisStale()) {
-            parts.add("Analyse veraltet");
+        // A1: Unsicheres trägt das Wort „Vorschlag“ (neutral, nie rot); ein Urteil von Hand geht vor.
+        String marker = StatementProvenance.marker(entry.statement());
+        if (marker != null) {
+            parts.add(marker);
+        } else if (entry.uncertain()) {
+            parts.add(StatementProvenance.PROPOSAL);
         }
         if (entry.decision() != null) {
             parts.add("von Hand");
@@ -1051,31 +1364,10 @@ final class StandingTab extends JPanel {
         } else if (sentence != null && sentence.stale()) {
             lines.add("Originalsatz: nicht mehr ermittelbar, der Text der Seite hat sich geändert.");
         }
-        if (entry.origin() == ParsedStatements.Origin.VORSTUFE) {
-            lines.add("Herkunft: Vorstufe „Sätze vereinfachen“ (KI) · Kennzeichen: " + stageFlag(entry.stageFlag()));
-            String simplified = entry.statement().derivation().simplifiedSentence();
-            if (simplified != null && !simplified.isBlank()) {
-                lines.add("Vereinfachter Satz: „" + simplified.strip() + "“");
-            }
-        } else if (entry.origin() == ParsedStatements.Origin.MODELL) {
-            // ADR 0032, FL4: aus dem Satz, mit dem das Modell eine andere Aussage vervollständigt hat.
-            lines.add(CheckTexts.ORIGIN_LABEL + ": " + CheckTexts.ORIGIN_MODEL);
-            String corrected = entry.statement().derivation().simplifiedSentence();
-            if (corrected != null && !corrected.isBlank()) {
-                lines.add(CheckTexts.MODEL_SENTENCE_LABEL + ": „" + corrected.strip() + "“");
-            }
-        } else {
-            lines.add("Herkunft: Originalsatz");
-        }
-        if (entry.statement().check() != null) {
-            lines.add(CheckTexts.VERDICT_LABEL + ": " + CheckTexts.verdict(entry.statement().check()));
-            String lowered = CheckTexts.lowered(entry.statement());
-            if (lowered != null) {
-                lines.add(CheckTexts.QUALITY_LABEL + ": " + lowered);
-            }
-        }
+        // A1: Herkunft und Prüfstatus wie im Reiter „Aussagen“, aus derselben Stelle.
+        lines.add(StatementProvenance.details(entry.statement(), null, null));
         if (entry.uncertain()) {
-            lines.add("Unsicher: zählt nicht für den Stand der Seite.");
+            lines.add(StatementProvenance.PROPOSAL + ": zählt nicht für den Stand der Seite.");
         }
         if (entry.analysisStale()) {
             lines.add("Die Analyse passt nicht mehr zum Text der Seite.");
@@ -1355,9 +1647,10 @@ final class StandingTab extends JPanel {
                 markText = "";
                 metaText = "Seite " + pageName(decision.page()) + " · löschen im Overlay";
             }
-            Color tone = tone(standing);
-            boolean faded = standing == Standing.UEBERHOLT;
-            badge.setText(word(standing));
+            boolean stale = row instanceof Line l && l.entry().analysisStale();
+            Color tone = stale ? Comic.MUTED : tone(standing);
+            boolean faded = stale || standing == Standing.UEBERHOLT;
+            badge.setText(stale ? STALE_WORD : word(standing));
             badge.setForeground(tone);
             badge.setBackground(Comic.SURFACE);
             badge.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),
@@ -1389,6 +1682,20 @@ final class StandingTab extends JPanel {
 
     CountChip chip(Standing standing) {
         return chips.get(standing);
+    }
+
+    CountChip staleChip() {
+        return staleChip;
+    }
+
+    /** Der Satz, den die leere Aussagenliste zeigt. */
+    String placeholder() {
+        return list.showsPlaceholder() ? list.placeholder() : null;
+    }
+
+    /** Der Satz, den die leere Liste „Mögliche Widersprüche“ zeigt. */
+    String conflictPlaceholder() {
+        return conflictList.showsPlaceholder() ? conflictList.placeholder() : null;
     }
 
     JCheckBoxMenuItem certainOnlyBox() {

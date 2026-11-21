@@ -76,6 +76,10 @@ public final class ActivitiesView implements View {
     private final JTable table = Comic.table(new JobsTable(model));
     private final JLabel title = new JLabel("Kein Auftrag gewählt");
     private final Facts facts = new Facts();
+    /** Rechts neben „Ausgabeordner“: öffnet den Ordner, in den der gewählte Auftrag schreibt. */
+    final ComposerButton openOutput = Comic.button("Ordner öffnen", "Den Ausgabeordner im Dateimanager anzeigen");
+    /** Der Ausgabeordner des gezeigten Auftrags; {@code null}: er schreibt keine Dateien. */
+    private java.nio.file.Path outputShown;
     private final Feedback feedback = new Feedback();
     private final ComposerButton again = Comic.button("Erneut abgleichen", "Denselben Space erneut abgleichen");
     /** Die Einmalcode-Abfrage des gewählten Auftrags, ohne Auswahl die älteste offene (ADR 0018). */
@@ -86,10 +90,19 @@ public final class ActivitiesView implements View {
     /** Zuletzt gelesene Zahl paralleler Downloads; bei 0 keine Restzeit. */
     private int parallelNow = JobLimits.DEFAULT_PARALLEL_DOWNLOADS;
     /** Ein Knopf für alle Aufträge (Angelo 10.11.2026): löscht alles, laufende werden vorher abgebrochen. */
-    final IconButton deleteAll = new IconButton(Glyph.BROOM, "Alle Aufträge löschen");
+    final IconButton deleteFinished = new IconButton(Glyph.BROOM, DELETE_FINISHED);
+    /**
+     * Rechts neben dem Besen das Dreieck der Leseansicht (Angelo 17.11.2026); im Menü „Alle Aufträge löschen“, das
+     * laufende vorher abbricht, damit nichts unsichtbar weiterläuft.
+     */
+    final IconButton moreJobs = new IconButton(new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(),
+            MORE_JOB_ACTIONS);
+    static final String DELETE_FINISHED = "Abgeschlossene Aufträge löschen";
+    static final String DELETE_ALL = "Alle Aufträge löschen";
+    static final String MORE_JOB_ACTIONS = "Weitere Aktionen zu den Aufträgen";
     /** Links neben den Auswahlen (Angelo 11.11.2026): alle Bilder- und Anhänge-Unterzeilen auf- bzw. zuklappen. */
-    final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Bilder und Anhänge aufklappen");
-    final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Bilder und Anhänge zuklappen");
+    final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Unterschritte aufklappen (Bilder, Anhänge, Schritte von „In PPTX umwandeln“)");
+    final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Unterschritte zuklappen");
     /**
      * Links vom Besen (Angelo 11.11.2026): wie viele Bilder- und Anhängeaufträge gleichzeitig laden; 0 bereitet nur vor.
      * Gilt sofort und bleibt in der Konfigurationsdatei ({@code jobs.parallel-downloads}).
@@ -187,6 +200,12 @@ public final class ActivitiesView implements View {
                         && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
                     toggleGroup(row);
                 }
+                // Ein Klick auf die schon markierte Zeile meldet keine neue Auswahl: Fehlt ihr Detail noch (Abruf
+                // gescheitert), liest ihn der Klick nach, statt „Kein Auftrag gewählt“ stehen zu lassen.
+                if (row >= 0 && row < model.rows.size() && detail == null
+                        && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    select(model.rows.get(row).id());
+                }
             }
         });
         table.getSelectionModel().addListSelectionListener(e -> {
@@ -219,7 +238,7 @@ public final class ActivitiesView implements View {
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
         JPanel listTools = Comic.row(expandAll, collapseAll, preparationsLabel, preparations.box(), downloadsLabel,
-                downloads.box(), connectionsLabel, connections.box(), deleteAll);
+                downloads.box(), connectionsLabel, connections.box(), deleteFinished, moreJobs);
         // Mittig in der Kopfzeile, für alle Aufträge zugleich (Angelo 11.11.2026).
         pauseAll.addActionListener(e -> pauseOrResumeAll());
         cancelAll.addActionListener(e -> cancelAll());
@@ -246,7 +265,9 @@ public final class ActivitiesView implements View {
         title.setFont(Comic.semiBold(17f));
         title.setForeground(Comic.INK);
         again.addActionListener(e -> restart());
-        deleteAll.addActionListener(e -> deleteAll());
+        deleteFinished.addActionListener(e -> deleteFinished());
+        openOutput.addActionListener(e -> SettingsView.open(outputShown, feedback));
+        moreJobs.addActionListener(e -> showMoreJobsMenu());
 
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
@@ -410,6 +431,8 @@ public final class ActivitiesView implements View {
     static final String RESULT_LABEL = "Ergebnis";
     /** Bezeichnung einer bewusst ausgelassenen Phase; gelb, nie rot. */
     static final String SKIPPED_LABEL = "Bewusst ausgelassen";
+    /** Angabe am Auftrag „Bilder beschreiben“ (Fahrplan B1): bewusst ausgelassen oder Obergrenze erreicht, gelb. */
+    static final String IMAGES_LABEL = "Bilder";
 
     /** Eine Angabe am Auftrag aus einem Ereignis mit Code; {@code skipped} zeigt sie gelb. */
     record Note(String label, String text, boolean skipped) {
@@ -457,6 +480,19 @@ public final class ActivitiesView implements View {
         if (code.startsWith(com.aresstack.spaceharvester.application.glossary.GlossaryClassification.MODEL_SKIPPED
                 + ":")) {
             return new Note(SKIPPED_LABEL, message, true);
+        }
+        // Fahrplan B1: ohne Vision-Modell, mit Einmalcode oder an der Obergrenze bewusst ausgelassen (gelb).
+        if (code.startsWith("IMAGES_SKIPPED:")
+                || code.equals(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions
+                .LIMIT_REACHED)) {
+            return new Note(IMAGES_LABEL, message, true);
+        }
+        // Ein ausgefallenes Vision-Modell ist ein Fehler, kein bewusstes Auslassen.
+        if (code.equals(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.MODEL_FAILED)) {
+            return new Note(IMAGES_LABEL, message, false);
+        }
+        if (code.equals(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.DONE)) {
+            return new Note(RESULT_LABEL, message, false);
         }
         if (code.equals(com.aresstack.spaceharvester.application.glossary.GlossaryClassification.RULES_DONE)) {
             return new Note(RESULT_LABEL, message, false);
@@ -510,22 +546,33 @@ public final class ActivitiesView implements View {
             model.set(jobs);
             context.events().publish(overall.event(jobs, now, averages::get, parallelNow));
             updateGlobalButtons(jobs);
-            deleteAll.setEnabled(!jobs.isEmpty());
+            deleteFinished.setEnabled(jobs.stream().anyMatch(ActivitiesView::finished));
             downloads.refresh(runtime.workspace().parallelDownloads());
             preparations.refresh(runtime.workspace().parallelPreparations());
             connections.refresh(runtime.workspace().downloadConnections());
-            reselect();
-            // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
-            if (java.util.Objects.equals(id, selectedId)) {
+            // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an. Das Detail steht vor dem
+            // Markieren der Zeile fest, damit deren Auswahlmeldung keinen weiteren Abruf auslöst.
+            boolean shown = java.util.Objects.equals(id, selectedId);
+            if (shown) {
                 detail = id == null ? null : data[1];
                 phase = (String) data[2];
                 @SuppressWarnings("unchecked")
                 List<Note> notes = (List<Note>) data[3];
                 stageNotes = id == null ? List.of() : notes;
+            }
+            reselect();
+            if (shown) {
                 render();
             }
         }, error -> {
             readDone();
+            // Ließ sich der gewählte Auftrag nicht lesen, bleibt keine Zeile markiert, deren Detail fehlt: Ein
+            // erneuter Klick auf sie wählt sie wieder und liest nach.
+            if (id != null && id.equals(selectedId) && detail == null) {
+                selectedId = null;
+                table.clearSelection();
+                render();
+            }
             feedback.problem(error);
         });
     }
@@ -539,7 +586,11 @@ public final class ActivitiesView implements View {
         }
     }
 
+    /** Wählt einen Auftrag; derselbe Auftrag ohne gelesenes Detail wird erneut gelesen. */
     private void select(String id) {
+        if (id.equals(selectedId) && detail != null) {
+            return;
+        }
         if (!id.equals(selectedId)) {
             selectedId = id;
             detail = null;
@@ -548,8 +599,8 @@ public final class ActivitiesView implements View {
             details.revalidate();
             details.repaint();
             feedback.clear();
-            poll();
         }
+        poll();
     }
 
     /** Klappt alle Gruppen zu ({@code collapse}) oder auf; die Auswahl bleibt beim selben Auftrag, sofern sichtbar. */
@@ -567,6 +618,10 @@ public final class ActivitiesView implements View {
         reselect();
     }
 
+    /**
+     * Markiert die Zeile des gewählten Auftrags; ist er nicht sichtbar (zugeklappt, noch nicht gelistet), bleibt keine
+     * andere Zeile markiert, deren Klick sonst keine Auswahl meldet.
+     */
     private void reselect() {
         for (int i = 0; i < model.rows.size(); i++) {
             if (model.rows.get(i).id().equals(selectedId)) {
@@ -575,6 +630,9 @@ public final class ActivitiesView implements View {
                 }
                 return;
             }
+        }
+        if (table.getSelectedRow() >= 0) {
+            table.clearSelection();
         }
     }
 
@@ -638,7 +696,7 @@ public final class ActivitiesView implements View {
             return;
         }
         JobStatus status = current.get();
-        title.setText(Texts.type(status.type()) + " " + where(status));
+        title.setText(Texts.type(status) + " " + where(status));
         JobProgress p = status.progress();
         Counters counters = Counters.of(status.type());
         boolean waiting = waitingForSignIn(status.id());
@@ -663,6 +721,11 @@ public final class ActivitiesView implements View {
             facts.add(note.label(), note.text(), note.skipped() ? Comic.ORANGE : Comic.INK);
         }
         facts.add("Auftrags-ID", status.id());
+        outputShown = outputDirectory(status,
+                context.settings() == null ? null : context.settings().outputDirectory());
+        if (outputShown != null) {
+            facts.add(OUTPUT_LABEL, outputShown.toString(), Comic.INK, openOutput);
+        }
         if (status.error() != null) {
             facts.add("Fehler", status.error().code() + ": " + status.error().message(), Comic.RED);
         }
@@ -671,7 +734,7 @@ public final class ActivitiesView implements View {
         } else if (detail instanceof ExportDetail export) {
             renderExport(export);
         } else if (!status.state().terminal()) {
-            feedback.working(Texts.type(status.type()) + " läuft …");
+            feedback.working(Texts.type(status) + " läuft …");
         } else {
             renderTerminal(status, true);
         }
@@ -681,8 +744,12 @@ public final class ActivitiesView implements View {
         root.revalidate();
     }
 
-    /** Das Ergebnis eines Abgleichs steht unter den Zahlen des Laufs in derselben Kachel. */
+    /**
+     * Das Ergebnis eines Abgleichs steht unter den Zahlen des Laufs in derselben Kachel. „Fehlend“ sind nur neue Seiten,
+     * deren Abruf scheiterte; Seiten, die der Lauf bewusst nur katalogisiert, zählen unter „Nur im Katalog“.
+     */
     private void renderSync(JobStatus status, SyncSummary summary) {
+        List<String> missing = summary.missingPageIds().stream().filter(summary.failedPageIds()::contains).toList();
         facts.add("Gelistet", String.valueOf(summary.listed()))
                 .add("Neu", String.valueOf(summary.added()))
                 .add("Nur im Katalog", String.valueOf(summary.notLoaded()))
@@ -699,8 +766,7 @@ public final class ActivitiesView implements View {
                 .add("Nicht geprüft", String.valueOf(summary.unverified()))
                 .add("Fehlgeschlagen", String.valueOf(summary.failedPageIds().size()),
                         summary.failedPageIds().isEmpty() ? Comic.INK : Comic.RED)
-                .add("Fehlend", String.valueOf(summary.missingPageIds().size()),
-                        summary.missingPageIds().isEmpty() ? Comic.INK : Comic.RED)
+                .add("Fehlend", String.valueOf(missing.size()), missing.isEmpty() ? Comic.INK : Comic.RED)
                 .add("Abfrage", inventory(summary.inventory()))
                 .add("Vollständig", summary.complete() ? "ja" : "nein", summary.complete() ? Comic.GREEN : Comic.ORANGE)
                 .add("Generation", summary.generation() == null ? "keine bestätigt" : String.valueOf(summary.generation()))
@@ -708,13 +774,23 @@ public final class ActivitiesView implements View {
         if (!summary.failedPageIds().isEmpty()) {
             facts.add("Fehlgeschlagene Seiten", String.join(", ", summary.failedPageIds()), Comic.RED);
         }
-        if (!summary.missingPageIds().isEmpty()) {
-            facts.add("Fehlende Seiten", String.join(", ", summary.missingPageIds()), Comic.RED);
+        if (!missing.isEmpty()) {
+            facts.add("Fehlende Seiten", String.join(", ", missing), Comic.RED);
         }
+        boolean confirmed = summary.generation() != null && summary.notConfirmed() == null;
         if (!status.state().terminal()) {
             feedback.working("Abgleich läuft …");
-        } else if (status.state() == JobState.COMPLETED && summary.complete() && summary.notConfirmed() == null) {
+        } else if (status.state() == JobState.COMPLETED && confirmed && !summary.failedPageIds().isEmpty()) {
+            feedback.warning("Generation " + summary.generation() + " bestätigt, "
+                    + Texts.count(summary.failedPageIds().size(), "Seite", "Seiten") + " fehlgeschlagen",
+                    "Sie bleiben veraltet bzw. fehlen; „Nur Fehler neu versuchen“ holt sie nach.");
+        } else if (status.state() == JobState.COMPLETED && confirmed && summary.complete()) {
             feedback.success("Abgleich vollständig, Generation " + summary.generation() + " bestätigt");
+        } else if (status.state() == JobState.COMPLETED && confirmed) {
+            // Bestätigt, aber nicht jede Seite mit Inhalt: Der Lauf hat Seiten bewusst nur katalogisiert.
+            feedback.info("Generation " + summary.generation() + " bestätigt",
+                    Texts.count(summary.notLoaded(), "Seite", "Seiten") + " nur im Katalog: geladen werden sie beim "
+                            + "Öffnen, von der Suche oder über „Indexieren“ im Baum.");
         } else if (status.state() == JobState.COMPLETED || summary.notConfirmed() != null) {
             feedback.warning("Abgleich nicht bestätigt", summary.notConfirmed() == null
                     ? "Der Lauf war unvollständig; der Bestand gilt nicht als bestätigt."
@@ -753,7 +829,7 @@ public final class ActivitiesView implements View {
         switch (status.state()) {
             case COMPLETED -> {
                 if (plain) {
-                    feedback.success(Texts.type(status.type()) + " fertig");
+                    feedback.success(Texts.type(status) + " fertig");
                 }
             }
             case CANCELLED -> feedback.warning("Abgebrochen", "Teilergebnisse bleiben unbestätigt.");
@@ -764,9 +840,57 @@ public final class ActivitiesView implements View {
         }
     }
 
+    static final String OUTPUT_LABEL = "Ausgabeordner";
+
+    /**
+     * Wohin ein Auftrag schreibt (Angelo 20.11.2026): „PPTX erzeugen“ in den Ordner seiner Datei, „Datei erzeugen“,
+     * Metadaten- und Analytics-Export in den Ordner, den sie beim Start bekamen, ein Download in den Ausgabeordner der
+     * Einstellungen; andere Aufträge schreiben keine Dateien ({@code null}).
+     */
+    static java.nio.file.Path outputDirectory(JobStatus status, java.nio.file.Path exportDirectory) {
+        return switch (status.type()) {
+            case PRESENTATION_EXPORT -> {
+                String file = status.parameters().get(
+                        com.aresstack.spaceharvester.application.presentation.VideoPresentations.FILE_PARAMETER);
+                yield file == null ? null : java.nio.file.Path.of(file).toAbsolutePath().getParent();
+            }
+            case CONVERSION -> parameterDirectory(status,
+                    com.aresstack.spaceharvester.application.export.ExportConversions.DIRECTORY, exportDirectory);
+            case METADATA_EXPORT, ANALYTICS_EXPORT -> parameterDirectory(status,
+                    com.aresstack.spaceharvester.application.metadata.SourceQueryExports.DIRECTORY, exportDirectory);
+            case EXPORT -> exportDirectory;
+            // Ergebnis und Bericht der Suchqualität liegen im Unterordner „Suchqualität“ des Ausgabeordners (Q1).
+            case SEARCH_QUALITY -> {
+                String file = status.parameters().get(
+                        com.aresstack.spaceharvester.application.quality.SearchQualityRuns.RESULT_PARAMETER);
+                yield file == null ? null : java.nio.file.Path.of(file).toAbsolutePath().getParent();
+            }
+            default -> null;
+        };
+    }
+
+    private static java.nio.file.Path parameterDirectory(JobStatus status, String parameter,
+                                                         java.nio.file.Path fallback) {
+        String directory = status.parameters().get(parameter);
+        if (directory == null || directory.isBlank()) {
+            return fallback;
+        }
+        try {
+            return java.nio.file.Path.of(directory).toAbsolutePath();
+        } catch (java.nio.file.InvalidPathException e) {
+            return fallback;
+        }
+    }
+
     /** Quelle / Space eines Auftrags, bei einem Seiten-Download dazu „ab“ seiner Startseite. */
     static String where(JobStatus status) {
-        String where = status.sourceId() + " / " + status.partitionKey();
+        if (status.type() == JobType.SEARCH_QUALITY) {
+            // Nur der Name des Testbestands, nie eine Frage (Q1).
+            String suite = com.aresstack.spaceharvester.application.quality.SearchQualityRuns.suiteName(status);
+            return suite.isEmpty() ? "Testbestand" : "Testbestand „" + suite + "“";
+        }
+        String where = status.partitionKey() == null || status.partitionKey().isBlank()
+                ? status.sourceId() : status.sourceId() + " / " + status.partitionKey();
         return status.rootPageId() == null ? where : where + " ab „" + startPage(status) + "“";
     }
 
@@ -1086,13 +1210,13 @@ public final class ActivitiesView implements View {
         }
         switch (action) {
             case CANCEL -> {
-                if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(job.type()) + " von "
+                if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(job) + " von "
                         + job.partitionKey() + " wirklich abbrechen? Bereits Gelesenes bleibt unbestätigt.")) {
                     return;
                 }
             }
             case DELETE -> {
-                if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job.type()) + " von " + job.partitionKey()
+                if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job) + " von " + job.partitionKey()
                         + " wirklich löschen?" + (job.state().terminal() ? "" : " Er wird dafür abgebrochen.")
                         + " Der Auftrag und seine Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT)) {
                     return;
@@ -1118,6 +1242,11 @@ public final class ActivitiesView implements View {
     }
 
     /** Für Tests. */
+    /** Für Tests und Proben: die Überschrift des Detailbereichs. */
+    String detailTitleForTest() {
+        return title.getText();
+    }
+
     JTable table() {
         return table;
     }
@@ -1169,6 +1298,25 @@ public final class ActivitiesView implements View {
                 return new Step((phase == null ? "Aussagen prüfen" : phase) + " · " + p.processed() + " von " + total
                         + " Seiten, " + p.written() + " geprüft, " + skipped + " übersprungen",
                         p.processed(), total);
+            }
+            if (type == JobType.VIDEO_TRANSCRIPT && total > 1) {
+                // Sekunden Video: wie weit das Transkript reicht, von der Länge des Videos (Angelo 20.11.2026).
+                return new Step((phase == null ? Texts.type(type) : phase) + " · "
+                        + com.aresstack.spaceharvester.application.presentation.TranscriptSections.clock(
+                                p.processed() * 1000) + " von "
+                        + com.aresstack.spaceharvester.application.presentation.TranscriptSections.clock(total * 1000),
+                        p.processed(), total);
+            }
+            if (type == JobType.SEARCH_QUALITY && total > 0) {
+                return new Step((phase == null ? Texts.type(type) : phase) + " · " + p.processed() + " von " + total
+                        + " Fragen" + (p.failed() > 0 ? ", " + p.failed() + " gescheitert" : ""), p.processed(), total);
+            }
+            if (type.presentation()) {
+                // „In PPTX umwandeln“: Folien, Transkriptpakete oder das eine Transkript.
+                String unit = type == JobType.TRANSCRIPT_CORRECTION ? " Abschnitten"
+                        : type == JobType.VIDEO_TRANSCRIPT ? " Transkript" : " Folien";
+                return new Step((phase == null ? Texts.type(type) : phase) + " · " + p.processed() + " von " + total
+                        + unit + (p.failed() > 0 ? ", " + p.failed() + " fehlgeschlagen" : ""), p.processed(), total);
             }
             if (type == JobType.EXPORT && phase != null && phase.startsWith("Seiten exportieren")) {
                 return new Step("Seiten exportieren · " + p.written() + " von " + total + " exportiert",
@@ -1233,6 +1381,14 @@ public final class ActivitiesView implements View {
                 case IMPORT -> new Counters("Seiten im Paket", "Bearbeitet", "Übernommen", "Fehlgeschlagen");
                 case REREAD -> new Counters("Dokumente", "Geprüft", "Neu gelesen", "Fehlgeschlagen");
                 case METADATA_EXPORT, ANALYTICS_EXPORT -> new Counters("Seiten", "Abgefragt", "Mit Daten", "Ohne Antwort");
+                case VIDEO_TRANSCRIPT -> new Counters("Sekunden Video", "Transkribiert", "Abgelegt", "Fehlgeschlagen");
+                case VIDEO_SLIDES -> new Counters("Folien", "Bearbeitet", "Beschrieben", "Fehlgeschlagen");
+                case TRANSCRIPT_CORRECTION -> new Counters("Transkriptpakete", "Bearbeitet", "Korrigiert",
+                        "Unkorrigiert");
+                case SLIDE_NOTES -> new Counters("Folien", "Bearbeitet", "Kommentiert", "Fehlgeschlagen");
+                case PRESENTATION_EXPORT -> new Counters("Folien", "Bearbeitet", "In der Datei", "Ohne Standbild");
+                case SEARCH_QUALITY -> new Counters("Fragen", "Gestellt", "Im Chat-Kontext gefunden",
+                        "Suche gescheitert");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }
@@ -1277,9 +1433,80 @@ public final class ActivitiesView implements View {
         feedback.warning("Nicht übernommen", message);
     }
 
+    /** Klappt das Menü am Dreieck auf: rechtsbündig unter dem ▼, wie die übrigen Menüs unter ihrem Knopf. */
+    void showMoreJobsMenu() {
+        javax.swing.JPopupMenu menu = com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
+                moreJobsMenu(), moreJobs);
+        menu.show(moreJobs, moreJobs.getWidth() - menu.getPreferredSize().width, moreJobs.getHeight());
+    }
+
     /**
-     * Löscht alle Aufträge nach „Wirklich alle Aufträge löschen?“, in jedem Zustand; laufende und wartende bricht der
-     * Core dafür ab ({@code Workspace#deleteAllJobs}).
+     * Das Menü hinter dem Dreieck neben dem Besen: oben „Suchqualität messen …“ (Angelo 21.11.2026, Q1b), Trenner, dann
+     * „Alle Aufträge löschen“.
+     */
+    javax.swing.JPopupMenu moreJobsMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem quality = new javax.swing.JMenuItem(SearchQualityStart.MENU, Glyph.CROSSHAIR);
+        // Glyph zeichnet sich gesperrt selbst grau; ohne eigenes Sperr-Symbol ließe Swing nur die Lücke stehen.
+        quality.setDisabledIcon(Glyph.CROSSHAIR);
+        quality.setFont(Comic.regular(13f));
+        quality.setToolTipText(SearchQualityStart.MENU_TIP);
+        quality.setEnabled(context.runtime() != null);
+        quality.addActionListener(e -> SearchQualityStart.open(root, context, started -> show(started.id()),
+                feedback::problem));
+        menu.add(quality);
+        menu.addSeparator();
+        javax.swing.JMenuItem all = new javax.swing.JMenuItem(DELETE_ALL, Glyph.TRASH);
+        all.setDisabledIcon(Glyph.TRASH);
+        all.setFont(Comic.regular(13f));
+        all.setToolTipText("Alle Aufträge samt Diagnose löschen; laufende werden vorher abgebrochen");
+        all.setEnabled(!model.rows.isEmpty());
+        all.addActionListener(e -> deleteAll());
+        menu.add(all);
+        return menu;
+    }
+
+    /** Abgeschlossen: fertig, gescheitert oder abgebrochen; ein angehaltener lässt sich fortsetzen und bleibt. */
+    static boolean finished(JobStatus job) {
+        return job.state() == JobState.COMPLETED || job.state() == JobState.FAILED
+                || job.state() == JobState.CANCELLED;
+    }
+
+    /**
+     * Der Besen (Angelo 17.11.2026, wie früher): löscht nach „Wirklich … löschen?“ (Ja/Nein) genau die abgeschlossenen
+     * Aufträge, die der Dialog nennt; laufende, wartende und angehaltene bleiben.
+     */
+    void deleteFinished() {
+        AppRuntime runtime = context.runtime();
+        List<String> confirmed = model.rows.stream().filter(ActivitiesView::finished).map(JobStatus::id).toList();
+        if (runtime == null || confirmed.isEmpty()) {
+            return;
+        }
+        long kept = model.rows.size() - confirmed.size();
+        if (!Dialogs.confirm(root, "Abgeschlossene Aufträge löschen?", Texts.count(confirmed.size(),
+                "abgeschlossenen Auftrag", "abgeschlossene Aufträge") + " wirklich löschen? Sie (fertig, gescheitert, "
+                + "abgebrochen) und ihre Diagnoseereignisse werden dauerhaft gelöscht."
+                + (kept == 0 ? "" : " " + Texts.count(kept, "anderer Auftrag bleibt", "andere Aufträge bleiben") + ".")
+                + " " + KEPT)) {
+            return;
+        }
+        boolean selectedGone = selectedId != null && confirmed.contains(selectedId);
+        Background.run(() -> runtime.workspace().deleteJobs(confirmed), deleted -> {
+            if (selectedGone) {
+                selectedId = null;
+                detail = null;
+                table.clearSelection();
+                render();
+            }
+            feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            poll();
+        }, feedback::problem);
+    }
+
+    /**
+     * „Alle Aufträge löschen“ im Menü neben dem Besen: löscht alle Aufträge in jedem Zustand; laufende und wartende
+     * bricht der Core dafür ab ({@code Workspace#deleteAllJobs}), damit kein Auftrag unsichtbar weiterläuft. Laufen
+     * welche, warnt der Dialog wie beim Beenden der App.
      */
     void deleteAll() {
         AppRuntime runtime = context.runtime();
@@ -1287,9 +1514,16 @@ public final class ActivitiesView implements View {
         if (runtime == null || count == 0) {
             return;
         }
-        if (!Dialogs.confirm(root, "Alle Aufträge löschen?", "Wirklich alle Aufträge löschen? "
-                + Texts.count(count, "Auftrag", "Aufträge") + " samt Diagnoseereignissen werden dauerhaft "
-                + "gelöscht; laufende werden vorher abgebrochen. " + KEPT)) {
+        long running = model.rows.stream().filter(job -> !job.state().terminal()).count();
+        String question = running == 0
+                ? "Wirklich alle Aufträge löschen? " + Texts.count(count, "Auftrag", "Aufträge")
+                        + " samt Diagnoseereignissen werden dauerhaft gelöscht. " + KEPT
+                : "Wirklich alle Aufträge abbrechen und löschen? " + Texts.count(running, "Auftrag läuft",
+                        "Aufträge laufen") + " noch; sie werden vorher abgebrochen, ihr Ergebnis bleibt unbestätigt. "
+                        + "Insgesamt werden " + Texts.count(count, "Auftrag", "Aufträge")
+                        + " samt Diagnoseereignissen dauerhaft gelöscht. " + KEPT;
+        if (!Dialogs.confirm(root, running == 0 ? "Alle Aufträge löschen?" : "Alle Aufträge abbrechen und löschen?",
+                question)) {
             return;
         }
         Background.run(() -> runtime.workspace().deleteAllJobs(), deleted -> {
@@ -1637,30 +1871,77 @@ public final class ActivitiesView implements View {
         return result;
     }
 
-    /** Folgeaufträge je Export-ID, nur für Exporte, die selbst in {@code jobs} stehen. */
+    /**
+     * Unterzeilen je Oberschritt, nur für Oberschritte, die selbst in {@code jobs} stehen: unter einem Export seine
+     * Bilder und Anhänge (Verknüpfung {@link ExportAssetCollection#EXPORT_ID}); unter „PPTX erzeugen“ die übrigen vier
+     * Schritte desselben Laufs von „In PPTX umwandeln“ (Angelo 20.11.2026, {@code VideoPresentations.RUN_PARAMETER}) in
+     * ihrer Reihenfolge.
+     */
     static Map<String, List<JobStatus>> children(List<JobStatus> jobs) {
-        Set<String> exports = new HashSet<>();
+        Map<String, String> parents = new HashMap<>();
         for (JobStatus job : jobs) {
-            if (job.type() == JobType.EXPORT) {
-                exports.add(job.id());
+            String group = groupKey(job);
+            if (group != null) {
+                parents.put(group, job.id());
             }
         }
         Map<String, List<JobStatus>> children = new HashMap<>();
         for (JobStatus job : jobs) {
-            String exportId = showsProgress(job) ? job.parameter(ExportAssetCollection.EXPORT_ID) : null;
-            if (exportId != null && exports.contains(exportId)) {
-                children.computeIfAbsent(exportId, id -> new ArrayList<>()).add(job);
+            String member = memberKey(job);
+            String parent = member == null ? null : parents.get(member);
+            if (parent != null) {
+                children.computeIfAbsent(parent, id -> new ArrayList<>()).add(job);
             }
         }
         for (List<JobStatus> list : children.values()) {
-            list.sort(Comparator.comparing((JobStatus job) -> job.type() == JobType.ATTACHMENTS));
+            list.sort(Comparator.comparingInt(ActivitiesView::stepOrder));
         }
         return children;
     }
 
+    /** Unter welchem Schlüssel ein Oberschritt seine Unterzeilen sammelt; {@code null}, wenn er keiner ist. */
+    private static String groupKey(JobStatus job) {
+        if (job.type() == JobType.EXPORT) {
+            return "export:" + job.id();
+        }
+        String run = job.parameter(com.aresstack.spaceharvester.application.presentation.VideoPresentations
+                .RUN_PARAMETER);
+        return job.type() == JobType.PRESENTATION_EXPORT && run != null ? "presentation:" + run : null;
+    }
+
+    /** Zu welchem Oberschritt ein Auftrag gehört; {@code null}, wenn er eigenständig ist. */
+    private static String memberKey(JobStatus job) {
+        if (showsProgress(job)) {
+            String exportId = job.parameter(ExportAssetCollection.EXPORT_ID);
+            return exportId == null ? null : "export:" + exportId;
+        }
+        String run = job.parameter(com.aresstack.spaceharvester.application.presentation.VideoPresentations
+                .RUN_PARAMETER);
+        return job.type().presentation() && job.type() != JobType.PRESENTATION_EXPORT && run != null
+                ? "presentation:" + run : null;
+    }
+
+    /** Reihenfolge der Unterzeilen: Bilder vor Anhängen, die Schritte von „In PPTX umwandeln“ wie sie laufen. */
+    private static int stepOrder(JobStatus job) {
+        return switch (job.type()) {
+            case VIDEO_TRANSCRIPT -> 0;
+            case VIDEO_SLIDES -> 1;
+            case TRANSCRIPT_CORRECTION -> 2;
+            case SLIDE_NOTES -> 3;
+            case ATTACHMENTS -> 5;
+            default -> 4;
+        };
+    }
+
     private static String parentOf(JobStatus job, Map<String, List<JobStatus>> children) {
-        String exportId = showsProgress(job) ? job.parameter(ExportAssetCollection.EXPORT_ID) : null;
-        return exportId != null && children.containsKey(exportId) ? exportId : null;
+        for (Map.Entry<String, List<JobStatus>> group : children.entrySet()) {
+            for (JobStatus child : group.getValue()) {
+                if (child.id().equals(job.id())) {
+                    return group.getKey();
+                }
+            }
+        }
+        return null;
     }
 
     static final class JobsModel extends AbstractTableModel {
@@ -1741,7 +2022,7 @@ public final class ActivitiesView implements View {
         public Object getValueAt(int row, int column) {
             JobStatus status = rows.get(row);
             return switch (column) {
-                case 0 -> Texts.type(status.type());
+                case 0 -> Texts.type(status);
                 case 1 -> where(status);
                 case 2 -> status;
                 case 3 -> progressText(status);

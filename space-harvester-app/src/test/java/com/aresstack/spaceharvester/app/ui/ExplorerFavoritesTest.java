@@ -96,6 +96,22 @@ class ExplorerFavoritesTest {
             Favorites.Favorite page = explorer[0].favoriteList().getModel().getElementAt(1);
             assertThat(page.pageId()).isEqualTo(pageId);
             assertThat(page.where()).startsWith("Handbuch › ");
+            // Nichts im Baum gewählt: kein Favorit markiert.
+            assertThat(explorer[0].favoriteList().getSelectedValue()).isNull();
+            explorer[0].reveal("handbuch", space);
+        });
+        // Die Liste markiert den Favoriten des gewählten Knotens, damit ein Klick auf den schon offenen Favoriten
+        // nicht wie „nichts passiert“ aussieht.
+        Favorites.Favorite[] marked = new Favorites.Favorite[1];
+        long revealed = System.nanoTime() + 30_000_000_000L;
+        do {
+            assertThat(System.nanoTime()).as("Zeitlimit: Space im Baum gewählt").isLessThan(revealed);
+            Thread.sleep(50);
+            SwingUtilities.invokeAndWait(() -> marked[0] = explorer[0].favoriteList().getSelectedValue());
+        } while (marked[0] == null);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(marked[0].spaceKey()).isEqualTo(space);
+            assertThat(marked[0].pageId()).isNull();
             explorer[0].favoritesButton().doClick();
             assertThat(explorer[0].onlyFavorites()).isFalse();
         });

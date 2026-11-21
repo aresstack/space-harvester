@@ -7,6 +7,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicWindowDragger;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowHoldCloseButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowResizer;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowShape;
+import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.paint.StrokeIcon;
@@ -41,8 +42,8 @@ import java.util.Map;
 
 /**
  * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste (Tooltip mit Namen,
- * Strg+1 … Strg+6): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
- * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Begriffe und Aufträge, dann abgetrennt
+ * Strg+1 … Strg+5): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
+ * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Aufträge, dann abgetrennt
  * Wissensquellen verwalten und Einstellungen, dann ✕ (Angelo, 13.11.2026: der Baum links wählt, die Reiter oben
  * entscheiden, wie die Mitte das Gewählte zeigt). Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
@@ -80,16 +81,30 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel actionDeck = new JPanel(actionCards);
     static final int SIDEBAR_WIDTH = 280;
     private ComicSplitPane split;
+    /** Arbeitsfläche links, Chat-Seitenleiste rechts (Angelo, 21.11.2026). */
+    private javax.swing.JSplitPane chatSplit;
+    private com.aresstack.spaceharvester.app.ui.content.ChatSidebar chatSidebar;
+    private ComposerToggleButton chatToggle;
+    private boolean chatOpen;
+    /** Eine Antwort kam, während die Leiste zu war: der Chat-Knopf trägt bis zum Aufklappen einen Punkt. */
+    private boolean chatUnread;
+    private int chatWidth = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH;
+    static final String CHAT_OPEN_KEY = "chat.open";
+    static final String CHAT_WIDTH_KEY = "chat.width";
+    static final String CHAT_LARGE_KEY = "chat.large";
+    /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
+    private boolean chatLarge;
+    static final String CHAT_TOOLTIP = "Chat (Strg+J)";
+    static final String CHAT_UNREAD_TOOLTIP = "Chat (Strg+J) · neue Antwort";
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
     private JobStatusLine jobStatus;
     private final JLabel status = Comic.muted(" ");
+    /** ✕ hinter dem Stand der App: ein Ergebnis (etwa eines Exports) bleibt stehen, bis es der Benutzer wegklickt. */
+    private final ComposerButton statusClose = closeButton();
     /** So lange bleibt eine kurze Meldung stehen. */
     private static final int NOTICE_MS = 8000;
-    private final javax.swing.Timer statusClear = new javax.swing.Timer(NOTICE_MS, e -> {
-        status.setText(" ");
-        status.setToolTipText(null);
-    });
+    private final javax.swing.Timer statusClear = new javax.swing.Timer(NOTICE_MS, e -> clearStatus());
     /** Bis die Laufzeit steht, zeigt die Statuszeile „Startet …“. */
     private boolean starting = true;
     /** Stand des sichtbaren Bereichs ({@link View#statusInfo()}) links in der Statuszeile, vor dem Stand der App. */
@@ -113,7 +128,6 @@ public final class MainWindow implements AppContext.Navigator {
     private final ActivitiesView activities;
     private final SearchView searchView;
     private final SettingsView settings;
-    private final TermsView terms;
 
     public MainWindow(AppContext context) {
         this.context = context;
@@ -124,16 +138,12 @@ public final class MainWindow implements AppContext.Navigator {
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
-        terms = new TermsView(context);
         settings.onLeave(() -> show(beforeSettings));
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
         // Links gewählt bestimmt rechts (Angelo, 13.11.2026): der Reiter „Export“ folgt der Auswahl im Explorer.
-        // Die Auswahl links bestimmt Inhalte und das Fachglossar unter Begriffe (ADR 0029).
-        explorer.onSelection(selection -> {
-            content.selection(selection);
-            terms.selection(selection);
-        });
+        // Die Auswahl links bestimmt die Inhalte, darunter Begriffe, Fachglossar und Graph unter Analysen (ADR 0029).
+        explorer.onSelection(content::selection);
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
@@ -153,7 +163,6 @@ public final class MainWindow implements AppContext.Navigator {
         views.put(AppContext.Section.CONTENT, content);
         views.put(AppContext.Section.ACTIVITIES, activities);
         views.put(AppContext.Section.SEARCH, searchView);
-        views.put(AppContext.Section.TERMS, terms);
         views.put(AppContext.Section.SETTINGS, settings);
         deck.setBackground(Comic.SURFACE);
         views.forEach((section, view) -> deck.add(view.component(), section.name()));
@@ -255,6 +264,15 @@ public final class MainWindow implements AppContext.Navigator {
             nav.put(section, button);
             (section.administration() ? administration : section.trailing() ? trailing : icons).add(button);
         }
+        // Der Chat ist kein Bereich, sondern eine Leiste neben jedem Bereich: sein Umschalter steht rechts vor den
+        // Aufträgen und gehört nicht zur Gruppe der Bereichsknöpfe.
+        chatToggle = new ComposerToggleButton(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon(), null,
+                CHAT_TOOLTIP);
+        chatToggle.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        chatToggle.getAccessibleContext().setAccessibleName(
+                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE);
+        chatToggle.addActionListener(e -> chatOpen(chatToggle.isSelected()));
+        trailing.add(chatToggle, 0);
         // Die Reiter der Seitenansicht schalten die Mitte um: ein Klick zeigt Inhalte, auch aus einem anderen Bereich.
         JComponent tabBar = content.tabBar();
         tabBar.setBorder(BorderFactory.createEmptyBorder(0, TAB_GAP, 0, 0));
@@ -300,7 +318,48 @@ public final class MainWindow implements AppContext.Navigator {
         workFoot.add(findBar, BorderLayout.SOUTH);
         work.add(deck, BorderLayout.CENTER);
         work.add(workFoot, BorderLayout.SOUTH);
-        split = new ComicSplitPane(side, work, 200, 520, Comic.PALETTE);
+        chatSidebar = content.chatSidebar();
+        chatSidebar.collapseButton().addActionListener(e -> chatOpen(false));
+        chatSidebar.chat().onAnswer(this::chatAnswered);
+        // Ein Quellen-Link soll die Seite zeigen: die große Ansicht wird wieder zur Leiste.
+        chatSidebar.chat().onSourceOpened(() -> {
+            if (chatLarge) {
+                chatLarge(false);
+            }
+        });
+        chatSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
+        chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, work, chatSidebar);
+        chatSplit.setBorder(null);
+        chatSplit.setBackground(Comic.SURFACE);
+        chatSplit.setResizeWeight(1);
+        chatSplit.setContinuousLayout(true);
+        chatSplit.setMinimumSize(new Dimension(320, 0));
+        ComicDivider.install(chatSplit, Comic.PALETTE);
+        if (chatSplit.getUI() instanceof javax.swing.plaf.basic.BasicSplitPaneUI basic) {
+            basic.getDivider().addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent event) {
+                    if (event.getClickCount() == 2) {
+                        chatOpen(!chatOpen);
+                    }
+                }
+            });
+        }
+        // Die Breite der Leiste gilt, solange sie offen ist: beim Ziehen merken, bei neuer Fenstergröße halten.
+        chatSplit.addPropertyChangeListener(javax.swing.JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> rememberChatWidth());
+        chatSplit.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                placeChat();
+            }
+        });
+        chatWidth = Math.max(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH,
+                WindowSizes.recallInt(CHAT_WIDTH_KEY, chatWidth));
+        chatOpen = WindowSizes.recallInt(CHAT_OPEN_KEY, 0) == 1;
+        chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
+        chatToggle.setSelected(chatOpen);
+        placeChat();
+        split = new ComicSplitPane(side, chatSplit, 200, 520, Comic.PALETTE);
         split.setBackground(Comic.SURFACE);
         // Ein Trenner für die ganze App: derselbe Renderer wie unter „Aufträge“ und im Graph (ComicDivider), damit
         // alle Teilungen gleich aussehen; die Breitenregeln des ComicSplitPane bleiben.
@@ -332,8 +391,13 @@ public final class MainWindow implements AppContext.Navigator {
         });
         // Scheitert das Erneuern des Proxy-Skripts, steht es daneben; der Klick zeigt den Grund (Angelo 16.11.2026).
         proxyNotice = new ProxyNotice(context);
+        JPanel statusBox = new JPanel(new BorderLayout(4, 0));
+        statusBox.setOpaque(false);
+        statusBox.add(status, BorderLayout.CENTER);
+        statusBox.add(statusClose, BorderLayout.EAST);
+        statusClose.setVisible(false);
         statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, proxyNotice), viewStatus,
-                status, jobStatus, new CopyrightLink());
+                statusBox, jobStatus, new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
@@ -388,6 +452,26 @@ public final class MainWindow implements AppContext.Navigator {
             });
         }
         surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_J, java.awt.event.InputEvent.CTRL_DOWN_MASK), "chat");
+        surface.getActionMap().put("chat", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                chatOpen(!chatOpen);
+            }
+        });
+        // Esc stellt aus der großen Chat-Ansicht die Leiste wieder her, gleich wo der Fokus steht (auch im Explorer);
+        // Felder und Overlays mit eigenem Esc gehen vor, weil diese Bindung als letzte gefragt wird.
+        surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_ESCAPE, 0), "chat-shrink");
+        surface.getActionMap().put("chat-shrink", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                if (chatOpen && chatLarge) {
+                    chatLarge(false);
+                }
+            }
+        });
+        surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
                 java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
         surface.getActionMap().put("find", new javax.swing.AbstractAction() {
             @Override
@@ -409,6 +493,103 @@ public final class MainWindow implements AppContext.Navigator {
         settings.showAi();
     }
 
+    /**
+     * Klappt die Chat-Seitenleiste auf oder zu (Knopf oben rechts, Strg+J, „»“ in der Leiste, Doppelklick auf den
+     * Teiler). Zugeklappt bleibt nur der schmale Teiler; der Zustand und die Breite gelten auch nach dem Neustart.
+     */
+    void chatOpen(boolean open) {
+        chatOpen = open;
+        chatToggle.setSelected(open);
+        if (open) {
+            chatUnread(false);
+        }
+        WindowSizes.rememberInt(CHAT_OPEN_KEY, open ? 1 : 0);
+        placeChat();
+        if (open) {
+            chatSidebar.chat().focusEditor();
+        }
+    }
+
+    /** Eine Antwort ist fertig: Ist die Leiste zu, zeigt der Chat-Knopf einen Punkt, bis sie aufgeklappt wird. */
+    void chatAnswered() {
+        if (!chatOpen) {
+            chatUnread(true);
+        }
+    }
+
+    boolean chatUnread() {
+        return chatUnread;
+    }
+
+    private void chatUnread(boolean unread) {
+        chatUnread = unread;
+        chatToggle.setIcon(unread ? com.aresstack.spaceharvester.app.ui.content.ChatSidebar.unreadIcon()
+                : com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon());
+        chatToggle.setToolTipText(unread ? CHAT_UNREAD_TOOLTIP : CHAT_TOOLTIP);
+    }
+
+    boolean chatOpen() {
+        return chatOpen;
+    }
+
+    /**
+     * „Groß anzeigen“: dieselbe Leiste nimmt die ganze Arbeitsfläche, der Explorer bleibt; derselbe Knopf und Esc
+     * stellen die vorige Breite wieder her. Gemerkt wie offen/zu.
+     */
+    void chatLarge(boolean large) {
+        chatLarge = large;
+        WindowSizes.rememberInt(CHAT_LARGE_KEY, large ? 1 : 0);
+        placeChat();
+        if (chatOpen) {
+            chatSidebar.chat().focusEditor();
+        }
+    }
+
+    boolean chatLarge() {
+        return chatLarge;
+    }
+
+    /** Stellt den Teiler so, dass die Leiste ihre Breite hat bzw. zugeklappt ganz verschwindet. */
+    private void placeChat() {
+        placingChat = true;
+        try {
+            int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
+            chatSidebar.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
+            chatSidebar.shown(chatOpen);
+            boolean large = chatOpen && chatLarge;
+            chatSidebar.large(large);
+            // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
+            chatSplit.getLeftComponent().setVisible(!large);
+            // Zugeklappt lässt sich der Teiler nicht ziehen, nur doppelt klicken.
+            chatSplit.setEnabled(chatOpen && !large);
+            chatSplit.setDividerSize(large ? 0 : chatOpen ? ComicDivider.THICKNESS : COLLAPSED_DIVIDER);
+            int width = chatSplit.getWidth();
+            if (width > 0 && !large) {
+                // Die Arbeitsfläche behält ihre Mindestbreite; in einem schmalen Fenster gibt die Leiste nach.
+                int room = Math.max(0, width - chatSplit.getDividerSize() - 320);
+                int shown = chatOpen ? Math.max(Math.min(min, room), Math.min(chatWidth, room)) : 0;
+                chatSplit.setDividerLocation(width - chatSplit.getDividerSize() - shown);
+            }
+            chatSplit.revalidate();
+        } finally {
+            placingChat = false;
+        }
+    }
+
+    private boolean placingChat;
+
+    /** Merkt die Breite, die der Benutzer der offenen Leiste durch Ziehen gegeben hat. */
+    private void rememberChatWidth() {
+        if (placingChat || !chatOpen || chatLarge || chatSplit.getWidth() <= 0) {
+            return;
+        }
+        int width = chatSplit.getWidth() - chatSplit.getDividerSize() - chatSplit.getDividerLocation();
+        if (width >= com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH && width != chatWidth) {
+            chatWidth = width;
+            WindowSizes.rememberInt(CHAT_WIDTH_KEY, width);
+        }
+    }
+
     /** Klappt den linken Drawer zu oder wieder auf. */
     /** Breite des Teilers bei zugeklapptem Drawer: sichtbar und per Doppelklick erreichbar. */
     static final int COLLAPSED_DIVIDER = 6;
@@ -425,6 +606,18 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void show(AppContext.Section section) {
+        // Wer einen Bereich aufruft, will ihn sehen: aus der großen Chat-Ansicht wird wieder die Leiste. Nur die
+        // Auswahl im Explorer lässt sie groß, denn dort wählt man den Bereich der nächsten Frage.
+        if (chatSplit != null && chatOpen && chatLarge) {
+            chatLarge = false;
+            WindowSizes.rememberInt(CHAT_LARGE_KEY, 0);
+            placeChat();
+        }
+        showSection(section);
+    }
+
+    /** Zeigt den Bereich, ohne die große Chat-Ansicht zu verlassen (Auswahl im Explorer). */
+    private void showSection(AppContext.Section section) {
         if (section == AppContext.Section.STATUS) {
             show(AppContext.Section.SETTINGS);
             settings.select(SettingsView.DIAGNOSIS);
@@ -468,14 +661,14 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openPage(String sourceId, String pageId) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPage(sourceId, pageId);
     }
 
     @Override
     public void openPassage(String sourceId, String passageId) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPassage(sourceId, passageId);
     }
@@ -487,14 +680,14 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openSpace(String sourceId, String spaceKey) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
         explorer.reveal(sourceId, spaceKey);
     }
 
     @Override
     public void openSource(String sourceId, String title) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         content.openSource(sourceId, title);
     }
 
@@ -562,18 +755,73 @@ public final class MainWindow implements AppContext.Navigator {
         }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
     }
 
+    /** Indexieren aus dem Kontextmenü des Baums; das Ergebnis steht in der Statuszeile, der Auftrag unter Aufträge. */
+    @Override
+    public void index(String sourceId, String spaceKey, String pageId) {
+        notice("Indexieren wird gestartet …", Comic.MUTED);
+        Indexer.start(context, sourceId, spaceKey, pageId, started -> {
+            if (started.failed().isEmpty()) {
+                notice(started.jobs().isEmpty() ? "Kein Space zum Indexieren"
+                        : Texts.count(started.jobs().size(), "Space wird", "Spaces werden") + " indexiert",
+                        Comic.MUTED);
+            } else {
+                notice(String.join("; ", started.failed()), Comic.ORANGE);
+            }
+            if (!started.jobs().isEmpty()) {
+                showJob(started.jobs().get(0).id());
+            }
+        }, error -> notice("Indexieren ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
+    }
+
+    @Override
+    public void unindex(String sourceId, String spaceKey, String pageId) {
+        Indexer.stop(context, sourceId, spaceKey, pageId,
+                () -> notice("Nicht mehr indexiert; Geladenes bleibt und wird weiter aktuell gehalten", Comic.MUTED),
+                error -> notice("Markierung ließ sich nicht aufheben: " + Problems.describe(error).title(),
+                        Comic.RED));
+    }
+
+    /** Kreispfeile hinter gescheiterten Abgleichen eines Updates: wie die Kreispfeile im Baum für diese Spaces. */
+    @Override
+    public void retrySyncs(String sourceId, List<String> spaceKeys) {
+        catchUp(sourceId, spaceKeys);
+    }
+
     /** Kreispfeile im Baum: Quelle oder Space holen nach wie die Quellenkarte, eine Seite liest ihren Teilbaum neu. */
     @Override
     public void refresh(String sourceId, String spaceKey, String pageId) {
         if (pageId == null) {
-            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey))) {
-                notice("Nachholen wird gestartet …", Comic.MUTED);
-            } else {
-                notice("Nachholen nicht gestartet: keine Spaces bekannt, oder die Quelle holt schon nach",
-                        Comic.ORANGE);
-            }
+            catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey));
             return;
         }
+        refreshPage(sourceId, spaceKey, pageId);
+    }
+
+    /** Holt die Spaces nach (ohne {@code spaceKeys} jeden der Quelle); der Ausgang kommt in die Statuszeile. */
+    private void catchUp(String sourceId, List<String> spaceKeys) {
+        // Die Meldezeile der Quellen-Ansicht sieht man vom Baum aus nicht: der Ausgang kommt in die Statuszeile.
+        if (sources.catchUp(sourceId, spaceKeys,
+                new SourcesView.CatchUpReport() {
+                    @Override
+                    public void started(List<String> jobs) {
+                        notice(Texts.count(jobs.size(), "Space wird", "Spaces werden") + " nachgeholt",
+                                Comic.MUTED);
+                        if (!jobs.isEmpty()) {
+                            showJob(jobs.get(0));
+                        }
+                    }
+
+                    @Override
+                    public void failed(String message) {
+                        notice(message, Comic.RED);
+                    }
+                })) {
+            notice("Nachholen wird gestartet …", Comic.MUTED);
+        }
+    }
+
+    /** Liest eine Seite samt Unterseiten neu aus der Quelle. */
+    private void refreshPage(String sourceId, String spaceKey, String pageId) {
         notice("Aktualisierung wird gestartet …", Comic.MUTED);
         Downloads.refreshSubtree(context, sourceId, spaceKey, pageId, started -> {
             notice("Aktualisierung der Seite samt Unterseiten gestartet", Comic.MUTED);
@@ -607,8 +855,7 @@ public final class MainWindow implements AppContext.Navigator {
         if (context.runtime() != null) {
             if (starting) {
                 starting = false;
-                status.setText(" ");
-                status.setToolTipText(null);
+                clearStatus();
             }
         } else if (context.startProblem() != null) {
             // Nach einem späteren Fehlschlag löscht ein erfolgreicher Neustart die Meldung wieder.
@@ -625,10 +872,15 @@ public final class MainWindow implements AppContext.Navigator {
         Runnable apply = () -> {
             StatusMessageEvent.Payload message = event.getPayload();
             String text = message.getText() == null ? "" : message.getText();
+            if (message.getReplaces() != null && !message.getReplaces().equals(status.getText())) {
+                // Eine Ansicht beendet nur ihre eigene Meldung; die einer anderen Ansicht bleibt stehen.
+                return;
+            }
             status.setText(text.isEmpty() ? " " : text);
             status.setToolTipText(text.isEmpty() ? null : text);
             status.setForeground(message.getSeverity() == Severity.ERROR ? Comic.RED
                     : message.getSeverity() == Severity.WARN ? Comic.ORANGE : Comic.MUTED);
+            statusClose.setVisible(!text.isEmpty() && message.isClosable());
             statusClear.stop();
             if (message.getDurationMs() < Integer.MAX_VALUE) {
                 statusClear.setInitialDelay(message.getDurationMs());
@@ -640,6 +892,37 @@ public final class MainWindow implements AppContext.Navigator {
         } else {
             javax.swing.SwingUtilities.invokeLater(apply);
         }
+    }
+
+    /** Leert den Stand der App in der Statuszeile (Ablauf der Dauer, ✕ oder Start der Laufzeit). */
+    private void clearStatus() {
+        status.setText(" ");
+        status.setToolTipText(null);
+        statusClose.setVisible(false);
+    }
+
+    /** Das ✕ hinter dem Stand der App, wie an der Meldungsplatte ({@link Feedback}): durchsichtiger Icon-Knopf. */
+    private ComposerButton closeButton() {
+        ComposerButton button = ComposerButton.iconButton(ComposerIcons.close(), "Meldung schließen");
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        button.setFocusPainted(false);
+        button.setOpaque(false);
+        button.setPreferredSize(new Dimension(16, 16));
+        button.addActionListener(e -> {
+            statusClear.stop();
+            clearStatus();
+        });
+        return button;
+    }
+
+    /** Für Tests: der Stand der App in der Statuszeile und sein ✕. */
+    JLabel statusText() {
+        return status;
+    }
+
+    ComposerButton statusClose() {
+        return statusClose;
     }
 
     private boolean confirmClose(JFrame frame) {
@@ -664,7 +947,6 @@ public final class MainWindow implements AppContext.Navigator {
             case SOURCES -> database();
             // Inhalte hat keinen eigenen Knopf mehr; das Buch bleibt für Verweise (etwa „Inhalte öffnen“).
             case CONTENT -> ComposerIcons.openBook();
-            case TERMS -> ComposerIcons.marker();
             case ACTIVITIES -> stack();
             case SEARCH -> ComposerIcons.magnifier();
             case SETTINGS -> ComposerIcons.gear();
@@ -720,6 +1002,16 @@ public final class MainWindow implements AppContext.Navigator {
     /** Für Tests: der Einmalcode-Hinweis der Statuszeile. */
     SignInNotice signInNotice() {
         return signInNotice;
+    }
+
+    /** Für Tests: die Teilung zwischen Arbeitsfläche und Chat-Seitenleiste. */
+    javax.swing.JSplitPane chatSplit() {
+        return chatSplit;
+    }
+
+    /** Für Tests: der Umschalter der Chat-Seitenleiste oben rechts. */
+    ComposerToggleButton chatToggle() {
+        return chatToggle;
     }
 
     /** Für Tests: die Teilung zwischen Drawer und Arbeitsfläche. */

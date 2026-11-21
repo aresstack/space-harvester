@@ -3,3 +3,4 @@ heute	Originaltext direkt in die Kette (OpenNLP + MaltParser + Regeln)
 vorstufe-hand	Vorstufe „reine Hauptsätze“ von Hand (Architekt, obere Schranke, nach Anweisung v1, ohne ergänzte Handelnde); A und C unverändert
 gezielt-hand	Vorstufe von Hand nur für die Sätze der Auswahl „nur wo nötig“; PLAUSIBLE-Aussagen des Originals bleiben	gezielt:vorstufe-hand
 immer-hand	Vorstufe von Hand für alle Sätze, zusammengeführt; PLAUSIBLE-Aussagen des Originals bleiben	immer:vorstufe-hand
+ki-gemma4-12b	Zweiter Analysator (Fahrplan A2): gemma4:12b über Ollama, Anweisung v1, Temperatur 0, Denken aus, Wortabgleich des Core (Angelos Rechner, 21.11.2026); Eingabe = Sätze des Pins „heute“	ki:

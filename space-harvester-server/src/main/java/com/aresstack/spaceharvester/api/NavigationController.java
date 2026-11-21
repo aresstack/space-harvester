@@ -105,9 +105,9 @@ public class NavigationController {
     @GetMapping("/{sourceId}/pages/{pageId}/links")
     @Operation(summary = "Querverweise einer Seite auf andere Seiten der Quelle",
             description = "outgoing: Seiten, auf die die Seite verweist, jede einmal, in Reihenfolge der Seite, ohne "
-                    + "Anhänge. incoming: Seiten, die hierher verweisen, nur wenn die Quelle sie vollständig kennt "
-                    + "(incomingSupported), bei Confluence nicht. Verlangt content auf die Seite; Ziele ohne Freigabe "
-                    + "fehlen.")
+                    + "Anhänge. incoming: Seiten, die hierher verweisen; von der Quelle, wenn sie sie vollständig "
+                    + "kennt (incomingSupported), sonst aus den lokal gespeicherten Seiten mit indexedPages von "
+                    + "knownPages (bei Confluence so). Verlangt content auf die Seite; Ziele ohne Freigabe fehlen.")
     @ApiResponse(responseCode = "200", description = "LinksResponse")
     @ApiResponse(responseCode = "404", description = "Seite unbekannt oder nicht freigegeben",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -157,14 +157,22 @@ public class NavigationController {
         }
     }
 
-    /** Querverweise; {@code incoming} ist leer, wenn {@code incomingSupported} false ist. */
+    /**
+     * Querverweise; {@code incoming} ist leer, wenn {@code incomingSupported} false ist. {@code incomingSupported} heißt:
+     * die Quelle kennt die eingehenden Verweise vollständig. Stammen sie stattdessen aus den lokal gespeicherten Seiten,
+     * ist {@code incomingSupported} false, {@code incoming} enthält die bisher gefundenen und {@code indexedPages} von
+     * {@code knownPages} nennen den Stand (sonst {@code null}).
+     */
     public record LinksResponse(String sourceId, String pageId, List<Node> outgoing, boolean incomingSupported,
-                                List<Node> incoming) {
+                                List<Node> incoming, Integer indexedPages, Integer knownPages) {
 
         static LinksResponse of(PageNavigation.References references) {
+            boolean local = references.coverage() != null;
+            boolean shown = local && references.coverage().shown();
             return new LinksResponse(references.sourceId(), references.pageId(), Node.of(references.outgoing()),
-                    references.incoming() != null,
-                    references.incoming() == null ? List.of() : Node.of(references.incoming()));
+                    references.incoming() != null && !local,
+                    references.incoming() == null ? List.of() : Node.of(references.incoming()),
+                    shown ? references.coverage().indexed() : null, shown ? references.coverage().known() : null);
         }
     }
 }

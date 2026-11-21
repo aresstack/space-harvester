@@ -43,6 +43,8 @@ public class Enrichments {
      * Ablage ab. Sie ist kein Prozessor, erscheint nie in {@link #view} und wird mit der Seite entfernt.
      */
     public static final String READING_VIEW = "reading-view";
+    /** Die Marken eines Videos, wie der Player sie gefunden hat ({@code VideoMarks}); kein Analyseergebnis. */
+    public static final String VIDEO_MARKS = "video-marks";
 
     /**
      * Vorbehaltene Prozessor-ID: unter ihr legt ein Import die Bilder und Anhänge einer Seite ab, die sein Paket
@@ -64,6 +66,13 @@ public class Enrichments {
      * entfernt; der Entzug der KI-Freigabe entfernt sie ebenfalls.
      */
     public static final String STATEMENT_CHECKS = "statement-checks";
+
+    /**
+     * Vorbehaltene Prozessor-ID: unter ihr legt „In PPTX umwandeln“ das korrigierte Transkript und den Vortragstext je
+     * Folie eines Videos ab ({@code PresentationStore}). Wie {@link #STATEMENT_CHECKS} kein Prozessor, nie in
+     * {@link #view}, mit der Seite entfernt; der Entzug der KI-Freigabe entfernt sie ebenfalls.
+     */
+    public static final String VIDEO_PRESENTATION = "video-presentation";
 
     /** So viele erzwungene Neuberechnungen warten höchstens zugleich im Hintergrund; der übrige Platz bleibt frei. */
     public static final int FORCED_IN_BACKGROUND = 50;
@@ -386,8 +395,10 @@ public class Enrichments {
         List<View> views = new ArrayList<>();
         for (Enrichment enrichment : store.find(snapshot.key())) {
             if (READING_VIEW.equals(enrichment.processorId()) || IMPORTED_ASSETS.equals(enrichment.processorId())
+                    || VIDEO_MARKS.equals(enrichment.processorId())
                     || SIMPLIFICATIONS.equals(enrichment.processorId())
-                    || STATEMENT_CHECKS.equals(enrichment.processorId())) {
+                    || STATEMENT_CHECKS.equals(enrichment.processorId())
+                    || VIDEO_PRESENTATION.equals(enrichment.processorId())) {
                 // Rechte für eingebundene Inhalte prüft nur die Lese-Ansicht selbst; mitgebrachte Bilder gehören zum
                 // Export.
                 continue;
@@ -420,6 +431,28 @@ public class Enrichments {
     public Optional<String> processorVersion(String processorId) {
         EnrichmentProcessor processor = processors.get(processorId);
         return processor == null ? Optional.empty() : Optional.of(processor.version());
+    }
+
+    /**
+     * Entfernt die gespeicherten Ergebnisse aller Prozessoren dieser Klasse für eine Seite, deren Text weggefallen ist,
+     * etwa nach dem Löschen eines Video-Transkripts. Nur was diese Klasse für die Seite aus dem Text rechnet
+     * ({@link EnrichmentProcessor#appliesTo}); unabhängig abgelegte Ergebnisse (Bildanalyse, Folien) bleiben.
+     *
+     * @return wie viele Prozessoren ein Ergebnis hatten
+     */
+    public int forget(PageKey key) {
+        java.util.Set<String> stored = new java.util.HashSet<>();
+        for (Enrichment enrichment : store.find(key)) {
+            stored.add(enrichment.processorId());
+        }
+        int removed = 0;
+        for (EnrichmentProcessor processor : processors.values()) {
+            if (stored.contains(processor.id()) && processor.appliesTo(key)) {
+                store.remove(key, processor.id());
+                removed++;
+            }
+        }
+        return removed;
     }
 
     /** Macht die Ergebnisse dauerhaft, etwa am Ende eines Abgleichs. */
@@ -507,6 +540,9 @@ public class Enrichments {
         schedule(processor, snapshot, text, input, false);
     }
 
+    /** Wie oft eine Hintergrundberechnung einem Text folgt, der sich während des Rechnens ändert. */
+    private static final int TEXT_CHANGE_ATTEMPTS = 3;
+
     /**
      * Reiht eine Berechnung im Hintergrund ein. Ob der Prozessor die Seite noch bearbeitet, prüft erst die Ausführung:
      * Wird eine Freigabe entzogen, während die Berechnung wartet, geht nichts mehr an den Dienst (ADR 0015).
@@ -529,18 +565,36 @@ public class Enrichments {
         try {
             background.execute(() -> {
                 try {
-                    if (!processor.appliesTo(snapshot.key())) {
+                    // Der Text kann sich ändern, während die Berechnung wartet oder läuft, ohne neue Payload (etwa
+                    // ein neues Transkript eines Videos): Gerechnet und gespeichert wird nur der aktuelle; ist er
+                    // weggefallen, nichts.
+                    PageText current = text;
+                    String currentInput = input;
+                    for (int attempt = 0; attempt < TEXT_CHANGE_ATTEMPTS; attempt++) {
+                        if (!processor.appliesTo(snapshot.key())) {
+                            return;
+                        }
+                        Enrichment previous = store.find(snapshot.key()).stream()
+                                .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
+                                .orElse(null);
+                        if (!force && previous != null && previous.freshness(currentInput, processor.version())
+                                == Enrichment.Freshness.CURRENT) {
+                            return;
+                        }
+                        Enrichment result = compute(processor, snapshot, current, currentInput);
+                        Optional<PageText> now = projection(snapshot);
+                        if (now.isEmpty()) {
+                            return;
+                        }
+                        if (!now.get().inputSha256().equals(currentInput)) {
+                            current = now.get();
+                            currentInput = current.inputSha256();
+                            continue;
+                        }
+                        if (saveWhileApplies(processor, result)) {
+                            store.flush();
+                        }
                         return;
-                    }
-                    Enrichment previous = store.find(snapshot.key()).stream()
-                            .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
-                            .orElse(null);
-                    if (!force && previous != null
-                            && previous.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT) {
-                        return;
-                    }
-                    if (saveWhileApplies(processor, compute(processor, snapshot, text, input))) {
-                        store.flush();
                     }
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.WARNING, "Hintergrundberechnung {0} scheiterte ({1})",

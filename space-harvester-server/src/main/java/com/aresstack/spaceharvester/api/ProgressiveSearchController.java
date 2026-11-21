@@ -191,7 +191,7 @@ public class ProgressiveSearchController {
                     request.minScore() == null ? defaults.minScore() : request.minScore(), timeBudget,
                     or(request.searchBudget(), defaults.searchBudget()),
                     or(request.limitPerSearch(), defaults.limitPerSearch()), defaults.execution(), expansion,
-                    defaults.ranking());
+                    defaults.ranking(), Boolean.TRUE.equals(request.neighbors()));
         } catch (IllegalArgumentException e) {
             // Die Meldung stammt aus der Prüfung des Profils und nennt nur die Grenze.
             throw new InvalidQueryException(e.getMessage());
@@ -220,6 +220,9 @@ public class ProgressiveSearchController {
      * @param expansion        {@code ai} (Standard; ohne Chat-Modell wie {@code rules}) oder {@code rules}
      * @param ranking          {@code keyword} (Standard, Schlagwortsuche) oder {@code semantic} (Vektoren im Cache,
      *                         ADR 0013; ohne Embedding-Modell 503 {@code semantic-search-unavailable})
+     * @param neighbors        Suchmethode „Nachbarseiten“ (R2): {@code true} nimmt nach den Varianten Eltern-, Unterseiten
+     *                         und Verweisziele bzw. -quellen der besten Treffer als Kandidaten und bewertet sie wie jeden
+     *                         Treffer gegen q; Standard {@code false}, dann unverändert
      * @param waitForResult    JSON {@code wait}: bis zum Abschluss warten und die fertige Liste liefern
      */
     public record ProgressiveRequest(
@@ -233,6 +236,7 @@ public class ProgressiveSearchController {
             @Schema(nullable = true) Integer searchBudget, @Schema(nullable = true) Integer limitPerSearch,
             @Schema(nullable = true, allowableValues = {"ai", "rules"}) String expansion,
             @Schema(nullable = true, allowableValues = {"keyword", "semantic"}) String ranking,
+            @Schema(nullable = true) Boolean neighbors,
             @JsonProperty("wait") @Schema(name = "wait", nullable = true) Boolean waitForResult) {
     }
 
@@ -287,6 +291,8 @@ public class ProgressiveSearchController {
      * @param attachment bei {@code attachment} der Anhang, sonst {@code null}
      * @param passageId  Passage-ID des Absatzes, aus dem der Auszug stammt (auflösbar über
      *                   {@code GET /api/v1/passages?id=}), sonst {@code null}
+     * @param reasons    warum der Treffer gefunden wurde (R1), über alle Suchanfragen vereinigt
+     * @param reranked   ob {@code score} vom Reranker stammt; er ordnet nur um und ist keine Ursache
      */
     public record ProgressiveHitResponse(String sourceId, String pageId, @Schema(nullable = true) String spaceKey,
                                          String title, String snippet, @Schema(nullable = true) URI url,
@@ -297,7 +303,8 @@ public class ProgressiveSearchController {
                                          @Schema(allowableValues = {"page", "attachment"}) String matchedIn,
                                          @Schema(nullable = true)
                                          SearchController.AttachmentMatchResponse attachment,
-                                         @Schema(nullable = true) String passageId) {
+                                         @Schema(nullable = true) String passageId,
+                                         List<SearchController.HitReasonResponse> reasons, boolean reranked) {
 
         static ProgressiveHitResponse of(ProgressiveResult.RankedHit ranked) {
             KeywordSearch.Hit hit = ranked.hit();
@@ -306,7 +313,8 @@ public class ProgressiveSearchController {
                     hit.snippet(), hit.url(), hit.version(), hit.modifiedAt(), hit.parentPageId(),
                     Double.isNaN(score) || Double.isInfinite(score) ? null : score, ranked.foundBy(),
                     ranked.confirmed(), SearchController.matchKind(hit),
-                    SearchController.AttachmentMatchResponse.of(hit.attachment()), hit.passageId());
+                    SearchController.AttachmentMatchResponse.of(hit.attachment()), hit.passageId(),
+                    SearchController.HitReasonResponse.of(hit), ranked.reranked());
         }
     }
 

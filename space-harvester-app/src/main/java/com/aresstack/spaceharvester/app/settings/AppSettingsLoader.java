@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
@@ -13,6 +14,7 @@ import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.check.CheckScope;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
+import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
@@ -208,10 +210,23 @@ public final class AppSettingsLoader {
         int maxTreeNodes = integer(get(map(get(root, "query")), "max-tree-nodes"), 50_000,
                 "space-harvester.query.max-tree-nodes", problems);
         Path pdfFont = path(get(map(get(map(get(root, "export")), "pdf")), "font"), problems);
+        long maxPage = size(get(map(get(root, "cache")), "max-page-size"), AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES,
+                "space-harvester.cache.max-page-size", problems);
+        if (maxPage <= 0 || maxPage > AppSettings.Storage.MAX_PAGE_BYTES_LIMIT) {
+            problems.add("space-harvester.cache.max-page-size liegt zwischen 1B und 2047MB: " + maxPage);
+            maxPage = AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES;
+        }
         AppSettings.Storage storage = new AppSettings.Storage(data,
                 exports == null ? data.resolve("exports") : exports, assets == null ? data.resolve("assets") : assets,
                 maxAsset, largeAsset, maxLargeAssets, searchTimeout, maxTreeNodes, pdfFont,
-                extraction(map(get(map(get(root, "assets")), "extraction")), problems));
+                extraction(map(get(map(get(root, "assets")), "extraction")), problems), maxPage,
+                size(get(map(get(root, "cache")), "max-text-file-size"), AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES,
+                        "space-harvester.cache.max-text-file-size", problems),
+                duration(get(map(get(root, "cache")), "check-timeout"), AppSettings.Storage.DEFAULT_CHECK_TIMEOUT,
+                        "space-harvester.cache.check-timeout", problems),
+                duration(get(map(get(root, "cache")), "large-file-timeout"),
+                        AppSettings.Storage.DEFAULT_LARGE_FILE_TIMEOUT, "space-harvester.cache.large-file-timeout",
+                        problems));
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "
@@ -231,7 +246,91 @@ public final class AppSettingsLoader {
                 enrichment(map(get(root, "enrichment")), problems), analytics(map(get(app, "analytics")), problems),
                 simplification(map(get(map(get(root, "statements")), "simplification")), problems),
                 standing(map(get(map(get(root, "statements")), "standing")), problems),
-                check(map(get(map(get(root, "statements")), "check")), problems));
+                check(map(get(map(get(root, "statements")), "check")), problems),
+                viewerBackground(get(map(get(app, "viewer")), "background"), problems),
+                video(map(get(app, "video")), problems),
+                whisperModel(get(map(get(app, "whisper")), "model"), problems),
+                images(map(get(root, "images")), problems));
+    }
+
+    /**
+     * {@code space-harvester.images.*}: automatische Bildbeschreibung nach dem Abgleich (Fahrplan B1), wie beim Dienst
+     * ({@link ImageSettings}). Ein unlesbarer Wert ist ein Problem und lässt die Vorgabe stehen.
+     */
+    private ImageSettings images(Map<?, ?> images, List<String> problems) {
+        boolean automatic = flag(get(images, "automatic"), ImageSettings.DEFAULT.automatic(),
+                ROOT + "." + ImageSettings.AUTOMATIC, problems);
+        String maxKey = ROOT + "." + ImageSettings.MAX_PER_RUN;
+        long max = longNumber(get(images, "max-per-run"), ImageSettings.DEFAULT_MAX_PER_RUN, maxKey, problems);
+        if (max < 0 || max > Integer.MAX_VALUE) {
+            problems.add(maxKey + ": Erwartet 0 (unbegrenzt) oder eine positive ganze Zahl");
+            max = ImageSettings.DEFAULT_MAX_PER_RUN;
+        }
+        return new ImageSettings(automatic, (int) max);
+    }
+
+    /** {@code space-harvester-app.whisper.model}: ein unbekannter Wert ist ein Problem und lässt Tiny stehen. */
+    private com.aresstack.spaceharvester.app.transcription.WhisperModel whisperModel(Object raw,
+                                                                                    List<String> problems) {
+        if (raw == null || raw.toString().isBlank()) {
+            return com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT;
+        }
+        com.aresstack.spaceharvester.app.transcription.WhisperModel model =
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.of(raw.toString());
+        if (model == null) {
+            problems.add(com.aresstack.spaceharvester.app.transcription.WhisperModel.KEY + " kennt „" + raw
+                    + "“ nicht; es gilt " + com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT.id());
+            return com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT;
+        }
+        return model;
+    }
+
+    /**
+     * {@code space-harvester-app.video.*}: die Werte für Videos ({@link VideoSettings.Value}). Ein unlesbarer oder zu
+     * großer Wert ist ein Problem und lässt den Default stehen.
+     */
+    private VideoSettings video(Map<?, ?> video, List<String> problems) {
+        Map<VideoSettings.Value, Long> values = new java.util.EnumMap<>(VideoSettings.Value.class);
+        for (VideoSettings.Value value : VideoSettings.Value.values()) {
+            Object raw = get(video, value.key());
+            if (raw == null) {
+                continue;
+            }
+            String key = VideoSettings.KEY + "." + value.key();
+            long chosen = longNumber(raw, value.defaultValue(), key, problems);
+            if (value.accepts(chosen)) {
+                values.put(value, chosen);
+            } else {
+                problems.add(key + " liegt zwischen " + value.min() + " und " + value.max() + "; es gilt "
+                        + value.defaultValue());
+            }
+        }
+        return new VideoSettings(values);
+    }
+
+    /**
+     * {@code space-harvester-app.viewer.background}: Hintergrund des Bildbetrachters (Angelo 17.11.2026). Ohne Angabe
+     * oder bei einem unbekannten Wert gilt {@link ViewerBackground#DEFAULT}, die Oberfläche der App.
+     */
+    private ViewerBackground viewerBackground(Object raw, List<String> problems) {
+        if (raw == null) {
+            return ViewerBackground.DEFAULT;
+        }
+        if (raw instanceof Map<?, ?> || raw instanceof List<?>) {
+            problems.add(ViewerBackground.KEY + " ist ein einzelner Wert: " + ViewerBackground.keys());
+            return ViewerBackground.DEFAULT;
+        }
+        String text = text(raw, problems);
+        if (text == null || text.isBlank()) {
+            // Ein ungelöster Platzhalter steht schon unter den Problemen.
+            return ViewerBackground.DEFAULT;
+        }
+        ViewerBackground background = ViewerBackground.parse(text);
+        if (background == null) {
+            problems.add(ViewerBackground.KEY + " kennt nur " + ViewerBackground.keys() + ", nicht " + text.strip());
+            return ViewerBackground.DEFAULT;
+        }
+        return background;
     }
 
     /**
@@ -438,8 +537,10 @@ public final class AppSettingsLoader {
                 prefix + SynonymBudget.MAX_EMBEDDED_TERMS, problems);
         int maxJudged = integer(get(synonyms, SynonymBudget.MAX_JUDGED_PAIRS), fallback.maxJudgedPairs(),
                 prefix + SynonymBudget.MAX_JUDGED_PAIRS, problems);
+        boolean automatic = flag(get(synonyms, SynonymBudget.AUTOMATIC), fallback.automatic(),
+                prefix + SynonymBudget.AUTOMATIC, problems);
         try {
-            return new TermSettings(new SynonymBudget(maxTerms, maxEmbedded, maxJudged));
+            return new TermSettings(new SynonymBudget(maxTerms, maxEmbedded, maxJudged, automatic));
         } catch (IllegalArgumentException e) {
             problems.add(prefix + "*: " + e.getMessage());
             return TermSettings.DEFAULT;
@@ -537,7 +638,7 @@ public final class AppSettingsLoader {
     /** Die globalen Werte unter {@code space-harvester.sync}, geprüft wie im Core; ungültige gelten wie die Vorgabe. */
     private SyncSettings sync(Map<?, ?> sync, AppSettings.Cache cache, List<String> problems) {
         String prefix = "space-harvester.";
-        SyncMode mode = SyncMode.CATALOG_ONLY;
+        SyncMode mode = SyncSettings.DEFAULT_MODE;
         String modeText = text(get(sync, "mode"), problems);
         if (modeText != null && !modeText.isBlank()) {
             SyncMode parsed = SyncMode.parse(modeText);
@@ -959,7 +1060,6 @@ public final class AppSettingsLoader {
     }
 
     private JobLimits jobLimits(Map<?, ?> jobs, List<String> problems) {
-        int concurrent = integer(get(jobs, "max-concurrent"), 2, "space-harvester.jobs.max-concurrent", problems);
         int queued = integer(get(jobs, "max-queued"), 20, "space-harvester.jobs.max-queued", problems);
         Duration runTime = duration(get(jobs, "max-run-time"), Duration.ofHours(6), "space-harvester.jobs.max-run-time",
                 problems);
@@ -974,7 +1074,7 @@ public final class AppSettingsLoader {
                 JobLimits::requireConnections, problems);
         // Ein Bediener: die Grenze je Auslöser ist die Gesamtgrenze.
         try {
-            return new JobLimits(concurrent, queued, runTime, retention).withRetry(retry)
+            return new JobLimits(preparations, queued, runTime, retention).withRetry(retry)
                     .withParallel(preparations, downloads).withConnections(connections);
         } catch (IllegalArgumentException e) {
             problems.add("space-harvester.jobs: " + e.getMessage() + "; es gelten die Standards");
@@ -1035,7 +1135,12 @@ public final class AppSettingsLoader {
                 optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released,
                 text(get(ai, "rerank-model"), problems), text(get(ai, "embedding-chunk-tokens"), problems),
                 text(get(ai, "embedding-chunk-overlap-sentences"), problems), text(get(ai, "vision-model"), problems),
-                text(get(ai, "chat-max-tokens"), problems));
+                text(get(ai, "chat-max-tokens"), problems), provider(text(get(ai, "provider"), problems), problems),
+                text(get(ai, "context-tokens"), problems),
+                seconds(optionalDuration(get(ai, "load-timeout"), "space-harvester.ai.load-timeout", problems)),
+                text(get(ai, "retries"), problems),
+                seconds(optionalDuration(get(ai, "load-poll-interval"), "space-harvester.ai.load-poll-interval",
+                        problems)), text(get(ai, "step-thinking"), problems), text(get(ai, "parallel"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1043,7 +1148,24 @@ public final class AppSettingsLoader {
         boolean valid = draft.problems().isEmpty();
         return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
                 draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
-                draft.tokens(), draft.overlap(), draft.visionModel(), draft.maxTokens());
+                draft.tokens(), draft.overlap(), draft.visionModel(), draft.maxTokens(), draft.provider(),
+                draft.context(), draft.loadDuration(), draft.retryCount(),
+                draft.pollDuration(), draft.thinking(), draft.parallelCount());
+    }
+
+    /** Eine Dauer als Sekunden, wie das Feld der Einstellungen sie zeigt; {@code null} bleibt. */
+    private static String seconds(Duration duration) {
+        return duration == null ? null : String.valueOf(duration.toSeconds());
+    }
+
+    /** Die Art des KI-Dienstes; ein unbekannter Wert ist ein Problem, und es gilt OpenAI-kompatibel. */
+    private static AiProvider provider(String key, List<String> problems) {
+        try {
+            return AiProvider.fromKey(key);
+        } catch (IllegalArgumentException e) {
+            problems.add(e.getMessage() + "; es gilt openai-compatible");
+            return AiProvider.OPENAI_COMPATIBLE;
+        }
     }
 
     // ------------------------------------------------------------------ Werte

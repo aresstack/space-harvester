@@ -3,11 +3,14 @@ package com.aresstack.spaceharvester.application.images;
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.AssetTooLargeException;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.Describable;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriptionException;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.marks.VideoMark;
+import com.aresstack.spaceharvester.application.marks.VideoMarks;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.StoredReadingView;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -30,6 +33,9 @@ import java.util.Optional;
  * je Bildbytes und Modell nur einmal. Rechte prüft der Aufrufer wie für die Lese-Ansicht und das Bild; Bilder aus
  * Quellen ohne Freigabe für den KI-Dienst gehen nie an das Modell.
  *
+ * <p>Beschrieben wird alles Beschreibbare der Seite ({@link Describable}), jedes mit seinem eigenen Prompt: die Bilder
+ * der Lese-Ansicht und die Marken eines Videos mit ihrem Standbild ({@link VideoMark}).</p>
+ *
  * <p>Übersprungen werden Vorschaubilder von draw.io-Diagrammen (die textuelle Quelle gilt, Angelo 16.10.), SVG und
  * andere Nicht-Rasterbilder sowie Bilder über der Grenze der Asset-Ablage.</p>
  */
@@ -37,7 +43,10 @@ public class PageImageAnalysis {
 
     /** Höchstens so viele Bilder je Seite; weitere stehen als Warnung {@value #TRUNCATED} im Ergebnis. */
     public static final int MAX_IMAGES = 50;
-    /** Warnung: Die Seite hat mehr Bilder als {@link #MAX_IMAGES}. */
+    /**
+     * Warnung: Die Seite hat mehr Bilder als {@link #MAX_IMAGES} (bei einem Video mehr Marken, als
+     * eingestellt sind).
+     */
     public static final String TRUNCATED = "images-truncated";
     /** Warnung: Die Quelle hat keine Lese-Ansicht, also keine Bilder. */
     public static final String NO_READING_VIEW = "no-reading-view";
@@ -93,20 +102,22 @@ public class PageImageAnalysis {
      * {@link PageImages.State#STALE} mit {@value PageImages#ATTACHMENT_CHANGED}.
      */
     public PageImages read(PageSnapshot snapshot) {
-        PageText text = enrichments.text(snapshot).orElse(null);
-        PageImages images = PageImages.read(snapshot.key(), enrichments.view(snapshot), text);
+        Input input = input(snapshot);
+        PageImages images = PageImages.read(snapshot.key(), input.views(), input.sha256());
         if (images.state() == PageImages.State.CURRENT && attachmentChanged(snapshot.key(), images.result())) {
             return new PageImages(PageImages.State.STALE, PageImages.ATTACHMENT_CHANGED, images.result(),
                     images.images(), images.warnings());
         }
         if (images.state() == PageImages.State.MISSING) {
+            // Noch nicht beschrieben: dieselbe Liste wie nach dem Beschreiben, nur ohne Text.
+            String reason = images.reason();
             Optional<ImageDescriber> model = assets.describerInUse();
             if (model.isEmpty()) {
-                return PageImages.missing(PageImages.VISION_MODEL_MISSING);
+                reason = PageImages.VISION_MODEL_MISSING;
+            } else if (!mayDescribe(model.get(), snapshot.key())) {
+                reason = PageImages.SOURCE_NOT_RELEASED;
             }
-            if (!mayDescribe(model.get(), snapshot.key())) {
-                return PageImages.missing(PageImages.SOURCE_NOT_RELEASED);
-            }
+            return new PageImages(PageImages.State.MISSING, reason, null, listed(snapshot), List.of());
         }
         return images;
     }
@@ -122,7 +133,15 @@ public class PageImageAnalysis {
      * @throws SourceAccessException     wenn die Lese-Ansicht nicht ladbar ist
      */
     public PageImages describe(PageSnapshot snapshot) {
-        return describe(snapshot, false);
+        return describe(snapshot, false, entry -> { });
+    }
+
+    /**
+     * Wie {@link #describe(PageSnapshot)}; {@code progress} erfährt jeden Eintrag, sobald er fertig ist, im
+     * aufrufenden Thread, damit die Oberfläche Beschreibungen schon während des Laufs zeigt.
+     */
+    public PageImages describe(PageSnapshot snapshot, java.util.function.Consumer<ImagePayload.Entry> progress) {
+        return describe(snapshot, false, progress);
     }
 
     /**
@@ -131,10 +150,16 @@ public class PageImageAnalysis {
      * Modell, eine Freigabe wird nicht gespeichert; die nächste Seite derselben Quelle bleibt gesperrt.
      */
     public PageImages describeOnce(PageSnapshot snapshot) {
-        return describe(snapshot, true);
+        return describe(snapshot, true, entry -> { });
     }
 
-    private PageImages describe(PageSnapshot snapshot, boolean releasedOnce) {
+    /** Wie {@link #describeOnce(PageSnapshot)} mit {@code progress} wie bei {@link #describe(PageSnapshot, java.util.function.Consumer)}. */
+    public PageImages describeOnce(PageSnapshot snapshot, java.util.function.Consumer<ImagePayload.Entry> progress) {
+        return describe(snapshot, true, progress);
+    }
+
+    private PageImages describe(PageSnapshot snapshot, boolean releasedOnce,
+                                java.util.function.Consumer<ImagePayload.Entry> progress) {
         PageKey key = snapshot.key();
         ImageDescriber model = assets.describerInUse().orElseThrow(() -> new ImageDescriptionException(
                 ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
@@ -142,35 +167,29 @@ public class PageImageAnalysis {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
                     "Quelle nicht für den KI-Dienst freigegeben", null);
         }
-        Optional<PageText> text = enrichments.text(snapshot);
-        if (text.isEmpty()) {
+        Input input = input(snapshot);
+        if (input.sha256() == null) {
             return PageImages.missing(PageImages.NO_TEXT);
         }
         // Die Version steht vor dem ersten Bild fest: wechselt das Modell währenddessen, ist das Ergebnis veraltet.
         String version = ImageProcessor.version(model);
         List<String> warnings = new ArrayList<>();
-        List<HarvestSource.ViewImage> images = images(snapshot, warnings);
-        if (images.size() > MAX_IMAGES) {
-            images = images.subList(0, MAX_IMAGES);
-            warnings.add(TRUNCATED);
-        }
-        List<PageAttachment> attachments = null;
-        List<ImagePayload.Entry> entries = new ArrayList<>(images.size());
+        List<Describable> items = describables(snapshot, warnings);
+        List<ImagePayload.Entry> entries = new ArrayList<>(items.size());
         Map<String, String> versions = new LinkedHashMap<>();
-        for (HarvestSource.ViewImage image : images) {
-            if (image.attachmentId() != null && image.version() != null) {
-                versions.putIfAbsent(image.attachmentId(), image.version());
+        for (Describable item : items) {
+            if (item.id() != null && item.version() != null) {
+                versions.putIfAbsent(item.id(), item.version());
             }
         }
-        for (int index = 0; index < images.size(); index++) {
-            HarvestSource.ViewImage image = images.get(index);
-            if (attachments == null && Assets.viewFileName(image).toLowerCase(Locale.ROOT).endsWith(".png")) {
-                attachments = attachments(key);
-            }
-            entries.add(describe(index, key, snapshot.revision(), image, attachments == null ? List.of()
-                    : attachments, releasedOnce));
+        prepare(model);
+        for (int index = 0; index < items.size(); index++) {
+            ImagePayload.Entry entry = describe(index, snapshot, items.get(index), releasedOnce, false,
+                    model.retries());
+            entries.add(entry);
+            progress.accept(entry);
         }
-        Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, version, text.get().inputSha256(),
+        Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, version, input.sha256(),
                 snapshot.revision(), Enrichment.Status.OK, ImagePayload.write(entries, versions), warnings, null,
                 clock.instant());
         enrichments.store().save(result);
@@ -182,7 +201,37 @@ public class PageImageAnalysis {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
                     "Freigabe während der Beschreibung entzogen", null);
         }
-        return PageImages.read(key, enrichments.view(snapshot), text.get());
+        Input after = input(snapshot);
+        return PageImages.read(key, after.views(), after.sha256());
+    }
+
+    /** Worauf sich das Ergebnis bezieht und die gespeicherten Ergebnisse mit ihrer Frische dazu. */
+    private record Input(String sha256, List<Enrichments.View> views) {
+    }
+
+    /**
+     * Der Seitentext, oder bei einem Video ohne Text seine Marken mit ihren Standbildern: Neue Marken oder Standbilder
+     * machen das Ergebnis dann veraltet wie ein geänderter Text. Ohne beides {@code null}.
+     */
+    private Input input(PageSnapshot snapshot) {
+        Optional<PageText> text = enrichments.text(snapshot);
+        if (text.isPresent()) {
+            return new Input(text.get().inputSha256(), enrichments.view(snapshot));
+        }
+        PageKey key = snapshot.key();
+        Optional<String> frames = assets.videoMarksInput(key.sourceId(), key.pageId(), snapshot.revision(),
+                VideoMarks.slides(enrichments.store(), assets).find(key, snapshot.revision()));
+        if (frames.isEmpty()) {
+            return new Input(null, enrichments.view(snapshot));
+        }
+        String processor = enrichments.processorVersion(ImagePayload.PROCESSOR).orElse(null);
+        List<Enrichments.View> views = new ArrayList<>();
+        for (Enrichment enrichment : enrichments.store().find(key)) {
+            if (ImagePayload.PROCESSOR.equals(enrichment.processorId())) {
+                views.add(new Enrichments.View(enrichment, enrichment.freshness(frames.get(), processor)));
+            }
+        }
+        return new Input(frames.get(), views);
     }
 
     /**
@@ -236,45 +285,270 @@ public class PageImageAnalysis {
         return results;
     }
 
-    private ImagePayload.Entry describe(int index, PageKey key, String pageVersion, HarvestSource.ViewImage image,
-                                        List<PageAttachment> attachments, boolean releasedOnce) {
-        String filename = Assets.viewFileName(image);
-        String title = image.title();
-        if (Assets.diagramPreview(attachments, image)) {
-            return ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title, image.mediaType(),
-                    ImageStatus.SKIPPED, "diagram-source");
+    /**
+     * Die Bilder der Seite ohne Beschreibung, ohne die Quelle zu fragen: die Marken ihres Videos, sonst die Bilder der
+     * zuletzt gespeicherten Lese-Ansicht; mit Hash, wenn ihre Bytes schon abliegen (dann hat der Reiter eine Vorschau).
+     */
+    private List<ImagePayload.Entry> listed(PageSnapshot snapshot) {
+        PageKey key = snapshot.key();
+        List<ImagePayload.Entry> entries = new ArrayList<>();
+        for (long millis : VideoMarks.slides(enrichments.store(), assets).find(key, snapshot.revision())) {
+            String sha = assets.videoFrameAsset(key.sourceId(), key.pageId(), snapshot.revision(), millis)
+                    .map(com.aresstack.spaceharvester.application.assets.Asset::sha256).orElse(null);
+            entries.add(ImagePayload.Entry.without(entries.size(), Assets.markAttachmentId(key.pageId(), millis), sha,
+                    Assets.markFileName(millis), Assets.markTitle(millis), "image/png", ImageStatus.PENDING, null));
         }
-        if (vector(image, filename)) {
-            return ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title, image.mediaType(),
-                    ImageStatus.SKIPPED, "vector-source");
+        if (!entries.isEmpty()) {
+            return entries;
+        }
+        List<HarvestSource.ViewImage> images = new ReadingViewStore(enrichments.store()).find(key)
+                .map(StoredReadingView::images).orElse(List.of());
+        for (HarvestSource.ViewImage image : images.subList(0, Math.min(images.size(), MAX_IMAGES))) {
+            Optional<com.aresstack.spaceharvester.application.assets.Asset> stored =
+                    assets.storedViewImage(key.sourceId(), snapshot.revision(), image);
+            entries.add(ImagePayload.Entry.without(entries.size(),
+                    stored.map(com.aresstack.spaceharvester.application.assets.Asset::attachmentId)
+                            .orElse(image.attachmentId()),
+                    stored.map(com.aresstack.spaceharvester.application.assets.Asset::sha256).orElse(null),
+                    Assets.viewFileName(image), image.title(), image.mediaType(), ImageStatus.PENDING, null));
+        }
+        return entries;
+    }
+
+    /** Lädt das Modell, falls es noch nicht geladen ist; Fehler melden dann die Bilder selbst. */
+    private static void prepare(ImageDescriber model) {
+        try {
+            if (!model.loaded()) {
+                model.load();
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Vision-Modell nicht geladen ({0})", e.getClass().getName());
+        }
+    }
+
+    /**
+     * Ob das Vision-Modell geladen ist und sofort antwortet (bei Ollama laut {@code /api/ps}); ohne Modell
+     * {@code true}.
+     */
+    public boolean modelLoaded() {
+        return assets.describerInUse().map(ImageDescriber::loaded).orElse(true);
+    }
+
+    /** Lädt das Vision-Modell und wartet darauf, höchstens die eingestellte Ladefrist. */
+    public void loadModel() {
+        assets.describerInUse().ifPresent(ImageDescriber::load);
+    }
+
+    /**
+     * Beschreibt genau ein Bild der Seite ({@code index} wie in der Liste) und legt es im Ergebnis {@code images} ab;
+     * die übrigen Einträge bleiben, wie sie waren (noch nicht beschriebene ohne Text). Mit {@code fresh} neu
+     * beschrieben statt aus dem Speicher der Beschreibungen.
+     *
+     * @throws ImageDescriptionException {@code NOT_CONFIGURED} ohne Vision-Modell, {@code NOT_RELEASED} ohne Freigabe
+     */
+    public PageImages describeOne(PageSnapshot snapshot, int index, boolean releasedOnce, boolean fresh) {
+        PageKey key = snapshot.key();
+        ImageDescriber model = assets.describerInUse().orElseThrow(() -> new ImageDescriptionException(
+                ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
+        if (!releasedOnce && !mayDescribe(model, key)) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
+                    "Quelle nicht für den KI-Dienst freigegeben", null);
+        }
+        Input input = input(snapshot);
+        if (input.sha256() == null) {
+            return PageImages.missing(PageImages.NO_TEXT);
+        }
+        List<String> warnings = new ArrayList<>();
+        List<Describable> items = describables(snapshot, warnings);
+        if (index < 0 || index >= items.size()) {
+            return read(snapshot);
+        }
+        prepare(model);
+        // Erst das Bild beschreiben (dauert), dann unter der Sperre mit dem gespeicherten Ergebnis zusammenführen:
+        // Laufen mehrere Einzelbeschreibungen zugleich, geht keine verloren.
+        ImagePayload.Entry described = describe(index, snapshot, items.get(index), releasedOnce, fresh,
+                model.retries());
+        synchronized (merging) {
+            // Was schon beschrieben ist, bleibt; der Rest steht ohne Text da.
+            List<ImagePayload.Entry> stored = new ArrayList<>();
+            enrichments.store().find(key).stream()
+                    .filter(found -> ImagePayload.PROCESSOR.equals(found.processorId())).findFirst()
+                    .ifPresent(found -> {
+                        try {
+                            stored.addAll(ImagePayload.parse(found.payloadJson()));
+                        } catch (IllegalArgumentException e) {
+                            // unlesbar: alles gilt als noch nicht beschrieben
+                        }
+                    });
+            Map<String, ImagePayload.Entry> byId = new LinkedHashMap<>();
+            stored.forEach(entry -> byId.putIfAbsent(entry.assetId(), entry));
+            List<ImagePayload.Entry> entries = new ArrayList<>(items.size());
+            Map<String, String> versions = new LinkedHashMap<>();
+            for (int at = 0; at < items.size(); at++) {
+                Describable item = items.get(at);
+                if (item.id() != null && item.version() != null) {
+                    versions.putIfAbsent(item.id(), item.version());
+                }
+                ImagePayload.Entry known = known(item, at, byId, stored);
+                if (at == index) {
+                    entries.add(described);
+                } else if (known != null) {
+                    entries.add(new ImagePayload.Entry(at, known.assetId(), known.sha256(), known.filename(),
+                            known.title(), known.mediaType(), known.status(), known.reason(), known.description(),
+                            known.describer(), known.model(), known.describedAt()));
+                } else {
+                    entries.add(ImagePayload.Entry.without(at, item.id(), null, item.filename(), item.title(),
+                            item.mediaType(), ImageStatus.PENDING, null));
+                }
+            }
+            Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, ImageProcessor.version(model),
+                    input.sha256(), snapshot.revision(), Enrichment.Status.OK, ImagePayload.write(entries, versions),
+                    warnings, null, clock.instant());
+            enrichments.store().save(result);
+        }
+        enrichments.flush();
+        if (!releasedOnce && !mayDescribe(model, key)) {
+            withdraw(List.of(snapshot), page -> mayDescribe(model, page));
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
+                    "Freigabe während der Beschreibung entzogen", null);
+        }
+        Input after = input(snapshot);
+        return PageImages.read(key, after.views(), after.sha256());
+    }
+
+    /** Hält das Zusammenführen einzelner Beschreibungen mit dem gespeicherten Ergebnis an. */
+    private final Object merging = new Object();
+
+    /** Der gespeicherte Eintrag zu einem Bild: nach seiner Kennung, sonst an derselben Stelle mit demselben Namen. */
+    private static ImagePayload.Entry known(Describable item, int index, Map<String, ImagePayload.Entry> byId,
+                                            List<ImagePayload.Entry> stored) {
+        ImagePayload.Entry known = item.id() == null ? null : byId.get(item.id());
+        if (known == null && index < stored.size()
+                && Objects.equals(stored.get(index).filename(), item.filename())) {
+            known = stored.get(index);
+        }
+        return known;
+    }
+
+    /** Beschreibt ein Bild; scheitert das Modell, bis zu {@code retries} weitere Male. */
+    private ImagePayload.Entry describe(int index, PageSnapshot snapshot, Describable item, boolean releasedOnce,
+                                        boolean fresh, int retries) {
+        ImagePayload.Entry entry = describeOnce(index, snapshot, item, releasedOnce, fresh);
+        for (int retry = 0; retry < retries && entry.status() == ImageStatus.FAILED
+                && modelFailure(entry.reason()); retry++) {
+            entry = describeOnce(index, snapshot, item, releasedOnce, fresh);
+        }
+        return entry;
+    }
+
+    /** Ein Modellaufruf zum Bild ist gescheitert (nicht erreichbar, Frist, leer oder unbrauchbar). */
+    public static final String MODEL_FAILED = "model-failed";
+    /** Das Modell hat innerhalb der Lesefrist ({@code ai.timeout}) nicht geantwortet. */
+    public static final String MODEL_TIMEOUT = "model-timeout";
+    /** Das Modell hat leer geantwortet. */
+    public static final String MODEL_EMPTY = "model-empty";
+    /** Der KI-Dienst war nicht erreichbar. */
+    public static final String MODEL_UNREACHABLE = "model-unreachable";
+
+    /** Ob ein Grund ein gescheiterter Modellaufruf ist, den ein neuer Versuch beheben kann. */
+    public static boolean modelFailure(String reason) {
+        return MODEL_FAILED.equals(reason) || MODEL_TIMEOUT.equals(reason) || MODEL_EMPTY.equals(reason)
+                || MODEL_UNREACHABLE.equals(reason);
+    }
+
+    /** Der Grund eines gescheiterten Modellaufrufs, so genau es die Ausnahme sagt. */
+    static String failureReason(ImageDescriptionException e) {
+        if (e.getCause() instanceof com.aresstack.spaceharvester.ai.AiServiceException cause) {
+            return switch (cause.reason()) {
+                case TIMEOUT -> MODEL_TIMEOUT;
+                case UNREACHABLE -> MODEL_UNREACHABLE;
+                default -> MODEL_FAILED;
+            };
+        }
+        return e.getCause() == null && "Leere Beschreibung".equals(e.getMessage()) ? MODEL_EMPTY : MODEL_FAILED;
+    }
+
+    private ImagePayload.Entry describeOnce(int index, PageSnapshot snapshot, Describable item, boolean releasedOnce,
+                                            boolean fresh) {
+        PageKey key = snapshot.key();
+        String filename = item.filename();
+        String title = item.title();
+        if (!item.ready()) {
+            return ImagePayload.Entry.without(index, item.id(), null, filename, title, item.mediaType(),
+                    ImageStatus.PENDING, "not-ready");
+        }
+        String skip = item.skipReason();
+        if (skip != null) {
+            return ImagePayload.Entry.without(index, item.id(), null, filename, title, item.mediaType(),
+                    ImageStatus.SKIPPED, skip);
         }
         try {
-            Assets.DescribedImage described = assets.describeViewImage(key.sourceId(), key.pageId(), pageVersion,
-                    image, releasedOnce);
+            Assets.DescribedImage described = assets.describe(key, item, releasedOnce, fresh);
+            // B2: Ist das Bild ein Anhang der Seite, steht seine Beschreibung sofort im Volltextindex, nicht erst beim
+            // nächsten Ablegen der Anhänge. Nur mit Freigabe (ADR 0028): „einmalig“ Beschriebenes bleibt draußen.
+            if (!releasedOnce && item.instruction() == null) {
+                assets.indexDescription(key, snapshot.spaceKey(), described);
+            }
             return new ImagePayload.Entry(index, described.asset().attachmentId(), described.asset().sha256(),
                     filename, title, described.asset().mediaType(), ImageStatus.DESCRIBED, null,
                     described.description().text(), described.description().describer(),
                     described.description().modelVersion(), described.description().createdAt());
         } catch (ImageDescriptionException e) {
             return switch (e.reason()) {
-                case NOT_AN_IMAGE -> ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title,
-                        image.mediaType(), ImageStatus.SKIPPED, "not-a-raster-image");
-                case BUSY -> ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title,
-                        image.mediaType(), ImageStatus.PENDING, "model-busy");
+                case NOT_AN_IMAGE -> ImagePayload.Entry.without(index, item.id(), null, filename, title,
+                        item.mediaType(), ImageStatus.SKIPPED, "not-a-raster-image");
+                case BUSY -> ImagePayload.Entry.without(index, item.id(), null, filename, title,
+                        item.mediaType(), ImageStatus.PENDING, "model-busy");
                 case NOT_CONFIGURED, NOT_RELEASED -> throw e;
-                default -> ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title,
-                        image.mediaType(), ImageStatus.FAILED, "model-failed");
+                default -> ImagePayload.Entry.without(index, item.id(), null, filename, title,
+                        item.mediaType(), ImageStatus.FAILED, failureReason(e));
             };
         } catch (AssetTooLargeException e) {
-            return ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title, image.mediaType(),
+            return ImagePayload.Entry.without(index, item.id(), null, filename, title, item.mediaType(),
                     ImageStatus.SKIPPED, "too-large");
         } catch (SourceAccessException e) {
-            return ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title, image.mediaType(),
+            return ImagePayload.Entry.without(index, item.id(), null, filename, title, item.mediaType(),
                     ImageStatus.FAILED, code(e.reason()));
         } catch (AssetStoreException e) {
-            return ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title, image.mediaType(),
+            return ImagePayload.Entry.without(index, item.id(), null, filename, title, item.mediaType(),
                     ImageStatus.FAILED, "asset-store-unavailable");
         }
+    }
+
+    /**
+     * Alles Beschreibbare der Seite: die Marken ihres Videos mit gezogenem Standbild (höchstens so viele, wie ein Video
+     * Marken haben darf), sonst die Bilder ihrer Lese-Ansicht (höchstens {@link #MAX_IMAGES}).
+     */
+    private List<Describable> describables(PageSnapshot snapshot, List<String> warnings) {
+        PageKey key = snapshot.key();
+        List<Describable> items = new ArrayList<>();
+        for (long millis : VideoMarks.slides(enrichments.store(), assets).find(key, snapshot.revision())) {
+            // Auch Marken ohne Standbild: Sie stehen ohne Beschreibung in der Liste.
+            items.add(new VideoMark(millis, Assets.markAttachmentId(key.pageId(), millis), snapshot.revision(),
+                    assets.videoFrame(key.sourceId(), key.pageId(), snapshot.revision(), millis).orElse(null)));
+        }
+        if (!items.isEmpty()) {
+            return truncated(items, assets.slideThresholds().maxFrames(), warnings);
+        }
+        List<PageAttachment>[] attachments = new List[1];
+        java.util.function.Supplier<List<PageAttachment>> lazy = () -> {
+            if (attachments[0] == null) {
+                attachments[0] = attachments(key);
+            }
+            return attachments[0];
+        };
+        for (HarvestSource.ViewImage image : images(snapshot, warnings)) {
+            items.add(new ViewImageDescribable(assets, key, snapshot.revision(), image, lazy));
+        }
+        return truncated(items, MAX_IMAGES, warnings);
+    }
+
+    private static List<Describable> truncated(List<Describable> items, int limit, List<String> warnings) {
+        if (items.size() <= limit) {
+            return items;
+        }
+        warnings.add(TRUNCATED);
+        return items.subList(0, limit);
     }
 
     /**
@@ -348,10 +622,6 @@ public class PageImageAnalysis {
         }
     }
 
-    private static boolean vector(HarvestSource.ViewImage image, String filename) {
-        String type = image.mediaType() == null ? "" : image.mediaType().toLowerCase(Locale.ROOT);
-        return type.startsWith("image/svg") || filename.toLowerCase(Locale.ROOT).endsWith(".svg");
-    }
 
     private static String code(SourceAccessException.Reason reason) {
         return switch (reason) {

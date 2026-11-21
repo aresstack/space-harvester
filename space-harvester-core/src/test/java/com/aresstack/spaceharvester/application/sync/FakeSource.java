@@ -26,10 +26,17 @@ class FakeSource implements HarvestSource {
 
     private final Map<String, PageMetadata> pages = new LinkedHashMap<>();
     private final Map<String, SourceAccessException.Reason> singlePageFailures = new HashMap<>();
+    /** Alte IDs, unter denen die Einzelabfrage eine Seite noch findet, die die Quelle heute anders führt. */
+    private final Map<String, String> aliases = new HashMap<>();
     private int failListingAtCall = -1;
     /** Ersetzt den Stapel vor der Auslieferung, um Widersprüche zu simulieren. */
     UnaryOperator<PageMetadataBatch> tamper = UnaryOperator.identity();
     private int listingCalls;
+    /** Wie oft der Papierkorb gefragt wurde; die Änderungssuche fragt ihn nicht (oft nur für Space-Administratoren). */
+    int trashCalls;
+    /** Wie oft die Seitenliste samt Kopfdaten gelesen wurde. */
+    int metadataListings;
+    private boolean listsPageIds;
     private boolean confirmsDeletion;
     private final java.util.Set<String> trash = new java.util.LinkedHashSet<>();
     private boolean listsChanges;
@@ -62,6 +69,7 @@ class FakeSource implements HarvestSource {
 
     @Override
     public PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit) {
+        metadataListings++;
         if (listingCalls++ == failListingAtCall) {
             throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "Zeitüberschreitung",
                     null);
@@ -81,7 +89,7 @@ class FakeSource implements HarvestSource {
         if (failure != null) {
             throw new SourceAccessException(id(), failure, "Einzelabfrage fehlgeschlagen", null);
         }
-        PageMetadata page = pages.get(pageId);
+        PageMetadata page = pages.get(aliases.getOrDefault(pageId, pageId));
         if (page == null) {
             throw new SourceAccessException(id(), SourceAccessException.Reason.NOT_FOUND, "Seite nicht gefunden",
                     null);
@@ -130,6 +138,7 @@ class FakeSource implements HarvestSource {
 
     @Override
     public PageMetadataBatch removedPageMetadata(String partitionKey, String cursor, int limit) {
+        trashCalls++;
         requireChanges();
         return new PageMetadataBatch(trash.stream()
                 .map(pageId -> page(pageId, partitionKey, null, "1", null)).toList(), null);
@@ -143,6 +152,32 @@ class FakeSource implements HarvestSource {
             throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "Zeitüberschreitung",
                     null);
         }
+    }
+
+    @Override
+    public boolean listsPageIds() {
+        return listsPageIds;
+    }
+
+    @Override
+    public com.aresstack.spaceharvester.application.sources.PageIdBatch pageIds(String partitionKey, String cursor,
+                                                                              int limit) {
+        if (listingCalls++ == failListingAtCall) {
+            throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "Zeitüberschreitung",
+                    null);
+        }
+        List<String> inSpace = pages.values().stream()
+                .filter(page -> page.partitionKey().equals(partitionKey)).map(PageMetadata::pageId).toList();
+        int offset = cursor == null ? 0 : Integer.parseInt(cursor);
+        int end = Math.min(offset + limit, inSpace.size());
+        return new com.aresstack.spaceharvester.application.sources.PageIdBatch(inSpace.subList(offset, end),
+                end < inSpace.size() ? Integer.toString(end) : null);
+    }
+
+    /** Liefert ab jetzt eine reine ID-Liste je Partition. */
+    FakeSource listingPageIds() {
+        listsPageIds = true;
+        return this;
     }
 
     /** Meldet ab jetzt Änderungen und Papierkorb. */
@@ -192,6 +227,12 @@ class FakeSource implements HarvestSource {
     FakeSource failListingAtCall(int call) {
         failListingAtCall = call;
         listingCalls = 0;
+        return this;
+    }
+
+    /** Die Einzelabfrage nach {@code oldId} liefert die Seite {@code currentId}, wie eine Quelle mit neuer Adressbildung. */
+    FakeSource alias(String oldId, String currentId) {
+        aliases.put(oldId, currentId);
         return this;
     }
 

@@ -1,11 +1,13 @@
 package com.aresstack.spaceharvester.source.ai;
 
+import com.aresstack.spaceharvester.ai.AiChat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.spaceharvester.ai.AiModel;
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
@@ -69,6 +71,21 @@ class RemoteAiTest {
             authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
             bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             respond(exchange, chatAnswer);
+        });
+        // Ollama: Modelle und Fähigkeiten nur über die eigene Schnittstelle, Chat und Embeddings unter /v1.
+        server.createContext("/api/tags", exchange -> {
+            authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            respond(exchange, """
+                    {"models":[{"name":"gemma4:12b","model":"gemma4:12b"},{"name":"bge-m3:latest","model":"bge-m3:latest"},
+                      {"name":"alt:1b","model":"alt:1b"}]}""");
+        });
+        server.createContext("/api/show", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            bodies.add(body);
+            respond(exchange, body.contains("gemma4") ? """
+                    {"capabilities":["completion","vision","audio","tools","thinking"]}"""
+                    : body.contains("bge-m3") ? """
+                    {"capabilities":["embedding"]}""" : "{}");
         });
         server.start();
     }
@@ -264,6 +281,331 @@ class RemoteAiTest {
     }
 
     @Test
+    void listsTheModelsOfAnOllamaServerWithTheirCapabilities() {
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, null, null, null, null, null, Set.of())
+                .withProvider(AiProvider.OLLAMA);
+
+        assertThat(remote(settings).models()).extracting(AiModel::id, AiModel::categories).containsExactly(
+                org.assertj.core.groups.Tuple.tuple("gemma4:12b", Set.of(AiModel.CHAT, AiModel.VISION)),
+                org.assertj.core.groups.Tuple.tuple("bge-m3:latest", Set.of(AiModel.EMBEDDING)),
+                // Ältere Server melden keine Fähigkeiten: wie bei anderen Katalogen Chat und Embeddings.
+                org.assertj.core.groups.Tuple.tuple("alt:1b", Set.of(AiModel.CHAT, AiModel.EMBEDDING)));
+        assertThat(bodies).containsExactly("{\"model\":\"gemma4:12b\"}", "{\"model\":\"bge-m3:latest\"}",
+                "{\"model\":\"alt:1b\"}");
+        assertThat(authorizations).containsOnly("null");
+    }
+
+    @Test
+    void chatsAndDescribesImagesOverTheOllamaInterfaceWithTheContextLengthAndEmbedsOverV1() {
+        List<String> chats = new CopyOnWriteArrayList<>();
+        server.createContext("/api/chat", exchange -> {
+            authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"model":"gemma4:12b","message":{"role":"assistant","content":"fertig"},"done":true,
+                     "done_reason":"stop","prompt_eval_count":12,"eval_count":3}""");
+        });
+        // Mit Schrägstrich am Ende oder der Adresse der OpenAI-Schnittstelle eingetragen: dieselben Pfade.
+        for (URI address : List.of(ollama(), URI.create(ollama() + "/"), URI.create(ollama() + "/v1"))) {
+            AiServiceSettings settings = new AiServiceSettings(address, null, "gemma4:12b", "bge-m3:latest", 3, null,
+                    null, Set.of(), null, "gemma4:12b").withProvider(AiProvider.OLLAMA);
+            RemoteAi ai = remote(settings);
+
+            assertThat(ai.termCompletions().apply("Anweisung", "{}")).isEqualTo("fertig");
+            assertThat(ai.embeddings().embed(List.of("Betrieb"))).singleElement()
+                    .satisfies(vector -> assertThat(vector).hasSize(3));
+            assertThat(ai.describeImage(new byte[] {1, 2, 3}, "image/png")).isEqualTo("fertig");
+            assertThat(settings.apiBaseUrl()).isEqualTo(URI.create(ollama() + "/v1"));
+        }
+        assertThat(authorizations).hasSize(9).containsOnly("null");
+        assertThat(bodies).as("Embeddings über /v1").hasSize(3).allMatch(body -> body.contains("bge-m3:latest"));
+        assertThat(chats).hasSize(6);
+        assertThat(chats.get(0)).contains("\"model\":\"gemma4:12b\"", "\"stream\":false", "\"role\":\"system\"",
+                "\"content\":\"Anweisung\"", "\"num_ctx\":8192", "\"num_predict\":8192", "\"temperature\":0.0");
+        assertThat(chats.get(1)).contains("\"images\":[\"AQID\"]", "\"num_ctx\":8192")
+                .doesNotContain("image_url");
+    }
+
+    @Test
+    void anOllamaAnswerAtTheOutputLimitIsIncompleteAndTheContextLengthIsConfigurable() {
+        List<String> chats = new CopyOnWriteArrayList<>();
+        server.createContext("/api/chat", exchange -> {
+            chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"{\\"abgeschn"},"done":true,"done_reason":"length"}""");
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "gemma4:12b", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA).withContextTokens(32768).withChatMaxTokens(100);
+
+        assertThatThrownBy(() -> remote(settings).termCompletions().apply("Anweisung", "{}"))
+                .isInstanceOfSatisfying(AiServiceException.class, e -> assertThat(e.reason())
+                        .isEqualTo(AiServiceException.Reason.INVALID_RESPONSE))
+                .hasMessageContaining("max_tokens=100");
+        // Analyseschritte denken standardmäßig nicht nach (ai.step-thinking, Angelo 20.11.2026).
+        assertThat(chats).singleElement().asString().contains("\"num_ctx\":32768", "\"num_predict\":100",
+                "\"think\":false");
+        assertThatThrownBy(() -> settings.withContextTokens(100)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("context-tokens");
+    }
+
+    @Test
+    void theThinkingOfAnalysisStepsIsConfigurable() {
+        List<String> chats = new CopyOnWriteArrayList<>();
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"gemma4:12b","model":"gemma4:12b"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"korrigiert"},"done":true,"done_reason":"stop"}""");
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "gemma4:12b", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA).withStepThinking("low");
+
+        assertThat(remote(settings).termCompletions().apply("Anweisung", "Text")).isEqualTo("korrigiert");
+        assertThat(chats).singleElement().asString().contains("\"think\":\"low\"");
+        assertThatThrownBy(() -> settings.withStepThinking("ganz viel")).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("step-thinking");
+    }
+
+    @Test
+    void imagePromptsDoNotThinkEitherAndATruncatedAnswerSaysWhy() {
+        // Folienkommentare und Folienbeschreibungen denken wie die Analyseschritte nicht nach (ai.step-thinking):
+        // gemma4 füllte sonst mit 10.000+ Zeichen Nachdenken je Folie fast die ganze Kontextlänge (Angelo 20.11.2026).
+        List<String> chats = new CopyOnWriteArrayList<>();
+        java.util.concurrent.atomic.AtomicReference<String> reason = new java.util.concurrent.atomic.AtomicReference<>(
+                "stop");
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"gemma4:12b","model":"gemma4:12b"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"%s"},"done":true,"done_reason":"%s",
+                     "prompt_eval_count":3593,"eval_count":4599}""".formatted(
+                    "stop".equals(reason.get()) ? "Vortragstext" : "", reason.get()));
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, null, null, null, null, null, Set.of())
+                .withVisionModel("gemma4:12b").withProvider(AiProvider.OLLAMA);
+
+        assertThat(remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png", "Schreibe den Vortragstext."))
+                .isEqualTo("Vortragstext");
+        assertThat(remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png")).isEqualTo("Vortragstext");
+        assertThat(chats).hasSize(2).allSatisfy(body -> assertThat(body).contains("\"think\":false"));
+
+        reason.set("length");
+        assertThatThrownBy(() -> remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png", "Notizen"))
+                .isInstanceOfSatisfying(AiServiceException.class, e -> assertThat(e.reason())
+                        .isEqualTo(AiServiceException.Reason.INVALID_RESPONSE))
+                .hasMessageContaining("3593 Token Prompt + 4599 Token Antwort")
+                .hasMessageContaining("context-tokens");
+    }
+
+    @Test
+    void streamsTheOllamaChatLineByLine() throws Exception {
+        // Ein Ollama-Server meldet die geladenen Modelle; hier läuft das Chat-Modell schon.
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"gemma4:12b","model":"gemma4:12b"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"Hal"},"done":false}
+                    {"message":{"role":"assistant","content":"lo"},"done":false}
+                    {"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}
+                    """);
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "gemma4:12b", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA);
+        List<String> deltas = new CopyOnWriteArrayList<>();
+        java.util.concurrent.CompletableFuture<String> done = new java.util.concurrent.CompletableFuture<>();
+
+        remote(settings).chat().stream(new com.aresstack.spaceharvester.ai.AiChat.Request(
+                List.of(com.aresstack.spaceharvester.ai.AiChat.Message.user("Hallo?")), "gemma4:12b", null),
+                new com.aresstack.spaceharvester.ai.AiChat.Listener() {
+                    @Override
+                    public void delta(String text) {
+                        deltas.add(text);
+                    }
+
+                    @Override
+                    public void completed(String text) {
+                        done.complete(text);
+                    }
+
+                    @Override
+                    public void failed(com.aresstack.spaceharvester.ai.AiChatException error) {
+                        done.completeExceptionally(error);
+                    }
+
+                    @Override
+                    public void cancelled() {
+                        done.cancel(false);
+                    }
+                });
+
+        assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("Hallo");
+        assertThat(deltas).containsExactly("Hal", "lo");
+    }
+
+    @Test
+    void theChatOffersToolsAndReportsTheCallsOfTheModel() throws Exception {
+        // ADR 0031: Die Werkzeuge leben beim Aufrufer; hier gehen nur Definition, Aufruf und Ergebnis über die Leitung.
+        // Der Testserver antwortet am Stück (application/json), wie Dienste, die stream=true übergehen.
+        chatAnswer = """
+                {"choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                  "tool_calls":[{"id":"call_7","type":"function","function":{"name":"seite_lesen","arguments":"{\\"id\\":\\"42\\"}"}}]}}]}""";
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+        AiChat.Tool tool = new AiChat.Tool("seite_lesen", "Liest eine Seite des Bereichs.",
+                "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]}");
+        List<AiChat.Message> history = List.of(AiChat.Message.user("Was steht auf Seite 41?"),
+                AiChat.Message.assistant("", List.of(new AiChat.ToolCall("call_6", "seite_lesen", "{\"id\":\"41\"}"))),
+                AiChat.Message.tool("call_6", "Inhalt von 41"));
+
+        java.util.concurrent.CompletableFuture<List<AiChat.ToolCall>> calls = new java.util.concurrent.CompletableFuture<>();
+        remote(settings).chat().stream(new AiChat.Request(history, "gpt-x", null, List.of(tool)), new ToolListener(calls));
+
+        assertThat(calls.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                .containsExactly(new AiChat.ToolCall("call_7", "seite_lesen", "{\"id\":\"42\"}"));
+        assertThat(bodies).singleElement().asString()
+                .contains("\"tools\":[{\"type\":\"function\"", "\"name\":\"seite_lesen\"", "\"required\":[\"id\"]")
+                .contains("\"tool_calls\":[", "\"id\":\"call_6\"")
+                .contains("\"role\":\"tool\"", "\"tool_call_id\":\"call_6\"", "Inhalt von 41");
+    }
+
+    @Test
+    void theOllamaChatOffersToolsAndNumbersTheCallsOfTheModel() throws Exception {
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"gemma4:12b","model":"gemma4:12b"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"im_bereich_suchen","arguments":{"text":"Nachtlauf"}}}]},"done":false}
+                    {"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}
+                    """);
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "gemma4:12b", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA);
+        AiChat.Tool tool = new AiChat.Tool("im_bereich_suchen", "Sucht im Bereich.", null);
+        List<AiChat.Message> history = List.of(AiChat.Message.user("Warum bricht der Nachtlauf ab?"),
+                AiChat.Message.assistant("", List.of(new AiChat.ToolCall("call_1", "im_bereich_suchen", "{\"text\":\"Abbruch\"}"))),
+                AiChat.Message.tool("call_1", "Treffer"));
+
+        java.util.concurrent.CompletableFuture<List<AiChat.ToolCall>> calls = new java.util.concurrent.CompletableFuture<>();
+        remote(settings).chat().stream(new AiChat.Request(history, "gemma4:12b", null, List.of(tool)),
+                new ToolListener(calls));
+
+        assertThat(calls.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                .containsExactly(new AiChat.ToolCall("call_1", "im_bereich_suchen", "{\"text\":\"Nachtlauf\"}"));
+        assertThat(bodies).filteredOn(body -> body.contains("\"messages\"")).singleElement().asString()
+                .contains("\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"im_bereich_suchen\"")
+                .contains("\"tool_calls\":[{\"function\":{\"name\":\"im_bereich_suchen\",\"arguments\":{\"text\":\"Abbruch\"}}}]")
+                .contains("\"role\":\"tool\"", "Treffer");
+    }
+
+    /** Erwartet Werkzeugaufrufe; eine fertige Antwort oder ein Fehler lässt den Test scheitern. */
+    private record ToolListener(java.util.concurrent.CompletableFuture<List<AiChat.ToolCall>> calls)
+            implements AiChat.Listener {
+
+        @Override
+        public void delta(String text) {
+        }
+
+        @Override
+        public void completed(String text) {
+            calls.completeExceptionally(new AssertionError("Antwort statt Werkzeugaufruf"));
+        }
+
+        @Override
+        public void toolCalls(String text, List<AiChat.ToolCall> called) {
+            calls.complete(called);
+        }
+
+        @Override
+        public void failed(com.aresstack.spaceharvester.ai.AiChatException error) {
+            calls.completeExceptionally(error);
+        }
+
+        @Override
+        public void cancelled() {
+            calls.cancel(false);
+        }
+    }
+
+    @Test
+    void theOllamaChatLoadsTheModelOnceAndWaitsUntilItRuns() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger loads = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean();
+        // Erst läuft das Modell nicht; der Anstoß lädt es, danach meldet /api/ps es.
+        server.createContext("/api/ps", exchange -> respond(exchange, running.get()
+                ? "{\"models\":[{\"name\":\"gemma4:12b\",\"model\":\"gemma4:12b\"}]}" : "{\"models\":[]}"));
+        server.createContext("/api/generate", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(body).contains("\"model\":\"gemma4:12b\"", "\"num_ctx\"");
+            loads.incrementAndGet();
+            running.set(true);
+            respond(exchange, "{\"done\":true}");
+        });
+        server.createContext("/api/chat", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            assertThat(running.get()).as("erst fragen, wenn das Modell läuft").isTrue();
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"OK"},"done":true,"done_reason":"stop"}
+                    """);
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "gemma4:12b", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA).withLoadPollInterval(java.time.Duration.ofMillis(10));
+        java.util.concurrent.atomic.AtomicInteger loading = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CompletableFuture<String> done = new java.util.concurrent.CompletableFuture<>();
+
+        remote(settings).chat().stream(new com.aresstack.spaceharvester.ai.AiChat.Request(
+                List.of(com.aresstack.spaceharvester.ai.AiChat.Message.user("Hallo?")), "gemma4:12b", null),
+                new com.aresstack.spaceharvester.ai.AiChat.Listener() {
+                    @Override
+                    public void loading() {
+                        loading.incrementAndGet();
+                    }
+
+                    @Override
+                    public void delta(String text) {
+                    }
+
+                    @Override
+                    public void completed(String text) {
+                        done.complete(text);
+                    }
+
+                    @Override
+                    public void failed(com.aresstack.spaceharvester.ai.AiChatException error) {
+                        done.completeExceptionally(error);
+                    }
+
+                    @Override
+                    public void cancelled() {
+                        done.cancel(false);
+                    }
+                });
+
+        assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("OK");
+        assertThat(loading.get()).as("„wird geladen“ einmal gemeldet").isEqualTo(1);
+        assertThat(loads.get()).as("einmal angestoßen").isEqualTo(1);
+    }
+
+    @Test
+    void readsTheProviderFromTheProperties() {
+        java.util.Properties properties = new java.util.Properties();
+        properties.setProperty("space-harvester.ai.base-url", "http://localhost:11434");
+        properties.setProperty("space-harvester.ai.provider", "Ollama");
+
+        AiServiceSettings settings = AiServiceSettings.fromProperties(properties);
+
+        assertThat(settings.provider()).isEqualTo(AiProvider.OLLAMA);
+        assertThat(settings.apiBaseUrl()).isEqualTo(URI.create("http://localhost:11434/v1"));
+        assertThat(settings.toString()).contains("provider=ollama");
+        assertThat(AiServiceSettings.NONE.provider()).isEqualTo(AiProvider.OPENAI_COMPATIBLE);
+        properties.setProperty("space-harvester.ai.provider", "lmstudio");
+        assertThatThrownBy(() -> AiServiceSettings.fromProperties(properties))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("ollama");
+    }
+
+    @Test
     void namesTopicSectionsWithTheChatSectionLabelerOfTheEnterpriseAiClient() {
         chatAnswer = """
                 {"choices":[{"index":0,"message":{"role":"assistant","content":"1: Belegimport\\n2) Urlaubsantrag"}}]}""";
@@ -370,6 +712,10 @@ class RemoteAiTest {
 
     private AiServiceSettings settings(String model, Integer dimensions) {
         return new AiServiceSettings(base(), KEY, null, model, dimensions, null, null, Set.of("wiki"));
+    }
+
+    private URI ollama() {
+        return URI.create("http://127.0.0.1:" + server.getAddress().getPort());
     }
 
     private URI base() {

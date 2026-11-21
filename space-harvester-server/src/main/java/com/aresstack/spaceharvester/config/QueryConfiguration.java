@@ -16,11 +16,13 @@ import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentSto
 import com.aresstack.spaceharvester.application.passages.PassageSnippets;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.links.PageLinks;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.CandidateSelectionStrategy;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.query.SearchExpansion;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
@@ -56,6 +58,9 @@ import java.util.function.Function;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.structure.LinkDirectory;
+import com.aresstack.spaceharvester.application.structure.PageLinksDirectory;
+import com.aresstack.spaceharvester.application.structure.PageConnections;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
@@ -116,8 +121,8 @@ class QueryConfiguration {
     /** Live-Navigation (#177); der Cache nennt nur den Space von Verweiszielen. Titeltreffer gehen in den Katalog. */
     @Bean
     PageNavigation pageNavigation(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache, AccessGuard access,
-                                  FindingCatalog findings) {
-        return new PageNavigation(catalog, cache.getIfAvailable(), access, findings);
+                                  FindingCatalog findings, ObjectProvider<PageLinks> links) {
+        return new PageNavigation(catalog, cache.getIfAvailable(), access, findings, links.getIfAvailable());
     }
 
     /**
@@ -180,7 +185,7 @@ class QueryConfiguration {
                 sourceIds -> syncBeforeSearch.ifAvailable(before -> before.searching(sourceIds)),
                 // #336, Teil 4: bestätigte Synonyme, Varianten und Ausschreibungen als Anfragen je Quelle.
                 relations.getIfAvailable() == null ? SearchExpansion.NONE
-                        : new SearchExpansion(relations.getIfAvailable()::expansions));
+                        : SearchExpansion.typed(relations.getIfAvailable()::counterparts));
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */
@@ -304,6 +309,26 @@ class QueryConfiguration {
      * (ADR 0013). Vorher finden die Quellen, die gefundenen Seiten werden geladen und ihre fehlenden Embeddings
      * berechnet (ADR 0013, Punkt 3). Mit {@code rerank-model} ordnet danach der Cross-Encoder des Dienstes um.
      */
+    /**
+     * Strukturgraph (Paket G1) wie {@code Harvester.pageConnections()}. Verweise kommen aus dem Verzeichnis der
+     * Verweise (Paket V1), das mit dem Cache entsteht; ohne Cache gelten sie als unbekannt. Ohne Begriffsindex oder
+     * Vektoren fehlen die jeweiligen Kantenarten und sind als nicht verfügbar gekennzeichnet.
+     */
+    @Bean
+    PageConnections pageConnections(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access,
+                                    ObjectProvider<TermQueries> terms, ObjectProvider<TermRelations> relations,
+                                    ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingIndex> vectors,
+                                    ObjectProvider<EmbeddingProcessor> embedding, ObjectProvider<PageLinks> links) {
+        PageLinks pageLinks = links.getIfAvailable();
+        EnrichmentStore enrichments = store.getIfUnique();
+        EmbeddingIndex vectorIndex = vectors.getIfUnique();
+        EmbeddingProcessor processor = embedding.getIfUnique();
+        return new PageConnections(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access,
+                pageLinks == null ? LinkDirectory.NONE : PageLinksDirectory.of(pageLinks), terms.getIfAvailable(), relations.getIfAvailable(),
+                enrichments == null || vectorIndex == null || processor == null ? null
+                        : new PageConnections.Vectors(enrichments, vectorIndex, processor));
+    }
+
     @Bean
     RelevanceSearch relevanceSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access,
                                     ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingIndex> vectors,

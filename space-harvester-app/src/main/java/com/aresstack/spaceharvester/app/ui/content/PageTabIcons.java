@@ -25,7 +25,7 @@ final class PageTabIcons {
         return ComposerIcons.document();
     }
 
-    /** Eigenschaften: das Info-Zeichen. */
+    /** Info (Eigenschaften und Technik der Seite): das Info-Zeichen. */
     static Icon properties() {
         return ComposerIcons.info();
     }
@@ -56,18 +56,6 @@ final class PageTabIcons {
                 g2.drawPolyline(new int[] {2, 2, 13, 13}, new int[] {9, 13, 13, 9}, 4);
                 g2.drawLine(7, 2, 7, 10);
                 g2.drawPolyline(new int[] {4, 7, 10}, new int[] {5, 2, 5}, 3);
-            }
-        };
-    }
-
-    /** Erweitert: spitze Klammern mit Schrägstrich (Quelltext, technische Angaben). */
-    static Icon advanced() {
-        return new StrokeIcon() {
-            @Override
-            protected void paint(Graphics2D g2) {
-                g2.drawPolyline(new int[] {5, 1, 5}, new int[] {3, 7, 11}, 3);
-                g2.drawPolyline(new int[] {10, 14, 10}, new int[] {3, 7, 11}, 3);
-                g2.drawLine(9, 2, 6, 12);
             }
         };
     }

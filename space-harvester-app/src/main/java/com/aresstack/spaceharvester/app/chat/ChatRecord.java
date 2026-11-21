@@ -56,8 +56,20 @@ public record ChatRecord(String id, String title, long createdAt, long modifiedA
      * @param text      der Text; bei einer abgebrochenen Antwort der bis dahin empfangene
      * @param cancelled ob die Antwort abgebrochen wurde; sie bleibt sichtbar, geht aber nicht mehr an das Modell
      * @param at        Epoche in Millisekunden
+     * @param area      bei einer Frage der Bereich in Worten, für den sie gestellt wurde (die Auswahl links beim
+     *                  Senden, Angelo 21.11.2026: der Chat bleibt stehen, der Bereich wandert); {@code null} bei
+     *                  Antworten und bei Chats aus der Zeit davor
+     * @param scope     bei einer Frage die Kennung dieses Bereichs (Quelle, Space, Seite), an der ein Wechsel des
+     *                  Bereichs erkannt wird, auch wenn zwei Bereiche gleich heißen; {@code null} wie {@code area}
+     * @param sources   bei einer Antwort die nummerierten Quellen, die das Modell hatte (Position = Nummer, ab 1);
+     *                  leer bei Fragen, ohne Quellen und bei Chats aus der Zeit davor
      */
-    public record Message(String role, String text, boolean cancelled, long at) {
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record Message(String role, String text, boolean cancelled, long at, String area, String scope,
+                          @com.fasterxml.jackson.annotation.JsonInclude(
+                                  com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+                          List<Source> sources) {
 
         public static final String USER = "user";
         public static final String ASSISTANT = "assistant";
@@ -65,14 +77,35 @@ public record ChatRecord(String id, String title, long createdAt, long modifiedA
         public Message {
             Objects.requireNonNull(role, "role");
             text = text == null ? "" : text;
+            area = area == null || area.isBlank() ? null : area;
+            scope = scope == null || scope.isBlank() ? null : scope;
+            sources = sources == null ? List.of() : List.copyOf(sources);
+        }
+
+        public Message(String role, String text, boolean cancelled, long at, String area, String scope) {
+            this(role, text, cancelled, at, area, scope, List.of());
+        }
+
+        public Message(String role, String text, boolean cancelled, long at) {
+            this(role, text, cancelled, at, null, null);
         }
 
         public static Message user(String text, long at) {
-            return new Message(USER, text, false, at);
+            return new Message(USER, text, false, at, null, null);
+        }
+
+        /** Eine Frage samt dem Bereich, für den sie gestellt wurde: in Worten und als Kennung. */
+        public static Message user(String text, long at, String area, String scope) {
+            return new Message(USER, text, false, at, area, scope);
         }
 
         public static Message assistant(String text, boolean cancelled, long at) {
-            return new Message(ASSISTANT, text, cancelled, at);
+            return new Message(ASSISTANT, text, cancelled, at, null, null);
+        }
+
+        /** Eine Antwort samt ihren nummerierten Quellen. */
+        public static Message assistant(String text, boolean cancelled, long at, List<Source> sources) {
+            return new Message(ASSISTANT, text, cancelled, at, null, null, sources);
         }
 
         public boolean user() {
@@ -81,6 +114,28 @@ public record ChatRecord(String id, String title, long createdAt, long modifiedA
 
         public boolean assistant() {
             return ASSISTANT.equals(role);
+        }
+    }
+
+    /**
+     * Eine Quelle einer Antwort, wie sie das Modell als [n] zitieren konnte.
+     *
+     * @param title    Titel der Seite
+     * @param sourceId Kennung der Wissensquelle
+     * @param pageId   die Seite oder {@code null}, wenn nicht bekannt (etwa beim Überblick)
+     * @param location Adresse der Seite oder {@code null}
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record Source(String title, String sourceId, String pageId, String location) {
+
+        public Source {
+            Objects.requireNonNull(sourceId, "sourceId");
+        }
+
+        /** Die Quelle eines Auszugs aus dem Kontext des Turns. */
+        public static Source of(ChatKnowledge.Excerpt excerpt) {
+            return new Source(excerpt.title(), excerpt.sourceId(), excerpt.pageId(), excerpt.location());
         }
     }
 }

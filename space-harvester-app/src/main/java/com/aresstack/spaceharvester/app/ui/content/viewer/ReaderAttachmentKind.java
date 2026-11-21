@@ -7,22 +7,23 @@ import java.util.Set;
 
 /**
  * Wie das Anhang-Overlay einen Anhang zeigt, aus Medientyp und Dateiendung: Bild (auch SVG, über den Bildweg),
- * PDF (Seiten über PDFBox), Text (Textansicht), Office (Vorschau der Quelle, etwa Confluences Dokumentkonvertierung)
- * oder sonstige Datei (nur Name, Typ, Größe, Speichern und Öffnen). Die Endung zählt, wenn der Medientyp nichts sagt
+ * PDF (Seiten über PDFBox), Text (Textansicht), PowerPoint (lokal über Apache POI),
+ * Office (Vorschau der Quelle) oder sonstige Dateien (Name, Typ, Größe, Speichern und Öffnen). Die Endung zählt, wenn der Medientyp nichts sagt
  * ({@code application/octet-stream}). Die Listen sind eine Auswahl gängiger Typen (kannst du kippen); was nicht
  * erkannt wird, bleibt trotzdem in der Liste und öffnet das Overlay.
  *
- * <p>Kopie von {@code ReaderAttachmentKind} aus dem Enterprise AI Client (exedra ui.reader); unverändert bis auf das
- * Paket. Die Office-Vorschau bietet die App nur bei Quellen mit {@code SourceCapability.ATTACHMENT_PREVIEWS} an.</p>
+ * <p>Extend the Enterprise AI Client attachment classifier with local PowerPoint rendering.
+ * Keep source-based previews for the remaining Office formats.</p>
  */
 public enum ReaderAttachmentKind {
-    IMAGE, PDF, TEXT, OFFICE, OTHER;
+    IMAGE, PDF, TEXT, PRESENTATION, SPREADSHEET, OFFICE, OTHER;
 
     private static final Set<String> IMAGE_EXTENSIONS = set("png", "jpg", "jpeg", "gif", "bmp", "svg", "webp");
     private static final Set<String> TEXT_EXTENSIONS = set("txt", "log", "md", "csv", "tsv", "json", "xml", "yml",
             "yaml", "properties", "ini", "cfg", "conf", "sql", "java", "js", "ts", "py", "sh", "bat", "cmd", "ps1",
             "html", "htm", "css", "jcl", "cbl", "cob", "cpy", "nsp", "nsn", "gradle", "kt", "groovy", "c", "h", "cpp",
             "cs", "go", "rs", "toml", "wsdl", "xsd");
+    private static final Set<String> PRESENTATION_EXTENSIONS = set("ppt", "pptx", "pptm", "pps", "ppsx");
     private static final Set<String> OFFICE_EXTENSIONS = set("doc", "docx", "docm", "dot", "dotx", "xls", "xlsx",
             "xlsm", "xlsb", "ppt", "pptx", "pptm", "pps", "ppsx", "odt", "ods", "odp", "rtf", "vsd", "vsdx", "msg");
 
@@ -34,6 +35,15 @@ public enum ReaderAttachmentKind {
         }
         if ("application/pdf".equals(type) || "pdf".equals(extension)) {
             return PDF;
+        }
+        if (SpreadsheetPreviewData.supports(fileName) || "text/csv".equals(type)
+                || "text/tab-separated-values".equals(type)
+                || (extension.isEmpty() && (type.contains("spreadsheet") || type.contains("ms-excel")))) {
+            return SPREADSHEET;
+        }
+        if (PRESENTATION_EXTENSIONS.contains(extension) || type.contains("presentation")
+                || type.contains("powerpoint")) {
+            return PRESENTATION;
         }
         if (isOffice(type) || OFFICE_EXTENSIONS.contains(extension)) {
             return OFFICE;
@@ -61,6 +71,12 @@ public enum ReaderAttachmentKind {
     static String label(String mediaType, String fileName) {
         String type = baseType(mediaType);
         String extension = extension(fileName);
+        if ("csv".equals(extension) || "text/csv".equals(type)) {
+            return "CSV";
+        }
+        if ("tsv".equals(extension) || "text/tab-separated-values".equals(type)) {
+            return "TSV";
+        }
         if ("application/pdf".equals(type) || "pdf".equals(extension)) {
             return "PDF";
         }
@@ -69,6 +85,7 @@ public enum ReaderAttachmentKind {
             return "Word";
         }
         if (type.contains("spreadsheet") || type.contains("ms-excel") || extension.startsWith("xls")
+                || "csv".equals(extension) || "tsv".equals(extension)
                 || "ods".equals(extension)) {
             return "Excel";
         }

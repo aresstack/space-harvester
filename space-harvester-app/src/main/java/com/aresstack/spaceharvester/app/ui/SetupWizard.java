@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.app.settings.AiAccess;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
@@ -57,8 +58,8 @@ final class SetupWizard {
                     + "ich die öffentliche Confluence-Hilfe von Atlassian.",
             "Proxy und Serverzertifikate gelten für alle Wissensquellen und den KI-Dienst. „Verbindung testen“ "
                     + "versucht es mit deinen Quellen.",
-            "Optional: ein OpenAI-kompatibler KI-Dienst für die semantische Suche. Der API-Key liegt nur im Tresor "
-                    + "dieses Windows-Kontos, nie in der Konfigurationsdatei.",
+            "Optional: ein OpenAI-kompatibler KI-Dienst oder ein Ollama-Server für die semantische Suche. Der API-Key "
+                    + "liegt nur im Tresor dieses Windows-Kontos, nie in der Konfigurationsdatei; Ollama braucht keinen.",
             "Die Modelle gelten zentral für alle Quellen. Ich lade sie beim Dienst und wähle die Vorzugsmodelle vor; "
                     + "andere wählst du über das Auswahlmenü rechts neben dem Feld.",
             "Geschafft! Gesucht wird per Schlagwort im Cache; die semantische Suche schaltest du in der Suche per "
@@ -311,7 +312,8 @@ final class SetupWizard {
         done[SOURCES] = allConnected;
         done[NETWORK] = entries.stream().anyMatch(entry -> connected(entry.id()));
         done[MODELS] = settings.ai().embeddingModel() != null && settings.ai().embeddingDimensions() != null;
-        done[AI] = settings.ai().configured() && context.aiKeyAvailable();
+        done[AI] = settings.ai().configured()
+                && (settings.ai().provider() == AiProvider.OLLAMA || context.aiKeyAvailable());
         return done;
     }
 
@@ -364,6 +366,10 @@ final class SetupWizard {
         int judged = settings.terms().synonyms().maxJudgedPairs();
         summary.add(AiSettingsPanel.JUDGED_PAIRS_LABEL,
                 judged == 0 ? "aus" : judged + " " + AiSettingsPanel.JUDGED_PAIRS_UNIT);
+        // Lauf nach jedem Abgleich (SY1/SY3), einstellbar im Schritt „Modelle“ und unter Einstellungen › Modelle.
+        summary.add(AiSettingsPanel.AUTOMATIC_SYNONYMS_LABEL,
+                AiSettingsPanel.automaticSynonymsSummary(settings.terms().synonyms()));
+        summary.add(AiSettingsPanel.AUTOMATIC_IMAGES_LABEL, AiSettingsPanel.automaticImagesSummary(settings.images()));
         // Vorstufe der Aussagenanalyse (ADR 0032), einstellbar im Schritt „Modelle“.
         summary.add(AiSettingsPanel.SIMPLIFY_LABEL, AiSettingsPanel.simplificationSummary(settings.simplification()));
         // Einstellbar unter Einstellungen › Modelle › Wörter für den Stand (ADR 0032).
@@ -382,15 +388,19 @@ final class SetupWizard {
             case INSTALLING -> "Wird installiert …";
             case UNAVAILABLE -> "Nicht verfügbar";
         }, parser.state() == ParserModelSetup.State.INSTALLED ? Comic.INK : Comic.MUTED);
-        summary.add("KI-Dienst", settings.ai().configured() ? settings.ai().baseUrl() : "nicht eingerichtet (optional)");
+        boolean ollama = settings.ai().provider() == AiProvider.OLLAMA;
+        summary.add("KI-Dienst", !settings.ai().configured() ? "nicht eingerichtet (optional)"
+                : (ollama ? AiProvider.OLLAMA.displayName() + " · " : "") + settings.ai().baseUrl());
         summary.add("KeePass", context.keePass().paired() ? "gekoppelt" : "nicht gekoppelt");
         AiAccess access = settings.aiAccess();
-        summary.add("API-Key", !context.aiKeyAvailable() ? "fehlt" : access.fromKeePass()
-                ? "aus KeePass („" + access.entry() + "“)" : "im Tresor");
+        summary.add("API-Key", ollama ? "nicht nötig (Ollama)" : !context.aiKeyAvailable() ? "fehlt"
+                : access.fromKeePass() ? "aus KeePass („" + access.entry() + "“)" : "im Tresor");
         summary.add("Freigegeben für den KI-Dienst",
                 AiSettingsPanel.releasedText(settings, settings.ai().externalProcessingSources()));
         // Einstellbar unter Allgemein › Terminal-Ausgabe; die Protokolldatei bekommt immer alles.
         summary.add(SettingsView.CONSOLE_TITLE, settings.consoleOutput().label());
+        // Einstellbar unter Allgemein › Darstellung; gilt beim nächsten Öffnen des Bildbetrachters.
+        summary.add(SettingsView.VIEWER_TITLE, settings.viewerBackground().label());
         // Einstellbar unter Allgemein › Analytics-Export: Zeitraum und Pfade des Confluence-Analytics-Plugins.
         summary.add(SettingsView.ANALYTICS_TITLE, settings.analytics().isDefault() ? "Vorgaben (Confluence 10.2)"
                 : "angepasst · " + settings.analytics().days() + " Tage");
