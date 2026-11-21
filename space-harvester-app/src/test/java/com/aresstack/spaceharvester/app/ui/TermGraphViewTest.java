@@ -281,10 +281,20 @@ class TermGraphViewTest {
             seen.add(graph.hint());
             graph.showEvidenceFor(edges.getFirst());
             seen.add(graph.evidencePopup().stageTexts());
+            // Nur ungeprüfte Aussagen: Es fehlt die Prüfung, nicht die Analyse.
+            graph.show(new GraphSource.Graph(List.of(new GraphSource.Node("antragsteller", "Antragsteller", 0, null)),
+                    List.of(), false));
+            seen.add(graph.hint());
+            graph.checkedChoice().doClick();
+            graph.show(new GraphSource.Graph(List.of(new GraphSource.Node("antragsteller", "Antragsteller", 0, null)),
+                    List.of(), false));
+            seen.add(graph.hint());
         });
         assertThat(seen).containsExactly(false, TermGraphView.CHECKED_LOCKED, true,
                 "Optionen – aktiv: Nur Fachbegriffe, Nur geprüft", "2 Fachbegriffe · 1 Verbindung · nur geprüft",
-                List.of("vom Prüfschritt bestätigt", "abweichend"));
+                List.of("vom Prüfschritt bestätigt", "abweichend"),
+                "Zu diesem Fachbegriff gibt es noch keine geprüften Aussagen mit anderen Fachbegriffen.",
+                TermGraphView.NO_VERBS);
     }
 
     @Test

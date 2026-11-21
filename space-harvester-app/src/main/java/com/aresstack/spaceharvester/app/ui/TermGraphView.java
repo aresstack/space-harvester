@@ -71,6 +71,9 @@ public final class TermGraphView {
     static final String NO_NEIGHBOURS = "Zu diesem Begriff gibt es noch keine Beziehungen.";
     static final String NO_VERBS = "Zu diesem Fachbegriff gibt es auf den analysierten, für dich sichtbaren Seiten "
             + "noch keine Aussagen mit anderen Fachbegriffen.";
+    /** Leer unter „Nur geprüft“: Es fehlen geprüfte Aussagen, nicht Aussagen überhaupt (Prüfen statt Neuanalyse). */
+    static final String NO_CHECKED_VERBS = "Zu diesem Fachbegriff gibt es noch keine geprüften Aussagen mit anderen "
+            + "Fachbegriffen.";
     static final String DOMAIN = "Nur Fachbegriffe";
     static final String CHECKED = "Nur geprüft";
     static final String CHECKED_TIP = "Nur Verbindungen mit geprüften Belegen; die Zahl zählt nur diese";
@@ -503,11 +506,13 @@ public final class TermGraphView {
         canvas.domain(domainMode());
         canvas.graph(graph);
         boolean fach = domainMode();
+        boolean checkedOnly = fach && checked.isSelected();
+        boolean alone = graph.nodes().size() == 1;
         String text;
         if (graph.nodes().isEmpty()) {
             text = graph.empty() == null ? " " : graph.empty();
-        } else if (graph.nodes().size() == 1) {
-            text = fach ? NO_VERBS : NO_NEIGHBOURS;
+        } else if (alone) {
+            text = checkedOnly ? NO_CHECKED_VERBS : fach ? NO_VERBS : NO_NEIGHBOURS;
         } else {
             text = Texts.count(graph.nodes().size(), fach ? "Fachbegriff" : "Begriff", fach ? "Fachbegriffe"
                     : "Begriffe") + " · " + Texts.count(graph.edges().size(), fach ? "Verbindung" : "Beziehung",
@@ -516,7 +521,7 @@ public final class TermGraphView {
         if (!graph.note().isBlank()) {
             text = (text.isBlank() ? "" : text + " · ") + graph.note();
         }
-        if (fach && checked.isSelected() && !graph.nodes().isEmpty()) {
+        if (checkedOnly && !graph.nodes().isEmpty() && !alone) {
             text = text + " · nur geprüft";
         }
         hint.setText(text);
