@@ -128,7 +128,7 @@ public final class Explorer {
     static final String REANALYZE = "Bereits analysierte Seiten erneut analysieren";
     static final String SIMPLIFY = "Sätze vorher vereinfachen (Vorstufe mit Chat-Modell, nur Seiten mit KI-Freigabe)";
     /** Sicherheitsgrenze: bis hierhin zählt die Schätzung, darüber fragt der Dialog ausdrücklich nach allen Seiten. */
-    static final int ANALYSIS_LIMIT = 500;
+    public static final int ANALYSIS_LIMIT = 500;
     private static final int NOTICE_MS = 8000;
 
     /** Umfang aus der Auswahl: eine Quelle, ein Space oder nichts (alle). */
@@ -2355,6 +2355,15 @@ public final class Explorer {
             + "Fortschritt und Abbruch unter Aufträge.";
 
     /** Der Text des Dialogs passend zum gewählten Analysator; er wechselt beim Umschalten des Auswahlfelds. */
+    /**
+     * Die Rückfrage vor „Analysieren“ eines größeren Umfangs mit dem Absatz des Analysators, wie im Baum; auch für den
+     * Reiter „Aussagen“ mit „mit Unterseiten“ (Fahrplan D3).
+     */
+    public static String analysisQuestion(StatementAnalysisJobs.Estimate estimate, String where,
+                                          AnalyzerChoice analyzer) {
+        return analysisText(analysisQuestion(estimate, where), analyzer);
+    }
+
     static String analysisText(String question, AnalyzerChoice analyzer) {
         return analyzer == AnalyzerChoice.MODEL ? question.replace(PARSER_NOTE, MODEL_NOTE) : question;
     }

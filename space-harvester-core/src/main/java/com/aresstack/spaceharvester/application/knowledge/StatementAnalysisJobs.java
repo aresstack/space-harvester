@@ -5,9 +5,15 @@ import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.background.BackgroundGroup;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
+import com.aresstack.spaceharvester.application.background.BackgroundKind;
+import com.aresstack.spaceharvester.application.background.BackgroundPart;
 import com.aresstack.spaceharvester.application.check.CheckScope;
 import com.aresstack.spaceharvester.application.check.CheckUnavailableException;
 import com.aresstack.spaceharvester.application.check.StatementChecks;
+import com.aresstack.spaceharvester.application.holdings.HoldingState;
+import com.aresstack.spaceharvester.application.holdings.Holdings;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
@@ -15,18 +21,26 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
 import com.aresstack.spaceharvester.application.sources.Partition;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 
@@ -49,6 +63,12 @@ import java.util.concurrent.CancellationException;
  *
  * <p>Es gibt keinen anderen Auslöser: kein Abgleich, kein Zeitplan und keine Anreicherungskette startet diesen
  * Auftrag. Die Seiten laufen nacheinander; der Analysator lädt sein Modell einmal und teilt es.
+ *
+ * <p>Fahrplan D3: Eine einzelne Seite ist ein normaler Auftrag ({@link JobType#STATEMENT_ANALYSIS}) mit dem Vorrang
+ * wie bisher. Teilbaum, Space und Quelle laufen, sobald {@link #background} angeschlossen ist, als Hintergrundgruppe
+ * der Art {@value #KIND} mit einem Unterauftrag je Space; derselbe Code rechnet, die Arbeit entsteht allein aus den
+ * Angaben des Unterauftrags (Umfang, Analysator, Vorstufe, Eigentümer). So setzt ein Neustart sie fort, und der
+ * Analysator bleibt der beim Start gewählte, auch wenn die Einstellung inzwischen anders ist.
  */
 public class StatementAnalysisJobs {
 
@@ -82,6 +102,38 @@ public class StatementAnalysisJobs {
     public static final String CHECK_COSTS = "CHECK_COSTS";
     /** Code des Info-Ereignisses „so viele Seiten ohne KI-Freigabe nicht geprüft“. */
     public static final String CHECK_NOT_RELEASED = "CHECK_NOT_RELEASED";
+    /**
+     * Anfang des Codes der Angabe mit dem Grund zu {@value #ANALYZER_UNAVAILABLE}, dahinter
+     * {@link AnalyzerUnavailableException.Reason#name()}, etwa {@code ANALYZER_REASON_MODEL_MISSING}.
+     */
+    public static final String ANALYZER_REASON = "ANALYZER_REASON_";
+    /** Kennung der Hintergrundart (Fahrplan D3). */
+    public static final String KIND = "statements";
+    /** Code der gelben Angabe: nach dem Neustart nicht von selbst fortgesetzt, weil ein anderer Eigentümer startete. */
+    public static final String RESUME_BY_HAND = "RESUME_BY_HAND";
+    /** Angabe: Umfang des Unterauftrags, {@value #SCOPE_PAGE}, {@value #SCOPE_SUBTREE} oder {@value #SCOPE_SPACE}. */
+    public static final String SCOPE = "scope";
+    /** Angabe: Ausgangsseite eines Teilbaums. */
+    public static final String ROOT = "root";
+    /** Angabe: der Analysator ({@link AnalyzerChoice#value()}), beim Start festgelegt. */
+    public static final String ANALYZER = "analyzer";
+    /** Angabe: erneut analysieren ({@code true}/{@code false}). */
+    public static final String REANALYZE = "reanalyze";
+    /** Angabe: Sicherheitsgrenze je Unterauftrag, {@code 0} ohne. */
+    public static final String MAX_PAGES = "max-pages";
+    /** Angabe: Betriebsart der Vorstufe ({@link com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode#value()}), fehlt ohne Vorstufe. */
+    public static final String STAGE_MODE = "stage-mode";
+    /** Angabe: Obergrenze zugleich der Vorstufe. */
+    public static final String STAGE_PARALLEL = "stage-parallel";
+    /** Angabe: Startzeit; beim Fortsetzen mit „erneut analysieren“ gilt eine Seite ab hier als erledigt. */
+    public static final String SINCE = "since";
+    /** Angabe: Eigentümer ({@link AccessContext#jobOwner()}) des Aufrufers, der startete. */
+    public static final String OWNER = "owner";
+    /** Angabe der Teile einer Quelle mit Grenze: alle ihre Spaces, durch Zeilenumbruch getrennt. */
+    public static final String LIMIT_SPACES = "limit-spaces";
+    static final String SCOPE_PAGE = "page";
+    static final String SCOPE_SUBTREE = "subtree";
+    static final String SCOPE_SPACE = "space";
 
     private final Jobs jobs;
     private final Discovery discovery;
@@ -89,6 +141,17 @@ public class StatementAnalysisJobs {
     private final StatementAnalysis analysis;
     private final AccessGuard access;
     private final String owner;
+    private volatile BackgroundJobs background;
+    private volatile AccessContext restored;
+    private volatile LocalPages local;
+    /** Aufrufer der jüngsten Gruppen, älteste zuerst verdrängt; danach und nach einem Neustart gilt {@link #restored}. */
+    private final Map<String, AccessContext> callers = Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, false) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, AccessContext> eldest) {
+                    return size() > 256;
+                }
+            });
 
     /**
      * @param owner Auftraggeber, unter dem die Aufträge in {@link Jobs} stehen
@@ -101,6 +164,82 @@ public class StatementAnalysisJobs {
         this.analysis = Objects.requireNonNull(analysis, "analysis");
         this.access = Objects.requireNonNull(access, "access");
         this.owner = owner;
+    }
+
+    /**
+     * Schließt die Hintergrundaufträge an (Fahrplan D3): Teilbaum, Space und Quelle laufen dann als Gruppe der Art
+     * {@value #KIND}. Ein Unterauftrag, den {@link BackgroundJobs#resumeInterrupted()} nach einem Neustart fortsetzt,
+     * läuft nur weiter, wenn {@code restored} derselbe Eigentümer ist, der ihn startete; sonst bleibt er angehalten mit
+     * der gelben Angabe {@value #RESUME_BY_HAND}.
+     *
+     * @param restored der Aufrufer nach einem Neustart (in der Desktop-App der App-Benutzer {@code Harvester.OWNER})
+     */
+    public void background(BackgroundJobs jobs, AccessContext restored) {
+        this.restored = Objects.requireNonNull(restored, "restored");
+        Objects.requireNonNull(jobs, "jobs").register(new BackgroundKind(KIND, this::work));
+        this.background = jobs;
+    }
+
+    /** Schließt den Bestand an, aus dem {@link #missing} liest. */
+    public void local(LocalPages pages) {
+        this.local = Objects.requireNonNull(pages, "pages");
+    }
+
+    /** Ob der Auftrag eine Aussagenanalyse ist: der normale Auftrag oder ein Unterauftrag der Art {@value #KIND}. */
+    public static boolean isAnalysis(JobStatus status) {
+        return status != null && (status.type() == JobType.STATEMENT_ANALYSIS
+                || status.type() == JobType.BACKGROUND && KIND.equals(status.parameter(BackgroundJobs.KIND)));
+    }
+
+    /**
+     * Wie viele Seiten der KI-Analysator laut den Ereignissen eines Auftrags bewusst ausgelassen hat (ohne KI-Freigabe,
+     * ohne Chat-Modell; {@value #MODEL_NOT_RELEASED}, {@value #MODEL_NO_MODEL}), für die gelbe Zahl im Reiter.
+     */
+    public static long omitted(List<JobEvent> events) {
+        long omitted = 0;
+        for (JobEvent event : events) {
+            if (MODEL_NOT_RELEASED.equals(event.code()) || MODEL_NO_MODEL.equals(event.code())) {
+                omitted += leadingNumber(event.message());
+            }
+        }
+        return omitted;
+    }
+
+    /** Die Zahl am Anfang der Meldung („12 Seiten …“), wie {@code runModel} sie schreibt; sonst 0. */
+    private static long leadingNumber(String message) {
+        if (message == null) {
+            return 0;
+        }
+        int end = 0;
+        while (end < message.length() && Character.isDigit(message.charAt(end))) {
+            end++;
+        }
+        try {
+            return end == 0 ? 0 : Long.parseLong(message.substring(0, end));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** Die Gruppe eines Unterauftrags ({@value BackgroundJobs#GROUP}), sonst leer. */
+    public static Optional<String> groupOf(JobStatus status) {
+        return status == null || status.type() != JobType.BACKGROUND ? Optional.empty()
+                : Optional.ofNullable(status.parameter(BackgroundJobs.GROUP));
+    }
+
+    /**
+     * Setzt eine Gruppe von Hand fort, mit den Rechten des Fortsetzenden; auch nach {@value #RESUME_BY_HAND}.
+     *
+     * @return die Gruppe, leer ohne Hintergrund oder unbekannte Gruppe
+     */
+    public Optional<BackgroundGroup> resume(AccessContext caller, String groupId) {
+        Objects.requireNonNull(caller, "caller");
+        BackgroundJobs group = background;
+        if (group == null) {
+            return Optional.empty();
+        }
+        callers.put(Objects.requireNonNull(groupId, "groupId"), caller);
+        return group.resume(groupId);
     }
 
     /** Ob überhaupt analysiert werden kann (Analysator eingerichtet); lädt kein Modell. */
@@ -127,36 +266,333 @@ public class StatementAnalysisJobs {
 
     /**
      * Startet den Auftrag; der Aufrufer wartet nicht. Der Umfang wird im Auftrag vollständig ermittelt, bevor die
-     * erste Seite analysiert wird.
+     * erste Seite analysiert wird. Ohne {@link Options#analyzer()} gilt die Einstellung {@code statements.analyzer}
+     * ({@link StatementAnalysis#selected()}); der Analysator wird beim Start festgelegt.
      *
+     * <p>Eine einzelne Seite ist ein normaler Auftrag; Teilbaum, Space und Quelle sind mit angeschlossenem Hintergrund
+     * eine Gruppe der Art {@value #KIND}, je Space ein Unterauftrag (Fahrplan D3).
+     *
+     * @return der Auftrag, bei einer Gruppe ihr erster Unterauftrag ({@link #groupOf} nennt die Gruppe)
      * @throws AnalyzerUnavailableException wenn kein Analysator eingerichtet ist
      */
     public JobStatus start(AccessContext caller, Scope scope, Options options) {
+        return start(caller, scope, options, fetch);
+    }
+
+    /**
+     * Wie {@link #start} für genau die gezeigte Seite (Reiter „Aussagen“, „Analysieren“): derselbe Auftrag
+     * {@code STATEMENT_ANALYSIS}, er analysiert aber die gezeigte Fassung, statt die Seite erneut abzurufen; so fragt
+     * ein Klick die Quelle nicht und rechnet denselben Text, den der Benutzer sieht.
+     */
+    public JobStatus startShown(AccessContext caller, PageSnapshot shown, Options options) {
+        Objects.requireNonNull(shown, "shown");
+        PageFetch pages = (who, sourceId, pageId) -> shown.key().sourceId().equals(sourceId)
+                && shown.key().pageId().equals(pageId) ? shown : fetch.page(who, sourceId, pageId);
+        return start(caller, new Scope.SinglePage(shown.key().sourceId(), shown.spaceKey(), shown.key().pageId()),
+                options, pages);
+    }
+
+    private JobStatus start(AccessContext caller, Scope scope, Options options, PageFetch pages) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(options, "options");
-        if (!analysis.available(options.analyzer())) {
+        AnalyzerChoice analyzer = options.analyzer() != null ? options.analyzer() : analysis.selected();
+        Options fixed = options.withAnalyzer(analyzer);
+        if (!analysis.available(analyzer)) {
             throw new AnalyzerUnavailableException(AnalyzerUnavailableException.Reason.NOT_CONFIGURED,
-                    options.analyzer() == AnalyzerChoice.MODEL ? "In dieser Laufzeit ist kein KI-Analysator eingerichtet"
+                    analyzer == AnalyzerChoice.MODEL ? "In dieser Laufzeit ist kein KI-Analysator eingerichtet"
                             : "In dieser Laufzeit ist kein Satzanalysator eingerichtet (nur in der Desktop-App)", null);
         }
+        BackgroundJobs group = background;
+        if (group != null && !(scope instanceof Scope.SinglePage)) {
+            List<BackgroundPart.Draft> parts = parts(caller, scope, fixed);
+            if (!parts.isEmpty()) {
+                // Den Aufrufer vor dem Start ablegen: ein Unterauftrag kann schon während start() laufen.
+                String groupId = BackgroundJobs.newGroupId();
+                callers.put(groupId, caller);
+                return group.start(groupId, KIND, title(analyzer), parts).parts().get(0);
+            }
+        }
+        JobTask task = JobTask.blocking(context -> run(caller, scope, fixed, null, List.of(), pages, context));
+        if (scope instanceof Scope.SinglePage) {
+            // Ein Klick auf eine Seite wartet nie hinter Hintergrund (AT, #1055).
+            return jobs.submitInteractive(JobType.STATEMENT_ANALYSIS, scope.sourceId(), scope.spaceKey(),
+                    scope.rootPageId(), owner, Map.of(), task);
+        }
         return jobs.submit(JobType.STATEMENT_ANALYSIS, scope.sourceId(), scope.spaceKey(), scope.rootPageId(), owner,
-                JobTask.blocking(context -> run(caller, scope, options, context)));
+                task);
     }
 
-    private void run(AccessContext caller, Scope scope, Options options, JobContext context) {
+    /** Titel der Gruppe in der Auftragsliste. */
+    static String title(AnalyzerChoice analyzer) {
+        return analyzer == AnalyzerChoice.MODEL ? "Aussagen analysieren (KI)" : "Aussagen analysieren (MaltParser)";
+    }
+
+    /**
+     * Die Unteraufträge, je Space einer: eine Quelle in alle Spaces mit {@code metadata}-Freigabe, ein Teilbaum in den
+     * Space seiner Seite (unbekannt: der Unterauftrag ermittelt ihn wie bisher selbst).
+     */
+    private List<BackgroundPart.Draft> parts(AccessContext caller, Scope scope, Options options) {
+        Map<String, String> common = new LinkedHashMap<>();
+        common.put(ANALYZER, options.analyzer().value());
+        common.put(REANALYZE, Boolean.toString(options.reanalyze()));
+        common.put(MAX_PAGES, Integer.toString(options.maxPages()));
+        if (options.simplification() != null) {
+            common.put(STAGE_MODE, options.simplification().mode().value());
+            common.put(STAGE_PARALLEL, Integer.toString(options.simplification().parallel()));
+        }
+        common.put(SINCE, analysis.now().toString());
+        common.put(OWNER, caller.jobOwner());
+        List<BackgroundPart.Draft> parts = new ArrayList<>();
+        switch (scope) {
+            case Scope.SinglePage page -> {
+                Map<String, String> own = new LinkedHashMap<>(common);
+                own.put(SCOPE, SCOPE_PAGE);
+                own.put(ROOT, page.pageId());
+                parts.add(new BackgroundPart.Draft(page.sourceId(), page.spaceKey(), own));
+            }
+            case Scope.Subtree subtree -> {
+                Map<String, String> own = new LinkedHashMap<>(common);
+                own.put(SCOPE, SCOPE_SUBTREE);
+                own.put(ROOT, subtree.pageId());
+                parts.add(new BackgroundPart.Draft(subtree.sourceId(), subtree.spaceKey(), own));
+            }
+            case Scope.Space space -> parts.add(spacePart(space.sourceId(), space.spaceKey(), common));
+            case Scope.Source source -> {
+                List<Partition> spaces;
+                try {
+                    spaces = discovery.spaces(caller, source.sourceId());
+                } catch (AccessDeniedException e) {
+                    throw e;
+                } catch (RuntimeException e) {
+                    // Quelle gerade nicht erreichbar: ein normaler Auftrag, der wie bisher „unvollständig“ endet und
+                    // sich wiederholen lässt, statt dass der Start scheitert.
+                    return List.of();
+                }
+                if (options.maxPages() > 0) {
+                    // Die bestätigte Grenze gilt für die ganze Quelle: jeder Teil zählt alle ihre Spaces.
+                    common.put(LIMIT_SPACES, String.join("\n", spaces.stream().map(Partition::key).toList()));
+                }
+                for (Partition space : spaces) {
+                    parts.add(spacePart(source.sourceId(), space.key(), common));
+                }
+            }
+        }
+        return parts;
+    }
+
+    private static BackgroundPart.Draft spacePart(String sourceId, String spaceKey, Map<String, String> common) {
+        Map<String, String> own = new LinkedHashMap<>(common);
+        own.put(SCOPE, SCOPE_SPACE);
+        return new BackgroundPart.Draft(sourceId, spaceKey, own);
+    }
+
+    /**
+     * Die Arbeit eines Unterauftrags, allein aus seinen Angaben: Umfang, festgelegter Analysator, Vorstufe. Beim
+     * Fortsetzen überspringt der Lauf Seiten, die der Analysator schon aktuell hat (mit „erneut analysieren“: seit
+     * {@value #SINCE}). Setzt {@link BackgroundJobs#resumeInterrupted()} ihn fort und der Eigentümer ist ein anderer
+     * als der wiederhergestellte Aufrufer, hält er gelb an ({@value #RESUME_BY_HAND}).
+     */
+    private JobTask work(BackgroundPart part) {
+        String scopeName = part.parameter(SCOPE);
+        String root = part.parameter(ROOT);
+        Scope scope = SCOPE_PAGE.equals(scopeName) && root != null
+                ? new Scope.SinglePage(part.sourceId(), part.partitionKey(), root)
+                : SCOPE_SUBTREE.equals(scopeName) && root != null
+                ? new Scope.Subtree(part.sourceId(), part.partitionKey(), root)
+                : new Scope.Space(part.sourceId(), part.partitionKey());
+        Options options = options(part);
+        Instant since = part.resumed() ? instant(part.parameter(SINCE)) : null;
+        AccessContext known = callers.get(part.groupId());
+        AccessContext fallback = restored;
+        return JobTask.blocking(context -> {
+            // Nie mit fremden Rechten: ohne bekannten Aufrufer nur, wenn der wiederhergestellte der Eigentümer ist.
+            // Von Hand mit eigenen Rechten fortsetzen geht über resume(caller, groupId).
+            if (known == null && (fallback == null || !fallback.jobOwner().equals(part.parameter(OWNER)))) {
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, RESUME_BY_HAND,
+                        part.automatic() ? "Nach dem Neustart nicht von selbst fortgesetzt, weil ein anderer Aufrufer "
+                                + "ihn gestartet hat; bitte von Hand fortsetzen"
+                                : "Ein anderer Aufrufer hat ihn gestartet; bitte mit den eigenen Rechten fortsetzen"));
+                context.pause(PauseReason.RESUME_BY_HAND);
+                return;
+            }
+            AccessContext caller = known != null ? known : fallback;
+            if (caller == null) {
+                throw new IllegalStateException("Kein Aufrufer für den Hintergrund angeschlossen");
+            }
+            if (!analysis.available(options.analyzer())) {
+                throw new JobFailedException(ANALYZER_UNAVAILABLE, options.analyzer() == AnalyzerChoice.MODEL
+                        ? "In dieser Laufzeit ist kein KI-Analysator eingerichtet"
+                        : "In dieser Laufzeit ist kein Satzanalysator eingerichtet");
+            }
+            run(caller, scope, options, since, limitSpaces(part), fetch, context);
+        });
+    }
+
+    /** Die Spaces, über die eine Quelle mit Grenze zählt ({@value #LIMIT_SPACES}); leer ohne. */
+    private static List<String> limitSpaces(BackgroundPart part) {
+        String value = part.parameter(LIMIT_SPACES);
+        return value == null || value.isBlank() ? List.of()
+                : java.util.Arrays.stream(value.split("\n")).filter(key -> !key.isBlank()).toList();
+    }
+
+    /** Die Optionen aus den Angaben; ein fehlender Analysator ist der MaltParser, nie die aktuelle Einstellung. */
+    static Options options(BackgroundPart part) {
+        StatementAnalysis.SimplificationRequest stage = null;
+        String mode = part.parameter(STAGE_MODE);
+        if (mode != null) {
+            stage = new StatementAnalysis.SimplificationRequest(
+                    com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.parse(mode),
+                    Math.max(1, number(part.parameter(STAGE_PARALLEL), 1)));
+        }
+        return new Options(Boolean.parseBoolean(part.parameter(REANALYZE)),
+                Math.max(0, number(part.parameter(MAX_PAGES), 0)), stage, AnalyzerChoice.parse(part.parameter(ANALYZER)));
+    }
+
+    private static int number(String value, int fallback) {
+        try {
+            return value == null ? fallback : Integer.parseInt(value.strip());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static Instant instant(String value) {
+        try {
+            return value == null ? null : Instant.parse(value);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Seiten einer Menge, die jetzt ohne aktuelle Analyse des eingestellten Analysators ({@code statements.analyzer})
+     * sind und die der Dienst gleich analysieren kann (für den Planer, Fahrplan D1): lokal in aktueller Fassung und
+     * ohne Analyse, mit geändertem Text oder nur mit einer Analyse des anderen Analysators. Seiten, die erst geladen
+     * werden müssen (nur in der Quelle bekannt oder im Bestand veraltet, {@link HoldingState#OUTDATED}), zählt
+     * {@link Missing#toLoad()}; das Laden ist eine eigene Stufe des Planers. Seiten ohne Leserecht und ohne Lesetext
+     * fallen still heraus. Nur aus Bestand und Cache, keine Quellenabrufe.
+     *
+     * <p>Der Bestand kennt nur Abgeglichenes: Ein nicht abgeglichener Space ist hier leer, der Auftrag findet ihn über
+     * die Navigation trotzdem vollständig.
+     *
+     * @throws IllegalStateException ohne angeschlossenen Bestand ({@link #local})
+     */
+    public Missing missing(AccessContext caller, PageSet pages) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(pages, "pages");
+        LocalPages stock = local;
+        if (stock == null) {
+            throw new IllegalStateException("Kein Bestand angeschlossen");
+        }
+        AnalyzerChoice choice = analysis.selected();
+        Map<String, Set<String>> missing = new LinkedHashMap<>();
+        int toLoad = 0;
+        for (Map.Entry<PageKey, Holdings.Located> entry : stock.locate(caller, pages).entrySet()) {
+            PageKey key = entry.getKey();
+            HoldingState state = entry.getValue().state();
+            if (state == HoldingState.LOCKED || !access.permits(caller,
+                    ResourceScope.page(key.sourceId(), entry.getValue().spaceKey(), key.pageId()), AccessKind.CONTENT)) {
+                continue; // gesperrt oder ohne Leserecht: still heraus, auch nicht unter „zu laden“
+            }
+            if (state != HoldingState.LOCAL) {
+                toLoad++;
+                continue;
+            }
+            Optional<PageSnapshot> snapshot = stock.stored(key);
+            if (snapshot.isEmpty()) {
+                toLoad++;
+                continue;
+            }
+            PageStatements read;
+            try {
+                read = analysis.read(caller, snapshot.get(), choice);
+            } catch (AccessDeniedException e) {
+                continue; // ohne Leserecht: still heraus
+            }
+            if (read.state() == PageStatements.State.CURRENT
+                    || read.state() == PageStatements.State.MISSING && PageStatements.NO_TEXT.equals(read.reason())) {
+                continue;
+            }
+            missing.computeIfAbsent(key.sourceId(), ignored -> new LinkedHashSet<>()).add(key.pageId());
+        }
+        return new Missing(PageSet.of(missing), toLoad);
+    }
+
+    /**
+     * Ergebnis von {@link #missing}.
+     *
+     * @param pages  Seiten ohne aktuelle Analyse, die der Dienst jetzt analysieren kann
+     * @param toLoad so viele Seiten müssten erst geladen werden (nur in der Quelle bekannt oder veraltet); ohne Titel
+     */
+    public record Missing(PageSet pages, int toLoad) {
+
+        public Missing {
+            Objects.requireNonNull(pages, "pages");
+        }
+    }
+
+    /** Bestand und Cache für {@link #missing}, ohne Quellenabrufe. */
+    public interface LocalPages {
+
+        /** Space und Bestand je Seite, mit den Rechten des Aufrufers ({@link Holdings#locate}). */
+        Map<PageKey, Holdings.Located> locate(AccessContext caller, PageSet pages);
+
+        /** Der gespeicherte Stand der Seite aus dem Cache. */
+        Optional<PageSnapshot> stored(PageKey key);
+    }
+
+    /**
+     * Ob die Seite übersprungen wird: ohne „erneut analysieren“, wenn der Analysator sie aktuell hat; mit „erneut
+     * analysieren“ nur beim Fortsetzen ({@code since} gesetzt), wenn er sie seit dem Start aktuell gerechnet hat.
+     */
+    private boolean done(AccessContext caller, PageSnapshot snapshot, Options options, Instant since) {
+        if (options.reanalyze() && since == null) {
+            return false;
+        }
+        boolean current = options.analyzer() == AnalyzerChoice.MODEL
+                ? analysis.currentWith(caller, snapshot, AnalyzerChoice.MODEL)
+                : analysis.current(caller, snapshot, options.simplification());
+        if (!current || !options.reanalyze()) {
+            return current;
+        }
+        PageStatementAnalysis stored = analysis.read(caller, snapshot, options.analyzer()).analysis();
+        return stored != null && stored.analyzedAt() != null && !stored.analyzedAt().isBefore(since);
+    }
+
+    /**
+     * @param limitSpaces bei einem Space-Teil einer Quelle mit Grenze alle Spaces der Quelle: Die Grenze gilt für ihre
+     *                    Summe wie beim früheren einzelnen Auftrag; jeder Teil zählt sie vor der ersten Analyse
+     * @param pages       woher die Seiten kommen; für die gezeigte Seite ihre Fassung ({@link #startShown})
+     */
+    private void run(AccessContext caller, Scope scope, Options options, Instant since, List<String> limitSpaces,
+                     PageFetch pages, JobContext context) {
         context.phase(COMPONENT, PHASE_DISCOVERY);
         Walk walk = new Walk(caller, scope, options.maxPages() == 0 ? Integer.MAX_VALUE : bound(options.maxPages()),
                 context::checkpoint);
         walk.onPage = () -> context.discovered(1);
         walk.run();
-        if (options.maxPages() > 0 && walk.pages.size() > options.maxPages()) {
+        long total = walk.pages.size();
+        if (options.maxPages() > 0 && scope instanceof Scope.Space own) {
+            for (String other : limitSpaces) {
+                if (total > options.maxPages()) {
+                    break;
+                }
+                if (!other.equals(own.spaceKey())) {
+                    Walk count = new Walk(caller, new Scope.Space(own.sourceId(), other),
+                            bound(options.maxPages()), context::checkpoint);
+                    count.run();
+                    total += count.pages.size();
+                }
+            }
+        }
+        if (options.maxPages() > 0 && total > options.maxPages()) {
             throw new JobFailedException(SCOPE_TOO_LARGE, "Der Umfang hat mehr als " + options.maxPages()
                     + " Seiten; es wurde nichts analysiert. Bitte ausdrücklich mit höherer Grenze bestätigen.");
         }
         context.phase(COMPONENT, PHASE_ANALYSIS);
         if (options.analyzer() == AnalyzerChoice.MODEL) {
-            runModel(caller, walk, options, context);
+            runModel(caller, walk, options, since, pages, context);
             return;
         }
         long current = 0;
@@ -166,9 +602,9 @@ public class StatementAnalysisJobs {
         for (Target target : walk.pages.values()) {
             context.checkpoint();
             try {
-                PageSnapshot snapshot = fetch.page(caller, target.sourceId(), target.pageId());
+                PageSnapshot snapshot = pages.page(caller, target.sourceId(), target.pageId());
                 // Aktuell = gleicher Text, Analysator und (mit Vorstufe) Stand der Vorstufe; auch nach Fortsetzen
-                if (!options.reanalyze() && analysis.current(caller, snapshot, vorstufe)) {
+                if (done(caller, snapshot, options, since)) {
                     current++;
                     context.processed(1);
                     continue;
@@ -200,6 +636,9 @@ public class StatementAnalysisJobs {
                 context.checkpoint();
                 throw e;
             } catch (AnalyzerUnavailableException e) {
+                // Der Grund als eigene Angabe, damit der Reiter etwa „Modell fehlt“ von „nicht eingerichtet“ trennt.
+                context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                        ANALYZER_REASON + e.reason().name(), "Analysator nicht bereit", null, null, null));
                 throw new JobFailedException(ANALYZER_UNAVAILABLE, e.getMessage(), e);
             } catch (RuntimeException e) {
                 if (context.cancelRequested()) {
@@ -244,7 +683,8 @@ public class StatementAnalysisJobs {
      * Freigabe oder ohne eingestelltes Modell wird die Seite bewusst ausgelassen und gezählt (gelb), nie als Fehler;
      * ein Fehler des Dienstes zählt die Seite als gescheitert (rot), die übrigen laufen weiter.
      */
-    private void runModel(AccessContext caller, Walk walk, Options options, JobContext context) {
+    private void runModel(AccessContext caller, Walk walk, Options options, Instant since, PageFetch pages,
+                          JobContext context) {
         long current = 0;
         long withoutText = 0;
         long notReleased = 0;
@@ -254,8 +694,8 @@ public class StatementAnalysisJobs {
         for (Target target : walk.pages.values()) {
             context.checkpoint();
             try {
-                PageSnapshot snapshot = fetch.page(caller, target.sourceId(), target.pageId());
-                if (!options.reanalyze() && analysis.currentWith(caller, snapshot, AnalyzerChoice.MODEL)) {
+                PageSnapshot snapshot = pages.page(caller, target.sourceId(), target.pageId());
+                if (done(caller, snapshot, options, since)) {
                     current++;
                     context.processed(1);
                     continue;
@@ -350,8 +790,14 @@ public class StatementAnalysisJobs {
         if (!analysis.checkAvailable()) {
             throw new CheckUnavailableException(CheckUnavailableException.Reason.NO_MODEL);
         }
+        JobTask task = JobTask.blocking(context -> runCheck(caller, scope, options, context));
+        if (scope instanceof Scope.SinglePage) {
+            // „Prüfen“ einer Seite ist ein Klick wie „Analysieren“ (AT, #1055).
+            return jobs.submitInteractive(JobType.STATEMENT_CHECK, scope.sourceId(), scope.spaceKey(),
+                    scope.rootPageId(), owner, Map.of(), task);
+        }
         return jobs.submit(JobType.STATEMENT_CHECK, scope.sourceId(), scope.spaceKey(), scope.rootPageId(), owner,
-                JobTask.blocking(context -> runCheck(caller, scope, options, context)));
+                task);
     }
 
     private void runCheck(AccessContext caller, Scope scope, CheckOptions options, JobContext context) {
@@ -659,7 +1105,7 @@ public class StatementAnalysisJobs {
      *                  scheitert der Auftrag vor der ersten Analyse mit {@link #SCOPE_TOO_LARGE} – nie still gekürzt.
      * @param simplification Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3) oder {@code null} ohne sie; nur Seiten mit
      *                  KI-Freigabe gehen an das Modell, die übrigen werden ohne Vorstufe analysiert; nur mit dem MaltParser
-     * @param analyzer  welcher Analysator rechnet (Fahrplan Paket A2), {@code null} = MaltParser. Mit
+     * @param analyzer  welcher Analysator rechnet (Fahrplan Paket A2), {@code null} = Einstellung (D3). Mit
      *                  {@link AnalyzerChoice#MODEL} gehen nur Seiten mit KI-Freigabe an den KI-Dienst; Seiten ohne
      *                  Freigabe und ohne eingestelltes Modell werden bewusst ausgelassen und gezählt, nie als Fehler
      */
@@ -668,21 +1114,25 @@ public class StatementAnalysisJobs {
 
         public static final Options DEFAULT = new Options(false, 0);
 
-        /** Ohne Vorstufe, mit dem MaltParser. */
+        /** Ohne Vorstufe, mit dem eingestellten Analysator. */
         public Options(boolean reanalyze, int maxPages) {
             this(reanalyze, maxPages, null);
         }
 
-        /** Mit dem MaltParser. */
+        /** Mit dem eingestellten Analysator ({@code statements.analyzer}). */
         public Options(boolean reanalyze, int maxPages, StatementAnalysis.SimplificationRequest simplification) {
-            this(reanalyze, maxPages, simplification, AnalyzerChoice.PARSER);
+            this(reanalyze, maxPages, simplification, null);
         }
 
         public Options {
             if (maxPages < 0) {
                 throw new IllegalArgumentException("maxPages darf nicht negativ sein");
             }
-            analyzer = analyzer == null ? AnalyzerChoice.PARSER : analyzer;
+        }
+
+        /** Dieselben Optionen mit festgelegtem Analysator. */
+        public Options withAnalyzer(AnalyzerChoice choice) {
+            return new Options(reanalyze, maxPages, simplification, Objects.requireNonNull(choice, "choice"));
         }
     }
 

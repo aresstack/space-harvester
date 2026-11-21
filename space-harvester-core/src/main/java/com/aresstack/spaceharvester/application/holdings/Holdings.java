@@ -254,6 +254,62 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
                 resolved.summary().inventoried() && resolved.found());
     }
 
+    /**
+     * Space und Bestand je Seite einer Menge, nach derselben Regel wie {@link #state} (für den Planer, Fahrplan D1, und
+     * {@code StatementAnalysisJobs#missing}). Ohne Quellenzugriff; es fehlen Seiten ohne Eintrag im Katalog, in Spaces
+     * ohne {@code metadata}-Freigabe und solche, die der Aufrufer nicht sehen darf.
+     */
+    public Map<PageKey, Located> locate(AccessContext caller, PageSet pages) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(pages, "pages");
+        Map<PageKey, Located> located = new LinkedHashMap<>();
+        for (String sourceId : pages.sourceIds()) {
+            Map<String, List<String>> bySpace = new LinkedHashMap<>();
+            for (String pageId : pages.pagesOf(sourceId)) {
+                catalog.spaceOf(sourceId, pageId).ifPresent(spaceKey -> bySpace
+                        .computeIfAbsent(spaceKey, ignored -> new ArrayList<>()).add(pageId));
+            }
+            for (Map.Entry<String, List<String>> space : bySpace.entrySet()) {
+                String spaceKey = space.getKey();
+                if (!access.permits(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA)) {
+                    continue;
+                }
+                Optional<HoldingsCatalog.Stock> found = catalog.stock(sourceId, spaceKey);
+                if (found.isEmpty()) {
+                    continue;
+                }
+                HoldingsCatalog.Stock stock = found.get();
+                Map<String, HoldingsCatalog.CatalogPage> byId = new HashMap<>();
+                stock.pages().forEach(page -> byId.putIfAbsent(page.pageId(), page));
+                Set<String> locked = new HashSet<>();
+                stock.locked().forEach(page -> locked.add(page.pageId()));
+                for (String pageId : space.getValue()) {
+                    HoldingsCatalog.CatalogPage page = byId.get(pageId);
+                    HoldingState state = page != null ? state(page, stock.stale())
+                            : locked.contains(pageId) ? HoldingState.LOCKED : null;
+                    if (state != null && visible(caller, sourceId, spaceKey, pageId)) {
+                        located.put(new PageKey(sourceId, pageId), new Located(spaceKey, state));
+                    }
+                }
+            }
+        }
+        return located;
+    }
+
+    /**
+     * Space und Bestand einer Seite ({@link #locate}).
+     *
+     * @param spaceKey ihr Space
+     * @param state    ihr Zustand im Bestand
+     */
+    public record Located(String spaceKey, HoldingState state) {
+
+        public Located {
+            Objects.requireNonNull(spaceKey, "spaceKey");
+            Objects.requireNonNull(state, "state");
+        }
+    }
+
     /** Die Spaces einer Wurzel: ihr eigener oder alle der Quelle, die der Aufrufer sehen darf. */
     private List<String> spaceKeys(AccessContext caller, Selection.Root root) {
         if (root.spaceKey() != null) {

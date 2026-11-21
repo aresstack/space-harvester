@@ -448,6 +448,141 @@ class StatementsTabTest {
     }
 
     @Test
+    void withSubpagesTheButtonStartsTheGroupOverTheSubtreeAndDoesNotWait() {
+        List<String> statuses = new ArrayList<>();
+        tab.onStatus(statuses::add);
+        tab.withSubpages(() -> true);
+        tab.confirmBelowWith(question -> true);
+        tab.page(page("1"), text());
+        runner.runAll();
+
+        tab.clickAnalyze();
+        assertThat(tab.cancelOffered()).as("abbrechen unter Aufträge, nicht im Reiter").isFalse();
+        runner.runAll();
+
+        assertThat(actions.below).containsExactly("1");
+        assertThat(actions.belowLimits).as("Sicherheitsgrenze wie im Baum").containsExactly(500);
+        assertThat(actions.analyses).as("keine eigene Rechnung im Reiter").isZero();
+        assertThat(statuses).contains(StatementsTab.STARTED_BELOW);
+        assertThat(tab.analyzeOffered()).isTrue();
+    }
+
+    /** Wie im Baum: erst zählen und mit „wirklich“ fragen; „Nein“ startet nichts, über der Grenze ohne Grenze. */
+    @Test
+    void withSubpagesAsksWithTheCountFirstAndNoStartsNothing() {
+        List<String> questions = new ArrayList<>();
+        tab.withSubpages(() -> true);
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.confirmBelowWith(question -> {
+            questions.add(question);
+            return false;
+        });
+
+        tab.clickAnalyze();
+        runner.runAll();
+
+        assertThat(questions).singleElement().asString().contains("4 Seiten wirklich analysieren?")
+                .contains("mit allen Unterseiten");
+        assertThat(actions.below).isEmpty();
+        assertThat(tab.analyzeOffered()).isTrue();
+
+        actions.belowEstimate = new com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs
+                .Estimate(null, 500, true, false);
+        tab.confirmBelowWith(question -> true);
+        tab.clickAnalyze();
+        runner.runAll();
+        assertThat(actions.belowLimits).as("alle ausdrücklich bestätigt").containsExactly(0);
+    }
+
+    /** UX (D3): „gestartet“ bleibt nicht stehen; das Ende der Gruppe ersetzt es, „Aufträge“ ist ein Link. */
+    @Test
+    void theEndOfTheGroupReplacesStartedWithTheResultAndJobsIsALink() {
+        List<com.aresstack.spaceharvester.app.ui.controls.StatusNote> notes = new ArrayList<>();
+        List<String> opened = new ArrayList<>();
+        tab.onNote(notes::add);
+        tab.onShowJob(opened::add);
+        tab.withSubpages(() -> true);
+        tab.confirmBelowWith(question -> true);
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.clickAnalyze();
+        runner.runAll();
+
+        com.aresstack.spaceharvester.app.ui.controls.StatusNote started = notes.get(notes.size() - 1);
+        assertThat(started.text()).isEqualTo(StatementsTab.STARTED_BELOW);
+        assertThat(started.link()).isEqualTo("Aufträge");
+        started.action().run();
+        assertThat(opened).as("öffnet den Auftrag in der Auftragsverwaltung").containsExactly("job-1");
+
+        actions.belowFinished.accept(new StatementsTab.BelowOutcome(12, 3, 0, 0, StatementsTab.BelowOutcome.End.DONE));
+        runner.runAll(); // der Reiter liest die Ablage neu; das Ergebnis bleibt in der Statuszeile
+
+        com.aresstack.spaceharvester.app.ui.controls.StatusNote result = notes.get(notes.size() - 1);
+        assertThat(result.text()).startsWith("Analyse der Seite samt Unterseiten fertig: 12 Seiten, davon 3 neu");
+        assertThat(result.tone()).isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.PLAIN);
+        assertThat(result.link()).isEqualTo("Aufträge");
+    }
+
+    @Test
+    void aGroupEndingAfterThePageChangedLeavesTheNewPageAlone() {
+        List<com.aresstack.spaceharvester.app.ui.controls.StatusNote> notes = new ArrayList<>();
+        tab.onNote(notes::add);
+        tab.withSubpages(() -> true);
+        tab.confirmBelowWith(question -> true);
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.clickAnalyze();
+        runner.runAll();
+        Consumer<StatementsTab.BelowOutcome> first = actions.belowFinished;
+
+        tab.page(page("2"), text());
+        runner.runAll();
+        int before = notes.size();
+        first.accept(new StatementsTab.BelowOutcome(4, 4, 0, 0, StatementsTab.BelowOutcome.End.DONE));
+
+        assertThat(actions.belowWatchClosed).as("Seitenwechsel beendet das Warten").isTrue();
+        assertThat(notes).hasSize(before);
+    }
+
+    @Test
+    void skippedPagesAreYellowWithANumberAndOnlyErrorsAreRed() {
+        Runnable open = () -> { };
+        var omitted = StatementsTab.belowResult(new StatementsTab.BelowOutcome(10, 7, 0, 3,
+                StatementsTab.BelowOutcome.End.DONE), open);
+        assertThat(omitted.tone()).isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.WARNING);
+        assertThat(omitted.text()).contains("10 Seiten").contains("3 Seiten bewusst ausgelassen");
+
+        var failed = StatementsTab.belowResult(new StatementsTab.BelowOutcome(10, 9, 1, 0,
+                StatementsTab.BelowOutcome.End.DONE), open);
+        assertThat(failed.tone()).isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR);
+        assertThat(failed.text()).contains("1 Seite mit Fehler");
+
+        assertThat(StatementsTab.belowResult(new StatementsTab.BelowOutcome(2, 0, 0, 0,
+                StatementsTab.BelowOutcome.End.FAILED), open).tone())
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR);
+        assertThat(StatementsTab.belowResult(new StatementsTab.BelowOutcome(2, 2, 0, 0,
+                StatementsTab.BelowOutcome.End.CANCELLED), open).tone())
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.PLAIN);
+        var paused = StatementsTab.belowResult(new StatementsTab.BelowOutcome(2, 2, 0, 0,
+                StatementsTab.BelowOutcome.End.PAUSED), open);
+        assertThat(paused.tone()).isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.WARNING);
+        assertThat(paused.link()).isEqualTo("Aufträge");
+    }
+
+    @Test
+    void cancelReachesTheCoreJobThroughTheCancellation() {
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.clickAnalyze();
+        tab.clickCancel();
+        runner.runAll();
+
+        assertThat(actions.lastCancelled).isInstanceOf(com.aresstack.spaceharvester.app.runtime.Cancellation.class);
+        assertThat(actions.lastCancelled.getAsBoolean()).isTrue();
+    }
+
+    @Test
     void cancelKeepsAnalyseLockedUntilTheRunHasReallyEnded() {
         tab.page(page("1"), text());
         runner.runAll();
@@ -700,6 +835,42 @@ class StatementsTabTest {
             return List.of(new KnowledgeGraph.Link("beleg", KnowledgeGraph.Match.LEXICAL, List.of(DOC + "#s1.t10"),
                     new KnowledgeGraph.PageRef(new PageKey("handbuch", "7"), "OPS", "Belege",
                             PageStatements.State.CURRENT, null), List.of("handbuch/7@abc#s1.t4")));
+        }
+
+        final List<String> below = new ArrayList<>();
+        /** Wartet auf das Ende der Gruppe, wie der Core es meldet. */
+        Consumer<StatementsTab.BelowOutcome> belowFinished;
+        boolean belowWatchClosed;
+
+        final List<Integer> belowLimits = new ArrayList<>();
+        com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.Estimate belowEstimate;
+
+        @Override
+        public com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.Estimate estimateBelow(
+                PageSnapshot page, int limit) {
+            return belowEstimate != null ? belowEstimate
+                    : new com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.Estimate(null, 4,
+                    false, false);
+        }
+
+        @Override
+        public com.aresstack.spaceharvester.application.jobs.JobStatus startBelow(PageSnapshot page,
+                                                                                  boolean withStage, int maxPages) {
+            below.add(page.key().pageId());
+            belowLimits.add(maxPages);
+            return new com.aresstack.spaceharvester.application.jobs.JobStatus("job-" + page.key().pageId(),
+                    com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND, "handbuch", "OPS", "app",
+                    com.aresstack.spaceharvester.application.jobs.JobState.QUEUED,
+                    com.aresstack.spaceharvester.application.jobs.JobProgress.NONE, null, false, Instant.EPOCH, null,
+                    null, page.key().pageId(), null, Map.of(), false, false, null);
+        }
+
+        @Override
+        public AutoCloseable whenBelowFinished(com.aresstack.spaceharvester.application.jobs.JobStatus started,
+                                               Consumer<StatementsTab.BelowOutcome> listener) {
+            belowFinished = listener;
+            belowWatchClosed = false;
+            return () -> belowWatchClosed = true;
         }
 
         @Override

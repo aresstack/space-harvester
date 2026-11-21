@@ -1161,16 +1161,171 @@ public final class Workspace {
     }
 
     /**
-     * „Mit MaltParser analysieren“: analysiert genau diese Seite jetzt und ersetzt ihre Analyse samt Graph-Projektion.
-     * Lädt beim ersten Aufruf das Modell (Sekunden); nur auf ausdrückliche Anforderung, nie auf dem EDT.
+     * „Analysieren“ im Reiter Aussagen: analysiert genau diese Seite mit dem eingestellten Analysator als Auftrag
+     * „Aussagenanalyse“ (Fahrplan D3, derselbe Code wie im Baum, mit dem Vorrang eines normalen Auftrags) und wartet auf
+     * sein Ende; ersetzt ihre Analyse samt Graph-Projektion. Nur auf ausdrückliche Anforderung, nie auf dem EDT.
+     *
+     * @param cancelled eine {@link Cancellation} bricht den Auftrag ab, sobald sie ausgelöst wird
+     * @throws AnalyzerUnavailableException wenn der KI-Analysator die Seite bewusst ausließ (ohne Freigabe oder Modell)
+     *                                      oder kein Analysator bereitsteht
+     * @throws java.util.concurrent.CancellationException nach einem Abbruch; die alte Analyse bleibt
      */
     public PageStatements analyzeStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled) {
-        if (statementAnalyzer() == AnalyzerChoice.MODEL) {
-            return harvester.statementAnalysis().analyzeWith(caller, snapshot, cancelled, AnalyzerChoice.MODEL,
-                    costs -> {
-                    });
+        return analyzePage(snapshot, cancelled, null);
+    }
+
+    /**
+     * Seite samt Unterseiten analysieren (Reiter Aussagen mit „mit Unterseiten“, Fahrplan D3): startet nach der
+     * Rückfrage die Hintergrundgruppe „Aussagen analysieren“ mit dem eingestellten Analysator und kehrt sofort zurück;
+     * schon aktuelle Seiten überspringt sie wie der Baum ohne „erneut analysieren“. Fortschritt und Abbruch unter
+     * Aufträge.
+     *
+     * @param simplification Vorstufe „Sätze vereinfachen“ oder {@code null} ohne sie (nur mit dem MaltParser)
+     * @param maxPages       Sicherheitsgrenze wie im Baum; 0 nach ausdrücklicher Bestätigung aller Seiten
+     */
+    public JobStatus startStatementAnalysisBelow(PageSnapshot snapshot,
+            com.aresstack.spaceharvester.application.configuration.SimplificationSettings simplification,
+            int maxPages) {
+        AnalyzerChoice analyzer = statementAnalyzer();
+        return harvester.statementAnalysisJobs().start(caller, belowScope(snapshot),
+                new StatementAnalysisJobs.Options(false, maxPages, simplification == null
+                        || analyzer == AnalyzerChoice.MODEL ? null : com.aresstack.spaceharvester.application
+                        .knowledge.StatementAnalysis.SimplificationRequest.of(simplification), analyzer));
+    }
+
+    /** Zählt Seite samt Unterseiten für die Rückfrage vor {@link #startStatementAnalysisBelow}; nie auf dem EDT. */
+    public StatementAnalysisJobs.Estimate estimateStatementAnalysisBelow(PageSnapshot snapshot, int limit) {
+        return estimateStatementAnalysis(belowScope(snapshot), limit);
+    }
+
+    private static StatementAnalysisJobs.Scope belowScope(PageSnapshot snapshot) {
+        return new StatementAnalysisJobs.Scope.Subtree(snapshot.key().sourceId(), snapshot.spaceKey(),
+                snapshot.key().pageId());
+    }
+
+    /** Eine Seite als Auftrag rechnen und auf sein Ende warten, über Meldungen des Core, ohne Abfragen. */
+    private PageStatements analyzePage(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled,
+            com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.SimplificationRequest stage) {
+        AnalyzerChoice analyzer = statementAnalyzer();
+        java.util.concurrent.CountDownLatch ended = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> id = new java.util.concurrent.atomic.AtomicReference<>();
+        // Der letzte gemeldete Stand: Wird der Auftrag unter Aufträge gelöscht, gibt es ihn danach nicht mehr.
+        java.util.concurrent.atomic.AtomicReference<JobStatus> last = new java.util.concurrent.atomic.AtomicReference<>();
+        Subscription watch = harvester.jobs().subscribe(Harvester.OWNER, new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+                if (status.id().equals(id.get()) && status.state().terminal()) {
+                    last.set(status);
+                    ended.countDown();
+                }
+            }
+
+            @Override
+            public void removed(JobStatus gone) {
+                if (gone.id().equals(id.get())) {
+                    last.compareAndSet(null, gone);
+                    ended.countDown();
+                }
+            }
+        });
+        JobStatus done;
+        try {
+            // Die gezeigte Fassung, ohne erneuten Abruf bei der Quelle (wie vor D3)
+            JobStatus started = harvester.statementAnalysisJobs().startShown(caller, snapshot,
+                    new StatementAnalysisJobs.Options(true, 0, analyzer == AnalyzerChoice.MODEL ? null : stage,
+                            analyzer));
+            id.set(started.id());
+            if (cancelled instanceof Cancellation cancellation) {
+                cancellation.onRequest(() -> {
+                    try {
+                        harvester.jobs().cancel(started.id(), Harvester.OWNER);
+                    } catch (RuntimeException e) {
+                        // schon beendet: das Ergebnis gilt
+                    }
+                });
+            }
+            JobStatus now = currentStatus(started.id()).orElse(null);
+            if (now == null || now.state().terminal()) {
+                last.compareAndSet(null, now);
+                ended.countDown();
+            }
+            ended.await();
+            done = currentStatus(started.id()).orElse(last.get());
+            if (done == null || !done.state().terminal()) {
+                // gelöscht, bevor er endete: wie ein Abbruch, die bisherige Analyse bleibt
+                throw new java.util.concurrent.CancellationException("Auftrag gelöscht");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new java.util.concurrent.CancellationException("Unterbrochen");
+        } finally {
+            watch.close();
         }
-        return harvester.statementAnalysis().analyze(caller, snapshot, cancelled);
+        return pageResult(snapshot, done);
+    }
+
+    /** Das Ende des Auftrags einer Seite als Ergebnis wie beim Rechnen im Reiter: Stand, Abbruch, Auslassen, Fehler. */
+    private PageStatements pageResult(PageSnapshot snapshot, JobStatus done) {
+        if (done.state() == com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED
+                || done.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED) {
+            throw new java.util.concurrent.CancellationException("Abgebrochen");
+        }
+        List<JobEvent> events;
+        try {
+            events = harvester.jobs().events(done.id());
+        } catch (UnknownJobException e) {
+            events = List.of(); // schon gelöscht: der letzte Stand gilt
+        }
+        List<JobEvent> known = events;
+        java.util.function.Predicate<String> has = code -> known.stream().anyMatch(event -> code.equals(event.code()));
+        if (done.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED) {
+            String message = done.error() == null ? "Die Analyse ist gescheitert" : done.error().message();
+            if (done.error() != null && StatementAnalysisJobs.ANALYZER_UNAVAILABLE.equals(done.error().code())) {
+                AnalyzerUnavailableException.Reason reason = known.stream().map(JobEvent::code)
+                        .filter(code -> code != null && code.startsWith(StatementAnalysisJobs.ANALYZER_REASON))
+                        .map(code -> reason(code.substring(StatementAnalysisJobs.ANALYZER_REASON.length())))
+                        .filter(Objects::nonNull).findFirst()
+                        .orElse(AnalyzerUnavailableException.Reason.NOT_CONFIGURED);
+                throw new AnalyzerUnavailableException(reason, message, null);
+            }
+            throw new IllegalStateException(message);
+        }
+        if (has.test(StatementAnalysisJobs.MODEL_NOT_RELEASED)) {
+            throw new AnalyzerUnavailableException(AnalyzerUnavailableException.Reason.NOT_RELEASED,
+                    "Die Seite hat keine KI-Freigabe", null);
+        }
+        if (has.test(StatementAnalysisJobs.MODEL_NO_MODEL)) {
+            throw new AnalyzerUnavailableException(AnalyzerUnavailableException.Reason.NO_AI_MODEL,
+                    "Kein Chat-Modell eingestellt", null);
+        }
+        if (done.progress().failed() > 0) {
+            // Der Grund steht im Ereignis der Seite: ohne Leserecht wie früher als Zugriffsfehler, sonst seine Meldung
+            JobEvent failed = known.stream().filter(event -> "PAGE_FAILED".equals(event.code())).findFirst()
+                    .orElse(null);
+            if (failed != null && failed.category() == JobEvent.Category.ACCESS) {
+                statements(snapshot); // wirft ohne Leserecht die AccessDeniedException des Core
+            }
+            throw new IllegalStateException(failed == null || failed.message() == null
+                    ? "Die Seite wurde nicht analysiert" : failed.message());
+        }
+        return statements(snapshot);
+    }
+
+    /** Der Stand eines Auftrags; leer, wenn er gelöscht ist. */
+    private java.util.Optional<JobStatus> currentStatus(String jobId) {
+        try {
+            return java.util.Optional.of(harvester.jobs().status(jobId));
+        } catch (UnknownJobException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
+    private static AnalyzerUnavailableException.Reason reason(String name) {
+        try {
+            return name == null ? null : AnalyzerUnavailableException.Reason.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /**
@@ -1199,14 +1354,9 @@ public final class Workspace {
      */
     public PageStatements analyzeStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled,
             com.aresstack.spaceharvester.application.configuration.SimplificationSettings simplification) {
-        if (statementAnalyzer() == AnalyzerChoice.MODEL) {
-            // Der KI-Analysator kennt keine Vorstufe; er rechnet die Seite wie ohne sie.
-            return analyzeStatements(snapshot, cancelled);
-        }
-        return harvester.statementAnalysis().analyze(caller, snapshot, cancelled,
-                com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.SimplificationRequest
-                        .of(simplification), costs -> {
-                });
+        // Der KI-Analysator kennt keine Vorstufe; er rechnet die Seite wie ohne sie.
+        return analyzePage(snapshot, cancelled, com.aresstack.spaceharvester.application.knowledge.StatementAnalysis
+                .SimplificationRequest.of(simplification));
     }
 
     /**

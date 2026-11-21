@@ -106,6 +106,22 @@ class HoldingsTest {
     }
 
     @Test
+    void locateNamesSpaceAndStateOfEachVisiblePageWithoutTheSource() {
+        dev();
+        AccessPolicy withoutThree = (context, scope, kind) -> "3".equals(scope.pageId()) ? AccessDecision.DENY
+                : AccessDecision.ALLOW;
+        com.aresstack.spaceharvester.application.snapshot.PageSet pages = com.aresstack.spaceharvester.application
+                .snapshot.PageSet.of(Map.of("wiki", List.of("1", "2", "3", "4", "unbekannt")));
+
+        Map<com.aresstack.spaceharvester.application.snapshot.PageKey, Holdings.Located> located =
+                holdings(withoutThree, 100).locate(CALLER, pages);
+
+        assertThat(located).extractingFromEntries(entry -> entry.getKey().pageId() + ":"
+                + entry.getValue().spaceKey() + ":" + entry.getValue().state())
+                .containsExactlyInAnyOrder("1:DEV:LOCAL", "2:DEV:REMOTE", "4:DEV:OUTDATED");
+    }
+
+    @Test
     void statesAndSubtreeCountsFollowTheCatalogTree() {
         dev();
 

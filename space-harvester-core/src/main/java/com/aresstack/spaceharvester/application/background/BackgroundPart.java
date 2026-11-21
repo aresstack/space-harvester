@@ -14,9 +14,11 @@ import java.util.Objects;
  * @param parameters   die Angaben der Art, ohne die Schlüssel von {@link BackgroundJobs}
  * @param resumed      {@code true}, wenn der Auftrag fortgesetzt wird (nach Anhalten, Fehler oder Neustart), nicht
  *                     zum ersten Mal läuft
+ * @param automatic    {@code true}, wenn {@link BackgroundJobs#resumeInterrupted()} ihn nach einem Neustart von selbst
+ *                     fortsetzt, nicht ein Benutzer; eine Art kann dann etwa verlangen, dass der Eigentümer derselbe ist
  */
 public record BackgroundPart(String jobId, String groupId, String kind, String sourceId, String partitionKey,
-                             Map<String, String> parameters, boolean resumed) {
+                             Map<String, String> parameters, boolean resumed, boolean automatic) {
 
     public BackgroundPart {
         Objects.requireNonNull(jobId, "jobId");
@@ -24,6 +26,12 @@ public record BackgroundPart(String jobId, String groupId, String kind, String s
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(sourceId, "sourceId");
         parameters = Map.copyOf(parameters);
+    }
+
+    /** Ohne Angabe, ob von selbst fortgesetzt. */
+    public BackgroundPart(String jobId, String groupId, String kind, String sourceId, String partitionKey,
+                          Map<String, String> parameters, boolean resumed) {
+        this(jobId, groupId, kind, sourceId, partitionKey, parameters, resumed, false);
     }
 
     /** Eine Angabe der Art oder {@code null}. */

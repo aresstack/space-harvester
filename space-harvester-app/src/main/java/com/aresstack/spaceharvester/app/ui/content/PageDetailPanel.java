@@ -7,6 +7,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.AppContext;
+import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Facts;
@@ -97,9 +98,11 @@ public final class PageDetailPanel extends JPanel {
     private static final String READING = "Leseansicht";
     private java.util.function.BiConsumer<String, String> pageShown = (source, space) -> { };
     /** Stand des sichtbaren Reiters für die Statuszeile des Hauptfensters ({@link #onStatus}). */
-    private java.util.function.Consumer<String> statusShown = text -> { };
+    private java.util.function.Consumer<StatusNote> statusShown =
+            note -> { };
     /** Die Erläuterung je Reiter; gezeigt wird die des sichtbaren Reiters. */
-    private final java.util.Map<String, String> tabStatus = new java.util.HashMap<>();
+    private final java.util.Map<String, StatusNote> tabStatus =
+            new java.util.HashMap<>();
     private java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position> positionShown = position -> { };
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
@@ -641,6 +644,9 @@ public final class PageDetailPanel extends JPanel {
         images.onStatus(text -> tabStatus(IMAGES, text));
         references.onStatus(text -> tabStatus(REFERENCES, text));
         statementsView.onStatus(text -> tabStatus(STATEMENTS, text));
+        // Meldungen mit Ampel und Link (D3: „Aufträge“ öffnet die Auftragsverwaltung im Reiter „Hintergrund“)
+        statementsView.onNote(note -> tabNote(STATEMENTS, note));
+        statementsView.onShowJob(jobId -> context.navigator().showJob(jobId));
         sourceView.onStatus(text -> tabStatus(READING, text));
         standing.onStatus(text -> tabStatus(STAND, text));
         standing.onJump(this::openAt);
@@ -680,6 +686,7 @@ public final class PageDetailPanel extends JPanel {
         subpages.onChange(this::subpagesChanged);
         passages.onJump(this::jumpTo);
         statementsView.onJump(this::jumpTo);
+        statementsView.withSubpages(subpages::active);
         statementsTab(statementsView);
         graphView.onJump(this::jumpTo);
         statementsView.onAnalysed(() -> {
@@ -1583,6 +1590,12 @@ public final class PageDetailPanel extends JPanel {
      * Statuszeile des Hauptfensters; " " ohne.
      */
     public void onStatus(java.util.function.Consumer<String> listener) {
+        java.util.Objects.requireNonNull(listener, "listener");
+        onStatusNote(note -> listener.accept(note.text()));
+    }
+
+    /** Wie {@link #onStatus}, mit Ampelton und Link der Meldung ({@code controls.StatusLabel}). */
+    public void onStatusNote(java.util.function.Consumer<StatusNote> listener) {
         this.statusShown = java.util.Objects.requireNonNull(listener, "listener");
         showTabStatus();
     }
@@ -1978,13 +1991,19 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void tabStatus(String tab, String text) {
-        tabStatus.put(tab, text == null ? " " : text);
+        tabNote(tab, StatusNote.plain(text));
+    }
+
+    private void tabNote(String tab, StatusNote note) {
+        tabStatus.put(tab, note == null ? StatusNote.plain(" ") : note);
         showTabStatus();
     }
 
     private void showTabStatus() {
         String tab = selectedTab();
-        statusShown.accept(withStore(tab, tabStatus.getOrDefault(tab, " "), shownStore));
+        StatusNote note = tabStatus.getOrDefault(tab,
+                StatusNote.plain(" "));
+        statusShown.accept(note.withText(withStore(tab, note.text(), shownStore)));
     }
 
     /**

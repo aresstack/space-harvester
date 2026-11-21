@@ -1270,6 +1270,22 @@ public final class Harvester implements AutoCloseable {
                 }
             }, (who, sourceId, pageId) -> pages.page(who, sourceId, pageId, false).snapshot(), statementAnalysis,
                     access, OWNER);
+            // Fahrplan D3: Teilbaum, Space und Quelle als Hintergrundgruppe, nach einem Neustart mit dem App-Benutzer
+            // fortgesetzt; missing() liest nur Bestand und Cache.
+            this.statementAnalysisJobs.background(backgroundJobs, AccessContext.technicalClient(OWNER));
+            Holdings stockForAnalyses = this.holdings;
+            this.statementAnalysisJobs.local(new StatementAnalysisJobs.LocalPages() {
+                @Override
+                public Map<PageKey, Holdings.Located> locate(AccessContext who,
+                        com.aresstack.spaceharvester.application.snapshot.PageSet set) {
+                    return stockForAnalyses.locate(who, set);
+                }
+
+                @Override
+                public Optional<PageSnapshot> stored(PageKey key) {
+                    return cache.find(key);
+                }
+            });
             this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
                     key -> cache.findHeader(key).map(header -> header.metadata().parentPageId()), clock, OWNER);
             this.knowledgeGraphExportDirectory = builder.exportDirectory().resolve("knowledge-graph");

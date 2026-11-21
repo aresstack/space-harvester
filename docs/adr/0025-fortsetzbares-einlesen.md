@@ -221,7 +221,13 @@ wird automatisch verwaltet.
 1. **Eigene Auftragsart** `JobType.BACKGROUND` (`JobType#background()`). Welche Arbeit, sagt die Angabe
    `background.kind`; Arten melden sich bei `BackgroundJobs#register(BackgroundKind)` an (`application.background`).
    Eingebaut ist „Seiten nachladen“ (`PageLoads`, Art `pages`, `Harvester#pageLoads()`); die Bildbeschreibung meldet
-   sich als Art `images` an.
+   sich als Art `images` an. Fahrplan D3: „Aussagen analysieren“ über Teilbaum, Space oder Quelle ist die Art
+   `statements` (`StatementAnalysisJobs#background`); eine einzelne Seite bleibt ein normaler Auftrag
+   `STATEMENT_ANALYSIS`, als Klick über `Jobs#submitInteractive` (ebenso „Prüfen“ einer Seite), derselbe Code rechnet
+   beide. Der Reiter „Aussagen“ rechnet dabei die gezeigte Fassung (`startShown`), ohne die Seite erneut abzurufen;
+   mit „mit Unterseiten“ zählt und fragt er wie der Baum (Sicherheitsgrenze, „wirklich“) und meldet das Ende der
+   Gruppe über `BackgroundJobs#whenFinished`. Eine Quelle mit Grenze zählt in jedem Teil alle ihre Spaces
+   (`limit-spaces`), die Grenze gilt also wie früher für die ganze Quelle.
 2. **Gruppe statt Oberauftrag mit eigenem Platz.** Ein Start (`BackgroundJobs#start`) legt je Space einen Unterauftrag
    an; alle tragen dieselbe `background.group` und `background.title`. Die Gruppe (`BackgroundGroup`) ist kein eigener
    Auftrag, belegt nichts und hat ihren Zustand aus den Unteraufträgen. Jeder Unterauftrag hat einen eigenen Platz und
@@ -251,6 +257,15 @@ wird automatisch verwaltet.
 6. **Rechte.** Der Hintergrund lädt nie mit der Anmeldung eines Benutzers (wie ADR 0016). `PageLoads` lädt mit dem
    technischen Aufrufer des Start-Aufrufs, nach einem Neustart mit dem technischen Aufrufer des Dienstes; was schon im
    Cache liegt, fällt vorher heraus, ein Fortsetzen holt also nur, was fehlt.
+   `statements` legt den Eigentümer des Start-Aufrufers in den Angaben ab (`owner`, `AccessContext#jobOwner`) und
+   setzt nach einem Neustart nur fort, wenn der wiederhergestellte Aufrufer derselbe ist (in der Desktop-App der
+   App-Benutzer); sonst hält der Teil gelb an (`PauseReason#RESUME_BY_HAND`, „Angehalten – von Hand fortsetzen“),
+   und `StatementAnalysisJobs#resume` setzt ihn mit den Rechten des Fortsetzenden fort. Die allgemeine
+   Auftragsaktion (`BackgroundJobs#resumeJob`) kennt keinen Aufrufer; mit ihr hält ein fremder Teil erneut an, statt
+   mit den Rechten des wiederhergestellten Aufrufers zu laufen. Der Analysator steht beim Start in
+   den Angaben (`analyzer`) und wird nie neu aus `statements.analyzer` gelesen; beim Fortsetzen überspringt der Teil
+   Seiten, die dieser Analysator schon aktuell hat (mit „erneut analysieren“ nur die seit dem Start, `since`).
+   `BackgroundPart#automatic` sagt, ob `resumeInterrupted` fortsetzt oder ein Benutzer (für die Meldung).
 7. **Desktop-App.** Die Auftragsverwaltung zeigt Hintergrundaufträge in einem eigenen Reiter „Hintergrund“, je Gruppe
    eine Zeile mit den Unteraufträgen darunter, farblich hervorgehoben (Form mit dem UX-Manager); die Liste der
    Benutzeraufträge bleibt frei davon.

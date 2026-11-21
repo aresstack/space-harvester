@@ -106,7 +106,7 @@ public final class BackgroundJobs {
                 parameters.put(GROUP, groupId);
                 parameters.put(TITLE, title);
                 started.add(jobs.submit(JobType.BACKGROUND, draft.sourceId(), draft.partitionKey(), null, owner,
-                        parameters, task(false)));
+                        parameters, task(false, false)));
             }
         } catch (RuntimeException e) {
             // Ganz oder gar nicht (wie GlossaryClassification): keine Teile ohne ihre Gruppe.
@@ -207,7 +207,7 @@ public final class BackgroundJobs {
         if (kind == null || !kinds.containsKey(kind)) {
             throw new JobNotResumableException(jobId, "die Art „" + kind + "“ ist nicht angemeldet");
         }
-        return jobs.rerun(jobId, owner, task(true));
+        return jobs.rerun(jobId, owner, task(true, false));
     }
 
     /**
@@ -228,7 +228,7 @@ public final class BackgroundJobs {
                 continue;
             }
             try {
-                resumed.add(jobs.rerun(status.id(), owner, task(true)));
+                resumed.add(jobs.rerun(status.id(), owner, task(true, true)));
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.WARNING, "Hintergrundauftrag {0} nach dem Neustart nicht fortgesetzt "
                         + "({1})", status.id(), e.getClass().getName());
@@ -335,8 +335,12 @@ public final class BackgroundJobs {
         return registered;
     }
 
-    /** Die Arbeit eines Unterauftrags, beim Start aus seinen abgelegten Angaben gebaut. */
-    private JobTask task(boolean resumed) {
+    /**
+     * Die Arbeit eines Unterauftrags, beim Start aus seinen abgelegten Angaben gebaut.
+     *
+     * @param automatic von {@link #resumeInterrupted()} fortgesetzt, nicht vom Benutzer
+     */
+    private JobTask task(boolean resumed, boolean automatic) {
         return context -> {
             try {
                 JobStatus status = jobs.status(context.jobId(), owner);
@@ -344,7 +348,7 @@ public final class BackgroundJobs {
                 Map<String, String> own = new HashMap<>(status.parameters());
                 own.keySet().removeIf(key -> key.startsWith(PREFIX));
                 BackgroundPart part = new BackgroundPart(status.id(), groupOf(status), kind.id(), status.sourceId(),
-                        status.partitionKey(), own, resumed);
+                        status.partitionKey(), own, resumed, automatic);
                 return kind.work().apply(part).start(context);
             } catch (RuntimeException e) {
                 return java.util.concurrent.CompletableFuture.failedFuture(e);

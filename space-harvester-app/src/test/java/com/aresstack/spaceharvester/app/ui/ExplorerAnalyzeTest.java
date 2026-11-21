@@ -215,7 +215,7 @@ class ExplorerAnalyzeTest {
         clickLater(LEAF, Explorer.ANALYZE);
         await(() -> !shownJobs.isEmpty());
         assertThat(analyses.started).containsExactly(new Started(new Scope.SinglePage("wiki", "OPS", "p1"),
-                StatementAnalysisJobs.Options.DEFAULT));
+                StatementAnalysisJobs.Options.DEFAULT.withAnalyzer(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER)));
         assertThat(analyses.estimated).isEmpty();
         assertThat(confirmations).isEmpty();
         assertThat(shownJobs).containsExactly("job-1");
@@ -239,7 +239,7 @@ class ExplorerAnalyzeTest {
                 .contains("Eltern");
         assertThat(actions).containsExactly(Explorer.ANALYZE);
         assertThat(analyses.started).containsExactly(new Started(new Scope.Subtree("wiki", "OPS", "p2"),
-                new StatementAnalysisJobs.Options(true, Explorer.ANALYSIS_LIMIT)));
+                new StatementAnalysisJobs.Options(true, Explorer.ANALYSIS_LIMIT).withAnalyzer(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER)));
     }
 
     @Test
@@ -254,7 +254,8 @@ class ExplorerAnalyzeTest {
                 new StatementAnalysisJobs.Options(false, Explorer.ANALYSIS_LIMIT,
                         new com.aresstack.spaceharvester.application.knowledge.StatementAnalysis
                                 .SimplificationRequest(com.aresstack.spaceharvester.application.configuration
-                                .SimplificationSettings.Mode.WHERE_NEEDED, 2))));
+                                .SimplificationSettings.Mode.WHERE_NEEDED, 2)).withAnalyzer(
+                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER)));
     }
 
     /** Fahrplan A3: Mit dem KI-Analysator sagt der Dialog, dass die Sätze an den KI-Dienst gehen. */
@@ -293,7 +294,7 @@ class ExplorerAnalyzeTest {
         assertThat(confirmations).singleElement().asString().startsWith("Wirklich mehr als 500 Seiten analysieren?");
         assertThat(actions).containsExactly("Alle analysieren");
         assertThat(analyses.started).containsExactly(new Started(new Scope.Source("wiki"),
-                new StatementAnalysisJobs.Options(false, 0)));
+                new StatementAnalysisJobs.Options(false, 0).withAnalyzer(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER)));
     }
 
     @Test
