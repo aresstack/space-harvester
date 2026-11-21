@@ -87,6 +87,8 @@ public final class DocumentNavigationSky extends JPanel {
     private boolean expanded;
     private int contentBottom;
     private boolean revealDeepestRow;
+    /** Freier Rand rechts, etwa für den Play-Knopf des Podcasts darüber. */
+    private int trailingInset;
 
     public DocumentNavigationSky() {
         super(null);
@@ -217,6 +219,16 @@ public final class DocumentNavigationSky extends JPanel {
         return activeSectionId;
     }
 
+    /** Hält rechts {@code pixels} frei, damit dort ein Knopf über dem Himmel liegen kann (Podcast, 21.11.2026). */
+    public void setTrailingInset(int pixels) {
+        int value = Math.max(0, pixels);
+        if (value != trailingInset) {
+            trailingInset = value;
+            revalidate();
+            repaint();
+        }
+    }
+
     public void setExpanded(boolean value) {
         if (expanded != value) {
             expanded = value;
@@ -345,7 +357,7 @@ public final class DocumentNavigationSky extends JPanel {
         chevron.setBounds(padH, top + (ResearchUiMetrics.CLOUD_CHIP_HEIGHT - CHEVRON_SIZE) / 2, CHEVRON_SIZE,
                 CHEVRON_SIZE);
         int stripLeft = padH + CHEVRON_SIZE + 6;
-        strip.setBounds(stripLeft, top, Math.max(0, getWidth() - stripLeft - padH),
+        strip.setBounds(stripLeft, top, Math.max(0, getWidth() - stripLeft - padH - trailingInset),
                 ResearchUiMetrics.CLOUD_CHIP_HEIGHT);
         strip.layoutChips();
         int bottom = top + ResearchUiMetrics.CLOUD_CHIP_HEIGHT + 8;
@@ -358,7 +370,8 @@ public final class DocumentNavigationSky extends JPanel {
             int cap = Math.max(ROW_HEIGHT * 2,
                     getHeight() * ResearchUiMetrics.SKY_EXPANDED_MAX_PERCENT / 100 - rowsTop);
             int height = Math.min(natural, cap);
-            rowsScroll.setBounds(stripLeft, rowsTop, Math.max(0, getWidth() - stripLeft - padH), height);
+            rowsScroll.setBounds(stripLeft, rowsTop, Math.max(0, getWidth() - stripLeft - padH - trailingInset),
+                    height);
             rowsScroll.validate();
             if (revealDeepestRow) {
                 revealDeepestRow = false;

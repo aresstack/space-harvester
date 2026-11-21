@@ -58,8 +58,7 @@ final class FindBar extends JPanel {
         setLayout(new RowLayout());
         this.area = area;
         setOpaque(false);
-        setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(4, 16, 4, 16)));
+        line(true);
         field.getAccessibleContext().setAccessibleName("In dieser Ansicht suchen");
         field.getDocument().addDocumentListener(new DocumentListener() {
             @Override
@@ -130,6 +129,14 @@ final class FindBar extends JPanel {
     void close() {
         clear();
         expand(false);
+    }
+
+    /**
+     * Der Trenner über der Leiste; ohne ihn, solange darüber eine Zeitleiste steht ({@code TimelineEvent}, Podcast).
+     */
+    void line(boolean shown) {
+        setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(shown ? 1 : 0, 0, 0, 0,
+                Comic.LINE), BorderFactory.createEmptyBorder(shown ? 4 : 5, 16, 4, 16)));
     }
 
     /** Setzt die Umschalter des gezeigten Bereichs mittig in die Leiste; {@code null} lässt die Mitte leer. */

@@ -468,6 +468,7 @@ public final class PageDetailPanel extends JPanel {
         }
         // Beide Reiter zeigen dasselbe Update: Wer es in einem wählt, sieht es im anderen auch.
         sourceView.onSelected(sourceChanges::select);
+        sourceView.podcastEvents(context.events()::publish);
         sourceChanges.onSelected(sourceView::select);
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);

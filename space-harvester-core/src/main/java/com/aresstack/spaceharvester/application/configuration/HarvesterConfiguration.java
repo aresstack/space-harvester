@@ -438,7 +438,8 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                     message -> problems.add(new ConfigurationProblem(kind.excludeKey(), message)));
             glossaryRules = glossaryRules.with(kind, add, exclude);
         }
-        terms = terms.withGlossaryRules(glossaryRules);
+        terms = terms.withGlossaryRules(glossaryRules)
+                .withGlossaryAutomatic(read.bool(TermSettings.GLOSSARY_AUTOMATIC, false));
         EnrichmentSettings enrichment = EnrichmentSettings.DEFAULT;
         try {
             enrichment = new EnrichmentSettings(read.bool(EnrichmentSettings.DOCUMENTS_ENABLED, true),

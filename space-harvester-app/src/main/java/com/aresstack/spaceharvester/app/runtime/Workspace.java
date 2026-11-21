@@ -187,6 +187,17 @@ public final class Workspace {
                 new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
     }
 
+    /**
+     * Abgleich der beiden Aussagenanalysatoren einer Seite (K2): je Aussage der eingestellten Ablage, ob die andere
+     * übereinstimmt, abweicht (mit beiden Lesarten) oder nicht vergleichbar ist; dahinter Aussagen nur der anderen.
+     * Nie auf dem EDT.
+     */
+    public java.util.Map<String, com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Comparison>
+            analyzerComparisons(String sourceId, String pageId) {
+        return harvester.analyzerComparison().comparisons(caller,
+                new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
+    }
+
     /** Die Fundstellen eines Verbs in {@code within} ({@code VerbQueries.occurrences}, Paket K1). Nie auf dem EDT. */
     public List<com.aresstack.spaceharvester.application.knowledge.VerbQueries.Occurrence> verbOccurrences(
             com.aresstack.spaceharvester.application.snapshot.PageSet within,
@@ -2519,6 +2530,30 @@ public final class Workspace {
     public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> changeSummary(
             String sourceId, String updateId, String spaceKey) {
         return harvester.changeLog().summary(caller, sourceId, updateId, spaceKey);
+    }
+
+    /** Ob der Podcast zur Update-Zusammenfassung erzeugt werden kann: Chat-Modell und Sprachausgabe (TTS) eingerichtet. */
+    public boolean podcastsAvailable() {
+        return harvester.podcasts().available();
+    }
+
+    /**
+     * Der Stand des Podcasts einer Zusammenfassung, leer, solange nichts erzeugt ist. Die Zusammenfassung kommt aus
+     * {@link #changeSummary}, ist also schon für diese App geprüft. Liest Dateien, nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.podcast.Podcast> podcast(
+            com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().podcast(summary);
+    }
+
+    /** Startet den Auftrag „Podcast erzeugen“ oder setzt ihn fort; ein offener Auftrag desselben Podcasts ist die Antwort. */
+    public JobStatus startPodcast(com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().start(caller, summary);
+    }
+
+    /** Meldet jede abgelegte Stufe eines Podcasts (Plan, Abschnitte, Audio), auf einem Thread des Core. */
+    public Subscription subscribePodcast(String key, Runnable listener) {
+        return harvester.podcasts().subscribe(key, listener);
     }
 
     /**

@@ -53,6 +53,7 @@ public final class ConfigurationOverlay {
             ExportSettings.ATTACHMENTS_MAX_SIZE, TermSettings.SYNONYMS_MAX_TERMS,
             TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS,
             TermSettings.SYNONYMS_AUTOMATIC, TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY,
+            TermSettings.GLOSSARY_AUTOMATIC,
             EnrichmentSettings.DOCUMENTS_ENABLED, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
             SimplificationSettings.MODE, SimplificationSettings.PARALLEL, SimplificationSettings.MODEL,
             StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS, CheckSettings.SCOPE, CheckSettings.PARALLEL,
@@ -147,6 +148,7 @@ public final class ConfigurationOverlay {
         put(properties, TermSettings.SYNONYMS_AUTOMATIC, configuration.terms().synonyms().automatic());
         put(properties, TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY,
                 configuration.terms().synonyms().glossaryTermsOnly());
+        put(properties, TermSettings.GLOSSARY_AUTOMATIC, configuration.terms().glossaryAutomatic());
         put(properties, EnrichmentSettings.DOCUMENTS_ENABLED, configuration.enrichment().documents());
         put(properties, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
                 configuration.enrichment().documentEmbeddingMaxChars());

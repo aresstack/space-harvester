@@ -302,6 +302,33 @@ class KnowledgeGraphTest {
                 .satisfies(node -> assertThat(node.page().document()).isEqualTo(attachment));
     }
 
+    @Test
+    void aViewOnAnotherStoreSharesTheInputMemoSoAComparisonTurnsNotComparableAfterANewTranscript() {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.");
+        InMemoryKnowledgeGraphStore modelStore = new InMemoryKnowledgeGraphStore();
+        modelStore.replace(store.all().getFirst());
+        String[] transcript = {""};
+        KnowledgeGraph main = new KnowledgeGraph(store, access, key -> Optional.ofNullable(cache.get(key)),
+                snapshot -> Optional.of(new com.aresstack.spaceharvester.application.enrichment.PageText("test/v1",
+                        StatementAnalysisTest.text(snapshot).text() + transcript[0], List.of())),
+                statements, KnowledgeGraph.TermExpansion.NONE);
+        KnowledgeGraph view = main.sharingInputs(modelStore);
+        PageKey key = new PageKey("wiki", "1");
+        AnalyzerComparison comparison = new AnalyzerComparison(access, k -> Optional.ofNullable(cache.get(k)),
+                (who, choice, k) -> (choice == AnalyzerChoice.PARSER ? main : view).page(who, k),
+                () -> AnalyzerChoice.PARSER);
+        String statement = store.all().getFirst().result().statements().getFirst().id();
+        assertThat(comparison.comparison(CALLER, key, statement).agreement())
+                .isEqualTo(AnalyzerComparison.Agreement.AGREES);
+
+        transcript[0] = " Neues Transkript.";
+        main.forgetInput(key);
+
+        assertThat(view.page(CALLER, key).orElseThrow().page().state()).isEqualTo(PageStatements.State.STALE);
+        assertThat(comparison.comparison(CALLER, key, statement).agreement())
+                .as("bis neu analysiert ist").isEqualTo(AnalyzerComparison.Agreement.NOT_COMPARABLE);
+    }
+
     /** Legt eine Analyse eines Anhangs ab, wie es ein späterer Auftrag täte; gibt den Eingabe-Hash zurück. */
     private String analyseDocument(DocumentKey document, String text) {
         String input = "sha256:" + Integer.toHexString(text.hashCode()) + "0".repeat(56);
