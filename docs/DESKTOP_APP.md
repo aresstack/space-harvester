@@ -377,15 +377,20 @@ Core selbst.
   endet er, weicht sie von selbst „… abgeschlossen · n Seiten im Bestand unter ‹Datenordner›“ oder „… fehlgeschlagen“
   mit dem Grund, und die bleibt, bis ✕ rechts in der Platte sie schließt (das ✕ hat seit 16.11.2026 jede
   `Feedback`-Platte). Der Chat ist die einzige Ausnahme der KI-Freigabe (ADR 0028): eine nicht freigegebene Quelle
-  steht in der Zeile als „Quelle nicht für KI freigegeben; Senden gibt die gewählten Seiten dauerhaft frei“, gesperrt
-  wird nichts; Senden trägt die lokal gespeicherten Seiten der Auswahl ein (`releasePagesForChat`) und nennt die neuen
+  steht in der Zeile als „Quelle nicht für KI freigegeben; Senden gibt die offene Seite und die Seiten, die der Assistent liest, dauerhaft frei“, gesperrt
+  wird nichts; Senden trägt mit Werkzeugen nur ein, was an das Modell geht (offene Seite, gelesene Seiten, Seiten mit Suchauszug, `releasePageForChat`, ADR 0033), ohne Werkzeuge die lokal gespeicherten Seiten der Auswahl (`releasePagesForChat`), und nennt die neuen
   in der Statuszeile. Der Composer ist eine abgerundete Fläche: **Nachricht…** (Enter sendet, Umschalt+Enter neue
   Zeile), darüber Chips der angehängten Dateien mit ✕ (lesbare Textdateien gehen als Text mit, anderes wird nur
   genannt), unten links das Chat-Modell aus Einstellungen › KI („Kein Chat-Modell“, Klick zeigt es und führt zu den
   Einstellungen) und der Denkaufwand (Niedrig, Mittel, Hoch → `reasoning_effort` low/medium/high), rechts Websuche
   (ausgegraut, „Websuche folgt“), **Dateien anhängen**, Mikrofon (deaktiviert, „Spracheingabe folgt“) und **Senden**.
-  Senden (`ChatTurn`): die eigene Nachricht als Sprechblase, dann das Wissen aus dem Bestand (ADR 0029: bis drei
-  gewählte Seiten gehen ganz mit, sonst sucht die progressive Suche des Core, ADR 0017, nur in den gewählten Seiten
+  Senden (`ChatTurn`): die eigene Nachricht als Sprechblase, dann das Wissen aus dem Bestand nach
+  [ADR 0033](adr/0033-wissen-des-chats-per-verweis-und-werkzeug.md): Ist links eine Seite gewählt, geht sie im
+  Volltext als Quelle [1] mit (sehr lange Seiten: der Anfang, der Rest per Werkzeug), alles andere im Bereich holt sich
+  das Modell selbst über die Werkzeuge `im_bereich_suchen`, `seiten_auflisten` (je Knoten, blätternd) und
+  `seite_lesen` (`ChatTools`); jeder Aufruf wird gegen den Bereich beim Senden geprüft, gelesene Seiten werden
+  fortlaufend nummeriert, die Statuszeile nennt, was das Modell gerade holt. Lehnt der Dienst Werkzeuge ab, gilt für
+  dieses Modell bis zum Neustart der frühere Weg (ADR 0029: bis drei gewählte Seiten gehen ganz mit, sonst sucht die progressive Suche des Core, ADR 0017, nur in den gewählten Seiten
   und die besten acht Treffer kommen als Absatz samt Nachbarn oder Lesetext-Auszug mit; Kontextblock wie
   `PromptContextAssembler` des EAC mit nummerierten Auszügen, Quelle, Ort und dem Hinweis, dass Auszüge Daten sind;
   24 000 Zeichen; die Systemnachricht nennt dem Modell immer den gewählten Bereich wie die Zeile „Wissen:“ und

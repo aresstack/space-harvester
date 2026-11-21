@@ -147,8 +147,8 @@ public final class ChatPanel extends JPanel {
     static final String NO_SELECTION = "Links eine Wissensquelle, einen Space oder eine Seite wählen";
     static final String NOT_LOADED = "Seiten noch nicht erfasst";
     static final String LOAD = "Laden";
-    static final String NOT_ALLOWED = "Quelle nicht für KI freigegeben; Senden gibt die gewählten Seiten dauerhaft "
-            + "frei (Einstellungen › Sicherheit)";
+    static final String NOT_ALLOWED = "Quelle nicht für KI freigegeben; Senden gibt die offene Seite und die Seiten, "
+            + "die der Assistent liest, dauerhaft frei (Einstellungen › Sicherheit)";
     static final String EMPTY_TRANSCRIPT = "Noch keine Nachrichten";
     // Schnellaktionen in der unteren Leiste (Angelo 17.11.2026): immer auf den gewählten Knoten samt Unterknoten,
     // nie auf Eltern; sie gehen den normalen Sendeweg.
@@ -1336,7 +1336,6 @@ public final class ChatPanel extends JPanel {
         status.setText(SEARCHING);
         composer.revalidate();
         composer.repaint();
-        release();
         answering = addAnswer("…");
         ChatRecord target = chat;
         Path targetNode = home;
@@ -1344,6 +1343,11 @@ public final class ChatPanel extends JPanel {
         listening = listener;
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
                 listener, SwingUtilities::invokeLater);
+        // ADR 0033: Was offen ist, sieht das Modell; den Rest des Bereichs holt es sich per Werkzeug.
+        Selection open = selection;
+        turn.knowledgeByTools(open == null || open.pageId() == null ? null
+                : new com.aresstack.spaceharvester.application.snapshot.PageKey(open.sourceId(), open.pageId()));
+        turn.releasing(releases(runtime, open));
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());
@@ -1429,6 +1433,28 @@ public final class ChatPanel extends JPanel {
         }
 
         @Override
+        public void released(int count) {
+            if (!detached) {
+                status.setText(status.getText().strip() + " · " + Texts.count(count, "Seite", "Seiten")
+                        + " für KI freigegeben");
+            }
+        }
+
+        @Override
+        public void releaseFailed(RuntimeException error) {
+            if (!detached) {
+                feedback.problem(error);
+            }
+        }
+
+        @Override
+        public void using(String what) {
+            if (!detached) {
+                status.setText(ANSWERING + " · " + what);
+            }
+        }
+
+        @Override
         public void context(ChatKnowledge.Context context) {
             if (!detached) {
                 status.setText(context.isEmpty() ? ANSWERING + " · ohne Auszüge aus dem Bestand"
@@ -1504,26 +1530,22 @@ public final class ChatPanel extends JPanel {
     }
 
     /**
-     * Die Ausnahme der KI-Freigabe (ADR 0028, Angelo 13.11.2026): Senden trägt die lokal gespeicherten Seiten der
-     * Auswahl in die Liste freigegebener Seiten ein, auch ohne Haken an der Quelle; sie stehen danach unter
-     * Einstellungen › Sicherheit. Die Statuszeile nennt, wie viele neu dazukamen.
+     * Die Ausnahme der KI-Freigabe (ADR 0028, Angelo 13.11.2026; mit Werkzeugen ADR 0033): Der Turn trägt ein, was an
+     * das Modell geht, auch ohne Haken an der Quelle; die Seiten stehen danach unter Einstellungen › Sicherheit. Die
+     * Statuszeile nennt, wie viele neu dazukamen.
      */
-    private void release() {
-        AppRuntime runtime = context.runtime();
-        Selection current = selection;
-        if (runtime == null || current == null) {
-            return;
-        }
-        Background.run(() -> runtime.workspace().releasePagesForChat(current.toCore(runtime)), released -> {
-            if (!released.isEmpty() && Objects.equals(current, selection)) {
-                status.setText(status.getText().strip() + " · " + Texts.count(released.size(), "Seite", "Seiten")
-                        + " für KI freigegeben");
+    private static ChatTurn.Releases releases(AppRuntime runtime, Selection current) {
+        return new ChatTurn.Releases() {
+            @Override
+            public int page(String spaceKey, com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                return runtime.workspace().releasePageForChat(spaceKey, key).size();
             }
-        }, error -> {
-            if (Objects.equals(current, selection)) {
-                feedback.problem(error);
+
+            @Override
+            public int selection() {
+                return current == null ? 0 : runtime.workspace().releasePagesForChat(current.toCore(runtime)).size();
             }
-        });
+        };
     }
 
     /** Löst die Ansicht vom laufenden Turn: er schreibt seinen Chat zu Ende, zeigt hier aber nichts mehr. */
