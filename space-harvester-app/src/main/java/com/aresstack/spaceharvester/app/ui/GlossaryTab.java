@@ -865,16 +865,32 @@ public final class GlossaryTab {
     }
 
     /**
-     * „Fachbegriffe ermitteln“ für die Auswahl links: eine Quelle oder ein Space (eine Seite zählt mit ihrem Space),
-     * „Wissensquellen“ für alle Quellen. Startet auch ohne Modell (Phase „Begriffe ableiten“); je Quelle ein Auftrag
-     * im Hintergrund, das Fenster bleibt bedienbar.
+     * „Fachbegriffe ermitteln“ für die Auswahl links: eine Quelle, ein Space oder eine Seite samt Unterseiten (D4.2;
+     * der Lauf ergänzt dann nur), „Wissensquellen“ für alle Quellen. Startet auch ohne Modell (Phase „Begriffe
+     * ableiten“); je Quelle ein Auftrag im Hintergrund, das Fenster bleibt bedienbar.
      */
     void detect() {
         ExportPanel.Selection chosen = selection;
-        detect(chosen.global() ? null : chosen.sourceId(), chosen.global() ? null : chosen.spaceKey());
+        if (chosen.global()) {
+            detect(null, null, null, null);
+        } else {
+            detect(chosen.sourceId(), chosen.spaceKey(), chosen.spaceKey() == null ? null : chosen.pageId(),
+                    chosen.title());
+        }
     }
 
     void detect(String sourceId, String spaceKey) {
+        detect(sourceId, spaceKey, null, null);
+    }
+
+    /** „Fachbegriffe ermitteln für „Titel“ samt Unterseiten“ bzw. ohne Seite nur der Name des Laufs. */
+    static String detectName(String pageId, String title) {
+        return pageId == null ? DETECT
+                : DETECT + " für „" + (title == null || title.isBlank() ? "Seite " + pageId : title)
+                + "“ samt Unterseiten";
+    }
+
+    void detect(String sourceId, String spaceKey, String pageId, String title) {
         Optional<GlossaryAccess> glossary = access.get();
         if (glossary.isEmpty() || !jobs.isEmpty() || starting) {
             return;
@@ -882,8 +898,9 @@ public final class GlossaryTab {
         observe(glossary.get());
         starting = true;
         updateDetect();
-        notice(DETECT + " wird gestartet …", Severity.INFO);
-        Background.run(() -> glossary.get().classify(sourceId, spaceKey), started -> {
+        String name = detectName(pageId, title);
+        notice(name + " wird gestartet …", Severity.INFO);
+        Background.run(() -> glossary.get().classify(sourceId, spaceKey, pageId), started -> {
             starting = false;
             if (started.isEmpty()) {
                 updateDetect();
@@ -891,7 +908,7 @@ public final class GlossaryTab {
             }
             started.forEach(status -> jobs.put(status.id(), status));
             updateDetect();
-            notice(STARTED, Severity.INFO);
+            notice(pageId == null ? STARTED : name + STARTED.substring(DETECT.length()), Severity.INFO);
             if (context != null && context.navigator() != null) {
                 context.navigator().followJobs();
             }

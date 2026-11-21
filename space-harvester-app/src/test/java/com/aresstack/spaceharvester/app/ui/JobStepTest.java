@@ -82,6 +82,14 @@ class JobStepTest {
                 .isTrue();
     }
 
+    @Test
+    void aGlossaryRunOverASubtreeNamesThePageWithItsSubpages() {
+        JobStatus glossary = new JobStatus("j2", JobType.GLOSSARY, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, "42", "Betriebshandbuch");
+
+        assertThat(ActivitiesView.where(glossary)).isEqualTo("wiki / OPS · „Betriebshandbuch“ samt Unterseiten");
+    }
+
     private static JobStatus job(String rootPageId, String rootTitle) {
         return new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.RUNNING, new JobProgress(0, 0, 0, 0),
                 null, false, Instant.EPOCH, null, null, rootPageId, rootTitle);

@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -172,6 +173,7 @@ public class GlossaryClassification {
     private final Supplier<GlossaryRuleSettings> ruleSettings;
     private final Predicate<PageKey> released;
     private final Set<String> started = ConcurrentHashMap.newKeySet();
+    private volatile Subtrees subtrees;
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
 
     /**
@@ -241,6 +243,21 @@ public class GlossaryClassification {
     }
 
     /**
+     * Die Seiten einer Seite samt Unterseiten, die ein Aufrufer lesen darf (D4.2, {@code Holdings#resolve}); ohne
+     * Angabe kein Lauf über einen Teilbaum.
+     */
+    @FunctionalInterface
+    public interface Subtrees {
+
+        PageSet pages(AccessContext caller, String sourceId, String spaceKey, String pageId);
+    }
+
+    /** Ermöglicht Läufe über eine Seite samt Unterseiten ({@link #start(AccessContext, String, String, String)}). */
+    public void subtrees(Subtrees subtrees) {
+        this.subtrees = subtrees;
+    }
+
+    /**
      * Ob ein Lauf möglich ist: mit Regelphase immer, sonst nur mit Modell; ohne meldet {@link #start}
      * {@code NO_MODEL}, die Pflege von Hand geht weiter.
      */
@@ -268,10 +285,27 @@ public class GlossaryClassification {
      *                                      „{@value #PHASE}“ fällt dann aus, das Ergebnis nennt Grund und Zahlen.
      */
     public List<JobStatus> start(AccessContext caller, String sourceId, String spaceKey) {
+        return start(caller, sourceId, spaceKey, null);
+    }
+
+    /**
+     * Wie {@link #start(AccessContext, String, String)}, mit {@code pageId} nur über diese Seite samt Unterseiten
+     * (D4.2): Die Einträge gelten weiter für Quelle und Space der Seite, der Lauf ergänzt aber nur und gleicht nicht
+     * ab; Belege, Unterstützung und Einordnung aus Seiten außerhalb des Teilbaums bleiben.
+     *
+     * @param pageId Startseite oder {@code null}; nur mit {@code sourceId} und {@code spaceKey}
+     * @throws InvalidQueryException bei {@code pageId} ohne Space oder ohne Regelphase
+     */
+    public List<JobStatus> start(AccessContext caller, String sourceId, String spaceKey, String pageId) {
         String source = blank(sourceId) ? null : sourceId.trim();
         String space = blank(spaceKey) ? null : spaceKey.trim();
+        String root = blank(pageId) ? null : pageId.trim();
         if (source == null && space != null) {
             throw new InvalidQueryException("spaceKey nur mit sourceId");
+        }
+        if (root != null && (space == null || analysed == null || subtrees == null)) {
+            throw new InvalidQueryException(space == null ? "pageId nur mit sourceId und spaceKey"
+                    : "Ein Teilbaum braucht die Aussagenanalyse");
         }
         // Erst die Rechte, damit eine Antwort ohne Freigabe nichts über Modell oder Freigaben verrät.
         List<String> permitted = new ArrayList<>();
@@ -309,10 +343,16 @@ public class GlossaryClassification {
         try {
             for (String id : sources) {
                 RelationScope scope = new RelationScope(id, space);
-                JobStatus status = jobs.submit(JobType.GLOSSARY, id, space, caller.jobOwner(),
+                JobStatus status = jobs.submit(JobType.GLOSSARY, id, space, root, caller.jobOwner(),
                         JobTask.blocking(context -> {
                             synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
-                                job(scope, context, caller);
+                                if (root == null) {
+                                    job(scope, context, caller);
+                                } else {
+                                    headers.apply(new PageKey(id, root))
+                                            .ifPresent(header -> context.rootTitle(header.metadata().title()));
+                                    job(scope, subtrees.pages(caller, id, space, root), context, caller);
+                                }
                             }
                         }));
                 started.add(status.id());
@@ -337,9 +377,20 @@ public class GlossaryClassification {
      * Grund und Zahlen.
      */
     Outcome job(RelationScope scope, JobContext context, AccessContext caller) {
+        return job(scope, null, context, caller);
+    }
+
+    /**
+     * Wie {@link #job(RelationScope, JobContext, AccessContext)}, mit {@code subtree} nur über dessen Seiten (D4.2):
+     * ergänzen statt abgleichen.
+     */
+    Outcome job(RelationScope scope, PageSet subtree, JobContext context, AccessContext caller) {
         List<KnowledgeGraph.AnalysedPage> pages = analysed == null ? null
                 : GlossaryOverview.inScope(analysed.apply(caller), scope.sourceId(), scope.spaceKey());
-        RuleRun rules = pages == null ? null : rules(scope, context, pages);
+        if (pages != null && subtree != null) {
+            pages = pages.stream().filter(page -> subtree.contains(page.page().key())).toList();
+        }
+        RuleRun rules = pages == null ? null : rules(scope, context, pages, subtree);
         if (rules != null && context != null) {
             context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, RULES_DONE,
                     "„" + RULE_PHASE + "“: " + rules.describe(), null, null, null));
@@ -359,7 +410,7 @@ public class GlossaryClassification {
                 perPage = true;
             } else {
                 phase(context, PHASE);
-                classified = phase.run(scope, pages, context);
+                classified = phase.run(scope, pages, context, subtree);
                 if (context != null) {
                     context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
                             MODEL_DONE, "„" + PHASE + "“: " + classified.describe(), null, null, null));
@@ -416,10 +467,11 @@ public class GlossaryClassification {
     /** Die Regelphase „{@value #RULE_PHASE}“: ohne Modell, abbrechbar, Teilergebnisse sofort. */
     RuleRun rules(RelationScope scope, JobContext context, AccessContext caller) {
         return rules(scope, context, GlossaryOverview.inScope(analysed.apply(caller), scope.sourceId(),
-                scope.spaceKey()));
+                scope.spaceKey()), null);
     }
 
-    private RuleRun rules(RelationScope scope, JobContext context, List<KnowledgeGraph.AnalysedPage> pages) {
+    private RuleRun rules(RelationScope scope, JobContext context, List<KnowledgeGraph.AnalysedPage> pages,
+                          PageSet subtree) {
         phase(context, RULE_PHASE);
         GlossaryRuleSettings settings = ruleSettings.get();
         GlossaryRuleProposals.Batch batch = GlossaryRuleProposals.of(pages, settings, () -> {
@@ -431,6 +483,7 @@ public class GlossaryClassification {
         String generation = RULE_VERSION + "@" + clock.instant();
         int added = 0;
         int updated = 0;
+        int suppressed = 0;
         List<Glossary.Proposal> proposals = batch.proposals();
         if (context != null) {
             context.discovered(proposals.size());
@@ -440,10 +493,12 @@ public class GlossaryClassification {
                 context.checkpoint();
             }
             List<Glossary.Proposal> chunk = proposals.subList(from, Math.min(proposals.size(), from + RULE_CHUNK));
-            Glossary.ProposalRun part = glossary.proposeSome(RelationOrigin.RULE, RULE_ACTOR, scope, generation,
-                    chunk);
+            Glossary.ProposalRun part = subtree == null
+                    ? glossary.proposeSome(RelationOrigin.RULE, RULE_ACTOR, scope, generation, chunk)
+                    : glossary.supplement(RelationOrigin.RULE, RULE_ACTOR, scope, generation, chunk);
             added += part.added();
             updated += part.updated();
+            suppressed += part.suppressed();
             if (context != null) {
                 context.processed(chunk.size());
                 if (part.added() + part.updated() > 0) {
@@ -454,11 +509,14 @@ public class GlossaryClassification {
         if (context != null) {
             context.checkpoint();
         }
-        phase(context, RULE_PHASE + ": Abgleich");
-        Glossary.ProposalRun last = glossary.propose(RelationOrigin.RULE, RULE_ACTOR, scope, generation, proposals,
-                batch.retained());
+        // Ein Teilbaum gleicht nie ab (D4.2): Was außerhalb belegt ist, entfällt nicht und veraltet nicht.
+        Glossary.ProposalRun last = Glossary.ProposalRun.NONE;
+        if (subtree == null) {
+            phase(context, RULE_PHASE + ": Abgleich");
+            last = glossary.propose(RelationOrigin.RULE, RULE_ACTOR, scope, generation, proposals, batch.retained());
+        }
         Glossary.ProposalRun run = new Glossary.ProposalRun(added + last.added(), updated + last.updated(),
-                last.withdrawn(), last.suppressed(), last.stale());
+                last.withdrawn(), subtree == null ? last.suppressed() : suppressed, last.stale());
         LOG.log(System.Logger.Level.INFO, "Begriffe ableiten in {0}: {1} Seiten, {2} Begriffe, {3} vorgeschlagen, "
                         + "{4} neu, {5} geändert, {6} entfallen", scope.sourceId(), pages.size(),
                 batch.derivation().terms().size(), proposals.size(), run.added(), run.updated(), run.withdrawn());

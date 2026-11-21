@@ -749,6 +749,9 @@ public final class Harvester implements AutoCloseable {
                     who -> self.knowledgeGraph.analysed(who),
                     () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(),
                     this.aiRelease::mayProcess, clock);
+            // D4.2: eine Seite samt Unterseiten mit den Rechten des Aufrufers.
+            this.glossaryClassification.subtrees((caller, sourceId, spaceKey, pageId) -> holdings.resolve(caller,
+                    Selection.of(Selection.Root.subtree(sourceId, spaceKey, pageId))).pages());
             // #336: Synonymerkennung auf Knopfdruck; Embedding- und Chat-Modell folgen der Konfiguration, Text nur
             // aus freigegebenen Quellen, Budget aus terms.synonyms.*.
             EmbeddingProcessor embeddingForTerms = embedding;

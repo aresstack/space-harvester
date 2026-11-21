@@ -891,7 +891,12 @@ public final class ActivitiesView implements View {
         }
         String where = status.partitionKey() == null || status.partitionKey().isBlank()
                 ? status.sourceId() : status.sourceId() + " / " + status.partitionKey();
-        return status.rootPageId() == null ? where : where + " ab „" + startPage(status) + "“";
+        if (status.rootPageId() == null) {
+            return where;
+        }
+        // D4.2: „Fachbegriffe ermitteln“ über eine Seite samt Unterseiten.
+        return status.type() == JobType.GLOSSARY ? where + " · „" + startPage(status) + "“ samt Unterseiten"
+                : where + " ab „" + startPage(status) + "“";
     }
 
     /** Titel der Startseite, solange der Auftrag sie noch nicht gelesen hat ihre ID; „–“ für ganze Spaces. */
