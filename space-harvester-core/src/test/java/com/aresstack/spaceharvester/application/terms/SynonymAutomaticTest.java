@@ -153,6 +153,18 @@ class SynonymAutomaticTest {
     }
 
     @Test
+    void theAutomaticRunHasTheCoreAsOwnerAndARecognizableName() {
+        // D4.4: in der Auftragsliste wie die übrigen Aufträge des Core, als „Synonyme erkennen“.
+        discovery.owner("space-harvester-core");
+
+        JobStatus status = discovery.automatic("wiki").orElseThrow();
+
+        assertThat(status.owner()).isEqualTo("space-harvester-core");
+        assertThat(status.type()).isEqualTo(JobType.ENRICHMENT);
+        assertThat(status.parameters()).containsEntry(SynonymDiscovery.TASK_PARAMETER, SynonymDiscovery.TASK);
+    }
+
+    @Test
     void confirmedProposalsStayAndUnsupportedOnesAreWithdrawn() {
         discovery.automatic("wiki");
         TermRelation pair = synonyms().get(0);

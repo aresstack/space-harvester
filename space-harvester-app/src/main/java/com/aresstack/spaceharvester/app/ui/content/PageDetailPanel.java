@@ -261,6 +261,13 @@ public final class PageDetailPanel extends JPanel {
     private final JComponent tabIcons;
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
+    /**
+     * Ablage der Aussagenanalyse oben rechts in Aussagen und Graph (Fahrplan A3), also überall, wo der Inhalt von
+     * der Ablage abhängt (UX). „Beziehungen“ liest nur Glossar-Beziehungen und Analyseschritte, nicht die Ablage.
+     */
+    private final AnalyzerStoreField storeField = new AnalyzerStoreField();
+    /** Liegt beim Umschalten der Ablage über den Unterreitern von „Analysen“. */
+    private com.aresstack.spaceharvester.app.ui.controls.BusyOverlay storeBusy;
     /** Inhalt des Unterreiters „Aussagen“; bis {@link #statementsTab(JComponent)} ein Hinweis. */
     private final JPanel statements = new JPanel(new BorderLayout());
     /** Inhalt des Unterreiters „Graph“ (Wissensgraph, #499 F); bis {@link #knowledgeGraphTab(JComponent)} ein Hinweis. */
@@ -468,6 +475,7 @@ public final class PageDetailPanel extends JPanel {
         }
         // Beide Reiter zeigen dasselbe Update: Wer es in einem wählt, sieht es im anderen auch.
         sourceView.onSelected(sourceChanges::select);
+        sourceView.podcastEvents(context.events()::publish);
         sourceChanges.onSelected(sourceView::select);
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
@@ -587,7 +595,8 @@ public final class PageDetailPanel extends JPanel {
                 .tab(GRAPH, withBelow(graph, graphBelow))
                 .tab(RELATIONS, analysisView)
                 // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Beziehungen“ gewählt ist (BG2b).
-                .actions(subpages.box(), analysisView.proposeIcon(), analysisView.createIcon());
+                .actions(storeField, subpages.box(), analysisView.proposeIcon(), analysisView.createIcon());
+        storeField.onChange(this::switchStore);
         originalContent.setOpaque(false);
         fileContent.setOpaque(false);
         originalContent.add(readingPane, ORIGINAL_PAGE_CARD);
@@ -595,7 +604,7 @@ public final class PageDetailPanel extends JPanel {
         tabs.tab(READING, originalContent)
                 .tab(READ, readerPanel)
                 .tab(ATTACHMENTS, attachmentsPanel)
-                .tab(ANALYSES, analysisTabs)
+                .tab(ANALYSES, storeBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(analysisTabs))
                 .tab(ADVANCED, advanced)
                 // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
                 // eigene Karte neben Seite und Hinweis, der Reiter hält nur den Platz.
@@ -638,8 +647,13 @@ public final class PageDetailPanel extends JPanel {
         // Nach jedem (Neu-)Start, etwa nach dem Speichern der Wörter für den Stand, liest „Stand“ neu (Beobachter, kein
         // Zeitgeber); verdeckt erst beim nächsten Zeigen.
         if (context != null) {
-            context.onChange(ignored -> standing.settingsChanged());
+            context.onChange(ignored -> {
+                standing.settingsChanged();
+                storeChanged();
+            });
         }
+        shownStore = storeSetting();
+        storeField.show(shownStore);
         sourceChanges.onStatus(text -> tabStatus(READ, text));
         graphView.onStatus(text -> tabStatus(GRAPH, text));
         // Lauf-, Erfolgs- und Infomeldungen gehen in die Statuszeile des Hauptfensters; die Platte zeigt nur Probleme.
@@ -1088,6 +1102,8 @@ public final class PageDetailPanel extends JPanel {
      * nur dann in der Reiterzeile. Ohne Seite steht er beim Stand und erfährt dort, ob er zu sehen ist.
      */
     private void showRelations() {
+        String sub = analysisTabs.selected();
+        storeField.setVisible(STATEMENTS.equals(sub) || GRAPH.equals(sub));
         boolean selected = RELATIONS.equals(analysisTabs.selected());
         analysisView.proposeIcon().setVisible(selected);
         analysisView.createIcon().setVisible(selected);
@@ -1104,6 +1120,70 @@ public final class PageDetailPanel extends JPanel {
     /** Für Tests: die Checkbox „mit Unterseiten“ der Analyse-Reiter. */
     Subpages subpages() {
         return subpages;
+    }
+
+    /** Die eingestellte Ablage der Aussagenanalyse; ohne Datei der MaltParser. */
+    private com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice storeSetting() {
+        return context == null || context.settings() == null || context.settings().analyzer().analyzer() == null
+                ? com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER
+                : context.settings().analyzer().analyzer();
+    }
+
+    /**
+     * Ablage umgeschaltet: schreibt dieselbe Einstellung wie Einstellungen › Modelle („Aussagenanalyse“) und übernimmt
+     * sie ohne Neustart; währenddessen liegt das BusyOverlay über den Analysen. Neu gelesen wird per Beobachter
+     * ({@link AppContext#onChange}), wenn die Laufzeit die neue Einstellung hat.
+     */
+    private void switchStore(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice choice) {
+        if (context == null || choice == storeSetting()) {
+            return;
+        }
+        com.aresstack.spaceharvester.application.configuration.AnalyzerSettings next =
+                (context.settings() == null
+                        ? com.aresstack.spaceharvester.application.configuration.AnalyzerSettings.DEFAULT
+                        : context.settings().analyzer()).withAnalyzer(choice);
+        storeBusy.setText("Ablage „" + AnalyzerNames.shortName(choice) + "“ wird geladen …");
+        storeBusy.setBusy(true);
+        com.aresstack.spaceharvester.app.ui.Background.run(() -> {
+            com.aresstack.spaceharvester.app.settings.ConfigFileEditor editor =
+                    new com.aresstack.spaceharvester.app.settings.ConfigFileEditor(context.loader());
+            java.nio.file.Path file = context.configFile();
+            String text = java.nio.file.Files.isRegularFile(file)
+                    ? java.nio.file.Files.readString(file, java.nio.charset.StandardCharsets.UTF_8) : "";
+            com.aresstack.spaceharvester.app.settings.ConfigFileEditor.Draft written = editor.withAnalyzer(file,
+                    new com.aresstack.spaceharvester.app.settings.ConfigFileEditor.Draft(text, null), next);
+            editor.save(file, written, !editor.fileHasPlaintextSecret(file));
+            return Boolean.TRUE;
+        }, done -> context.reload(() -> storeBusy.setBusy(false)), error -> {
+            storeBusy.setBusy(false);
+            storeField.show(storeSetting());
+            context.events().publish(new com.aresstack.spaceharvester.app.event.StatusMessageEvent(
+                    "Ablage ließ sich nicht umschalten: " + com.aresstack.spaceharvester.app.ui.Problems
+                            .describe(error).title(), STATUS_MS,
+                    com.aresstack.spaceharvester.app.event.Severity.ERROR));
+        });
+    }
+
+    /** Die Laufzeit hat neue Einstellungen: Auswahlfeld nachziehen, bei anderer Ablage die Ansichten neu lesen. */
+    private void storeChanged() {
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice now = storeSetting();
+        boolean switched = now != shownStore;
+        shownStore = now;
+        storeField.show(now);
+        if (switched) {
+            showTabStatus();
+            statementsView.storeChanged();
+            graphView.reload();
+            // „Beziehungen“ (Glossar und Analyseschritte) liest nicht aus der Aussagen-Ablage: kein Neuladen nötig.
+        }
+    }
+
+    private com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice shownStore =
+            com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER;
+
+    /** Für Tests: das Ablage-Auswahlfeld der Reiterzeile. */
+    AnalyzerStoreField storeField() {
+        return storeField;
     }
 
     /** Für Tests: die ?-Hilfe des Unterreiters „Aussagen“. */
@@ -1903,7 +1983,19 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void showTabStatus() {
-        statusShown.accept(tabStatus.getOrDefault(selectedTab(), " "));
+        String tab = selectedTab();
+        statusShown.accept(withStore(tab, tabStatus.getOrDefault(tab, " "), shownStore));
+    }
+
+    /**
+     * Die Statuszeile der Reiter, die aus der Ablage der Aussagenanalyse lesen (Aussagen, Graph, Stand, Glossar), nennt
+     * den Analysator dieser Ablage (AT, D6a); leere Zeilen bleiben leer, andere Reiter unverändert.
+     */
+    static String withStore(String tab, String text,
+                            com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice store) {
+        boolean reads = STATEMENTS.equals(tab) || GRAPH.equals(tab) || STAND.equals(tab)
+                || OVERVIEW_GLOSSARY.equals(tab);
+        return !reads || text == null || text.isBlank() ? text : text + " · Ablage: " + AnalyzerNames.name(store);
     }
 
     private void show(Loaded loaded) {

@@ -25,8 +25,11 @@ import tools.jackson.databind.json.JsonMapper;
  * bleiben je Textstelle eigenständig. Es gibt keine {@code owl:sameAs}-Behauptungen: {@code sh:lexicalKey} ist nur die
  * normalisierte Grundform für lexikalische Kandidaten, keine Identität. Jede Aussage trägt drei getrennte Angaben:
  * {@code sh:extractionQuality} (maschinelle Ableitung, mit {@code sh:qualityReason}), {@code sh:basis} je Beteiligung
- * (Herkunft) und {@code sh:verificationStatus} (fachliche Prüfung: {@value #UNVERIFIED}, solange kein Mensch sie
- * bestätigt oder verworfen hat). Exportiert werden nur die Aussagen der Stufen aus {@link Header#qualities()},
+ * (Herkunft) und {@code sh:verificationStatus} (fachliche Prüfung: die wirksame Prüfung durch Menschen,
+ * {@code CONFIRMED}/{@code REJECTED}, sonst {@value #UNVERIFIED}). Wirksam heißt: aus der Ablage der Entscheidungen für
+ * den Analysator der exportierten Analyse, sonst der gespeicherte Wert (ADR 0032 W3); die Aussagen kommen schon so aus
+ * {@code KnowledgeGraph#analysed}, hier wird nichts nachgeschlagen. Exportiert werden nur die Aussagen der Stufen aus
+ * {@link Header#qualities()},
  * standardmäßig nur plausible; Erwähnungen und nominale Bezüge bleiben vollständig.
  *
  * <p>Deterministisch: Seiten nach Quelle und Seite, Knoten nach Satz und Position, Mengen sortiert; nur der Kopf nennt
@@ -391,6 +394,7 @@ public final class KnowledgeGraphJsonLd {
             json.writeStringProperty("voice", statement.voice().name());
             json.writeStringProperty("clause", statement.clause().name());
             json.writeBooleanProperty("core", statement.core());
+            // Die wirksame Prüfung durch Menschen (ADR 0032 W3): die Aussage kommt aus KnowledgeGraph#analysed mit ihr.
             json.writeStringProperty("verificationStatus", statement.review() == ParsedStatements.Review.UNREVIEWED
                     ? UNVERIFIED : statement.review().name());
             json.writeStringProperty("extractionQuality", statement.quality().name());

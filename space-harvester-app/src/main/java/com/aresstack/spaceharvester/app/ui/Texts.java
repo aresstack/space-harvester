@@ -157,6 +157,7 @@ public final class Texts {
             case SLIDE_NOTES -> "Folienkommentare";
             case PRESENTATION_EXPORT -> "PPTX erzeugen";
             case SEARCH_QUALITY -> "Suchqualität messen";
+            case UPDATE_PODCAST -> "Podcast erzeugen";
             case BACKGROUND -> "Hintergrund";
         };
     }
@@ -171,6 +172,12 @@ public final class Texts {
                 status.parameters().get(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions
                         .TASK_PARAMETER))) {
             return "Bilder beschreiben";
+        }
+        if (status.type() == JobType.ENRICHMENT
+                && com.aresstack.spaceharvester.application.terms.SynonymDiscovery.TASK.equals(
+                status.parameters().get(com.aresstack.spaceharvester.application.terms.SynonymDiscovery
+                        .TASK_PARAMETER))) {
+            return "Synonyme erkennen";
         }
         if (status.type() == JobType.BACKGROUND) {
             // Hintergrundaufträge (ADR 0025 Nachtrag): der Titel ihrer Gruppe, etwa „Nachbarseiten laden“.

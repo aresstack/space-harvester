@@ -79,9 +79,19 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
     @Override
     public int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys,
                        SearchRunId partOf) {
+        return prepare(caller, query, text, excludedSpaceKeys, partOf, false);
+    }
+
+    /** Mit {@code glossarySynonyms} findet die Schlagwortsuche auch über Synonyme bestätigter Fachbegriffe (K5a). */
+    @Override
+    public int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys,
+                       SearchRunId partOf, boolean glossarySynonyms) {
         long deadline = System.nanoTime() + wait.toNanos();
         KeywordSearch.Query keywordQuery = new KeywordSearch.Query(shortened(text), query.sourceId(),
                 query.sourceIds(), query.spaceKeys(), excludedSpaceKeys, query.pages());
+        if (glossarySynonyms) {
+            keywordQuery = keywordQuery.withGlossarySynonyms(true);
+        }
         KeywordSearch.Results found = keywords.search(caller, keywordQuery, null, MAX_PAGES, partOf);
         if (awaitLoading(found.progress(), deadline)) {
             // Die Schlagwortsuche wartet nicht aufs Laden; erst danach findet der Volltextindex die Seiten.

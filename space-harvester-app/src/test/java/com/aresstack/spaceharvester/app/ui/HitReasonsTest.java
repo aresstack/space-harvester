@@ -37,6 +37,24 @@ class HitReasonsTest {
     }
 
     @Test
+    void aHitOnlyThroughASynonymIsMarkedAndItsTooltipNamesTermAndSynonym() {
+        // K5a: bestätigt „Synonym“, vorgeschlagen „Synonym (Vorschlag)“; Tooltip mit Fachbegriff und Synonym.
+        List<HitReason> confirmed = List.of(HitReason.text("Dunsthöhe", new HitReason.Relation("Wolkenpegel",
+                "Dunsthöhe", "synonym"), List.of(), List.of("dunsthöhe")));
+        List<HitReason> proposed = List.of(HitReason.text("Dunsthöhe", new HitReason.Relation("Wolkenpegel",
+                "Dunsthöhe", "synonym-proposed"), List.of(), List.of("dunsthöhe")));
+
+        assertThat(HitReasons.mark(confirmed).brief()).isEqualTo("Synonym");
+        assertThat(HitReasons.tip(confirmed)).isEqualTo("Fachbegriff „Wolkenpegel“, Synonym „Dunsthöhe“");
+        assertThat(HitReasons.mark(proposed)).isEqualTo(new MarkedTextRenderer.Mark(
+                "Synonym (Vorschlag) „Dunsthöhe“", "Synonym (Vorschlag)"));
+        assertThat(HitReasons.tip(proposed))
+                .isEqualTo("Fachbegriff „Wolkenpegel“, vorgeschlagenes Synonym „Dunsthöhe“");
+        assertThat(HitReasons.details(proposed)).contains("als Synonym des Fachbegriffs vorgeschlagen")
+                .doesNotContain("bestätigt als");
+    }
+
+    @Test
     void withoutAFullTextHitTheMarkSaysHowItWasFound() {
         // Auflage Architekt: gerade hier ist die Ursache nicht offensichtlich.
         assertThat(HitReasons.mark(List.of(HitReason.source("RSL", null))).full())

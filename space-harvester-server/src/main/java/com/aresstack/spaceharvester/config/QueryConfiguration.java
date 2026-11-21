@@ -25,6 +25,8 @@ import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.query.SearchExpansion;
+import com.aresstack.spaceharvester.application.glossary.Glossary;
+import com.aresstack.spaceharvester.application.glossary.GlossarySynonyms;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
@@ -173,7 +175,7 @@ class QueryConfiguration {
                                 @Value("${space-harvester.search.candidate-selection:}") String selectionValue,
                                 SearchRunLog runs, FindingCatalog findings, ObjectProvider<EnrichmentStore> store,
                                 LiveConfiguration live, ObjectProvider<SyncBeforeSearch> syncBeforeSearch,
-                                ObjectProvider<TermRelations> relations) {
+                                ObjectProvider<TermRelations> relations, ObjectProvider<Glossary> glossary) {
         // Auszüge aus semantischen Absätzen, wo welche zum abgelegten Text gespeichert sind (#181, ADR 0020).
         PageTextIndex index = texts.getIfAvailable();
         EnrichmentStore enrichments = store.getIfAvailable();
@@ -185,7 +187,10 @@ class QueryConfiguration {
                 sourceIds -> syncBeforeSearch.ifAvailable(before -> before.searching(sourceIds)),
                 // #336, Teil 4: bestätigte Synonyme, Varianten und Ausschreibungen als Anfragen je Quelle.
                 relations.getIfAvailable() == null ? SearchExpansion.NONE
-                        : SearchExpansion.typed(relations.getIfAvailable()::counterparts));
+                        : SearchExpansion.typed(relations.getIfAvailable()::counterparts),
+                // K5a: vorgeschlagene Synonyme bestätigter Fachbegriffe, nur wenn die Anfrage es einschaltet.
+                relations.getIfAvailable() == null || glossary.getIfAvailable() == null ? SearchExpansion.NONE
+                        : new GlossarySynonyms(glossary.getIfAvailable(), relations.getIfAvailable()).expansion());
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */

@@ -143,7 +143,7 @@ class TermGraphViewTest {
 
     @Test
     void theDomainViewMapsTermsSynonymsAndVerbEdgesAndSaysWhereTheStatementsComeFrom() throws Exception {
-        GraphSource source = GraphSource.ofDomainTerms((start, depth, cancelled) -> FACHSICHT, id -> "MaltParser");
+        GraphSource source = GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> FACHSICHT, id -> "MaltParser");
 
         GraphSource.Graph graph = source.around("Antragsteller", 2, false);
 
@@ -155,7 +155,7 @@ class TermGraphViewTest {
                 Tuple.tuple(GraphSource.Style.VERB, "stellen · 3", true),
                 Tuple.tuple(GraphSource.Style.SYNONYM, null, false));
         assertThat(graph.note()).isEqualTo("Aussagen aus MaltParser · 2 veraltete Aussagen ausgelassen");
-        assertThat(GraphSource.ofDomainTerms((start, depth, cancelled) -> new DomainTermGraph.View(
+        assertThat(GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> new DomainTermGraph.View(
                 DomainTermGraph.Outcome.NOT_A_TERM, List.of(), List.of(), false, 0, Set.of()), id -> id)
                 .around("Kaffee", 1, false).empty()).isEqualTo("„Kaffee“ " + GraphSource.NOT_A_TERM);
     }
@@ -167,7 +167,7 @@ class TermGraphViewTest {
             asked.add("relations");
             return GraphSource.Graph.EMPTY;
         };
-        GraphSource domain = GraphSource.ofDomainTerms((start, depth, cancelled) -> {
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> {
             asked.add("domain");
             return FACHSICHT;
         }, id -> "MaltParser");
@@ -203,6 +203,7 @@ class TermGraphViewTest {
             seen.add(popup.headingText());
             seen.add(popup.countValue());
             seen.add(popup.linkTexts());
+            seen.add(popup.stageTexts());
             List<java.awt.geom.Rectangle2D> tags = canvas.segments(canvas.layout(900, 560)).stream()
                     .map(TermGraphView.Canvas.Segment::tag).filter(java.util.Objects::nonNull).toList();
             for (int i = 0; i < tags.size(); i++) {
@@ -217,8 +218,93 @@ class TermGraphViewTest {
         assertThat(seen).containsExactly(
                 "3 Fachbegriffe · 2 Verbindungen · Aussagen aus MaltParser · 2 veraltete Aussagen ausgelassen",
                 GraphSource.Style.VERB, "Antragsteller stellen Antrag", 3,
-                List.of("Förderantrag (wiki / FOE)", "Leitfaden (wiki / FOE)"));
+                List.of("Förderantrag (wiki / FOE)", "Leitfaden (wiki / FOE)"), List.of("nur MaltParser", "nur MaltParser"));
         assertThat(opened).containsExactly(new EvidencePopup.Target("wiki", "2", -1, -1));
+    }
+
+    @Test
+    void trustShowsAsLineStyleTooltipAndPillAndOnlyCheckedAsksTheCoreForCheckedEvidence() throws Exception {
+        DomainTermGraph.Evidence checkedEvidence = evidence("1", "Förderantrag", DomainTermGraph.Trust.GEPRUEFT);
+        DomainTermGraph.Evidence open = evidence("2", "Leitfaden", DomainTermGraph.Trust.UNGEPRUEFT);
+        DomainTermGraph.Evidence other = evidence("3", "Merkblatt", DomainTermGraph.Trust.ABWEICHEND);
+        DomainTermGraph.View view = new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND,
+                List.of(new DomainTermGraph.Node("antragsteller", "Antragsteller", DomainTermGraph.NodeKind.TERM, 0,
+                                null),
+                        new DomainTermGraph.Node("antrag", "Antrag", DomainTermGraph.NodeKind.TERM, 1, "antragsteller"),
+                        new DomainTermGraph.Node("frist", "Frist", DomainTermGraph.NodeKind.TERM, 1, "antragsteller")),
+                List.of(new DomainTermGraph.Edge("antragsteller", "antrag", DomainTermGraph.EdgeKind.VERB, "stellen",
+                                2, List.of(checkedEvidence, other)),
+                        new DomainTermGraph.Edge("antragsteller", "frist", DomainTermGraph.EdgeKind.VERB, "wahren", 2,
+                                List.of(open, other))),
+                false, 0, Set.of("maltparser-de"));
+        List<Boolean> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> {
+            asked.add(checkedOnly);
+            return view;
+        }, id -> "MaltParser");
+
+        List<GraphSource.Edge> edges = domain.around("Antragsteller", 2, false).edges();
+        assertThat(edges).extracting(GraphSource.Edge::label, GraphSource.Edge::trust, GraphSource.Edge::differs)
+                .containsExactly(Tuple.tuple("stellen · 2", DomainTermGraph.Trust.GEPRUEFT, false),
+                        Tuple.tuple("wahren ≠ · 2", DomainTermGraph.Trust.UNGEPRUEFT, true));
+        assertThat(edges.getFirst().tip()).as("genaue Stufen wie die Pillen")
+                .isEqualTo("Vom Prüfschritt bestätigt 1 · abweichend 1 – Klick zeigt die Belege");
+        java.awt.BasicStroke strong = TermGraphView.Canvas.trustStroke(edges.getFirst());
+        java.awt.BasicStroke dotted = TermGraphView.Canvas.trustStroke(edges.get(1));
+        assertThat(strong.getDashArray()).as("geprüft: durchgezogen").isNull();
+        assertThat(strong.getLineWidth()).isGreaterThan(3f);
+        assertThat(dotted.getDashArray()).as("abweichend: gepunktet").containsExactly(0.5f, 5f);
+        java.awt.BasicStroke dashed = TermGraphView.Canvas.trustStroke(new GraphSource.Edge("a", "b", "VERB", true,
+                true, GraphSource.Style.VERB, "x · 1", List.of(open), DomainTermGraph.Trust.UNGEPRUEFT, false, null));
+        assertThat(dashed.getDashArray()).as("ungeprüft: gestrichelt").containsExactly(7f, 5f);
+
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView graph = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY,
+                    domain);
+            seen.add(graph.checkedChoice().isEnabled());
+            seen.add(graph.checkedChoice().getToolTipText());
+            graph.domainChoice().doClick();
+            seen.add(graph.checkedChoice().isEnabled());
+            graph.checkedChoice().doClick();
+            seen.add(graph.optionsButton().getToolTipText());
+            graph.showTerm("Antragsteller");
+        });
+        awaitTrue(() -> !asked.isEmpty() && asked.getLast());
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView graph = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY,
+                    domain);
+            graph.domainChoice().doClick();
+            graph.checkedChoice().doClick();
+            graph.show(new GraphSource.Graph(List.of(new GraphSource.Node("antragsteller", "Antragsteller", 0, null),
+                    new GraphSource.Node("antrag", "Antrag", 1, "antragsteller")), List.of(edges.getFirst()), false));
+            seen.add(graph.hint());
+            graph.showEvidenceFor(edges.getFirst());
+            seen.add(graph.evidencePopup().stageTexts());
+            // Nur ungeprüfte Aussagen: Es fehlt die Prüfung, nicht die Analyse.
+            graph.show(new GraphSource.Graph(List.of(new GraphSource.Node("antragsteller", "Antragsteller", 0, null)),
+                    List.of(), false));
+            seen.add(graph.hint());
+            graph.checkedChoice().doClick();
+            graph.show(new GraphSource.Graph(List.of(new GraphSource.Node("antragsteller", "Antragsteller", 0, null)),
+                    List.of(), false));
+            seen.add(graph.hint());
+        });
+        assertThat(seen).containsExactly(false, TermGraphView.CHECKED_LOCKED, true,
+                "Optionen – aktiv: Nur Fachbegriffe, Nur geprüft", "2 Fachbegriffe · 1 Verbindung · nur geprüft",
+                List.of("vom Prüfschritt bestätigt", "abweichend"),
+                "Zu diesem Fachbegriff gibt es noch keine geprüften Aussagen mit anderen Fachbegriffen.",
+                TermGraphView.NO_VERBS);
+    }
+
+    @Test
+    void theRealFetchPassesCheckedOnlyAndTheHelpWaitsForTheComparison() {
+        assertThat(TermGraphView.domainOptions(2, null, true).checkedOnly()).isTrue();
+        assertThat(TermGraphView.domainOptions(1, null, false).checkedOnly()).isFalse();
+        assertThat(TermGraphView.domainOptions(2, null, true).includeStale()).as("nie veraltete Aussagen").isFalse();
+        assertThat(TermGraphView.HELP).as("einig/abweichend erst mit dem Vergleich Parser/KI")
+                .contains("geprüft", "gestrichelt").doesNotContainIgnoringCase("einig")
+                .doesNotContainIgnoringCase("abweichend");
     }
 
     @Test
@@ -226,7 +312,7 @@ class TermGraphViewTest {
         List<Object> seen = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
             TermGraphView view = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY,
-                    GraphSource.ofDomainTerms((start, depth, cancelled) -> FACHSICHT, id -> "MaltParser"));
+                    GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> FACHSICHT, id -> "MaltParser"));
             seen.add(java.util.Arrays.asList(view.tools().getComponents()).contains(view.proposalsChoice()));
             seen.add(view.proposalsChoice().isEnabled());
             view.domainChoice().doClick();
@@ -251,7 +337,7 @@ class TermGraphViewTest {
         assertThat(seen).containsExactly(true, true, false, TermGraphView.PROPOSALS_LOCKED,
                 true, true, true, true, true);
 
-        GraphSource.Graph empty = GraphSource.ofDomainTerms((start, depth, cancelled) -> new DomainTermGraph.View(
+        GraphSource.Graph empty = GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> new DomainTermGraph.View(
                 DomainTermGraph.Outcome.FOUND, List.of(new DomainTermGraph.Node("antrag", "Antrag",
                 DomainTermGraph.NodeKind.TERM, 0, null)), List.of(), false, 0, Set.of(),
                 com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER),
@@ -262,7 +348,7 @@ class TermGraphViewTest {
     @Test
     void aCoreChangeReloadsQuietlyAndWaitsWhileTheEvidenceIsOpen() throws Exception {
         java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
-        GraphSource domain = GraphSource.ofDomainTerms((start, depth, cancelled) -> {
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> {
             asked.incrementAndGet();
             return FACHSICHT;
         }, id -> "MaltParser");
@@ -300,7 +386,7 @@ class TermGraphViewTest {
                 List.of(new DomainTermGraph.Node("antragsteller", "Antragsteller", DomainTermGraph.NodeKind.TERM, 0,
                         null)), List.of(), false, 0, Set.of(),
                 com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER);
-        GraphSource domain = GraphSource.ofDomainTerms((start, depth, cancelled) -> {
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> {
             if (asked.incrementAndGet() == 2) {
                 try {
                     release.await();
@@ -333,22 +419,23 @@ class TermGraphViewTest {
     @Test
     void anOvertakenEvidenceAnswerKeepsTheReloadWaitingForTheLastClick() throws Exception {
         java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
-        GraphSource domain = GraphSource.ofDomainTerms((start, depth, cancelled) -> {
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> {
             asked.incrementAndGet();
             return FACHSICHT;
         }, id -> "MaltParser");
         java.util.concurrent.CountDownLatch first = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.CountDownLatch second = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.atomic.AtomicInteger read = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.concurrent.atomic.AtomicBoolean firstDone = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<Thread> firstReader =
+                new java.util.concurrent.atomic.AtomicReference<>();
         TermGraphView[] holder = new TermGraphView[1];
         SwingUtilities.invokeAndWait(() -> {
             holder[0] = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY, domain);
             holder[0].sentenceReader(byPage -> {
                 try {
                     if (read.incrementAndGet() == 1) {
+                        firstReader.set(Thread.currentThread());
                         first.await();
-                        firstDone.set(true);
                     } else {
                         second.await();
                     }
@@ -364,16 +451,18 @@ class TermGraphViewTest {
         GraphSource.Edge verb = domain.around("Antragsteller", 2, false).edges().stream()
                 .filter(edge -> edge.style() == GraphSource.Style.VERB).findFirst().orElseThrow();
         asked.set(1);
-        SwingUtilities.invokeAndWait(() -> {
-            holder[0].showEvidenceFor(verb);
-            holder[0].showEvidenceFor(verb);
-        });
+        // Klicks nacheinander: Erst wenn das Lesen des ersten Klicks läuft, kommt der zweite. Sonst könnte der Thread
+        // des zweiten Klicks zuerst lesen, und die „überholte“ Antwort wäre in Wahrheit die letzte.
+        SwingUtilities.invokeAndWait(() -> holder[0].showEvidenceFor(verb));
+        awaitTrue(() -> firstReader.get() != null);
+        SwingUtilities.invokeAndWait(() -> holder[0].showEvidenceFor(verb));
+        awaitTrue(() -> read.get() == 2);
         first.countDown();
-        awaitTrue(firstDone::get);
-        for (int i = 0; i < 20; i++) {
-            SwingUtilities.invokeAndWait(() -> { });
-            Thread.sleep(10);
-        }
+        // Background läuft je Aufgabe in einem eigenen Thread; er endet erst, nachdem er die überholte Antwort an den
+        // EDT übergeben hat. Danach den EDT einmal leeren: Die Antwort ist zugestellt, ganz ohne Zeitfenster.
+        firstReader.get().join(5000);
+        assertThat(firstReader.get().isAlive()).isFalse();
+        SwingUtilities.invokeAndWait(() -> { });
         SwingUtilities.invokeAndWait(() -> holder[0].coreChangedWhileShowing());
         assertThat(asked).as("die überholte Antwort beendet das Lesen nicht").hasValue(1);
         assertThat(holder[0].coreDirty()).isTrue();
@@ -407,11 +496,15 @@ class TermGraphViewTest {
     }
 
     private static DomainTermGraph.Evidence evidence(String pageId, String title) {
+        return evidence(pageId, title, DomainTermGraph.Trust.UNGEPRUEFT);
+    }
+
+    private static DomainTermGraph.Evidence evidence(String pageId, String title, DomainTermGraph.Trust trust) {
         ParsedStatements.Statement statement = new ParsedStatements.Statement("wiki/" + pageId + "@x#s0.v1", 0, 4,
                 10, "stellt", "stellen", ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(),
                 Set.of(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED);
         return new DomainTermGraph.Evidence(new KnowledgeGraph.PageRef(new PageKey("wiki", pageId), "FOE", title,
-                PageStatements.State.CURRENT, null), statement, "maltparser-de", "Antragsteller", "Antrag");
+                PageStatements.State.CURRENT, null), statement, "maltparser-de", "Antragsteller", "Antrag", trust);
     }
 
     private static TermRelation relation(String from, String to, RelationType type, ReviewStatus status) {

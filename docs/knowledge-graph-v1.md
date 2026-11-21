@@ -58,7 +58,8 @@ Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName
   (`ACTIVE`/`PASSIVE`/…), `sh:clause` (`MAIN`/`SUBORDINATE`/…), `sh:core` (Kernsicht), `sh:finding` (Unsicherheiten
   und Hinweise), `sh:sentence`, `sh:paragraph` (Absatz im Lesetext, ab 0; fehlt, wenn unbekannt), `sh:start`, `sh:end`, `sh:extractionQuality`
   (`PLAUSIBLE`/`UNCERTAIN`/`INVALID`), `sh:qualityReason` (Gründe, keine Prozentwerte), `sh:verificationStatus`
-  (`UNVERIFIED_PARSER_OUTPUT` bis zur fachlichen Prüfung, sonst `CONFIRMED`/`REJECTED`),
+  (`UNVERIFIED_PARSER_OUTPUT` bis zur fachlichen Prüfung, sonst `CONFIRMED`/`REJECTED`; gesetzt von einem Menschen je
+  Aussage und Analysator, aus der Ablage der Entscheidungen für den exportierten Analysator `sh:analyzer`, ADR 0032 W3),
   Merkmale aus dem Satz (ADR 0032, FL2; fehlen bei älteren Analysen = unbekannt): `sh:negated` (true/false),
   `sh:modality` (`NONE`/`MUSS`/`SOLL`/`KANN`/`DARF`), `sh:temporality` (`GILT`/`GEPLANT`/`FRUEHER`/`VERWORFEN`, nur aus
   Grammatik und Wörtern, nie aus einem Vergleich mit dem heutigen Datum; Präteritum und Plusquamperfekt im Indikativ

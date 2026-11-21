@@ -34,6 +34,15 @@ interface GraphSource {
      */
     default Graph around(String start, int depth, boolean proposals, java.util.function.BooleanSupplier cancelled)
             throws Exception {
+        return around(start, depth, proposals, false, cancelled);
+    }
+
+    /**
+     * Wie {@link #around(String, int, boolean, java.util.function.BooleanSupplier)}, mit „nur geprüft“ (Paket W2); nur
+     * die Fachsicht wertet es aus.
+     */
+    default Graph around(String start, int depth, boolean proposals, boolean checkedOnly,
+                         java.util.function.BooleanSupplier cancelled) throws Exception {
         return around(start, depth, proposals);
     }
 
@@ -68,13 +77,22 @@ interface GraphSource {
      * @param style     wie die Kante gezeichnet wird
      * @param label     Beschriftung der Fachsicht („Grundform · N“) oder {@code null} für die Art der Beziehung
      * @param evidence  Belege einer Verb-Kante der Fachsicht, sonst leer
+     * @param trust     Vertrauen einer Verb-Kante (Paket W2), sonst {@code null}
+     * @param differs   ob ein Beleg der Verb-Kante abweicht und keiner geprüft ist
+     * @param tip       Tooltip der Kante oder {@code null}
      */
     record Edge(String from, String to, String type, boolean confirmed, boolean directed, Style style, String label,
-                List<DomainTermGraph.Evidence> evidence) {
+                List<DomainTermGraph.Evidence> evidence, DomainTermGraph.Trust trust, boolean differs, String tip) {
 
         public Edge {
             style = style == null ? Style.RELATION : style;
             evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        }
+
+        /** Ohne Vertrauen (Beziehungen, Synonyme). */
+        Edge(String from, String to, String type, boolean confirmed, boolean directed, Style style, String label,
+             List<DomainTermGraph.Evidence> evidence) {
+            this(from, to, type, confirmed, directed, style, label, evidence, null, false, null);
         }
 
         /** Eine Beziehung zwischen Begriffen (wie vor der Fachsicht). */
@@ -172,11 +190,11 @@ interface GraphSource {
         };
     }
 
-    /** Die Fachsicht des Core zu einem Startbegriff und einer Tiefe (Paket W1). */
+    /** Die Fachsicht des Core zu einem Startbegriff und einer Tiefe (Paket W1), auf Wunsch nur Geprüftes (W2). */
     @FunctionalInterface
     interface DomainFetch {
-        DomainTermGraph.View around(String start, int depth, java.util.function.BooleanSupplier cancelled)
-                throws Exception;
+        DomainTermGraph.View around(String start, int depth, boolean checkedOnly,
+                                    java.util.function.BooleanSupplier cancelled) throws Exception;
     }
 
     /**
@@ -191,14 +209,14 @@ interface GraphSource {
         return new GraphSource() {
             @Override
             public Graph around(String start, int depth, boolean proposals) throws Exception {
-                return around(start, depth, proposals, () -> false);
+                return around(start, depth, proposals, false, () -> false);
             }
 
             @Override
-            public Graph around(String start, int depth, boolean proposals,
+            public Graph around(String start, int depth, boolean proposals, boolean checkedOnly,
                                 java.util.function.BooleanSupplier cancelled) throws Exception {
-                return domainGraph(fetch.around(start, Math.max(1, Math.min(2, depth)), cancelled), start,
-                        analyzerName);
+                return domainGraph(fetch.around(start, Math.max(1, Math.min(2, depth)), checkedOnly, cancelled),
+                        start, analyzerName);
             }
         };
     }
@@ -223,7 +241,8 @@ interface GraphSource {
                         List.of()));
             } else {
                 edges.add(new Edge(edge.from(), edge.to(), "VERB", true, true, Style.VERB,
-                        edge.verb() + " · " + edge.count(), edge.evidence()));
+                        edge.verb() + (edge.differs() ? " ≠" : "") + " · " + edge.count(), edge.evidence(),
+                        edge.trust(), edge.differs(), edgeTip(edge, analyzerName)));
             }
         }
         List<String> notes = new ArrayList<>();
@@ -246,6 +265,66 @@ interface GraphSource {
         }
         return new Graph(nodes, edges, view.truncated(), String.join(" · ", notes), null);
     }
+
+    /** Stufe einer Verb-Kante in Worten (Linienart, Tooltip). */
+    static String trustText(DomainTermGraph.Trust trust, boolean differs) {
+        if (differs) {
+            return TRUST_DIFFERS;
+        }
+        return switch (trust == null ? DomainTermGraph.Trust.UNGEPRUEFT : trust) {
+            case GEPRUEFT -> TRUST_CHECKED;
+            case EINIG -> TRUST_AGREED;
+            case UNGEPRUEFT, ABWEICHEND -> TRUST_UNCHECKED;
+        };
+    }
+
+    /**
+     * Tooltip einer Verb-Kante: die genauen Stufen ihrer Belege mit Anzahl, im selben Wortlaut wie die Pillen im
+     * Overlay ({@link #stage}); die Linie fasst nur zusammen.
+     */
+    private static String edgeTip(DomainTermGraph.Edge edge,
+                                  java.util.function.Function<String, String> analyzerName) {
+        Map<String, Integer> stages = new LinkedHashMap<>();
+        edge.evidence().forEach(item -> stages.merge(stage(item, analyzerName), 1, Integer::sum));
+        List<String> parts = new ArrayList<>();
+        stages.forEach((stage, count) -> parts.add(stage + " " + count));
+        String head = parts.isEmpty() ? trustText(edge.trust(), edge.differs()) : capitalize(String.join(" · ", parts));
+        return head + " – Klick zeigt die Belege";
+    }
+
+    /**
+     * Genaue Stufe eines Belegs (Pille im Overlay, Tooltip der Kante): „von Hand bestätigt“, „vom Prüfschritt
+     * bestätigt“, „Parser und KI einig“, „nur &lt;Analysator&gt;“ oder „abweichend“.
+     */
+    static String stage(DomainTermGraph.Evidence item, java.util.function.Function<String, String> analyzerName) {
+        return switch (item.trust()) {
+            case GEPRUEFT -> item.statement().review()
+                    == com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review.CONFIRMED
+                    ? STAGE_BY_HAND : STAGE_BY_CHECK;
+            case EINIG -> STAGE_AGREED;
+            case UNGEPRUEFT -> {
+                String name = item.analyzerId() == null ? null : analyzerName.apply(item.analyzerId());
+                yield "nur " + (name == null ? "Analysator" : name);
+            }
+            case ABWEICHEND -> STAGE_DIFFERS;
+        };
+    }
+
+    private static String capitalize(String text) {
+        return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
+    }
+
+    /** Genaue Stufen je Beleg (Paket W2). */
+    String STAGE_BY_HAND = "von Hand bestätigt";
+    String STAGE_BY_CHECK = "vom Prüfschritt bestätigt";
+    String STAGE_AGREED = "Parser und KI einig";
+    String STAGE_DIFFERS = "abweichend";
+
+    /** Stufen einer Kante in Worten (Paket W2). */
+    String TRUST_CHECKED = "Geprüft";
+    String TRUST_AGREED = "Parser und KI einig";
+    String TRUST_UNCHECKED = "Ungeprüft";
+    String TRUST_DIFFERS = "Abweichend";
 
     /** Hinweis, wenn der Startbegriff der Fachsicht kein bestätigter Fachbegriff ist. */
     String NOT_A_TERM = "ist kein bestätigter Fachbegriff und kein bestätigtes Synonym im Glossar.";

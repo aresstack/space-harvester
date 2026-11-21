@@ -61,7 +61,8 @@ führen sie abwärtsverträglich. „Plausibel“ verlangt besetzte Kernrollen.
 ### 4. Prüfschritt (Chat-Modell danach)
 Das Modell erhält Originalsatz und Aussage und antwortet mit stimmt, unvollständig oder falsch, gegebenenfalls mit
 einer Korrektur aus Wörtern des Satzes; der Core prüft das. Jede Aussage nennt ihre Herkunft: Parser, Parser nach
-Vorstufe, vom Modell korrigiert.
+Vorstufe, vom Modell korrigiert. Getrennt davon kann ein Mensch eine einzelne Aussage bestätigen oder verwerfen
+(Prüfung durch Menschen, Umsetzung W3); das überschreibt weder die Stufe des Parsers noch das Urteil des Modells.
 
 ### 5. Auswertung über Seiten hinweg
 - Begriffe: mehrteilige Fachbegriffe, Wichtigkeit, Einordnung fachlich / technisch / Rolle-Stelle / unklar (erst Regeln,
@@ -236,7 +237,7 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   ungültige und abgelehnte fehlen, unsichere erscheinen gekennzeichnet und zählen nicht für die Seite. Stand je Seite =
   Zahlen je Stand, Etikett aus der Mehrheit der sicheren Aussagen, bei Gleichstand unklar.
 - Entscheidungen des Menschen je Seite (über Fassungen hinweg) und je Aussage (genau diese Fassung, sonst „veraltet“) in
-  `standing-decisions/v1` mit Revision und Protokoll wie geprüfte Fakten; lesen wie die Seite, ändern mit `sync`;
+  `standing-decisions/v1` (seit W3 `v2`) mit Revision und Protokoll wie geprüfte Fakten; lesen wie die Seite, ändern mit `sync`;
   gelöscht mit der Quelle; Änderungen per Beobachter.
 - Reine Auswertung, abbrechbar, speichert nichts; nur Kopfdaten aus dem Bestand. Laufzeit: 3000 erzeugte Seiten mit
   60 000 Aussagen rund 0,1 s im Container.
@@ -269,3 +270,32 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Reine Auswertung, abbrechbar, speichert nichts. Laufzeit: 3000 erzeugte Seiten mit 60 000 Aussagen rund 0,4 s im
   Container, samt Begriffsableitung über `GlossaryDerivation`.
 
+## Umsetzung W3: Prüfung durch Menschen (Core)
+- Ein Eintrag je Ziel: Die Prüfung einer Aussage (`CONFIRMED`/`REJECTED`) ist ein zweites Feld im selben
+  `StandingDecision` wie der Stand, keine zweite Ablage und nie in den Analysedateien. Prüfung nur an Einträgen zu
+  Aussagen, nie an der Seite. Stand und Prüfung werden unabhängig gesetzt und zurückgenommen; ein Eintrag ohne beides
+  wird gelöscht. Setzen des Stands behält die Prüfung und umgekehrt.
+- Ablage eines Analysators: MaltParser und KI-Analysator bilden gleich lautende IDs (`…#s<n>.v<m>`), deshalb gehört der
+  Analysator (`AnalyzerChoice`) bei Aussagen zum Schlüssel (`StandingDecision.Target`), bei der Seite `null`. Er kommt
+  aus der Analyse, in der die Aussage gefunden wurde, nie aus der Einstellung. Einträge ohne Angabe gelten für den
+  MaltParser. Eine Prüfung am MaltParser ändert die KI-Aussage mit derselben ID nicht und umgekehrt.
+- Eine Stelle: `DecisionReviews` (Port `StatementReviews`) legt die Prüfung beim Lesen über die gespeicherte Analyse,
+  angebunden an `StatementAnalysis` und von dort an `KnowledgeGraph` (alle Lesewege des Graphen, damit Stand, Begriffe,
+  Glossar, Export) und an `StatementAnalysis#read` (Aussagen-Reiter). Nie auf einem Weg, der liest und
+  zurückschreibt (Prüfschritt, Entzug von Vorstufe oder Urteilen): Diese lesen weiter die Ablage selbst.
+- Vorrang: Die Prüfung aus der Entscheidung gilt; ohne sie bleibt der gespeicherte Wert der Aussage (in der Regel
+  `UNREVIEWED`). Daraus folgen `CountedStatements` (verworfene zählen nicht), die Herkunftsanzeige und der JSON-LD-Wert
+  `sh:verificationStatus`.
+- Rechte wie beim Stand: sehen wie die Seite, setzen und zurücknehmen mit `sync`; eine gesperrte Seite kann nicht
+  geprüft werden. Stand und Prüfung teilen sich die Revision des Eintrags (ein Zähler, ein Konflikt).
+- Protokoll: Setzen ist `review`, Zurücknehmen eine eigene Zeile `unreview`, beide mit dem Wert der Prüfung; `remove`
+  (Stand gelöscht, Quelle entfernt) trägt die zuletzt gültige Prüfung mit.
+- Beobachter: Jede Änderung meldet `StatusQuo#subscribe` (ADR 0027, kein Polling). Gesetzte, zurückgenommene oder mit
+  der Quelle entfernte Prüfungen melden zusätzlich `StatusQuo#subscribeReviews`; der Harvester gibt das an
+  `KnowledgeGraph#analysesChanged` weiter, damit Graph, Aussagen und Verben ohne Klick nachziehen.
+- Sicht: Eine verworfene Aussage fehlt in den Einträgen und Zahlen, ihre Entscheidung steht in
+  `StatusQuoView#rejectedDecisions`, damit die Prüfung zurückgenommen werden kann; veraltet ist sie nicht. Veraltet
+  (`staleDecisions`) sind auch reine Prüfungen verschwundener Aussagen, aber nur Einträge des gelesenen Analysators.
+- Ablage `standing-decisions/v2`: Stand, Prüfung und Analysator je optional; `v1` wird weiter gelesen.
+  Ein älterer Stand der Anwendung lehnt `v2` mit klarer Meldung ab.
+- Die Bedienung (✓/✕ ohne Rückfrage, Klick auf den gesetzten Knopf nimmt zurück) folgt getrennt.

@@ -117,9 +117,20 @@ public final class TabHeader extends JPanel {
 
     /** Der Stand des Reiters als Abzeichen ganz rechts; {@code null} blendet es aus. */
     public void status(String text, Color tone) {
+        status(text, tone, null);
+    }
+
+    /** Wie {@link #status(String, Color)}, mit einem Grund im Tooltip (etwa gelb „Ausgelassen“). */
+    public void status(String text, Color tone, String tooltip) {
         status.setVisible(text != null);
         status.setText(text == null ? " " : text);
+        status.setToolTipText(tooltip);
         tone(status, tone == null ? Comic.MUTED : tone);
+    }
+
+    /** Für Tests: der Tooltip des Stands. */
+    public String statusTooltip() {
+        return status.getToolTipText();
     }
 
     /** Ein Abzeichen im Stil des Stands: Text in Farbe mit feinem Rahmen derselben Farbe. */

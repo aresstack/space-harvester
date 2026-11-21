@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -59,8 +60,13 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * „Fachbegriffe ermitteln“ (#122 Stufe 2, ADR 0019): ein asynchroner, abbrechbarer KI-Lauf, nur auf ausdrücklichen
- * Wunsch, nie beim Start, beim Abgleich, bei der Anreicherung oder beim Öffnen eines Reiters. Kandidaten sind die
+ * „Fachbegriffe ermitteln“ (#122 Stufe 2, ADR 0019): ein asynchroner, abbrechbarer KI-Lauf, auf ausdrücklichen
+ * Wunsch oder, nur mit {@code terms.glossary.automatic} (K4, Standard aus), nach der Anreicherung einer Quelle
+ * ({@link #automatic}); nie beim Start oder beim Öffnen eines Reiters. Der automatische Lauf ist ein nachrangiger
+ * Hintergrundauftrag ({@link JobType#BACKGROUND}, ein Unterauftrag je Space mit aktueller Aussagenanalyse) über
+ * denselben Code wie der Knopf; er stößt nie Vorstufen an, läuft über die vorhandenen Analysen und meldet fehlende
+ * gelb, ebenso eine ausgelassene Modellphase ohne Chat-Modell. Ein Klick bleibt ein normaler Auftrag mit Vorrang.
+ * Kandidaten sind die
  * Bezeichner und Akronyme des Begriffsindex im gewählten Umfang (alle Quellen, eine Quelle oder ein Space); fehlende
  * Seiten lädt der Lauf nicht nach. Je Kandidat gehen wenige kurze, aktuelle Fundstellen an das Chat-Modell, das nur
  * auswählt, welche Kandidaten im Kontext Fachbegriffe sind; es schreibt keine Erläuterungen. Jede Antwort wird gegen
@@ -117,6 +123,21 @@ public class GlossaryClassification {
     public static final String RULES_DONE = "GLOSSARY_RULES_DONE";
     /** Kennung des Ereignisses „Modellphase je Seite fertig“ (ADR 0032, FL5c), nur Anzahlen. */
     public static final String MODEL_DONE = "GLOSSARY_MODEL_DONE";
+
+    /** Unterordner des Glossars für den Ergebnis-Cache der Modellantworten (D4: dauerhaft wie bei den Synonymen). */
+    public static final String CACHE_DIRECTORY = "model-cache";
+
+    /**
+     * Die Schlüssel des Ergebnis-Caches, an denen eine Quelle beteiligt ist („Daten bereinigen“): ihre Läufe je Quelle
+     * und Space und die globalen, sonst gälten ihre Antworten nach erneutem Laden als schon gegeben.
+     */
+    public static java.util.function.Predicate<String> cacheKeysOf(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        return key -> {
+            String rest = key.startsWith("classify\u0000") ? key.substring("classify\u0000".length()) : key;
+            return rest.startsWith(sourceId + '\u0000') || rest.startsWith("null\u0000");
+        };
+    }
 
     /** Warum die Phase mit Modell ausfiel. */
     public enum SkipReason {
@@ -193,6 +214,7 @@ public class GlossaryClassification {
     private final Supplier<GlossaryRuleSettings> ruleSettings;
     private final Predicate<PageKey> released;
     private final Set<String> started = ConcurrentHashMap.newKeySet();
+    private volatile Subtrees subtrees;
     /** Die lokalen Seiten eines Bereichs mit den Rechten des Aufrufers (D4); ohne nur die veralteten Analysen. */
     private volatile java.util.function.BiFunction<AccessContext, RelationScope,
             com.aresstack.spaceharvester.application.snapshot.PageSet> localPages;
@@ -274,6 +296,90 @@ public class GlossaryClassification {
     }
 
     /**
+     * Die Seiten einer Seite samt Unterseiten, die ein Aufrufer lesen darf (D4.2, {@code Holdings#resolve}); ohne
+     * Angabe kein Lauf über einen Teilbaum.
+     */
+    @FunctionalInterface
+    public interface Subtrees {
+
+        PageSet pages(AccessContext caller, String sourceId, String spaceKey, String pageId);
+    }
+
+    /** Kennung der Hintergrundart des automatischen Laufs (K4). */
+    public static final String AUTOMATIC_KIND = "glossary.automatic";
+    /** Titel der Gruppe in der Auftragsliste. */
+    public static final String AUTOMATIC_TITLE = "Fachbegriffe erkennen";
+
+    private volatile com.aresstack.spaceharvester.application.background.BackgroundJobs background;
+    private volatile AccessContext automaticCaller;
+    private volatile java.util.function.BooleanSupplier automatic = () -> false;
+
+    /**
+     * Schließt den automatischen Lauf an (K4): Hintergrundaufträge, mit deren Rechten er liest (in der Desktop-App
+     * {@code Harvester.OWNER}), und die Einstellung {@code terms.glossary.automatic}, je Anlass gelesen. Unterbrochene
+     * Unteraufträge laufen nach einem Neustart nur mit eingeschalteter Automatik weiter.
+     */
+    public void background(com.aresstack.spaceharvester.application.background.BackgroundJobs jobs,
+                           AccessContext caller, java.util.function.BooleanSupplier enabled) {
+        this.automaticCaller = Objects.requireNonNull(caller, "caller");
+        this.automatic = Objects.requireNonNull(enabled, "enabled");
+        jobs.register(new com.aresstack.spaceharvester.application.background.BackgroundKind(AUTOMATIC_KIND,
+                part -> {
+                    started.add(part.jobId());
+                    RelationScope scope = new RelationScope(part.sourceId(), part.partitionKey());
+                    return JobTask.blocking(context -> {
+                        synchronized (locks.computeIfAbsent(part.sourceId(), ignored -> new Object())) {
+                            job(scope, context, caller);
+                        }
+                    });
+                }, enabled));
+        this.background = jobs;
+    }
+
+    /**
+     * Automatischer Lauf für eine Quelle nach ihrer Anreicherung (K4): eine Hintergrundgruppe mit einem Unterauftrag
+     * je Space, der analysierte Seiten hat. Nichts geschieht, wenn {@code terms.glossary.automatic} aus ist, nichts
+     * angeschlossen ist, es keine Regelphase gibt, die Quelle unbekannt ist oder für einen Space schon ein Lauf wartet
+     * oder läuft. Ohne Chat-Modell oder Freigabe bleibt es bei Regelvorschlägen; die Modellphase meldet sich gelb.
+     *
+     * @return die Gruppe, oder leer, wenn keine nötig ist
+     */
+    public synchronized Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> automatic(
+            String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        var jobs = background;
+        AccessContext caller = automaticCaller;
+        if (jobs == null || caller == null || !automatic.getAsBoolean() || analysed == null
+                || catalog.find(sourceId).isEmpty()) {
+            return Optional.empty();
+        }
+        List<com.aresstack.spaceharvester.application.background.BackgroundPart.Draft> parts = new ArrayList<>();
+        GlossaryOverview.inScope(analysed.apply(caller), sourceId, null).stream()
+                .map(page -> page.page().spaceKey()).filter(Objects::nonNull).distinct().sorted()
+                .filter(space -> jobs.running(AUTOMATIC_KIND, sourceId, space).isEmpty())
+                .forEach(space -> parts.add(new com.aresstack.spaceharvester.application.background.BackgroundPart
+                        .Draft(sourceId, space, Map.of())));
+        if (parts.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            var group = jobs.start(AUTOMATIC_KIND, AUTOMATIC_TITLE, parts);
+            LOG.log(System.Logger.Level.INFO, "Fachbegriffe für {0} automatisch eingeplant: {1} Spaces", sourceId,
+                    parts.size());
+            return Optional.of(group);
+        } catch (JobCapacityExceededException e) {
+            LOG.log(System.Logger.Level.INFO, "Fachbegriffe für {0} nicht eingeplant ({1})", sourceId,
+                    e.getClass().getName());
+            return Optional.empty();
+        }
+    }
+
+    /** Ermöglicht Läufe über eine Seite samt Unterseiten ({@link #start(AccessContext, String, String, String)}). */
+    public void subtrees(Subtrees subtrees) {
+        this.subtrees = subtrees;
+    }
+
+    /**
      * Ob ein Lauf möglich ist: mit Regelphase immer, sonst nur mit Modell; ohne meldet {@link #start}
      * {@code NO_MODEL}, die Pflege von Hand geht weiter.
      */
@@ -301,10 +407,27 @@ public class GlossaryClassification {
      *                                      „{@value #PHASE}“ fällt dann aus, das Ergebnis nennt Grund und Zahlen.
      */
     public List<JobStatus> start(AccessContext caller, String sourceId, String spaceKey) {
+        return start(caller, sourceId, spaceKey, null);
+    }
+
+    /**
+     * Wie {@link #start(AccessContext, String, String)}, mit {@code pageId} nur über diese Seite samt Unterseiten
+     * (D4.2): Die Einträge gelten weiter für Quelle und Space der Seite, der Lauf ergänzt aber nur und gleicht nicht
+     * ab; Belege, Unterstützung und Einordnung aus Seiten außerhalb des Teilbaums bleiben.
+     *
+     * @param pageId Startseite oder {@code null}; nur mit {@code sourceId} und {@code spaceKey}
+     * @throws InvalidQueryException bei {@code pageId} ohne Space oder ohne Regelphase
+     */
+    public List<JobStatus> start(AccessContext caller, String sourceId, String spaceKey, String pageId) {
         String source = blank(sourceId) ? null : sourceId.trim();
         String space = blank(spaceKey) ? null : spaceKey.trim();
+        String root = blank(pageId) ? null : pageId.trim();
         if (source == null && space != null) {
             throw new InvalidQueryException("spaceKey nur mit sourceId");
+        }
+        if (root != null && (space == null || analysed == null || subtrees == null)) {
+            throw new InvalidQueryException(space == null ? "pageId nur mit sourceId und spaceKey"
+                    : "Ein Teilbaum braucht die Aussagenanalyse");
         }
         // Erst die Rechte, damit eine Antwort ohne Freigabe nichts über Modell oder Freigaben verrät.
         List<String> permitted = new ArrayList<>();
@@ -342,10 +465,16 @@ public class GlossaryClassification {
         try {
             for (String id : sources) {
                 RelationScope scope = new RelationScope(id, space);
-                JobStatus status = jobs.submit(JobType.GLOSSARY, id, space, caller.jobOwner(),
+                JobStatus status = jobs.submit(JobType.GLOSSARY, id, space, root, caller.jobOwner(),
                         JobTask.blocking(context -> {
                             synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
-                                job(scope, context, caller);
+                                if (root == null) {
+                                    job(scope, context, caller);
+                                } else {
+                                    headers.apply(new PageKey(id, root))
+                                            .ifPresent(header -> context.rootTitle(header.metadata().title()));
+                                    job(scope, subtrees.pages(caller, id, space, root), root, context, caller);
+                                }
                             }
                         }));
                 started.add(status.id());
@@ -359,6 +488,21 @@ public class GlossaryClassification {
         return submitted;
     }
 
+    /**
+     * KI-Freigabe entzogen (ADR 0028, „Entfernen löscht KI-Ergebnisse“): vergisst die Modellantworten aller Quellen
+     * dieser Seiten im Ergebnis-Cache ({@link #cacheKeysOf}); andere Quellen bleiben.
+     */
+    public void withdrawn(Collection<PageKey> pages) {
+        pages.stream().map(PageKey::sourceId).distinct().forEach(sourceId -> {
+            try {
+                cache.removeSources(cacheKeysOf(sourceId));
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Glossar-Cache von {0} nicht geleert ({1})", sourceId,
+                        e.getClass().getName());
+            }
+        });
+    }
+
     /** Ob der Auftrag von {@link #start} stammt. */
     public boolean started(String jobId) {
         return jobId != null && started.contains(jobId);
@@ -370,15 +514,31 @@ public class GlossaryClassification {
      * Grund und Zahlen.
      */
     Outcome job(RelationScope scope, JobContext context, AccessContext caller) {
+        return job(scope, null, context, caller);
+    }
+
+    /**
+     * Wie {@link #job(RelationScope, JobContext, AccessContext)}, mit {@code subtree} nur über dessen Seiten (D4.2):
+     * ergänzen statt abgleichen.
+     */
+    Outcome job(RelationScope scope, PageSet subtree, JobContext context, AccessContext caller) {
+        return job(scope, subtree, null, context, caller);
+    }
+
+    /** Wie oben; {@code rootPageId} ist die Startseite des Teilbaums (ihr Eimer im Modell-Cache). */
+    Outcome job(RelationScope scope, PageSet subtree, String rootPageId, JobContext context, AccessContext caller) {
         List<KnowledgeGraph.AnalysedPage> pages = analysed == null ? null
                 : GlossaryOverview.inScope(analysed.apply(caller), scope.sourceId(), scope.spaceKey());
+        if (pages != null && subtree != null) {
+            pages = pages.stream().filter(page -> subtree.contains(page.page().key())).toList();
+        }
         // D4: Nur aktuelle Analysen zählen für die Modellphase; veraltete nennt der Lauf, statt sie als fehlende
         // Freigabe zu melden.
         List<KnowledgeGraph.AnalysedPage> current = pages == null ? null : pages.stream()
                 .filter(page -> page.page().state() == com.aresstack.spaceharvester.application.knowledge
                         .PageStatements.State.CURRENT).toList();
-        int missing = pages == null ? 0 : missing(caller, scope, pages, current.size());
-        RuleRun rules = pages == null ? null : rules(scope, context, pages);
+        int missing = pages == null ? 0 : missing(caller, scope, pages, current.size(), subtree);
+        RuleRun rules = pages == null ? null : rules(scope, context, pages, subtree);
         if (rules != null && context != null) {
             context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, RULES_DONE,
                     "„" + RULE_PHASE + "“: " + rules.describe(), null, null, null));
@@ -406,7 +566,7 @@ public class GlossaryClassification {
                             ANALYSIS_MISSING + ":" + missing, "„" + PHASE + "“ nur über aktuelle Analysen: "
                             + missingAnalysis(missing), null, null, null));
                 }
-                classified = phase.run(scope, current, context);
+                classified = phase.run(scope, current, context, subtree, rootPageId);
                 if (context != null) {
                     context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
                             MODEL_DONE, "„" + PHASE + "“: " + classified.describe(), null, null, null));
@@ -431,16 +591,17 @@ public class GlossaryClassification {
      * Seiten, keine Anhänge; Rechte des Aufrufers).
      */
     private int missing(AccessContext caller, RelationScope scope, List<KnowledgeGraph.AnalysedPage> pages,
-                        int current) {
+                        int current, com.aresstack.spaceharvester.application.snapshot.PageSet subtree) {
         java.util.function.BiFunction<AccessContext, RelationScope,
                 com.aresstack.spaceharvester.application.snapshot.PageSet> local = localPages;
         int stale = pages.size() - current;
-        if (local == null) {
+        if (local == null && subtree == null) {
             return stale;
         }
         com.aresstack.spaceharvester.application.snapshot.PageSet inScope;
         try {
-            inScope = local.apply(caller, scope);
+            // D4.2: Bei einem Teilbaum nur dessen Seiten.
+            inScope = subtree != null ? subtree : local.apply(caller, scope);
         } catch (RuntimeException e) {
             return stale;
         }
@@ -509,10 +670,11 @@ public class GlossaryClassification {
     /** Die Regelphase „{@value #RULE_PHASE}“: ohne Modell, abbrechbar, Teilergebnisse sofort. */
     RuleRun rules(RelationScope scope, JobContext context, AccessContext caller) {
         return rules(scope, context, GlossaryOverview.inScope(analysed.apply(caller), scope.sourceId(),
-                scope.spaceKey()));
+                scope.spaceKey()), null);
     }
 
-    private RuleRun rules(RelationScope scope, JobContext context, List<KnowledgeGraph.AnalysedPage> pages) {
+    private RuleRun rules(RelationScope scope, JobContext context, List<KnowledgeGraph.AnalysedPage> pages,
+                          PageSet subtree) {
         phase(context, RULE_PHASE);
         GlossaryRuleSettings settings = ruleSettings.get();
         GlossaryRuleProposals.Batch batch = GlossaryRuleProposals.of(pages, settings, () -> {
@@ -524,6 +686,7 @@ public class GlossaryClassification {
         String generation = RULE_VERSION + "@" + clock.instant();
         int added = 0;
         int updated = 0;
+        int suppressed = 0;
         List<Glossary.Proposal> proposals = batch.proposals();
         if (context != null) {
             context.discovered(proposals.size());
@@ -533,10 +696,12 @@ public class GlossaryClassification {
                 context.checkpoint();
             }
             List<Glossary.Proposal> chunk = proposals.subList(from, Math.min(proposals.size(), from + RULE_CHUNK));
-            Glossary.ProposalRun part = glossary.proposeSome(RelationOrigin.RULE, RULE_ACTOR, scope, generation,
-                    chunk);
+            Glossary.ProposalRun part = subtree == null
+                    ? glossary.proposeSome(RelationOrigin.RULE, RULE_ACTOR, scope, generation, chunk)
+                    : glossary.supplement(RelationOrigin.RULE, RULE_ACTOR, scope, generation, chunk);
             added += part.added();
             updated += part.updated();
+            suppressed += part.suppressed();
             if (context != null) {
                 context.processed(chunk.size());
                 if (part.added() + part.updated() > 0) {
@@ -547,11 +712,14 @@ public class GlossaryClassification {
         if (context != null) {
             context.checkpoint();
         }
-        phase(context, RULE_PHASE + ": Abgleich");
-        Glossary.ProposalRun last = glossary.propose(RelationOrigin.RULE, RULE_ACTOR, scope, generation, proposals,
-                batch.retained());
+        // Ein Teilbaum gleicht nie ab (D4.2): Was außerhalb belegt ist, entfällt nicht und veraltet nicht.
+        Glossary.ProposalRun last = Glossary.ProposalRun.NONE;
+        if (subtree == null) {
+            phase(context, RULE_PHASE + ": Abgleich");
+            last = glossary.propose(RelationOrigin.RULE, RULE_ACTOR, scope, generation, proposals, batch.retained());
+        }
         Glossary.ProposalRun run = new Glossary.ProposalRun(added + last.added(), updated + last.updated(),
-                last.withdrawn(), last.suppressed(), last.stale());
+                last.withdrawn(), subtree == null ? last.suppressed() : suppressed, last.stale());
         LOG.log(System.Logger.Level.INFO, "Begriffe ableiten in {0}: {1} Seiten, {2} Begriffe, {3} vorgeschlagen, "
                         + "{4} neu, {5} geändert, {6} entfallen", scope.sourceId(), pages.size(),
                 batch.derivation().terms().size(), proposals.size(), run.added(), run.updated(), run.withdrawn());
