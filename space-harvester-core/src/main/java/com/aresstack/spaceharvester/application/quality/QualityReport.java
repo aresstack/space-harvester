@@ -132,8 +132,8 @@ public final class QualityReport {
         if (r.noAnswer()) {
             return r.noAnswerCorrect() ? "zu Recht leer" : r.usefulInContext() + " brauchbar wirkende Treffer";
         }
-        if (r.unavailable() > 0) {
-            return r.unavailable() + " Quelle(n) ohne Antwort";
+        if (r.failedQueries() > 0) {
+            return r.failedQueries() + " von " + r.queries() + " Suchanfragen gescheitert";
         }
         return "";
     }

@@ -24,7 +24,7 @@ public interface QualitySearch {
      * Ein Treffer der Rangliste.
      *
      * @param page  Seite
-     * @param score Bewertung der Suche gegen die Frage (Skala des Suchprofils)
+     * @param score Bewertung der Suche gegen die Frage (Skala des Suchprofils), {@link Double#NaN} ohne
      * @param title Titel, nur für die lokale Ergebnisdatei; darf {@code null} sein
      */
     record RankedPage(PageRef page, double score, String title) {
@@ -39,10 +39,10 @@ public interface QualitySearch {
      *
      * @param hits        Rangliste, bester zuerst
      * @param completion  Abschlussgrund der Suche (etwa {@code QUALITY_REACHED}, {@code TIME_BUDGET})
-     * @param variants    Zahl der gelaufenen Suchanfragen neben der ursprünglichen
-     * @param unavailable Zahl der Quellen, die nicht geantwortet haben
+     * @param queries     Zahl der gelaufenen Suchanfragen samt der ursprünglichen
+     * @param failed      davon gescheitert (etwa weil eine Quelle nicht antwortete)
      */
-    record Answer(List<RankedPage> hits, String completion, int variants, int unavailable) {
+    record Answer(List<RankedPage> hits, String completion, int queries, int failed) {
 
         public Answer {
             hits = List.copyOf(hits);

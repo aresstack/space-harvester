@@ -16,10 +16,10 @@ import java.util.Set;
  * @param firstExpectedMillis Laufzeit bis eine erwartete Fundstelle zum ersten Mal in einer Rangliste stand, {@code -1}
  *                            = nie
  * @param completion          Abschlussgrund der Suche, leer wenn gescheitert
- * @param variants            gelaufene Suchanfragen neben der ursprünglichen
- * @param unavailable         Quellen ohne Antwort
+ * @param queries             gelaufene Suchanfragen samt der ursprünglichen
+ * @param failedQueries       davon gescheitert
  * @param hits                Länge der Endliste
- * @param bestScore           höchste Bewertung der Endliste, {@link Double#NaN} ohne Treffer
+ * @param bestScore           höchste Bewertung der Endliste, {@link Double#NaN} ohne bewertete Treffer
  * @param usefulInContext     Treffer im Chat-Kontext mit Bewertung mindestens {@link QualityRun.Settings#relevantScore()}
  * @param failure             Klasse des Fehlers, wenn die Suche gescheitert ist, sonst {@code null}
  * @param found               die ersten 10 Seiten der Endliste
@@ -28,7 +28,7 @@ import java.util.Set;
  */
 public record CaseResult(String id, Set<CaseKind> kinds, List<PageRef> expected, List<Integer> ranks,
                          List<Boolean> stored, long durationMillis, long firstExpectedMillis, String completion,
-                         int variants, int unavailable, int hits, double bestScore, int usefulInContext,
+                         int queries, int failedQueries, int hits, double bestScore, int usefulInContext,
                          String failure, List<PageRef> found, String question, List<String> titles) {
 
     public CaseResult {

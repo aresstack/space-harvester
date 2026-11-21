@@ -65,7 +65,7 @@ Platz (wie der Chat die Treffer übernimmt).
 - **Verteilt**: Anteil der erwarteten Fundstellen unter den ersten 10.
 - **Laufzeit** bis zum Endergebnis und bis eine erwartete Fundstelle zum ersten Mal in einer vorläufigen Rangliste
   stand.
-- Abschlussgrund der Suche, Zahl der Varianten, Quellen ohne Antwort.
+- Abschlussgrund der Suche, Zahl der gelaufenen Suchanfragen (samt ursprünglicher) und wie viele davon scheiterten.
 - Eine gescheiterte Suche zählt als nicht gefunden und erscheint mit der Klasse des Fehlers.
 
 ### Art `keine`: „zu Recht nichts Brauchbares“
@@ -88,12 +88,12 @@ ist nicht im Bestand“.
 Mit einem früheren Ergebnis (`.tsv`) zeigt der Bericht die Kennzahlen vorher/jetzt und je Frage, ob sie besser,
 schlechter, neu oder entfallen ist (besser = kleinerer bester Rang; bei `keine` „zu Recht leer“). Vergleichbar sind
 Läufe mit gleichem Testbestand und gleichem Bestand: Weil die Suche Funde lädt, misst ein zweiter Lauf einen wärmeren
-Cache. Die Spalte `lokal` zeigt, ob der Zustand gleich war; für einen Vergleich vor/nach einem Umbau empfiehlt sich
+Cache. Ein zweiter Lauf kann deshalb mehr Fundstellen als „lokal gespeichert“ zeigen als der erste. Die Spalte `lokal` zeigt, ob der Zustand gleich war; für einen Vergleich vor/nach einem Umbau empfiehlt sich
 je ein Aufwärmlauf vorher.
 
 ## Ergebnisdatei (`.tsv`)
 
 Kopfzeilen `# schluessel=wert` (`version`, `profil`, `start`, `testbestand`, `kontext`, `schwelle`, `fragen`,
 `abgebrochen`), dann eine Zeile je Frage mit den Spalten `id, art, erwartet, raenge, lokal, bester_rang, top5,
-top_kontext, top10, recall10, dauer_ms, erster_fund_ms, abschluss, varianten, quellen_aus, treffer, bester_wert,
+top_kontext, top10, recall10, dauer_ms, erster_fund_ms, abschluss, anfragen, anfragen_fehler, treffer, bester_wert,
 brauchbar_kontext, fehler, gefunden, titel, frage`. Listen mit `|`, nicht gefunden `-`, lokal `j`/`n`.

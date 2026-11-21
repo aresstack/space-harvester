@@ -145,7 +145,7 @@ public final class QualityRun {
         List<String> titles = new ArrayList<>();
         for (int i = 0; i < hits.size(); i++) {
             QualitySearch.RankedPage hit = hits.get(i);
-            if (Double.isNaN(best) || hit.score() > best) {
+            if (!Double.isNaN(hit.score()) && (Double.isNaN(best) || hit.score() > best)) {
                 best = hit.score();
             }
             if (i < settings.contextSize() && hit.score() >= settings.relevantScore()) {
@@ -158,7 +158,7 @@ public final class QualityRun {
         }
         return new CaseResult(question.id(), question.kinds(), question.expected(), ranks, stored,
                 millis(duration), first.get() < 0 ? -1 : millis(first.get()), answer.completion(),
-                answer.variants(), answer.unavailable(), hits.size(), best, useful, failure, found,
+                answer.queries(), answer.failed(), hits.size(), best, useful, failure, found,
                 question.question(), titles);
     }
 

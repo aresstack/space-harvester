@@ -17,8 +17,8 @@ import java.util.Set;
 public final class QualityResults {
 
     static final List<String> COLUMNS = List.of("id", "art", "erwartet", "raenge", "lokal", "bester_rang", "top5",
-            "top_kontext", "top10", "recall10", "dauer_ms", "erster_fund_ms", "abschluss", "varianten",
-            "quellen_aus", "treffer", "bester_wert", "brauchbar_kontext", "fehler", "gefunden", "titel", "frage");
+            "top_kontext", "top10", "recall10", "dauer_ms", "erster_fund_ms", "abschluss", "anfragen",
+            "anfragen_fehler", "treffer", "bester_wert", "brauchbar_kontext", "fehler", "gefunden", "titel", "frage");
 
     /**
      * Gelesene Ergebnisdatei.
@@ -65,8 +65,8 @@ public final class QualityResults {
             cells.add(Long.toString(r.durationMillis()));
             cells.add(Long.toString(r.firstExpectedMillis()));
             cells.add(RunInfo.clean(r.completion()));
-            cells.add(Integer.toString(r.variants()));
-            cells.add(Integer.toString(r.unavailable()));
+            cells.add(Integer.toString(r.queries()));
+            cells.add(Integer.toString(r.failedQueries()));
             cells.add(Integer.toString(r.hits()));
             cells.add(Double.isNaN(r.bestScore()) ? "-" : number(r.bestScore()));
             cells.add(Integer.toString(r.usefulInContext()));
@@ -152,8 +152,8 @@ public final class QualityResults {
         List<String> titles = new ArrayList<>(split(cell(cells, columns, "titel")));
         return new CaseResult(cell(cells, columns, "id"), kinds, expected, ranks, stored,
                 Long.parseLong(cell(cells, columns, "dauer_ms")), Long.parseLong(cell(cells, columns,
-                "erster_fund_ms")), cell(cells, columns, "abschluss"), integer(cell(cells, columns, "varianten")),
-                integer(cell(cells, columns, "quellen_aus")), integer(cell(cells, columns, "treffer")),
+                "erster_fund_ms")), cell(cells, columns, "abschluss"), integer(cell(cells, columns, "anfragen")),
+                integer(cell(cells, columns, "anfragen_fehler")), integer(cell(cells, columns, "treffer")),
                 score.isEmpty() || score.equals("-") ? Double.NaN : decimal(score),
                 integer(cell(cells, columns, "brauchbar_kontext")), failure.isEmpty() ? null : failure,
                 pages(cell(cells, columns, "gefunden")), cell(cells, columns, "frage"), titles);
