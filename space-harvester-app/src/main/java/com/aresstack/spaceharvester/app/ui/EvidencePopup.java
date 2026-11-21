@@ -66,6 +66,7 @@ public final class EvidencePopup extends JPopupMenu {
     private final JScrollPane scroll = Comic.scroll(rows);
     private final List<JLabel> links = new ArrayList<>();
     private final List<CountChip> stages = new ArrayList<>();
+    private final List<String> otherTexts = new ArrayList<>();
     private Consumer<Target> onOpen = target -> { };
 
     EvidencePopup() {
@@ -128,6 +129,7 @@ public final class EvidencePopup extends JPopupMenu {
         rows.removeAll();
         links.clear();
         stages.clear();
+        otherTexts.clear();
         List<WrappedText> texts = new ArrayList<>();
         for (DomainTermGraph.Evidence item : evidence) {
             rows.add(row(item, sentences.get(item.statement().id()), failed, texts));
@@ -174,6 +176,16 @@ public final class EvidencePopup extends JPopupMenu {
         text.setAlignmentX(LEFT_ALIGNMENT);
         texts.add(text);
         row.add(text);
+        String other = otherText(item);
+        if (other != null) {
+            // Bei abweichenden Belegen: wie die andere Ablage den Satz liest, nur was abweicht (K2).
+            WrappedText otherLine = Comic.wrapped(other, Comic.MUTED, 12f);
+            otherLine.setAlignmentX(LEFT_ALIGNMENT);
+            texts.add(otherLine);
+            otherTexts.add(other);
+            row.add(Box.createVerticalStrut(2));
+            row.add(otherLine);
+        }
         JLabel link = link(pageTitle(item));
         JPanel foot = new JPanel();
         foot.setOpaque(false);
@@ -223,9 +235,53 @@ public final class EvidencePopup extends JPopupMenu {
                     == com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review.CONFIRMED
                     ? "Ein Mensch hat diese Aussage bestätigt" : "Der Prüfschritt hat diese Aussage als stimmig bewertet";
             case EINIG -> "Parser und KI lesen diesen Satz gleich, nicht geprüft";
-            case UNGEPRUEFT -> "Nur diese Lesart liegt vor, nicht geprüft";
+            case UNGEPRUEFT -> "Nicht mit der anderen Lesart verglichen, nicht geprüft";
             case ABWEICHEND -> "Parser und KI lesen diesen Satz verschieden, nicht geprüft";
         };
+    }
+
+    /**
+     * Die Lesart der anderen Ablage bei einem abweichenden Beleg, nur in dem, was abweicht: „Sprachmodell (KI) liest
+     * anders: Verb „senden“ · Handelnde „kunde““; sonst {@code null}. Die Wortlaute kommen normalisiert aus dem Abgleich;
+     * gleiche Wörter an anderer Stelle heißen so.
+     */
+    static String otherText(DomainTermGraph.Evidence item) {
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Reading other = item.otherReading();
+        if (other == null) {
+            return null;
+        }
+        java.util.Set<com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference> differences =
+                item.comparison().differences();
+        List<String> parts = new ArrayList<>();
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Reading own = item.comparison().own();
+        if (differences.contains(com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.VERB)) {
+            parts.add(part("Verb", "kein Verb", other.verb() == null ? java.util.Set.of() : java.util.Set.of(other.verb()),
+                    own == null || own.verb() == null ? java.util.Set.of() : java.util.Set.of(own.verb())));
+        }
+        if (differences.contains(com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.ACTOR)) {
+            parts.add(part("Handelnde", "keine Handelnden", other.actors(), own == null ? java.util.Set.of()
+                    : own.actors()));
+        }
+        if (differences.contains(
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.AFFECTED_OBJECT)) {
+            parts.add(part("Betroffene", "keine Betroffenen", other.affected(), own == null ? java.util.Set.of()
+                    : own.affected()));
+        }
+        String name = other.analyzer() == com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL
+                ? com.aresstack.spaceharvester.app.ui.content.StatementProvenance.LANGUAGE_MODEL
+                : com.aresstack.spaceharvester.app.ui.content.StatementProvenance.MALTPARSER;
+        return name + " liest anders" + (parts.isEmpty() ? "" : ": " + String.join(" · ", parts));
+    }
+
+    private static String part(String label, String none, java.util.Set<String> theirs, java.util.Set<String> mine) {
+        java.util.List<String> words = theirs.stream().filter(word -> word != null && !word.isBlank()).toList();
+        if (words.isEmpty()) {
+            return none;
+        }
+        String quoted = label + " " + words.stream().map(word -> "„" + word + "“")
+                .collect(java.util.stream.Collectors.joining(", "));
+        // Abgeglichen wird über Zeichenspannen: gleiche Wörter können an anderer Stelle stehen.
+        return new java.util.HashSet<>(words).equals(mine) ? quoted + " an anderer Stelle" : quoted;
     }
 
     /**
@@ -294,6 +350,10 @@ public final class EvidencePopup extends JPopupMenu {
 
     int countValue() {
         return count.count();
+    }
+
+    List<String> otherTexts() {
+        return List.copyOf(otherTexts);
     }
 
     List<String> stageTexts() {
