@@ -107,6 +107,8 @@ public final class PageDetailPanel extends JPanel {
     private static final String TERMS = "Begriffe";
     private static final String PASSAGES = "Absätze";
     private static final String IMAGES = "Bilder";
+    private static final String IMAGES_WORD = "Bilder";
+    private static final String STATEMENTS_WORD = "Aussagen";
     private static final String ANALYSES = "Analysen";
     private static final String STATEMENTS = "Aussagen";
     static final String STATEMENTS_PLACEHOLDER = "Noch keine Aussagen – Analyse folgt";
@@ -191,6 +193,10 @@ public final class PageDetailPanel extends JPanel {
      * für die Sitzung, Standard aus.
      */
     private final Subpages subpages = new Subpages();
+    /** „Aus Unterseiten“ unter Bildern, Aussagen und Graph (Fahrplan P3); zeigt nur Vorhandenes, nie ein KI-Lauf. */
+    private final SubpageSection imagesBelow = new SubpageSection(IMAGES_WORD, 8, "Bild", "Beschreibung");
+    private final SubpageSection statementsBelow = new SubpageSection(STATEMENTS_WORD, 8, "Aussage", "Beteiligte");
+    private final SubpageSection graphBelow = new SubpageSection("Unterseiten", 8).badge("Knoten");
     /** Unterreiter „Analysen → Aussagen“ (#499): gespeicherte Analyse der Seite, neu nur auf Knopfdruck. */
     private final StatementsTab statementsView;
     /** Unterreiter „Analysen → Graph“ (#499 F): fokussierte Teilgraphen, geladen erst beim Anzeigen. */
@@ -566,9 +572,9 @@ public final class PageDetailPanel extends JPanel {
         analysisTabs.tab(PASSAGES, passages)
                 .tab(TERMS, terms)
                 .tab(REFERENCES, references)
-                .tab(IMAGES, images)
-                .tab(STATEMENTS, statements)
-                .tab(GRAPH, graph)
+                .tab(IMAGES, withBelow(images, imagesBelow))
+                .tab(STATEMENTS, withBelow(statements, statementsBelow))
+                .tab(GRAPH, withBelow(graph, graphBelow))
                 .tab(RELATIONS, analysisView)
                 // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Beziehungen“ gewählt ist (BG2b).
                 .actions(subpages.box(), analysisView.proposeIcon(), analysisView.createIcon());
@@ -605,6 +611,7 @@ public final class PageDetailPanel extends JPanel {
             if (RELATIONS.equals(name)) {
                 loadBelowRelations();
             }
+            loadBelowSection(name);
             showRelations();
             if (ANALYSES.equals(tabs.selected())) {
                 loadVisible();
@@ -635,6 +642,10 @@ public final class PageDetailPanel extends JPanel {
         terms.onJump(this::jumpTo);
         terms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
         analysisView.below().onOpen(id -> load(sourceId, id, false));
+        imagesBelow.onOpen(id -> load(sourceId, id, false));
+        statementsBelow.onOpen(id -> load(sourceId, id, false));
+        // Der Reiter „Graph“ bleibt beim Laden gewählt; die Unterseite öffnet sich also in ihrem Graphen.
+        graphBelow.onOpen(id -> load(sourceId, id, false));
         // Eine neue oder geänderte Beziehung kann eine der Unterseiten betreffen: unten neu laden.
         analysisView.onRelationsChanged(() -> {
             belowRelationsFor = null;
@@ -1070,6 +1081,11 @@ public final class PageDetailPanel extends JPanel {
                 && STATEMENTS.equals(analysisTabs.selected()));
     }
 
+    /** Für Tests: der Abschnitt „Aus Unterseiten“ unter Bildern, Aussagen oder Graph. */
+    SubpageSection belowSectionOf(String tab) {
+        return belowSection(tab);
+    }
+
     /** Für Tests: die Checkbox „mit Unterseiten“ der Analyse-Reiter. */
     Subpages subpages() {
         return subpages;
@@ -1484,10 +1500,15 @@ public final class PageDetailPanel extends JPanel {
         AppRuntime runtime = context.runtime();
         belowRelationsFor = null;
         belowRelationsGeneration++;
+        belowSectionFor.clear();
+        BELOW_TABS.forEach(tab -> belowSectionGeneration.merge(tab, 1L, Long::sum));
         if (below == null || runtime == null) {
             terms.below(null);
             references.belowLoading(-1);
             analysisView.below().off();
+            imagesBelow.off();
+            statementsBelow.off();
+            graphBelow.off();
             belowReferencesGeneration++;
             tabStatus(TERMS, " ");
             return;
@@ -1497,6 +1518,10 @@ public final class PageDetailPanel extends JPanel {
         if (RELATIONS.equals(analysisTabs.selected())) {
             loadBelowRelations();
         }
+        imagesBelow.off();
+        statementsBelow.off();
+        graphBelow.off();
+        loadBelowSection(analysisTabs.selected());
         com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
         SelectionTerms selection = new SelectionTerms(workspace, "den Unterseiten", below.pages());
         terms.below(new TermsTab.Below() {
@@ -1578,6 +1603,187 @@ public final class PageDetailPanel extends JPanel {
                 tabStatus(RELATIONS, "Beziehungen der Unterseiten nicht lesbar: " + Problems.describe(error).title());
             }
         });
+    }
+
+    /** Die Reiter mit einem Abschnitt „Aus Unterseiten“, der je Unterseite liest. */
+    private static final List<String> BELOW_TABS = List.of(IMAGES, STATEMENTS, GRAPH);
+    /** Höchstens so viele Zeilen je Abschnitt; darüber sagt die Statuszeile „die ersten“. */
+    static final int BELOW_ROWS_LIMIT = 1000;
+    /** Für welche Unterseiten ein Abschnitt geladen ist, je Reiter. */
+    private final java.util.Map<String, Subpages.Below> belowSectionFor = new java.util.HashMap<>();
+    /** Zählt die Ladevorgänge je Reiter; auch der Hintergrund liest, ob seiner noch gilt. */
+    private final java.util.Map<String, Long> belowSectionGeneration = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Ein Inhalt mit seinem Abschnitt „Aus Unterseiten“ darunter. */
+    private static JPanel withBelow(JComponent content, SubpageSection below) {
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.setOpaque(false);
+        panel.add(content, BorderLayout.CENTER);
+        panel.add(below, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private SubpageSection belowSection(String tab) {
+        return IMAGES.equals(tab) ? imagesBelow : STATEMENTS.equals(tab) ? statementsBelow
+                : GRAPH.equals(tab) ? graphBelow : null;
+    }
+
+    /** Was ein Abschnitt aus den Unterseiten liest: Zeilen und wie viele Unterseiten noch nichts haben. */
+    record BelowRows(List<SubpageSection.Row> rows, int missing, boolean cut) {
+    }
+
+    /**
+     * Lädt den Abschnitt „Aus Unterseiten“ unter Bildern, Aussagen oder Graph (Fahrplan P3): nur, wenn der Reiter zu
+     * sehen ist, einmal je Stand der Unterseiten, im Hintergrund, Teilergebnisse sofort. Es zeigt nur, was schon
+     * vorliegt; die Statuszeile sagt, für wie viele Unterseiten noch nichts vorliegt (AT). Nie ein KI-Lauf.
+     */
+    private void loadBelowSection(String tab) {
+        SubpageSection section = belowSection(tab);
+        Subpages.Below below = subpages.below();
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (section == null || below == null || runtime == null || pageId == null
+                || below.equals(belowSectionFor.get(tab))) {
+            return;
+        }
+        belowSectionFor.put(tab, below);
+        long generation = belowSectionGeneration.merge(tab, 1L, Long::sum);
+        java.util.function.BooleanSupplier current = () -> generation == belowSectionGeneration.getOrDefault(tab, 0L);
+        section.loading();
+        com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
+        Background.run(() -> belowRows(tab, workspace, below, current, partial ->
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (current.getAsBoolean()) {
+                        section.rows(partial, false);
+                    }
+                })), found -> {
+            if (current.getAsBoolean()) {
+                section.rows(found.rows(), true);
+                tabStatus(tab, belowStatus(tab, below.size(), found));
+            }
+        }, error -> {
+            if (current.getAsBoolean()) {
+                section.rows(List.of(), true);
+                tabStatus(tab, "Unterseiten nicht lesbar: " + Problems.describe(error).title());
+            }
+        });
+    }
+
+    /**
+     * „für 2 Unterseiten liegt noch nichts vor“ für die Statuszeile, nur wenn etwas fehlt; die Zahl der Einträge steht
+     * im Chip (UX). Leer ({@code " "}), wenn alles vorliegt.
+     */
+    static String belowStatus(String tab, int pages, BelowRows found) {
+        List<String> parts = new java.util.ArrayList<>();
+        if (found.missing() > 0) {
+            parts.add("für " + (found.missing() == 1 ? "1 Unterseite" : found.missing() + " Unterseiten")
+                    + " liegt noch nichts vor");
+        }
+        if (found.cut()) {
+            parts.add("unten die ersten 1.000 von mehr");
+        }
+        return parts.isEmpty() ? " " : String.join(" · ", parts);
+    }
+
+    /**
+     * Liest je Unterseite, was der Reiter {@code tab} zeigt, in Titelreihenfolge; meldet alle zehn Unterseiten den
+     * Zwischenstand. Nie auf dem EDT.
+     */
+    static BelowRows belowRows(String tab, com.aresstack.spaceharvester.app.runtime.Workspace workspace,
+                               Subpages.Below below, java.util.function.BooleanSupplier current,
+                               java.util.function.Consumer<List<SubpageSection.Row>> partial) {
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> keys = new java.util.ArrayList<>();
+        var pages = below.pages().pages();
+        for (String source : pages.sourceIds()) {
+            pages.pagesOf(source).forEach(id ->
+                    keys.add(new com.aresstack.spaceharvester.application.snapshot.PageKey(source, id)));
+        }
+        var nodes = workspace.pageNodes(keys);
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> ordered = new java.util.ArrayList<>(
+                nodes.keySet());
+        ordered.sort(java.util.Comparator.comparing(
+                (com.aresstack.spaceharvester.application.snapshot.PageKey key) -> Breadcrumbs.title(nodes.get(key)),
+                String.CASE_INSENSITIVE_ORDER).thenComparing(key -> key.pageId()));
+        List<SubpageSection.Row> rows = new java.util.ArrayList<>();
+        int missing = 0;
+        int done = 0;
+        boolean cut = false;
+        for (var key : ordered) {
+            if (!current.getAsBoolean()) {
+                break;
+            }
+            List<SubpageSection.Row> found = belowRowsOf(tab, workspace, key, nodes.get(key));
+            if (found == null) {
+                missing++;
+            } else {
+                for (SubpageSection.Row row : found) {
+                    if (rows.size() >= BELOW_ROWS_LIMIT) {
+                        cut = true;
+                        break;
+                    }
+                    rows.add(row);
+                }
+            }
+            if (cut) {
+                break;
+            }
+            if (++done % 10 == 0) {
+                partial.accept(List.copyOf(rows));
+            }
+        }
+        return new BelowRows(List.copyOf(rows), missing, cut);
+    }
+
+    /** Was eine Unterseite für den Reiter hat; {@code null}: noch nichts (nicht lokal, nicht analysiert). */
+    private static List<SubpageSection.Row> belowRowsOf(String tab,
+                                                        com.aresstack.spaceharvester.app.runtime.Workspace workspace,
+                                                        com.aresstack.spaceharvester.application.snapshot.PageKey key,
+                                                        com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode node) {
+        if (GRAPH.equals(tab)) {
+            var graph = workspace.knowledgeGraphOfPage(key,
+                    com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood.Options.DEFAULT);
+            int count = graph.nodes().size() + graph.hidden();
+            return count == 0 ? null : List.of(new SubpageSection.Row(List.of(), node, List.of(), null, count));
+        }
+        var page = workspace.cachedPage(key.sourceId(), key.pageId());
+        if (page.isEmpty()) {
+            return null;
+        }
+        if (IMAGES.equals(tab)) {
+            PageImages found = workspace.images(page.get());
+            if (found.state() == PageImages.State.MISSING) {
+                return PageImages.NO_TEXT.equals(found.reason()) ? List.of() : null;
+            }
+            List<SubpageSection.Row> rows = new java.util.ArrayList<>();
+            // Veraltete Beschreibungen kenntlich machen wie im Reiter selbst.
+            String stale = found.state() == PageImages.State.CURRENT ? "" : " (veraltet)";
+            for (ImagePayload.Entry entry : found.images()) {
+                ImagesTab.Image image = imageOf(entry);
+                String description = image.description() == null || image.description().isBlank()
+                        ? "noch nicht beschrieben" : image.description().strip().replaceAll("\\s+", " ");
+                rows.add(new SubpageSection.Row(List.of(image.name() + stale, description), node));
+            }
+            return rows;
+        }
+        var found = workspace.statements(page.get().snapshot());
+        if (found.state() == com.aresstack.spaceharvester.application.knowledge.PageStatements.State.MISSING) {
+            return com.aresstack.spaceharvester.application.knowledge.PageStatements.NO_TEXT.equals(found.reason())
+                    ? List.of() : null;
+        }
+        var result = found.analysis().result();
+        java.util.Map<String, String> mentions = new java.util.HashMap<>();
+        result.mentions().forEach(mention -> mentions.put(mention.id(), mention.text()));
+        List<SubpageSection.Row> rows = new java.util.ArrayList<>();
+        String stale = found.state() == com.aresstack.spaceharvester.application.knowledge.PageStatements.State.CURRENT
+                ? "" : " (veraltet)";
+        for (var statement : result.statements()) {
+            List<String> parts = statement.arguments().stream().map(argument -> mentions.get(argument.mention()))
+                    .filter(java.util.Objects::nonNull).distinct().toList();
+            // Verneinung, Modalität und Zeit gehören zur Aussage (wie StatementsTab.describe).
+            String features = StatementsTab.features(statement.features());
+            String predicate = statement.predicateText() + (features.isEmpty() ? "" : " (" + features + ")") + stale;
+            rows.add(new SubpageSection.Row(List.of(predicate, String.join(", ", parts)), node));
+        }
+        return rows;
     }
 
     /** Die Zeilen des Abschnitts „Aus Unterseiten“ unter „Beziehungen“; nie auf dem EDT. */

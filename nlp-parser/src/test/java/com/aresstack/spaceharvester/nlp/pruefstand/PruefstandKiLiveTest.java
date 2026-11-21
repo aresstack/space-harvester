@@ -26,7 +26,8 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 /**
  * Echttest des zweiten Analysators (Fahrplan Paket A2) gegen einen Ollama-Server, nur über die HTTP-API und nur mit
- * {@code -PstatementModelLiveOllama=http://localhost:11434 [-PstatementModelLiveModel=gemma4:12b]}; in der CI
+ * {@code -PstatementModelLiveOllama=http://localhost:11434 [-PstatementModelLiveModel=gemma4:12b]
+ * -PstatementModelLiveMissing=true]} (nur Texte ohne Pin); in der CI
  * übersprungen. Derselbe Weg wie im Betrieb ({@link ChatStepModel}, Temperatur 0, Denken aus, {@link
  * ModelStatementAnalyzer} mit Anweisung v1) über alle Texte aller Textsätze. Die Antworten landen als Pins unter
  * {@code build/reports/pruefstand/pins/<Textsatz>/varianten/ki-<Modell>/<Text>.antwort} zum Übernehmen; ausgegeben
@@ -45,6 +46,8 @@ class PruefstandKiLiveTest {
                 ConfiguredSourceCatalog.of(List.of(), "space-harvester-pruefstand"), TrustBundles.NONE,
                 "space-harvester-pruefstand");
         String variante = "ki-" + model.replace(':', '-').replace('/', '-');
+        // Nur Texte ohne Pin (neuer Prüftext): die übrigen bleiben, wie sie gepinnt sind.
+        boolean nurFehlende = Boolean.parseBoolean(System.getProperty("statement.model.live.missing", "false"));
         Path ziel = Path.of("build", "reports", "pruefstand", "pins");
         StringBuilder out = new StringBuilder("Zweiter Analysator gegen Ollama (" + model + "), nur Zahlen:\n");
         for (Textsatz satz : Textsatz.alle()) {
@@ -52,6 +55,9 @@ class PruefstandKiLiveTest {
             StatementAnalyzer.Costs kosten = StatementAnalyzer.Costs.NONE;
             long started = System.nanoTime();
             for (Textsatz.Text text : satz.texte()) {
+                if (nurFehlende && satz.kiAntworten(new Textsatz.Variante(variante, ""), text) != null) {
+                    continue;
+                }
                 List<String> antworten = new ArrayList<>();
                 StepModel aufzeichnend = new StepModel() {
                     @Override
