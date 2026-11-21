@@ -256,6 +256,8 @@ class PageConnectionsTest {
         assertThat(result.edges()).isEmpty();
         assertThat(result.coverage()).containsEntry(ConnectionKind.PARENT, Coverage.PARTIAL);
         assertThat(result.complete()).isFalse();
+        // Bekannt, aber nicht lokal: ladbar, keine Kante.
+        assertThat(result.missing()).containsExactly(java.util.Map.entry(key("77"), ConnectionKind.PARENT));
     }
 
     @Test
@@ -329,6 +331,21 @@ class PageConnectionsTest {
         });
         assertThat(result.coverage()).containsEntry(ConnectionKind.LINKS_TO, Coverage.PARTIAL)
                 .containsEntry(ConnectionKind.LINKED_FROM, Coverage.COMPLETE);
+        assertThat(result.missing()).containsExactly(java.util.Map.entry(key("99"), ConnectionKind.LINKS_TO));
+    }
+
+    @Test
+    void aHiddenLinkTargetIsNeverReportedAsMissing() {
+        standard();
+        hidden.add("2");
+        LinkDirectory links = (caller, page) -> Optional.of(new LinkDirectory.Links(List.of(key("2")), List.of(),
+                true));
+
+        PageConnections.Connections result = connections(links).connections(CALLER, "wiki", "1",
+                PageConnections.Query.all().withKinds(List.of(ConnectionKind.LINKS_TO)));
+
+        assertThat(result.edges()).isEmpty();
+        assertThat(result.missing()).isEmpty();
     }
 
     @Test

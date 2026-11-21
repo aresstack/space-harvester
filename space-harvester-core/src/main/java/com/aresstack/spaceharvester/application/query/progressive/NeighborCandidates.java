@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.structure.Connection;
 import com.aresstack.spaceharvester.application.structure.ConnectionKind;
 import com.aresstack.spaceharvester.application.structure.PageConnections;
+import com.aresstack.spaceharvester.application.structure.PageRef;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,6 +48,11 @@ public final class NeighborCandidates implements NeighborSource {
 
     @Override
     public Map<PageKey, HitReason.Neighbor> neighbors(AccessContext caller, List<KeywordSearch.Hit> seeds) {
+        return find(caller, seeds).local();
+    }
+
+    @Override
+    public Found find(AccessContext caller, List<KeywordSearch.Hit> seeds) {
         Map<PageKey, KeywordSearch.Hit> chosen = new LinkedHashMap<>();
         for (KeywordSearch.Hit seed : seeds) {
             if (chosen.size() >= MAX_SEEDS) {
@@ -55,6 +61,8 @@ public final class NeighborCandidates implements NeighborSource {
             chosen.putIfAbsent(new PageKey(seed.sourceId(), seed.pageId()), seed);
         }
         Map<PageKey, HitReason.Neighbor> found = new LinkedHashMap<>();
+        Map<PageKey, HitReason.Neighbor> missing = new LinkedHashMap<>();
+        Map<PageKey, PageRef> places = new LinkedHashMap<>();
         for (Map.Entry<PageKey, KeywordSearch.Hit> entry : chosen.entrySet()) {
             if (found.size() >= MAX_CANDIDATES) {
                 break;
@@ -78,9 +86,23 @@ public final class NeighborCandidates implements NeighborSource {
                 }
                 found.put(target, new HitReason.Neighbor(seed.sourceId(), seed.pageId(), seed.title(),
                         edge(edge.kind())));
+                places.put(target, edge.target());
+            }
+            for (Map.Entry<PageKey, ConnectionKind> gap : result.missing().entrySet()) {
+                PageKey target = gap.getKey();
+                if (missing.size() >= MAX_CANDIDATES || !KINDS.contains(gap.getValue())
+                        || chosen.containsKey(target) || found.containsKey(target)) {
+                    continue;
+                }
+                if (missing.putIfAbsent(target, new HitReason.Neighbor(seed.sourceId(), seed.pageId(), seed.title(),
+                        edge(gap.getValue()))) == null && gap.getValue() == ConnectionKind.PARENT) {
+                    // Eine Elternseite liegt im Space ihrer Unterseite; ein Verweisziel kann überall liegen.
+                    places.put(target, new PageRef(target, null, seed.spaceKey()));
+                }
             }
         }
-        return found;
+        missing.keySet().removeAll(found.keySet());
+        return new Found(found, missing, places);
     }
 
     private static HitReason.Neighbor.Edge edge(ConnectionKind kind) {
