@@ -147,6 +147,8 @@ public class Jobs implements AutoCloseable {
     private int parallelPreparations;
     private int parallelDownloads;
     private boolean closed;
+    /** Nach {@link #interruptBackground()}: kein Hintergrundteil startet oder wird angenommen. */
+    private boolean backgroundStopped;
 
     /**
      * @param executor führt {@link JobTask#start} aus; die Parallelität begrenzt {@code Jobs} selbst, der Executor muss
@@ -216,6 +218,9 @@ public class Jobs implements AutoCloseable {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
+            if (backgroundStopped && job.type.background()) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
+            }
             requireCapacity(type, owner);
             // Vor dem Einreihen: sonst könnte ein paralleler dispatch() den Start vor der Annahme festhalten.
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
@@ -250,6 +255,9 @@ public class Jobs implements AutoCloseable {
         synchronized (lock) {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
+            }
+            if (backgroundStopped && job.type.background()) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
             }
             requireCapacity(type, owner);
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
@@ -299,6 +307,9 @@ public class Jobs implements AutoCloseable {
         synchronized (lock) {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
+            }
+            if (backgroundStopped && job.type.background()) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
             }
             // Ohne Platzprüfung: belegt bis zur Freigabe nichts und ist durch die Zahl der Vorgänger begrenzt.
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
@@ -707,6 +718,8 @@ public class Jobs implements AutoCloseable {
                 job.pauseRequested = true;
                 job.pauseReason = PauseReason.USER;
                 job.cancelRequested = true;
+                // Der Benutzer gewinnt auch während des Beendens (Abnahme #1030).
+                job.shutdownInterrupted = false;
                 // Wer nach ↻ anhält, will anhalten: kein Neustart danach.
                 job.restartForRetry = false;
                 job.retryFailedRequested = false;
@@ -799,6 +812,9 @@ public class Jobs implements AutoCloseable {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
+            if (backgroundStopped && job.type.background()) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
+            }
             requireCapacity(job.type, job.owner);
             JobTask task = renew == null ? job.task : Objects.requireNonNull(renew.apply(job.task), "task");
             stopped.remove(jobId);
@@ -851,6 +867,9 @@ public class Jobs implements AutoCloseable {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
+            if (backgroundStopped && current.type().background()) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
+            }
             if (open.containsKey(jobId)) {
                 throw new JobNotResumableException(jobId, "der Auftrag wartet oder läuft noch");
             }
@@ -901,6 +920,9 @@ public class Jobs implements AutoCloseable {
         synchronized (lock) {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
+            }
+            if (backgroundStopped && current.type().background()) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
             }
             if (open.containsKey(jobId)) {
                 throw new JobNotResumableException(jobId, "der Auftrag wartet oder läuft noch");
@@ -1240,6 +1262,8 @@ public class Jobs implements AutoCloseable {
             Job job = open.get(jobId);
             if (job != null) {
                 job.cancelRequested = true;
+                // Der Benutzer gewinnt auch während des Beendens: kein „unterbrochen“, kein Fortsetzen danach.
+                job.shutdownInterrupted = false;
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = clock.instant();
                     watchStop(job);
@@ -1281,6 +1305,8 @@ public class Jobs implements AutoCloseable {
      */
     public void interruptBackground() {
         synchronized (lock) {
+            // Ab jetzt startet kein Hintergrundteil mehr und keiner wird angenommen (Abnahme #1030).
+            backgroundStopped = true;
             for (Job job : open.values()) {
                 if (job.type.background() && !job.cancelRequested && !job.pauseRequested) {
                     job.shutdownInterrupted = true;
@@ -1352,7 +1378,7 @@ public class Jobs implements AutoCloseable {
                     && (status.pauseRequested() || status.cancelRequested())) {
                 // Angehalten oder abgebrochen kurz vor dem Ende oder Absturz: bleibt beim Wunsch des Benutzers, nie
                 // fortsetzen (Abnahme #1030).
-                store.save(status.stoppedByUser(now));
+                store.save(status.stoppedBeforeEnd(now));
                 continue;
             }
             if (!status.state().terminal()) {
@@ -1489,7 +1515,7 @@ public class Jobs implements AutoCloseable {
                 continue;
             }
             if (job.type.background()) {
-                if (backgroundPick == null && background) {
+                if (backgroundPick == null && background && !backgroundStopped) {
                     backgroundPick = job;
                 }
                 if (parallelPreparations <= 1 && !job.singleSlotNoted) {
@@ -2108,6 +2134,7 @@ public class Jobs implements AutoCloseable {
             restartForRetry = false;
             stage = null;
             incomplete = false;
+            singleSlotNoted = false;
             discovered.set(0);
             processed.set(0);
             written.set(0);

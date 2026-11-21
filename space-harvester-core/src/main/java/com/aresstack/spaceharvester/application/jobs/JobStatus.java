@@ -112,14 +112,18 @@ public record JobStatus(String id, JobType type, String sourceId, String partiti
     }
 
     /**
-     * Nach einem Neustart: ein Auftrag, den der Benutzer vor dem Ende angehalten ({@link JobState#PAUSED},
-     * {@link PauseReason#USER}) oder abgebrochen ({@link JobState#CANCELLED}) hatte.
+     * Nach einem Neustart: ein Auftrag, dessen Anhalten oder Abbruch vor dem Ende angefordert war. Ein Abbruch wird
+     * {@link JobState#CANCELLED}; ein Anhalten {@link JobState#PAUSED} mit seinem Grund, also bleibt ein Anhalten des
+     * Benutzers ({@link PauseReason#USER}) angehalten, während {@link PauseReason#RETRY},
+     * {@link PauseReason#CONNECTION_LOST} und {@link PauseReason#SIGN_IN_REQUIRED} so fortsetzbar bleiben wie vor dem
+     * Beenden.
      */
-    JobStatus stoppedByUser(Instant at) {
+    JobStatus stoppedBeforeEnd(Instant at) {
         boolean pause = pauseRequested;
+        PauseReason reason = pause ? (pauseReason == null ? PauseReason.USER : pauseReason) : null;
         return new JobStatus(id, type, sourceId, partitionKey, owner, pause ? JobState.PAUSED : JobState.CANCELLED,
                 progress, null, !pause, createdAt, startedAt, at, rootPageId, rootTitle, parameters, false, false,
-                pause ? PauseReason.USER : null);
+                reason);
     }
 
     /** Derselbe Zustand mit anderem Endzustand und Ende; für Aufträge, die ein Neustart unterbrochen hat. */

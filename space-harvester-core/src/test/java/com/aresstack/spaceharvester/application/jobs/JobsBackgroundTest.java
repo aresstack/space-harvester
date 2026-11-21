@@ -127,4 +127,15 @@ class JobsBackgroundTest {
         jobs.parallelPreparations(2);
         assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.RUNNING);
     }
+
+    @Test
+    void theSingleSlotNoteComesAgainAfterTheJobIsResumed() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus background = jobs.submit(JobType.BACKGROUND, "wiki", "ALPHA", null, null, Map.of(), idle());
+        jobs.pause(background.id(), null);
+        jobs.resume(background.id(), null);
+
+        assertThat(jobs.events(background.id())).filteredOn(event -> Jobs.SINGLE_SLOT.equals(event.code()))
+                .hasSize(2);
+    }
 }

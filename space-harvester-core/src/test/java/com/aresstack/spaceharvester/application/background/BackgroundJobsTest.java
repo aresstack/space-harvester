@@ -322,4 +322,40 @@ class BackgroundJobsTest {
                 assertThat(status.state()).isEqualTo(JobState.CANCELLED));
         assertThat(seen).isEmpty();
     }
+
+    @Test
+    void aPauseOfTheUserWhileTheServiceIsClosingWinsOverInterrupted() {
+        Jobs first = new Jobs(store, executor, new JobLimits(4, 10, Duration.ofHours(1)), clock);
+        BackgroundGroup group = background(first, new AtomicBoolean(true)).start("demo", "Demo", twoSpaces());
+        String paused = group.parts().get(0).id();
+        String cancelled = group.parts().get(1).id();
+
+        first.interruptBackground();
+        first.pause(paused, OWNER);
+        first.cancel(cancelled, OWNER);
+        executor.runAll();
+
+        assertThat(first.status(paused).state()).isEqualTo(JobState.PAUSED);
+        assertThat(first.status(cancelled).state()).isEqualTo(JobState.CANCELLED);
+        first.close();
+    }
+
+    @Test
+    void afterInterruptBackgroundNothingStartsAndNothingIsAccepted() {
+        Jobs jobs = new Jobs(store, executor, new JobLimits(2, 10, Duration.ofHours(1)), clock);
+        BackgroundJobs background = background(jobs, new AtomicBoolean(true));
+        // Ein Platz für den Hintergrund: der erste läuft, der zweite wartet.
+        BackgroundGroup group = background.start("demo", "Demo", twoSpaces());
+        String waiting = group.parts().get(1).id();
+        assertThat(jobs.status(waiting).state()).isEqualTo(JobState.QUEUED);
+
+        jobs.interruptBackground();
+        executor.runAll();
+
+        assertThat(jobs.status(waiting).state()).as("startet nicht mehr").isEqualTo(JobState.QUEUED);
+        assertThatThrownBy(() -> background.start("demo", "Später", twoSpaces()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(background.groups()).hasSize(1);
+        jobs.close();
+    }
 }
