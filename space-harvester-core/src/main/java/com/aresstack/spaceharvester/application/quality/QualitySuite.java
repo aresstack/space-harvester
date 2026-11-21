@@ -200,7 +200,7 @@ public record QualitySuite(List<QualityCase> cases, List<LineError> errors) {
         } else {
             String[] parts = token.split(":", 3);
             if (parts[0].isBlank() || (parts.length > 1 && parts[1].isBlank())) {
-                throw new RowException("Bereich „" + token + "“ unvollständig (" + id + ")");
+                throw new RowException("Bereich unvollständig (" + id + ")");
             }
             if (parts.length == 3 && parts[1].equalsIgnoreCase("seite") && !parts[2].isBlank()) {
                 spec = ScopeSpec.page(new PageRef(parts[0], parts[2]), children);
@@ -209,7 +209,7 @@ public record QualitySuite(List<QualityCase> cases, List<LineError> errors) {
             } else if (parts.length == 1) {
                 spec = ScopeSpec.source(parts[0]);
             } else {
-                throw new RowException("Bereich „" + token + "“ nicht lesbar (" + id
+                throw new RowException("Bereich nicht lesbar (" + id
                         + "), erlaubt: *, quelle, quelle:SPACE, quelle:seite:ID, Seitenadresse");
             }
         }

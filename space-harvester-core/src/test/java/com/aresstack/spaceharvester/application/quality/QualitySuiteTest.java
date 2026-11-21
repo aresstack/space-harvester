@@ -53,6 +53,8 @@ class QualitySuiteTest {
         assertThat(suite.cases().get(1).expected()).containsExactly(new PageRef("q", "8"));
         assertThat(suite.errors()).extracting(QualitySuite.LineError::line).containsExactly(4, 5, 6, 7, 8, 9);
         assertThat(suite.errors().get(0).message()).doesNotContain("unbekannt.example");
+        assertThat(QualitySuite.parse("id\tfrage\tbereich\terwartet\nB1\tFrage\tgeheim:SP:x:y\tq:1\n", RESOLVER)
+                .errors()).singleElement().satisfies(error -> assertThat(error.message()).doesNotContain("geheim"));
     }
 
     @Test
