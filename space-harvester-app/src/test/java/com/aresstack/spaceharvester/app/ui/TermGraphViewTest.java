@@ -426,15 +426,16 @@ class TermGraphViewTest {
         java.util.concurrent.CountDownLatch first = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.CountDownLatch second = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.atomic.AtomicInteger read = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.concurrent.atomic.AtomicBoolean firstDone = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<Thread> firstReader =
+                new java.util.concurrent.atomic.AtomicReference<>();
         TermGraphView[] holder = new TermGraphView[1];
         SwingUtilities.invokeAndWait(() -> {
             holder[0] = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY, domain);
             holder[0].sentenceReader(byPage -> {
                 try {
                     if (read.incrementAndGet() == 1) {
+                        firstReader.set(Thread.currentThread());
                         first.await();
-                        firstDone.set(true);
                     } else {
                         second.await();
                     }
@@ -450,16 +451,18 @@ class TermGraphViewTest {
         GraphSource.Edge verb = domain.around("Antragsteller", 2, false).edges().stream()
                 .filter(edge -> edge.style() == GraphSource.Style.VERB).findFirst().orElseThrow();
         asked.set(1);
-        SwingUtilities.invokeAndWait(() -> {
-            holder[0].showEvidenceFor(verb);
-            holder[0].showEvidenceFor(verb);
-        });
+        // Klicks nacheinander: Erst wenn das Lesen des ersten Klicks läuft, kommt der zweite. Sonst könnte der Thread
+        // des zweiten Klicks zuerst lesen, und die „überholte“ Antwort wäre in Wahrheit die letzte.
+        SwingUtilities.invokeAndWait(() -> holder[0].showEvidenceFor(verb));
+        awaitTrue(() -> firstReader.get() != null);
+        SwingUtilities.invokeAndWait(() -> holder[0].showEvidenceFor(verb));
+        awaitTrue(() -> read.get() == 2);
         first.countDown();
-        awaitTrue(firstDone::get);
-        for (int i = 0; i < 20; i++) {
-            SwingUtilities.invokeAndWait(() -> { });
-            Thread.sleep(10);
-        }
+        // Background läuft je Aufgabe in einem eigenen Thread; er endet erst, nachdem er die überholte Antwort an den
+        // EDT übergeben hat. Danach den EDT einmal leeren: Die Antwort ist zugestellt, ganz ohne Zeitfenster.
+        firstReader.get().join(5000);
+        assertThat(firstReader.get().isAlive()).isFalse();
+        SwingUtilities.invokeAndWait(() -> { });
         SwingUtilities.invokeAndWait(() -> holder[0].coreChangedWhileShowing());
         assertThat(asked).as("die überholte Antwort beendet das Lesen nicht").hasValue(1);
         assertThat(holder[0].coreDirty()).isTrue();
