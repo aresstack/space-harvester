@@ -99,6 +99,21 @@ public class GlossaryClassification {
     /** Kennung des Ereignisses „Modellphase je Seite fertig“ (ADR 0032, FL5c), nur Anzahlen. */
     public static final String MODEL_DONE = "GLOSSARY_MODEL_DONE";
 
+    /** Unterordner des Glossars für den Ergebnis-Cache der Modellantworten (D4: dauerhaft wie bei den Synonymen). */
+    public static final String CACHE_DIRECTORY = "model-cache";
+
+    /**
+     * Die Schlüssel des Ergebnis-Caches, an denen eine Quelle beteiligt ist („Daten bereinigen“): ihre Läufe je Quelle
+     * und Space und die globalen, sonst gälten ihre Antworten nach erneutem Laden als schon gegeben.
+     */
+    public static java.util.function.Predicate<String> cacheKeysOf(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        return key -> {
+            String rest = key.startsWith("classify\u0000") ? key.substring("classify\u0000".length()) : key;
+            return rest.startsWith(sourceId + '\u0000') || rest.startsWith("null\u0000");
+        };
+    }
+
     /** Warum die Phase mit Modell ausfiel. */
     public enum SkipReason {
         /** Kein Chat-Modell eingestellt. */

@@ -21,7 +21,6 @@ import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.application.terms.AcronymResolution;
-import com.aresstack.spaceharvester.application.terms.ResolutionCache;
 import com.aresstack.spaceharvester.application.terms.SynonymCandidates;
 import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.application.terms.SynonymJudgmentModel;
@@ -123,7 +122,9 @@ class TermConfiguration {
                                                   ObjectProvider<AcronymExpansionModel> model,
                                                   ObjectProvider<SnapshotRepository> repository,
                                                   ObjectProvider<PageCacheReader> reader,
-                                                  SentenceSegmenter sentences, ObjectProvider<DocumentEnrichments> documents) {
+                                                  SentenceSegmenter sentences, ObjectProvider<DocumentEnrichments> documents,
+                                                  @Qualifier("glossaryResolutionCache")
+                                                  FileResolutionCache glossaryCache) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -131,8 +132,15 @@ class TermConfiguration {
         PageTextProjector projector = projector();
         return new GlossaryClassification(catalog, index, access, headers(snapshots, cache),
                 key -> payloads.apply(key).flatMap(projector::project), glossary,
-                model.getIfAvailable(() -> AcronymExpansionModel.NONE), ResolutionCache.inMemory(), jobs,
+                model.getIfAvailable(() -> AcronymExpansionModel.NONE), glossaryCache, jobs,
                 termsVersion(sentences), GlossaryClassification.Budget.DEFAULT, Clock.systemUTC());
+    }
+
+    /** Ergebnis-Cache der Glossar-Modellantworten (D4) im Glossarordner; „Daten bereinigen“ leert ihn. */
+    @Bean
+    FileResolutionCache glossaryResolutionCache(
+            @Value("${space-harvester.glossary.directory:data/glossary}") Path directory) {
+        return new FileResolutionCache(directory.resolve(GlossaryClassification.CACHE_DIRECTORY));
     }
 
     /** Ergebnis-Cache der Synonymerkennung (#336) neben dem der Akronymauflösung; „Daten bereinigen“ leert ihn. */
