@@ -76,13 +76,15 @@ public final class EacSourceAdapters {
      * {@code options.baseUrl}, Einschränkung {@code options.jql}. Anmeldung {@code basic} (Benutzer und Passwort) oder
      * {@code pat} (Personal Access Token, als Bearer); ein eigener KeePass-Verweis unter {@code options.credentialRef}
      * geht wie bei SharePoint an den Anbieter des Programms. Das Client-Zertifikat kommt aus {@code client-certificate}
-     * (siehe {@link KnowledgeSourceProviderAdapter}); das eigene Feld des Typs bleibt deshalb ungenutzt.
+     * (siehe {@link KnowledgeSourceProviderAdapter}); das eigene Feld des Typs bleibt deshalb ungenutzt. Abgelegt wird
+     * der Lesetext samt aller Kommentare, ohne Startpunkte gilt die Liste je Projekt ({@code JiraSnapshots}).
      */
     public static SourceAdapter jira() {
         return KnowledgeSourceProviderAdapter.connected(connection -> new JiraSourceProvider(connection.secrets(),
                 connection.routes(), connection.tls(), connection.userAgent(), (alias, keyStoreFile, passwordRef) -> {
                     throw new IllegalArgumentException("Client-Zertifikat für Jira unter client-certificate angeben");
-                }), CREDENTIAL_REF, null).withCredentialRefPassThrough().acceptingToken();
+                }), CREDENTIAL_REF, null).withCredentialRefPassThrough().acceptingToken()
+                .whenOpened(JiraSnapshots::adapt);
     }
 
     public static SourceAdapter outlook() {
