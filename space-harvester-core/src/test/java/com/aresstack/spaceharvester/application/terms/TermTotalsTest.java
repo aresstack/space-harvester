@@ -210,6 +210,17 @@ class TermTotalsTest {
         assertThat(terms.pageCounts(CALLER, PageSet.ofKeys(List.of(new PageKey("wiki", "3"))))).isEmpty();
     }
 
+    /** Zwei Schreibweisen desselben Suchwerts auf einer Seite: die Seite zählt einmal (Auflage AT zu P1). */
+    @Test
+    void aPageWithTwoSpellingsOfOneTermCountsOnce() {
+        page("wiki", "DEV", "7", "Das Feld order_id steht oben. Unten steht ORDER_ID noch einmal.");
+        PageSet seven = PageSet.ofKeys(List.of(new PageKey("wiki", "7")));
+
+        Map<TermQueries.TermRef, Integer> counts = terms.pageCounts(CALLER, seven);
+        assertThat(counts).isNotEmpty();
+        assertThat(counts.values()).as(counts.toString()).allMatch(count -> count == 1);
+    }
+
     /** Messung für den Architekten: etwa 5.000 Seiten, eine Zählung über alles; die Zeit steht in der Ausgabe. */
     @Test
     void fiveThousandPagesAreCountedInOnePass() {

@@ -442,13 +442,16 @@ public class TermQueries {
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, null, null, null, processorVersion, null,
                 TermOrigin.PAGES, pages);
         Visibility visibility = new Visibility(caller, null);
-        Map<TermRef, Integer> counts = new java.util.HashMap<>();
+        // Je Begriff die verschiedenen Seiten: mehrere Schreibweisen desselben Suchwerts auf einer Seite sind
+        // getrennte Einträge, die Seite zählt trotzdem einmal.
+        Map<TermRef, Set<PageKey>> seen = new java.util.HashMap<>();
         String from = null;
         while (true) {
             List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
             for (TermPosting posting : batch) {
                 if (!posting.ofDocument() && visibility.current(posting).isPresent()) {
-                    counts.merge(new TermRef(posting.normalized(), posting.kind()), 1, Integer::sum);
+                    seen.computeIfAbsent(new TermRef(posting.normalized(), posting.kind()),
+                            ref -> new java.util.HashSet<>()).add(posting.page());
                 }
             }
             if (batch.size() < TermIndex.MAX_BATCH) {
@@ -456,6 +459,8 @@ public class TermQueries {
             }
             from = batch.get(batch.size() - 1).sortKey();
         }
+        Map<TermRef, Integer> counts = new java.util.HashMap<>();
+        seen.forEach((ref, pageKeys) -> counts.put(ref, pageKeys.size()));
         return Map.copyOf(counts);
     }
 
