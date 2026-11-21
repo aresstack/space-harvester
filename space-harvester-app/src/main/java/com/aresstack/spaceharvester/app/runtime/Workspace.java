@@ -187,6 +187,17 @@ public final class Workspace {
                 new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
     }
 
+    /**
+     * Abgleich der beiden Aussagenanalysatoren einer Seite (K2): je Aussage der eingestellten Ablage, ob die andere
+     * übereinstimmt, abweicht (mit beiden Lesarten) oder nicht vergleichbar ist; dahinter Aussagen nur der anderen.
+     * Nie auf dem EDT.
+     */
+    public java.util.Map<String, com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Comparison>
+            analyzerComparisons(String sourceId, String pageId) {
+        return harvester.analyzerComparison().comparisons(caller,
+                new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
+    }
+
     /** Die Fundstellen eines Verbs in {@code within} ({@code VerbQueries.occurrences}, Paket K1). Nie auf dem EDT. */
     public List<com.aresstack.spaceharvester.application.knowledge.VerbQueries.Occurrence> verbOccurrences(
             com.aresstack.spaceharvester.application.snapshot.PageSet within,
