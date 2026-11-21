@@ -63,6 +63,40 @@ class StatementsTabTest {
         assertThat(tab.analyzeTooltip()).isEqualTo(StatementsTab.ANALYZE_TIP_MODEL);
     }
 
+    /** Codex-Befund zu #1025: Der KI-Analysator braucht das MaltParser-Modell nicht. */
+    @Test
+    void theModelAnalyzerCanAnalyseWithoutTheParserModel() {
+        actions.analyzer = com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL;
+        tab.modelStatus(new com.aresstack.spaceharvester.app.ui.ParserModelSetup.Status(
+                com.aresstack.spaceharvester.app.ui.ParserModelSetup.State.NOT_INSTALLED, null, false, -1));
+        tab.page(page("1"), text());
+        runner.runAll();
+
+        assertThat(tab.analyzeOffered()).isTrue();
+        assertThat(tab.modelBanner.isVisible()).as("keine Parser-Meldung für den KI-Analysator").isFalse();
+
+        actions.analyzer = com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER;
+        tab.storeChanged();
+        runner.runAll();
+        assertThat(tab.analyzeOffered()).isFalse();
+        assertThat(tab.modelBanner.isVisible()).isTrue();
+    }
+
+    /** Codex-Befund zu #1025: Ein Lauf aus der alten Ablage erscheint nach dem Umschalten nicht unter der neuen. */
+    @Test
+    void switchingTheStoreDuringAnAnalysisDropsItsResult() {
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.clickAnalyze();
+
+        tab.storeChanged();
+        runner.runAll();
+
+        assertThat(actions.lastCancelled.getAsBoolean()).as("Lauf abgebrochen").isTrue();
+        assertThat(tab.stateLabel()).isEqualTo("Nicht analysiert");
+        assertThat(tab.analyzeOffered()).isTrue();
+    }
+
     @Test
     void withTheParserTheButtonKeepsItsName() {
         tab.page(page("1"), text());

@@ -286,7 +286,9 @@ final class StatementsTab extends JPanel {
     void modelStatus(ParserModelSetup.Status status) {
         modelState = status.state();
         boolean installing = status.state() == ParserModelSetup.State.INSTALLING;
-        boolean show = status.state() == ParserModelSetup.State.NOT_INSTALLED || installing;
+        // Mit dem KI-Analysator braucht „Analysieren“ das Parsermodell nicht; die Meldung bleibt dann aus.
+        boolean show = analyzerChoice == AnalyzerChoice.PARSER
+                && (status.state() == ParserModelSetup.State.NOT_INSTALLED || installing);
         if (show) {
             String directory = setup == null ? "" : setup.directory().map(Object::toString).orElse("");
             modelText.setText("„" + ANALYZE + "“ braucht das deutsche MaltParser-Modell. „"
@@ -315,10 +317,18 @@ final class StatementsTab extends JPanel {
 
     private static final String NOT_AVAILABLE_MODEL = "Das Parsermodell fehlt; siehe Meldung oben.";
 
+    /** Fehlt das MaltParser-Modell für den eingestellten Analysator? Der KI-Analysator braucht es nicht. */
     private boolean modelMissing() {
+        return analyzerChoice == AnalyzerChoice.PARSER && parserModelMissing();
+    }
+
+    private boolean parserModelMissing() {
         return modelState == ParserModelSetup.State.NOT_INSTALLED
                 || modelState == ParserModelSetup.State.INSTALLING;
     }
+
+    /** Der eingestellte Analysator, zuletzt aus dem Core gelesen (Fahrplan A3). */
+    private AnalyzerChoice analyzerChoice = AnalyzerChoice.PARSER;
 
     private static void browse(String target) {
         try {
@@ -1178,7 +1188,24 @@ final class StatementsTab extends JPanel {
 
     /** Tooltip von „Analysieren“ nach dem eingestellten Analysator; der Name bleibt neutral (Fahrplan A3). */
     private void analyzer(AnalyzerChoice choice) {
-        analyze.setToolTipText(choice == AnalyzerChoice.MODEL ? ANALYZE_TIP_MODEL : ANALYZE_TIP_PARSER);
+        analyzerChoice = choice == null ? AnalyzerChoice.PARSER : choice;
+        analyze.setToolTipText(analyzerChoice == AnalyzerChoice.MODEL ? ANALYZE_TIP_MODEL : ANALYZE_TIP_PARSER);
+        modelBanner.setVisible(analyzerChoice == AnalyzerChoice.PARSER && parserModelMissing());
+    }
+
+    /**
+     * Die Ablage wurde umgeschaltet (Fahrplan A3): Eine laufende Analyse der Seite wird abgebrochen (ihr Ergebnis gehört
+     * in die alte Ablage und darf nicht unter der neuen erscheinen), dann liest der Reiter aus der neuen Ablage.
+     */
+    void storeChanged() {
+        PageSnapshot page = snapshot;
+        PageText readerText = text;
+        if (page == null) {
+            return;
+        }
+        generation++;
+        cancelRun();
+        page(page, readerText);
     }
 
     /**

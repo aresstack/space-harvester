@@ -1125,7 +1125,7 @@ public final class PageDetailPanel extends JPanel {
         shownStore = now;
         storeField.show(now);
         if (switched) {
-            statementsView.reload();
+            statementsView.storeChanged();
             graphView.reload();
             analysisView.reload();
         }
