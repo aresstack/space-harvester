@@ -58,6 +58,22 @@ class ActivitiesStageNotesTest {
                 new ActivitiesView.Note(ActivitiesView.SKIPPED_LABEL, "Quelle nicht freigegeben", true));
     }
 
+    /** KI-Analysator (Fahrplan A2/A3): je Grund eine gelbe Zahl, die Kosten als eigene Zeile. */
+    @Test
+    void theModelAnalyzerShowsEachReasonInYellowAndItsCosts() {
+        List<JobEvent> events = List.of(
+                event(1, StatementAnalysisJobs.MODEL_COSTS, "Sprachmodell: 2 Seiten, 9 Sätze, 2 Modellaufrufe"),
+                event(2, StatementAnalysisJobs.MODEL_NOT_RELEASED, "12 Seiten ohne KI-Freigabe bewusst ausgelassen"),
+                event(3, StatementAnalysisJobs.MODEL_NO_MODEL, "3 Seiten bewusst ausgelassen"));
+
+        assertThat(ActivitiesView.notes(events)).containsExactly(
+                new ActivitiesView.Note(ActivitiesView.MODEL_COSTS_LABEL,
+                        "Sprachmodell: 2 Seiten, 9 Sätze, 2 Modellaufrufe", false),
+                new ActivitiesView.Note(ActivitiesView.MODEL_NOT_RELEASED_LABEL,
+                        "12 Seiten ohne KI-Freigabe bewusst ausgelassen", true),
+                new ActivitiesView.Note(ActivitiesView.MODEL_NO_MODEL_LABEL, "3 Seiten bewusst ausgelassen", true));
+    }
+
     private static JobEvent event(long sequence, String code, String message) {
         return new JobEvent("job-1", sequence, Instant.parse("2026-11-17T03:00:00Z"), JobType.STATEMENT_ANALYSIS,
                 "wiki", "DEV", JobEvent.Severity.INFO, JobEvent.Category.JOB, StatementAnalysisJobs.COMPONENT,

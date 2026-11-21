@@ -321,9 +321,6 @@ public final class Harvester implements AutoCloseable {
     private final PageQueries pages;
     private final Holdings holdings;
     private final AiRelease aiRelease;
-    /** Aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2); Vorgabe MaltParser. */
-    private volatile com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice statementAnalyzerChoice =
-            com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER;
     private final PageReleaseService pageReleaseService;
     private final ExportAssetCollection assetCollection;
     private final PageAddresses addresses;
@@ -1057,12 +1054,13 @@ public final class Harvester implements AutoCloseable {
             // MaltParser).
             KnowledgeGraphStore graphStore = new AnalyzerStores(new FileKnowledgeGraphStore(
                     builder.dataDirectory.resolve("knowledge-graph")), new FileKnowledgeGraphStore(
-                    builder.dataDirectory.resolve("knowledge-graph-model")), () -> statementAnalyzerChoice);
+                    builder.dataDirectory.resolve("knowledge-graph-model")), this::statementAnalyzerChoice);
             StatementAnalyzer statementAnalyzer = builder.statementAnalyzer;
             // Fahrplan Paket A2: zweiter Analysator über den eingestellten KI-Dienst, derselbe Modellweg wie Vorstufe
             // und Prüfschritt (Temperatur 0, Denken aus); nur auf Auftrag, an den Dienst nur Seiten mit KI-Freigabe.
             StatementAnalyzer modelAnalyzer = new ModelStatementAnalyzer(new ChatStepModel(ModelStatementAnalyzer.STEP,
-                    () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog, trustBundles,
+                    () -> liveAi ? this.settings.ai() : startAi,
+                    () -> this.settings == null ? null : this.settings.analyzer().model(), catalog, trustBundles,
                     builder.userAgent), sentences);
             java.util.function.Function<PageSnapshot, Optional<PageText>> readerText = snapshot -> {
                 try {
@@ -1640,14 +1638,14 @@ public final class Harvester implements AutoCloseable {
      * Die Freigabeprüfung für den KI-Dienst mit der Liste der freigegebenen Seiten (ADR 0028): Quelle in
      * {@code ai.external-processing-sources} oder Seite auf der Liste.
      */
-    /** Aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2). */
+    /**
+     * Aus welcher Ablage Graph, Stand, Begriffe und Export lesen und welcher Analysator vorgewählt ist
+     * ({@code space-harvester.statements.analyzer}, Fahrplan Paket A2/A3); Vorgabe MaltParser.
+     */
     public com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice statementAnalyzerChoice() {
-        return statementAnalyzerChoice;
-    }
-
-    /** Stellt ein, aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2). */
-    public void statementAnalyzerChoice(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice choice) {
-        this.statementAnalyzerChoice = java.util.Objects.requireNonNull(choice, "choice");
+        HarvesterConfiguration current = this.settings;
+        return current == null ? com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER
+                : current.analyzer().analyzer();
     }
 
     public AiRelease aiRelease() {

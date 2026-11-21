@@ -145,6 +145,13 @@ final class AnalysisView extends JPanel {
         loadIfShown();
     }
 
+    /** Die Ablage der Aussagenanalyse wurde umgeschaltet (Fahrplan A3): beim nächsten Zeigen neu lesen. */
+    void reload() {
+        dirty = true;
+        request++;
+        loadIfShown();
+    }
+
     /** Ob die Ansicht gerade zu sehen ist; erst dann wird gelesen. */
     void shown(boolean shown) {
         this.shown = shown;

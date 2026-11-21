@@ -138,6 +138,8 @@ class ConfigurationParityTest {
                   scope: all
                   parallel: 4
                   model: check-model
+                analyzer: model
+                analyzer-model: statement-model
             """;
 
     private static final String TOKEN = "parity-token";
@@ -236,6 +238,10 @@ class ConfigurationParityTest {
         assertThat(app.check()).isEqualTo(service2.check())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.CheckSettings(
                         com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "check-model"));
+        // Fahrplan A2/A3: Aussagenanalyse (Analysator = gelesene Ablage, eigenes Modell).
+        assertThat(app.analyzer()).isEqualTo(service2.analyzer())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.AnalyzerSettings(
+                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, "statement-model"));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder

@@ -615,6 +615,33 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theAnalyzerGoesUnderStatementsAndKeepsTheOtherKeys() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: always\n"
+                + "      model: einfach\n  jobs:\n    max-queued: 3\n");
+        var model = new com.aresstack.spaceharvester.application.configuration.AnalyzerSettings(
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, "aussagen:4b");
+        editor.save(file, editor.withAnalyzer(file, new ConfigFileEditor.Draft(Files.readString(file), null), model));
+        editor.save(file, editor.withAnalyzer(file, new ConfigFileEditor.Draft(Files.readString(file), null), model));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("    analyzer: model\n", "    analyzer-model: \"aussagen:4b\"\n",
+                "      mode: always\n      model: einfach\n", "max-queued: 3");
+        assertThat(text.indexOf("analyzer:")).as("zweimal gespeichert, ein Schlüssel")
+                .isEqualTo(text.lastIndexOf("analyzer:"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.analyzer()).isEqualTo(model);
+        assertThat(settings.simplification().model()).as("Vorstufe unberührt").isEqualTo("einfach");
+
+        var parser = com.aresstack.spaceharvester.application.configuration.AnalyzerSettings.DEFAULT;
+        editor.save(file, editor.withAnalyzer(file, new ConfigFileEditor.Draft(Files.readString(file), null), parser));
+        assertThat(Files.readString(file)).as("ohne eigenes Modell kein Schlüssel analyzer-model")
+                .contains("analyzer: parser").doesNotContain("analyzer-model:");
+        assertThat(loader.load(file).analyzer()).isEqualTo(parser);
+    }
+
+    @Test
     void theSimplificationStageGoesUnderStatementsSimplificationAndKeepsTheOtherKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: where-needed\n"

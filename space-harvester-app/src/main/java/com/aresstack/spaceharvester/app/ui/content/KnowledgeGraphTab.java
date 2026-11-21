@@ -440,6 +440,11 @@ final class KnowledgeGraphTab extends JPanel {
         load(entry, List.copyOf(requested), !current);
     }
 
+    /** Die Ablage der Aussagenanalyse wurde umgeschaltet (Fahrplan A3): dieselbe Ansicht aus der neuen Ablage. */
+    void reload() {
+        reloadFocus();
+    }
+
     /** Filter geändert: dieselbe Einstiegsabfrage samt aller Erweiterungen mit den neuen Filtern. */
     private void reloadFocus() {
         if (entry != null) {

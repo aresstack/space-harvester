@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -59,6 +60,10 @@ import java.util.function.Supplier;
 final class StatementsTab extends JPanel {
 
     static final String ANALYZE = "Mit MaltParser analysieren";
+    /** „Analysieren“, wenn unter Einstellungen › Modelle der KI-Analysator eingestellt ist (Fahrplan A3). */
+    static final String ANALYZE_MODEL = "Mit KI analysieren (Erprobung)";
+    /** Gelbe Pille: der KI-Analysator hat die Seite bewusst ausgelassen. */
+    static final String SKIPPED = "Ausgelassen";
     static final String DELETE_TIP = "Aussagen-Analyse dieser Seite löschen";
     static final String DELETE_QUESTION = "Wirklich die Aussagen-Analyse dieser Seite samt Anhängen löschen? Die Seite "
             + "bleibt.";
@@ -374,11 +379,15 @@ final class StatementsTab extends JPanel {
         int mine = generation;
         loading();
         runner.run(() -> new Loaded(actions.statements(page), actions.statementAnalysisAvailable(),
-                actions.statementLinks(page.key())), loaded -> {
+                actions.statementLinks(page.key()), actions.analyzer(), actions.skipped(page.key())), loaded -> {
             if (mine != generation) {
                 return;
             }
+            analyzer(loaded.analyzer());
             render(loaded.statements(), loaded.links());
+            if (loaded.statements().analysis() == null && loaded.skipped().isPresent()) {
+                skipped(loaded.skipped().get());
+            }
             if (!loaded.available()) {
                 analyze.setEnabled(false);
                 hint.setText(NOT_AVAILABLE);
@@ -502,6 +511,11 @@ final class StatementsTab extends JPanel {
                     && unavailable.reason() == AnalyzerUnavailableException.Reason.MODEL_MISSING) {
                 setup.refresh();
                 hint.setText(NOT_AVAILABLE_MODEL);
+            } else if (error instanceof AnalyzerUnavailableException unavailable
+                    && (unavailable.reason() == AnalyzerUnavailableException.Reason.NOT_RELEASED
+                    || unavailable.reason() == AnalyzerUnavailableException.Reason.NO_AI_MODEL)) {
+                // Bewusst ausgelassen, kein Fehler: gelb, die bisherige Analyse bleibt stehen.
+                head.status(SKIPPED, Comic.ORANGE, skipReason(unavailable.reason()));
             } else if (error instanceof AnalyzerUnavailableException unavailable) {
                 hint.setText(unavailable.getMessage());
             } else if (!(error instanceof CancellationException)) {
@@ -1159,6 +1173,36 @@ final class StatementsTab extends JPanel {
         head.status(label.isBlank() ? null : label, tone);
     }
 
+    /** Beschriftung von „Analysieren“ nach dem eingestellten Analysator (Fahrplan A3). */
+    private void analyzer(AnalyzerChoice choice) {
+        analyze.setText(choice == AnalyzerChoice.MODEL ? ANALYZE_MODEL : ANALYZE);
+    }
+
+    /**
+     * Der eingestellte KI-Analysator lässt die Seite bewusst aus (kein Modell, keine KI-Freigabe): gelbe Pille
+     * „Ausgelassen“ mit dem Grund im Tooltip, Inhalt leer, kein Fehlerband (UX-Vorgabe A3).
+     */
+    private void skipped(AnalyzerUnavailableException.Reason reason) {
+        head.status(SKIPPED, Comic.ORANGE, skipReason(reason));
+        hint.setText(" ");
+        explanation = "";
+        onStatus.accept(" ");
+        list.removeAll();
+        list.revalidate();
+        list.repaint();
+    }
+
+    /** Der Grund im Tooltip der gelben Pille. */
+    static String skipReason(AnalyzerUnavailableException.Reason reason) {
+        return switch (reason) {
+            case NOT_RELEASED -> "Bewusst ausgelassen: Die Seite ist nicht für den KI-Dienst freigegeben "
+                    + "(Einstellungen › Sicherheit).";
+            case NO_AI_MODEL -> "Bewusst ausgelassen: Für die Aussagenanalyse ist kein Modell eingestellt "
+                    + "(Einstellungen › Modelle).";
+            default -> "Bewusst ausgelassen: Der KI-Analysator ist hier nicht eingerichtet.";
+        };
+    }
+
     private static JTextArea note() {
         JTextArea area = new JTextArea();
         area.setEditable(false);
@@ -1186,6 +1230,17 @@ final class StatementsTab extends JPanel {
         /** Wie {@link #analyzeStatements}, mit der Vorstufe „Sätze vereinfachen“ nach den Einstellungen. */
         default PageStatements analyzeSimplified(PageSnapshot page, java.util.function.BooleanSupplier cancelled) {
             return analyzeStatements(page, cancelled);
+        }
+
+        /** Der eingestellte Aussagenanalysator (Fahrplan A3); ohne Angabe der MaltParser. */
+        default AnalyzerChoice analyzer() {
+            return AnalyzerChoice.PARSER;
+        }
+
+        /** Warum der eingestellte KI-Analysator diese Seite bewusst auslässt; sonst leer. */
+        default Optional<AnalyzerUnavailableException.Reason> skipped(
+                com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+            return Optional.empty();
         }
 
         /** Warum die Vorstufe für diese Seite nicht laufen kann ({@code NO_MODEL}, {@code NOT_RELEASED}); sonst leer. */
@@ -1231,6 +1286,17 @@ final class StatementsTab extends JPanel {
                 return null;
             }
             return new Actions() {
+                @Override
+                public AnalyzerChoice analyzer() {
+                    return workspace.statementAnalyzer();
+                }
+
+                @Override
+                public Optional<AnalyzerUnavailableException.Reason> skipped(
+                        com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                    return workspace.statementAnalyzerSkips(key);
+                }
+
                 @Override
                 public int deleteAnalysis(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
                     return workspace.deleteStatementAnalysis(key);
@@ -1305,7 +1371,11 @@ final class StatementsTab extends JPanel {
         <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure);
     }
 
-    private record Loaded(PageStatements statements, boolean available, List<KnowledgeGraph.Link> links) {
+    private record Loaded(PageStatements statements, boolean available, List<KnowledgeGraph.Link> links,
+                          AnalyzerChoice analyzer, Optional<AnalyzerUnavailableException.Reason> skipped) {
+        Loaded(PageStatements statements, boolean available, List<KnowledgeGraph.Link> links) {
+            this(statements, available, links, AnalyzerChoice.PARSER, Optional.empty());
+        }
     }
 
     // ---- für Tests
@@ -1321,6 +1391,14 @@ final class StatementsTab extends JPanel {
     /** Die Erläuterung, ob sie im Reiter steht oder in der Statuszeile. */
     String hintText() {
         return hint.getText().isBlank() ? explanation : hint.getText();
+    }
+
+    String stateTooltip() {
+        return head.statusTooltip();
+    }
+
+    String analyzeLabel() {
+        return analyze.getText();
     }
 
     boolean analyzeOffered() {

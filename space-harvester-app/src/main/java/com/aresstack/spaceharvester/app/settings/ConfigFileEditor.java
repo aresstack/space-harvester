@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
@@ -594,6 +595,29 @@ public final class ConfigFileEditor {
         if (newProblem || !settings.check().equals(check)) {
             throw new IllegalArgumentException("Der Prüfschritt „Aussagen prüfen“ ließ sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.statements.check von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer Aussagenanalyse ({@code space-harvester.statements.analyzer} und
+     * {@code analyzer-model}, Fahrplan A2/A3), dieselben Schlüssel wie im Dienst. Ohne eigenes Modell entfällt
+     * {@code analyzer-model}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withAnalyzer(Path file, Draft base, AnalyzerSettings analyzer) {
+        String text = nested(base.text(), "statements", "analyzer", indent -> indent + "analyzer: "
+                + analyzer.analyzer().value() + "\n");
+        text = nested(text, "statements", "analyzer-model", indent -> analyzer.model() == null ? ""
+                : indent + "analyzer-model: " + quoted(analyzer.model()) + "\n");
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.analyzer().equals(analyzer)) {
+            throw new IllegalArgumentException("Die Aussagenanalyse ließ sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester.statements.analyzer von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);

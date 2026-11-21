@@ -235,7 +235,7 @@ class ExplorerAnalyzeTest {
         clickLater(PARENT, Explorer.ANALYZE);
         await(() -> !shownJobs.isEmpty());
         assertThat(analyses.estimated).containsExactly(new Scope.Subtree("wiki", "OPS", "p2"));
-        assertThat(confirmations).singleElement().asString().startsWith("42 Seiten analysieren?")
+        assertThat(confirmations).singleElement().asString().startsWith("42 Seiten wirklich analysieren?")
                 .contains("Eltern");
         assertThat(actions).containsExactly(Explorer.ANALYZE);
         assertThat(analyses.started).containsExactly(new Started(new Scope.Subtree("wiki", "OPS", "p2"),
@@ -258,12 +258,25 @@ class ExplorerAnalyzeTest {
     }
 
     @Test
+    void theAnalyzerChosenInTheDialogStartsTheJob() throws Exception {
+        useFakes();
+        analyses.estimate = scope -> new StatementAnalysisJobs.Estimate(scope, 7, false, false);
+        answer = new Explorer.AnalysisChoice(false, false,
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL);
+        clickLater(SPACE, Explorer.ANALYZE);
+        await(() -> !shownJobs.isEmpty());
+        assertThat(analyses.started).containsExactly(new Started(new Scope.Space("wiki", "OPS"),
+                new StatementAnalysisJobs.Options(false, Explorer.ANALYSIS_LIMIT, null,
+                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL)));
+    }
+
+    @Test
     void beyondTheLimitTheUserConfirmsAllPages() throws Exception {
         useFakes();
         analyses.estimate = scope -> new StatementAnalysisJobs.Estimate(scope, Explorer.ANALYSIS_LIMIT, true, false);
         clickLater(SOURCE, Explorer.ANALYZE);
         await(() -> !shownJobs.isEmpty());
-        assertThat(confirmations).singleElement().asString().startsWith("Mehr als 500 Seiten analysieren?");
+        assertThat(confirmations).singleElement().asString().startsWith("Wirklich mehr als 500 Seiten analysieren?");
         assertThat(actions).containsExactly("Alle analysieren");
         assertThat(analyses.started).containsExactly(new Started(new Scope.Source("wiki"),
                 new StatementAnalysisJobs.Options(false, 0)));
@@ -298,19 +311,19 @@ class ExplorerAnalyzeTest {
     void theQuestionNamesExactExceededAndEstimatedCounts() {
         Scope scope = new Scope.Space("wiki", "OPS");
         assertThat(Explorer.analysisQuestion(new StatementAnalysisJobs.Estimate(scope, 1, false, false), "X"))
-                .startsWith("1 Seite analysieren?").contains("Umfang: X.").contains("heruntergeladen")
+                .startsWith("1 Seite wirklich analysieren?").contains("Umfang: X.").contains("heruntergeladen")
                 .doesNotContain("Schätzung").doesNotContain("Sicherheitsgrenze");
         assertThat(Explorer.analysisQuestion(new StatementAnalysisJobs.Estimate(scope, 12, false, false), "X"))
-                .startsWith("12 Seiten analysieren?");
+                .startsWith("12 Seiten wirklich analysieren?");
         assertThat(Explorer.analysisQuestion(new StatementAnalysisJobs.Estimate(scope, 500, true, false), "X"))
-                .startsWith("Mehr als 500 Seiten analysieren?").contains("Sicherheitsgrenze von 500 Seiten")
+                .startsWith("Wirklich mehr als 500 Seiten analysieren?").contains("Sicherheitsgrenze von 500 Seiten")
                 .contains("alle Seiten");
         assertThat(Explorer.analysisQuestion(new StatementAnalysisJobs.Estimate(scope, 7, false, true), "X"))
-                .startsWith("Etwa 7 Seiten analysieren? (Schätzung)").contains("nicht vollständig");
+                .startsWith("Etwa 7 Seiten wirklich analysieren? (Schätzung)").contains("nicht vollständig");
         assertThat(Explorer.analysisQuestion(new StatementAnalysisJobs.Estimate(scope, 0, false, true), "X"))
                 .startsWith("Umfang noch unbekannt (Schätzung)");
         assertThat(Explorer.analysisQuestion(new StatementAnalysisJobs.Estimate(scope, 500, true, true), "X"))
-                .startsWith("Mehr als 500 Seiten analysieren?");
+                .startsWith("Wirklich mehr als 500 Seiten analysieren?");
         assertThat(Explorer.analysisWhere(PARENT)).contains("Eltern").contains("samt allen Unterseiten");
         assertThat(Explorer.analysisWhere(SOURCE)).contains("Wiki");
     }

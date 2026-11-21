@@ -1,9 +1,11 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons;
+import com.aresstack.spaceharvester.app.ui.content.AnalyzerNames;
 import com.aresstack.spaceharvester.app.event.Severity;
 import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
@@ -303,9 +305,14 @@ public final class Explorer {
     private Analyses analyses = new WorkspaceAnalyses();
     /** Bestätigung großer Analyseumfänge; Tests antworten ohne Dialog. */
     private AnalysisConfirmation confirmation = (parent, title, text, action) -> {
-        boolean[] chosen = Dialogs.confirm(parent, title, text, java.util.List.of(REANALYZE, SIMPLIFY), action);
-        return chosen == null ? null : new AnalysisChoice(chosen[0], chosen[1]);
+        Dialogs.Choice chosen = Dialogs.confirm(parent, title, text, ANALYZER,
+                java.util.List.of(AnalyzerNames.PARSER, AnalyzerNames.MODEL),
+                AnalyzerNames.name(analyzerSetting()), java.util.List.of(REANALYZE, SIMPLIFY));
+        return chosen == null ? null : new AnalysisChoice(chosen.checked()[0], chosen.checked()[1],
+                AnalyzerNames.of(chosen.choice()));
     };
+    /** Zeile oben im Bestätigungsdialog „Analysieren“ (Fahrplan A3). */
+    static final String ANALYZER = "Analysator";
 
     /** Rückfrage vor „Aussagen prüfen“ über mehrere Seiten: Ja oder Nein; Tests antworten ohne Dialog. */
     private CheckConfirmation checkConfirmation = Dialogs::confirm;
@@ -360,7 +367,17 @@ public final class Explorer {
      * @param reanalyze „erneut analysieren“
      * @param simplify  mit der Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3)
      */
-    record AnalysisChoice(boolean reanalyze, boolean simplify) {
+    record AnalysisChoice(boolean reanalyze, boolean simplify, AnalyzerChoice analyzer) {
+        /** Ohne eigene Wahl gilt die Einstellung „Aussagenanalyse“. */
+        AnalysisChoice(boolean reanalyze, boolean simplify) {
+            this(reanalyze, simplify, null);
+        }
+    }
+
+    /** Der vorgewählte Analysator (Einstellungen › Modelle, „Aussagenanalyse“); ohne Datei der MaltParser. */
+    private AnalyzerChoice analyzerSetting() {
+        return context.settings() == null || context.settings().analyzer().analyzer() == null ? AnalyzerChoice.PARSER
+                : context.settings().analyzer().analyzer();
     }
 
     private final class WorkspaceAnalyses implements Analyses {
@@ -2212,7 +2229,8 @@ public final class Explorer {
             return;
         }
         if (scope instanceof StatementAnalysisJobs.Scope.SinglePage) {
-            startAnalysis(scope, StatementAnalysisJobs.Options.DEFAULT);
+            startAnalysis(scope, new StatementAnalysisJobs.Options(false, StatementAnalysisJobs.Options.DEFAULT
+                    .maxPages(), null, analyzerSetting()));
             return;
         }
         notice("Umfang der Analyse wird ermittelt …", Severity.INFO);
@@ -2232,7 +2250,8 @@ public final class Explorer {
             startAnalysis(scope, new StatementAnalysisJobs.Options(choice.reanalyze(),
                     estimate.exceeded() ? 0 : ANALYSIS_LIMIT, choice.simplify()
                     ? com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.SimplificationRequest
-                            .of(simplification()) : null));
+                            .of(simplification()) : null,
+                    choice.analyzer() == null ? analyzerSetting() : choice.analyzer()));
         }, error -> notice("Analyse ließ sich nicht starten: " + Problems.describe(error).title(), Severity.ERROR));
     }
 
@@ -2330,12 +2349,12 @@ public final class Explorer {
         String pages = Texts.count(estimate.pages(), "Seite", "Seiten");
         StringBuilder text = new StringBuilder();
         if (estimate.exceeded()) {
-            text.append("Mehr als ").append(pages).append(" analysieren?");
+            text.append("Wirklich mehr als ").append(pages).append(" analysieren?");
         } else if (estimate.incomplete()) {
-            text.append(estimate.pages() == 0 ? "Umfang noch unbekannt (Schätzung). Analysieren?"
-                    : "Etwa " + pages + " analysieren? (Schätzung)");
+            text.append(estimate.pages() == 0 ? "Umfang noch unbekannt (Schätzung). Wirklich analysieren?"
+                    : "Etwa " + pages + " wirklich analysieren? (Schätzung)");
         } else {
-            text.append(pages).append(" analysieren?");
+            text.append(pages).append(" wirklich analysieren?");
         }
         text.append("\n\nUmfang: ").append(where).append('.');
         if (estimate.exceeded()) {

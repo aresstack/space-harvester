@@ -46,6 +46,29 @@ class StatementsTabTest {
         assertThat(actions.analyses).isZero();
     }
 
+    /** Fahrplan A3: der eingestellte KI-Analysator lässt die Seite bewusst aus, gelbe Pille statt Fehlerband. */
+    @Test
+    void aPageTheModelAnalyzerSkipsShowsAYellowPillWithTheReason() {
+        actions.analyzer = com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL;
+        actions.skipped = Optional.of(
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException.Reason.NOT_RELEASED);
+        tab.page(page("1"), text());
+        runner.runAll();
+
+        assertThat(tab.stateLabel()).isEqualTo(StatementsTab.SKIPPED);
+        assertThat(tab.stateTooltip()).contains("nicht für den KI-Dienst freigegeben");
+        assertThat(tab.hintText()).isBlank();
+        assertThat(tab.lines()).isEmpty();
+        assertThat(tab.analyzeLabel()).isEqualTo(StatementsTab.ANALYZE_MODEL);
+    }
+
+    @Test
+    void withTheParserTheButtonKeepsItsName() {
+        tab.page(page("1"), text());
+        runner.runAll();
+        assertThat(tab.analyzeLabel()).isEqualTo(StatementsTab.ANALYZE);
+    }
+
     @Test
     void theButtonAnalysesAndShowsCoreStatementsFirstWithRolesAndEvidence() {
         tab.page(page("1"), text());
@@ -568,6 +591,21 @@ class StatementsTabTest {
         final List<PageKey> deletions = new ArrayList<>();
         Optional<com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason> checkUnavailable =
                 Optional.empty();
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer =
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER;
+        Optional<com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException.Reason> skipped =
+                Optional.empty();
+
+        @Override
+        public com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer() {
+            return analyzer;
+        }
+
+        @Override
+        public Optional<com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException.Reason>
+                skipped(PageKey key) {
+            return skipped;
+        }
 
         @Override
         public int deleteAnalysis(PageKey key) {

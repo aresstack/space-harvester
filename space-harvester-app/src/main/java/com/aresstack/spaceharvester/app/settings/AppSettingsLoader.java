@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.check.CheckScope;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
@@ -248,7 +249,26 @@ public final class AppSettingsLoader {
                 check(map(get(map(get(root, "statements")), "check")), problems),
                 viewerBackground(get(map(get(app, "viewer")), "background"), problems),
                 video(map(get(app, "video")), problems),
-                whisperModel(get(map(get(app, "whisper")), "model"), problems));
+                whisperModel(get(map(get(app, "whisper")), "model"), problems),
+                analyzer(map(get(root, "statements")), problems));
+    }
+
+    /**
+     * {@code space-harvester.statements.analyzer} und {@code analyzer-model}: Aussagenanalyse (Fahrplan A2/A3), wie
+     * beim Dienst ({@link AnalyzerSettings}). Ein unbekannter Analysator ist ein Problem und lässt den MaltParser stehen.
+     */
+    private AnalyzerSettings analyzer(Map<?, ?> statements, List<String> problems) {
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice choice =
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER;
+        Object value = get(statements, "analyzer");
+        try {
+            choice = com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.parse(
+                    value == null ? null : value.toString());
+        } catch (IllegalArgumentException e) {
+            problems.add(ROOT + "." + AnalyzerSettings.ANALYZER + ": " + e.getMessage());
+        }
+        Object model = get(statements, "analyzer-model");
+        return new AnalyzerSettings(choice, model == null ? null : model.toString());
     }
 
     /** {@code space-harvester-app.whisper.model}: ein unbekannter Wert ist ein Problem und lässt Tiny stehen. */
