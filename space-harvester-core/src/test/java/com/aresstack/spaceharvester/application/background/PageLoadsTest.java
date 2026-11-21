@@ -207,6 +207,10 @@ class PageLoadsTest {
             closing.start();
             String id = group.parts().getFirst().id();
             java.time.Instant deadline = java.time.Instant.now().plusSeconds(10);
+            // Erst freigeben, wenn close() Wartendes abgeworfen hat und auf den laufenden Abruf wartet.
+            while (closing.getState() != Thread.State.TIMED_WAITING && java.time.Instant.now().isBefore(deadline)) {
+                Thread.sleep(5);
+            }
             release.countDown();
             while (!real.status(id).state().terminal() && java.time.Instant.now().isBefore(deadline)) {
                 Thread.sleep(20);
