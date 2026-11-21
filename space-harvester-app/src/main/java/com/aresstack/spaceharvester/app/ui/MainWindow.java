@@ -89,6 +89,9 @@ public final class MainWindow implements AppContext.Navigator {
     private int chatWidth = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH;
     static final String CHAT_OPEN_KEY = "chat.open";
     static final String CHAT_WIDTH_KEY = "chat.width";
+    static final String CHAT_LARGE_KEY = "chat.large";
+    /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
+    private boolean chatLarge;
     static final String CHAT_TOOLTIP = "Chat (Strg+J)";
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
@@ -314,6 +317,7 @@ public final class MainWindow implements AppContext.Navigator {
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
         chatSidebar.collapseButton().addActionListener(e -> chatOpen(false));
+        chatSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
         chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, work, chatSidebar);
         chatSplit.setBorder(null);
         chatSplit.setBackground(Comic.SURFACE);
@@ -342,6 +346,7 @@ public final class MainWindow implements AppContext.Navigator {
         chatWidth = Math.max(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH,
                 WindowSizes.recallInt(CHAT_WIDTH_KEY, chatWidth));
         chatOpen = WindowSizes.recallInt(CHAT_OPEN_KEY, 0) == 1;
+        chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
         chatToggle.setSelected(chatOpen);
         placeChat();
         split = new ComicSplitPane(side, chatSplit, 200, 520, Comic.PALETTE);
@@ -444,6 +449,18 @@ public final class MainWindow implements AppContext.Navigator {
                 chatOpen(!chatOpen);
             }
         });
+        // Esc stellt aus der großen Chat-Ansicht die Leiste wieder her, gleich wo der Fokus steht (auch im Explorer);
+        // Felder und Overlays mit eigenem Esc gehen vor, weil diese Bindung als letzte gefragt wird.
+        surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_ESCAPE, 0), "chat-shrink");
+        surface.getActionMap().put("chat-shrink", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                if (chatOpen && chatLarge) {
+                    chatLarge(false);
+                }
+            }
+        });
         surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
                 java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
         surface.getActionMap().put("find", new javax.swing.AbstractAction() {
@@ -484,6 +501,23 @@ public final class MainWindow implements AppContext.Navigator {
         return chatOpen;
     }
 
+    /**
+     * „Groß anzeigen“: dieselbe Leiste nimmt die ganze Arbeitsfläche, der Explorer bleibt; derselbe Knopf und Esc
+     * stellen die vorige Breite wieder her. Gemerkt wie offen/zu.
+     */
+    void chatLarge(boolean large) {
+        chatLarge = large;
+        WindowSizes.rememberInt(CHAT_LARGE_KEY, large ? 1 : 0);
+        placeChat();
+        if (chatOpen) {
+            chatSidebar.chat().focusEditor();
+        }
+    }
+
+    boolean chatLarge() {
+        return chatLarge;
+    }
+
     /** Stellt den Teiler so, dass die Leiste ihre Breite hat bzw. zugeklappt ganz verschwindet. */
     private void placeChat() {
         placingChat = true;
@@ -491,11 +525,15 @@ public final class MainWindow implements AppContext.Navigator {
             int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
             chatSidebar.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
             chatSidebar.shown(chatOpen);
+            boolean large = chatOpen && chatLarge;
+            chatSidebar.large(large);
+            // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
+            chatSplit.getLeftComponent().setVisible(!large);
             // Zugeklappt lässt sich der Teiler nicht ziehen, nur doppelt klicken.
-            chatSplit.setEnabled(chatOpen);
-            chatSplit.setDividerSize(chatOpen ? ComicDivider.THICKNESS : COLLAPSED_DIVIDER);
+            chatSplit.setEnabled(chatOpen && !large);
+            chatSplit.setDividerSize(large ? 0 : chatOpen ? ComicDivider.THICKNESS : COLLAPSED_DIVIDER);
             int width = chatSplit.getWidth();
-            if (width > 0) {
+            if (width > 0 && !large) {
                 // Die Arbeitsfläche behält ihre Mindestbreite; in einem schmalen Fenster gibt die Leiste nach.
                 int room = Math.max(0, width - chatSplit.getDividerSize() - 320);
                 int shown = chatOpen ? Math.max(Math.min(min, room), Math.min(chatWidth, room)) : 0;
@@ -511,7 +549,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Merkt die Breite, die der Benutzer der offenen Leiste durch Ziehen gegeben hat. */
     private void rememberChatWidth() {
-        if (placingChat || !chatOpen || chatSplit.getWidth() <= 0) {
+        if (placingChat || !chatOpen || chatLarge || chatSplit.getWidth() <= 0) {
             return;
         }
         int width = chatSplit.getWidth() - chatSplit.getDividerSize() - chatSplit.getDividerLocation();
@@ -537,6 +575,18 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void show(AppContext.Section section) {
+        // Wer einen Bereich aufruft, will ihn sehen: aus der großen Chat-Ansicht wird wieder die Leiste. Nur die
+        // Auswahl im Explorer lässt sie groß, denn dort wählt man den Bereich der nächsten Frage.
+        if (chatSplit != null && chatOpen && chatLarge) {
+            chatLarge = false;
+            WindowSizes.rememberInt(CHAT_LARGE_KEY, 0);
+            placeChat();
+        }
+        showSection(section);
+    }
+
+    /** Zeigt den Bereich, ohne die große Chat-Ansicht zu verlassen (Auswahl im Explorer). */
+    private void showSection(AppContext.Section section) {
         if (section == AppContext.Section.STATUS) {
             show(AppContext.Section.SETTINGS);
             settings.select(SettingsView.DIAGNOSIS);
@@ -580,14 +630,14 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openPage(String sourceId, String pageId) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPage(sourceId, pageId);
     }
 
     @Override
     public void openPassage(String sourceId, String passageId) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPassage(sourceId, passageId);
     }
@@ -599,14 +649,14 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openSpace(String sourceId, String spaceKey) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
         explorer.reveal(sourceId, spaceKey);
     }
 
     @Override
     public void openSource(String sourceId, String title) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         content.openSource(sourceId, title);
     }
 
@@ -700,31 +750,47 @@ public final class MainWindow implements AppContext.Navigator {
                         Comic.RED));
     }
 
+    /** Kreispfeile hinter gescheiterten Abgleichen eines Updates: wie die Kreispfeile im Baum für diese Spaces. */
+    @Override
+    public void retrySyncs(String sourceId, List<String> spaceKeys) {
+        catchUp(sourceId, spaceKeys);
+    }
+
     /** Kreispfeile im Baum: Quelle oder Space holen nach wie die Quellenkarte, eine Seite liest ihren Teilbaum neu. */
     @Override
     public void refresh(String sourceId, String spaceKey, String pageId) {
         if (pageId == null) {
-            // Die Meldezeile der Quellen-Ansicht sieht man vom Baum aus nicht: der Ausgang kommt in die Statuszeile.
-            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey),
-                    new SourcesView.CatchUpReport() {
-                        @Override
-                        public void started(List<String> jobs) {
-                            notice(Texts.count(jobs.size(), "Space wird", "Spaces werden") + " nachgeholt",
-                                    Comic.MUTED);
-                            if (!jobs.isEmpty()) {
-                                showJob(jobs.get(0));
-                            }
-                        }
-
-                        @Override
-                        public void failed(String message) {
-                            notice(message, Comic.RED);
-                        }
-                    })) {
-                notice("Nachholen wird gestartet …", Comic.MUTED);
-            }
+            catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey));
             return;
         }
+        refreshPage(sourceId, spaceKey, pageId);
+    }
+
+    /** Holt die Spaces nach (ohne {@code spaceKeys} jeden der Quelle); der Ausgang kommt in die Statuszeile. */
+    private void catchUp(String sourceId, List<String> spaceKeys) {
+        // Die Meldezeile der Quellen-Ansicht sieht man vom Baum aus nicht: der Ausgang kommt in die Statuszeile.
+        if (sources.catchUp(sourceId, spaceKeys,
+                new SourcesView.CatchUpReport() {
+                    @Override
+                    public void started(List<String> jobs) {
+                        notice(Texts.count(jobs.size(), "Space wird", "Spaces werden") + " nachgeholt",
+                                Comic.MUTED);
+                        if (!jobs.isEmpty()) {
+                            showJob(jobs.get(0));
+                        }
+                    }
+
+                    @Override
+                    public void failed(String message) {
+                        notice(message, Comic.RED);
+                    }
+                })) {
+            notice("Nachholen wird gestartet …", Comic.MUTED);
+        }
+    }
+
+    /** Liest eine Seite samt Unterseiten neu aus der Quelle. */
+    private void refreshPage(String sourceId, String spaceKey, String pageId) {
         notice("Aktualisierung wird gestartet …", Comic.MUTED);
         Downloads.refreshSubtree(context, sourceId, spaceKey, pageId, started -> {
             notice("Aktualisierung der Seite samt Unterseiten gestartet", Comic.MUTED);

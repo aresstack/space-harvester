@@ -180,6 +180,8 @@ public final class ChatTurn {
     private PageKey openPage;
     private volatile ChatTools tools;
     private final List<ChatKnowledge.Excerpt> cited = new ArrayList<>();
+    /** Ob die Quellen schon einmal gemeldet wurden; danach meldet jede neue Quelle die Liste erneut. */
+    private boolean sourcesAnnounced;
     private final Map<PageKey, Integer> numbers = new HashMap<>();
     private Releases releases = Releases.NONE;
     private final Set<PageKey> releasedHere = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -400,7 +402,8 @@ public final class ChatTurn {
                 String head = total <= OPEN_PAGE_CHARS ? page.text() : ChatKnowledge.excerpt(page.text(),
                         OPEN_PAGE_CHARS).replaceAll(" …$", "");
                 shown = head.length();
-                open = new ChatKnowledge.Excerpt(page.title(), openPage.sourceId(), page.location(), head);
+                open = new ChatKnowledge.Excerpt(page.title(), openPage.sourceId(), page.location(), head,
+                        openPage.pageId());
                 openRef = ChatTools.ref(openPage);
                 cite(open, openPage);
                 String spaceKey = running.spaceOf(openPage);
@@ -415,6 +418,9 @@ public final class ChatTurn {
         if (cancelRequested) {
             finish(() -> listener.cancelled(""));
             return;
+        }
+        synchronized (cited) {
+            sourcesAnnounced = true;
         }
         reportSources();
         List<AiChat.Message> messages = conversation(ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef),
@@ -560,7 +566,7 @@ public final class ChatTurn {
             }
             cited.add(excerpt);
             numbers.put(key, cited.size());
-            if (cited.size() > 1) {
+            if (sourcesAnnounced) {
                 reportSources();
             }
             return cited.size();
@@ -656,7 +662,7 @@ public final class ChatTurn {
             if (excerpt != null) {
                 excerpts.add(new ChatKnowledge.Excerpt((excerpt.title() == null ? entry.getKey().pageId()
                         : excerpt.title()) + " (geändert am " + date(entry.getValue()) + ")", excerpt.sourceId(),
-                        excerpt.location(), excerpt.text()));
+                        excerpt.location(), excerpt.text(), excerpt.pageId()));
             }
         }
         Instant oldest = since.values().stream().min(Instant::compareTo).orElse(null);
@@ -829,7 +835,7 @@ public final class ChatTurn {
             }
             return text.isEmpty() ? null : new ChatKnowledge.Excerpt(hit.title(), hit.sourceId(),
                     hit.url() == null ? null : hit.url().toString(),
-                    ChatKnowledge.excerpt(text.toString(), ChatKnowledge.MAX_HIT_CHARS));
+                    ChatKnowledge.excerpt(text.toString(), ChatKnowledge.MAX_HIT_CHARS), hit.pageId());
         } catch (RuntimeException gone) {
             return null;
         }
@@ -852,7 +858,8 @@ public final class ChatTurn {
                 return null;
             }
             return new ChatKnowledge.Excerpt(metadata.title(), sourceId,
-                    metadata.url() == null ? null : metadata.url().toString(), ChatKnowledge.excerpt(body, maxChars));
+                    metadata.url() == null ? null : metadata.url().toString(), ChatKnowledge.excerpt(body, maxChars),
+                    pageId);
         } catch (RuntimeException notLocal) {
             return null;
         }

@@ -52,6 +52,7 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
     private static final class Round {
         final Set<String> jobs = new HashSet<>();
         final Set<String> spaces = new TreeSet<>();
+        final Set<String> failedSpaces = new TreeSet<>();
         String user;
         int failed;
         Instant end;
@@ -205,6 +206,9 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
         }
         if (failed) {
             round.failed++;
+            if (status.partitionKey() != null) {
+                round.failedSpaces.add(status.partitionKey());
+            }
         }
         Instant end = status.finishedAt() == null ? clock.instant() : status.finishedAt();
         if (round.end == null || end.isAfter(round.end)) {
@@ -220,7 +224,7 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
         try {
             boolean initial = marks.marks(status.sourceId()).isEmpty();
             marks.mark(new UpdateMark(status.sourceId(), round.end, round.user, round.spaces.stream().toList(),
-                    round.failed, initial));
+                    round.failed, initial, round.failedSpaces.stream().toList()));
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Update-Marke nicht gesetzt ({0})", e.getClass().getName());
         }
