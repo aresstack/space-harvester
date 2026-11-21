@@ -285,7 +285,11 @@ wird automatisch verwaltet.
    Seite mit dessen Rechten. Lässt sich daraus nach einem Neustart kein Aufrufer bauen (Endnutzer ohne Anmeldedaten),
    hält er gelb an (`VIDEO_SLIDES_RESUME_BY_HAND`). Öffnet derselbe Eigentümer das Video wieder, setzt ▶ im Reiter
    „Hintergrund“ mit seiner frischen Anmeldung fort; ein anderer übernimmt den Teil nie. `autoResume` ist erst wahr, wenn die App ihre Videos liefert.
-   `mediaSource()` setzt dann nur die Teile dieser Art fort (`BackgroundJobs#resumeInterrupted(kind)`).
+   `mediaSource()` setzt dann nur die Teile dieser Art fort (`BackgroundJobs#resumeInterrupted(kind)`), nur beim
+   ersten Setzen und abseits des Aufrufers; ein Neuladen der Einstellungen setzt nichts fort. Ein beendeter Teil ohne
+   lesbare Eigentümerangaben wird verworfen und für den neu angelegt, der das Video öffnet. Mit nur einem Platz zeigt
+   der Player statt des Rings einen gelben Hinweis „Folienerkennung braucht einen zweiten Platz“ mit dem Weg zur
+   Einstellung. Der Hinweis steht als eigene Zeile über den Meldungen des Players.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

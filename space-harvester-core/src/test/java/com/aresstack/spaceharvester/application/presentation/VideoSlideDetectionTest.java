@@ -67,7 +67,7 @@ class VideoSlideDetectionTest {
         Mockito.when(snapshot.revision()).thenReturn("r1");
         Mockito.when(snapshot.metadata()).thenReturn(new com.aresstack.spaceharvester.application.sources
                 .PageMetadata("42", "42", "Vortrag.mp4", "CLUK", null, null, null, null, new java.util.TreeMap<>()));
-        return new VideoPresentations(jobs, (who, sourceId, pageId) -> {
+        VideoPresentations presentations = new VideoPresentations(jobs, (who, sourceId, pageId) -> {
             readers.add(who);
             return snapshot;
         }, Mockito.mock(com.aresstack.spaceharvester.application.assets.Assets.class),
@@ -75,6 +75,8 @@ class VideoSlideDetectionTest {
                 Mockito.mock(com.aresstack.spaceharvester.application.stepmodel.StepModel.class),
                 new PresentationStore(new InMemoryEnrichmentStore(), Clock.systemUTC()), key -> true,
                 java.nio.file.Path.of("out"));
+        presentations.resumer(Runnable::run);
+        return presentations;
     }
 
     private static VideoMedia media(List<Long> changes) {
@@ -175,6 +177,34 @@ class VideoSlideDetectionTest {
     }
 
     @Test
+    void theAppsVideosResumeTheDetectionOnceAndNotOnTheCallingThreadEvenWhenTheSettingsAreReloaded() {
+        // Architekt 21.11.2026: nur beim ersten Setzen und abseits des EDT; ein Neuladen setzt nichts fort.
+        Jobs first = jobs(new Steps());
+        VideoPresentations before = presentations(first);
+        before.background(new BackgroundJobs(first, OWNER));
+        before.mediaSource((sourceId, pageId) -> media(List.of(1_000L)));
+        String jobId = before.detectSlides(APP, "wiki", "42").orElseThrow().jobIds().get(0);
+
+        Steps executor = new Steps();
+        Jobs restarted = jobs(executor);
+        VideoPresentations after = presentations(restarted);
+        after.background(new BackgroundJobs(restarted, OWNER));
+        List<Runnable> resumptions = new CopyOnWriteArrayList<>();
+        after.resumer(resumptions::add);
+
+        after.mediaSource((sourceId, pageId) -> media(List.of(1_000L)));
+        after.mediaSource((sourceId, pageId) -> media(List.of(1_000L)));
+
+        assertThat(resumptions).as("einmal, nicht im Aufrufer").hasSize(1);
+        executor.runAll();
+        assertThat(restarted.status(jobId).state()).isNotEqualTo(JobState.COMPLETED);
+
+        resumptions.get(0).run();
+        executor.runAll();
+        assertThat(restarted.status(jobId).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
     void anEndUsersPartPausesAfterARestartBecauseItsSignInIsGone() {
         // Nie mit technischen Rechten weiter, wenn ein Benutzer ihn gestartet hat (Architekt 21.11.2026).
         Jobs first = jobs(new Steps());
@@ -224,13 +254,24 @@ class VideoSlideDetectionTest {
         presentations.background(background);
         presentations.mediaSource((sourceId, pageId) -> media(List.of(1_000L)));
 
-        BackgroundGroup group = background.start(VideoPresentations.SLIDES_KIND, "Folienwechsel erkennen",
+        BackgroundGroup group = background.start(VideoPresentations.slidesGroup("wiki", "42", "r1"),
+                VideoPresentations.SLIDES_KIND, "Folienwechsel erkennen",
                 List.of(new BackgroundPart.Draft("wiki", "CLUK", Map.of(VideoPresentations.PAGE_PARAMETER, "42"))));
         executor.runAll();
 
         assertThat(jobs.status(group.jobIds().get(0)).state()).isEqualTo(JobState.PAUSED);
         assertThat(readers).isEmpty();
         assertThat(marks).isEmpty();
+
+        // Er hielte bei jedem Fortsetzen erneut an: öffnet Anna das Video, wird er verworfen und für sie neu angelegt.
+        BackgroundGroup fresh = presentations.detectSlides(ANNA, "wiki", "42").orElseThrow();
+        assertThat(fresh.jobIds()).doesNotContainAnyElementsOf(group.jobIds());
+        assertThat(fresh.parts()).singleElement()
+                .satisfies(part -> assertThat(part.parameter(VideoPresentations.PRINCIPAL_PARAMETER)).isEqualTo("anna"));
+        assertThat(background.group(group.groupId()).orElseThrow().jobIds()).isEqualTo(fresh.jobIds());
+        executor.runAll();
+        assertThat(marks).containsEntry("42@r1", List.of(1_000L));
+        assertThat(readers).containsOnly(ANNA);
     }
 
     /** Führt Arbeit erst auf Anforderung aus. */

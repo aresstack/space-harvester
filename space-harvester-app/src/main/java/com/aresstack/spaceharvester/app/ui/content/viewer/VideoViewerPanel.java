@@ -122,21 +122,22 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         message.setBackground(new java.awt.Color(0x171E27));
         message.setForeground(new java.awt.Color(0xE6EDF4));
         message.setBorder(BorderFactory.createEmptyBorder(9, 8, 9, 8));
-        // Meldungen des Players und die Platte zur Folienerkennung teilen sich den Platz über dem Bild; er ist immer
-        // gleich hoch, das Bild springt also nicht (UX 21.11.2026).
+        // Die Platte zur Folienerkennung steht als eigene Zeile über den Meldungen des Players; Download-Fortschritt,
+        // „Video gespeichert“ und Wiedergabefehler bleiben darunter sichtbar (Architekt 21.11.2026).
         north.setOpaque(true);
         north.setBackground(new java.awt.Color(0x171E27));
-        north.add(message, NORTH_MESSAGE);
-        javax.swing.JPanel plateHolder = new javax.swing.JPanel(new BorderLayout());
         plateHolder.setOpaque(false);
         plateHolder.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
         plateHolder.add(slidesPlate, BorderLayout.CENTER);
-        north.add(plateHolder, NORTH_PLATE);
+        plateHolder.setVisible(false);
+        north.add(plateHolder, BorderLayout.NORTH);
+        north.add(message, BorderLayout.CENTER);
         slidesPlate.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentHidden(java.awt.event.ComponentEvent event) {
-                // ✕ oder Link: zurück zu den Meldungen des Players.
-                ((java.awt.CardLayout) north.getLayout()).show(north, NORTH_MESSAGE);
+                // ✕ oder Link: die Zeile verschwindet wieder.
+                plateHolder.setVisible(false);
+                north.revalidate();
             }
         });
         add(north, BorderLayout.NORTH);
@@ -705,9 +706,9 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         message.setText(playbackMessage());
     }
 
-    private static final String NORTH_MESSAGE = "message";
-    private static final String NORTH_PLATE = "plate";
-    private final javax.swing.JPanel north = new javax.swing.JPanel(new java.awt.CardLayout());
+    /** Über dem Bild: die Platte zur Folienerkennung (nur wenn sie steht) und darunter die Meldungen des Players. */
+    private final javax.swing.JPanel north = new javax.swing.JPanel(new BorderLayout());
+    private final javax.swing.JPanel plateHolder = new javax.swing.JPanel(new BorderLayout());
     /** Hinweis, wenn „Folienwechsel erkennen“ abgebrochen, angehalten oder gescheitert ist; höchstens einer. */
     private final com.aresstack.spaceharvester.app.ui.controls.MessagePlate slidesPlate =
             new com.aresstack.spaceharvester.app.ui.controls.MessagePlate();
@@ -736,13 +737,24 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
      * im Tooltip.
      */
     public void slidesUnavailable(String sentence, boolean error, Runnable retry) {
+        slidesUnavailable(sentence, error, RETRY_IN_BACKGROUND, retry);
+    }
+
+    /** Wie {@link #slidesUnavailable(String, boolean, Runnable)}, mit eigenem Linktext, etwa zur Einstellung. */
+    public void slidesUnavailable(String sentence, boolean error, String link, Runnable action) {
         if (error) {
-            slidesPlate.showError(sentence, RETRY_IN_BACKGROUND, retry);
+            slidesPlate.showError(sentence, link, action);
         } else {
-            slidesPlate.show(sentence, RETRY_IN_BACKGROUND, retry);
+            slidesPlate.show(sentence, link, action);
         }
-        ((java.awt.CardLayout) north.getLayout()).show(north, NORTH_PLATE);
+        plateHolder.setVisible(true);
+        north.revalidate();
         transport.slidesUnavailable(sentence);
+    }
+
+    /** Die Meldungszeile des Players (für Tests). */
+    JLabel playerMessage() {
+        return message;
     }
 
     /** Die Erkennung ist fertig, das Video hat keine Folien: kein Ring, keine Knöpfe. */
