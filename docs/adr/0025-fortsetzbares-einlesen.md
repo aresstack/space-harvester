@@ -254,3 +254,15 @@ wird automatisch verwaltet.
 7. **Desktop-App.** Die Auftragsverwaltung zeigt Hintergrundaufträge in einem eigenen Reiter „Hintergrund“, je Gruppe
    eine Zeile mit den Unteraufträgen darunter, farblich hervorgehoben (Form mit dem UX-Manager); die Liste der
    Benutzeraufträge bleibt frei davon.
+8. **Bilder beschreiben** (`ImageDescriptionJobs`, Art `images`, `Harvester#imageDescriptions()`, D2). Ein Unterauftrag
+   je Space; Angaben `root` (Startseite), `subtree`, `trigger` (`automatic` oder `user`). Die Automatik
+   (`AutomaticImageDescriptions`) startet über die Art mit dem technischen Aufrufer und bleibt bei fehlender Freigabe
+   still. Ein Lauf des Benutzers (Space, Seite, Seite samt Unterseiten über `Holdings#resolve`) trägt dessen
+   Eigentümer (`principal`, `principal.kind`, `via`) und läuft nach einem Neustart nur mit dessen Rechten weiter; lässt
+   sich daraus kein Aufrufer bauen (Endnutzer ohne Anmeldedaten), hält er an (gelb `IMAGES_RESUME_BY_HAND`), und ▶
+   läuft mit dem Benutzer, der es drückt. Nicht freigegebene Seiten zählen bei Läufen des Benutzers gelb
+   (`IMAGES_SKIPPED:NOT_RELEASED`). `autoResume` = ein Vision-Modell ist eingestellt. Jeder Unterauftrag beschreibt bis zu
+   `ai.parallel` Bilder zugleich in eigener Spur, auch die Bilder einer Seite; die Obergrenze `images.max-per-run` gilt
+   je Gruppe über alle Spaces. Der Knopf je Seite im Reiter „Bilder“ ist kein Hintergrundauftrag, sondern ein
+   gewöhnlicher Auftrag (`ENRICHMENT`, `task=images`) über denselben Lauf; „Nur diese Seite einmalig“ bleibt ohne
+   Auftrag, weil die Einmal-Erlaubnis keinen Neustart überdauern darf.
