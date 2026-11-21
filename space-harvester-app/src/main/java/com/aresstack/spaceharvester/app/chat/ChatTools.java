@@ -102,6 +102,17 @@ final class ChatTools {
         this.sources = Objects.requireNonNull(sources, "sources");
     }
 
+    /**
+     * Suchmethode „Nachbarseiten“ (R2, C1) für {@value #SEARCH}, wie der Benutzer sie in den Suchoptionen gesetzt hat;
+     * beim Senden festgehalten. Nachbarn kommen nur aus dem Bereich, und nur gelieferte Seiten werden freigegeben.
+     */
+    ChatTools neighbors(boolean on) {
+        this.neighbors = on;
+        return this;
+    }
+
+    private boolean neighbors;
+
     /** Für Tests: ein anderer Zugriff auf den Bestand. */
     ChatTools holdingsReader(HoldingsReader reader) {
         this.reader = Objects.requireNonNull(reader, "reader");
@@ -434,7 +445,7 @@ final class ChatTools {
             public void ranked(List<ProgressiveResult.RankedHit> ranked) {
                 latest.set(ranked);
             }
-        });
+        }, neighbors);
         this.search = running;
         if (cancelled) {
             running.cancel();

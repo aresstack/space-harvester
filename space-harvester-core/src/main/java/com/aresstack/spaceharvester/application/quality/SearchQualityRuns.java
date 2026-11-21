@@ -76,6 +76,10 @@ public final class SearchQualityRuns {
     public static final String TIMEOUT_PARAMETER = "frist";
     /** Angabe des Auftrags: App-Version für den Kopf des Ergebnisses. */
     public static final String VERSION_PARAMETER = "version";
+    /** Ob mit der Suchmethode „Nachbarseiten“ (R2) gemessen wird; fehlt er, ohne. */
+    public static final String NEIGHBORS_PARAMETER = "nachbarseiten";
+    /** Zusatz im Namen von Ergebnis und Bericht eines Laufs mit „Nachbarseiten“; ohne bleibt der Name wie bisher. */
+    public static final String NEIGHBORS_SUFFIX = " – mit Nachbarseiten";
 
     static final String COMPONENT = "Suchqualität";
     /** Unterordner des Ausgabeordners für Ergebnisse und Berichte. */
@@ -91,8 +95,15 @@ public final class SearchQualityRuns {
      * @param contextSize Treffer, die der Chat ins Modell gibt ({@code ChatKnowledge.MAX_SOURCES})
      * @param timeout     Frist je Frage wie im Chat ({@code ChatTurn.SEARCH_SECONDS})
      * @param version     App-Version
+     * @param neighbors   mit der Suchmethode „Nachbarseiten“ (R2), damit ihr Nutzen neben einem Lauf ohne messbar ist
      */
-    public record Request(Path suite, Path previous, Path output, int contextSize, Duration timeout, String version) {
+    public record Request(Path suite, Path previous, Path output, int contextSize, Duration timeout, String version,
+                          boolean neighbors) {
+
+        /** Ohne „Nachbarseiten“. */
+        public Request(Path suite, Path previous, Path output, int contextSize, Duration timeout, String version) {
+            this(suite, previous, output, contextSize, timeout, version, false);
+        }
 
         public Request {
             Objects.requireNonNull(suite, "suite");
@@ -113,7 +124,13 @@ public final class SearchQualityRuns {
     private final Supplier<SearchProfile> profile;
     private final Jobs jobs;
     private final Clock clock;
-    private final BiFunction<AccessContext, Duration, QualitySearch> searches;
+    private final Searches searches;
+
+    /** Die Suche je Frage mit dem Profil des Laufs. */
+    @FunctionalInterface
+    interface Searches {
+        QualitySearch of(AccessContext caller, Duration timeout, SearchProfile settings);
+    }
 
     /**
      * @param sources    eingetragene Quellen
@@ -156,7 +173,8 @@ public final class SearchQualityRuns {
         this.profile = Objects.requireNonNull(profile, "profile");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.searches = Objects.requireNonNull(searches, "searches");
+        Objects.requireNonNull(searches, "searches");
+        this.searches = (who, timeout, settings) -> searches.apply(who, timeout);
     }
 
     /** Liest einen Testbestand zur Vorschau im Startdialog (Zahl der Fragen, Zeilenfehler). */
@@ -170,7 +188,8 @@ public final class SearchQualityRuns {
         Path suite = request.suite().toAbsolutePath();
         Path output = request.output().toAbsolutePath().resolve(FOLDER);
         Path result = reserve(output, baseName(suite) + " – "
-                + STAMP.format(clock.instant().atZone(ZoneId.systemDefault())));
+                + STAMP.format(clock.instant().atZone(ZoneId.systemDefault()))
+                + (request.neighbors() ? NEIGHBORS_SUFFIX : ""));
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put(SUITE_PARAMETER, suite.toString());
         parameters.put(RESULT_PARAMETER, result.toString());
@@ -180,6 +199,9 @@ public final class SearchQualityRuns {
         parameters.put(CONTEXT_PARAMETER, Integer.toString(request.contextSize()));
         parameters.put(TIMEOUT_PARAMETER, Long.toString(request.timeout().toSeconds()));
         parameters.put(VERSION_PARAMETER, request.version() == null ? "" : request.version());
+        if (request.neighbors()) {
+            parameters.put(NEIGHBORS_PARAMETER, "true");
+        }
         return jobs.submit(JobType.SEARCH_QUALITY, Jobs.ALL_SOURCES, null, null, caller.jobOwner(), parameters,
                 task(caller, parameters));
     }
@@ -246,12 +268,13 @@ public final class SearchQualityRuns {
         int contextSize = Integer.parseInt(parameters.getOrDefault(CONTEXT_PARAMETER, "8"));
         Duration timeout = Duration.ofSeconds(Long.parseLong(parameters.getOrDefault(TIMEOUT_PARAMETER, "90")));
         String version = parameters.getOrDefault(VERSION_PARAMETER, "");
+        boolean neighbors = Boolean.parseBoolean(parameters.get(NEIGHBORS_PARAMETER));
         return JobTask.blocking(context -> run(caller, suite, result, previous == null ? null : Path.of(previous),
-                contextSize, timeout, version, context));
+                contextSize, timeout, version, neighbors, context));
     }
 
     private void run(AccessContext caller, Path suitePath, Path resultPath, Path previousPath, int contextSize,
-                     Duration timeout, String version, JobContext context) throws IOException {
+                     Duration timeout, String version, boolean neighbors, JobContext context) throws IOException {
         context.phase(COMPONENT, "Testbestand lesen");
         QualitySuite suite;
         try {
@@ -266,7 +289,7 @@ public final class SearchQualityRuns {
         }
         Map<String, CaseResult> done = new HashMap<>();
         Instant started = clock.instant();
-        SearchProfile settings = profile.get();
+        SearchProfile settings = profile.get().withNeighbors(neighbors);
         // Eine leere Datei ist die beim Start reservierte: noch nichts gemessen.
         if (Files.exists(resultPath) && Files.size(resultPath) > 0) {
             QualityResults.Stored earlier = QualityResults.read(Files.readString(resultPath, StandardCharsets.UTF_8));
@@ -285,7 +308,8 @@ public final class SearchQualityRuns {
             }
         }
         QualityRun.Settings runSettings = new QualityRun.Settings(contextSize, settings.minScore());
-        QualityRun run = new QualityRun(searches.apply(caller, timeout), page -> stored(caller, page), runSettings);
+        QualityRun run = new QualityRun(searches.of(caller, timeout, settings), page -> stored(caller, page),
+                runSettings);
         context.discovered(suite.cases().size());
         context.processed(done.size());
         // Dieselbe Leitzahl wie der Bericht: erwartete Fundstelle im Chat-Kontext.
@@ -350,7 +374,9 @@ public final class SearchQualityRuns {
                 + ", Ranking " + (profile.ranking() == SearchProfile.Ranking.SEMANTIC ? "semantisch" : "Schlagwort")
                 + ", Modus " + profile.mode()
                 + ", Ziel " + profile.minRelevantHits() + " Treffer ab " + profile.minScore()
-                + ", Budget " + profile.timeBudget().toSeconds() + " s / " + profile.searchBudget() + " Anfragen";
+                + ", Budget " + profile.timeBudget().toSeconds() + " s / " + profile.searchBudget() + " Anfragen"
+                // Nur wenn an: frühere Ergebnisse ohne die Methode behalten ihre Beschreibung (Fortsetzen).
+                + (profile.neighbors() ? ", Nachbarseiten an" : "");
     }
 
     static Path report(Path result) {
@@ -398,7 +424,7 @@ public final class SearchQualityRuns {
      * Die Suche einer Frage wie im Chat: {@code KeywordSearch.Query(...).within(Bereich)} an die progressive Suche mit
      * dem eingestellten Profil; nach der Frist gilt die letzte vorläufige Rangliste.
      */
-    QualitySearch search(AccessContext caller, Duration timeout) {
+    QualitySearch search(AccessContext caller, Duration timeout, SearchProfile settings) {
         return (question, interim) -> {
             KeywordSearch.Query query = new KeywordSearch.Query(question.question(), null, Set.of(), Set.of());
             PageSet scope = scope(caller, question.scope());
@@ -409,7 +435,7 @@ public final class SearchQualityRuns {
                 query = query.within(scope);
             }
             AtomicReference<List<ProgressiveResult.RankedHit>> latest = new AtomicReference<>(List.of());
-            ProgressiveSearch running = search.get().searchAsync(caller, query, profile.get(),
+            ProgressiveSearch running = search.get().searchAsync(caller, query, settings,
                     new ProgressiveSearchListener() {
                         @Override
                         public void ranked(List<ProgressiveResult.RankedHit> hits) {

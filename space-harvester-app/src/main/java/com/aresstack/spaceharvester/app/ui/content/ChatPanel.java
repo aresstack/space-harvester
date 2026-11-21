@@ -1348,6 +1348,8 @@ public final class ChatPanel extends JPanel {
         turn.knowledgeByTools(open == null || open.pageId() == null ? null
                 : new com.aresstack.spaceharvester.application.snapshot.PageKey(open.sourceId(), open.pageId()));
         turn.releasing(releases(runtime, open));
+        // R2/C1: Der Chat folgt der Suchmethode „Nachbarseiten“ der Suchoptionen, wie sie beim Senden steht.
+        turn.searchingNeighbors(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());

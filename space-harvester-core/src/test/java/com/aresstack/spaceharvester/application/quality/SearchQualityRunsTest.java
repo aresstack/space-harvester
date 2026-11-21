@@ -98,6 +98,27 @@ class SearchQualityRunsTest {
     }
 
     @Test
+    void aRunWithNeighborsIsNamedSoItLiesNextToARunWithoutAndSaysSoInItsProfile() throws Exception {
+        SearchQualityRuns runs = runs(search);
+        JobStatus without = runs.submit(CALLER, request(suite()));
+        SearchQualityRuns.Request base = request(suite());
+        JobStatus with = runs.submit(CALLER, new SearchQualityRuns.Request(base.suite(), null, base.output(), 8,
+                Duration.ofSeconds(90), "1.0", true));
+
+        Path plain = Path.of(jobs.status(without.id(), CALLER.jobOwner()).parameter(
+                SearchQualityRuns.RESULT_PARAMETER));
+        Path neighbors = Path.of(jobs.status(with.id(), CALLER.jobOwner()).parameter(
+                SearchQualityRuns.RESULT_PARAMETER));
+        assertThat(plain.getFileName().toString()).doesNotContain("Nachbarseiten");
+        assertThat(neighbors.getFileName().toString()).endsWith(SearchQualityRuns.NEIGHBORS_SUFFIX + ".tsv");
+        assertThat(neighbors.getParent()).isEqualTo(plain.getParent());
+        assertThat(jobs.status(with.id(), CALLER.jobOwner()).parameter(SearchQualityRuns.NEIGHBORS_PARAMETER))
+                .isEqualTo("true");
+        assertThat(Files.readString(neighbors)).contains("Nachbarseiten an");
+        assertThat(Files.readString(plain)).doesNotContain("Nachbarseiten");
+    }
+
+    @Test
     void resumingMeasuresOnlyWhatTheResultFileLacks() throws Exception {
         SearchQualityRuns runs = runs(search);
         JobStatus first = runs.submit(CALLER, request(suite()));
