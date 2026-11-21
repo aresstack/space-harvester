@@ -36,6 +36,7 @@ import javax.swing.SwingConstants;
 final class CertificateCodesView {
 
     static final String TITLE = "Zertifikate als QR-Code";
+    static final String TOO_LARGE = "passt nicht in einen Code; bitte das Archiv nutzen";
 
     private final List<CertificateCode> codes;
     private final JPanel body = new JPanel(new BorderLayout(8, 8));
@@ -45,6 +46,8 @@ final class CertificateCodesView {
     private final JLabel position = new JLabel("", SwingConstants.CENTER);
     private final JLabel name = new JLabel("", SwingConstants.CENTER);
     private final JLabel role = new JLabel("", SwingConstants.CENTER);
+    /** „passt nicht in einen Code“, gelb wie „bewusst ausgelassen“ (UX-Manager); sonst unsichtbar. */
+    private final JLabel tooLarge = new JLabel(TOO_LARGE, SwingConstants.CENTER);
     private final JLabel sha1 = new JLabel();
     private int index;
 
@@ -70,7 +73,12 @@ final class CertificateCodesView {
         JPanel caption = new JPanel();
         caption.setOpaque(false);
         caption.setLayout(new javax.swing.BoxLayout(caption, javax.swing.BoxLayout.Y_AXIS));
-        for (JComponent line : List.of(position, name, role, fingerprint)) {
+        tooLarge.setOpaque(true);
+        tooLarge.setBackground(Comic.YELLOW);
+        tooLarge.setForeground(Comic.INK);
+        tooLarge.setBorder(BorderFactory.createEmptyBorder(1, 6, 1, 6));
+        tooLarge.setVisible(false);
+        for (JComponent line : List.of(position, name, role, tooLarge, fingerprint)) {
             line.setAlignmentX(Component.CENTER_ALIGNMENT);
             caption.add(line);
         }
@@ -114,6 +122,10 @@ final class CertificateCodesView {
         return body;
     }
 
+    boolean tooLargeShown() {
+        return tooLarge.isVisible();
+    }
+
     int index() {
         return index;
     }
@@ -141,6 +153,7 @@ final class CertificateCodesView {
         if (codes.isEmpty()) {
             position.setText("");
             name.setText("Keine vertrauten Zertifikate");
+            tooLarge.setVisible(false);
             role.setText("");
             sha1.setText("");
             code.image = null;
@@ -150,7 +163,8 @@ final class CertificateCodesView {
         CertificateCode shown = current();
         position.setText((index + 1) + " von " + codes.size());
         name.setText(shown.name());
-        role.setText(shown.image() == null ? shown.role() + " · zu groß für einen QR-Code" : shown.role());
+        role.setText(shown.role());
+        tooLarge.setVisible(shown.image() == null);
         sha1.setText("SHA-1 " + shown.sha1());
         code.image = shown.image();
         code.repaint();
@@ -164,6 +178,28 @@ final class CertificateCodesView {
                 step(delta);
             }
         });
+    }
+
+    /**
+     * Ganzzahlige Pixel je Modul (das Bild hat ein Pixel je Modul), so groß wie das Feld erlaubt, mindestens 1: nie
+     * unscharf zwischen zwei Größen skaliert.
+     */
+    static int scale(int width, int height, int imageWidth, int imageHeight) {
+        return Math.max(1, Math.min(width / imageWidth, height / imageHeight));
+    }
+
+    /** Das Bild des Codes, wie es gezeichnet wird, für Tests. */
+    static BufferedImage paint(BufferedImage code, int size) {
+        CodePanel panel = new CodePanel();
+        panel.image = code;
+        panel.setSize(size, size);
+        BufferedImage out = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = out.createGraphics();
+        // Wie ein Bildschirm mit Glättung: das Feld muss sie für den Code selbst abschalten.
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        panel.paintComponent(g);
+        g.dispose();
+        return out;
     }
 
     /** Weißes Feld; der Code in ganzzahliger Vergrößerung ohne Glättung, damit die Module scharf bleiben. */
@@ -190,7 +226,7 @@ final class CertificateCodesView {
                 if (image == null) {
                     return;
                 }
-                int scale = Math.max(1, Math.min(getWidth() / image.getWidth(), getHeight() / image.getHeight()));
+                int scale = scale(getWidth(), getHeight(), image.getWidth(), image.getHeight());
                 int w = image.getWidth() * scale;
                 int h = image.getHeight() * scale;
                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,

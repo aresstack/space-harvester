@@ -101,6 +101,32 @@ class CertificateQrImportTest {
         assertThat(view.index()).isEqualTo(1);
     }
 
+    @Test
+    void theCodeIsDrawnWithWholePixelsPerModuleAndWithoutSmoothing() {
+        java.awt.image.BufferedImage code = CertificateQrCodes.image(ca, 1).orElseThrow();
+        assertThat(CertificateCodesView.scale(420, 420, code.getWidth(), code.getHeight()))
+                .isEqualTo(420 / code.getWidth());
+        assertThat(CertificateCodesView.scale(10, 10, code.getWidth(), code.getHeight())).isEqualTo(1);
+
+        java.awt.image.BufferedImage drawn = CertificateCodesView.paint(code, 420);
+        // Nur reines Schwarz und Weiß: keine Zwischentöne einer geglätteten Skalierung.
+        for (int y = 0; y < drawn.getHeight(); y++) {
+            for (int x = 0; x < drawn.getWidth(); x++) {
+                assertThat(drawn.getRGB(x, y) & 0xFFFFFF).isIn(0x000000, 0xFFFFFF);
+            }
+        }
+        // Und das Gezeichnete liest sich wieder als dasselbe Zertifikat.
+        assertThat(CertificateQrCodes.read(drawn)).containsExactly(ca);
+    }
+
+    @Test
+    void aCertificateWithoutCodeIsNamedInTheView() {
+        CertificateCodesView view = new CertificateCodesView(List.of(
+                new CertificateCode("Riesige Wurzel", "Stammzertifizierungsstelle", "EE:FF", null)));
+
+        assertThat(view.tooLargeShown()).isTrue();
+    }
+
     private static List<X509Certificate> read(Path file) throws Exception {
         try (InputStream in = Files.newInputStream(file)) {
             Collection<? extends Certificate> all = CertificateFactory.getInstance("X.509").generateCertificates(in);

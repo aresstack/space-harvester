@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.ui.controls.DurationField;
 import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.spaceharvester.app.ui.controls.ScrollColumn;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.spaceharvester.app.ui.controls.FileField;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ProxyDraft;
@@ -574,6 +575,15 @@ final class SettingDialogs {
                 current.useWindowsCaStores());
         JTextField file = Comic.field(32);
         file.setText(current.caCertificatesFile() == null ? "" : current.caCertificatesFile().toString());
+        // Durchsuchen und „Zertifikat aus QR-Bild lesen …“ (Strang ZX) als Knöpfe im Feld; leer = ohne CA-Datei.
+        FileField caFile = new FileField(file).clearable("CA-Datei entfernen");
+        caFile.path(current.caCertificatesFile());
+        caFile.extensions("Zertifikate (PEM, DER)", "pem", "crt", "cer", "der");
+        caFile.dialogTitle("CA-Datei wählen");
+        caFile.onChange(path -> file.setText(path == null ? "" : path.toString()));
+        IconButton qr = new IconButton(Glyph.QR, CertificateQrImport.TOOLTIP);
+        qr.setEnabled(context.settings() != null);
+        caFile.addButton(qr);
         JPanel switches = new JPanel();
         switches.setOpaque(false);
         switches.setLayout(new BoxLayout(switches, BoxLayout.Y_AXIS));
@@ -583,19 +593,8 @@ final class SettingDialogs {
         Rows rows = new Rows();
         rows.add("Vertrauen", switches, "Ein Zertifikat gilt, sobald eine eingeschaltete Quelle es akzeptiert. "
                 + "Die Windows-Speicher gibt es nur unter Windows.");
-        // Zertifikat aus einem QR-Bild des Zertifikatsexports (Strang ZX): landet als PEM im Datenordner und im Feld.
-        ComposerButton qr = Comic.button("QR-Bild …", CertificateQrImport.TOOLTIP);
-        qr.setEnabled(context.settings() != null);
-        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
-        buttons.setOpaque(false);
-        buttons.add(browse(file));
-        buttons.add(qr);
-        JPanel fileRow = new JPanel(new BorderLayout(6, 0));
-        fileRow.setOpaque(false);
-        fileRow.add(file, BorderLayout.CENTER);
-        fileRow.add(buttons, BorderLayout.EAST);
-        rows.add("CA-Datei", fileRow, "PEM oder DER, z. B. die CA eines TLS-prüfenden Firmen-Proxys; "
-                + "leer ohne. „QR-Bild …“ liest Zertifikate aus den QR-Codes des Zertifikatsexports");
+        rows.add("CA-Datei", caFile, "PEM oder DER, z. B. die CA eines TLS-prüfenden Firmen-Proxys; "
+                + "leer ohne");
         Supplier<TrustSettings> draft = () -> new TrustSettings(jvm.isSelected(), root.isSelected(),
                 stores.isSelected(), file.getText().isBlank() ? null : java.nio.file.Path.of(file.getText().strip()));
         JPanel body = new JPanel(new BorderLayout(0, 10));
@@ -606,7 +605,10 @@ final class SettingDialogs {
         Shell shell = new Shell(parent, TLS_TITLE, body);
         qr.addActionListener(e -> CertificateQrImport.choose(qr, file,
                 context.settings().storage().dataDirectory(), shell.feedback::problem,
-                message -> shell.feedback.info(message, null)));
+                message -> {
+                    caFile.path(java.nio.file.Path.of(file.getText()));
+                    shell.feedback.info(message, null);
+                }));
         shell.onSaveFile(() -> {
             try {
                 return TrustPolicy.problems(draft.get());

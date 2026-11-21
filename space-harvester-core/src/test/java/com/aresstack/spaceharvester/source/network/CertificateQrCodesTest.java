@@ -110,6 +110,29 @@ class CertificateQrCodesTest {
         assertThat(bundle.writeQrZip(zip)).isZero();
     }
 
+    @Test
+    void aCertificateTooLargeForOneCodeGetsNoCodeAndIsNamedInTheReadme() throws Exception {
+        StringBuilder names = new StringBuilder("SAN=");
+        for (int i = 0; i < 90; i++) {
+            names.append(i == 0 ? "" : ",").append("dns:dienst-").append(i)
+                    .append(".sehr-lange-erfundene-domain.beispiel.test");
+        }
+        X509Certificate large = selfSigned("gross", "CN=Riesige Wurzel,O=Beispiel", "-keyalg", "EC", "-groupname",
+                "secp256r1", "-ext", names.toString());
+        assertThat(CertificateQrCodes.image(large, 1)).isEmpty();
+
+        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(large), true,
+                List.of(large), List.of(), List.of(), List.of(), java.time.ZonedDateTime.now());
+        Path zip = dir.resolve("gross.zip");
+        assertThat(bundle.writeQrZip(zip)).isZero();
+        try (java.util.zip.ZipInputStream in = new java.util.zip.ZipInputStream(Files.newInputStream(zip))) {
+            java.util.zip.ZipEntry entry = in.getNextEntry();
+            assertThat(entry.getName()).isEqualTo("LIESMICH.txt");
+            assertThat(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
+                    .contains("Passt nicht in einen Code").contains("Riesige Wurzel");
+        }
+    }
+
     private static X509Certificate selfSigned(String name, String dname, String... key) throws Exception {
         Path store = dir.resolve(name + ".p12");
         List<String> args = new ArrayList<>(List.of("-genkeypair", "-alias", name, "-dname", dname, "-validity",
