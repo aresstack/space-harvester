@@ -1086,8 +1086,10 @@ public final class Harvester implements AutoCloseable {
                     imageDescriptions, imageSettings, sourceId -> catalog.find(sourceId).isPresent());
             opened.add(pageReleases.subscribe(automaticImages::releasesChanged));
             // D1 (Nachtrag ADR 0025): Dienst-Planer mit den Beschreibungen der Analysedienste; die Arten bauen B1/A2.
+            TermSettings plannerTerms = builder.terms;
             this.servicePlanner = services(backgroundJobs, () -> (this.settings != null ? this.settings.images()
-                    : startImages).automatic(), access,
+                    : startImages).automatic(), () -> (this.settings != null ? this.settings.terms()
+                    : plannerTerms).glossaryAutomatic(), access,
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()), imageDescriptions);
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
@@ -2337,7 +2339,8 @@ public final class Harvester implements AutoCloseable {
      */
     static com.aresstack.spaceharvester.application.background.services.ServicePlanner services(
             com.aresstack.spaceharvester.application.background.BackgroundJobs background,
-            java.util.function.BooleanSupplier imagesAutomatic, AccessGuard access,
+            java.util.function.BooleanSupplier imagesAutomatic, java.util.function.BooleanSupplier glossaryAutomatic,
+            AccessGuard access,
             java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf,
             com.aresstack.spaceharvester.application.images.ImageDescriptionJobs images) {
         com.aresstack.spaceharvester.application.background.services.AnalysisService.Missing visibleOf =
@@ -2382,7 +2385,10 @@ public final class Harvester implements AutoCloseable {
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
                 "statements", "Aussagenanalyse", manual, List.of("index"), null, nothing));
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
-                "glossary", "Glossar", automatic, List.of("index"), null, nothing));
+                "glossary", "Glossar", () -> glossaryAutomatic.getAsBoolean()
+                ? com.aresstack.spaceharvester.application.background.services.ServiceStart.AUTOMATIC
+                : com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL,
+                List.of("index"), null, nothing));
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
                 "knowledge-graph", "Wissensgraph", manual, List.of("statements", "images"), null, nothing));
         return planner;

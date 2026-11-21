@@ -1315,6 +1315,19 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Bricht den eigenen Auftrag nur ab, solange er noch wartet ({@link JobState#QUEUED}), mit einem gelben Grund statt
+     * des einfachen „vor dem Start abgebrochen“. Hat er inzwischen begonnen, bleibt er unberührt; die Prüfung und der
+     * Abbruch geschehen unter derselben Sperre, ein laufender Auftrag wird so nie unterbrochen.
+     *
+     * @return der abgebrochene Auftrag, leer wenn er nicht mehr wartete
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     */
+    public Optional<JobStatus> cancelIfWaiting(String jobId, String owner, String reason) {
+        requireOwner(status(jobId), owner);
+        return Optional.ofNullable(cancel(jobId, Objects.requireNonNull(reason, "reason"), true));
+    }
+
+    /**
      * Fordert den Abbruch an. Ein wartender Auftrag ist danach {@link JobState#CANCELLED}, ein laufender trägt
      * {@link JobStatus#cancelRequested()} bis zu seinem nächsten {@link JobContext#checkpoint()}. Für einen beendeten
      * Auftrag ändert sich nichts.
@@ -1322,20 +1335,32 @@ public class Jobs implements AutoCloseable {
      * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID gibt
      */
     public JobStatus cancel(String jobId) {
+        return cancel(jobId, null, false);
+    }
+
+    /**
+     * Der eine Abbruchweg für {@link #cancel(String)} und {@link #cancelIfWaiting}: mit {@code onlyIfWaiting} nur,
+     * solange der Auftrag unter der Sperre noch {@link JobState#QUEUED} ist (sonst {@code null}); {@code reason} ersetzt
+     * den Text des gelben Ereignisses für einen wartenden Auftrag. Ein abgebrochener wartender Vorgänger gibt danach
+     * seinen Nachfolger frei (Abnahme D1).
+     */
+    private JobStatus cancel(String jobId, String reason, boolean onlyIfWaiting) {
         boolean[] release = {false};
         try {
-            return cancel(jobId, release);
+            return cancel(jobId, reason, onlyIfWaiting, release);
         } finally {
             if (release[0]) {
-                // Ein abgebrochener wartender Vorgänger gibt seinen Nachfolger frei (Abnahme D1).
                 dispatch();
             }
         }
     }
 
-    private JobStatus cancel(String jobId, boolean[] release) {
+    private JobStatus cancel(String jobId, String reason, boolean onlyIfWaiting, boolean[] release) {
         synchronized (lock) {
             Job job = open.get(jobId);
+            if (onlyIfWaiting && (job == null || job.state != JobState.QUEUED)) {
+                return null;
+            }
             if (job != null) {
                 job.cancelRequested = true;
                 // Der Benutzer gewinnt auch während des Beendens: kein „unterbrochen“, kein Fortsetzen danach.
@@ -1361,7 +1386,8 @@ public class Jobs implements AutoCloseable {
                 // könnte eine Löschung dazwischen eines verwaist zurücklassen.
                 job.emit(wasQueued, wasQueued ? JobEvent.Severity.WARNING : JobEvent.Severity.INFO,
                         JobEvent.Category.JOB, COMPONENT, wasQueued ? "CANCELLED" : null,
-                        wasQueued ? "Auftrag vor dem Start abgebrochen" : "Abbruch angefordert", null, null, null,
+                        wasQueued ? (reason == null ? "Auftrag vor dem Start abgebrochen" : reason)
+                                : "Abbruch angefordert", null, null, null,
                         null);
                 JobStatus status = job.snapshot();
                 store.save(status);
