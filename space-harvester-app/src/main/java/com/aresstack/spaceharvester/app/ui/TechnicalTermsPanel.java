@@ -204,8 +204,9 @@ final class TechnicalTermsPanel extends JPanel {
         right.add(addFrame, BorderLayout.SOUTH);
 
         split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
-        ComicDivider.install(split);
-        split.setOpaque(false);
+        split.setBackground(Comic.SURFACE);
+        // Derselbe Trenner wie neben der Wissensquellen-Liste: dünne Linie mit gelbem Griff.
+        ComicDivider.install(split, Comic.PALETTE);
         split.setResizeWeight(0.5);
         split.setContinuousLayout(true);
         add(split, BorderLayout.CENTER);

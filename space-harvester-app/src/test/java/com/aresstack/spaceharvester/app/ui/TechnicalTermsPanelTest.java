@@ -113,9 +113,34 @@ class TechnicalTermsPanelTest {
                 surface.setBorder(javax.swing.BorderFactory.createEmptyBorder(12, 12, 12, 12));
                 surface.add(panel, java.awt.BorderLayout.CENTER);
                 surface.setSize(width, 420);
+                // paint statt printAll: Der Teiler ist kein JComponent und erscheint beim Drucken nicht.
+                layout(surface);
                 panel.split.setDividerLocation(0.5);
-                Screenshots.write(surface, out.resolve("nur-fachbegriffe-" + width + ".png"));
+                layout(surface);
+                layout(surface);
+                java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, 420,
+                        java.awt.image.BufferedImage.TYPE_INT_RGB);
+                java.awt.Graphics2D g = image.createGraphics();
+                g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                surface.paint(g);
+                g.dispose();
+                try {
+                    javax.imageio.ImageIO.write(image, "png", out.resolve("nur-fachbegriffe-" + width + ".png")
+                            .toFile());
+                } catch (java.io.IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
             });
+        }
+    }
+
+    private static void layout(java.awt.Component component) {
+        component.doLayout();
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                layout(child);
+            }
         }
     }
 
