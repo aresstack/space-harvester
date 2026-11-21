@@ -47,4 +47,16 @@ public final class SearchMethods {
     }
 
     private volatile Boolean session;
+
+    /** Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a); Standard aus, gilt nur für die Sitzung. */
+    private volatile boolean glossarySynonyms;
+
+    /** Ob die Suche zu bestätigten Fachbegriffen auch ihre vorgeschlagenen Synonyme sucht (K5a). */
+    public boolean glossarySynonyms() {
+        return glossarySynonyms;
+    }
+
+    public void glossarySynonyms(boolean on) {
+        glossarySynonyms = on;
+    }
 }

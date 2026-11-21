@@ -113,6 +113,14 @@ final class ChatTools {
 
     private boolean neighbors;
 
+    /** Suchmethode „Synonyme der Fachbegriffe“ (K5a) für die Suche im Bereich. */
+    ChatTools glossarySynonyms(boolean on) {
+        this.glossarySynonyms = on;
+        return this;
+    }
+
+    private boolean glossarySynonyms;
+
     /** Für Tests: ein anderer Zugriff auf den Bestand. */
     ChatTools holdingsReader(HoldingsReader reader) {
         this.reader = Objects.requireNonNull(reader, "reader");
@@ -438,7 +446,8 @@ final class ChatTools {
 
     /** Die progressive Suche nur in den Seiten des Bereichs, wie die Suche mit Auswahl links. */
     List<KeywordSearch.Hit> hits(String query) {
-        KeywordSearch.Query search = new KeywordSearch.Query(query, null, Set.of(), Set.of()).within(scope.pages());
+        KeywordSearch.Query search = new KeywordSearch.Query(query, null, Set.of(), Set.of()).within(scope.pages())
+                .withGlossarySynonyms(glossarySynonyms);
         AtomicReference<List<ProgressiveResult.RankedHit>> latest = new AtomicReference<>(List.of());
         ProgressiveSearch running = workspace.progressiveSearch(search, new ProgressiveSearchListener() {
             @Override

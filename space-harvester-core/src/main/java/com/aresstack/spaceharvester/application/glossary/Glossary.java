@@ -211,6 +211,28 @@ public class Glossary {
         return found;
     }
 
+    /**
+     * Wie {@link #confirmedTerms(RelationScope)}, nur die Fachbegriffe, die der Aufrufer sehen darf (K5a: Suchmethode
+     * „Synonyme der Fachbegriffe“): Quellen im Bereich und mit Recht, Belege wie in {@link #entries}.
+     */
+    public Set<String> confirmedTerms(AccessContext caller, RelationScope scope) {
+        Objects.requireNonNull(scope, "scope");
+        Set<String> confirmed = confirmedTerms(scope);
+        if (confirmed.isEmpty()) {
+            return confirmed;
+        }
+        Visibility visibility = new Visibility(caller);
+        Set<String> found = new HashSet<>();
+        for (GlossaryEntry entry : store.all()) {
+            if (confirmed.contains(entry.normalized()) && entry.status() == ReviewStatus.CONFIRMED
+                    && categoryOf(entry) != GlossaryDerivation.Category.TECHNISCH
+                    && visibility.visible(entry).isPresent()) {
+                found.add(entry.normalized());
+            }
+        }
+        return found;
+    }
+
     /** @throws UnknownGlossaryEntryException wenn es ihn nicht gibt oder er verborgen ist */
     public GlossaryEntry entry(AccessContext caller, String id) {
         return store.find(id).flatMap(new Visibility(caller)::visible)

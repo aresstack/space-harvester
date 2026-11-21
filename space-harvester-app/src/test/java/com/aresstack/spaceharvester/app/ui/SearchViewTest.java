@@ -488,9 +488,19 @@ class SearchViewTest {
             assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
                     .contains("WISSENSQUELLEN", "DATEITYPEN", "SUCHMETHODEN");
             // Suchmethoden als Gruppe: Semantische Suche, darunter Nachbarseiten (R2), Standard aus.
+            // K5a: „Synonyme der Fachbegriffe einbeziehen“ direkt unter den Nachbarseiten, Standard aus.
             List<String> methods = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
-                    .filter(text -> text.equals(SearchView.SEMANTIC) || text.equals(SearchView.NEIGHBORS)).toList();
-            assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS);
+                    .filter(text -> text.equals(SearchView.SEMANTIC) || text.equals(SearchView.NEIGHBORS)
+                            || text.equals(SearchView.SYNONYMS)).toList();
+            assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS, SearchView.SYNONYMS);
+            assertThat(view[0].glossarySynonyms.isSelected()).isFalse();
+            assertThat(view[0].glossarySynonyms.isEnabled()).isTrue();
+            assertThat(view[0].modeLabel.getText()).doesNotContain("Synonyme");
+            view[0].glossarySynonyms.doClick();
+            assertThat(view[0].modeLabel.getText()).endsWith(" + Synonyme");
+            assertThat(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms()).isTrue();
+            view[0].glossarySynonyms.doClick();
+            assertThat(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms()).isFalse();
             assertThat(view[0].neighbors.isEnabled()).isTrue();
             assertThat(view[0].neighbors.getToolTipText()).isEqualTo(SearchView.NEIGHBORS_TIP);
             assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)

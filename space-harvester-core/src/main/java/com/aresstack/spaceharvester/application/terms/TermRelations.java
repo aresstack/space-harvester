@@ -338,6 +338,27 @@ public class TermRelations {
         return List.copyOf(found.values());
     }
 
+    /**
+     * Für die Suchmethode „Synonyme der Fachbegriffe“ (K5a): die VORGESCHLAGENEN Synonyme eines Begriffs im Umfang der
+     * Suche (Umfang wie {@link #counterparts}). Bestätigte liefert schon {@link #counterparts}, Abgelehntes nie.
+     */
+    public List<String> proposedSynonyms(AccessContext caller, String term, String sourceId, String spaceKey) {
+        String normalized = TermText.normalize(term);
+        Visibility visibility = new Visibility(caller);
+        Set<String> found = new LinkedHashSet<>();
+        for (TermRelation relation : store.all()) {
+            RelationScope scope = relation.scope();
+            boolean inScope = scope.global()
+                    || sourceId != null && scope.sourceId().equals(sourceId)
+                    && (scope.spaceKey() == null || scope.spaceKey().equals(spaceKey));
+            if (inScope && relation.status() == ReviewStatus.PROPOSED && relation.type() == RelationType.SYNONYM
+                    && relation.touches(normalized) && visibility.visible(relation).isPresent()) {
+                found.add(relation.other(normalized));
+            }
+        }
+        return List.copyOf(found);
+    }
+
     public List<String> expansions(AccessContext caller, String term, String sourceId) {
         String normalized = TermText.normalize(term);
         Visibility visibility = new Visibility(caller);

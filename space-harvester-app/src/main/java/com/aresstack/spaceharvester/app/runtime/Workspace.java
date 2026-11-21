@@ -1339,6 +1339,18 @@ public final class Workspace {
         return harvester.keywordSearch().search(caller, query, cursor, limit, null, found);
     }
 
+    /**
+     * Suchmethode „Synonyme der Fachbegriffe“ (K5a): wie viele zusätzliche Anfragen sie zu {@code text} im Umfang
+     * brächte, vor der Grenze {@code SearchExpansion.MAX_EXPANSIONS}. Wirft, wenn Glossar oder Beziehungen nicht
+     * lesbar sind; nie auf dem EDT.
+     *
+     * @param sourceId Quelle der Suche oder {@code null} für alle
+     * @param spaceKey Space der Suche oder {@code null}
+     */
+    public int glossarySynonymsAvailable(String text, String sourceId, String spaceKey) {
+        return harvester.glossarySynonyms().available(caller, text, sourceId, spaceKey);
+    }
+
     /** Wie weit die Seiten eines Stapels der Schlagwortsuche geladen sind ({@code Results.progress()}). */
     public java.util.Optional<KeywordSearch.Progress> keywordSearchProgress(String id) {
         return harvester.keywordSearch().progress(id);
@@ -1411,11 +1423,18 @@ public final class Workspace {
     /** Wie oben, mit bzw. ohne die Suchmethode „Nachbarseiten“ (R2), damit ihr Nutzen messbar ist. */
     public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
                                         java.nio.file.Path output, String version, boolean neighbors) {
+        return startSearchQuality(suite, previous, output, version, neighbors, false);
+    }
+
+    /** Wie oben, zusätzlich mit bzw. ohne die Suchmethode „Synonyme der Fachbegriffe“ (K5a). */
+    public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
+                                        java.nio.file.Path output, String version, boolean neighbors,
+                                        boolean synonyms) {
         JobStatus status = harvester.searchQuality().submit(caller,
                 new com.aresstack.spaceharvester.application.quality.SearchQualityRuns.Request(suite, previous, output,
                         com.aresstack.spaceharvester.app.chat.ChatKnowledge.MAX_SOURCES,
                         java.time.Duration.ofSeconds(com.aresstack.spaceharvester.app.chat.ChatTurn.SEARCH_SECONDS),
-                        version, neighbors));
+                        version, neighbors, synonyms));
         activities.remember(status.id());
         return status;
     }

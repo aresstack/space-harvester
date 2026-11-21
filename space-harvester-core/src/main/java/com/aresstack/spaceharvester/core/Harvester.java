@@ -162,6 +162,7 @@ import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.persistence.files.FileSynonymVectorCache;
 import com.aresstack.spaceharvester.application.glossary.Glossary;
+import com.aresstack.spaceharvester.application.glossary.GlossarySynonyms;
 import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.terms.AcronymResolution;
 import com.aresstack.spaceharvester.application.terms.ResolutionCache;
@@ -352,6 +353,7 @@ public final class Harvester implements AutoCloseable {
     private FileSynonymVectorCache synonymVectors;
     private final AcronymResolution acronymResolution;
     private final Glossary glossary;
+    private final GlossarySynonyms glossarySynonyms;
     private final GlossaryClassification glossaryClassification;
     private final com.aresstack.spaceharvester.application.glossary.GlossaryOverview glossaryOverview;
     private final SynonymDiscovery synonymDiscovery;
@@ -825,6 +827,8 @@ public final class Harvester implements AutoCloseable {
             } else {
                 excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
             }
+            // K5a: vorgeschlagene Synonyme bestätigter Fachbegriffe, nur mit der Suchmethode „Synonyme der Fachbegriffe“.
+            this.glossarySynonyms = new GlossarySynonyms(glossary, termRelations);
             this.keywordSearch = new KeywordSearch(catalog, access,
                     new PassageSnippets(textIndex, enrichmentStore::find), prefetch, builder.discoveryQueries,
                     excerpts, builder.selection(), runLog, findings,
@@ -833,7 +837,7 @@ public final class Harvester implements AutoCloseable {
                         if (before != null) {
                             before.searching(sourceIds);
                         }
-                    }, SearchExpansion.typed(termRelations::counterparts));
+                    }, SearchExpansion.typed(termRelations::counterparts), glossarySynonyms.expansion());
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -1753,6 +1757,11 @@ public final class Harvester implements AutoCloseable {
     /** KI-Akronymauflösung als Vorschlagslauf je Quelle (#122). */
     public AcronymResolution acronymResolution() {
         return acronymResolution;
+    }
+
+    /** Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a). */
+    public GlossarySynonyms glossarySynonyms() {
+        return glossarySynonyms;
     }
 
     /** Fachglossar: Pflege von Hand und Abgleich der KI-Läufe. */
