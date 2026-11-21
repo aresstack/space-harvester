@@ -103,6 +103,14 @@ public final class AppContext {
 
         void openSpace(String sourceId, String spaceKey);
 
+        /**
+         * Klick auf eine Seite im Explorer: öffnet sie, außer in der Suche. Dort ist die Auswahl links nur der Filter
+         * der Suche, und die Suchansicht bleibt stehen (Angelo, 21.11.2026).
+         */
+        default void openFromTree(String sourceId, String pageId) {
+            openPage(sourceId, pageId);
+        }
+
         /** Zeigt die Quellenseite einer Wissensquelle mit ihren Updates (ADR 0030); ohne eigene Umsetzung nichts. */
         default void openSource(String sourceId, String title) {
         }
