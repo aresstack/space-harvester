@@ -31,10 +31,16 @@ class PageLinksDirectoryTest {
     }
 
     @Test
-    void aPageTheDirectoryHasNotCapturedHasUnknownLinksNotNone() {
-        LinkDirectory notCaptured = PageLinksDirectory.from((caller, page) -> new PageLinks.Links(page, List.of(),
-                List.of(OTHER), false, new PageLinks.Coverage(0, 4)));
+    void anUncapturedPageKeepsItsIncomingLinksAsIncompleteAndWithoutAnyItsLinksAreUnknown() {
+        LinkDirectory linkedTo = PageLinksDirectory.from((caller, page) -> new PageLinks.Links(page, List.of(),
+                List.of(OTHER), false, new PageLinks.Coverage(3, 4)));
+        LinkDirectory nothing = PageLinksDirectory.from((caller, page) -> new PageLinks.Links(page, List.of(),
+                List.of(), false, new PageLinks.Coverage(0, 4)));
 
-        assertThat(notCaptured.links(CALLER, SEED)).isEmpty();
+        LinkDirectory.Links links = linkedTo.links(CALLER, SEED).orElseThrow();
+        assertThat(links.outgoing()).isEmpty();
+        assertThat(links.incoming()).containsExactly(OTHER);
+        assertThat(links.complete()).isFalse();
+        assertThat(nothing.links(CALLER, SEED)).isEmpty();
     }
 }
