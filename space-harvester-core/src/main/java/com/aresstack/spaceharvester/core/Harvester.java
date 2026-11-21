@@ -1088,7 +1088,7 @@ public final class Harvester implements AutoCloseable {
             // D1 (Nachtrag ADR 0025): Dienst-Planer mit den Beschreibungen der Analysedienste; die Arten bauen B1/A2.
             this.servicePlanner = services(backgroundJobs, () -> (this.settings != null ? this.settings.images()
                     : startImages).automatic(), access,
-                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
+                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()), imageDescriptions);
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
             PageImageAnalysis pageImages = this.imageAnalysis;
@@ -2330,14 +2330,17 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
-     * Die Beschreibungen der Analysedienste (D1). Ihre Arten fehlen noch (B1/A2); die Starttypen ändern am heutigen
-     * Verhalten nichts.
+     * Die Beschreibungen der Analysedienste (D1). „Bilder beschreiben“ hat seine Art (D2, {@code images}); die übrigen
+     * fehlen noch (A2); die Starttypen ändern am heutigen Verhalten nichts.
+     *
+     * @param images „Bilder beschreiben“ oder {@code null} (Tests): dann nur die Beschreibung
      */
     static com.aresstack.spaceharvester.application.background.services.ServicePlanner services(
             com.aresstack.spaceharvester.application.background.BackgroundJobs background,
             java.util.function.BooleanSupplier imagesAutomatic, AccessGuard access,
-            java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf) {
-        var planner = new com.aresstack.spaceharvester.application.background.services.ServicePlanner(background,
+            java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf,
+            com.aresstack.spaceharvester.application.images.ImageDescriptionJobs images) {
+        com.aresstack.spaceharvester.application.background.services.AnalysisService.Missing visibleOf =
                 (caller, pages) -> {
                     Map<com.aresstack.spaceharvester.application.background.services.MissingPages.Scope,
                             java.util.Set<String>> visible = new java.util.LinkedHashMap<>();
@@ -2356,7 +2359,9 @@ public final class Harvester implements AutoCloseable {
                     }
                     return new com.aresstack.spaceharvester.application.background.services.MissingPages(visible,
                             hidden);
-                });
+                };
+        var planner = new com.aresstack.spaceharvester.application.background.services.ServicePlanner(background,
+                visibleOf);
         var manual = (java.util.function.Supplier<
                 com.aresstack.spaceharvester.application.background.services.ServiceStart>) () ->
                 com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL;
@@ -2370,7 +2375,10 @@ public final class Harvester implements AutoCloseable {
                 "images", "Bilder beschreiben", () -> imagesAutomatic.getAsBoolean()
                 ? com.aresstack.spaceharvester.application.background.services.ServiceStart.AUTOMATIC
                 : com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL,
-                List.of("index"), null, nothing));
+                List.of("index"), images == null ? null
+                : com.aresstack.spaceharvester.application.images.ImageDescriptionJobs.KIND,
+                images == null ? nothing
+                : (caller, pages) -> visibleOf.of(caller, images.missing(caller, pages))));
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
                 "statements", "Aussagenanalyse", manual, List.of("index"), null, nothing));
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(

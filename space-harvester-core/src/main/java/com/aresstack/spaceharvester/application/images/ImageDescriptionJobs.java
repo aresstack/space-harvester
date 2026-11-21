@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.background.BackgroundGroup;
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.background.BackgroundKind;
 import com.aresstack.spaceharvester.application.background.BackgroundPart;
+import com.aresstack.spaceharvester.application.background.services.AnalysisService;
 import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
@@ -80,6 +81,11 @@ public final class ImageDescriptionJobs {
     public static final String PRINCIPAL = "principal";
     public static final String PRINCIPAL_KIND = "principal.kind";
     public static final String VIA = "via";
+    /**
+     * Angabe eines Teils des Dienst-Planers (D1): seine Seiten-IDs, durch Zeilenumbruch getrennt
+     * ({@link AnalysisService#PAGES}).
+     */
+    public static final String PAGES = AnalysisService.PAGES;
     /** Ereignis: Seiten ohne KI-Freigabe bewusst ausgelassen (gelb, nur bei Läufen des Benutzers). */
     public static final String NOT_RELEASED = "IMAGES_SKIPPED:NOT_RELEASED";
     /** Ereignis: der Lauf eines Benutzers lässt sich ohne ihn nicht fortsetzen (gelb, angehalten). */
@@ -416,6 +422,27 @@ public final class ImageDescriptionJobs {
             // Die Automatik wurde inzwischen ausgeschaltet: nichts an das Modell.
             return;
         }
+        Budget budget;
+        synchronized (budgets) {
+            budget = GROUP_BUDGET ? budgets.computeIfAbsent(part.groupId(), id -> new Budget()) : new Budget();
+        }
+        String listed = part.parameter(PAGES);
+        if (listed != null) {
+            // Ein Teil des Dienst-Planers (D1): Seine Seiten hat der Planer beim Start mit den Rechten des Aufrufers
+            // bestimmt (missing() bzw. sichtbare Seiten); die Liste ist fest und wächst nie, darum braucht der Teil
+            // auch nach einem Neustart keinen Aufrufer und läuft nie über mehr als diese Seiten.
+            List<PageSnapshot> chosen = new ArrayList<>();
+            for (String pageId : listed.split("\n")) {
+                if (!pageId.isBlank()) {
+                    find.apply(new PageKey(part.sourceId(), pageId.strip()))
+                            .filter(snapshot -> part.partitionKey() == null
+                                    || part.partitionKey().equals(snapshot.spaceKey()))
+                            .ifPresent(chosen::add);
+                }
+            }
+            run(chosen.iterator(), snapshot -> true, now, context, budget, true);
+            return;
+        }
         AccessContext caller = automatic ? technical : caller(part);
         if (caller == null) {
             // Ohne den Benutzer liefe der Teilbaum mit fremden Rechten (Architekt 21.11.2026).
@@ -429,10 +456,6 @@ public final class ImageDescriptionJobs {
         Iterator<PageSnapshot> pages = root != null && !"true".equals(part.parameter(SUBTREE))
                 ? find.apply(new PageKey(part.sourceId(), root)).stream().iterator()
                 : snapshots.apply(part.sourceId());
-        Budget budget;
-        synchronized (budgets) {
-            budget = GROUP_BUDGET ? budgets.computeIfAbsent(part.groupId(), id -> new Budget()) : new Budget();
-        }
         run(pages, inScope, now, context, budget, !automatic);
     }
 

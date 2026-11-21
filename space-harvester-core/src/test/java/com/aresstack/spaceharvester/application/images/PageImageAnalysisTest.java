@@ -1382,6 +1382,44 @@ class PageImageAnalysisTest {
         }
     }
 
+    @Test
+    void theServicePlannerStartsImagesForTheMissingPagesOnlyAndAPartNeedsNoCallerAfterARestart() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        source.image("3", "att3", "karte.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 9});
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null), page("2", "DEV", null), page("3", "DEV", null));
+        PageImageAnalysis analysis = analysis();
+        com.aresstack.spaceharvester.application.jobs.InMemoryJobStore store =
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore();
+        ImageDescriptionJobs before = images(jobs(store, task -> { }), analysis, pages, ON, null);
+        // Wie Harvester#services: je Space die Seiten, die der Aufrufer sieht; hier alle.
+        com.aresstack.spaceharvester.application.background.services.AnalysisService.Missing visible =
+                (caller, set) -> new com.aresstack.spaceharvester.application.background.services.MissingPages(
+                        Map.of(new com.aresstack.spaceharvester.application.background.services.MissingPages.Scope(
+                                "wiki", "DEV"), set.pagesOf("wiki")), 0);
+        com.aresstack.spaceharvester.application.background.services.ServicePlanner planner =
+                new com.aresstack.spaceharvester.application.background.services.ServicePlanner(before.background(),
+                        visible);
+        planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService("images",
+                "Bilder beschreiben", () -> com.aresstack.spaceharvester.application.background.services
+                .ServiceStart.MANUAL, List.of(), ImageDescriptionJobs.KIND, visible));
+
+        com.aresstack.spaceharvester.application.background.BackgroundGroup group = planner.start(USER, "images",
+                com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(List.of(new PageKey("wiki", "1"),
+                        new PageKey("wiki", "2")))).group().orElseThrow();
+        assertThat(group.parts()).singleElement().satisfies(part ->
+                assertThat(part.parameter(ImageDescriptionJobs.PAGES)).isEqualTo("1\n2"));
+
+        // Neustart: Der Teil läuft ohne gemerkten Aufrufer weiter, nur über seine Seiten, nie angehalten.
+        com.aresstack.spaceharvester.application.jobs.Jobs after = jobs(store, Runnable::run);
+        images(after, analysis, pages, ON, null).background().resumeInterrupted();
+
+        assertThat(after.status(group.parts().get(0).id()).state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+        assertThat(describer.calls).as("Seite 3 gehört nicht zur Auswahl").isEqualTo(2);
+        assertThat(analysis.read(pages.get(2)).describedCount()).isZero();
+    }
+
     private static com.aresstack.spaceharvester.application.jobs.Jobs jobs() {
         return new com.aresstack.spaceharvester.application.jobs.Jobs(
                 new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,
