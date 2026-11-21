@@ -303,6 +303,84 @@ class MainWindowTest {
         assertThat(labelTexts(AboutDialog.body(context))).contains(AboutDialog.TAGLINE);
     }
 
+    /**
+     * Der Chat ist eine Seitenleiste rechts neben der Arbeitsfläche (Angelo, 21.11.2026): der Knopf oben rechts vor
+     * „Aufträge“, Strg+J und „»“ in der Leiste klappen sie auf und zu; sie bleibt in jedem Bereich stehen, zugeklappt
+     * bleibt nur der schmale Teiler, und Zustand samt Breite gelten für den nächsten Start.
+     */
+    @Test
+    void theChatIsASidebarNextToTheWorkAreaThatTheButtonTopRightOpensAndCloses() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            try {
+                surface.setSize(1400, 820);
+                window.chatOpen(false);
+                layoutAll(surface);
+                javax.swing.JSplitPane chatSplit = window.chatSplit();
+                Component sidebar = chatSplit.getRightComponent();
+                assertThat(sidebar).isInstanceOf(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class);
+                assertThat(SwingUtilities.isDescendingFrom(window.deck(), chatSplit.getLeftComponent())).isTrue();
+                assertThat(window.split().getRightComponent()).isSameAs(chatSplit);
+                // Zu: kein Platz für die Leiste, nur der schmale Teiler; der Knopf ist hell.
+                assertThat(window.chatToggle().isSelected()).isFalse();
+                assertThat(window.chatToggle().getToolTipText()).isEqualTo(MainWindow.CHAT_TOOLTIP);
+                assertThat(sidebar.getWidth()).isZero();
+                assertThat(chatSplit.getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+                assertThat(((java.awt.Container) sidebar).getComponents())
+                        .as("zugeklappt ist nichts aus der Leiste erreichbar").noneMatch(Component::isVisible);
+
+                window.chatToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.chatOpen()).isTrue();
+                assertThat(window.chatToggle().isSelected()).isTrue();
+                assertThat(sidebar.getWidth())
+                        .isGreaterThanOrEqualTo(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH);
+                assertThat(chatSplit.getLeftComponent().getWidth()).as("die Arbeitsfläche behält ihre Mindestbreite")
+                        .isGreaterThanOrEqualTo(320);
+                assertThat(chatSplit.getDividerSize())
+                        .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.THICKNESS);
+                // Die Leiste bleibt in jedem Bereich stehen.
+                int width = sidebar.getWidth();
+                for (AppContext.Section section : AppContext.Section.values()) {
+                    window.show(section);
+                    layoutAll(surface);
+                    assertThat(sidebar.getWidth()).as(section.name()).isEqualTo(width);
+                }
+                // Ziehen am Teiler ändert die Breite, sie wird gemerkt und nach Zu/Auf wiederhergestellt.
+                chatSplit.setDividerLocation(chatSplit.getDividerLocation() - 60);
+                layoutAll(surface);
+                assertThat(sidebar.getWidth()).isEqualTo(width + 60);
+                assertThat(WindowSizes.recallInt(MainWindow.CHAT_WIDTH_KEY, -1)).isEqualTo(width + 60);
+                assertThat(WindowSizes.recallInt(MainWindow.CHAT_OPEN_KEY, -1)).isEqualTo(1);
+                ((com.aresstack.spaceharvester.app.ui.content.ChatSidebar) sidebar).collapseButton().doClick();
+                layoutAll(surface);
+                assertThat(window.chatOpen()).isFalse();
+                assertThat(window.chatToggle().isSelected()).isFalse();
+                assertThat(sidebar.getWidth()).isZero();
+                // Strg+J klappt wieder auf, mit der gemerkten Breite.
+                surface.getActionMap().get("chat").actionPerformed(null);
+                layoutAll(surface);
+                assertThat(window.chatOpen()).isTrue();
+                assertThat(sidebar.getWidth()).isEqualTo(width + 60);
+                assertThat(surface.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW).get(
+                        javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_J,
+                                java.awt.event.InputEvent.CTRL_DOWN_MASK))).isEqualTo("chat");
+            } finally {
+                // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Standard.
+                window.chatOpen(false);
+                WindowSizes.rememberInt(MainWindow.CHAT_WIDTH_KEY,
+                        com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH);
+            }
+        });
+    }
+
     /** Zugeklappt bleibt ein schmaler Teiler: derselbe Doppelklick klappt den Drawer wieder auf. */
     @Test
     void aCollapsedDrawerKeepsAThinDividerToReopenIt() throws Exception {

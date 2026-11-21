@@ -81,6 +81,15 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel actionDeck = new JPanel(actionCards);
     static final int SIDEBAR_WIDTH = 280;
     private ComicSplitPane split;
+    /** Arbeitsfläche links, Chat-Seitenleiste rechts (Angelo, 21.11.2026). */
+    private javax.swing.JSplitPane chatSplit;
+    private com.aresstack.spaceharvester.app.ui.content.ChatSidebar chatSidebar;
+    private ComposerToggleButton chatToggle;
+    private boolean chatOpen;
+    private int chatWidth = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH;
+    static final String CHAT_OPEN_KEY = "chat.open";
+    static final String CHAT_WIDTH_KEY = "chat.width";
+    static final String CHAT_TOOLTIP = "Chat (Strg+J)";
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
     private JobStatusLine jobStatus;
@@ -249,6 +258,15 @@ public final class MainWindow implements AppContext.Navigator {
             nav.put(section, button);
             (section.administration() ? administration : section.trailing() ? trailing : icons).add(button);
         }
+        // Der Chat ist kein Bereich, sondern eine Leiste neben jedem Bereich: sein Umschalter steht rechts vor den
+        // Aufträgen und gehört nicht zur Gruppe der Bereichsknöpfe.
+        chatToggle = new ComposerToggleButton(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon(), null,
+                CHAT_TOOLTIP);
+        chatToggle.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        chatToggle.getAccessibleContext().setAccessibleName(
+                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE);
+        chatToggle.addActionListener(e -> chatOpen(chatToggle.isSelected()));
+        trailing.add(chatToggle, 0);
         // Die Reiter der Seitenansicht schalten die Mitte um: ein Klick zeigt Inhalte, auch aus einem anderen Bereich.
         JComponent tabBar = content.tabBar();
         tabBar.setBorder(BorderFactory.createEmptyBorder(0, TAB_GAP, 0, 0));
@@ -294,7 +312,39 @@ public final class MainWindow implements AppContext.Navigator {
         workFoot.add(findBar, BorderLayout.SOUTH);
         work.add(deck, BorderLayout.CENTER);
         work.add(workFoot, BorderLayout.SOUTH);
-        split = new ComicSplitPane(side, work, 200, 520, Comic.PALETTE);
+        chatSidebar = content.chatSidebar();
+        chatSidebar.collapseButton().addActionListener(e -> chatOpen(false));
+        chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, work, chatSidebar);
+        chatSplit.setBorder(null);
+        chatSplit.setBackground(Comic.SURFACE);
+        chatSplit.setResizeWeight(1);
+        chatSplit.setContinuousLayout(true);
+        chatSplit.setMinimumSize(new Dimension(320, 0));
+        ComicDivider.install(chatSplit, Comic.PALETTE);
+        if (chatSplit.getUI() instanceof javax.swing.plaf.basic.BasicSplitPaneUI basic) {
+            basic.getDivider().addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent event) {
+                    if (event.getClickCount() == 2) {
+                        chatOpen(!chatOpen);
+                    }
+                }
+            });
+        }
+        // Die Breite der Leiste gilt, solange sie offen ist: beim Ziehen merken, bei neuer Fenstergröße halten.
+        chatSplit.addPropertyChangeListener(javax.swing.JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> rememberChatWidth());
+        chatSplit.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                placeChat();
+            }
+        });
+        chatWidth = Math.max(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH,
+                WindowSizes.recallInt(CHAT_WIDTH_KEY, chatWidth));
+        chatOpen = WindowSizes.recallInt(CHAT_OPEN_KEY, 0) == 1;
+        chatToggle.setSelected(chatOpen);
+        placeChat();
+        split = new ComicSplitPane(side, chatSplit, 200, 520, Comic.PALETTE);
         split.setBackground(Comic.SURFACE);
         // Ein Trenner für die ganze App: derselbe Renderer wie unter „Aufträge“ und im Graph (ComicDivider), damit
         // alle Teilungen gleich aussehen; die Breitenregeln des ComicSplitPane bleiben.
@@ -387,6 +437,14 @@ public final class MainWindow implements AppContext.Navigator {
             });
         }
         surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_J, java.awt.event.InputEvent.CTRL_DOWN_MASK), "chat");
+        surface.getActionMap().put("chat", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                chatOpen(!chatOpen);
+            }
+        });
+        surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
                 java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
         surface.getActionMap().put("find", new javax.swing.AbstractAction() {
             @Override
@@ -406,6 +464,61 @@ public final class MainWindow implements AppContext.Navigator {
     public void showAiSettings() {
         show(AppContext.Section.SETTINGS);
         settings.showAi();
+    }
+
+    /**
+     * Klappt die Chat-Seitenleiste auf oder zu (Knopf oben rechts, Strg+J, „»“ in der Leiste, Doppelklick auf den
+     * Teiler). Zugeklappt bleibt nur der schmale Teiler; der Zustand und die Breite gelten auch nach dem Neustart.
+     */
+    void chatOpen(boolean open) {
+        chatOpen = open;
+        chatToggle.setSelected(open);
+        WindowSizes.rememberInt(CHAT_OPEN_KEY, open ? 1 : 0);
+        placeChat();
+        if (open) {
+            chatSidebar.chat().focusEditor();
+        }
+    }
+
+    boolean chatOpen() {
+        return chatOpen;
+    }
+
+    /** Stellt den Teiler so, dass die Leiste ihre Breite hat bzw. zugeklappt ganz verschwindet. */
+    private void placeChat() {
+        placingChat = true;
+        try {
+            int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
+            chatSidebar.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
+            chatSidebar.shown(chatOpen);
+            // Zugeklappt lässt sich der Teiler nicht ziehen, nur doppelt klicken.
+            chatSplit.setEnabled(chatOpen);
+            chatSplit.setDividerSize(chatOpen ? ComicDivider.THICKNESS : COLLAPSED_DIVIDER);
+            int width = chatSplit.getWidth();
+            if (width > 0) {
+                // Die Arbeitsfläche behält ihre Mindestbreite; in einem schmalen Fenster gibt die Leiste nach.
+                int room = Math.max(0, width - chatSplit.getDividerSize() - 320);
+                int shown = chatOpen ? Math.max(Math.min(min, room), Math.min(chatWidth, room)) : 0;
+                chatSplit.setDividerLocation(width - chatSplit.getDividerSize() - shown);
+            }
+            chatSplit.revalidate();
+        } finally {
+            placingChat = false;
+        }
+    }
+
+    private boolean placingChat;
+
+    /** Merkt die Breite, die der Benutzer der offenen Leiste durch Ziehen gegeben hat. */
+    private void rememberChatWidth() {
+        if (placingChat || !chatOpen || chatSplit.getWidth() <= 0) {
+            return;
+        }
+        int width = chatSplit.getWidth() - chatSplit.getDividerSize() - chatSplit.getDividerLocation();
+        if (width >= com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH && width != chatWidth) {
+            chatWidth = width;
+            WindowSizes.rememberInt(CHAT_WIDTH_KEY, width);
+        }
     }
 
     /** Klappt den linken Drawer zu oder wieder auf. */
@@ -792,6 +905,16 @@ public final class MainWindow implements AppContext.Navigator {
     /** Für Tests: der Einmalcode-Hinweis der Statuszeile. */
     SignInNotice signInNotice() {
         return signInNotice;
+    }
+
+    /** Für Tests: die Teilung zwischen Arbeitsfläche und Chat-Seitenleiste. */
+    javax.swing.JSplitPane chatSplit() {
+        return chatSplit;
+    }
+
+    /** Für Tests: der Umschalter der Chat-Seitenleiste oben rechts. */
+    ComposerToggleButton chatToggle() {
+        return chatToggle;
     }
 
     /** Für Tests: die Teilung zwischen Drawer und Arbeitsfläche. */

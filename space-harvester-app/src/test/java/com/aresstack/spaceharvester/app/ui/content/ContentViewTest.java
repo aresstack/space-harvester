@@ -241,7 +241,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export", "Chat");
+                .containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph", "Beziehungen");
         // „Info“ hat die Eigenschaften als ersten Unterreiter (Angelo, 19.11.2026); „Beziehungen“ steht unter
@@ -262,7 +262,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export", "Chat");
+        })).containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -378,11 +378,10 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
-        // Unten in der Werkzeugleiste stehen nur die Schnellaktionen des Chats, außerhalb des Reiters Chat unsichtbar.
+        // Die Schnellaktionen des Chats stehen in seiner Seitenleiste, nicht mehr unten in der Werkzeugleiste.
         assertThat(onEdt(() -> view.tools() == view.detail().footTools()
-                && view.detail().footTools().getComponentCount() == 0
-                && !view.detail().chat().quickActions().isVisible()))
-                .as("unten außerhalb des Chats keine Chat-Chips").isTrue();
+                && view.detail().footTools().getComponentCount() == 0))
+                .as("unten keine Chat-Chips").isTrue();
         // Ohne gezeigte Mitte verschwindet nur die dunkle Füllung, der gewählte Reiter bleibt.
         onEdt(() -> {
             view.tabsActive(false);
@@ -499,7 +498,7 @@ class ContentViewTest {
     }
 
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
-        return java.util.stream.Stream.of("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export", "Chat").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
+        return java.util.stream.Stream.of("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 
     @Test
@@ -508,29 +507,33 @@ class ContentViewTest {
         ChatPanel chat = detail.chat();
         assertThat(onEdt(chat::knowledge)).isEqualTo(ChatPanel.NO_SELECTION);
         assertThat(onEdt(() -> chat.sendButton().isEnabled())).isFalse();
+        // Der Chat ist kein Reiter mehr, sondern eine Seitenleiste (Angelo, 21.11.2026): die Seitenansicht behält ihre
+        // Überschrift, „Chat: ‹Name› ▾“ samt Neuer Chat, Chat löschen und Einklappen steht im Kopf der Leiste.
+        ChatSidebar sidebar = onEdt(view::chatSidebar);
         onEdt(() -> {
-            detail.tabs().select("Chat");
             view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
             return null;
         });
-        assertThat(onEdt(chat::isVisible)).isTrue();
-        // Kopfzeile im Reiter Chat (Angelo, 17.11.2026): mittig „Chat: ‹Name› ▾“ statt der Seitenüberschrift, rechts
-        // Neuer Chat und Chat löschen als Symbole neben dem Stern; Löschen erst bei einem gespeicherten Chat.
-        assertThat(onEdt(() -> chat.header().isVisible() && chat.header().getParent() == detail.titleLabel().getParent()
-                && !detail.titleLabel().isVisible() && chat.headerActions().isVisible()
-                && javax.swing.SwingUtilities.isDescendingFrom(chat.headerActions(),
-                        detail.starButton().getParent()))).isTrue();
+        assertThat(onEdt(() -> sidebar.chat() == chat && view.chatSidebar() == sidebar
+                && javax.swing.SwingUtilities.isDescendingFrom(chat, sidebar)
+                && javax.swing.SwingUtilities.isDescendingFrom(chat.header(), sidebar)
+                && javax.swing.SwingUtilities.isDescendingFrom(chat.headerActions(), sidebar)
+                && !javax.swing.SwingUtilities.isDescendingFrom(chat, detail)
+                && sidebar.collapseButton().getParent() == chat.headerActions().getParent()
+                && ChatSidebar.COLLAPSE.equals(sidebar.collapseButton().getToolTipText()))).isTrue();
+        assertThat(onEdt(() -> sidebar.getMinimumSize().width)).isEqualTo(ChatSidebar.MIN_WIDTH);
         List<String> actions = onEdt(() -> find((java.awt.Container) chat.headerActions(),
                 javax.swing.AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName() + ":" + button.isEnabled()).toList());
         assertThat(actions).containsExactly(ChatPanel.NEW_CHAT + ":true", ChatPanel.DELETE + ":false");
         // Den Text zeigt der Chat schon vor dem Auflösen der Auswahl; Senden geht erst danach.
         await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
-        // Schnellaktionen in der unteren Leiste (Angelo, 17.11.2026): die Werkzeuge der Ansicht sind die Chips des
-        // Chats, nur im Reiter Chat sichtbar; bei einer Quelle „Bereich zusammenfassen“ und „Was ist neu?“.
-        assertThat(onEdt(() -> view.tools() == view.detail().footTools()
-                && view.detail().footTools().getComponent(0) == chat.quickActions()
-                && chat.quickActions().isVisible())).isTrue();
+        // Schnellaktionen über der Eingabe der Leiste, umbrechend; bei einer Quelle „Bereich zusammenfassen“ und
+        // „Was ist neu?“.
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(chat.quickActions(), chat)
+                && chat.quickActions().isVisible()
+                && ((javax.swing.JComponent) chat.quickActions()).getLayout()
+                        instanceof com.aresstack.spaceharvester.app.ui.controls.WrapLayout)).isTrue();
         assertThat(onEdt(() -> chipLabels(chat))).containsExactly(ChatPanel.SUMMARIZE_AREA, ChatPanel.WHATS_NEW);
         await(() -> chipsEnabled(chat));
         // Bei einer Seite: nur die Seite, die Seite samt Unterseiten, Was ist neu – nie die Eltern.
@@ -575,9 +578,8 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Text");
         assertThat(onEdt(() -> detail.tabs().button("Text").isSelected())).isTrue();
-        // In jedem anderen Reiter steht die Seitenüberschrift wieder, die Chat-Symbole und die Chips sind weg.
-        assertThat(onEdt(() -> detail.titleLabel().isVisible() && !chat.header().isVisible()
-                && !chat.headerActions().isVisible() && !chat.quickActions().isVisible())).isTrue();
+        // Ohne Auswahl gibt es keine Chips; die Seitenüberschrift der Ansicht hat mit dem Chat nichts mehr zu tun.
+        assertThat(onEdt(() -> detail.titleLabel().isVisible() && !chat.quickActions().isVisible())).isTrue();
         onEdt(() -> {
             detail.tabs().select("Leseansicht");
             return null;
