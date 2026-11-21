@@ -196,6 +196,30 @@ class BackgroundJobsTest {
         assertThat(reports).last().satisfies(report -> assertThat(report.completed()).isTrue());
     }
 
+    @Test
+    void whenFinishedTellsOnceAtTheEndAndAtOnceForAFinishedGroup() throws Exception {
+        Jobs jobs = jobs(executor);
+        BackgroundJobs background = background(jobs, new AtomicBoolean(true));
+        BackgroundGroup group = background.start("demo", "Demo", twoSpaces());
+        List<BackgroundGroup> told = new CopyOnWriteArrayList<>();
+        java.util.concurrent.CountDownLatch finished = new java.util.concurrent.CountDownLatch(1);
+
+        background.whenFinished(group.groupId(), report -> {
+            told.add(report);
+            finished.countDown();
+        });
+        assertThat(told).isEmpty();
+        executor.runAll();
+
+        assertThat(finished.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(300);
+        assertThat(told).singleElement().satisfies(report -> assertThat(report.completed()).isTrue());
+
+        List<BackgroundGroup> late = new CopyOnWriteArrayList<>();
+        background.whenFinished(group.groupId(), late::add);
+        assertThat(late).singleElement().satisfies(report -> assertThat(report.finished()).isTrue());
+    }
+
     /** Führt Arbeit erst auf Anforderung aus. */
     static final class Steps implements Executor {
         private final Deque<Runnable> pending = new ArrayDeque<>();

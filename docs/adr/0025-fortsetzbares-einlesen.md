@@ -238,7 +238,9 @@ wird automatisch verwaltet.
    selbst weiter. „Fortsetzen“ in der Liste geht über `JobActions` an `BackgroundJobs#resumeJob`.
 5. **Anhalten, Fortsetzen, Abbrechen** je Unterauftrag wie jeder Auftrag, je Gruppe über `BackgroundJobs#pause`,
    `#resume`, `#cancel`. Beobachter (`BackgroundJobs#watch`) erfahren jede Änderung einer Gruppe über die
-   Auftragsmeldungen (ADR 0027), ohne Abfragen. Gegen doppelte Anläufe: `BackgroundJobs#running`.
+   Auftragsmeldungen (ADR 0027), ohne Abfragen. Wer nur das Ende braucht, abonniert es einmal mit
+   `BackgroundJobs#whenFinished` (Angelo 21.11.2026) und zeigt bis dahin den drehenden Ring (`BusyOverlay`); ist die
+   Gruppe schon fertig, kommt die Meldung sofort. Gegen doppelte Anläufe: `BackgroundJobs#running`.
 6. **Rechte.** Der Hintergrund lädt nie mit der Anmeldung eines Benutzers (wie ADR 0016). `PageLoads` lädt mit dem
    technischen Aufrufer des Start-Aufrufs, nach einem Neustart mit dem technischen Aufrufer des Dienstes; was schon im
    Cache liegt, fällt vorher heraus, ein Fortsetzen holt also nur, was fehlt.

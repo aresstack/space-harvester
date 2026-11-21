@@ -252,6 +252,35 @@ public final class BackgroundJobs {
         });
     }
 
+    /**
+     * Benachrichtigt einmal, sobald die Gruppe fertig ist (kein Unterauftrag wartet oder läuft mehr; Angelo
+     * 21.11.2026): etwa um bis dahin den drehenden Ring zu zeigen. Ist sie schon fertig oder nicht mehr in der Liste,
+     * kommt die Meldung sofort. Ohne Abfragen (ADR 0027); {@link Subscription#close()} zieht das Abonnement zurück.
+     */
+    public Subscription whenFinished(String groupId, Consumer<BackgroundGroup> listener) {
+        Objects.requireNonNull(listener, "listener");
+        java.util.concurrent.atomic.AtomicBoolean told = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<Subscription> holder =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Consumer<BackgroundGroup> once = group -> {
+            if (group.finished() && told.compareAndSet(false, true)) {
+                Subscription subscription = holder.get();
+                if (subscription != null) {
+                    subscription.close();
+                }
+                listener.accept(group);
+            }
+        };
+        Subscription subscription = watch(groupId, once);
+        holder.set(subscription);
+        // Nach dem Anmelden nachsehen: was schon fertig ist, meldet sich nicht mehr von selbst.
+        once.accept(group(groupId).orElse(new BackgroundGroup(groupId, null, null, List.of())));
+        if (told.get()) {
+            subscription.close();
+        }
+        return subscription;
+    }
+
     /** Alle Hintergrundaufträge des Auftraggebers. */
     private List<JobStatus> all() {
         return jobs.list(owner, JobType.BACKGROUND);
