@@ -46,7 +46,11 @@ class ServicePlannerTest {
     private final Map<String, ServiceStart> starts = new HashMap<>();
 
     private Jobs jobs() {
-        return new Jobs(store, executor, new JobLimits(4, 10, Duration.ofHours(1)), clock);
+        return jobs(4);
+    }
+
+    private Jobs jobs(int slots) {
+        return new Jobs(store, executor, new JobLimits(slots, 10, Duration.ofHours(1)), clock);
     }
 
     private BackgroundJobs background(Jobs jobs, String... notResumable) {
@@ -198,7 +202,7 @@ class ServicePlannerTest {
     void aRunningPartOfTheSameKindAndSpaceIsReusedAsPredecessor() {
         BackgroundJobs background = background(jobs());
         BackgroundGroup earlier = background.start("pre", "Früher", List.of(new BackgroundPart.Draft("wiki",
-                "ALPHA")));
+                "ALPHA", Map.of(AnalysisService.PAGES, "a1"))));
         missing.put("pre", missingIn(ALPHA));
 
         BackgroundGroup group = planner(background).start(CALLER, "goal", PAGES).group().orElseThrow();
@@ -352,5 +356,143 @@ class ServicePlannerTest {
         assertThatThrownBy(() -> planner.start(CALLER, "unknown", PAGES)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> planner.start(CALLER, "described", PAGES))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aRunningPartCoveringOnlySomePagesIsReusedAndTheRestGetsItsOwnPart() {
+        BackgroundJobs background = background(jobs());
+        BackgroundGroup earlier = background.start("pre", "Früher", List.of(new BackgroundPart.Draft("wiki",
+                "ALPHA", Map.of(AnalysisService.PAGES, "a1"))));
+        missing.put("pre", new MissingPages(Map.of(ALPHA, Set.of("a1", "a2")), 0));
+
+        BackgroundGroup group = planner(background).start(CALLER, "goal", PageSet.of(Map.of("wiki",
+                Set.of("a1", "a2")))).group().orElseThrow();
+
+        JobStatus rest = part(group, "pre", "ALPHA");
+        assertThat(rest.parameter(AnalysisService.PAGES)).isEqualTo("a2");
+        assertThat(part(group, "goal", "ALPHA").parameter(Jobs.AFTER).split(","))
+                .containsExactlyInAnyOrder(earlier.parts().get(0).id(), rest.id());
+    }
+
+    @Test
+    void theGoalNeverReusesARunningPartAndAlwaysCreatesItsOwn() {
+        BackgroundJobs background = background(jobs());
+        ServicePlanner planner = planner(background);
+        PageSet alpha = PageSet.of(Map.of("wiki", Set.of("a1")));
+        BackgroundGroup first = planner.start(CALLER, "goal", alpha).group().orElseThrow();
+
+        BackgroundGroup second = planner.start(CALLER, "goal", alpha).group().orElseThrow();
+
+        assertThat(second.parts()).singleElement().satisfies(status -> {
+            assertThat(status.parameter(BackgroundJobs.KIND)).isEqualTo("goal");
+            assertThat(status.id()).isNotEqualTo(first.parts().get(0).id());
+        });
+    }
+
+    @Test
+    void cancellingAWaitingPredecessorWakesItsFollowerAtOnce() {
+        Jobs jobs = jobs();
+        BackgroundJobs background = background(jobs);
+        ServicePlanner planner = planner(background);
+        planner.register(service("graph", "Graph", "goal"));
+        missing.put("pre", missingIn(ALPHA));
+        missing.put("goal", missingIn(ALPHA));
+        BackgroundGroup group = planner.start(CALLER, "graph", PageSet.of(Map.of("wiki", Set.of("a1"))))
+                .group().orElseThrow();
+        jobs.pause(part(group, "pre", "ALPHA").id(), OWNER);
+        executor.runAll();
+        String middle = part(group, "goal", "ALPHA").id();
+        assertThat(jobs.status(middle).state()).isEqualTo(JobState.QUEUED);
+
+        jobs.cancel(middle, OWNER);
+        executor.runAll();
+
+        assertThat(ran).containsExactly("graph:ALPHA");
+    }
+
+    @Test
+    void sweepingAPausedPredecessorAwayWakesItsFollower() {
+        Jobs jobs = jobs();
+        BackgroundJobs background = background(jobs);
+        missing.put("pre", missingIn(ALPHA));
+        BackgroundGroup group = planner(background).start(CALLER, "goal", PageSet.of(Map.of("wiki", Set.of("a1"))))
+                .group().orElseThrow();
+        jobs.pause(part(group, "pre", "ALPHA").id(), OWNER);
+        executor.runAll();
+
+        jobs.deleteFinished(OWNER, null);
+        executor.runAll();
+
+        assertThat(ran).containsExactly("goal:ALPHA");
+    }
+
+    @Test
+    void anExpiredPausedPredecessorIsKeptWhileItsFollowerWaits() {
+        Jobs jobs = jobs();
+        BackgroundJobs background = background(jobs);
+        missing.put("pre", missingIn(ALPHA));
+        BackgroundGroup group = planner(background).start(CALLER, "goal", PageSet.of(Map.of("wiki", Set.of("a1"))))
+                .group().orElseThrow();
+        String pre = part(group, "pre", "ALPHA").id();
+        jobs.pause(pre, OWNER);
+        executor.runAll();
+
+        Jobs sweeping = new Jobs(store, new BackgroundJobsTest.Steps(), new JobLimits(4, 10, Duration.ofMillis(1)),
+                clock);
+        for (int i = 0; i < 5; i++) {
+            clock.instant();
+        }
+        sweeping.purgeExpired();
+
+        assertThat(store.find(pre)).isPresent();
+    }
+
+    @Test
+    void pausingAndResumingAPlannedGroupKeepsTheOrder() {
+        Jobs jobs = jobs();
+        BackgroundJobs background = background(jobs);
+        missing.put("pre", missingIn(ALPHA));
+        BackgroundGroup group = planner(background).start(CALLER, "goal", PageSet.of(Map.of("wiki", Set.of("a1"))))
+                .group().orElseThrow();
+
+        background.pause(group.groupId());
+        executor.runAll();
+        assertThat(ran).isEmpty();
+
+        background.resume(group.groupId());
+        executor.runAll();
+        assertThat(ran).containsExactly("pre:ALPHA", "goal:ALPHA");
+    }
+
+    @Test
+    void aUserJobStartsNextToAHeldPart() {
+        Jobs jobs = jobs();
+        BackgroundJobs background = background(jobs);
+        missing.put("pre", missingIn(ALPHA));
+        BackgroundGroup group = planner(background).start(CALLER, "goal", PageSet.of(Map.of("wiki", Set.of("a1"))))
+                .group().orElseThrow();
+        jobs.pause(part(group, "pre", "ALPHA").id(), OWNER);
+        executor.runAll();
+
+        JobStatus sync = jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "wiki", "ALPHA",
+                null, OWNER, Map.of(), JobTask.blocking(context -> ran.add("sync")));
+        executor.runAll();
+
+        assertThat(jobs.status(sync.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(ran).containsExactly("sync");
+    }
+
+    @Test
+    void withASingleSlotNoPlannedPartRunsButTheUserJobDoes() {
+        Jobs jobs = jobs(1);
+        BackgroundJobs background = background(jobs);
+        missing.put("pre", missingIn(ALPHA));
+        planner(background).start(CALLER, "goal", PageSet.of(Map.of("wiki", Set.of("a1"))));
+
+        jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "wiki", "ALPHA", null, OWNER,
+                Map.of(), JobTask.blocking(context -> ran.add("sync")));
+        executor.runAll();
+
+        assertThat(ran).containsExactly("sync");
     }
 }

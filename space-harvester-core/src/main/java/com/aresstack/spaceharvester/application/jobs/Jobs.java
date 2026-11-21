@@ -165,6 +165,11 @@ public class Jobs implements AutoCloseable {
     }
 
     private volatile PredecessorGate gate = PredecessorGate.DEFAULT;
+    /**
+     * Unter dem Sperrobjekt: abgelegter Stand beendeter oder gelöschter Vorgänger ({@link #AFTER}), damit
+     * {@link #next()} nicht bei jedem Lauf die Ablage liest; wird beim Öffnen und Löschen eines Auftrags verworfen.
+     */
+    private final Map<String, Optional<JobStatus>> predecessors = new HashMap<>();
     /** Downloads ({@link JobType#download()}) in {@link JobStage#PREPARING}. */
     private int preparing;
     /** Downloads in {@link JobStage#DOWNLOADING}. */
@@ -253,6 +258,7 @@ public class Jobs implements AutoCloseable {
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
                     null, null);
             open.put(job.id, job);
+            predecessors.remove(job.id);
             queued.addLast(job);
             status = job.snapshot();
             store.save(status);
@@ -290,6 +296,7 @@ public class Jobs implements AutoCloseable {
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
                     null, null);
             open.put(job.id, job);
+            predecessors.remove(job.id);
             queued.addLast(job);
             status = job.snapshot();
             store.save(status);
@@ -342,6 +349,7 @@ public class Jobs implements AutoCloseable {
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
                     "Auftrag angenommen; startet, wenn sein Vorgänger fertig ist", null, null, null, null);
             open.put(job.id, job);
+            predecessors.remove(job.id);
             queued.addLast(job);
             JobStatus status = job.snapshot();
             store.save(status);
@@ -851,6 +859,7 @@ public class Jobs implements AutoCloseable {
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag fortgesetzt", null,
                     null, null, null);
             open.put(job.id, job);
+            predecessors.remove(job.id);
             queued.addLast(job);
             status = job.snapshot();
             store.save(status);
@@ -924,6 +933,7 @@ public class Jobs implements AutoCloseable {
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag erneut gestartet",
                     null, null, null, null);
             open.put(job.id, job);
+            predecessors.remove(job.id);
             queued.addLast(job);
             status = job.snapshot();
             store.save(status);
@@ -1071,13 +1081,8 @@ public class Jobs implements AutoCloseable {
                     }
                 }
                 // Ein gelöschter Vorgänger gibt seine Nachfolger frei (D1); sie starten mit einer Warnung.
-                for (Job follower : queued) {
-                    String after = follower.parameters == null ? null : follower.parameters.get(AFTER);
-                    if (after != null && java.util.Arrays.asList(after.split(",")).contains(jobId)) {
-                        freed = true;
-                        break;
-                    }
-                }
+                predecessors.remove(jobId);
+                freed |= awaitedAsPredecessor(jobId);
                 stopped.remove(status.id());
                 reconnects.remove(status.id());
                 reconnectAttempts.remove(status.id());
@@ -1295,6 +1300,18 @@ public class Jobs implements AutoCloseable {
      * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID gibt
      */
     public JobStatus cancel(String jobId) {
+        boolean[] release = {false};
+        try {
+            return cancel(jobId, release);
+        } finally {
+            if (release[0]) {
+                // Ein abgebrochener wartender Vorgänger gibt seinen Nachfolger frei (Abnahme D1).
+                dispatch();
+            }
+        }
+    }
+
+    private JobStatus cancel(String jobId, boolean[] release) {
         synchronized (lock) {
             Job job = open.get(jobId);
             if (job != null) {
@@ -1316,6 +1333,7 @@ public class Jobs implements AutoCloseable {
                     lock.notifyAll();
                     job.finish(JobState.CANCELLED, null, clock.instant());
                     keepResumable(job);
+                    release[0] = awaitedAsPredecessor(jobId);
                 }
                 // Erst das Ereignis, dann der Zustand: Ein beendeter Auftrag bekommt danach nie mehr ein Ereignis, sonst
                 // könnte eine Löschung dazwischen eines verwaist zurücklassen.
@@ -1403,8 +1421,19 @@ public class Jobs implements AutoCloseable {
     public int purgeExpired() {
         Instant limit = clock.instant().minus(limits.retention());
         int removed = 0;
-        for (JobStatus status : store.all()) {
+        List<JobStatus> all = store.all();
+        // Angehaltene Vorgänger, auf die ein noch offener oder fortsetzbarer Nachfolger wartet, halten und bleiben
+        // (Abnahme D1), auch vor dem Fortsetzen nach einem Neustart.
+        java.util.Set<String> awaited = new java.util.HashSet<>();
+        for (JobStatus follower : all) {
+            String after = follower.parameter(AFTER);
+            if (after != null && (!follower.state().terminal() || resumableState(follower.state()))) {
+                awaited.addAll(java.util.Arrays.asList(after.split(",")));
+            }
+        }
+        for (JobStatus status : all) {
             if (status.state().terminal() && status.finishedAt() != null && status.finishedAt().isBefore(limit)
+                    && !(status.state() == JobState.PAUSED && awaited.contains(status.id()))
                     && deleteIfFinished(status.id(), true)) {
                 removed++;
             }
@@ -1444,6 +1473,25 @@ public class Jobs implements AutoCloseable {
      * @return ob gelöscht wurde
      */
     private boolean deleteIfFinished(String jobId, boolean quietly) {
+        boolean release = false;
+        try {
+            synchronized (lock) {
+                boolean deleted = deleteIfFinishedLocked(jobId, quietly);
+                if (deleted) {
+                    predecessors.remove(jobId);
+                    release = awaitedAsPredecessor(jobId);
+                }
+                return deleted;
+            }
+        } finally {
+            if (release) {
+                // Ein gelöschter Vorgänger gibt seinen Nachfolger frei (Abnahme D1).
+                dispatch();
+            }
+        }
+    }
+
+    private boolean deleteIfFinishedLocked(String jobId, boolean quietly) {
         synchronized (lock) {
             if (open.containsKey(jobId)) {
                 return false;
@@ -1556,11 +1604,9 @@ public class Jobs implements AutoCloseable {
                 continue;
             }
             if (job.type.background()) {
-                if (held(job)) {
-                    // Gesperrt: zählt nicht als wartend und hält keinen anderen auf (Abnahme D1).
-                    continue;
-                }
-                if (backgroundPick == null && background && !backgroundStopped) {
+                // Gesperrt zählt nicht als wartend und hält keinen anderen auf (Abnahme D1); geprüft wird nur, solange
+                // der Hintergrund starten darf und noch kein Kandidat gefunden ist.
+                if (backgroundPick == null && background && !backgroundStopped && !held(job)) {
                     backgroundPick = job;
                 }
                 if (parallelPreparations <= 1 && !job.singleSlotNoted) {
@@ -1610,7 +1656,8 @@ public class Jobs implements AutoCloseable {
                 continue;
             }
             Job open = this.open.get(id);
-            JobStatus predecessor = open != null ? open.snapshot() : store.find(id).orElse(null);
+            JobStatus predecessor = open != null ? open.snapshot()
+                    : predecessors.computeIfAbsent(id, store::find).orElse(null);
             if (gate.holds(predecessor)) {
                 held = true;
                 break;
@@ -1626,6 +1673,17 @@ public class Jobs implements AutoCloseable {
             job.waitingNoted = false;
         }
         return held;
+    }
+
+    /** Unter dem Sperrobjekt: ob ein wartender Auftrag auf diesen als Vorgänger ({@link #AFTER}) wartet. */
+    private boolean awaitedAsPredecessor(String jobId) {
+        for (Job follower : queued) {
+            String after = follower.parameters == null ? null : follower.parameters.get(AFTER);
+            if (after != null && java.util.Arrays.asList(after.split(",")).contains(jobId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Unter dem Sperrobjekt: gibt den Platz eines beendeten Auftrags frei. */

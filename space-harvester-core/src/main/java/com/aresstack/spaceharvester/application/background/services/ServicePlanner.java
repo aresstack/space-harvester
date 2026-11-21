@@ -117,15 +117,27 @@ public final class ServicePlanner {
             for (Map.Entry<MissingPages.Scope, Set<String>> entry : missing.pages().entrySet()) {
                 MissingPages.Scope area = entry.getKey();
                 List<Ref> after = new ArrayList<>(new LinkedHashSet<>(waitsFor(service, area, produced, all)));
-                Optional<JobStatus> running = background.running(service.kind(), area.sourceId(), area.spaceKey());
-                if (running.isPresent()) {
-                    own.put(area, List.of(new Ref(running.get().id(), -1, service.title())));
+                Set<String> rest = new java.util.TreeSet<>(entry.getValue());
+                List<Ref> refs = new ArrayList<>();
+                if (!isGoal) {
+                    // Nur Vorstufen verwenden einen laufenden Teil wieder, und nur für die Seiten, die er abdeckt; für
+                    // den Rest entsteht ein eigener Teil (Abnahme D1). Das Ziel legt seine Teile immer an.
+                    Optional<JobStatus> running = background.running(service.kind(), area.sourceId(),
+                            area.spaceKey());
+                    if (running.isPresent()) {
+                        rest.removeAll(pages(running.get()));
+                        refs.add(new Ref(running.get().id(), -1, service.title()));
+                    }
+                }
+                if (rest.isEmpty()) {
+                    own.put(area, refs);
                     continue;
                 }
-                own.put(area, List.of(new Ref(null, steps.size(), service.title())));
+                refs.add(new Ref(null, steps.size(), service.title()));
+                own.put(area, refs);
                 steps.add(new BackgroundJobs.Step(service.kind(), service.title(),
                         new BackgroundPart.Draft(area.sourceId(), area.spaceKey(),
-                                Map.of(AnalysisService.PAGES, String.join("\n", entry.getValue()))),
+                                Map.of(AnalysisService.PAGES, String.join("\n", rest))),
                         after.stream().filter(ref -> ref.jobId() != null).map(Ref::jobId).toList(),
                         after.stream().filter(ref -> ref.jobId() == null).map(Ref::step).toList(),
                         after.stream().map(Ref::title).toList()));
@@ -139,6 +151,21 @@ public final class ServicePlanner {
         }
         BackgroundGroup group = background.startSteps(BackgroundJobs.newGroupId(), goal.kind(), goal.title(), steps);
         return new ServicePlan(Optional.of(group), notes, inaccessible);
+    }
+
+    /** Die Seiten eines laufenden Teils ({@link AnalysisService#PAGES}). */
+    private static Set<String> pages(JobStatus status) {
+        String pages = status.parameter(AnalysisService.PAGES);
+        if (pages == null || pages.isBlank()) {
+            return Set.of();
+        }
+        Set<String> ids = new java.util.HashSet<>();
+        for (String id : pages.split("\n")) {
+            if (!id.isBlank()) {
+                ids.add(id);
+            }
+        }
+        return ids;
     }
 
     /** Worauf ein Dienst in einem Bereich wartet: je direkter Vorstufe deren Teil, sonst deren Vorstufen. */

@@ -272,9 +272,10 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    Ein ausdrücklich gestartetes Ziel startet auch MANUAL-Vorstufen; DISABLED startet nie und wird gelb als „bewusst
    ausgelassen“ gemeldet. AUTOMATIC heißt zusätzlich: startet auf seinen bisherigen Auslösern. Die Vorgaben der
    Starttypen ändern am heutigen Verhalten nichts. Eine Vorstufe ohne fehlende Seiten legt nichts an; das Ziel legt
-   seinen Teil je Space immer an, sobald die Seitenmenge für den Aufrufer nicht leer ist. Läuft schon ein Teil gleicher
-   Art für Quelle und Space (`BackgroundJobs#running`), wird er Vorgänger statt neu angelegt, auch aus einer fremden
-   Gruppe (gezeigt werden nur Art und Space).
+   seinen Teil je Space immer an, sobald die Seitenmenge für den Aufrufer nicht leer ist. Läuft für eine Vorstufe schon ein Teil
+   gleicher Art für Quelle und Space (`BackgroundJobs#running`), wird er Vorgänger, auch aus einer fremden Gruppe
+   (gezeigt werden nur Art und Space); deckt er nicht alle fehlenden Seiten ab, entsteht für den Rest ein eigener Teil.
+   Das Ziel verwendet nie wieder, es legt seine Teile immer an.
 3. **Warten je Space.** Ein Teil trägt die IDs seiner Vorgänger (`Jobs.AFTER`, Liste) und startet erst, wenn keiner ihn
    mehr hält (`Jobs.PredecessorGate`): offen, angehalten oder unterbrochen und fortsetzbar hält; fertig, gescheitert,
    abgebrochen, gelöscht oder unterbrochen ohne angemeldete, fortsetzbare Art gibt frei. Ein gesperrter Teil zählt für
@@ -283,7 +284,11 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
 4. **Fehler und Pause.** Eine gescheiterte, abgebrochene oder gelöschte Vorstufe hält die Kette nicht auf: die
    Folgestufe läuft über das Vorhandene und meldet gelb mit Grund (`BackgroundJobs.PREDECESSOR_MISSING`). Eine
    angehaltene Vorstufe hält die Kette an. Abbruch der Gruppe bricht auch gesperrte Teile ab, Pause pausiert sie, und
-   Fortsetzen setzt die Sperre wieder ein.
+   Fortsetzen setzt die Sperre wieder ein; lässt sich ein Vorgänger nicht fortsetzen, bleiben seine Nachfolger stehen.
+   Jeder Übergang, der einen Nachfolger frei gibt (Abbruch eines wartenden, Löschen, Besen), weckt die Planung sofort.
+   Die Aufbewahrungsfrist löscht keinen angehaltenen Vorgänger, auf den noch ein Nachfolger wartet. Der Stand
+   beendeter Vorgänger liegt im Speicher, geprüft wird nur, solange der Hintergrund starten darf; ein Start gilt ganz
+   oder gar nicht, zurückgenommen wird vom letzten Teil her.
 5. **Neustart.** Die Vorgänger stehen in den Angaben; `resumeInterrupted` setzt die ältesten Teile zuerst fort, darum
    läuft eine unterbrochene Kette in derselben Reihenfolge weiter.
 6. **Erste Dienste** (`Harvester#servicePlanner`) nur als Beschreibung: Indexieren (AUTOMATIC), Bilder beschreiben

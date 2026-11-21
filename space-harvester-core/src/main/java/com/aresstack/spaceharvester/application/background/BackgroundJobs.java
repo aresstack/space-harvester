@@ -129,7 +129,8 @@ public final class BackgroundJobs {
             }
         } catch (RuntimeException e) {
             // Ganz oder gar nicht (wie GlossaryClassification): keine Teile ohne ihre Gruppe.
-            for (JobStatus accepted : started) {
+            // Nachfolger zuerst, damit keiner dazwischen frei wird und startet (Abnahme D1).
+            for (JobStatus accepted : started.reversed()) {
                 try {
                     jobs.cancel(accepted.id(), owner);
                 } catch (RuntimeException ignored) {
@@ -208,7 +209,8 @@ public final class BackgroundJobs {
                         null, owner, parameters, task(false)));
             }
         } catch (RuntimeException e) {
-            for (JobStatus accepted : started) {
+            // Nachfolger zuerst, damit keiner dazwischen frei wird und startet (Abnahme D1).
+            for (JobStatus accepted : started.reversed()) {
                 try {
                     jobs.cancel(accepted.id(), owner);
                 } catch (RuntimeException ignored) {
@@ -271,12 +273,21 @@ public final class BackgroundJobs {
 
     /** Setzt jeden angehaltenen, gescheiterten oder abgebrochenen Unterauftrag der Gruppe fort. */
     public Optional<BackgroundGroup> resume(String groupId) {
+        // Älteste zuerst; lässt sich ein Vorgänger nicht fortsetzen, bleiben seine Nachfolger stehen, statt frei zu
+        // werden (Abnahme D1).
+        java.util.Set<String> notResumed = new java.util.HashSet<>();
         group(groupId).ifPresent(group -> group.parts().stream()
                 .filter(status -> Jobs.resumableState(status.state()))
                 .forEach(status -> {
+                    String after = status.parameter(Jobs.AFTER);
+                    if (after != null && java.util.Arrays.stream(after.split(",")).anyMatch(notResumed::contains)) {
+                        notResumed.add(status.id());
+                        return;
+                    }
                     try {
                         resumeJob(status.id());
                     } catch (RuntimeException e) {
+                        notResumed.add(status.id());
                         LOG.log(System.Logger.Level.WARNING, "Hintergrundauftrag {0} nicht fortgesetzt ({1})",
                                 status.id(), e.getClass().getName());
                     }
