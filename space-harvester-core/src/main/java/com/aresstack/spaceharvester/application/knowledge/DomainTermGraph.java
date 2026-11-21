@@ -30,6 +30,9 @@ import java.util.function.Function;
  *
  * <p>Synonyme stehen als eigene Knoten neben ihrem Fachbegriff, verbunden durch eine {@link EdgeKind#SYNONYM}-Kante;
  * sie werden nie mit ihm verschmolzen.
+ *
+ * <p>Zwei Sichten teilen sich denselben Aufbau der Kanten: {@link #around} um einen Startbegriff und
+ * {@link #onPages} seitenweit ohne Startbegriff (Paket W4b).
  */
 public final class DomainTermGraph {
 
@@ -91,8 +94,10 @@ public final class DomainTermGraph {
      *
      * @param key    Suchwert ({@link TermText#normalize}), eindeutig im Graphen
      * @param label  Wortlaut wie im Glossar bzw. in der Beziehung
-     * @param depth  Abstand zur Mitte: 0 die Mitte, 1 Nachbar, 2 Nachbar eines Nachbarn
-     * @param parent Schlüssel des Knotens, über den er gefunden wurde; {@code null} für die Mitte
+     * @param depth  Abstand zur Mitte: 0 die Mitte, 1 Nachbar, 2 Nachbar eines Nachbarn; in der seitenweiten Sicht
+     *               ({@link #onPages}) ohne Mitte immer 0
+     * @param parent Schlüssel des Knotens, über den er gefunden wurde; {@code null} für die Mitte und für jeden Knoten
+     *               der seitenweiten Sicht
      */
     public record Node(String key, String label, NodeKind kind, int depth, String parent) {
 
@@ -261,13 +266,18 @@ public final class DomainTermGraph {
         /** Kein Startbegriff eingegeben. */
         EMPTY_START,
         /** Der Startbegriff ist kein bestätigter Fachbegriff und kein bestätigtes Synonym. */
-        NOT_A_TERM
+        NOT_A_TERM,
+        /**
+         * Nur seitenweit ({@link #onPages}): Kein bestätigter Fachbegriff dieser Seiten ist durch ein Verb mit einem
+         * anderen verbunden. Ein neutraler Hinweis, kein Fehler.
+         */
+        NO_EDGES
     }
 
     /**
-     * Eine Fachsicht um einen Startbegriff.
+     * Eine Fachsicht um einen Startbegriff oder seitenweit über eine Seitenauswahl ({@link #onPages}).
      *
-     * @param nodes          Knoten, die Mitte zuerst
+     * @param nodes          Knoten, die Mitte zuerst; seitenweit ohne Mitte, nach Zahl der Belege geordnet
      * @param truncated      ob es mehr als {@link #MAX_NODES} Knoten gäbe
      * @param skippedStale   Aussagen auf veralteten Seiten, die ausgelassen wurden (nur ohne {@code includeStale})
      * @param analyzers      Analysatoren aller gelesenen Seiten der Ablage, wie gespeichert (in der Regel genau einer),
@@ -295,6 +305,10 @@ public final class DomainTermGraph {
             return new View(outcome, List.of(), List.of(), false, 0, Set.of(), null);
         }
 
+        /**
+         * Die Mitte: der erste Knoten. Die seitenweite Sicht ({@link #onPages}) hat keine Mitte; dort ist der erste
+         * Knoten nur der mit den meisten Belegen und darf nicht als Mitte gelten.
+         */
         public Node centre() {
             return nodes.isEmpty() ? null : nodes.getFirst();
         }
@@ -303,9 +317,10 @@ public final class DomainTermGraph {
     /**
      * Grenzen und Filter.
      *
-     * @param depth        1 oder 2
+     * @param depth        1 oder 2; die seitenweite Sicht ({@link #onPages}) kennt keine Tiefe und übergeht sie
      * @param includeStale Aussagen veralteter Seiten mitnehmen
-     * @param pages        nur diese Seiten samt Dokumenten (Auswahl im Baum, ADR 0029) oder {@code null} für alle
+     * @param pages        nur diese Seiten samt Dokumenten (Auswahl im Baum, ADR 0029) oder {@code null} für alle;
+     *                     für {@link #onPages} Pflicht
      * @param checkedOnly  „nur geprüft“ (Paket W2): nur Belege der Stufe {@link Trust#GEPRUEFT} zählen; Kanten ohne
      *                     solche fallen weg
      */
@@ -376,8 +391,7 @@ public final class DomainTermGraph {
         if (wanted.isEmpty() || limit < 1) {
             return List.of();
         }
-        Lexicon lexicon = new Lexicon(vocabulary.terms(caller), vocabulary.synonyms(caller),
-                vocabulary.technical(caller));
+        Lexicon lexicon = lexicon(caller);
         return lexicon.labels.keySet().stream().filter(key -> key.contains(wanted))
                 .sorted(java.util.Comparator.<String>comparingInt(key -> key.startsWith(wanted) ? 0 : 1)
                         .thenComparing(key -> lexicon.kinds.get(key))
@@ -400,12 +414,60 @@ public final class DomainTermGraph {
         if (centre.isEmpty()) {
             return View.of(Outcome.EMPTY_START);
         }
-        Lexicon lexicon = new Lexicon(vocabulary.terms(caller), vocabulary.synonyms(caller),
-                vocabulary.technical(caller));
+        Lexicon lexicon = lexicon(caller);
         if (!lexicon.labels.containsKey(centre)) {
             return View.of(Outcome.NOT_A_TERM);
         }
+        return collect(caller, lexicon, options, cancelled)
+                .finish(edges -> layout(centre, lexicon, edges, options.depth(), 0, Set.of()), selected);
+    }
 
+    /**
+     * Die seitenweite Fachsicht ohne Startbegriff (Paket W4b): alle bestätigten Fachbegriffe und Synonyme der Seiten
+     * {@code options.pages()}, die dort mit einem anderen Knoten durch ein Verb verbunden sind, höchstens
+     * {@link #MAX_NODES}. Gezählt wird genau wie in {@link #around} (derselbe Aufbau): Standardansicht,
+     * „nur geprüft“, veraltete Seiten und Vergleich der Analysatoren.
+     *
+     * <p>Die Knoten sind nach der Zahl ihrer Belege geordnet (Summe der Belege ihrer Verb-Kanten), absteigend, bei
+     * Gleichstand nach Wortlaut (ohne Groß-/Kleinschreibung), dann nach Schlüssel; so bleibt die Auswahl stabil.
+     * {@link View#truncated()} meldet, dass es mehr Knoten gäbe. Gekürzt wird in dieser Ordnung, aber nie so, dass ein
+     * Knoten ohne sichtbare Kante dasteht: Hat ein Knoten noch keinen gezeigten Partner, kommt er nur zusammen mit
+     * seinem stärksten Partner in die Sicht, sonst fällt er weg. Es gibt keine Mitte: Jeder Knoten hat Tiefe 0 und
+     * keinen Vorgänger, und {@link View#centre()} ist hier bedeutungslos. Synonym-Kanten stehen nur zwischen zwei gezeigten
+     * Knoten; ein Synonym wird nur über eigene Verb-Kanten ein Knoten. Verbindet kein Verb zwei Knoten, lautet das
+     * Ergebnis {@link Outcome#NO_EDGES}.
+     *
+     * <p>{@code options.pages()} soll nur lesbare Seiten nennen; der Kern prüft das Leserecht trotzdem selbst: Gelesen
+     * wird nur, was {@link KnowledgeGraph#analysed} für {@code caller} liefert (nur sichtbare Seiten). Eine genannte
+     * Seite, die der Aufrufer nicht sehen darf, trägt nichts bei.
+     *
+     * @param options   {@link Options#pages()} ist Pflicht; {@link Options#depth()} gilt hier nicht
+     * @param cancelled bricht zwischen zwei Seiten ab; dann gilt der Aufruf als verworfen
+     * @throws IllegalArgumentException ohne Seitenauswahl
+     */
+    public View onPages(AccessContext caller, Options options, BooleanSupplier cancelled) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(cancelled, "cancelled");
+        if (options.pages() == null) {
+            throw new IllegalArgumentException("Die seitenweite Fachsicht braucht eine Seitenauswahl");
+        }
+        Lexicon lexicon = lexicon(caller);
+        return collect(caller, lexicon, options, cancelled).finish(edges -> pageLayout(lexicon, edges), selected);
+    }
+
+    private Lexicon lexicon(AccessContext caller) {
+        return new Lexicon(vocabulary.terms(caller), vocabulary.synonyms(caller), vocabulary.technical(caller));
+    }
+
+    /**
+     * Der gemeinsame Aufbau beider Sichten: Seite für Seite die Verb-Kanten zwischen Knoten des {@code lexicon} samt
+     * Belegen, Stufen ({@link #trustFor}), Vergleich der Analysatoren nur, wo er die Stufe ändern kann, „nur geprüft“
+     * und die ausgelassenen veralteten Aussagen. Nur hier stehen die Zählregeln.
+     *
+     * @param cancelled bricht zwischen zwei Seiten ab ({@link java.util.concurrent.CancellationException})
+     */
+    private Collected collect(AccessContext caller, Lexicon lexicon, Options options, BooleanSupplier cancelled) {
         Map<String, EdgeBuilder> edges = new LinkedHashMap<>();
         // Dieselbe Sicht, als wären die veralteten Aussagen aktuell, in derselben Reihenfolge wie mit „veraltete
         // zeigen“ (Synonyme zuerst, dann Seite für Seite): nur was dort läge, zählt als ausgelassen.
@@ -512,19 +574,39 @@ public final class DomainTermGraph {
                 }
             }
         }
-        View view = layout(centre, lexicon, edges, options.depth(), 0, analyzers);
-        Set<String> shown = new java.util.HashSet<>();
-        if (!stale.isEmpty()) {
-            layout(centre, lexicon, withStale, options.depth(), 0, analyzers).nodes()
-                    .forEach(node -> shown.add(node.key()));
+        return new Collected(edges, withStale, stale, analyzers);
+    }
+
+    /**
+     * Ergebnis von {@code collect}.
+     *
+     * @param edges     die Kanten der Sicht
+     * @param withStale dieselben Kanten, als wären die veralteten Aussagen aktuell
+     * @param stale     je ausgelassener veralteter Aussage die Paare (Schlüssel von und nach), die sie verbände
+     * @param analyzers Analysatoren aller gelesenen Seiten
+     */
+    private record Collected(Map<String, EdgeBuilder> edges, Map<String, EdgeBuilder> withStale,
+                             List<Set<String>> stale, Set<String> analyzers) {
+
+        /**
+         * Legt die Sicht mit {@code layout} an und zählt die ausgelassenen veralteten Aussagen: nur die, deren Kante in
+         * derselben Sicht mit „veraltete zeigen“ läge (beide Enden wären Knoten).
+         */
+        View finish(Function<Map<String, EdgeBuilder>, View> layout,
+                    java.util.function.Supplier<AnalyzerChoice> selected) {
+            View view = layout.apply(edges);
+            Set<String> shown = new java.util.HashSet<>();
+            if (!stale.isEmpty()) {
+                layout.apply(withStale).nodes().forEach(node -> shown.add(node.key()));
+            }
+            // Nur veraltete Aussagen, deren Kante in dieser Sicht läge, wären sie aktuell: beide Enden wären Knoten.
+            int skippedStale = (int) stale.stream().filter(pairs -> pairs.stream().anyMatch(pair -> {
+                int cut = pair.indexOf('\u0000');
+                return shown.contains(pair.substring(0, cut)) && shown.contains(pair.substring(cut + 1));
+            })).count();
+            return new View(view.outcome(), view.nodes(), view.edges(), view.truncated(), skippedStale, analyzers,
+                    selected.get());
         }
-        // Nur veraltete Aussagen, deren Kante in dieser Sicht läge, wären sie aktuell: beide Enden wären Knoten.
-        int skippedStale = (int) stale.stream().filter(pairs -> pairs.stream().anyMatch(pair -> {
-            int cut = pair.indexOf('\u0000');
-            return shown.contains(pair.substring(0, cut)) && shown.contains(pair.substring(cut + 1));
-        })).count();
-        return new View(view.outcome(), view.nodes(), view.edges(), view.truncated(), skippedStale, analyzers,
-                selected.get());
     }
 
     /**
@@ -548,14 +630,7 @@ public final class DomainTermGraph {
 
     private static View layout(String centre, Lexicon lexicon, Map<String, EdgeBuilder> edges, int depth,
                                int skippedStale, Set<String> analyzers) {
-        Map<String, List<EdgeBuilder>> touching = new LinkedHashMap<>();
-        for (EdgeBuilder edge : edges.values()) {
-            if (edge.kind == EdgeKind.VERB && edge.evidence.isEmpty()) {
-                continue;
-            }
-            touching.computeIfAbsent(edge.from, unused -> new ArrayList<>()).add(edge);
-            touching.computeIfAbsent(edge.to, unused -> new ArrayList<>()).add(edge);
-        }
+        Map<String, List<EdgeBuilder>> touching = touching(edges);
         Map<String, Node> nodes = new LinkedHashMap<>();
         nodes.put(centre, lexicon.node(centre, 0, null));
         boolean truncated = false;
@@ -578,6 +653,78 @@ public final class DomainTermGraph {
             }
             frontier = next;
         }
+        return new View(Outcome.FOUND, new ArrayList<>(nodes.values()), shown(nodes, touching), truncated,
+                skippedStale, analyzers);
+    }
+
+    /**
+     * Seitenweit: Knoten sind alle Einträge mit mindestens einer belegten Verb-Kante, nach Zahl der Belege absteigend,
+     * dann Wortlaut ohne Groß-/Kleinschreibung, dann Schlüssel; höchstens {@link #MAX_NODES}, jeder mit mindestens
+     * einem gezeigten Verb-Partner, alle Tiefe 0 ohne Vorgänger. Synonym-Kanten zählen nicht für die Auswahl und erscheinen nur zwischen gezeigten Knoten.
+     */
+    private static View pageLayout(Lexicon lexicon, Map<String, EdgeBuilder> edges) {
+        Map<String, Integer> weights = new LinkedHashMap<>();
+        for (EdgeBuilder edge : edges.values()) {
+            if (edge.kind == EdgeKind.VERB && !edge.evidence.isEmpty()) {
+                weights.merge(edge.from, edge.evidence.size(), Integer::sum);
+                weights.merge(edge.to, edge.evidence.size(), Integer::sum);
+            }
+        }
+        if (weights.isEmpty()) {
+            return new View(Outcome.NO_EDGES, List.of(), List.of(), false, 0, Set.of());
+        }
+        List<String> ranked = weights.keySet().stream()
+                .sorted(java.util.Comparator.<String>comparingInt(weights::get).reversed()
+                        .thenComparing(lexicon.labels::get, String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(java.util.Comparator.naturalOrder()))
+                .toList();
+        Map<String, Integer> rank = new java.util.HashMap<>();
+        ranked.forEach(key -> rank.put(key, rank.size()));
+        // Verb-Partner je Knoten, der stärkste zuerst: Ein Knoten kommt nur mit einem sichtbaren Partner in die Sicht.
+        Map<String, java.util.TreeSet<String>> partners = new java.util.HashMap<>();
+        for (EdgeBuilder edge : edges.values()) {
+            if (edge.kind == EdgeKind.VERB && !edge.evidence.isEmpty()) {
+                partners.computeIfAbsent(edge.from, unused -> new java.util.TreeSet<>(
+                        java.util.Comparator.comparingInt(rank::get))).add(edge.to);
+                partners.computeIfAbsent(edge.to, unused -> new java.util.TreeSet<>(
+                        java.util.Comparator.comparingInt(rank::get))).add(edge.from);
+            }
+        }
+        Set<String> kept = new java.util.HashSet<>();
+        for (String key : ranked) {
+            if (kept.contains(key)) {
+                continue;
+            }
+            if (partners.get(key).stream().anyMatch(kept::contains)) {
+                if (kept.size() < MAX_NODES) {
+                    kept.add(key);
+                }
+            } else if (kept.size() + 2 <= MAX_NODES) {
+                kept.add(key);
+                kept.add(partners.get(key).first());
+            }
+        }
+        Map<String, Node> nodes = new LinkedHashMap<>();
+        ranked.stream().filter(kept::contains).forEach(key -> nodes.put(key, lexicon.node(key, 0, null)));
+        return new View(Outcome.FOUND, new ArrayList<>(nodes.values()), shown(nodes, touching(edges)),
+                kept.size() < ranked.size(), 0, Set.of());
+    }
+
+    /** Je Knoten die Kanten, die ihn berühren; Verb-Kanten ohne Beleg (nur veraltet belegt) fallen weg. */
+    private static Map<String, List<EdgeBuilder>> touching(Map<String, EdgeBuilder> edges) {
+        Map<String, List<EdgeBuilder>> touching = new LinkedHashMap<>();
+        for (EdgeBuilder edge : edges.values()) {
+            if (edge.kind == EdgeKind.VERB && edge.evidence.isEmpty()) {
+                continue;
+            }
+            touching.computeIfAbsent(edge.from, unused -> new ArrayList<>()).add(edge);
+            touching.computeIfAbsent(edge.to, unused -> new ArrayList<>()).add(edge);
+        }
+        return touching;
+    }
+
+    /** Die Kanten zwischen zwei gezeigten Knoten, in der Reihenfolge der Knoten, jede einmal. */
+    private static List<Edge> shown(Map<String, Node> nodes, Map<String, List<EdgeBuilder>> touching) {
         List<Edge> shown = new ArrayList<>();
         Set<EdgeBuilder> taken = new LinkedHashSet<>();
         for (String key : nodes.keySet()) {
@@ -587,7 +734,7 @@ public final class DomainTermGraph {
                 }
             }
         }
-        return new View(Outcome.FOUND, new ArrayList<>(nodes.values()), shown, truncated, skippedStale, analyzers);
+        return shown;
     }
 
     private record Match(String key, String text, ParsedStatements.Role role) {
