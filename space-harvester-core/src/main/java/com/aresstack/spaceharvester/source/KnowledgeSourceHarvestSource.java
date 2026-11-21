@@ -847,14 +847,19 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
     }
 
+    /**
+     * Nur ohne Startpunkte und Tiefe ({@link #restriction}) und ohne Discovery: Die reine ID-Liste kennt den Umfang
+     * nicht; Quellen mit Umfang nutzen weiter die Seitenliste, die ihn anwendet ({@link #pageMetadata(String, String,
+     * int)}), damit Seiten außerhalb des Umfangs aus dem Katalog fallen.
+     */
     @Override
     public boolean listsPageIds() {
-        return port instanceof PartitionIdListingSource;
+        return port instanceof PartitionIdListingSource && restriction == null && !discovering();
     }
 
     @Override
     public PageIdBatch pageIds(String partitionKey, String cursor, int limit) {
-        if (!(port instanceof PartitionIdListingSource ids)) {
+        if (!listsPageIds() || !(port instanceof PartitionIdListingSource ids)) {
             throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle liefert keine reine ID-Liste", null);
         }
