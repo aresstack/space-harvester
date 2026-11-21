@@ -77,11 +77,17 @@ public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Co
      * @param foundBy   Priorität der Suchanfrage, die ihn zuerst freigab
      * @param confirmed ob der Treffer aus dem Cache stammt (Volltextindex, semantisch die Vektoren), nicht nur aus der
      *                  Suche der Quelle
+     * @param reranked  ob {@code score} vom Reranker ({@link HitScorer}) stammt; der Reranker ordnet nur um und ist
+     *                  keine Ursache des Treffers (R1, Ursachen in {@link KeywordSearch.Hit#reasons()})
      */
-    public record RankedHit(KeywordSearch.Hit hit, double score, int foundBy, boolean confirmed) {
+    public record RankedHit(KeywordSearch.Hit hit, double score, int foundBy, boolean confirmed, boolean reranked) {
 
         public RankedHit {
             Objects.requireNonNull(hit, "hit");
+        }
+
+        public RankedHit(KeywordSearch.Hit hit, double score, int foundBy, boolean confirmed) {
+            this(hit, score, foundBy, confirmed, false);
         }
     }
 }

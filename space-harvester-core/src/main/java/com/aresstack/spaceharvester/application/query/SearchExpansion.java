@@ -34,13 +34,59 @@ public final class SearchExpansion {
         List<String> expansions(AccessContext caller, String term, String sourceId, String spaceKey);
     }
 
+    /**
+     * Wie {@link Relations}, mit der Art jeder Beziehung (R1: Ursache am Treffer).
+     */
+    @FunctionalInterface
+    public interface Counterparts {
+
+        /** @return die Gegenstücke mit ihrer Beziehungsart, ohne den Begriff selbst */
+        List<Counterpart> counterparts(AccessContext caller, String term, String sourceId, String spaceKey);
+    }
+
+    /**
+     * Ein Gegenstück eines Begriffs.
+     *
+     * @param text Schreibweise der Beziehung
+     * @param type Art der Beziehung ({@code abbreviation}, {@code synonym}, {@code variant}) oder {@code null}
+     */
+    public record Counterpart(String text, String type) {
+    }
+
+    /**
+     * Eine zusätzliche Anfrage und die bestätigte Beziehung, aus der sie entstand.
+     *
+     * @param query    die Anfrage, wie sie an Index und Quelle geht
+     * @param relation Begriff, Gegenstück und Art
+     */
+    public record Expansion(String query, HitReason.Relation relation) {
+
+        public Expansion {
+            Objects.requireNonNull(query, "query");
+            Objects.requireNonNull(relation, "relation");
+        }
+    }
+
     /** Keine Erweiterung. */
     public static final SearchExpansion NONE = new SearchExpansion((caller, term, sourceId, spaceKey) -> List.of());
 
-    private final Relations relations;
+    private final Counterparts relations;
 
     public SearchExpansion(Relations relations) {
+        Objects.requireNonNull(relations, "relations");
+        this.relations = (caller, term, sourceId, spaceKey) -> {
+            List<String> found = relations.expansions(caller, term, sourceId, spaceKey);
+            return found == null ? List.of() : found.stream().map(text -> new Counterpart(text, null)).toList();
+        };
+    }
+
+    private SearchExpansion(Counterparts relations, boolean typed) {
         this.relations = Objects.requireNonNull(relations, "relations");
+    }
+
+    /** Erweiterung, die die Art jeder Beziehung kennt. */
+    public static SearchExpansion typed(Counterparts relations) {
+        return new SearchExpansion(relations, true);
     }
 
     /**
@@ -50,14 +96,19 @@ public final class SearchExpansion {
      * selbst, höchstens {@link #MAX_EXPANSIONS}.
      */
     public List<String> expand(AccessContext caller, String text, String sourceId, String spaceKey) {
+        return expansions(caller, text, sourceId, spaceKey).stream().map(Expansion::query).toList();
+    }
+
+    /** Wie {@link #expand}, je Anfrage mit der Beziehung, aus der sie entstand. */
+    public List<Expansion> expansions(AccessContext caller, String text, String sourceId, String spaceKey) {
         String query = text == null ? "" : text.strip();
         if (query.isEmpty() || this == NONE) {
             return List.of();
         }
-        Map<String, String> queries = new LinkedHashMap<>();
+        Map<String, Expansion> queries = new LinkedHashMap<>();
         String own = query.toLowerCase(Locale.ROOT);
-        for (String other : lookup(caller, query, sourceId, spaceKey)) {
-            put(queries, other, own);
+        for (Counterpart other : lookup(caller, query, sourceId, spaceKey)) {
+            put(queries, other.text(), own, new HitReason.Relation(query, other.text(), other.type()));
         }
         List<String> words = SearchTerms.terms(query);
         if (words.size() > 1 && SearchTerms.isConcise(query)) {
@@ -65,31 +116,34 @@ public final class SearchExpansion {
                 if (queries.size() >= MAX_EXPANSIONS) {
                     break;
                 }
-                for (String other : lookup(caller, word, sourceId, spaceKey)) {
-                    put(queries, replace(query, word, other), own);
+                for (Counterpart other : lookup(caller, word, sourceId, spaceKey)) {
+                    put(queries, replace(query, word, other.text()), own,
+                            new HitReason.Relation(word, other.text(), other.type()));
                 }
             }
         }
-        List<String> result = new ArrayList<>(queries.values());
+        List<Expansion> result = new ArrayList<>(queries.values());
         return result.size() > MAX_EXPANSIONS ? List.copyOf(result.subList(0, MAX_EXPANSIONS)) : List.copyOf(result);
     }
 
-    private List<String> lookup(AccessContext caller, String term, String sourceId, String spaceKey) {
+    private List<Counterpart> lookup(AccessContext caller, String term, String sourceId, String spaceKey) {
         try {
-            List<String> found = relations.expansions(caller, term, sourceId, spaceKey);
-            return found == null ? List.of() : found;
+            List<Counterpart> found = relations.counterparts(caller, term, sourceId, spaceKey);
+            return found == null ? List.of() : found.stream()
+                    .filter(other -> other != null && other.text() != null).toList();
         } catch (RuntimeException e) {
             // Die Suche läuft ohne Erweiterung weiter; nur der Typ ins Log, nie der Begriff.
             return List.of();
         }
     }
 
-    private static void put(Map<String, String> queries, String candidate, String own) {
+    private static void put(Map<String, Expansion> queries, String candidate, String own,
+                            HitReason.Relation relation) {
         String trimmed = candidate == null ? "" : candidate.strip();
         if (!trimmed.isEmpty()) {
             String key = trimmed.toLowerCase(Locale.ROOT);
             if (!key.equals(own)) {
-                queries.putIfAbsent(key, trimmed);
+                queries.putIfAbsent(key, new Expansion(trimmed, relation));
             }
         }
     }

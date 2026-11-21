@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.ranking;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.query.DocumentKind;
+import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
@@ -109,7 +110,9 @@ public final class SemanticVariantSearch implements VariantSearch {
                     metadata.parentPageId(),
                     inDocument ? new KeywordSearch.AttachmentMatch(best.attachmentId(), best.attachmentTitle(),
                             best.partId(), best.partTitle()) : null,
-                    best == null ? null : best.passageId()));
+                    best == null ? null : best.passageId(),
+                    // R1: gefunden über die Ähnlichkeit der Vektoren zu dieser Suchanfrage, ohne Wortangabe.
+                    List.of(HitReason.semantic(variant.text()))));
             if (ranked.relevance() != null) {
                 scores.put(key, ranked.relevance().similarity());
             }

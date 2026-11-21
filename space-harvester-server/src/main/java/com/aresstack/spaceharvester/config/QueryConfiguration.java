@@ -180,7 +180,7 @@ class QueryConfiguration {
                 sourceIds -> syncBeforeSearch.ifAvailable(before -> before.searching(sourceIds)),
                 // #336, Teil 4: bestätigte Synonyme, Varianten und Ausschreibungen als Anfragen je Quelle.
                 relations.getIfAvailable() == null ? SearchExpansion.NONE
-                        : new SearchExpansion(relations.getIfAvailable()::expansions));
+                        : SearchExpansion.typed(relations.getIfAvailable()::counterparts));
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */

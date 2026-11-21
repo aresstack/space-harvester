@@ -122,6 +122,51 @@ class KeywordSearchDiscoveryTest {
     }
 
     @Test
+    void eachHitCarriesTheQueriesThatReallyFoundItWithTheRelationAndTheWordsOfTheIndex() {
+        // R1: Treffergrund aus dem Lauf der Suche; „RSL“ wird über eine bestätigte Abkürzung ausgeweitet.
+        SearchExpansion expansion = SearchExpansion.typed((caller, term, sourceId, spaceKey) ->
+                "RSL".equals(term) ? List.of(new SearchExpansion.Counterpart("Rückmeldeschlüssel", "abbreviation"))
+                        : List.of());
+        wiki.results("RSL", "1").results("Rückmeldeschlüssel", "2");
+        when(texts.search(org.mockito.ArgumentMatchers.eq("RSL"), any(), any(), anyInt())).thenReturn(List.of(
+                new PageTextIndex.Match("wiki", "1", "DEV", "RSL", "Auszug").withWords(
+                        new PageTextIndex.Words(List.of("rsl"), List.of()))));
+        when(texts.search(org.mockito.ArgumentMatchers.eq("Rückmeldeschlüssel"), any(), any(), anyInt()))
+                .thenReturn(List.of(
+                        new PageTextIndex.Match("wiki", "2", "DEV", "B", "Auszug").withWords(
+                                new PageTextIndex.Words(List.of(), List.of("rückmeldeschlüssel"))),
+                        new PageTextIndex.Match("wiki", "1", "DEV", "RSL", "Auszug").withWords(
+                                new PageTextIndex.Words(List.of(), List.of("rückmeldeschlüssel")))));
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.topN(KeywordSearch.MAX_LIMIT), SearchRunLog.NONE, FindingCatalog.NONE,
+                () -> true, KeywordSearch.BeforeSearch.NONE, expansion)
+                .search(APP, new KeywordSearch.Query("RSL", "wiki", Set.of(), Set.of("DEV"), Set.of()), null, 50);
+
+        HitReason.Relation abbreviation = new HitReason.Relation("RSL", "Rückmeldeschlüssel", "abbreviation");
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1", "2");
+        assertThat(results.hits().get(0).reasons()).containsExactly(
+                HitReason.text("RSL", null, List.of("rsl"), List.of()),
+                HitReason.text("Rückmeldeschlüssel", abbreviation, List.of(), List.of("rückmeldeschlüssel")));
+        assertThat(results.hits().get(1).reasons()).containsExactly(
+                HitReason.text("Rückmeldeschlüssel", abbreviation, List.of(), List.of("rückmeldeschlüssel")));
+        assertThat(results.hits().get(1).reasons().getFirst().original()).isFalse();
+    }
+
+    @Test
+    void aProvisionalHitNamesTheSourceQueryWithoutWords() {
+        // R1: Was nur die Quelle meldet, trägt keine erfundene Fundstelle.
+        wiki.results("Hashicorp Vault", "9");
+        when(texts.search(anyString(), any(), any(), anyInt())).thenReturn(List.of());
+
+        KeywordSearch.Results results = search(KeywordSearch.DEFAULT_MAX_QUERIES, ExcerptPriority.off())
+                .search(APP, KeywordSearch.Query.of("Hashicorp Vault"), null, 50);
+
+        assertThat(results.found()).singleElement().satisfies(hit -> assertThat(hit.reasons())
+                .containsExactly(HitReason.source("Hashicorp Vault", null)));
+    }
+
+    @Test
     void aConciseQueryGoesToTheSourceUnchanged() {
         wiki.results("Hashicorp Vault", "1");
 

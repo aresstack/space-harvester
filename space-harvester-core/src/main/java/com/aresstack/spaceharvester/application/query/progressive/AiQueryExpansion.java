@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.query.progressive;
 
+import com.aresstack.spaceharvester.application.query.HitReason;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -88,8 +89,14 @@ public final class AiQueryExpansion implements QueryExpansionStrategy {
 
     @Override
     public List<String> expand(String original, int maxVariants) {
+        return variants(original, maxVariants).texts();
+    }
+
+    /** Vom Modell mit Herkunft {@code MODEL}; beim Rückfall, was der Rückfall meldet. */
+    @Override
+    public Variants variants(String original, int maxVariants) {
         if (maxVariants <= 0) {
-            return List.of();
+            return new Variants(List.of(), null);
         }
         Optional<QueryVariantModel> current;
         try {
@@ -98,7 +105,7 @@ public final class AiQueryExpansion implements QueryExpansionStrategy {
             current = Optional.empty();
         }
         if (current.isEmpty() || original == null || original.isBlank()) {
-            return fallback.expand(original, maxVariants);
+            return fallback.variants(original, maxVariants);
         }
         QueryVariantModel chosen = current.get();
         String question = original.strip();
@@ -111,7 +118,7 @@ public final class AiQueryExpansion implements QueryExpansionStrategy {
             List<String> variants = parse(answer.get(timeout.toNanos(), TimeUnit.NANOSECONDS), original,
                     maxVariants);
             if (!variants.isEmpty()) {
-                return variants;
+                return new Variants(variants, HitReason.Variant.Origin.MODEL);
             }
             LOG.log(System.Logger.Level.INFO, "Modell lieferte keine brauchbaren Varianten; Regeln übernehmen");
         } catch (TimeoutException e) {
@@ -126,9 +133,9 @@ public final class AiQueryExpansion implements QueryExpansionStrategy {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             answer.cancel(true);
-            return List.of();
+            return new Variants(List.of(), null);
         }
-        return fallback.expand(original, maxVariants);
+        return fallback.variants(original, maxVariants);
     }
 
     /**

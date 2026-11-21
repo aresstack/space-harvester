@@ -267,9 +267,21 @@ public interface PageTextIndex {
      * @param partId          Teilkennung der enthaltenen Datei des Anhangs, in der der Treffer liegt (ADR 0026),
      *                        oder {@code null}
      * @param partTitle       Anzeigename dieser enthaltenen Datei oder {@code null}
+     * @param words           welche Wörter der Anfrage in diesem Dokument trafen (R1), wie der Index sie zerlegt;
+     *                        {@link Words#NONE}, wenn der Index es nicht meldet
      */
     record Match(String sourceId, String pageId, String spaceKey, String title, String snippet, String attachmentId,
-                 String attachmentTitle, String passageId, String partId, String partTitle) {
+                 String attachmentTitle, String passageId, String partId, String partTitle, Words words) {
+
+        public Match {
+            words = words == null ? Words.NONE : words;
+        }
+
+        public Match(String sourceId, String pageId, String spaceKey, String title, String snippet, String attachmentId,
+                     String attachmentTitle, String passageId, String partId, String partTitle) {
+            this(sourceId, pageId, spaceKey, title, snippet, attachmentId, attachmentTitle, passageId, partId,
+                    partTitle, Words.NONE);
+        }
 
         public Match(String sourceId, String pageId, String spaceKey, String title, String snippet, String attachmentId,
                      String attachmentTitle, String passageId) {
@@ -296,7 +308,13 @@ public interface PageTextIndex {
         /** Wie {@link #withSnippet(String)}, mit der Passage-ID des Absatzes, aus dem der neue Auszug stammt. */
         public Match withSnippet(String snippet, String passageId) {
             return new Match(sourceId, pageId, spaceKey, title, snippet, attachmentId, attachmentTitle, passageId,
-                    partId, partTitle);
+                    partId, partTitle, words);
+        }
+
+        /** Derselbe Treffer mit den Wörtern, die in ihm trafen. */
+        public Match withWords(Words words) {
+            return new Match(sourceId, pageId, spaceKey, title, snippet, attachmentId, attachmentTitle, passageId,
+                    partId, partTitle, words);
         }
 
         /** Ob der Treffer im Text eines Anhangs liegt. */
@@ -313,6 +331,24 @@ public interface PageTextIndex {
                 return DocumentKind.of(partTitle, null);
             }
             return DocumentKind.of(attachmentId != null ? attachmentTitle : title, null);
+        }
+    }
+
+    /**
+     * Die Wörter einer Anfrage, die in einem gefundenen Dokument wirklich trafen (R1): genau die Wortabfragen, aus denen
+     * der Index die Rangfolge bildet, nicht aus dem Auszug erschlossen.
+     *
+     * @param inTitle im Titel des Dokuments (Seitentitel, Dateiname des Anhangs oder Name der enthaltenen Datei)
+     * @param inText  im Text des Dokuments
+     */
+    record Words(List<String> inTitle, List<String> inText) {
+
+        /** Nicht gemeldet. */
+        public static final Words NONE = new Words(List.of(), List.of());
+
+        public Words {
+            inTitle = inTitle == null ? List.of() : List.copyOf(inTitle);
+            inText = inText == null ? List.of() : List.copyOf(inText);
         }
     }
 }

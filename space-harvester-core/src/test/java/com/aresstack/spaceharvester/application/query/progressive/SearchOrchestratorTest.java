@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.query.progressive;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.Completion;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.RankedHit;
@@ -128,6 +129,43 @@ class SearchOrchestratorTest {
         assertThat(scoredAgainst).containsOnly(ORIGINAL);
         assertThat(result.hits()).extracting(hit -> hit.hit().pageId()).containsExactly("strong", "weak");
         assertThat(result.hits()).extracting(RankedHit::foundBy).containsExactly(1, 0);
+    }
+
+    @Test
+    void theReasonsOfAllVariantsThatFoundAHitAreUnitedAndNameTheVariantAndItsOrigin() throws Exception {
+        // R1: Ursachen aus jeder Suchanfrage, die den Treffer brachte; die Herkunft meldet die Strategie.
+        search.put(ORIGINAL, new KeywordSearch.Results("wiki", List.of(hit("a").withReasons(List.of(
+                HitReason.text(ORIGINAL, null, List.of(), List.of("dienstreise"))))), List.of(), null, true, 0));
+        search.put("Dienstreise", new KeywordSearch.Results("wiki", List.of(
+                hit("a").withReasons(List.of(HitReason.text("Dienstreise", null, List.of("dienstreise"), List.of()))),
+                hit("b").withReasons(List.of(HitReason.text("Dienstreise", null, List.of(), List.of("dienstreise"))))),
+                List.of(), null, true, 0));
+        HitScorer scorer = (original, hits) -> hits.stream().mapToDouble(hit -> 0.5).toArray();
+        orchestrator = new SearchOrchestrator(search, new QueryExpansionStrategy() {
+            @Override
+            public List<String> expand(String original, int maxVariants) {
+                return List.of("Dienstreise");
+            }
+
+            @Override
+            public Variants variants(String original, int maxVariants) {
+                return new Variants(expand(original, maxVariants), HitReason.Variant.Origin.MODEL);
+            }
+        }, scorer);
+
+        ProgressiveResult result = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                profile(SearchProfile.Mode.ALL_VARIANTS, 3)).result().get(10, TimeUnit.SECONDS);
+
+        HitReason.Variant variant = new HitReason.Variant(1, HitReason.Variant.Origin.MODEL);
+        RankedHit a = result.hits().stream().filter(hit -> hit.hit().pageId().equals("a")).findFirst().orElseThrow();
+        RankedHit b = result.hits().stream().filter(hit -> hit.hit().pageId().equals("b")).findFirst().orElseThrow();
+        assertThat(a.hit().reasons()).containsExactly(
+                HitReason.text(ORIGINAL, null, List.of(), List.of("dienstreise")),
+                HitReason.text("Dienstreise", null, List.of("dienstreise"), List.of()).fromVariant(variant));
+        assertThat(b.hit().reasons()).containsExactly(
+                HitReason.text("Dienstreise", null, List.of(), List.of("dienstreise")).fromVariant(variant));
+        // Der Reranker ordnet nur um: ein Kennzeichen, keine Ursache.
+        assertThat(result.hits()).extracting(RankedHit::reranked).containsOnly(true);
     }
 
     @Test

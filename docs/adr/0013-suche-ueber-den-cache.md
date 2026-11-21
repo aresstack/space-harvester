@@ -65,3 +65,15 @@ eigenes Dokument mit der Seite als Eltern (`page-text-index/v2`; seit ADR 0026 j
 bestes Dokument, ein Anhangstreffer trägt `matchedIn: attachment` und den Anhang. Ein Anhang hat keine eigenen Rechte;
 er wird mit seiner Seite seitenweise geprüft (`metadata` und `content`, ADR 0014, Punkt 4) und erscheint ohne sie
 nirgends, auch nicht als Zähler.
+
+## Fortschreibung: Treffergrund (21.11.2026, R1)
+
+Jeder Treffer trägt die Ursachen, die ihn tatsächlich geliefert haben (`KeywordSearch.Hit#reasons`, REST `reasons`):
+den Wortlaut, der an den Volltextindex oder die Suche der Quelle ging, die bestätigte Begriffsbeziehung, aus der eine
+Ausweitung entstand (Begriff, Gegenstück, Art), die Variante der progressiven Suche samt gemeldeter Herkunft (Regeln
+oder Modell) und die Wörter, die im Index in Titel und Text des gefundenen Dokuments trafen. Die Wörter stammen aus
+den Postings genau der Wortabfragen der Rangfolge, nur für die ausgelieferten Treffer, nie aus dem Auszug. Funde, die
+nur die Quelle meldet, und semantische Treffer tragen keine Wörter. Beim Zusammenführen werden Ursachen vereinigt,
+nichts wird nachträglich erklärt. Der Reranker ist keine Ursache; ob er bewertet hat, steht als eigenes Kennzeichen
+(`reranked`) am Treffer der progressiven Suche. Rangfolge und Treffermenge bleiben unverändert, die Punkte 1 bis 3
+gelten weiter.

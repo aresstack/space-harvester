@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.query.SearchExpansion;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
@@ -312,6 +313,29 @@ public class TermRelations {
             }
         }
         return List.copyOf(found);
+    }
+
+    /**
+     * Wie {@link #expansions(AccessContext, String, String, String)}, je Gegenstück mit der Art seiner Beziehung (R1);
+     * gibt es mehrere Beziehungen zum selben Gegenstück, die erste.
+     */
+    public List<SearchExpansion.Counterpart> counterparts(AccessContext caller, String term, String sourceId,
+                                                          String spaceKey) {
+        String normalized = TermText.normalize(term);
+        Visibility visibility = new Visibility(caller);
+        Map<String, SearchExpansion.Counterpart> found = new LinkedHashMap<>();
+        for (TermRelation relation : store.all()) {
+            RelationScope scope = relation.scope();
+            boolean inScope = scope.global()
+                    || sourceId != null && scope.sourceId().equals(sourceId)
+                    && (scope.spaceKey() == null || scope.spaceKey().equals(spaceKey));
+            if (inScope && relation.status() == ReviewStatus.CONFIRMED && relation.type().expandsSearch()
+                    && relation.touches(normalized) && visibility.visible(relation).isPresent()) {
+                String other = relation.other(normalized);
+                found.putIfAbsent(other, new SearchExpansion.Counterpart(other, relation.type().id()));
+            }
+        }
+        return List.copyOf(found.values());
     }
 
     public List<String> expansions(AccessContext caller, String term, String sourceId) {
