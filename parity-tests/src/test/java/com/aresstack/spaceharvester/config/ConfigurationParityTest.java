@@ -140,6 +140,9 @@ class ConfigurationParityTest {
                   model: check-model
                 analyzer: model
                 analyzer-model: statement-model
+              images:
+                automatic: true
+                max-per-run: 120
             """;
 
     private static final String TOKEN = "parity-token";
@@ -238,6 +241,9 @@ class ConfigurationParityTest {
         assertThat(app.check()).isEqualTo(service2.check())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.CheckSettings(
                         com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "check-model"));
+        // Fahrplan B1: automatische Bildbeschreibung, beim Dienst über withSyncRules.
+        assertThat(app.images()).isEqualTo(service2.images())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 120));
         // Fahrplan A2/A3: Aussagenanalyse (Analysator = gelesene Ablage, eigenes Modell).
         assertThat(app.analyzer()).isEqualTo(service2.analyzer())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.AnalyzerSettings(

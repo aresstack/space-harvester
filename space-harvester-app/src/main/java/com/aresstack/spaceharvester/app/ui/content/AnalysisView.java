@@ -76,6 +76,8 @@ final class AnalysisView extends JPanel {
     private final JPanel stepArea = new JPanel(new BorderLayout());
     private final InfoPopup popup = new InfoPopup();
     private final RelationTab relations;
+    private final SubpageSection below = new SubpageSection(RELATIONS, 8, "Begriff", "Beziehung", "Zu Begriff",
+            "Status");
     private Runner runner = new Runner() {
         @Override
         public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
@@ -121,9 +123,21 @@ final class AnalysisView extends JPanel {
             add(stepArea, BorderLayout.NORTH);
         }
         relations.heading(heading(), null);
-        relations.onChanged(this::count);
+        relations.onChanged(() -> {
+            count();
+            relationsChanged.run();
+        });
         add(relations.component(), BorderLayout.CENTER);
+        if (withSteps) {
+            // Fahrplan P3: die Beziehungen der Unterseiten abgetrennt unter denen der Seite.
+            add(below, BorderLayout.SOUTH);
+        }
         fitSteps();
+    }
+
+    /** Der Abschnitt „Aus Unterseiten“ (nur auf der Seite). */
+    SubpageSection below() {
+        return below;
     }
 
     /** Die Analyseschritte der gezeigten Seite; {@code result} liefert je Schritt das Ergebnis in Worten. */
@@ -237,6 +251,16 @@ final class AnalysisView extends JPanel {
         popup.showAt(steps, x, y);
     }
 
+    private Runnable relationsChanged = () -> { };
+
+    /** {@code listener} läuft, wenn eine Beziehung angelegt, bestätigt, abgelehnt oder entfernt wurde. */
+    void onRelationsChanged(Runnable listener) {
+        relationsChanged = Objects.requireNonNull(listener, "listener");
+    }
+
+    private com.aresstack.spaceharvester.app.ui.IconButton proposeIcon;
+    private com.aresstack.spaceharvester.app.ui.IconButton createIcon;
+
     /** „Synonyme vorschlagen“ für die Reiterzeile; nur sichtbar, solange „Analyse“ gewählt ist. */
     ComposerButton proposeButton() {
         return relations.proposeButton();
@@ -245,6 +269,35 @@ final class AnalysisView extends JPanel {
     /** „Neue Beziehung …“ für die Reiterzeile; nur sichtbar, solange „Analyse“ gewählt ist. */
     ComposerButton createButton() {
         return relations.createButton();
+    }
+
+    /**
+     * „Synonyme vorschlagen“ als Icon-Knopf für die enge Reiterzeile einer Seite (UX-Manager, 960 px): gleicher Wortlaut
+     * als Tooltip und zugänglicher Name, gleiche Aktion, gesperrt wie der Textknopf.
+     */
+    com.aresstack.spaceharvester.app.ui.IconButton proposeIcon() {
+        if (proposeIcon == null) {
+            proposeIcon = mirror(proposeButton(), com.aresstack.spaceharvester.app.ui.Glyph.SPARKLE);
+        }
+        return proposeIcon;
+    }
+
+    /** „Neue Beziehung …“ als Icon-Knopf (Plus) für die Reiterzeile einer Seite; wie {@link #proposeIcon()}. */
+    com.aresstack.spaceharvester.app.ui.IconButton createIcon() {
+        if (createIcon == null) {
+            createIcon = mirror(createButton(), com.aresstack.spaceharvester.app.ui.Glyph.PLUS);
+        }
+        return createIcon;
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.IconButton mirror(javax.swing.AbstractButton button,
+                                                                         javax.swing.Icon glyph) {
+        com.aresstack.spaceharvester.app.ui.IconButton icon =
+                new com.aresstack.spaceharvester.app.ui.IconButton(glyph, button.getText());
+        icon.setEnabled(button.isEnabled());
+        button.addPropertyChangeListener("enabled", e -> icon.setEnabled(button.isEnabled()));
+        icon.addActionListener(e -> button.doClick(0));
+        return icon;
     }
 
     // --------------------------------------------------------------------------------------------- Namen und Worte

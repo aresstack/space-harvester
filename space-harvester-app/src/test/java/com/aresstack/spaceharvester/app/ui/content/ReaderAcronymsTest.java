@@ -54,6 +54,15 @@ class ReaderAcronymsTest {
     private static final String OTHER_PAGE = "<h1>Prüfung</h1><p>Die API (Automatische Prüfungs Instanz) prüft "
             + "jede Lieferung.</p>";
 
+    private static void layoutAll(java.awt.Component component) {
+        component.doLayout();
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                layoutAll(child);
+            }
+        }
+    }
+
     @TempDir
     Path home;
 
@@ -297,6 +306,44 @@ class ReaderAcronymsTest {
         assertThat(onEdt(() -> panel.terms().belowChips())).extracting(chip -> chip.getText())
                 .noneMatch(text -> text.startsWith("API"));
         assertThat(onEdt(() -> panel.terms().alsoBelowTexts())).contains("+1");
+
+        // P3 Beziehungen: die der Unterseite („ZV · Zahlungsverkehr“) abgetrennt, Herkunft die Unterseite; die von
+        // Hand angelegte Beziehung zu „API“ betrifft die Seite selbst und steht nur oben.
+        workspace.addRelation(new com.aresstack.spaceharvester.application.terms.TermRelations.NewRelation("ZV",
+                "Zahlungsverkehr", com.aresstack.spaceharvester.application.terms.RelationType.ABBREVIATION,
+                com.aresstack.spaceharvester.application.terms.RelationScope.GLOBAL, null, List.of()));
+        workspace.addRelation(new com.aresstack.spaceharvester.application.terms.TermRelations.NewRelation("API",
+                "Schnittstelle", com.aresstack.spaceharvester.application.terms.RelationType.RELATED,
+                com.aresstack.spaceharvester.application.terms.RelationScope.GLOBAL, null, List.of()));
+        List<SubpageSection.Row> relations = PageDetailPanel.belowRelations(workspace, "wiki", "200",
+                onEdt(() -> panel.subpages().below()));
+        assertThat(relations).anySatisfy(row -> {
+            assertThat(row.cells().get(0) + " " + row.cells().get(2)).contains("ZV");
+            assertThat(row.originText()).isEqualTo("Zahlungen");
+        });
+        assertThat(relations).noneSatisfy(row -> assertThat(row.cells().get(0)).isEqualTo("API"));
+        onEdt(() -> {
+            panel.selectTab("Beziehungen");
+            return null;
+        });
+        awaitTrue(() -> onEdt(() -> panel.analysisView().below().count() > 0));
+        assertThat(onEdt(() -> panel.analysisView().below().table().getColumnName(4))).isEqualTo("Unterseite");
+        // UX-Manager: Bei 960 px stehen alle sieben Unterreiter in einer Zeile, auch mit Checkbox und den beiden
+        // Aktionen als Icon-Knöpfe; 900 px lässt Luft für die breitere Schrift der CI.
+        assertThat(onEdt(() -> {
+            panel.setSize(900, 700);
+            layoutAll(panel);
+            java.util.Set<Integer> rows = new java.util.HashSet<>();
+            for (String name : panel.analysisTabs().names()) {
+                javax.swing.AbstractButton tab = panel.analysisTabs().button(name);
+                rows.add(javax.swing.SwingUtilities.convertPoint(tab.getParent(), tab.getLocation(), panel).y);
+            }
+            return rows.size() + "/" + panel.analysisTabs().names().size();
+        })).isEqualTo("1/7");
+        assertThat(onEdt(() -> panel.analysisView().createIcon().getAccessibleContext().getAccessibleName()))
+                .isEqualTo("Neue Beziehung …");
+        assertThat(onEdt(() -> panel.analysisView().proposeIcon().getToolTipText()))
+                .isEqualTo("Synonyme vorschlagen");
 
         onEdt(() -> {
             panel.subpages().box().setSelected(false);

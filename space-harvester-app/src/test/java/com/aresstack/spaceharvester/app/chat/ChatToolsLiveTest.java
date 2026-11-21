@@ -68,6 +68,26 @@ class ChatToolsLiveTest {
         assertThat(events.completed.toLowerCase(Locale.ROOT)).contains("spool");
     }
 
+    /** R2/C1: mit der Suchmethode „Nachbarseiten“ sucht das Werkzeug weiter nur im Bereich und antwortet richtig. */
+    @Test
+    void withNeighborsTheToolSearchStaysInTheAreaAndAnswers() throws Exception {
+        Workspace workspace = start(System.getProperty("chat.live.model", "gemma4:12b"));
+        PageSelection space = space(workspace);
+        Recording port = new Recording(workspace.aiChat());
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, model(), null, List.of(),
+                "Suche im Bereich: Warum bricht der Nachtlauf ab? Antworte mit Quellenangabe.", space,
+                "Handbuch · 3 Seiten", events, Runnable::run).knowledgeByTools(null).searchingNeighbors(true).start();
+        assertThat(events.done.await(10, TimeUnit.MINUTES)).isTrue();
+
+        System.out.println("[live] Nachbarseiten: Anfragen " + port.requests.size() + ", Werkzeuge: " + events.using
+                + ", Antwort: " + events.completed);
+        assertThat(events.failed).isNull();
+        assertThat(events.using).isNotEmpty();
+        assertThat(events.completed.toLowerCase(Locale.ROOT)).contains("spool");
+    }
+
     @Test
     void cancellingDuringTheToolLoopEndsTheTurn() throws Exception {
         Workspace workspace = start(System.getProperty("chat.live.model", "gemma4:12b"));

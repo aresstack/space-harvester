@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
+import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
@@ -570,6 +571,27 @@ public final class ConfigFileEditor {
             throw new IllegalArgumentException("Die Vorstufe „Sätze vereinfachen“ ließ sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.statements.simplification von Hand "
                     + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer automatischer Bildbeschreibung ({@code space-harvester.images.automatic} und
+     * {@code .max-per-run}, Fahrplan B1), dieselben Schlüssel wie im Dienst; nur diese beiden Werte ändern sich.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withImages(Path file, Draft base, ImageSettings images) {
+        String text = nested(base.text(), "images", "automatic",
+                indent -> indent + "automatic: " + images.automatic() + "\n");
+        text = nested(text, "images", "max-per-run", indent -> indent + "max-per-run: " + images.maxPerRun() + "\n");
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.images().equals(images)) {
+            throw new IllegalArgumentException("Die automatische Bildbeschreibung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.images von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
     }

@@ -1431,11 +1431,17 @@ public final class Workspace {
      */
     public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
                                         java.nio.file.Path output, String version) {
+        return startSearchQuality(suite, previous, output, version, false);
+    }
+
+    /** Wie oben, mit bzw. ohne die Suchmethode „Nachbarseiten“ (R2), damit ihr Nutzen messbar ist. */
+    public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
+                                        java.nio.file.Path output, String version, boolean neighbors) {
         JobStatus status = harvester.searchQuality().submit(caller,
                 new com.aresstack.spaceharvester.application.quality.SearchQualityRuns.Request(suite, previous, output,
                         com.aresstack.spaceharvester.app.chat.ChatKnowledge.MAX_SOURCES,
                         java.time.Duration.ofSeconds(com.aresstack.spaceharvester.app.chat.ChatTurn.SEARCH_SECONDS),
-                        version));
+                        version, neighbors));
         activities.remember(status.id());
         return status;
     }
@@ -2124,6 +2130,22 @@ public final class Workspace {
     public List<PageNavigation.SubpageReference> subpageReferences(
             com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
         return harvester.navigation().subpageReferences(caller, pages);
+    }
+
+    /**
+     * Je Suchwert die Seiten einer Menge ({@code TermQueries.pagesByTerm}, Fahrplan P3), etwa für die Herkunft einer
+     * Beziehung unter „Aus Unterseiten“. Nie auf dem EDT.
+     */
+    public java.util.Map<String, List<com.aresstack.spaceharvester.application.snapshot.PageKey>> termPages(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.terms().pagesByTerm(caller, pages);
+    }
+
+    /** Titel und Space von Seiten aus dem Cache ({@code PageNavigation.nodes}); Seiten ohne Recht fehlen. */
+    public java.util.Map<com.aresstack.spaceharvester.application.snapshot.PageKey,
+            com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode> pageNodes(
+            java.util.Collection<com.aresstack.spaceharvester.application.snapshot.PageKey> keys) {
+        return harvester.navigation().nodes(caller, keys);
     }
 
     /**

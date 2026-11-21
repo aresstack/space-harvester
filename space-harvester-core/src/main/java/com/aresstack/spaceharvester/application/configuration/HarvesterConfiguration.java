@@ -39,13 +39,15 @@ import java.util.regex.Pattern;
  * @param simplification Vorstufe „Sätze vereinfachen“ der Aussagenanalyse (ADR 0032, FL3)
  * @param standing Wörter für überholte Seiten und Entwürfe der Status-quo-Sicht (ADR 0032, FL6)
  * @param check   Prüfschritt der Aussagenanalyse (ADR 0032, FL4)
+ * @param images  automatische Bildbeschreibung nach dem Abgleich (Fahrplan B1)
  * @param analyzer Analysator und Ablage der Aussagenanalyse (Fahrplan Paket A2/A3)
  */
 public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
                                      NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles,
                                      ExportSettings export, TermSettings terms, EnrichmentSettings enrichment,
                                      ChangeLogSettings changeLog, SimplificationSettings simplification,
-                                     StandingSettings standing, CheckSettings check, AnalyzerSettings analyzer) {
+                                     StandingSettings standing, CheckSettings check, ImageSettings images,
+                                     AnalyzerSettings analyzer) {
 
     /** Präfix aller Properties in Server und App. */
     public static final String PREFIX = "space-harvester.";
@@ -55,7 +57,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             SearchSettings.DEFAULT, SyncSettings.DEFAULT, NetworkSettings.DEFAULT, StorageSettings.DEFAULT,
             LocalFileSettings.DEFAULT, ExportSettings.DEFAULT, TermSettings.DEFAULT, EnrichmentSettings.DEFAULT,
             ChangeLogSettings.DEFAULT, SimplificationSettings.DEFAULT, StandingSettings.DEFAULT,
-            CheckSettings.DEFAULT, AnalyzerSettings.DEFAULT);
+            CheckSettings.DEFAULT, ImageSettings.DEFAULT, AnalyzerSettings.DEFAULT);
 
     /** Ohne freigegebene Ordner ({@link LocalFileSettings#DEFAULT}); {@link #withLocalFiles} ergänzt sie. */
     public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
@@ -120,14 +122,14 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 standing, CheckSettings.DEFAULT);
     }
 
-    /** Mit der Vorgabe der Aussagenanalyse ({@link AnalyzerSettings#DEFAULT}); {@link #withAnalyzer}. */
+    /** Mit den Vorgaben von Bildbeschreibung und Aussagenanalyse; {@link #withImages}, {@link #withAnalyzer}. */
     public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
                                   NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles,
                                   ExportSettings export, TermSettings terms, EnrichmentSettings enrichment,
                                   ChangeLogSettings changeLog, SimplificationSettings simplification,
                                   StandingSettings standing, CheckSettings check) {
         this(ai, search, sync, network, storage, localFiles, export, terms, enrichment, changeLog, simplification,
-                standing, check, AnalyzerSettings.DEFAULT);
+                standing, check, ImageSettings.DEFAULT, AnalyzerSettings.DEFAULT);
     }
 
     public HarvesterConfiguration {
@@ -144,6 +146,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         simplification = simplification == null ? SimplificationSettings.DEFAULT : simplification;
         standing = standing == null ? StandingSettings.DEFAULT : standing;
         check = check == null ? CheckSettings.DEFAULT : check;
+        images = images == null ? ImageSettings.DEFAULT : images;
         analyzer = analyzer == null ? AnalyzerSettings.DEFAULT : analyzer;
     }
 
@@ -179,72 +182,77 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
 
     public HarvesterConfiguration withAi(AiServiceSettings value) {
         return new HarvesterConfiguration(value, search, sync, network, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification, standing, check, analyzer);
+                changeLog, simplification, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withSearch(SearchSettings value) {
         return new HarvesterConfiguration(ai, value, sync, network, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification, standing, check, analyzer);
+                changeLog, simplification, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withSync(SyncSettings value) {
         return new HarvesterConfiguration(ai, search, value, network, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification, standing, check, analyzer);
+                changeLog, simplification, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withNetwork(NetworkSettings value) {
         return new HarvesterConfiguration(ai, search, sync, value, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification, standing, check, analyzer);
+                changeLog, simplification, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withStorage(StorageSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, value, localFiles, export, terms, enrichment,
-                changeLog, simplification, standing, check, analyzer);
+                changeLog, simplification, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withLocalFiles(LocalFileSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, value, export, terms, enrichment,
-                changeLog, simplification, standing, check, analyzer);
+                changeLog, simplification, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withExport(ExportSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, value, terms, enrichment,
-                changeLog, simplification, standing, check, analyzer);
+                changeLog, simplification, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withTerms(TermSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, value, enrichment,
-                changeLog, simplification, standing, check, analyzer);
+                changeLog, simplification, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withChangeLog(ChangeLogSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, enrichment,
-                value, simplification, standing, check, analyzer);
+                value, simplification, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withSimplification(SimplificationSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, enrichment,
-                changeLog, value, standing, check, analyzer);
+                changeLog, value, standing, check, images, analyzer);
     }
 
     public HarvesterConfiguration withStanding(StandingSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification, value, check, analyzer);
+                changeLog, simplification, value, check, images, analyzer);
     }
 
     public HarvesterConfiguration withCheck(CheckSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification, standing, value, analyzer);
+                changeLog, simplification, standing, value, images, analyzer);
     }
 
     public HarvesterConfiguration withAnalyzer(AnalyzerSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, enrichment,
-                changeLog, simplification, standing, check, value);
+                changeLog, simplification, standing, check, images, value);
+    }
+
+    public HarvesterConfiguration withImages(ImageSettings value) {
+        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, enrichment,
+                changeLog, simplification, standing, check, value, analyzer);
     }
 
     public HarvesterConfiguration withEnrichment(EnrichmentSettings value) {
         return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, value,
-                changeLog, simplification, standing, check, analyzer);
+                changeLog, simplification, standing, check, images, analyzer);
     }
 
     /**
@@ -496,8 +504,16 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(AnalyzerSettings.ANALYZER, e.getMessage()));
         }
+        ImageSettings images = ImageSettings.DEFAULT;
+        try {
+            images = new ImageSettings(read.bool(ImageSettings.AUTOMATIC, false),
+                    read.integer(ImageSettings.MAX_PER_RUN, ImageSettings.DEFAULT_MAX_PER_RUN));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(ImageSettings.MAX_PER_RUN, e.getMessage()));
+        }
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
-                storage, localFiles, export, terms, enrichment, changeLog, simplification, standing, check, analyzer);
+                storage, localFiles, export, terms, enrichment, changeLog, simplification, standing, check, images,
+                analyzer);
         problems.addAll(configuration.validate());
         List<ConfigurationProblem> all = problems.stream().distinct().toList();
         return new Parsed(all.isEmpty() ? configuration : null, all);

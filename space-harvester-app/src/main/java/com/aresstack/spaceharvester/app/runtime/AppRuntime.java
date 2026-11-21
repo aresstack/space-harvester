@@ -262,7 +262,7 @@ public final class AppRuntime implements AutoCloseable {
                 .withLocalFiles(settings.localFiles()).withTerms(settings.terms())
                 .withEnrichment(settings.enrichment()).withChangeLog(settings.cache().changeLog())
                 .withSimplification(settings.simplification()).withStanding(settings.standing())
-                .withCheck(settings.check()).withAnalyzer(settings.analyzer());
+                .withCheck(settings.check()).withImages(settings.images()).withAnalyzer(settings.analyzer());
     }
 
     /**

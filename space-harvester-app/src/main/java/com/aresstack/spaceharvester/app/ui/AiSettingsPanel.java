@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.app.ui.content.AnalyzerNames;
 import com.aresstack.spaceharvester.application.check.CheckScope;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
+import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
@@ -226,6 +227,35 @@ final class AiSettingsPanel {
             + "oder ablehnst. Was du dort entschieden hast, bleibt bestehen. Gilt ohne Neustart beim nächsten Abgleich. "
             + "Schlüssel in der Konfigurationsdatei: space-harvester.terms.synonyms.automatic.";
     /**
+     * Bilder automatisch beschreiben ({@code space-harvester.images.automatic} und {@code .max-per-run}, Fahrplan B1):
+     * nach dem Abgleich einer Quelle und nach neuer KI-Freigabe beschreibt ein eigener Auftrag die Bilder freigegebener
+     * Seiten, höchstens so viele je Lauf. Standard aus. Gilt ohne Neustart beim nächsten Abgleich.
+     */
+    final javax.swing.JCheckBox automaticImages = Comic.checkBox(AUTOMATIC_IMAGES_TEXT);
+    final JSpinner imagesPerRun = countSpinner(0, MAX_IMAGES_PER_RUN, 50);
+    final HelpButton automaticImagesHelp = new HelpButton(Dialogs.CLOSE_SIZE, AUTOMATIC_IMAGES_LABEL,
+            AUTOMATIC_IMAGES_HELP);
+    static final String AUTOMATIC_IMAGES_LABEL = "Bilder";
+    static final String AUTOMATIC_IMAGES_TEXT = "Nach jedem Abgleich beschreiben";
+    static final String IMAGES_PER_RUN_BEFORE = "höchstens";
+    static final String IMAGES_PER_RUN_AFTER = "je Lauf";
+    static final int MAX_IMAGES_PER_RUN = 1_000_000;
+    /** Die Zeile auf der Abschlussseite des Assistenten. */
+    static final String AUTOMATIC_IMAGES_OFF = "nur auf Klick";
+    static final String AUTOMATIC_IMAGES_HELP = "Mit Häkchen beschreibt Space Harvester nach jedem Abgleich einer "
+            + "Quelle und immer dann, wenn eine Seite neu für die KI freigegeben wird, von selbst die Bilder dieser "
+            + "Quelle mit dem Vision-Modell; der Lauf erscheint unter Aufträge als „Bilder beschreiben“ und lässt sich "
+            + "dort abbrechen. Was schon beschrieben ist, bleibt.\n\n"
+            + "Beschrieben werden nur Bilder von Seiten mit KI-Freigabe und nur solche, die für das eingestellte "
+            + "Vision-Modell noch keine Beschreibung haben; ein Bild geht nie zweimal an das Modell. Je Lauf gehen "
+            + "höchstens so viele Bilder an das Modell, wie hinter „" + IMAGES_PER_RUN_BEFORE + "“ steht (0 = "
+            + "unbegrenzt); der Rest folgt beim nächsten Abgleich, und der Auftrag nennt die Zahl der offenen "
+            + "Bilder. Die Grenze kann um die Bilder einer Seite überzogen werden.\n\n"
+            + "Ohne Vision-Modell wird nichts beschrieben; der Auftrag endet gelb. Ohne Häkchen gibt es "
+            + "Beschreibungen nur über den Knopf im Reiter „Bilder“ der Seite. Gilt ohne Neustart beim nächsten "
+            + "Abgleich. Schlüssel in der Konfigurationsdatei: space-harvester.images.automatic und "
+            + "space-harvester.images.max-per-run.";
+    /**
      * Aussagenanalyse ({@code space-harvester.statements.analyzer} und {@code analyzer-model}, Fahrplan A2/A3): EINE
      * Einstellung für den vorgewählten Analysator und die Ablage, aus der alle Ansichten lesen, dazu das Modell nur für
      * den KI-Analysator.
@@ -407,6 +437,13 @@ final class AiSettingsPanel {
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
                 "Beschreibt die Bilder einer Seite (Leseansicht › Bilder); leer: keine Bildbeschreibung");
+        automaticImages.setToolTipText("Bilder freigegebener Seiten nach jedem Abgleich und nach neuer KI-Freigabe "
+                + "beschreiben; ohne Häkchen nur auf Klick");
+        imagesPerRun.setToolTipText("Höchstens so viele Bilder gehen je Lauf und Quelle an das Vision-Modell; "
+                + "0 = unbegrenzt");
+        // Eine Zeile (UX-Manager 21.11.): Die Obergrenze gehört zur Checkbox und bleibt immer bedienbar.
+        modelRows.add(AUTOMATIC_IMAGES_LABEL, Comic.row(automaticImages, Comic.text(IMAGES_PER_RUN_BEFORE),
+                imagesPerRun, Comic.text(IMAGES_PER_RUN_AFTER), automaticImagesHelp), null);
         modelRows.add(RETRIES_LABEL, retries, RETRIES_HINT);
         modelRows.add(PARALLEL_LABEL, parallel, PARALLEL_HINT);
         THINKING_NAMES.forEach(stepThinking::addItem);
@@ -550,6 +587,9 @@ final class AiSettingsPanel {
         chatMaxTokens.setText(current.chatMaxTokens() == null ? "" : current.chatMaxTokens());
         judgedPairs.setValue(Math.min(savedBudget(settings).maxJudgedPairs(), SynonymRunForm.MAX_PAIRS));
         automaticSynonyms.setSelected(savedBudget(settings).automatic());
+        ImageSettings images = savedImages(settings);
+        automaticImages.setSelected(images.automatic());
+        imagesPerRun.setValue(Math.min(images.maxPerRun(), MAX_IMAGES_PER_RUN));
         SimplificationSettings simplification = savedSimplification(settings);
         simplifyMode.setSelectedItem(simplification.mode() == SimplificationSettings.Mode.ALWAYS ? SIMPLIFY_ALWAYS
                 : SIMPLIFY_WHERE_NEEDED);
@@ -921,6 +961,7 @@ final class AiSettingsPanel {
                 || !accessDraft().equals(shownAccess))
                 || judgedPairs() != savedBudget(settings).maxJudgedPairs()
                 || automaticSynonyms() != savedBudget(settings).automatic()
+                || !images().equals(savedImages(settings))
                 || !simplification().equals(savedSimplification(settings))
                 || !check().equals(savedCheck(settings))
                 || !analyzer().equals(savedAnalyzer(settings));
@@ -981,11 +1022,12 @@ final class AiSettingsPanel {
         boolean automatic = automaticSynonyms();
         SimplificationSettings simplification = simplification();
         CheckSettings check = check();
+        ImageSettings images = images();
         AnalyzerSettings analyzer = analyzer();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)
                 && judged == savedBudget(settings).maxJudgedPairs() && automatic == savedBudget(settings).automatic()
                 && simplification.equals(savedSimplification(settings)) && check.equals(savedCheck(settings))
-                && analyzer.equals(savedAnalyzer(settings))) {
+                && images.equals(savedImages(settings)) && analyzer.equals(savedAnalyzer(settings))) {
             if (!quiet) {
                 feedback.info("Nichts geändert", null);
             }
@@ -1042,7 +1084,7 @@ final class AiSettingsPanel {
             if (ollama) {
                 Measured measured = measure(context, runtime, draft, new char[0], false);
                 store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check,
-                        analyzer);
+                        images, analyzer);
                 return measured;
             }
             if (chosen.fromKeePass()) {
@@ -1055,7 +1097,7 @@ final class AiSettingsPanel {
                     Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
                             false);
                     store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check,
-                        analyzer);
+                        images, analyzer);
                     return measured;
                 } finally {
                     if (resolved != null) {
@@ -1065,7 +1107,7 @@ final class AiSettingsPanel {
             }
             Measured measured = measure(context, runtime, draft, key, true);
             store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, automatic, simplification,
-                    check, analyzer);
+                    check, images, analyzer);
             return measured;
         }, measured -> {
             if (!ollama && !chosen.fromKeePass() && !vault && key.length > 0) {
@@ -1165,10 +1207,21 @@ final class AiSettingsPanel {
         store(context, draft, key, access, judgedPairs, automatic, simplification, check, null);
     }
 
+    /**
+     * Wie {@link #store(AppContext, AiDraft, char[], AiAccess, Integer, Boolean, SimplificationSettings,
+     * CheckSettings)}, dazu die automatische Bildbeschreibung ({@code images.*}); {@code null} oder unverändert lässt
+     * sie in Ruhe.
+     */
+    static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
+                      Boolean automatic, SimplificationSettings simplification, CheckSettings check,
+                      ImageSettings images) throws IOException {
+        store(context, draft, key, access, judgedPairs, automatic, simplification, check, images, null);
+    }
+
     /** Wie oben, dazu die Aussagenanalyse ({@code statements.analyzer}); {@code null} oder unverändert lässt sie. */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
                       Boolean automatic, SimplificationSettings simplification, CheckSettings check,
-                      AnalyzerSettings analyzer) throws IOException {
+                      ImageSettings images, AnalyzerSettings analyzer) throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
@@ -1191,6 +1244,9 @@ final class AiSettingsPanel {
         }
         if (check != null && !check.equals(savedCheck(context.settings()))) {
             written = editor.withCheck(context.configFile(), written, check);
+        }
+        if (images != null && !images.equals(savedImages(context.settings()))) {
+            written = editor.withImages(context.configFile(), written, images);
         }
         if (analyzer != null && !analyzer.equals(savedAnalyzer(context.settings()))) {
             written = editor.withAnalyzer(context.configFile(), written, analyzer);
@@ -1225,6 +1281,21 @@ final class AiSettingsPanel {
     }
 
     /** Die Vorstufe „Sätze vereinfachen“ aus der Datei; ohne Datei die Vorgabe des Core. */
+    static ImageSettings savedImages(AppSettings settings) {
+        return settings == null ? ImageSettings.DEFAULT : settings.images();
+    }
+
+    /** Die eingestellte automatische Bildbeschreibung. */
+    ImageSettings images() {
+        return new ImageSettings(automaticImages.isSelected(), ((Number) imagesPerRun.getValue()).intValue());
+    }
+
+    /** Die Zeile zur automatischen Bildbeschreibung, für die Abschlussseite des Assistenten. */
+    static String automaticImagesSummary(ImageSettings images) {
+        return !images.automatic() ? AUTOMATIC_IMAGES_OFF : "nach jedem Abgleich, " + (images.unlimited()
+                ? "unbegrenzt" : "höchstens " + images.maxPerRun() + " je Lauf");
+    }
+
     static SimplificationSettings savedSimplification(AppSettings settings) {
         return settings == null ? SimplificationSettings.DEFAULT : settings.simplification();
     }

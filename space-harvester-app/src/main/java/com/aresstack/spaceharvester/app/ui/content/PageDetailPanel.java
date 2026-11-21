@@ -575,7 +575,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(GRAPH, graph)
                 .tab(RELATIONS, analysisView)
                 // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Beziehungen“ gewählt ist (BG2b).
-                .actions(storeField, subpages.box(), analysisView.proposeButton(), analysisView.createButton());
+                .actions(storeField, subpages.box(), analysisView.proposeIcon(), analysisView.createIcon());
         storeField.onChange(this::switchStore);
         originalContent.setOpaque(false);
         fileContent.setOpaque(false);
@@ -607,6 +607,9 @@ public final class PageDetailPanel extends JPanel {
         });
         analysisTabs.onSelect(name -> {
             subpages.tab(!PASSAGES.equals(name));
+            if (RELATIONS.equals(name)) {
+                loadBelowRelations();
+            }
             showRelations();
             if (ANALYSES.equals(tabs.selected())) {
                 loadVisible();
@@ -641,6 +644,14 @@ public final class PageDetailPanel extends JPanel {
         references.onOpen(id -> load(sourceId, id, false));
         terms.onJump(this::jumpTo);
         terms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
+        analysisView.below().onOpen(id -> load(sourceId, id, false));
+        // Eine neue oder geänderte Beziehung kann eine der Unterseiten betreffen: unten neu laden.
+        analysisView.onRelationsChanged(() -> {
+            belowRelationsFor = null;
+            if (RELATIONS.equals(analysisTabs.selected())) {
+                loadBelowRelations();
+            }
+        });
         subpages.onChange(this::subpagesChanged);
         passages.onJump(this::jumpTo);
         statementsView.onJump(this::jumpTo);
@@ -1064,8 +1075,8 @@ public final class PageDetailPanel extends JPanel {
         String sub = analysisTabs.selected();
         storeField.setVisible(STATEMENTS.equals(sub) || GRAPH.equals(sub) || RELATIONS.equals(sub));
         boolean selected = RELATIONS.equals(analysisTabs.selected());
-        analysisView.proposeButton().setVisible(selected);
-        analysisView.createButton().setVisible(selected);
+        analysisView.proposeIcon().setVisible(selected);
+        analysisView.createIcon().setVisible(selected);
         analysisView.shown(ANALYSES.equals(tabs.selected()) && !wide && selected);
         statementsHelp.setVisible(ANALYSES.equals(tabs.selected()) && !wide
                 && STATEMENTS.equals(analysisTabs.selected()));
@@ -1546,15 +1557,21 @@ public final class PageDetailPanel extends JPanel {
     private void subpagesChanged() {
         Subpages.Below below = subpages.below();
         AppRuntime runtime = context.runtime();
+        belowRelationsFor = null;
+        belowRelationsGeneration++;
         if (below == null || runtime == null) {
             terms.below(null);
             references.belowLoading(-1);
+            analysisView.below().off();
             belowReferencesGeneration++;
             tabStatus(TERMS, " ");
             return;
         }
         watchLinks(runtime);
         loadBelowReferences();
+        if (RELATIONS.equals(analysisTabs.selected())) {
+            loadBelowRelations();
+        }
         com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
         SelectionTerms selection = new SelectionTerms(workspace, "den Unterseiten", below.pages());
         terms.below(new TermsTab.Below() {
@@ -1598,6 +1615,105 @@ public final class PageDetailPanel extends JPanel {
                 references.below(List.of());
             }
         });
+    }
+
+    /** Für welche Unterseiten die Beziehungen geladen sind; {@code null}: noch nicht. */
+    private Subpages.Below belowRelationsFor;
+    private long belowRelationsGeneration;
+    /** Höchstens so viele Beziehungen der Unterseiten; darüber sagt die Statuszeile „die ersten“. */
+    static final int BELOW_RELATIONS_LIMIT = 1000;
+
+    /**
+     * Lädt die Beziehungen der Unterseiten (Fahrplan P3): alle mit einem Begriff auf einer Unterseite, ohne die, die
+     * oben bei der Seite schon stehen; Herkunft sind die Unterseiten ihrer beiden Begriffe. Nur, wenn „Beziehungen“
+     * zu sehen ist, einmal je Stand der Unterseiten; im Hintergrund, Teilergebnisse sofort.
+     */
+    private void loadBelowRelations() {
+        Subpages.Below below = subpages.below();
+        AppRuntime runtime = context.runtime();
+        if (below == null || runtime == null || below.equals(belowRelationsFor) || pageId == null) {
+            return;
+        }
+        belowRelationsFor = below;
+        long generation = ++belowRelationsGeneration;
+        SubpageSection section = analysisView.below();
+        section.loading();
+        com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
+        String source = sourceId;
+        String page = pageId;
+        Background.run(() -> belowRelations(workspace, source, page, below), rows -> {
+            if (generation == belowRelationsGeneration) {
+                section.rows(rows, true);
+                tabStatus(RELATIONS, subpagesStatus(RELATIONS, below.size())
+                        + (rows.size() >= BELOW_RELATIONS_LIMIT ? " · unten die ersten 1.000 von mehr" : ""));
+            }
+        }, error -> {
+            if (generation == belowRelationsGeneration) {
+                section.rows(List.of(), true);
+                tabStatus(RELATIONS, "Beziehungen der Unterseiten nicht lesbar: " + Problems.describe(error).title());
+            }
+        });
+    }
+
+    /** Die Zeilen des Abschnitts „Aus Unterseiten“ unter „Beziehungen“; nie auf dem EDT. */
+    static List<SubpageSection.Row> belowRelations(com.aresstack.spaceharvester.app.runtime.Workspace workspace,
+                                                   String sourceId, String pageId, Subpages.Below below) {
+        com.aresstack.spaceharvester.application.snapshot.PageSet own =
+                com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(List.of(
+                        new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId)));
+        java.util.Set<String> ownIds = new java.util.HashSet<>();
+        String cursor = null;
+        do {
+            var list = workspace.termRelations(null, null, null, null,
+                    com.aresstack.spaceharvester.application.terms.TermRelations.MAX_LIMIT, cursor, own);
+            list.relations().forEach(relation -> ownIds.add(relation.id()));
+            cursor = list.nextCursor();
+        } while (cursor != null);
+        com.aresstack.spaceharvester.application.snapshot.PageSet pages = below.pages().pages();
+        List<com.aresstack.spaceharvester.application.terms.TermRelation> found = new java.util.ArrayList<>();
+        cursor = null;
+        do {
+            var list = workspace.termRelations(null, null, null, null,
+                    com.aresstack.spaceharvester.application.terms.TermRelations.MAX_LIMIT, cursor, pages);
+            for (var relation : list.relations()) {
+                if (!ownIds.contains(relation.id()) && found.size() < BELOW_RELATIONS_LIMIT) {
+                    found.add(relation);
+                }
+            }
+            cursor = found.size() < BELOW_RELATIONS_LIMIT ? list.nextCursor() : null;
+        } while (cursor != null);
+        if (found.isEmpty()) {
+            return List.of();
+        }
+        java.util.Map<String, List<com.aresstack.spaceharvester.application.snapshot.PageKey>> termPages =
+                workspace.termPages(pages);
+        java.util.Map<com.aresstack.spaceharvester.application.terms.TermRelation,
+                List<com.aresstack.spaceharvester.application.snapshot.PageKey>> origins = new java.util.LinkedHashMap<>();
+        java.util.Set<com.aresstack.spaceharvester.application.snapshot.PageKey> keys = new java.util.LinkedHashSet<>();
+        for (var relation : found) {
+            java.util.Set<com.aresstack.spaceharvester.application.snapshot.PageKey> where =
+                    new java.util.LinkedHashSet<>();
+            for (String term : List.of(relation.fromTerm(), relation.toTerm())) {
+                where.addAll(termPages.getOrDefault(
+                        com.aresstack.spaceharvester.application.terms.TermText.normalize(term), List.of()));
+            }
+            origins.put(relation, List.copyOf(where));
+            keys.addAll(where);
+        }
+        var nodes = workspace.pageNodes(keys);
+        List<SubpageSection.Row> rows = new java.util.ArrayList<>();
+        origins.forEach((relation, where) -> {
+            List<com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode> visible = where.stream()
+                    .map(nodes::get).filter(java.util.Objects::nonNull).toList();
+            if (!visible.isEmpty()) {
+                com.aresstack.spaceharvester.app.ui.Relation shown = com.aresstack.spaceharvester.app.ui.Relation.of(relation);
+                rows.add(new SubpageSection.Row(List.of(shown.fromTerm(),
+                        com.aresstack.spaceharvester.app.ui.Relation.typeText(shown.type()),
+                        shown.toTerm(), com.aresstack.spaceharvester.app.ui.Relation.statusText(shown.status())),
+                        visible.get(0), visible.subList(1, visible.size()), null));
+            }
+        });
+        return rows;
     }
 
     /** „Begriffe aus dieser Seite und 3 Unterseiten“ für die Statuszeile. */

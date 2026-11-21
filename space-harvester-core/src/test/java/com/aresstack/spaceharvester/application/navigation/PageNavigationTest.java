@@ -219,6 +219,11 @@ class PageNavigationTest {
                     : " ← ") + reference.target().pageId()).containsExactly("101 ← 104", "104 → 101");
             assertThat(withLinks.subpageReferences(CLIENT,
                     com.aresstack.spaceharvester.application.snapshot.PageSet.EMPTY)).isEmpty();
+            assertThat(withLinks.nodes(CLIENT, List.of(
+                    new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "104"),
+                    new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "300"))).keySet())
+                    .extracting(com.aresstack.spaceharvester.application.snapshot.PageKey::pageId)
+                    .as("gesperrte Seite fehlt").containsExactly("104");
         }
     }
 
