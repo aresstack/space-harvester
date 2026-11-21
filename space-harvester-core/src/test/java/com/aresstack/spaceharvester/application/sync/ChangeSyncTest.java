@@ -15,7 +15,7 @@ import java.util.HashSet;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
-/** ADR 0014: Nachholen per Änderungssuche und Papierkorb statt Inventur. */
+/** ADR 0014: Nachholen per Änderungssuche; Löschungen über die vollständige Seitenliste, nie über den Papierkorb. */
 class ChangeSyncTest {
 
     private static final Instant AN_HOUR_AGO = FakeSource.CLOCK.instant().minus(Duration.ofHours(1));
@@ -93,7 +93,8 @@ class ChangeSyncTest {
     }
 
     @Test
-    void aTrashedKnownPageIsDeletedFromTheCache() {
+    void aKnownPageMissingFromTheSpaceListIsDeletedWhenTheSourceConfirmsIt() {
+        source.confirmingDeletion();
         cached("1");
         cached("3");
         source.trash("3");
@@ -105,10 +106,24 @@ class ChangeSyncTest {
         assertThat(run.confirmed().pages()).containsOnlyKeys("1");
         assertThat(run.confirmed().withheldPageIds()).isEmpty();
         assertThat(run.summary().removed()).isEqualTo(1);
+        assertThat(source.trashCalls).isZero();
     }
 
     @Test
-    void aTrashedPageTheCacheNeverKnewIsIgnored() {
+    void aKnownPageMissingFromTheSpaceListIsWithheldWhenTheSourceOnlySaysNotFound() {
+        cached("1");
+        cached("3");
+        source.trash("3");
+
+        SpaceSync.SyncRun run = run(AN_HOUR_AGO);
+
+        assertThat(run.plan().removals().get("3").verdict()).isEqualTo(RemovalCheck.Verdict.INACCESSIBLE);
+        assertThat(run.confirmed().pages()).containsOnlyKeys("1");
+        assertThat(run.confirmed().withheldPageIds()).containsOnlyKeys("3");
+    }
+
+    @Test
+    void aPageTheCacheNeverKnewIsIgnoredWhenItDisappears() {
         cached("1");
         source.trash("2");
 
@@ -119,7 +134,8 @@ class ChangeSyncTest {
     }
 
     @Test
-    void aCatalogOnlyPageInTheTrashLeavesTheCatalog() {
+    void aCatalogOnlyPageThatDisappearsLeavesTheCatalog() {
+        source.confirmingDeletion();
         cached("1");
         source.change("2", "2", 5);
         run(AN_HOUR_AGO);
@@ -132,6 +148,33 @@ class ChangeSyncTest {
     }
 
     @Test
+    void theChangeSearchNeverAsksTheTrashAndConfirmsAGeneration() {
+        cached("1");
+        source.change("1", "4", 5);
+
+        SpaceSync.SyncRun run = run(AN_HOUR_AGO);
+
+        assertThat(source.trashCalls).isZero();
+        assertThat(run.confirmed()).isNotNull();
+        assertThat(fetched).containsExactly("1");
+    }
+
+    @Test
+    void aFailingSpaceListStillAppliesTheChangesButRemovesNothing() {
+        source.confirmingDeletion();
+        cached("1");
+        cached("3");
+        source.trash("3").change("1", "4", 5).failListingAtCall(1);
+
+        SpaceSync.SyncRun run = run(AN_HOUR_AGO);
+
+        assertThat(run.confirmed()).isNotNull();
+        assertThat(fetched).containsExactly("1");
+        assertThat(run.plan().removals()).isEmpty();
+        assertThat(run.confirmed().pages()).containsKeys("1", "3");
+    }
+
+    @Test
     void aFailingSourceChangesNothing() {
         cached("1");
         SyncBaseline before = run(null).confirmed();
@@ -141,6 +184,7 @@ class ChangeSyncTest {
 
         assertThat(run.confirmed()).isNull();
         assertThat(run.notConfirmed()).contains("INCOMPLETE");
+        assertThat(run.cause()).isInstanceOf(SourceAccessException.class);
         assertThat(fetched).isEmpty();
         assertThat(store.confirmed("wiki", "DOC")).contains(before);
     }

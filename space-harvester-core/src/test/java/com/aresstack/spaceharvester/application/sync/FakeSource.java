@@ -32,6 +32,8 @@ class FakeSource implements HarvestSource {
     /** Ersetzt den Stapel vor der Auslieferung, um Widersprüche zu simulieren. */
     UnaryOperator<PageMetadataBatch> tamper = UnaryOperator.identity();
     private int listingCalls;
+    /** Wie oft der Papierkorb gefragt wurde; die Änderungssuche fragt ihn nicht (oft nur für Space-Administratoren). */
+    int trashCalls;
     private boolean confirmsDeletion;
     private final java.util.Set<String> trash = new java.util.LinkedHashSet<>();
     private boolean listsChanges;
@@ -132,6 +134,7 @@ class FakeSource implements HarvestSource {
 
     @Override
     public PageMetadataBatch removedPageMetadata(String partitionKey, String cursor, int limit) {
+        trashCalls++;
         requireChanges();
         return new PageMetadataBatch(trash.stream()
                 .map(pageId -> page(pageId, partitionKey, null, "1", null)).toList(), null);

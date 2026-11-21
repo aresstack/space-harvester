@@ -846,7 +846,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             // Der Grund kann Seiten-IDs oder Meldungen der Quelle enthalten: nur ins Log, nicht in den Auftrag.
             LOG.log(System.Logger.Level.INFO, "Abgleich {0}/{1}: keine Generation bestätigt ({2})", sourceId,
                     spaceKey, run.notConfirmed());
-            throw new JobFailedException(INCOMPLETE, "Keine Generation bestätigt; der Cache bleibt unverändert");
+            throw new JobFailedException(INCOMPLETE, notConfirmed(run), run.cause());
         }
         afterCommit(run, sourceId, spaceKey, context.owner());
         // Fehlende Seiten ohne Fehlschlag sind nur die bewusst nicht geladenen; jede andere fehlende ist fehlgeschlagen.
@@ -856,6 +856,35 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                     + "(davon " + run.confirmed().missingPageIds().size() + " ohne Stand im Cache); der nächste "
                     + "Lauf gleicht sie erneut ab");
         }
+    }
+
+    /**
+     * Der echte Grund ohne Seiten-IDs: Änderungsliste nicht abrufbar samt Fehlerart und Meldung der Quelle (bei
+     * entdeckenden Quellen nur die Fehlerart, {@code KnowledgeSourceHarvestSource#accessFailure}), Seitenliste
+     * unvollständig oder widersprüchlich, oder eine fehlende Seite doch im Space.
+     */
+    static String notConfirmed(SpaceSync.SyncRun run) {
+        Inventory inventory = run.plan().inventory();
+        String reason;
+        if (run.cause() instanceof com.aresstack.spaceharvester.application.sources.SourceAccessException access) {
+            reason = "Änderungsliste der Quelle nicht abrufbar (" + access.reason() + "): " + access.getMessage();
+        } else if (inventory.status() == Inventory.Status.INCOMPLETE) {
+            reason = "Seitenliste der Quelle unvollständig" + accessReason(inventory.problem());
+        } else if (inventory.status() == Inventory.Status.INCONSISTENT) {
+            reason = "Seitenliste der Quelle widersprüchlich (Space änderte sich während der Listung)";
+        } else {
+            reason = "eine fehlende Seite ist laut Quelle doch im Space";
+        }
+        return "Keine Generation bestätigt: " + reason + "; der Cache bleibt unverändert, der nächste Lauf versucht "
+                + "es erneut";
+    }
+
+    private static final java.util.regex.Pattern REASON = java.util.regex.Pattern.compile("\\(([A-Z_]+)\\)");
+
+    /** Die Fehlerart aus „Listung abgebrochen (REASON): …“, sonst leer. */
+    private static String accessReason(String problem) {
+        java.util.regex.Matcher matcher = REASON.matcher(problem == null ? "" : problem);
+        return matcher.find() ? " (" + matcher.group(1) + ")" : "";
     }
 
     /** Kopfdaten der gescheiterten Seiten aus der Inventur, auch für Seiten, die nie in den Cache kamen. */
