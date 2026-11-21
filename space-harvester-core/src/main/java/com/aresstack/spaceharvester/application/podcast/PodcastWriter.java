@@ -215,11 +215,14 @@ public final class PodcastWriter {
         String prompt = planText(plan, voices) + topicMaterial(material, plan, topicIndex) + "\n# AUFGABE\nPlane Thema "
                 + (topicIndex + 1) + " \"" + topic.title() + "\" genauer: "
                 + (edge ? "genau 1 kurzer Abschnitt" : "1 bis " + PodcastPlan.MAX_SEGMENTS + " Abschnitte, je nach "
-                + "Stoff; jeder Abschnitt erzählt einen anderen Teil der Meldungen")
+                + "Stoff; jeder Abschnitt erzählt einen anderen Teil der Meldungen. Zusammen erzählen die Abschnitte "
+                + "jeden wichtigen Fakt der Meldungen (jede Regel, jede Stufe, jeden Schritt eines Ablaufs), keinen "
+                + "doppelt")
                 + ", je Abschnitt 2 bis " + PodcastPlan.MAX_BEATS + " Wortbeiträge mit Sprecherwechsel. speaker ist "
                 + "\"host\" (" + voices.host() + ", führt durch die Folge) oder \"cohost\" (" + voices.cohost()
                 + ", fragt nach, ordnet ein). intent sagt konkret, welchen Inhalt der Beitrag erzählt (etwa \"erklärt, "
-                + "was die neue Prüfung vor dem Start verhindert\"), nie Metadaten.\nAntworte mit genau einem "
+                + "was die neue Prüfung vor dem Start verhindert\"), nie Metadaten. Der letzte Beitrag eines "
+                + "Abschnitts ist nie eine offene Frage.\nAntworte mit genau einem "
                 + "JSON-Objekt: {\"segments\":[{\"title\":\"...\",\"beats\":[{\"speaker\":\"host\",\"intent\":"
                 + "\"...\"}]}]}";
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
@@ -321,9 +324,14 @@ public final class PodcastWriter {
             prompt.append("Erzählt keine Meldung im Detail, die kommen in ihren eigenen Themen. ");
         } else {
             prompt.append("Erzählt anschaulich, was in den Meldungen dieses Themas inhaltlich neu ist und was es "
-                    + "bedeutet. Nennt im Thema einmal knapp in einem Halbsatz, wo es steht (Space oder Seite), "
-                    + "nicht öfter. ");
+                    + "bedeutet, mit den konkreten Fakten (Regeln, Stufen, Schritte) statt allgemeiner Worte. Nennt "
+                    + "im Thema einmal knapp in einem Halbsatz, wo es steht (Space oder Seite), nicht öfter. ");
+            if (segmentIndex == segments.size() - 1) {
+                prompt.append("Das ist der letzte Abschnitt des Themas: was aus seinen Meldungen noch nicht erzählt "
+                        + "ist, gehört hierher. ");
+            }
         }
+        prompt.append("Jede Frage wird im selben Abschnitt beantwortet; der letzte Beitrag ist keine Frage. ");
         prompt.append("Keine Anzahl von Seiten oder Änderungen, keine Größen, keine Aufzählungen, keine Abkürzungen, "
                 + "die man nicht sprechen kann, keine Regieanweisungen.\nAntworte mit genau einem JSON-Objekt: "
                 + "{\"turns\":[{\"speaker\":\"host\",\"text\":\"...\"}]}");
@@ -331,7 +339,7 @@ public final class PodcastWriter {
             try {
                 List<Turn> turns = readTurns(model.complete(STYLE, prompt.toString()), segment);
                 if (!turns.isEmpty()) {
-                    return turns;
+                    return withoutOpenQuestion(turns, segment, repairs);
                 }
                 repairs.add("Abschnitt \"" + segment.title() + "\": Antwort " + attempt + " ohne Text");
             } catch (RuntimeException e) {
@@ -344,6 +352,19 @@ public final class PodcastWriter {
         }
         repairs.add("Abschnitt \"" + segment.title() + "\": Text ohne Modell aus den Meldungen");
         return fallbackScript(material, topic, first, last);
+    }
+
+    /**
+     * Ein Abschnitt endet nie mit einer offenen Frage: Die Abschnitte entstehen gleichzeitig, der nächste beantwortet sie
+     * also nicht. Eine Frage am Ende fällt weg.
+     */
+    static List<Turn> withoutOpenQuestion(List<Turn> turns, Segment segment, List<String> repairs) {
+        List<Turn> result = new ArrayList<>(turns);
+        while (result.size() > 1 && result.get(result.size() - 1).text().strip().endsWith("?")) {
+            result.remove(result.size() - 1);
+            repairs.add("Abschnitt \"" + segment.title() + "\": offene Frage am Ende weggelassen");
+        }
+        return result;
     }
 
     static List<Turn> readTurns(String answer, Segment segment) {
@@ -489,7 +510,13 @@ public final class PodcastWriter {
                 text.append("Überblick: ").append(cut(flat(material.overview()), 1200)).append('\n');
             }
             text.append(topicIndex == 0 ? "Macht neugierig auf die folgenden Themen, ohne sie schon zu erzählen.\n"
-                    : "Rundet die Folge ab: was man mitnehmen sollte, in einem Satz je Thema höchstens.\n");
+                    : "Rundet die Folge ab: nennt zu jedem Thema der Folge in einem Halbsatz konkret, was man "
+                    + "mitnehmen sollte, ohne allgemeine Worte wie Effizienz oder Struktur.\n");
+            if (topicIndex > 0) {
+                for (Story story : material.stories()) {
+                    text.append("- ").append(story.title()).append('\n');
+                }
+            }
             return text.toString();
         }
         for (Story story : stories) {

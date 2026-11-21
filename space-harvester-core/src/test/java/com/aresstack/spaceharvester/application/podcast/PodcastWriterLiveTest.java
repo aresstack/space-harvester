@@ -67,6 +67,7 @@ class PodcastWriterLiveTest {
         plan.topics().forEach(topic -> System.out.println("[live] Thema: " + topic.title() + " " + topic.stories()));
         List<String> repairs = new ArrayList<>(plan.repairs());
         List<String> spoken = new ArrayList<>();
+        List<String> ends = new ArrayList<>();
         Segment before = null;
         for (int t = 0; t < plan.topics().size(); t++) {
             List<Segment> planned = writer.segments(material, plan, t, voices, repairs);
@@ -76,6 +77,7 @@ class PodcastWriterLiveTest {
                 System.out.println("[live] == " + plan.topics().get(t).title() + " / " + planned.get(s).title());
                 turns.forEach(turn -> System.out.println("[live] " + turn.speaker() + ": " + turn.text()));
                 turns.forEach(turn -> spoken.add(turn.text()));
+                ends.add(turns.get(turns.size() - 1).text().strip());
                 before = planned.get(s);
             }
         }
@@ -84,7 +86,9 @@ class PodcastWriterLiveTest {
         assertThat(repairs).noneMatch(repair -> repair.contains("ohne Modell"));
         assertThat(all).as("keine Metadaten").doesNotContainIgnoringCase("kilobyte")
                 .doesNotContain("100 neue Seiten", "hundert neue Seiten", "37 geänderte");
-        assertThat(all).as("Inhalt kommt vor").contains("Spool").containsIgnoringCase("Eskalation");
+        assertThat(all).as("Inhalt kommt vor").contains("Spool").containsIgnoringCase("Checkliste");
+        assertThat(all).as("Die Eskalationsstufen kommen vor").containsAnyOf("Eskalation", "Stufe", "Leitung");
+        assertThat(ends).as("Kein Abschnitt endet mit einer offenen Frage").noneMatch(text -> text.endsWith("?"));
         assertThat(spoken.stream().filter(text -> text.contains("Datenbank")).count())
                 .as("Die Datenbank-Meldung wird nicht in jedem Abschnitt neu erzählt").isLessThan(spoken.size() / 2);
     }

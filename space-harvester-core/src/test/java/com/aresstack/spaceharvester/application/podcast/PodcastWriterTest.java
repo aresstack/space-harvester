@@ -58,6 +58,21 @@ class PodcastWriterTest {
     }
 
     @Test
+    void aSegmentNeverEndsWithAnOpenQuestion() {
+        Segment segment = new Segment("Umzug", List.of(new Beat(Speaker.HOST, "erzählt"),
+                new Beat(Speaker.COHOST, "fragt")));
+        List<String> repairs = new ArrayList<>();
+
+        List<Turn> turns = PodcastWriter.withoutOpenQuestion(List.of(new Turn(Speaker.HOST, "Die Daten werden gesichert."),
+                new Turn(Speaker.COHOST, "Und was passiert am Montag?")), segment, repairs);
+
+        assertThat(turns).extracting(Turn::text).containsExactly("Die Daten werden gesichert.");
+        assertThat(repairs).hasSize(1);
+        assertThat(PodcastWriter.withoutOpenQuestion(List.of(new Turn(Speaker.HOST, "Wer hätte das gedacht?")),
+                segment, repairs)).hasSize(1);
+    }
+
+    @Test
     void theFallbackScriptReadsTheStoriesWithPlaceGreetingAndGoodbye() {
         PodcastWriter.Material material = new PodcastWriter.Material("", List.of(new PodcastWriter.Story(
                 "Neue Startseite", "Die Startseite zeigt die Ansprechstellen je Team.",
