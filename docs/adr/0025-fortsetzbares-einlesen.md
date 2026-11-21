@@ -256,15 +256,22 @@ wird automatisch verwaltet.
    Benutzeraufträge bleibt frei davon.
 8. **Nichts läuft unsichtbar** (Angelo 21.11.2026: „volle Kontrolle über das, was passiert, beziehungsweise zumindest
    informiert“). Arbeit, die der Core von sich aus anstößt und die bisher an der Auftragsliste vorbeilief, meldet sich
-   als eigene Art an. Gegen doppelte Anläufe gibt es neben `running` `BackgroundJobs#waiting` (nur ein noch nicht
-   gestarteter Teil), `#startUnlessWaiting` (für Arten, die ihre Arbeit erst beim Start aus dem Bestand bestimmen: ein
-   laufender Teil sieht einen neuen Anlass nicht mehr) und `#startUnlessRunning` (für Arten, deren laufender Teil sich
-   neue Arbeit selbst abholt). Bisher umgestellt:
+   als eigene Art an. Gegen doppelte Anläufe gibt es neben `running` `BackgroundJobs#waiting` (ein noch nicht
+   gestarteter oder angehaltener Teil), `#startUnlessWaiting` (für Arten, die ihre Arbeit erst beim Start aus dem
+   Bestand bestimmen: ein laufender Teil sieht einen neuen Anlass nicht mehr) und `#startUnlessRunning` (für Arten,
+   deren laufender Teil sich neue Arbeit selbst abholt). Ein angehaltener Teil zählt in allen dreien mit: Er hält neue
+   Anlässe zurück, beim Fortsetzen rechnet er sie mit (Abnahme #1052). Bisher umgestellt:
    - `synonyms` „Synonyme erkennen“ (`SynonymDiscovery#automatic`, ein Teil je Quelle; vorher ein Auftrag
      `ENRICHMENT` ohne Auftraggeber, den die App nie zeigte). Fortsetzen nach Neustart nur bei
      `terms.synonyms.automatic`.
-   - `documents` „Anhänge analysieren“ (`DocumentEnrichments`, ein Teil je Quelle und Space; vorher ebenso ein
-     Auftrag ohne Auftraggeber). Die Meldungen liegen nur im Speicher: nach einem Neustart endet der fortgesetzte Teil
-     sofort, den Bestand holt die Anreicherung nach dem nächsten Abgleich nach.
+   - `documents` „Anhänge analysieren“ (`DocumentEnrichments`, vorher ebenso ein Auftrag ohne Auftraggeber). Die
+     Arbeit kommt allein aus Quelle, Space und Bestand: die Anhänge der Seiten des Space ohne aktuelle Analyse. Eine
+     Meldung (`IndexedDocuments#indexed`) vermerkt nur, dass es im Space Arbeit gibt; Anhalten hält also wirklich an,
+     und nach einem Neustart setzt der Teil mit der Arbeit aus dem Bestand fort (nur bei
+     `enrichment.documents.enabled`). Je Anlass eine Gruppe, je Space höchstens ein offener Teil; eine Meldung während
+     des Laufs holt derselbe Teil in einem weiteren Durchgang ab. Gestartet wird erst, wenn im Space kein Abgleich,
+     keine Anreicherung, kein Anhänge- und kein Neu-Lese-Auftrag mehr wartet oder läuft; deren Ende kommt als
+     Auftragsmeldung (ADR 0027, kein Abfragen). Außerhalb solcher Aufträge bündelt ein `Coalescer` die Meldungen
+     zehn Sekunden lang. So geben die Anhänge eines Abgleichs eine einzige Gruppe.
 
    Ohne Hintergrundaufträge (Dienst) bleibt es beim bisherigen Weg.

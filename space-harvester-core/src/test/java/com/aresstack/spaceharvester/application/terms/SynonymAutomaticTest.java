@@ -259,6 +259,32 @@ class SynonymAutomaticTest {
         assertThat(hosted.automatic("wiki")).isPresent();
     }
 
+    @Test
+    void aPausedBackgroundRunHoldsTheNextChangeBackAndRunsItWhenResumed() {
+        // Ein Platz: der Teil wartet und lässt sich anhalten, bevor er läuft.
+        Jobs hosting = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 10, Duration.ofHours(1)),
+                Clock.fixed(T0, ZoneOffset.UTC));
+        SynonymDiscovery hosted = discovery(hosting);
+        BackgroundJobs background = new BackgroundJobs(hosting, "app");
+        hosted.background(background);
+        JobStatus first = hosted.automatic("wiki").orElseThrow();
+        String group = first.parameter(BackgroundJobs.GROUP);
+
+        background.pause(group);
+        cached("Der Wagen fährt. Der Wagen ist rot.");
+
+        assertThat(hosted.automatic("wiki")).as("der angehaltene Teil hält den Anlass zurück").isEmpty();
+        assertThat(hosting.status(first.id()).state()).isEqualTo(JobState.PAUSED);
+        assertThat(synonyms()).isEmpty();
+
+        hosting.parallelPreparations(2);
+        background.resume(group);
+
+        assertThat(hosting.status(first.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(synonyms()).isNotEmpty();
+        assertThat(hosted.automatic("wiki")).as("die Änderung ist mitgerechnet").isEmpty();
+    }
+
     private SynonymDiscovery discovery(Jobs on) {
         SynonymCandidates candidates = new SynonymCandidates(catalog, store,
                 key -> Optional.ofNullable(cache.get(key)).map(PageSnapshot::header),

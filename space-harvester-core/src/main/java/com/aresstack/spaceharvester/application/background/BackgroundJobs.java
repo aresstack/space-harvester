@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 /**
  * Hintergrundaufträge (Angelo 21.11.2026, ADR 0025 Nachtrag „Hintergrundaufträge“): was die App von sich aus anstößt,
@@ -130,34 +131,40 @@ public final class BackgroundJobs {
         return UUID.randomUUID().toString();
     }
 
-    /** Ein wartender oder laufender Unterauftrag dieser Art für Quelle und Space, gegen doppelte Anläufe. */
+    /**
+     * Ein wartender, angehaltener oder laufender Unterauftrag dieser Art für Quelle und Space, gegen doppelte Anläufe.
+     * Angehalten zählt wie wartend ({@link #waiting}).
+     */
     public Optional<JobStatus> running(String kind, String sourceId, String partitionKey) {
-        return all().stream()
-                .filter(status -> !status.state().terminal() && kind.equals(status.parameter(KIND))
-                        && sourceId.equals(status.sourceId())
-                        && Objects.equals(partitionKey, status.partitionKey()))
-                .findFirst();
+        return find(kind, sourceId, partitionKey, state -> !state.terminal() || state == JobState.PAUSED);
     }
 
     /**
-     * Ein Unterauftrag dieser Art für Quelle und Space, der noch auf seinen Start wartet ({@link JobState#QUEUED}); ein
-     * laufender zählt nicht, denn er hat seine Arbeit schon bestimmt.
+     * Ein Unterauftrag dieser Art für Quelle und Space, der noch auf seinen Start wartet ({@link JobState#QUEUED}) oder
+     * angehalten ist ({@link JobState#PAUSED}, Abnahme #1052): Ein angehaltener Teil hält neue Anlässe zurück, ihre
+     * Arbeit läuft beim Fortsetzen, denn die Art baut sie dann frisch aus Angaben und Bestand. Ein laufender zählt
+     * nicht, denn er hat seine Arbeit schon bestimmt.
      */
     public Optional<JobStatus> waiting(String kind, String sourceId, String partitionKey) {
+        return find(kind, sourceId, partitionKey, state -> state == JobState.QUEUED || state == JobState.PAUSED);
+    }
+
+    private Optional<JobStatus> find(String kind, String sourceId, String partitionKey,
+                                     Predicate<JobState> state) {
         return all().stream()
-                .filter(status -> status.state() == JobState.QUEUED && kind.equals(status.parameter(KIND))
+                .filter(status -> state.test(status.state()) && kind.equals(status.parameter(KIND))
                         && sourceId.equals(status.sourceId())
                         && Objects.equals(partitionKey, status.partitionKey()))
                 .findFirst();
     }
 
     /**
-     * Startet eine Gruppe mit einem Teil, außer es wartet schon ein Teil derselben Art für Quelle und Space
-     * ({@link #waiting}): der nimmt dann mit, was der neue Anlass bringt. Für Arten, die ihre Arbeit erst beim Start aus
-     * dem Bestand bestimmen, etwa „Synonyme erkennen“ je Quelle; ein laufender Teil hält einen neuen Anlass nicht auf,
-     * denn was sich währenddessen ändert, sieht er nicht mehr.
+     * Startet eine Gruppe mit einem Teil, außer es wartet schon ein Teil derselben Art für Quelle und Space oder ist
+     * angehalten ({@link #waiting}): der nimmt dann mit, was der neue Anlass bringt. Für Arten, die ihre Arbeit erst
+     * beim Start aus dem Bestand bestimmen, etwa „Synonyme erkennen“ je Quelle; ein laufender Teil hält einen neuen
+     * Anlass nicht auf, denn was sich währenddessen ändert, sieht er nicht mehr.
      *
-     * @return die neue Gruppe, oder leer, wenn schon ein Teil wartet
+     * @return die neue Gruppe, oder leer, wenn schon ein Teil wartet oder angehalten ist
      */
     public Optional<BackgroundGroup> startUnlessWaiting(String kind, String title, BackgroundPart.Draft part) {
         Objects.requireNonNull(part, "part");
@@ -170,11 +177,10 @@ public final class BackgroundJobs {
     }
 
     /**
-     * Startet eine Gruppe mit einem Teil, außer ein Teil derselben Art für Quelle und Space wartet oder läuft schon
-     * ({@link #running}): Für Arten, deren laufender Teil sich weitere Arbeit selbst abholt, etwa aus einer
-     * Warteschlange im Speicher.
+     * Startet eine Gruppe mit einem Teil, außer ein Teil derselben Art für Quelle und Space wartet, ist angehalten oder
+     * läuft schon ({@link #running}): Für Arten, deren laufender Teil sich weitere Arbeit selbst abholt.
      *
-     * @return die neue Gruppe, oder leer, wenn schon ein Teil wartet oder läuft
+     * @return die neue Gruppe, oder leer, wenn schon ein Teil wartet, angehalten ist oder läuft
      */
     public Optional<BackgroundGroup> startUnlessRunning(String kind, String title, BackgroundPart.Draft part) {
         Objects.requireNonNull(part, "part");

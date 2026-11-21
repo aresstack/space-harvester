@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.assets.ExtractionKey;
 import com.aresstack.spaceharvester.application.assets.TextSection;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.assets.ExtractionWriter;
+import com.aresstack.spaceharvester.application.background.BackgroundGroup;
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
@@ -49,7 +50,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
@@ -224,9 +228,8 @@ class DocumentEnrichmentsTest {
     void asBackgroundJobTheAnalysesRunVisiblyAsOnePartOfTheirSpace() {
         Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
                 Clock.fixed(NOW, ZoneOffset.UTC));
-        DocumentEnrichments documents = documents(true, jobs);
-        documents.background(new BackgroundJobs(jobs, "app"));
-        Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil mit Text."));
+        DocumentEnrichments documents = hosted(true, jobs, new BackgroundJobs(jobs, "app"));
+        Asset asset = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil mit Text.")));
 
         documents.indexed(list(), asset, extractions);
 
@@ -243,20 +246,133 @@ class DocumentEnrichmentsTest {
 
     @Test
     void aWaitingBackgroundPartTakesLaterReportsOfItsSpaceAlong() {
-        List<Runnable> held = new ArrayList<>();
+        Queue<Runnable> held = new ConcurrentLinkedQueue<>();
         Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(4, 5, Duration.ofHours(1)),
                 Clock.fixed(NOW, ZoneOffset.UTC));
-        DocumentEnrichments documents = documents(true, jobs);
-        documents.background(new BackgroundJobs(jobs, "app"));
-        Asset first = stored("teile.zip", Map.of("eins.txt", "Erster Teil."));
+        DocumentEnrichments documents = hosted(true, jobs, new BackgroundJobs(jobs, "app"));
+        Asset first = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
 
         documents.indexed(list(), first, extractions);
         documents.indexed(list(), first, extractions);
 
         assertThat(jobs.list("app", JobType.BACKGROUND)).as("ein Teil je Space, solange er wartet oder läuft")
                 .hasSize(1);
-        new ArrayList<>(held).forEach(Runnable::run);
+        runAll(held);
         assertThat(recording.inputs).containsExactly("Erster Teil.");
+    }
+
+    @Test
+    void aReportWhileThePartComputesGetsAnotherPassAndNoSecondPart() {
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = hosted(true, jobs, new BackgroundJobs(jobs, "app"));
+        Asset first = inStock(stored("a1", "eins.zip", Map.of("eins.txt", "Erster Teil.")));
+        Asset second = stored("a2", "zwei.zip", Map.of("zwei.txt", "Zweiter Teil."));
+        AtomicBoolean once = new AtomicBoolean();
+        // Während der Teil den ersten Anhang rechnet, legt ein Abruf den zweiten ab.
+        recording.onInput = () -> {
+            if (once.compareAndSet(false, true)) {
+                inStock(second);
+                documents.indexed(list(), second, extractions);
+            }
+        };
+
+        documents.indexed(list(), first, extractions);
+
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("höchstens ein offener Teil je Space").singleElement()
+                .extracting(JobStatus::state).isEqualTo(JobState.COMPLETED);
+        assertThat(recording.inputs).containsExactly("Erster Teil.", "Zweiter Teil.");
+    }
+
+    @Test
+    void aPausedPartHoldsNewReportsBackAndComputesThemWhenResumed() {
+        // Ein Platz: der Teil wartet und lässt sich anhalten, bevor er läuft.
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        DocumentEnrichments documents = hosted(true, jobs, background);
+        Asset asset = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
+        documents.indexed(list(), asset, extractions);
+        BackgroundGroup group = background.groups().getFirst();
+
+        background.pause(group.groupId());
+        documents.indexed(list(), asset, extractions);
+
+        assertThat(background.groups()).as("der angehaltene Teil hält den neuen Anlass zurück").singleElement()
+                .satisfies(paused -> assertThat(paused.paused()).isTrue());
+        assertThat(recording.inputs).as("angehalten heißt: nichts rechnet").isEmpty();
+
+        jobs.parallelPreparations(2);
+        background.resume(group.groupId());
+
+        assertThat(background.group(group.groupId()).orElseThrow().completed()).isTrue();
+        assertThat(recording.inputs).containsExactly("Erster Teil.");
+    }
+
+    @Test
+    void afterARestartAnInterruptedPartResumesWithItsWorkFromTheStock() {
+        InMemoryJobStore stored = new InMemoryJobStore();
+        Jobs first = new Jobs(stored, Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        Asset asset = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
+        hosted(true, first, new BackgroundJobs(first, "app")).indexed(list(), asset, extractions);
+        // Das Beenden unterbricht den wartenden Teil; die Meldung selbst liegt nirgends mehr.
+        first.close();
+
+        Jobs restarted = new Jobs(stored, Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        BackgroundJobs background = new BackgroundJobs(restarted, "app");
+        hosted(true, restarted, background);
+
+        assertThat(background.resumeInterrupted()).singleElement().satisfies(part ->
+                assertThat(restarted.status(part.id()).state()).isEqualTo(JobState.COMPLETED));
+        assertThat(recording.inputs).containsExactly("Erster Teil.");
+    }
+
+    @Test
+    void switchedOffTheInterruptedPartStaysAfterARestart() {
+        InMemoryJobStore stored = new InMemoryJobStore();
+        Jobs first = new Jobs(stored, Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        Asset asset = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
+        hosted(true, first, new BackgroundJobs(first, "app")).indexed(list(), asset, extractions);
+        first.close();
+
+        Jobs restarted = new Jobs(stored, Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        BackgroundJobs background = new BackgroundJobs(restarted, "app");
+        hosted(false, restarted, background);
+
+        assertThat(background.resumeInterrupted()).isEmpty();
+        assertThat(recording.inputs).isEmpty();
+    }
+
+    @Test
+    void allAttachmentsOfASyncMakeOneGroupThatStartsWhenTheSyncEnds() throws InterruptedException {
+        Queue<Runnable> held = new ConcurrentLinkedQueue<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = hosted(true, jobs, new BackgroundJobs(jobs, "app"));
+        // Der Abgleich des Space läuft und legt nacheinander 50 Anhänge ab.
+        jobs.submit(JobType.SYNC, "wiki", "DEV", null, JobTask.blocking(context -> { }));
+        List<Asset> assets = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            assets.add(inStock(stored("a" + i, "teil" + i + ".zip", Map.of("teil.txt", "Teil " + i + "."))));
+        }
+
+        assets.forEach(asset -> documents.indexed(list(), asset, extractions));
+
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("solange der Abgleich läuft, kein Teil").isEmpty();
+        // Das Ende des Abgleichs kommt als Auftragsmeldung auf dem Zustell-Thread und startet den Teil.
+        Instant deadline = Instant.now().plusSeconds(10);
+        while (Instant.now().isBefore(deadline) && jobs.list("app", JobType.BACKGROUND).stream()
+                .noneMatch(part -> part.state() == JobState.COMPLETED)) {
+            runAll(held);
+            Thread.sleep(20);
+        }
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("eine Gruppe für den ganzen Abgleich").singleElement()
+                .extracting(JobStatus::state).isEqualTo(JobState.COMPLETED);
+        assertThat(recording.inputs).hasSize(50);
     }
 
     @Test
@@ -425,12 +541,36 @@ class DocumentEnrichmentsTest {
                 d.totalTimeout(), d.tempSpaceReserve(), d.parallel(), d.memoryLimits());
     }
 
+    /** Mit Hintergrundaufträgen; Meldungen ohne Bündelung, die Seiten des Space sind die eine Testseite. */
+    private DocumentEnrichments hosted(boolean enabled, Jobs jobs, BackgroundJobs background) {
+        DocumentEnrichments documents = documents(enabled, jobs);
+        documents.background(background, (sourceId, spaceKey) -> List.of(PAGE.pageId()), Duration.ZERO);
+        return documents;
+    }
+
+    /** Legt den Anhang in den Bestand, aus dem ein Hintergrundteil seine Arbeit bestimmt. */
+    private Asset inStock(Asset asset) {
+        inventory.add(asset);
+        return asset;
+    }
+
+    private static void runAll(Queue<Runnable> held) {
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+    }
+
     private Asset stored(String title, Map<String, String> files) {
+        return stored("a1", title, files);
+    }
+
+    private Asset stored(String attachmentId, String title, Map<String, String> files) {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         files.entrySet().stream().sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> entries.put(entry.getKey(), entry.getValue().getBytes(StandardCharsets.UTF_8)));
         byte[] zip = Archives.zip(entries);
-        Asset asset = new Asset("wiki", "101", "a1", "1", title, Archives.ZIP, AssetKind.OTHER, zip.length,
+        Asset asset = new Asset("wiki", "101", attachmentId, "1", title, Archives.ZIP, AssetKind.OTHER, zip.length,
                 Assets.sha256(zip), NOW);
         store.put(asset, zip);
         extractions.text(asset, store, NOW);

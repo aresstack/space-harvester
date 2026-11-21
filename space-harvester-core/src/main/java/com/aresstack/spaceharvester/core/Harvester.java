@@ -943,8 +943,11 @@ public final class Harvester implements AutoCloseable {
             EnrichmentSettings startEnrichment = builder.enrichment;
             DocumentEnrichments documentEnrichments = new DocumentEnrichments(enrichments, jobs,
                     () -> this.settings != null ? this.settings.enrichment() : startEnrichment);
-            // Als Hintergrundauftrag „Anhänge analysieren“, sichtbar im Reiter „Hintergrund“ (Angelo 21.11.2026).
-            documentEnrichments.background(backgroundJobs);
+            // Als Hintergrundauftrag „Anhänge analysieren“, sichtbar im Reiter „Hintergrund“ (Angelo 21.11.2026): je
+            // Space höchstens ein Teil, Arbeit aus den Anhängen der Seiten des Space, Start erst nach dem Abgleich.
+            documentEnrichments.background(backgroundJobs, (sourceId, spaceKey) -> spaceKey == null ? List.of()
+                    : cache.knownPages(sourceId, spaceKey).keySet());
+            opened.add(documentEnrichments);
             sectionTexts.set(documentEnrichments);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.

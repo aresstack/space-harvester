@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -27,6 +28,7 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
@@ -149,13 +151,19 @@ class WorkspaceTest {
             assertThat(in.readAllBytes()).hasSize((int) first.bytes());
         }
 
-        // Anreicherung und Bilder sind eigene Folgeaufträge und stehen mit in der Liste.
+        // Anreicherung und Bilder sind eigene Folgeaufträge und stehen mit in der Liste; Hintergrundaufträge haben
+        // ihren eigenen Reiter und werden unten geprüft.
         assertThat(workspace.jobs()).extracting(JobStatus::type).contains(JobType.ENRICHMENT)
-                .filteredOn(type -> !type.followUp()).containsExactly(JobType.EXPORT, JobType.SYNC);
+                .filteredOn(type -> !type.followUp() && !type.background())
+                .containsExactly(JobType.EXPORT, JobType.SYNC);
         // Erst wenn auch die Folgeaufträge fertig sind, liegt alles auf der Platte, was zu durchsuchen ist.
         for (JobStatus listed : workspace.jobs()) {
             assertThat(await(workspace, listed).state().terminal()).isTrue();
         }
+        // Die Synonymerkennung nach der Anreicherung läuft sichtbar als Hintergrundauftrag (#1052).
+        assertThat(workspace.jobs()).filteredOn(job -> job.type().background())
+                .extracting(job -> job.parameter(BackgroundJobs.TITLE))
+                .contains(SynonymDiscovery.BACKGROUND_TITLE);
         assertThat(CONFLUENCE.requestHeaders()).anySatisfy(headers ->
                 assertThat(headers.values()).contains("Bearer " + TOKEN));
         assertNoFileContains(home, TOKEN);

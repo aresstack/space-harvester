@@ -124,6 +124,24 @@ class BackgroundJobsTest {
     }
 
     @Test
+    void aPausedPartCountsAsWaitingAndHoldsNewOccasionsBack() {
+        // Abnahme #1052: Angehalten wartet ein Teil auf das Fortsetzen; ein neuer Anlass startet keinen zweiten.
+        BackgroundJobs background = background(new Jobs(new InMemoryJobStore(), executor,
+                new JobLimits(1, 10, Duration.ofHours(1)), clock), new AtomicBoolean(true));
+        BackgroundPart.Draft alpha = new BackgroundPart.Draft("wiki", "ALPHA");
+        BackgroundGroup group = background.startUnlessWaiting("demo", "Demo", alpha).orElseThrow();
+
+        background.pause(group.groupId());
+
+        assertThat(background.group(group.groupId()).orElseThrow().paused()).isTrue();
+        assertThat(background.waiting("demo", "wiki", "ALPHA")).isPresent();
+        assertThat(background.running("demo", "wiki", "ALPHA")).isPresent();
+        assertThat(background.startUnlessWaiting("demo", "Demo", alpha)).as("der angehaltene nimmt es mit").isEmpty();
+        assertThat(background.startUnlessRunning("demo", "Demo", alpha)).as("der angehaltene holt es sich").isEmpty();
+        assertThat(background.groups()).extracting(BackgroundGroup::groupId).containsExactly(group.groupId());
+    }
+
+    @Test
     void aPausedGroupResumesInTheSameEntriesWithFreshWork() {
         BackgroundJobs background = background(jobs(executor), new AtomicBoolean(true));
         BackgroundGroup group = background.start("demo", "Demo", twoSpaces());
