@@ -115,6 +115,8 @@ class ConfigurationParityTest {
                   max-judged-pairs: 50
                   automatic: false
                   glossary-terms-only: true
+                glossary:
+                  automatic: true
               glossary:
                 rules:
                   max-terms: 200
@@ -210,6 +212,8 @@ class ConfigurationParityTest {
         assertThat(app.terms().synonyms()).isEqualTo(budget);
         assertThat(budget.automatic()).as("SY1: automatic aus beiden Loadern").isFalse();
         assertThat(budget.glossaryTermsOnly()).as("K3: glossary-terms-only aus beiden Loadern").isTrue();
+        assertThat(app.terms().glossaryAutomatic()).isEqualTo(service2.terms().glossaryAutomatic())
+                .as("K4: terms.glossary.automatic aus beiden Loadern").isTrue();
         // ADR 0032, FL5b: Regeln der Begriffsableitung, als YAML-Liste und als Text mit Kommas.
         com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings rules =
                 com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.DEFAULT.withMaxTerms(200)

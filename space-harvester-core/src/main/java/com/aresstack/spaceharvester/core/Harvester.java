@@ -821,6 +821,10 @@ public final class Harvester implements AutoCloseable {
                     scheduler, AccessContext.technicalClient(OWNER),
                     key -> texts.cachedVersion(key, cache::findHeader, cache::find).isPresent(),
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
+            // K4: Fachbegriffe nach der Anreicherung als Hintergrundauftrag, nur mit terms.glossary.automatic.
+            TermSettings automaticTerms = builder.terms;
+            this.glossaryClassification.background(backgroundJobs, AccessContext.technicalClient(OWNER),
+                    () -> (this.settings != null ? this.settings.terms() : automaticTerms).glossaryAutomatic());
             SearchHitPrefetch prefetch = null;
             // ADR 0015: Folgt das Vorabladen der Konfiguration, gibt es den Lader immer; ob ein Stapel lädt, liest die
             // Suche je Stapel aus search.prefetch-hits.
@@ -939,7 +943,9 @@ public final class Harvester implements AutoCloseable {
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                     // SY1: danach der automatische Synonymlauf der Quelle als eigener Auftrag.
                     // B1: danach die automatische Bildbeschreibung der Quelle als eigener Auftrag (Standard aus).
+                    // K4: danach die Fachbegriffe der Quelle als Hintergrundauftrag (Standard aus).
                     List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId),
+                            sourceId -> glossaryClassification.automatic(sourceId),
                             sourceId -> {
                                 var automatic = this.automaticImages;
                                 if (automatic != null) {

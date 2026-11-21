@@ -503,7 +503,11 @@ public final class AppSettingsLoader {
 
     /** {@code space-harvester.terms.synonyms.*}: Budget der Synonymerkennung (#336), dieselben Schlüssel wie beim Dienst. */
     private TermSettings terms(Map<?, ?> terms, Map<?, ?> glossary, List<String> problems) {
-        return terms(terms, problems).withGlossaryRules(glossaryRules(map(get(glossary, "rules")), problems));
+        // K4: terms.glossary.automatic, Standard aus, wie beim Dienst.
+        boolean glossaryAutomatic = flag(get(map(get(terms, "glossary")), "automatic"), false,
+                "space-harvester." + TermSettings.GLOSSARY_AUTOMATIC, problems);
+        return terms(terms, problems).withGlossaryRules(glossaryRules(map(get(glossary, "rules")), problems))
+                .withGlossaryAutomatic(glossaryAutomatic);
     }
 
     /**

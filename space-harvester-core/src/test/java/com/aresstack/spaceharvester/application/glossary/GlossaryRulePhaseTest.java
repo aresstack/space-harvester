@@ -310,6 +310,72 @@ class GlossaryRulePhaseTest {
     }
 
     @Test
+    void theAutomaticRunIsOffByDefaultAndIgnoresUnknownSources() {
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        java.util.concurrent.atomic.AtomicBoolean enabled = new java.util.concurrent.atomic.AtomicBoolean();
+        assertThat(classification.automatic("wiki")).as("nicht angeschlossen").isEmpty();
+        classification.background(background, EDITOR, enabled::get);
+
+        assertThat(classification.automatic("wiki")).as("terms.glossary.automatic aus").isEmpty();
+        enabled.set(true);
+        assertThat(classification.automatic("anderswo")).as("unbekannte Quelle").isEmpty();
+        assertThat(jobs.listAll(com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND)).isEmpty();
+        assertThat(store.all()).isEmpty();
+    }
+
+    @Test
+    void theAutomaticRunIsABackgroundGroupPerSpaceWithRulesAndWithoutModelPhaseWhenUnreleased() {
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        classification.background(background, EDITOR, () -> true);
+        available = true;
+        released = false;
+
+        var group = classification.automatic("wiki").orElseThrow();
+
+        assertThat(group.title()).isEqualTo(GlossaryClassification.AUTOMATIC_TITLE);
+        assertThat(group.parts()).extracting(JobStatus::type)
+                .containsOnly(com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND);
+        assertThat(group.parts()).extracting(JobStatus::partitionKey).containsExactly("FOE", "IT");
+        assertThat(group.jobIds()).allSatisfy(id -> assertThat(classification.started(id)).isTrue());
+        assertThat(entry("Antrag", new RelationScope("wiki", "FOE"))).as("Regelphase lief").isPresent();
+        assertThat(entry("Server", new RelationScope("wiki", "IT"))).isPresent();
+        assertThat(asked).as("ohne KI-Freigabe nichts an das Modell").isEmpty();
+        assertThat(jobs.events(group.jobIds().getFirst())).extracting(JobEvent::code)
+                .contains("GLOSSARY_MODEL_SKIPPED:NOT_RELEASED");
+    }
+
+    @Test
+    void withoutChatModelTheAutomaticRunNamesTheSkippedModelPhase() {
+        classification.background(new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs,
+                "app"), EDITOR, () -> true);
+
+        var group = classification.automatic("wiki").orElseThrow();
+
+        assertThat(group.parts()).allSatisfy(part -> assertThat(jobs.events(part.id())).extracting(JobEvent::code)
+                .contains(GlossaryClassification.RULES_DONE, "GLOSSARY_MODEL_SKIPPED:NO_MODEL"));
+        assertThat(jobs.status(group.jobIds().getFirst()).state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+    }
+
+    @Test
+    void aSecondOccasionWhileASpaceIsWaitingStartsOnlyTheOtherSpaces() {
+        // Aufträge laufen hier nie an: Was gestartet ist, wartet.
+        Jobs waiting = new Jobs(new InMemoryJobStore(), task -> { }, new JobLimits(2, 10, Duration.ofHours(1)),
+                Clock.fixed(T0, ZoneOffset.UTC));
+        classification.background(new com.aresstack.spaceharvester.application.background.BackgroundJobs(waiting,
+                "app"), EDITOR, () -> true);
+
+        assertThat(classification.automatic("wiki")).isPresent();
+        assertThat(classification.automatic("wiki")).as("beide Spaces warten").isEmpty();
+        page("7", "DOC", "Redaktion", "pflegt", "Handbuch");
+        var second = classification.automatic("wiki").orElseThrow();
+
+        assertThat(second.parts()).extracting(JobStatus::partitionKey).containsExactly("DOC");
+    }
+
+    @Test
     void wordListsFromTheSettingsChangeTheClassification() {
         settings = settings.with(GlossaryRuleSettings.Kind.TECHNICAL_HEADS, List.of(), List.of("datenbank"))
                 .with(GlossaryRuleSettings.Kind.ROLE_HEADS, List.of("bewilligungsstelle"), List.of());

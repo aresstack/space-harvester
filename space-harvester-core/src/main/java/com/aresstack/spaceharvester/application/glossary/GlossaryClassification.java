@@ -60,8 +60,13 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * „Fachbegriffe ermitteln“ (#122 Stufe 2, ADR 0019): ein asynchroner, abbrechbarer KI-Lauf, nur auf ausdrücklichen
- * Wunsch, nie beim Start, beim Abgleich, bei der Anreicherung oder beim Öffnen eines Reiters. Kandidaten sind die
+ * „Fachbegriffe ermitteln“ (#122 Stufe 2, ADR 0019): ein asynchroner, abbrechbarer KI-Lauf, auf ausdrücklichen
+ * Wunsch oder, nur mit {@code terms.glossary.automatic} (K4, Standard aus), nach der Anreicherung einer Quelle
+ * ({@link #automatic}); nie beim Start oder beim Öffnen eines Reiters. Der automatische Lauf ist ein nachrangiger
+ * Hintergrundauftrag ({@link JobType#BACKGROUND}, ein Unterauftrag je Space mit aktueller Aussagenanalyse) über
+ * denselben Code wie der Knopf; er stößt nie Vorstufen an, läuft über die vorhandenen Analysen und meldet fehlende
+ * gelb, ebenso eine ausgelassene Modellphase ohne Chat-Modell. Ein Klick bleibt ein normaler Auftrag mit Vorrang.
+ * Kandidaten sind die
  * Bezeichner und Akronyme des Begriffsindex im gewählten Umfang (alle Quellen, eine Quelle oder ein Space); fehlende
  * Seiten lädt der Lauf nicht nach. Je Kandidat gehen wenige kurze, aktuelle Fundstellen an das Chat-Modell, das nur
  * auswählt, welche Kandidaten im Kontext Fachbegriffe sind; es schreibt keine Erläuterungen. Jede Antwort wird gegen
@@ -298,6 +303,75 @@ public class GlossaryClassification {
     public interface Subtrees {
 
         PageSet pages(AccessContext caller, String sourceId, String spaceKey, String pageId);
+    }
+
+    /** Kennung der Hintergrundart des automatischen Laufs (K4). */
+    public static final String AUTOMATIC_KIND = "glossary.automatic";
+    /** Titel der Gruppe in der Auftragsliste. */
+    public static final String AUTOMATIC_TITLE = "Fachbegriffe erkennen";
+
+    private volatile com.aresstack.spaceharvester.application.background.BackgroundJobs background;
+    private volatile AccessContext automaticCaller;
+    private volatile java.util.function.BooleanSupplier automatic = () -> false;
+
+    /**
+     * Schließt den automatischen Lauf an (K4): Hintergrundaufträge, mit deren Rechten er liest (in der Desktop-App
+     * {@code Harvester.OWNER}), und die Einstellung {@code terms.glossary.automatic}, je Anlass gelesen. Unterbrochene
+     * Unteraufträge laufen nach einem Neustart nur mit eingeschalteter Automatik weiter.
+     */
+    public void background(com.aresstack.spaceharvester.application.background.BackgroundJobs jobs,
+                           AccessContext caller, java.util.function.BooleanSupplier enabled) {
+        this.automaticCaller = Objects.requireNonNull(caller, "caller");
+        this.automatic = Objects.requireNonNull(enabled, "enabled");
+        jobs.register(new com.aresstack.spaceharvester.application.background.BackgroundKind(AUTOMATIC_KIND,
+                part -> {
+                    started.add(part.jobId());
+                    RelationScope scope = new RelationScope(part.sourceId(), part.partitionKey());
+                    return JobTask.blocking(context -> {
+                        synchronized (locks.computeIfAbsent(part.sourceId(), ignored -> new Object())) {
+                            job(scope, context, caller);
+                        }
+                    });
+                }, enabled));
+        this.background = jobs;
+    }
+
+    /**
+     * Automatischer Lauf für eine Quelle nach ihrer Anreicherung (K4): eine Hintergrundgruppe mit einem Unterauftrag
+     * je Space, der analysierte Seiten hat. Nichts geschieht, wenn {@code terms.glossary.automatic} aus ist, nichts
+     * angeschlossen ist, es keine Regelphase gibt, die Quelle unbekannt ist oder für einen Space schon ein Lauf wartet
+     * oder läuft. Ohne Chat-Modell oder Freigabe bleibt es bei Regelvorschlägen; die Modellphase meldet sich gelb.
+     *
+     * @return die Gruppe, oder leer, wenn keine nötig ist
+     */
+    public synchronized Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> automatic(
+            String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        var jobs = background;
+        AccessContext caller = automaticCaller;
+        if (jobs == null || caller == null || !automatic.getAsBoolean() || analysed == null
+                || catalog.find(sourceId).isEmpty()) {
+            return Optional.empty();
+        }
+        List<com.aresstack.spaceharvester.application.background.BackgroundPart.Draft> parts = new ArrayList<>();
+        GlossaryOverview.inScope(analysed.apply(caller), sourceId, null).stream()
+                .map(page -> page.page().spaceKey()).filter(Objects::nonNull).distinct().sorted()
+                .filter(space -> jobs.running(AUTOMATIC_KIND, sourceId, space).isEmpty())
+                .forEach(space -> parts.add(new com.aresstack.spaceharvester.application.background.BackgroundPart
+                        .Draft(sourceId, space, Map.of())));
+        if (parts.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            var group = jobs.start(AUTOMATIC_KIND, AUTOMATIC_TITLE, parts);
+            LOG.log(System.Logger.Level.INFO, "Fachbegriffe für {0} automatisch eingeplant: {1} Spaces", sourceId,
+                    parts.size());
+            return Optional.of(group);
+        } catch (JobCapacityExceededException e) {
+            LOG.log(System.Logger.Level.INFO, "Fachbegriffe für {0} nicht eingeplant ({1})", sourceId,
+                    e.getClass().getName());
+            return Optional.empty();
+        }
     }
 
     /** Ermöglicht Läufe über eine Seite samt Unterseiten ({@link #start(AccessContext, String, String, String)}). */
