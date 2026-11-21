@@ -129,3 +129,8 @@ K02	K	2	melden	Angestellter|Angestellte	Schaden	-	nein	-	GILT	nominalisiertes Ad
 K03	K	3	Vorsitzende	Frau|Kern	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, nominalisiertes Adjektiv als Rollennomen; Schreibweise A|B gilt in der Verbspalte nicht, nach der Messung berichtigt
 K04	K	4	informieren	Einkäufer	Bevollmächtigten|Bevollmächtigte|Bevollmächtigter	-	nein	-	GILT	nominalisiertes Adjektiv als Betroffener
 K05	K	5	bestätigen	Angestellten|Angestellte|Angestellter	Wareneingang	-	nein	-	GILT	nominalisiertes Adjektiv in der Mehrzahl
+L01	L	1	Prokurist	Herr|Voss	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Person als Träger, Genitiv danach
+L02	L	2	Springerin	Frau|Albers	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Person als Träger, Ortsangabe „in der“ danach
+L03	L	3	Engpass	Herr|Menzel	-	-	nein	-	GILT	Zustand; Bewertung mit „ein“, Person als Träger, Angabe „in der“ danach
+L04	L	4	Kostenrisiko	Frau|Keller	-	-	nein	-	GILT	Zustand; Bewertung mit „ein“, Person als Träger, „für“ danach
+L05	L	5	Pflichtangabe	Bestellnummer	-	-	nein	-	GILT	Zustand; ohne Artikel, Sache als Träger, Ortsangabe „auf dem“ danach
