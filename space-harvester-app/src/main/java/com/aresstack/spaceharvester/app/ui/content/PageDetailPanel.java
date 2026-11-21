@@ -2502,8 +2502,12 @@ public final class PageDetailPanel extends JPanel {
         AppRuntime runtime = context.runtime();
         java.net.URI known = page == null ? null : page.header().metadata().url();
         String source = sourceId;
-        if (runtime == null || source == null || !sameDomain(url, known)) {
+        if (runtime == null) {
             ReadingPane.browse(url);
+            return;
+        }
+        if (source == null || !sameDomain(url, known)) {
+            openInOtherSource(runtime, url, request, ++linkRequest);
             return;
         }
         String address = url.toString();
@@ -2522,10 +2526,44 @@ public final class PageDetailPanel extends JPanel {
                 pendingAnchor = anchor;
             }
         }, error -> {
+            if (current == request && click == linkRequest) {
+                openInOtherSource(runtime, url, current, click);
+            }
+        });
+    }
+
+    /**
+     * Ein Link, den die Quelle der Seite nicht kennt, etwa ein Jira-Vorgang aus einem Jira-Makro oder -Link einer
+     * Confluence-Seite: zuerst über die Adressauflösung aller Quellen ({@code Workspace.resolveAddress}, #178), damit
+     * er intern im Lesebereich aufgeht, wenn eine eingerichtete Quelle (Jira, eine andere Confluence …) die Seite
+     * kennt; sonst wie bisher im Browser. Nur {@code http}/{@code https}; {@code mailto:} und Ähnliches gehen direkt
+     * an den Browser.
+     */
+    private void openInOtherSource(AppRuntime runtime, java.net.URL url, int current, int click) {
+        String protocol = url.getProtocol() == null ? "" : url.getProtocol().toLowerCase(java.util.Locale.ROOT);
+        if (!protocol.equals("http") && !protocol.equals("https") || context.navigator() == null) {
+            ReadingPane.browse(url);
+            return;
+        }
+        String address = url.toString();
+        Background.run(() -> runtime.workspace().resolveAddress(address), resolution -> {
+            if (current != request || click != linkRequest) {
+                return; // inzwischen eine andere Seite gewählt oder ein anderer Link geklickt
+            }
+            internalTarget(resolution).ifPresentOrElse(
+                    match -> context.navigator().openPage(match.sourceId(), match.pageId()),
+                    () -> ReadingPane.browse(url));
+        }, error -> {
             if (click == linkRequest) {
                 ReadingPane.browse(url);
             }
         });
+    }
+
+    /** Die erste Seite, die eine eingerichtete Quelle zur Adresse kennt; leer, wenn keine. */
+    static java.util.Optional<com.aresstack.spaceharvester.application.query.PageAddresses.Match> internalTarget(
+            com.aresstack.spaceharvester.application.query.PageAddresses.Resolution resolution) {
+        return resolution == null ? java.util.Optional.empty() : resolution.matches().stream().findFirst();
     }
 
     /** Ob {@code url} auf dieselbe Domain zeigt wie die bekannte Adresse der Seite (ohne „www.“, Groß/klein egal). */

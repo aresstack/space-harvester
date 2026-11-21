@@ -777,6 +777,17 @@ class ContentViewTest {
         assertThat(PageDetailPanel.sameDomain(java.net.URI.create("https://wiki.example.org/x").toURL(), null)).isFalse();
     }
 
+    @Test
+    void aForeignLinkOpensInternallyWhenASourceKnowsThePage() {
+        var issue = new com.aresstack.spaceharvester.application.query.PageAddresses.Match("jira", "ABC-1", "ABC",
+                "ABC-1 Drucker streikt", "1", java.net.URI.create("https://jira.example.org/browse/ABC-1"), null);
+        assertThat(PageDetailPanel.internalTarget(new com.aresstack.spaceharvester.application.query.PageAddresses
+                .Resolution(List.of(issue), List.of()))).contains(issue);
+        assertThat(PageDetailPanel.internalTarget(new com.aresstack.spaceharvester.application.query.PageAddresses
+                .Resolution(List.of(), List.of("jira")))).isEmpty();
+        assertThat(PageDetailPanel.internalTarget(null)).isEmpty();
+    }
+
     private static boolean shown(PageDetailPanel detail, String pageId) {
         return detail.shownPage() != null && pageId.equals(detail.shownPage().header().metadata().pageId());
     }

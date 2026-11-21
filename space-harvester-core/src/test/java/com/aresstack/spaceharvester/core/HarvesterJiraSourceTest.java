@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.query.ListedPage;
+import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceField;
 import com.aresstack.spaceharvester.application.sources.SourceType;
@@ -105,6 +106,23 @@ class HarvesterJiraSourceTest {
         }
         assertThat(authorizations).isNotEmpty().allSatisfy(header ->
                 assertThat(header).isEqualTo("Bearer token-fuer-den-test"));
+    }
+
+    @Test
+    void aJiraLinkFromAnotherSourceResolvesToTheIssueInTheJiraSource() throws Exception {
+        try (Harvester harvester = harvester(SourceSettingsConfig.Auth.anonymous())) {
+            // So kommt ein Jira-Makro oder -Link aus einer Confluence-Seite an: die Adresse des Vorgangs im Browser.
+            PageAddresses.Resolution issue = harvester.addresses().resolve(harvester.caller(),
+                    baseUrl() + "/browse/ABC-1");
+            assertThat(issue.matches()).singleElement().satisfies(match -> {
+                assertThat(match.sourceId()).isEqualTo("jira");
+                assertThat(match.title()).contains("Drucker streikt");
+            });
+
+            PageAddresses.Resolution foreign = harvester.addresses().resolve(harvester.caller(),
+                    "https://www.example.org/browse/ABC-1");
+            assertThat(foreign.matches()).isEmpty();
+        }
     }
 
     private Harvester harvester(SourceSettingsConfig.Auth auth) {
