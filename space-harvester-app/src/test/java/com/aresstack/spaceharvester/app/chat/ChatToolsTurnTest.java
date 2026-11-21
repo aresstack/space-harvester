@@ -115,6 +115,8 @@ class ChatToolsTurnTest {
         assertThat(events.context.accepted()).extracting(ChatKnowledge.Excerpt::text)
                 .satisfiesExactly(a -> assertThat(a).contains("Berechtigungsmanagement"),
                         b -> assertThat(b).contains("vollem Spool"));
+        assertThat(events.context.accepted()).extracting(ChatKnowledge.Excerpt::pageId)
+                .as("die Quellen kennen ihre Seite, für den Verlauf").containsExactly(open.pageId(), other.pageId());
         assertThat(events.using).contains("Liest eine Seite");
     }
 
