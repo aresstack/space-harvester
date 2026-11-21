@@ -702,6 +702,13 @@ registriert über `EacSourceAdapters.jira()` im Core und als Bean im Dienst. Nur
 ab 8.14, erprobt für 11.3.12 noch offen). Projekte sind die Partitionen (wie Spaces), Vorgänge die Seiten mit
 Beschreibung, Metadaten, Kommentaren und Anhängen; die Lese-Ansicht kommt aus `PageViewSource`, die Suche aus JQL.
 
+Abweichend von der rohen Ablage anderer Typen legt der Abgleich den Lesetext des Vorgangs ab (`load`: Beschreibung,
+Kopfdaten und alle Kommentare bis `maxComments`, auch über mehrere Kommentarseiten), damit Volltextindex und
+Anreicherungen ihn über `KnowledgeDocumentTextProjector` lesen; die rohe REST-Antwort hätte nur die erste
+Kommentarseite. Ohne eigene `startPoints` (Standard `project:*`) gilt die Liste je Projekt unverändert, wie bei
+Confluence ohne eigene Spaces (`JiraSnapshots`). Anhänge erscheinen in der Lese-Ansicht, aber noch nicht in der
+Anhangsliste des Core (`AttachmentListSource` fehlt der Upstream-Quelle).
+
 ```yaml
 - id: jira
   type: jira

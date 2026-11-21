@@ -4,12 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceField;
 import com.aresstack.spaceharvester.application.sources.SourceType;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.source.EacSourceAdapters;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -19,6 +23,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -41,6 +46,7 @@ class HarvesterJiraSourceTest {
     private HttpServer server;
     private final List<String> authorizations = new CopyOnWriteArrayList<>();
     private final List<String> paths = new CopyOnWriteArrayList<>();
+    private final List<String> searches = new CopyOnWriteArrayList<>();
 
     @BeforeEach
     void start() throws IOException {
@@ -85,13 +91,25 @@ class HarvesterJiraSourceTest {
 
             JobStatus sync = harvester.await(harvester.sync("jira", "ABC").id(), Duration.ofSeconds(60));
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            // Ohne eigene Startpunkte nur die Liste des Projekts, keine Suche über die ganze Jira davor.
+            assertThat(searches).containsExactly("project = \"ABC\" ORDER BY key ASC");
             List<ListedPage> pages = harvester.pages().pages(harvester.caller(), "jira", "ABC", null, 100).pages();
             assertThat(pages).singleElement().satisfies(page ->
                     assertThat(page.header().metadata().title()).contains("ABC-1", "Drucker streikt"));
-            String text = new String(harvester.pages().page(harvester.caller(), "jira",
-                    pages.get(0).header().key().pageId(), false).snapshot().payload().bytes(), StandardCharsets.UTF_8);
+            PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "jira",
+                    pages.get(0).header().key().pageId(), false).snapshot();
+            // Abgelegt ist der Lesetext mit allen Kommentaren, auch denen hinter der ersten Seite.
+            assertThat(snapshot.payload().nativeFormat()).isEqualTo(KnowledgeDocumentTextProjector.NATIVE_FORMAT);
+            String text = new String(snapshot.payload().bytes(), StandardCharsets.UTF_8);
             assertThat(text).contains("Drucker streikt", "Der Drucker im zweiten Stock druckt nicht.",
-                    "Toner ist leer.");
+                    "Toner ist leer.", "Neuer Toner ist bestellt.");
+            assertThat(harvester.pageText(snapshot)).map(PageText::text)
+                    .hasValueSatisfying(indexed -> assertThat(indexed).contains("zweiten Stock", "bestellt"));
+            Instant deadline = Instant.now().plusSeconds(30);
+            while (Instant.now().isBefore(deadline) && found(harvester, "Stock").isEmpty()) {
+                Thread.sleep(50);
+            }
+            assertThat(found(harvester, "Stock")).extracting(KeywordSearch.Hit::sourceId).containsExactly("jira");
         }
         assertThat(authorizations).isNotEmpty().allSatisfy(header -> assertThat(header).startsWith("Basic "));
         assertThat(paths).noneMatch(path -> path.contains("nur-fuer-den-test"));
@@ -125,6 +143,10 @@ class HarvesterJiraSourceTest {
         }
     }
 
+    private static List<KeywordSearch.Hit> found(Harvester harvester, String word) {
+        return harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of(word), null, 10).hits();
+    }
+
     private Harvester harvester(SourceSettingsConfig.Auth auth) {
         Map<String, String> options = Map.of("baseUrl", baseUrl(), "allowInsecureHttp", "true");
         return Harvester.builder()
@@ -156,9 +178,11 @@ class HarvesterJiraSourceTest {
         } else if (path.equals("/rest/api/2/project/ABC")) {
             body = project();
         } else if (path.equals("/rest/api/2/search")) {
+            searches.add(query(exchange, "jql"));
             body = "{\"startAt\":0,\"maxResults\":50,\"total\":1,\"issues\":[" + issue(false) + "]}";
         } else if (path.equals("/rest/api/2/issue/ABC-1/comment")) {
-            body = "{\"startAt\":0,\"maxResults\":50,\"total\":1,\"comments\":[" + comment() + "]}";
+            body = "{\"startAt\":0,\"maxResults\":50,\"total\":2,\"comments\":[" + comment() + ","
+                    + secondComment() + "]}";
         } else if (path.equals("/rest/api/2/issue/ABC-1")) {
             body = issue(true);
         } else {
@@ -178,6 +202,21 @@ class HarvesterJiraSourceTest {
                 + "/rest/api/2/project/ABC\"}";
     }
 
+    private static String query(HttpExchange exchange, String name) {
+        for (String pair : exchange.getRequestURI().getRawQuery().split("&")) {
+            if (pair.startsWith(name + "=")) {
+                return java.net.URLDecoder.decode(pair.substring(name.length() + 1), StandardCharsets.UTF_8);
+            }
+        }
+        return null;
+    }
+
+    private String secondComment() {
+        return "{\"id\":\"2\",\"author\":{\"displayName\":\"Alice\",\"name\":\"alice\"},"
+                + "\"body\":\"Neuer Toner ist bestellt.\",\"renderedBody\":\"<p>Neuer Toner ist bestellt.</p>\","
+                + "\"created\":\"2026-01-11T12:00:00.000+0100\",\"updated\":\"2026-01-11T12:00:00.000+0100\"}";
+    }
+
     private String comment() {
         return "{\"id\":\"1\",\"author\":{\"displayName\":\"Bob\",\"name\":\"bob\"},\"body\":\"Toner ist leer.\","
                 + "\"renderedBody\":\"<p>Toner ist leer.</p>\",\"created\":\"2026-01-10T12:00:00.000+0100\","
@@ -193,7 +232,7 @@ class HarvesterJiraSourceTest {
                 + "\"fixVersions\":[],\"description\":\"Der Drucker im zweiten Stock druckt nicht.\"";
         if (full) {
             fields += ",\"subtasks\":[],\"issuelinks\":[],\"attachment\":[],\"comment\":{\"startAt\":0,"
-                    + "\"maxResults\":50,\"total\":1,\"comments\":[" + comment() + "]}";
+                    + "\"maxResults\":1,\"total\":2,\"comments\":[" + comment() + "]}";
         }
         String rendered = full ? ",\"renderedFields\":{\"description\":\"<p>Der Drucker im zweiten Stock druckt "
                 + "nicht.</p>\"}" : "";
