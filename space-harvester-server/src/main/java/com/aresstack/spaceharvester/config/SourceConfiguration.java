@@ -103,6 +103,12 @@ class SourceConfiguration {
         return EacSourceAdapters.outlook();
     }
 
+    /** Quellentyp {@code jira}: Vorgänge von Jira Data Center über die REST-API 2, nur lesend. */
+    @Bean
+    SourceAdapter jiraSourceAdapter() {
+        return EacSourceAdapters.jira();
+    }
+
     /**
      * Vertrauen der Quellen und des KI-Dienstes: {@code trust-bundle} aus {@code spring.ssl.bundle.*}, ohne Bundle
      * {@code space-harvester.network.tls} (#189). Eine Bean, damit die Windows-Speicher nur einmal gelesen werden. Das
