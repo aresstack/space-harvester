@@ -262,8 +262,11 @@ class GlossaryTabTest {
         await("geladen, leer", () -> GlossaryTab.EMPTY.equals(tab[0].directory().hint()));
         SwingUtilities.invokeAndWait(() -> tab[0].detectButton().doClick());
         await("Auftrag läuft", () -> !tab[0].jobIds().isEmpty());
-        // Eine Seite zählt mit ihrem Space.
-        assertThat(glossary.calls).contains("classify wiki/DH");
+        // D4.2: eine Seite samt Unterseiten, nicht mehr ihr ganzer Space.
+        assertThat(glossary.calls).contains("classify wiki/DH/42");
+        assertThat(GlossaryTab.detectName("42", "Datenprodukt"))
+                .isEqualTo("Fachbegriffe ermitteln für „Datenprodukt“ samt Unterseiten");
+        assertThat(GlossaryTab.detectName(null, "Datenprodukt")).isEqualTo(GlossaryTab.DETECT);
         SwingUtilities.invokeAndWait(() -> {
             assertThat(tab[0].detectButton().isEnabled()).isFalse();
             assertThat(tab[0].detectButton().getToolTipText()).isEqualTo(GlossaryTab.RUNNING);
@@ -730,8 +733,8 @@ class GlossaryTabTest {
         }
 
         @Override
-        public List<JobStatus> classify(String sourceId, String spaceKey) {
-            calls.add("classify " + sourceId + "/" + spaceKey);
+        public List<JobStatus> classify(String sourceId, String spaceKey, String pageId) {
+            calls.add("classify " + sourceId + "/" + spaceKey + (pageId == null ? "" : "/" + pageId));
             if (startGate != null) {
                 try {
                     startGate.await(10, java.util.concurrent.TimeUnit.SECONDS);

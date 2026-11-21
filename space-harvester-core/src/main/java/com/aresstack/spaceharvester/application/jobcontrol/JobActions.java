@@ -84,6 +84,14 @@ public class JobActions {
         this.presentations = presentations;
     }
 
+    /** Hintergrundaufträge oder {@code null}; bindet der Harvester nach dem Bau an. */
+    private volatile com.aresstack.spaceharvester.application.background.BackgroundJobs background;
+
+    /** Bindet die Hintergrundaufträge an: Fortsetzen baut ihre Arbeit neu, auch nach einem Neustart. */
+    public void background(com.aresstack.spaceharvester.application.background.BackgroundJobs background) {
+        this.background = background;
+    }
+
     /** Der wirksame Zustand des eigenen Auftrags mit den jetzt erlaubten Aktionen. */
     public JobLifecycleState state(String jobId, String owner) {
         return jobs.status(jobId, owner).lifecycle();
@@ -216,6 +224,10 @@ public class JobActions {
             }
             // Podcast: derselbe Auftrag läuft im selben Eintrag neu und erzeugt nur, was auf der Platte fehlt.
             case UPDATE_PODCAST -> jobs.resume(current.id(), owner);
+            case BACKGROUND -> {
+                com.aresstack.spaceharvester.application.background.BackgroundJobs bound = background;
+                yield bound != null ? bound.resumeJob(current.id()) : jobs.resume(current.id(), owner);
+            }
             default -> throw new JobNotResumableException(current.id(), "diese Auftragsart lässt sich nicht fortsetzen");
         };
     }

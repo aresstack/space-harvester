@@ -60,6 +60,8 @@ class SourceDataConfiguration {
                                     ObjectProvider<com.aresstack.spaceharvester.persistence.files
                                             .FileSynonymVectorCache> synonymVectors,
                                     ObjectProvider<Glossary> glossary,
+                                    @Qualifier("glossaryResolutionCache")
+                                    ObjectProvider<FileResolutionCache> glossaryCache,
                                     ObjectProvider<FactEditStore> facts, ObjectProvider<InventoryLog> inventory,
                                     ObjectProvider<AcquisitionScheduler> acquisition) {
         Clock clock = Clock.systemUTC();
@@ -76,6 +78,7 @@ class SourceDataConfiguration {
         synonymCache.ifAvailable(stores::synonymCache);
         synonymVectors.ifAvailable(stores::synonymVectors);
         glossary.ifAvailable(stores::glossary);
+        glossaryCache.ifAvailable(stores::glossaryCache);
         facts.ifAvailable(found -> stores.factEdits(found, clock));
         if (inventory.getIfAvailable() instanceof FileInventoryLog log) {
             stores.inventoryLog(log);

@@ -75,6 +75,8 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
     private static final String PARAMETER = "parameter.";
     /** Warum angehalten ({@link JobStatus#pauseReason()}); ältere Einträge haben das Feld nicht. */
     private static final String PAUSE_REASON = "pauseReason";
+    /** Ob Anhalten angefordert ist ({@link JobStatus#pauseRequested()}); ältere Einträge haben das Feld nicht. */
+    private static final String PAUSE_REQUESTED = "pauseRequested";
 
     private final Path path;
     private final Directory directory;
@@ -239,6 +241,7 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
         storeIfPresent(doc, ROOT_TITLE, status.rootTitle());
         doc.add(new StoredField(INCOMPLETE, status.incomplete() ? 1 : 0));
         storeIfPresent(doc, PAUSE_REASON, status.pauseReason() == null ? null : status.pauseReason().name());
+        doc.add(new StoredField(PAUSE_REQUESTED, status.pauseRequested() ? 1 : 0));
         status.parameters().forEach((key, value) -> doc.add(new StoredField(PARAMETER + key, value)));
         return doc;
     }
@@ -252,7 +255,9 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
                 doc.get(OWNER), JobState.valueOf(doc.get(STATE)), progress, error, number(doc, CANCEL_REQUESTED) == 1,
                 Instant.parse(doc.get(CREATED_AT)), instant(doc.get(STARTED_AT)), instant(doc.get(FINISHED_AT)),
                 doc.get(ROOT_PAGE_ID), doc.get(ROOT_PAGE_ID) == null ? null : doc.get(ROOT_TITLE), parameters(doc),
-                doc.getField(INCOMPLETE) != null && number(doc, INCOMPLETE) == 1, false, pauseReason(doc.get(PAUSE_REASON)));
+                doc.getField(INCOMPLETE) != null && number(doc, INCOMPLETE) == 1,
+                doc.getField(PAUSE_REQUESTED) != null && number(doc, PAUSE_REQUESTED) == 1,
+                pauseReason(doc.get(PAUSE_REASON)));
     }
 
     private static PauseReason pauseReason(String value) {

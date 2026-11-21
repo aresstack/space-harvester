@@ -56,6 +56,7 @@ class SourceDataConfigurationTest {
                     none(AssetStore.class), none(ExportArtifactWriter.class), none(TermRelations.class),
                     none(FileResolutionCache.class), none(FileResolutionCache.class),
                     none(com.aresstack.spaceharvester.persistence.files.FileSynonymVectorCache.class), none(Glossary.class),
+                    none(FileResolutionCache.class),
                     none(FactEditStore.class), none(InventoryLog.class), none(AcquisitionScheduler.class));
 
             assertThat(purge.purge("wiki").complete()).isTrue();

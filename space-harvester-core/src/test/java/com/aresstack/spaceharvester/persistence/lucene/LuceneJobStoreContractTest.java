@@ -78,4 +78,37 @@ class LuceneJobStoreContractTest extends JobStoreContract {
         assertThatThrownBy(() -> LuceneJobStore.open(pages)).isInstanceOf(PageCacheException.class)
                 .hasMessageContaining(PageCacheSchema.VERSION).hasMessageContaining(LuceneJobStore.VERSION);
     }
+
+    @Test
+    void aRequestedPauseAndItsReasonSurviveARestartSoTheNextStartKeepsTheUsersWish() {
+        LuceneJobStore store = (LuceneJobStore) newStore();
+        Instant t = Instant.parse("2026-11-21T19:00:00Z");
+        store.save(new JobStatus("user", JobType.BACKGROUND, "wiki", "ALPHA", "app", JobState.RUNNING,
+                JobProgress.NONE, null, true, t, t, null, null, null, java.util.Map.of(), false, true,
+                com.aresstack.spaceharvester.application.jobs.PauseReason.USER));
+        store.save(new JobStatus("retry", JobType.BACKGROUND, "wiki", "BETA", "app", JobState.RUNNING,
+                JobProgress.NONE, null, true, t, t, null, null, null, java.util.Map.of(), false, true,
+                com.aresstack.spaceharvester.application.jobs.PauseReason.RETRY));
+
+        JobStore reopened = reopen(store);
+        assertThat(reopened.find("user").orElseThrow().pauseRequested()).isTrue();
+        assertThat(reopened.find("retry").orElseThrow().pauseReason())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason.RETRY);
+
+        // Der nächste Start (Jobs liest die Ablage): Nutzerpause bleibt angehalten, ↻ bleibt fortsetzbar.
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(reopened, Runnable::run, new com.aresstack.spaceharvester.application.jobs.JobLimits(2, 10,
+                java.time.Duration.ofHours(1)), java.time.Clock.systemUTC());
+        try {
+            JobStatus user = jobs.status("user");
+            assertThat(user.state()).isEqualTo(JobState.PAUSED);
+            assertThat(user.pauseReason()).isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason.USER);
+            JobStatus retry = jobs.status("retry");
+            assertThat(retry.state()).isEqualTo(JobState.PAUSED);
+            assertThat(retry.pauseReason())
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason.RETRY);
+        } finally {
+            jobs.close();
+        }
+    }
 }
