@@ -1,0 +1,276 @@
+package com.aresstack.spaceharvester.application.podcast;
+
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
+import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
+import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.stepmodel.StepModel;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import javax.sound.sampled.AudioFileFormat;
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/** Erfundene Daten: Quelle „wiki“, Space „DEMO“, Aussagen über ein fiktives Projekt „Nordlicht“. */
+class UpdatePodcastsTest {
+
+    @TempDir
+    Path root;
+
+    private final Clock clock = Clock.fixed(Instant.parse("2026-11-21T18:00:00Z"), ZoneOffset.UTC);
+    private final Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)),
+            clock);
+    private final AccessContext caller = AccessContext.technicalClient("app");
+
+    @Test
+    void plansWritesAndSpeaksEverySegmentWithTwoFixedVoices() throws Exception {
+        FakeModel model = new FakeModel();
+        FakeSpeech speech = new FakeSpeech(voice -> false);
+        UpdatePodcasts podcasts = podcasts(model, speech);
+        AtomicInteger notified = new AtomicInteger();
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        podcasts.subscribe(UpdatePodcasts.key(summary), notified::incrementAndGet);
+
+        JobStatus status = podcasts.start(caller, summary);
+
+        assertThat(jobs.status(status.id()).state()).isEqualTo(JobState.COMPLETED);
+        Podcast podcast = podcasts.podcast(summary).orElseThrow();
+        assertThat(podcast.title()).isEqualTo("Neues bei Nordlicht");
+        assertThat(podcast.complete()).isTrue();
+        // Einstieg und Abschluss je 1 Abschnitt, das mittlere Thema 2
+        assertThat(podcast.parts()).extracting(Podcast.Part::topic).containsExactly(0, 1, 1, 2);
+        assertThat(podcast.parts()).allSatisfy(part -> assertThat(Files.size(part.audio())).isGreaterThan(44));
+        assertThat(speech.voices).containsOnly("Jana", "Thomas");
+        assertThat(notified.get()).isGreaterThanOrEqualTo(1 + 1 + 3 + 4);
+    }
+
+    @Test
+    void aSecondRunReusesEverythingOnDisk() throws Exception {
+        FakeModel model = new FakeModel();
+        FakeSpeech speech = new FakeSpeech(voice -> false);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        podcasts(model, speech).start(caller, summary);
+        int calls = model.calls.get();
+        int spoken = speech.calls.get();
+
+        // neue Instanz wie nach einem Neustart
+        podcasts(model, speech).start(caller, summary);
+
+        assertThat(model.calls.get()).isEqualTo(calls);
+        assertThat(speech.calls.get()).isEqualTo(spoken);
+    }
+
+    @Test
+    void continuesWhereAnInterruptedRunStopped() throws Exception {
+        FakeModel model = new FakeModel();
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        // erster Lauf: Sprachausgabe fällt ganz aus, Plan und Texte liegen danach trotzdem auf der Platte
+        FakeSpeech broken = new FakeSpeech(voice -> true);
+        JobStatus first = podcasts(model, broken).start(caller, summary);
+        assertThat(jobs.status(first.id()).incomplete()).isTrue();
+        int calls = model.calls.get();
+
+        FakeSpeech working = new FakeSpeech(voice -> false);
+        podcasts(model, working).start(caller, summary);
+
+        assertThat(model.calls.get()).as("kein neuer Plan, kein neuer Text").isEqualTo(calls);
+        assertThat(podcasts(model, working).podcast(summary).orElseThrow().complete()).isTrue();
+    }
+
+    @Test
+    void healsAFailingVoiceWithTheOtherOne() throws Exception {
+        FakeSpeech speech = new FakeSpeech("Thomas"::equals);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+
+        podcasts(new FakeModel(), speech).start(caller, summary);
+
+        assertThat(podcasts(new FakeModel(), speech).podcast(summary).orElseThrow().complete()).isTrue();
+    }
+
+    @Test
+    void healsAModelThatNeverAnswersWithAPlanFromTheSummary() throws Exception {
+        StepModel silent = new StepModel() {
+            @Override
+            public String version() {
+                return "test";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String complete(String instructions, String input) {
+                throw new IllegalStateException("Dienst nicht erreichbar");
+            }
+        };
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        UpdatePodcasts podcasts = podcasts(silent, new FakeSpeech(voice -> false));
+
+        podcasts.start(caller, summary);
+
+        Podcast podcast = podcasts.podcast(summary).orElseThrow();
+        assertThat(podcast.complete()).isTrue();
+        assertThat(podcast.parts()).extracting(Podcast.Part::topicTitle).first().isEqualTo("Einstieg");
+    }
+
+    @Test
+    void aNewSummaryReplacesThePodcastOfTheSameLevel() throws Exception {
+        FakeModel model = new FakeModel();
+        FakeSpeech speech = new FakeSpeech(voice -> false);
+        UpdatePodcasts podcasts = podcasts(model, speech);
+        UpdateSummary old = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        podcasts.start(caller, old);
+
+        UpdateSummary renewed = summary("Das Projekt Nordlicht hat eine neue Startseite und ein Glossar.");
+        podcasts.start(caller, renewed);
+
+        assertThat(UpdatePodcasts.key(renewed)).isNotEqualTo(UpdatePodcasts.key(old));
+        assertThat(podcasts.podcast(old)).isEmpty();
+        assertThat(podcasts.podcast(renewed)).isPresent();
+    }
+
+    @Test
+    void prunesPodcastsWhoseSummaryIsGone() throws Exception {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        podcasts.start(caller, summary);
+
+        assertThat(podcasts.prune(meta -> false)).isEqualTo(1);
+
+        assertThat(podcasts.podcast(summary)).isEmpty();
+    }
+
+    @Test
+    void takesTitleAndDetailsOfEachTopicAsMaterial() {
+        UpdateSummary summary = new UpdateSummary("wiki", "u-1", "DEMO", "Kurzer Überblick.", List.of(
+                new SummaryStatement("Neue Startseite", List.of(), "Startseite",
+                        "Die Startseite zeigt jetzt die Ansprechstellen je Team und ein Glossar."),
+                new SummaryStatement("Altes Format ohne Details", List.of())),
+                "test", Instant.parse("2026-11-21T17:00:00Z"), 0, false);
+
+        PodcastWriter.Material material = UpdatePodcasts.material(summary);
+
+        assertThat(material.statements()).containsExactly(
+                "Startseite: Die Startseite zeigt jetzt die Ansprechstellen je Team und ein Glossar.",
+                "Altes Format ohne Details");
+        assertThat(material.scope()).isEqualTo("Space DEMO");
+    }
+
+    private UpdatePodcasts podcasts(StepModel model, PodcastSpeech speech) {
+        return new UpdatePodcasts(jobs, model, speech, new PodcastStore(root.resolve("podcasts")),
+                PodcastVoices.bundled(), () -> 2, (context, attempt) -> { });
+    }
+
+    private UpdateSummary summary(String text) {
+        return new UpdateSummary("wiki", "u-1", "DEMO", text, List.of(new SummaryStatement(text, List.of())),
+                "test", Instant.parse("2026-11-21T17:00:00Z"), 0, false);
+    }
+
+    /** Antwortet je Stufe mit festem JSON. */
+    private static final class FakeModel implements StepModel {
+
+        final AtomicInteger calls = new AtomicInteger();
+
+        @Override
+        public String version() {
+            return "test";
+        }
+
+        @Override
+        public boolean available() {
+            return true;
+        }
+
+        @Override
+        public String complete(String instructions, String input) {
+            calls.incrementAndGet();
+            if (input.contains("Plane die Folge grob")) {
+                return "Klar! {\"title\":\"Neues bei Nordlicht\",\"topics\":[{\"title\":\"Einstieg\",\"angle\":\"Worum "
+                        + "es geht\",\"energy\":0.7,\"points\":[]},{\"title\":\"Neue Startseite\",\"angle\":\"Die "
+                        + "Startseite wurde neu gebaut\",\"energy\":0.6,\"points\":[\"neue Startseite\"]},"
+                        + "{\"title\":\"Abschluss\",\"energy\":0.3,\"points\":[]}]}";
+            }
+            if (input.contains("Plane Thema 2")) {
+                return "{\"segments\":[{\"title\":\"Was neu ist\",\"beats\":[{\"speaker\":\"host\",\"intent\":\"stellt "
+                        + "vor\"},{\"speaker\":\"cohost\",\"intent\":\"fragt nach\"}]},{\"title\":\"Was es bringt\","
+                        + "\"beats\":[{\"speaker\":\"cohost\",\"intent\":\"ordnet ein\"}]}]}";
+            }
+            if (input.contains("Plane Thema")) {
+                return "{\"segments\":[{\"title\":\"Kurz\",\"beats\":[{\"speaker\":\"host\",\"intent\":\"sagt was\"},"
+                        + "{\"speaker\":\"cohost\",\"intent\":\"antwortet\"}]},{\"title\":\"zu viel\",\"beats\":"
+                        + "[{\"speaker\":\"host\",\"intent\":\"x\"}]}]}";
+            }
+            return "{\"turns\":[{\"speaker\":\"host\",\"text\":\"Jana: Hallo, heute gibt es Neues.\"},"
+                    + "{\"speaker\":\"cohost\",\"text\":\"Ach ja? Erzähl mal.\"}]}";
+        }
+    }
+
+    /** Liefert kurze Stille als WAV; scheitert für Stimmen, die {@code failing} annimmt. */
+    private static final class FakeSpeech implements PodcastSpeech {
+
+        final List<String> voices = Collections.synchronizedList(new ArrayList<>());
+        final AtomicInteger calls = new AtomicInteger();
+        private final Predicate<String> failing;
+
+        FakeSpeech(Predicate<String> failing) {
+            this.failing = failing;
+        }
+
+        @Override
+        public boolean available() {
+            return true;
+        }
+
+        @Override
+        public List<String> models() {
+            return List.of("orpheus-3b-german");
+        }
+
+        @Override
+        public List<byte[]> speak(String model, String voice, String text, boolean sentences) throws IOException {
+            calls.incrementAndGet();
+            if (failing.test(voice)) {
+                throw new IOException("HTTP 503");
+            }
+            voices.add(voice);
+            return List.of(silence());
+        }
+
+        private static byte[] silence() {
+            AudioFormat format = new AudioFormat(24000f, 16, 1, true, false);
+            byte[] pcm = new byte[2400 * 2];
+            try {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                AudioSystem.write(new AudioInputStream(new ByteArrayInputStream(pcm), format, 2400),
+                        AudioFileFormat.Type.WAVE, out);
+                return out.toByteArray();
+            } catch (IOException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+    }
+}

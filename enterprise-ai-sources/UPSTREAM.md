@@ -43,7 +43,9 @@ Auswahl, ohne neuen Upstream-Commit.
 | `embedding-api`, `embedding-openai` | vollständig: `EmbeddingPort`, `OpenAiCompatibleEmbeddingAdapter` für `POST /embeddings` (ADR 0011) |
 | `chat-api`, `chat-openai` | vollständig: `ChatCompletionPort`, `OpenAiCompatibleChatAdapter` für `POST /chat/completions`, Suchvarianten (ADR 0017) |
 | `model-api` | nur `ModelCatalogPort`, `ModelCatalogException` |
-| `model-kipitz` | nur der Modellkatalog für `GET /models`: `KipitzModelCatalogAdapter`, `KipitzModelCatalogConfig`, `KipitzModelListParser`, `KipitzConnections` |
+| `model-kipitz` | nur der Modellkatalog für `GET /models`: `KipitzModelCatalogAdapter`, `KipitzModelCatalogConfig`, `KipitzModelListParser`, `KipitzConnections`; `KipitzSpeechAdapter` für `POST /audio/speech` (Podcast der Update-Zusammenfassung) |
+| `speech-api` | nur `SpeechSynthesisPort`, `SpeechSynthesisException`, `SynthesizedSpeech`, `TextAnalysisEngine`, `TextAnalysisEngineLoader`, `TaggedToken`, `WordClass` |
+| `astu/acropolis` (Vorlesen) | `speech/ReadAloudService`, `AudioPlayback`, `SpeechRate`, `SpeechText` (samt Stimmstabilitäts-Fix: Stücke enden nach etwa 500 Zeichen an der nächsten Satzgrenze, weil generative Stimmen wie Orpheus über rund 1000 Zeichen ihre Stimme wechseln), `SpeechChunking`, `SpeechTextPreparation`, `TextAnalysisService`: der Vorlese-Ablauf für den Podcast der Update-Zusammenfassung; der Space Harvester sammelt die Stücke über eine eigene `AudioPlayback` |
 | `LICENSE` | die Lizenz des Upstreams (MIT, AresStack), mitkopiert und mitgeprüft |
 
 Pakete und Klassennamen bleiben wie im Upstream (`com.aresstack.enterpriseai.*`), damit sich Änderungen

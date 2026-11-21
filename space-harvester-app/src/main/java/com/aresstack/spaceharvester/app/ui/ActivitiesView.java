@@ -1677,6 +1677,7 @@ public final class ActivitiesView implements View {
                 case PRESENTATION_EXPORT -> new Counters("Folien", "Bearbeitet", "In der Datei", "Ohne Standbild");
                 case SEARCH_QUALITY -> new Counters("Fragen", "Gestellt", "Im Chat-Kontext gefunden",
                         "Suche gescheitert");
+                case UPDATE_PODCAST -> new Counters("Themen", "Gesprochen", "Fertig", "Abschnitte ohne Audio");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }

@@ -122,6 +122,12 @@ public enum JobType {
      */
     SEARCH_QUALITY,
     /**
+     * „Podcast erzeugen“ (Angelo 21.11.2026): die Update-Zusammenfassung als lockeres Gespräch zweier Stimmen, erst der
+     * Plan, dann Text und Audio Abschnitt für Abschnitt im Hintergrund ({@code application.podcast.UpdatePodcasts}).
+     * Jede Stufe liegt sofort auf der Platte; Fortsetzen und jeder neue Lauf erzeugen nur, was fehlt.
+     */
+    UPDATE_PODCAST,
+    /**
      * Hintergrundauftrag (Angelo 21.11.2026, ADR 0025 Nachtrag „Hintergrundaufträge“): alles, was die App von sich aus
      * anstößt, etwa fehlende Seiten nachladen oder Bilder automatisch beschreiben. Welche Arbeit, sagt die Angabe
      * {@code background.kind}; zusammengehörige Unteraufträge (je Space einer) tragen dieselbe {@code background.group}
@@ -175,7 +181,7 @@ public enum JobType {
     public boolean resumable() {
         return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD
                 || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT || presentation()
-                || this == SEARCH_QUALITY || this == BACKGROUND;
+                || this == SEARCH_QUALITY || this == UPDATE_PODCAST || this == BACKGROUND;
     }
 
     /** Export aus der Quelle per REST-Abfrage (Metadaten, Analytics): Gescheitertes fragt ein neuer Lauf erneut. */
