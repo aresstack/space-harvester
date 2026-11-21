@@ -184,6 +184,38 @@ public final class TermGraphView {
             reload();
         });
         evidence.onOpen(target -> onOpen.accept(target));
+        // Aufgeschobene Meldungen des Core holen nach, sobald Belege, Vorschläge oder das Startfeld frei sind.
+        javax.swing.event.PopupMenuListener closed = new javax.swing.event.PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) {
+                catchUp();
+            }
+
+            @Override
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) {
+            }
+        };
+        evidence.addPopupMenuListener(closed);
+        suggestions.addPopupMenuListener(closed);
+        start.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                catchUp();
+            }
+        });
+        // Nach einem Neustart der Laufzeit an der neuen anmelden, auch wenn der Reiter sichtbar bleibt.
+        if (context != null) {
+            context.onChange(changed -> javax.swing.SwingUtilities.invokeLater(() -> {
+                if (context.runtime() != watched) {
+                    watch();
+                    followCore();
+                }
+            }));
+        }
         start.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
@@ -278,12 +310,16 @@ public final class TermGraphView {
      */
     private void watch() {
         AppRuntime runtime = context == null ? null : context.runtime();
-        if (runtime == null || runtime == watched) {
+        if (runtime == watched) {
             return;
         }
+        // Neue Laufzeit (Neustart, Neuladen): alte Anmeldungen lösen, damit die alte Laufzeit nicht hängen bleibt.
         watches.forEach(com.aresstack.spaceharvester.application.observe.Subscription::close);
         watches.clear();
         watched = runtime;
+        if (runtime == null) {
+            return;
+        }
         Runnable later = () -> javax.swing.SwingUtilities.invokeLater(this::followCore);
         watches.add(runtime.workspace().subscribeStatementAnalyses(later));
         watches.add(runtime.workspace().subscribePageReleases(change -> later.run()));
@@ -294,10 +330,42 @@ public final class TermGraphView {
         }));
     }
 
-    /** Eine Meldung des Core: eine gezeigte Fachsicht rechnet neu. */
+    /** Eine Meldung des Core steht noch aus, weil der Nutzer gerade tippt oder Belege liest. */
+    private boolean coreDirty;
+    /** Belege werden gerade gelesen. */
+    private boolean evidencePending;
+    /** Ob die Ansicht zu sehen ist; Tests setzen es fest. */
+    private java.util.function.BooleanSupplier showing = () -> root.isShowing();
+    /** Ob der Nutzer gerade Belege liest, Vorschläge sieht oder tippt; Tests setzen es fest. */
+    private java.util.function.BooleanSupplier userBusy =
+            () -> evidence.isVisible() || evidencePending || suggestions.isVisible() || typing();
+
+    /**
+     * Eine Meldung des Core: eine gezeigte Fachsicht rechnet still neu. Sie lässt Startfeld, Vorschläge und Belege
+     * stehen; tippt der Nutzer gerade oder liest er Belege, wartet sie, bis er fertig ist.
+     */
     private void followCore() {
-        if (domainMode() && root.isShowing()) {
-            reload();
+        if (!domainMode() || !showing.getAsBoolean() || centre == null) {
+            return;
+        }
+        if (userBusy.getAsBoolean()) {
+            coreDirty = true;
+            return;
+        }
+        coreDirty = false;
+        fetch(domainSource, centre, false);
+    }
+
+    /** Ob im Startfeld gerade ein anderer Begriff als die Mitte getippt wird. */
+    private boolean typing() {
+        String text = start.getText() == null ? "" : start.getText().trim();
+        return start.isFocusOwner() && !text.equals(centre);
+    }
+
+    /** Eine aufgeschobene Meldung nachholen, sobald der Nutzer fertig ist. */
+    private void catchUp() {
+        if (coreDirty) {
+            javax.swing.SwingUtilities.invokeLater(this::followCore);
         }
     }
 
@@ -340,15 +408,23 @@ public final class TermGraphView {
         }
         String wanted = term.trim();
         centre = wanted;
+        coreDirty = false;
         if (!wanted.equals(start.getText())) {
             quiet = true;
             start.setText(wanted);
             quiet = false;
         }
+        fetch(active, wanted, true);
+    }
+
+    /** Liest den Graphen um {@code wanted} im Hintergrund; {@code announce} zeigt „Lädt …“. */
+    private void fetch(GraphSource active, String wanted, boolean announce) {
         int current = ++request;
         int levels = depth.getSelectedIndex() + 1;
         boolean withProposals = proposals.isSelected();
-        hint.setText("Lädt …");
+        if (announce) {
+            hint.setText("Lädt …");
+        }
         java.util.function.BooleanSupplier overtaken = () -> current != request;
         Background.run(() -> active.around(wanted, levels, withProposals, overtaken), graph -> {
             if (current == request) {
@@ -401,14 +477,19 @@ public final class TermGraphView {
         edge.evidence().forEach(item -> byPage.computeIfAbsent(item.page(), unused -> new ArrayList<>())
                 .add(item.statement()));
         int graphRequest = request;
+        evidencePending = true;
         Background.run(() -> runtime.workspace().statementSentences(byPage), sentences -> {
+            evidencePending = false;
             if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
                 evidence.fill(title, total, edge.evidence(), sentences, false).showAt(canvas, x, y);
             }
+            catchUp();
         }, failure -> {
+            evidencePending = false;
             if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
                 evidence.fill(title, total, edge.evidence(), java.util.Map.of(), true).showAt(canvas, x, y);
             }
+            catchUp();
         });
     }
 
@@ -467,6 +548,19 @@ public final class TermGraphView {
 
     String centre() {
         return centre;
+    }
+
+    /** Wie sichtbar, und eine Meldung des Core trifft ein, während der Nutzer {@code busy} beschäftigt ist. */
+    void coreChanged(boolean busy) {
+        showing = () -> true;
+        userBusy = () -> busy;
+        followCore();
+    }
+
+    /** Der Nutzer ist fertig (Belege oder Vorschläge zu, Startfeld verlassen). */
+    void userDone() {
+        userBusy = () -> false;
+        catchUp();
     }
 
     PlaceholderField startField() {

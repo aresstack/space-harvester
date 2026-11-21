@@ -134,6 +134,48 @@ class DomainTermGraphTest {
     }
 
     @Test
+    void aSynonymBetweenTwoDomainTermsMustHoldAtBothEndsWhateverItsDirection() {
+        terms.add(new DomainTermGraph.Term("Konto", new RelationScope("finanzen", null)));
+        terms.add(new DomainTermGraph.Term("Rechnung", new RelationScope("garten", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Konto", "Rechnung", new RelationScope("finanzen", null)));
+        assertThat(around("Konto").edges()).as("„Rechnung“ gilt nur im Garten").isEmpty();
+
+        synonyms.clear();
+        synonyms.add(new DomainTermGraph.Synonym("Rechnung", "Konto", new RelationScope("finanzen", null)));
+        assertThat(around("Konto").edges()).as("umgekehrt gespeichert dasselbe").isEmpty();
+
+        terms.add(new DomainTermGraph.Term("Rechnung", new RelationScope("finanzen", null)));
+        assertThat(around("Konto").edges()).as("gilt das Synonym an beiden Enden, verbindet es")
+                .singleElement().satisfies(edge -> assertThat(edge.kind()).isEqualTo(DomainTermGraph.EdgeKind.SYNONYM));
+        synonyms.clear();
+        synonyms.add(new DomainTermGraph.Synonym("Konto", "Rechnung", new RelationScope("finanzen", null)));
+        assertThat(around("Konto").edges()).as("in beiden Richtungen").hasSize(1);
+    }
+
+    @Test
+    void staleStatementsCountOnlyIfTheyWouldFitTheFullViewInItsOwnOrder() {
+        term("Kern");
+        for (int i = 0; i < DomainTermGraph.MAX_NODES - 1; i++) {
+            synonyms.add(new DomainTermGraph.Synonym("Kern", "Kernname" + (char) ('a' + i / 26) + (char) ('a' + i % 26),
+                    RelationScope.GLOBAL));
+        }
+        StringBuilder text = new StringBuilder();
+        for (char suffix = 'a'; suffix <= 'e'; suffix++) {
+            term("Ziel" + suffix);
+            text.append("Der Kern prüft die Ziel").append(suffix).append(". ");
+        }
+        analyse("wiki", "1", text.toString().strip());
+        cache.put(new PageKey("wiki", "1"), EnrichmentTestPages.text("wiki", "1", "2", "Ganz neuer Text."));
+
+        DomainTermGraph.View withStale = fachsicht.around(CALLER, "Kern", new DomainTermGraph.Options(2, true, null),
+                () -> false);
+        assertThat(withStale.nodes()).hasSize(DomainTermGraph.MAX_NODES);
+        assertThat(withStale.nodes()).extracting(DomainTermGraph.Node::label).noneMatch(label -> label.startsWith("Ziel"));
+        assertThat(around("Kern").skippedStale())
+                .as("auch mit „veraltete zeigen“ wären die Ziele abgeschnitten, also nicht ausgelassen").isZero();
+    }
+
+    @Test
     void lockedPagesGiveNoEdgesAndATermWithoutVisibleEvidenceStandsAlone() {
         term("Revision");
         term("Beleg");

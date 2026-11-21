@@ -260,6 +260,39 @@ class TermGraphViewTest {
     }
 
     @Test
+    void aCoreChangeReloadsQuietlyAndWaitsWhileTheEvidenceIsOpen() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, cancelled) -> {
+            asked.incrementAndGet();
+            return FACHSICHT;
+        }, id -> "MaltParser");
+        TermGraphView[] holder = new TermGraphView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView view = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY, domain);
+            holder[0] = view;
+            view.domainChoice().doClick();
+            view.showTerm("Antragsteller");
+        });
+        awaitTrue(() -> asked.get() == 1 && !holder[0].hint().startsWith("Lädt"));
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView view = holder[0];
+            view.startField().setText("Antr");
+            view.coreChanged(false);
+            seen.add(view.startField().getText());
+            seen.add(view.hint().startsWith("Lädt"));
+        });
+        awaitTrue(() -> asked.get() == 2);
+        SwingUtilities.invokeAndWait(() -> holder[0].coreChanged(true));
+        SwingUtilities.invokeAndWait(() -> { });
+        seen.add(asked.get());
+        SwingUtilities.invokeAndWait(() -> holder[0].userDone());
+        awaitTrue(() -> asked.get() == 3);
+        assertThat(seen).as("Startfeld bleibt, kein „Lädt …“; während der Nutzer liest, erst danach neu rechnen")
+                .containsExactly("Antr", false, 2);
+    }
+
+    @Test
     void theOverlayNeverMakesUpASentence() {
         com.aresstack.spaceharvester.application.standing.SentenceText found =
                 new com.aresstack.spaceharvester.application.standing.SentenceText("Der Antragsteller stellt den Antrag.",

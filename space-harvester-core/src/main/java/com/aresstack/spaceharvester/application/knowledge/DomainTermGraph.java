@@ -268,12 +268,16 @@ public final class DomainTermGraph {
         }
 
         Map<String, EdgeBuilder> edges = new LinkedHashMap<>();
-        lexicon.synonymEdges.forEach(pair -> edges.computeIfAbsent("syn\u0000" + pair[0] + "\u0000" + pair[1],
-                unused -> new EdgeBuilder(pair[0], pair[1], EdgeKind.SYNONYM, null)));
+        // Dieselbe Sicht, als wären die veralteten Aussagen aktuell, in derselben Reihenfolge wie mit „veraltete
+        // zeigen“ (Synonyme zuerst, dann Seite für Seite): nur was dort läge, zählt als ausgelassen.
+        Map<String, EdgeBuilder> withStale = new LinkedHashMap<>();
+        lexicon.synonymEdges.forEach(pair -> {
+            String key = "syn\u0000" + pair[0] + "\u0000" + pair[1];
+            edges.computeIfAbsent(key, unused -> new EdgeBuilder(pair[0], pair[1], EdgeKind.SYNONYM, null));
+            withStale.computeIfAbsent(key, unused -> new EdgeBuilder(pair[0], pair[1], EdgeKind.SYNONYM, null));
+        });
         // Je ausgelassener veralteter Aussage die Paare, die sie verbände; gezählt wird erst nach dem Aufbau der Sicht.
         List<Set<String>> stale = new ArrayList<>();
-        // Dieselbe Sicht, als wären die veralteten Aussagen aktuell: nur was dort läge, zählt als ausgelassen.
-        Map<String, EdgeBuilder> withStale = new LinkedHashMap<>();
         Set<String> analyzers = new LinkedHashSet<>();
         for (KnowledgeGraph.AnalysedPage page : analysed.apply(caller)) {
             if (cancelled.getAsBoolean()) {
@@ -337,10 +341,13 @@ public final class DomainTermGraph {
                                 || !seen.add(actor.key() + "\u0000" + object.key())) {
                             continue;
                         }
-                        edges.computeIfAbsent("verb\u0000" + actor.key() + "\u0000" + verb + "\u0000" + object.key(),
-                                        unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb))
-                                .add(new Evidence(ref, statement, page.analysis().analyzerId(), actor.text(),
-                                        object.text()));
+                        String key = "verb\u0000" + actor.key() + "\u0000" + verb + "\u0000" + object.key();
+                        Evidence item = new Evidence(ref, statement, page.analysis().analyzerId(), actor.text(),
+                                object.text());
+                        edges.computeIfAbsent(key,
+                                unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb)).add(item);
+                        withStale.computeIfAbsent(key,
+                                unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb)).add(item);
                     }
                 }
             }
@@ -348,9 +355,7 @@ public final class DomainTermGraph {
         View view = layout(centre, lexicon, edges, options.depth(), 0, analyzers);
         Set<String> shown = new java.util.HashSet<>();
         if (!stale.isEmpty()) {
-            Map<String, EdgeBuilder> all = new LinkedHashMap<>(withStale);
-            edges.forEach(all::putIfAbsent);
-            layout(centre, lexicon, all, options.depth(), 0, analyzers).nodes()
+            layout(centre, lexicon, withStale, options.depth(), 0, analyzers).nodes()
                     .forEach(node -> shown.add(node.key()));
         }
         // Nur veraltete Aussagen, deren Kante in dieser Sicht läge, wären sie aktuell: beide Enden wären Knoten.
@@ -489,10 +494,20 @@ public final class DomainTermGraph {
                     continue;
                 }
                 // Nur wo Synonym und Fachbegriff beide gelten: Ein gleich geschriebener Fachbegriff einer anderen
-                // Quelle zieht kein fremdes Synonym nach.
+                // Quelle zieht kein fremdes Synonym nach. Sind beide Enden Fachbegriffe, muss es bei beiden gelten,
+                // gleich in welcher Richtung das Synonym gespeichert ist.
                 List<RelationScope> shared = new ArrayList<>();
                 for (RelationScope termScope : scopes.get(term)) {
                     intersection(termScope, synonym.scope()).ifPresent(shared::add);
+                }
+                if (fachbegriffe.contains(other)) {
+                    List<RelationScope> both = new ArrayList<>();
+                    for (RelationScope one : shared) {
+                        for (RelationScope two : scopes.get(other)) {
+                            intersection(one, two).ifPresent(both::add);
+                        }
+                    }
+                    shared = both;
                 }
                 if (shared.isEmpty()) {
                     continue;
