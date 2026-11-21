@@ -333,7 +333,7 @@ public final class Harvester implements AutoCloseable {
     private final SearchOrchestrator progressiveSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
-    private final PageConnections connections;
+    private final PageConnections pageConnections;
     private final PassageQueries passages;
     private final NavigationQueries documentNavigation;
     private final TermQueries terms;
@@ -846,7 +846,7 @@ public final class Harvester implements AutoCloseable {
                     () -> (this.settings != null ? this.settings.enrichment() : searchEnrichment).documents(),
                     documentTexts);
             // Paket G1: Strukturgraph aus lokalem Index, Verzeichnis der Verweise, Begriffen und gespeicherten Vektoren.
-            this.connections = new PageConnections(catalog, index, access, PageLinksDirectory.of(pageLinks), terms,
+            this.pageConnections = new PageConnections(catalog, index, access, PageLinksDirectory.of(pageLinks), terms,
                     termRelations, embedding == null ? null
                     : new PageConnections.Vectors(enrichmentStore, enrichmentStore, embedding));
             // #182: Fakten aus den Anreicherungen mit den manuellen und geprüften (außerhalb des Caches), Rechte je
@@ -1653,7 +1653,7 @@ public final class Harvester implements AutoCloseable {
      * ({@link #knowledgeGraph()}), ersetzt ihn nicht.
      */
     public PageConnections pageConnections() {
-        return connections;
+        return pageConnections;
     }
 
     public PageNavigation navigation() {
