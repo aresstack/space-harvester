@@ -229,7 +229,7 @@ wird automatisch verwaltet.
 3. **Nachrangig.** `Jobs#next` startet einen Hintergrundauftrag nur, wenn kein anderer Auftrag auf einen Platz wartet,
    und Hintergrund- und Folgeaufträge zusammen belegen nie alle Plätze: Hintergrund höchstens „Vorbereitung“ minus
    eins, ohne Mindestplatz. Bei nur einem Platz läuft kein Hintergrund; der wartende Teil meldet gelb „Wartet, nur ein
-   Platz eingestellt“ (`Jobs.SINGLE_SLOT`). Ein Auftrag des Benutzers startet immer sofort. Hintergrundaufträge haben einen eigenen Vorrat
+   Platz eingestellt“ (`Jobs.SINGLE_SLOT`). Ein Auftrag des Benutzers startet immer sofort. Ein Klick, der einen Folgeauftrag anstößt (`Jobs#submitInteractive`, Angabe `jobs.interactive`), wartet nie hinter Hintergrund: laufende Hintergrundteile zählen für ihn nicht gegen die Plätze der Folgeaufträge; unterbrochen wird keiner. Hintergrundaufträge haben einen eigenen Vorrat
    (`Jobs.BACKGROUND_CAPACITY`) ohne Grenze je Auslöser und füllen nie die Warteschlange des Benutzers.
 4. **Fortsetzen nach Neustart.** Die Arbeit eines Unterauftrags baut seine Art allein aus Quelle, Space und Angaben
    (`BackgroundPart`, mit `resumed()`). `BackgroundJobs#resumeInterrupted` setzt am Ende des Harvester-Starts jeden
