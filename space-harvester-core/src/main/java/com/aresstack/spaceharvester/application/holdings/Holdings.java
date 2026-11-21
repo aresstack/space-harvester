@@ -256,8 +256,9 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
 
     /**
      * Space und Bestand je Seite einer Menge, nach derselben Regel wie {@link #state} (für den Planer, Fahrplan D1, und
-     * {@code StatementAnalysisJobs#missing}). Ohne Quellenzugriff; es fehlen Seiten ohne Eintrag im Katalog, in Spaces
-     * ohne {@code metadata}-Freigabe und solche, die der Aufrufer nicht sehen darf.
+     * {@code StatementAnalysisJobs#missing}). Ohne Quellenzugriff. Seiten ohne gespeicherten Kopf (etwa gelistet, aber
+     * beim ersten Abruf gescheitert) findet sie im Bestand der Spaces der Quelle. Es fehlen Seiten, die kein Bestand
+     * nennt, in Spaces ohne {@code metadata}-Freigabe und solche, die der Aufrufer nicht sehen darf.
      */
     public Map<PageKey, Located> locate(AccessContext caller, PageSet pages) {
         Objects.requireNonNull(caller, "caller");
@@ -265,35 +266,68 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         Map<PageKey, Located> located = new LinkedHashMap<>();
         for (String sourceId : pages.sourceIds()) {
             Map<String, List<String>> bySpace = new LinkedHashMap<>();
+            Set<String> unplaced = new LinkedHashSet<>();
             for (String pageId : pages.pagesOf(sourceId)) {
-                catalog.spaceOf(sourceId, pageId).ifPresent(spaceKey -> bySpace
-                        .computeIfAbsent(spaceKey, ignored -> new ArrayList<>()).add(pageId));
+                Optional<String> spaceKey = catalog.spaceOf(sourceId, pageId);
+                if (spaceKey.isPresent()) {
+                    bySpace.computeIfAbsent(spaceKey.get(), ignored -> new ArrayList<>()).add(pageId);
+                } else {
+                    unplaced.add(pageId);
+                }
             }
+            Map<String, Optional<HoldingsCatalog.Stock>> stocks = new HashMap<>();
             for (Map.Entry<String, List<String>> space : bySpace.entrySet()) {
-                String spaceKey = space.getKey();
-                if (!access.permits(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA)) {
-                    continue;
-                }
-                Optional<HoldingsCatalog.Stock> found = catalog.stock(sourceId, spaceKey);
-                if (found.isEmpty()) {
-                    continue;
-                }
-                HoldingsCatalog.Stock stock = found.get();
-                Map<String, HoldingsCatalog.CatalogPage> byId = new HashMap<>();
-                stock.pages().forEach(page -> byId.putIfAbsent(page.pageId(), page));
-                Set<String> locked = new HashSet<>();
-                stock.locked().forEach(page -> locked.add(page.pageId()));
-                for (String pageId : space.getValue()) {
-                    HoldingsCatalog.CatalogPage page = byId.get(pageId);
-                    HoldingState state = page != null ? state(page, stock.stale())
-                            : locked.contains(pageId) ? HoldingState.LOCKED : null;
-                    if (state != null && visible(caller, sourceId, spaceKey, pageId)) {
-                        located.put(new PageKey(sourceId, pageId), new Located(spaceKey, state));
+                locateIn(caller, sourceId, space.getKey(), space.getValue(), stocks, located);
+            }
+            if (!unplaced.isEmpty()) {
+                // Ohne Kopf: zuerst in den schon gelesenen Spaces suchen, dann in den übrigen der Quelle.
+                Set<String> spaceKeys = new LinkedHashSet<>(bySpace.keySet());
+                spaceKeys.addAll(catalog.spaceKeys(sourceId));
+                for (String spaceKey : spaceKeys) {
+                    if (unplaced.isEmpty()) {
+                        break;
                     }
+                    unplaced.removeAll(locateIn(caller, sourceId, spaceKey, List.copyOf(unplaced), stocks, located));
                 }
             }
         }
         return located;
+    }
+
+    /**
+     * Ordnet {@code pageIds} im Bestand eines Spaces ein ({@link #locate}).
+     *
+     * @return die Seiten, die dieser Bestand nennt, auch die der Aufrufer nicht sehen darf
+     */
+    private Set<String> locateIn(AccessContext caller, String sourceId, String spaceKey, List<String> pageIds,
+                                 Map<String, Optional<HoldingsCatalog.Stock>> stocks, Map<PageKey, Located> located) {
+        if (!access.permits(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA)) {
+            return Set.of();
+        }
+        Optional<HoldingsCatalog.Stock> found = stocks.computeIfAbsent(spaceKey,
+                key -> catalog.stock(sourceId, key));
+        if (found.isEmpty()) {
+            return Set.of();
+        }
+        HoldingsCatalog.Stock stock = found.get();
+        Map<String, HoldingsCatalog.CatalogPage> byId = new HashMap<>();
+        stock.pages().forEach(page -> byId.putIfAbsent(page.pageId(), page));
+        Set<String> locked = new HashSet<>();
+        stock.locked().forEach(page -> locked.add(page.pageId()));
+        Set<String> named = new HashSet<>();
+        for (String pageId : pageIds) {
+            HoldingsCatalog.CatalogPage page = byId.get(pageId);
+            HoldingState state = page != null ? state(page, stock.stale())
+                    : locked.contains(pageId) ? HoldingState.LOCKED : null;
+            if (state == null) {
+                continue;
+            }
+            named.add(pageId);
+            if (visible(caller, sourceId, spaceKey, pageId)) {
+                located.put(new PageKey(sourceId, pageId), new Located(spaceKey, state));
+            }
+        }
+        return named;
     }
 
     /**

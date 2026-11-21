@@ -2708,6 +2708,13 @@ public final class PageDetailPanel extends JPanel {
             if (sourceId != null && pageId != null) {
                 loadVerbs();
                 terms.reloadBelow();
+                // „Aus Unterseiten“ unter Aussagen und Graph zeigt, was vorliegt: neue oder gelöschte Analysen
+                // (etwa einer Hintergrundgruppe „mit Unterseiten“) lesen neu; verdeckte Reiter beim nächsten Zeigen.
+                belowSectionFor.remove(STATEMENTS);
+                belowSectionFor.remove(GRAPH);
+                if (ANALYSES.equals(tabs.selected())) {
+                    loadBelowSection(analysisTabs.selected());
+                }
             }
             if (overviewSelection != null) {
                 overviewTermsDirty = true;
