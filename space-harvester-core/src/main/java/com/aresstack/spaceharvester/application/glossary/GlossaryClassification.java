@@ -227,7 +227,9 @@ public class GlossaryClassification {
             com.aresstack.spaceharvester.application.snapshot.PageSet> pages) {
         this.localPages = Objects.requireNonNull(pages, "pages");
     }
-    private final Map<String, Object> locks = new ConcurrentHashMap<>();
+    private final Map<String, java.util.concurrent.locks.ReentrantReadWriteLock> sourceLocks =
+            new ConcurrentHashMap<>();
+    private final Map<String, java.util.concurrent.locks.ReentrantLock> spaceLocks = new ConcurrentHashMap<>();
 
     /**
      * @param texts aktueller projizierter Text einer Seite im Cache
@@ -307,6 +309,8 @@ public class GlossaryClassification {
 
     /** Kennung der Hintergrundart des automatischen Laufs (K4). */
     public static final String AUTOMATIC_KIND = "glossary.automatic";
+    /** Gelber Grund, wenn ein Klick einen noch wartenden Automatik-Teil ersetzt. */
+    public static final String REPLACED_BY_CLICK = "durch Klick ersetzt";
     /** Titel der Gruppe in der Auftragsliste. */
     public static final String AUTOMATIC_TITLE = "Fachbegriffe erkennen";
 
@@ -327,11 +331,7 @@ public class GlossaryClassification {
                 part -> {
                     started.add(part.jobId());
                     RelationScope scope = new RelationScope(part.sourceId(), part.partitionKey());
-                    return JobTask.blocking(context -> {
-                        synchronized (lock(scope)) {
-                            job(scope, context, caller);
-                        }
-                    });
+                    return JobTask.blocking(context -> exclusive(scope, () -> job(scope, context, caller)));
                 }, enabled));
         this.background = jobs;
     }
@@ -467,19 +467,23 @@ public class GlossaryClassification {
                 RelationScope scope = new RelationScope(id, space);
                 // Ein Klick wartet nie hinter Hintergrund (#1055), auch nicht hinter der eigenen Automatik.
                 JobStatus status = jobs.submitInteractive(JobType.GLOSSARY, id, space, root, caller.jobOwner(),
-                        Map.of(), JobTask.blocking(context -> {
-                            synchronized (lock(scope)) {
-                                if (root == null) {
-                                    job(scope, context, caller);
-                                } else {
-                                    headers.apply(new PageKey(id, root))
-                                            .ifPresent(header -> context.rootTitle(header.metadata().title()));
-                                    job(scope, subtrees.pages(caller, id, space, root), root, context, caller);
-                                }
+                        Map.of(), JobTask.blocking(context -> exclusive(scope, () -> {
+                            if (root == null) {
+                                job(scope, context, caller);
+                            } else {
+                                headers.apply(new PageKey(id, root))
+                                        .ifPresent(header -> context.rootTitle(header.metadata().title()));
+                                job(scope, subtrees.pages(caller, id, space, root), root, context, caller);
                             }
-                        }));
+                        })));
                 started.add(status.id());
                 submitted.add(status);
+                var automaticJobs = background;
+                if (root == null && automaticJobs != null) {
+                    // Der Klick ersetzt den noch wartenden Automatik-Teil desselben Bereichs; ein laufender wird nie
+                    // unterbrochen, auf ihn wartet der Klick über die Sperre.
+                    automaticJobs.cancelWaiting(AUTOMATIC_KIND, id, space, REPLACED_BY_CLICK);
+                }
             }
         } catch (JobCapacityExceededException e) {
             // Ganz oder gar nicht: angenommene Aufträge brechen ab, bevor sie abgleichen.
@@ -505,12 +509,36 @@ public class GlossaryClassification {
     }
 
     /**
-     * Sperre je Geltungsbereich (Quelle und Space): Läufe über denselben Bereich gleichen dieselben Einträge ab und
-     * laufen nacheinander; ein Klick für einen Space wartet so nie auf den Hintergrundteil eines anderen Space.
+     * Läuft {@code work} unter der Sperre des Geltungsbereichs: je Quelle eine Lese-Schreib-Sperre, ein Quellenlauf
+     * ({@code spaceKey} leer) hält die Schreibsperre und schließt jeden Space-Lauf der Quelle aus und umgekehrt;
+     * ein Space-Lauf hält die Lesesperre und dazu die Sperre seines Space. Läufe über denselben Space gleichen
+     * dieselben Einträge ab und laufen nacheinander, Space-Läufe verschiedener Spaces parallel.
      */
-    private Object lock(RelationScope scope) {
-        return locks.computeIfAbsent(scope.sourceId() + "\u0000" + (scope.spaceKey() == null ? "" : scope.spaceKey()),
-                ignored -> new Object());
+    void exclusive(RelationScope scope, Runnable work) {
+        var source = sourceLocks.computeIfAbsent(scope.sourceId(),
+                ignored -> new java.util.concurrent.locks.ReentrantReadWriteLock(true));
+        if (scope.spaceKey() == null) {
+            source.writeLock().lock();
+            try {
+                work.run();
+            } finally {
+                source.writeLock().unlock();
+            }
+            return;
+        }
+        var space = spaceLocks.computeIfAbsent(scope.sourceId() + "\u0000" + scope.spaceKey(),
+                ignored -> new java.util.concurrent.locks.ReentrantLock(true));
+        source.readLock().lock();
+        try {
+            space.lock();
+            try {
+                work.run();
+            } finally {
+                space.unlock();
+            }
+        } finally {
+            source.readLock().unlock();
+        }
     }
 
     /** Ob der Auftrag von {@link #start} stammt. */

@@ -1275,6 +1275,38 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Bricht den eigenen Auftrag nur ab, solange er noch wartet ({@link JobState#QUEUED}), mit einem gelben Grund statt
+     * des einfachen „vor dem Start abgebrochen“. Hat er inzwischen begonnen, bleibt er unberührt; die Prüfung und der
+     * Abbruch geschehen unter derselben Sperre, ein laufender Auftrag wird so nie unterbrochen.
+     *
+     * @return der abgebrochene Auftrag, leer wenn er nicht mehr wartete
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     */
+    public Optional<JobStatus> cancelIfWaiting(String jobId, String owner, String reason) {
+        requireOwner(status(jobId), owner);
+        synchronized (lock) {
+            Job job = open.get(jobId);
+            if (job == null || job.state != JobState.QUEUED) {
+                return Optional.empty();
+            }
+            job.cancelRequested = true;
+            job.shutdownInterrupted = false;
+            job.pauseRequested = false;
+            job.restartForRetry = false;
+            queued.remove(job);
+            open.remove(jobId);
+            lock.notifyAll();
+            job.finish(JobState.CANCELLED, null, clock.instant());
+            keepResumable(job);
+            job.emit(true, JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, "CANCELLED", reason, null,
+                    null, null, null);
+            JobStatus status = job.snapshot();
+            store.save(status);
+            return Optional.of(status);
+        }
+    }
+
+    /**
      * Fordert den Abbruch an. Ein wartender Auftrag ist danach {@link JobState#CANCELLED}, ein laufender trägt
      * {@link JobStatus#cancelRequested()} bis zu seinem nächsten {@link JobContext#checkpoint()}. Für einen beendeten
      * Auftrag ändert sich nichts.

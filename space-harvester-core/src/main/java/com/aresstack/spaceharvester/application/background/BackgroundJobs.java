@@ -137,6 +137,29 @@ public final class BackgroundJobs {
                 .findFirst();
     }
 
+    /**
+     * Bricht die noch wartenden Unteraufträge dieser Art für Quelle und Space ab, mit gelbem Grund (etwa „durch Klick
+     * ersetzt“); laufende bleiben unberührt ({@link Jobs#cancelIfWaiting}).
+     *
+     * @param partitionKey ein Space, oder {@code null} für alle Spaces der Quelle
+     * @return die abgebrochenen Unteraufträge
+     */
+    public List<JobStatus> cancelWaiting(String kind, String sourceId, String partitionKey, String reason) {
+        List<JobStatus> cancelled = new ArrayList<>();
+        all().stream()
+                .filter(status -> status.state() == JobState.QUEUED && kind.equals(status.parameter(KIND))
+                        && sourceId.equals(status.sourceId())
+                        && (partitionKey == null || partitionKey.equals(status.partitionKey())))
+                .forEach(status -> {
+                    try {
+                        jobs.cancelIfWaiting(status.id(), owner, reason).ifPresent(cancelled::add);
+                    } catch (UnknownJobException e) {
+                        // inzwischen gelöscht
+                    }
+                });
+        return cancelled;
+    }
+
     /** Die Gruppe, solange noch einer ihrer Unteraufträge in der Liste steht. */
     public Optional<BackgroundGroup> group(String groupId) {
         List<JobStatus> parts = all().stream().filter(status -> groupId.equals(status.parameter(GROUP)))
