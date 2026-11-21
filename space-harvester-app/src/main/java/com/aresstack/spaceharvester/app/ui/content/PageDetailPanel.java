@@ -373,6 +373,9 @@ public final class PageDetailPanel extends JPanel {
             + "Wer die Seite verlässt, ohne zu klicken, sieht beim nächsten Öffnen den neuen Stand ohne Farben, weil "
             + "die Prüfung den Cache schon erneuert hat. Ist der geänderte Teil sehr lang (mehr als rund tausend "
             + "Absätze auf beiden Seiten), bleibt die Seite ohne Farben; Bilder ohne Text zählen nicht als Änderung.";
+    /** ?-Hilfe zum Unterreiter „Aussagen“ einer Seite: Kennzeichen, Herkunft, Prüfstatus (A1). */
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton statementsHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, STATEMENTS, StatementProvenance.HELP);
     private final com.aresstack.spaceharvester.app.ui.controls.HelpButton readingHelp =
             new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Leseansicht", READING_HELP);
     /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */
@@ -1044,6 +1047,13 @@ public final class PageDetailPanel extends JPanel {
         analysisView.proposeButton().setVisible(selected);
         analysisView.createButton().setVisible(selected);
         analysisView.shown(ANALYSES.equals(tabs.selected()) && !wide && selected);
+        statementsHelp.setVisible(ANALYSES.equals(tabs.selected()) && !wide
+                && STATEMENTS.equals(analysisTabs.selected()));
+    }
+
+    /** Für Tests: die ?-Hilfe des Unterreiters „Aussagen“. */
+    com.aresstack.spaceharvester.app.ui.controls.HelpButton statementsHelp() {
+        return statementsHelp;
     }
 
     /** Die ?-Hilfe zum gewählten Reiter von Analysen ohne Seite: Stand, Fachglossar oder Graph, sonst keine. */
@@ -4335,6 +4345,7 @@ public final class PageDetailPanel extends JPanel {
      */
     JComponent headerActions() {
         return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp,
+                statementsHelp,
                 standingHelp, glossaryHelp, graphHelp, chat.headerActions(), star, more);
     }
 

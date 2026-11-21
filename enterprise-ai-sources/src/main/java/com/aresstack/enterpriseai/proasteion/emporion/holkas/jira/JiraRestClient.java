@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -168,6 +169,115 @@ final class JiraRestClient {
         int next = startAt + items.size();
         boolean more = items.size() > 0 && (total < 0 ? items.size() >= maxResults : next < total);
         return new SearchResult(issues, more ? next : -1, total);
+    }
+
+    // --- Jira-Werkzeuge (JiraIssueOperations) --------------------------------------------------------------------
+
+    /** Die Übergänge, die das Konto am Vorgang gerade ausführen darf ({@code GET /issue/KEY/transitions}). */
+    List<JiraIssueOperations.Transition> transitions(Session session, String key) throws KnowledgeSourceException {
+        JsonObject page = getJson(session, API + "/issue/" + pathSegment(key) + "/transitions",
+                "Übergänge " + key);
+        List<JiraIssueOperations.Transition> transitions = new ArrayList<JiraIssueOperations.Transition>();
+        JsonArray items = array(page, "transitions");
+        if (items == null) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Übergänge " + key + ": Antwort ohne transitions");
+        }
+        for (JsonElement item : items) {
+            if (!item.isJsonObject()) {
+                continue;
+            }
+            JsonObject transition = item.getAsJsonObject();
+            String id = string(transition, "id");
+            if (id == null) {
+                continue;
+            }
+            JsonObject to = transition.has("to") && transition.get("to").isJsonObject()
+                    ? transition.getAsJsonObject("to") : null;
+            transitions.add(new JiraIssueOperations.Transition(id, string(transition, "name"),
+                    to == null ? null : string(to, "name")));
+        }
+        return transitions;
+    }
+
+    /** Schreibt einen Kommentar ({@code POST /issue/KEY/comment}); gibt die Kommentar-ID zurück. */
+    String addComment(Session session, String key, String body) throws KnowledgeSourceException {
+        JsonObject request = new JsonObject();
+        request.addProperty("body", body);
+        String what = "Kommentar zu " + key;
+        JiraHttpResponse response = post(session, API + "/issue/" + pathSegment(key) + "/comment", request, what);
+        String id = string(jsonObject(response, what), "id");
+        if (id == null) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": Antwort ohne id");
+        }
+        return id;
+    }
+
+    /** Führt einen Übergang aus ({@code POST /issue/KEY/transitions}); Jira antwortet mit 204 ohne Körper. */
+    void transition(Session session, String key, String transitionId) throws KnowledgeSourceException {
+        JsonObject request = new JsonObject();
+        JsonObject transition = new JsonObject();
+        transition.addProperty("id", transitionId);
+        request.add("transition", transition);
+        post(session, API + "/issue/" + pathSegment(key) + "/transitions", request, "Übergang " + key);
+    }
+
+    /**
+     * Ein POST mit JSON, genau einmal: schreibende Aufrufe sind nicht idempotent und werden nie wiederholt. Ein
+     * Fehler nennt die Meldungen von Jira ({@code errorMessages}, {@code errors}), damit das Modell den Grund kennt.
+     */
+    private JiraHttpResponse post(Session session, String path, JsonObject json, String what)
+            throws KnowledgeSourceException {
+        URI uri = uri(path, what);
+        JiraHttpResponse response;
+        try {
+            response = transport.post(uri, session.headers, json.toString().getBytes(StandardCharsets.UTF_8),
+                    config.maxResponseBytes());
+        } catch (IOException e) {
+            throw transportFailure(e, what, config.maxResponseBytes());
+        }
+        if (response.isSuccess()) {
+            return response;
+        }
+        KnowledgeSourceException failure = statusFailure(what, response.status());
+        String reason = errorText(response);
+        if (reason.isEmpty()) {
+            throw failure;
+        }
+        throw new KnowledgeSourceException(failure.kind(), failure.getMessage() + ": " + reason);
+    }
+
+    /** {@code errorMessages} und {@code errors} einer Fehlerantwort in einer Zeile, höchstens 500 Zeichen. */
+    private static String errorText(JiraHttpResponse response) {
+        if (response.contentType() == null || !response.contentType().toLowerCase(Locale.ROOT).contains("json")) {
+            return "";
+        }
+        try {
+            JsonElement element = JsonParser.parseString(response.bodyAsUtf8());
+            if (!element.isJsonObject()) {
+                return "";
+            }
+            List<String> parts = new ArrayList<String>();
+            JsonArray messages = array(element.getAsJsonObject(), "errorMessages");
+            if (messages != null) {
+                for (JsonElement message : messages) {
+                    if (message.isJsonPrimitive()) {
+                        parts.add(message.getAsString());
+                    }
+                }
+            }
+            JsonElement errors = element.getAsJsonObject().get("errors");
+            if (errors != null && errors.isJsonObject()) {
+                for (Map.Entry<String, JsonElement> error : errors.getAsJsonObject().entrySet()) {
+                    if (error.getValue().isJsonPrimitive()) {
+                        parts.add(error.getKey() + ": " + error.getValue().getAsString());
+                    }
+                }
+            }
+            String text = String.join("; ", parts).replaceAll("\\s+", " ").trim();
+            return text.length() > 500 ? text.substring(0, 500) + "…" : text;
+        } catch (RuntimeException e) {
+            return "";
+        }
     }
 
     /** Eine GET-Abfrage unter {@code /rest/} mit der Anmeldung der Quelle; die Antwort kommt unverändert. */

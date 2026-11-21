@@ -89,12 +89,25 @@ public class RemovalCheck {
         if (missing.isEmpty()) {
             return results;
         }
-        boolean confirmsDeletion = queries.confirmsDeletion(plan.inventory().sourceId());
         Set<String> listed = new HashSet<>();
         plan.inventory().pages().forEach(entry -> listed.add(entry.page().pageId()));
-        for (PageChange change : missing) {
-            results.put(change.pageId(), verify(plan.inventory().sourceId(), plan.inventory().spaceKey(),
-                    change.pageId(), confirmsDeletion, listed));
+        return verify(plan.inventory().sourceId(), plan.inventory().spaceKey(),
+                missing.stream().map(PageChange::pageId).toList(), listed);
+    }
+
+    /**
+     * Prüft die Seiten {@code pageIds}, die in einer vollständigen Liste mit den IDs {@code listed} fehlen; so auch für
+     * das Nachholen mit reiner ID-Liste ({@link ChangeSync}).
+     */
+    Map<String, Result> verify(String sourceId, String spaceKey, java.util.Collection<String> pageIds,
+                               Set<String> listed) {
+        Map<String, Result> results = new LinkedHashMap<>();
+        if (pageIds.isEmpty()) {
+            return results;
+        }
+        boolean confirmsDeletion = queries.confirmsDeletion(sourceId);
+        for (String pageId : pageIds) {
+            results.put(pageId, verify(sourceId, spaceKey, pageId, confirmsDeletion, listed));
         }
         return results;
     }

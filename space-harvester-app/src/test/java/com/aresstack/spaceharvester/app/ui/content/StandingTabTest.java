@@ -319,7 +319,7 @@ class StandingTabTest {
 
         assertThat(tab.popup().titleText()).isEqualTo("Antragsverfahren");
         assertThat(tab.popup().bodyText()).contains("Grund: Die Vorstufe (KI) kennzeichnet den Satz als Planung")
-                .contains("Herkunft: Vorstufe „Sätze vereinfachen“ (KI) · Kennzeichen: Planung")
+                .contains("Herkunft: Vorstufe „Sätze vereinfachen“ (KI) · Kennzeichen der Vorstufe: Planung")
                 .contains("Vereinfachter Satz: „Der Antrag wird geprüft“");
         assertThat(tab.popup().linkTexts()).containsExactly(StandingTab.OPEN_TEXT);
 
@@ -355,7 +355,7 @@ class StandingTabTest {
                 .doesNotContain(CheckTexts.VERDICT_LABEL);
         // Die Herkunft steht schon in der grauen Zeile unter dem Satz, als Wort.
         assertThat(StandingTab.meta(corrected)).isEqualTo("Antragsverfahren · Korrektur des Modells (KI)");
-        assertThat(StandingTab.meta(entry)).isEqualTo("Antragsverfahren · unsicher");
+        assertThat(StandingTab.meta(entry)).isEqualTo("Antragsverfahren · Vorschlag");
         StatusQuoEntry staged = new StatusQuoEntry(page("2", "Antragsverfahren"), statement("v6",
                 ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE, ParsedStatements.Quality.PLAUSIBLE,
                 ParsedStatements.Derivation.vorstufe(ParsedStatements.StageFlag.FACT, "Der Antrag wird geprüft")),

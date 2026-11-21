@@ -175,6 +175,34 @@ final class ConfluenceRestClient {
     }
 
     /**
+     * Genau ein Stapel der Content-IDs eines Space ab Position {@code start}, ohne {@code expand} (höchstens
+     * {@code limit}, Confluence kann weniger liefern). {@link IdBatch#nextStart} wie bei {@link #spacePageBatch}.
+     */
+    IdBatch spacePageIdBatch(Session session, String spaceKey, int start, int limit) throws KnowledgeSourceException {
+        String what = "Seiten-IDs des Space";
+        JsonObject json = getJson(session, "/rest/api/content?type=page&spaceKey=" + query(spaceKey) + "&start="
+                + start + "&limit=" + limit, what);
+        List<String> ids = new ArrayList<String>();
+        for (JsonObject result : results(json, what)) {
+            String id = string(result, "id");
+            String type = string(result, "type");
+            if (id != null && ConfluenceIds.isContentId(id) && (type == null || "page".equals(type))) {
+                ids.add(id);
+            }
+        }
+        String next = nextLink(json, what);
+        if (next == null) {
+            return new IdBatch(ids, -1);
+        }
+        java.util.regex.Matcher position = NEXT_START.matcher(next);
+        int nextStart = position.find() ? Integer.parseInt(position.group(1)) : -1;
+        if (nextStart <= start) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": Folgelink ohne weiterführende Position");
+        }
+        return new IdBatch(ids, nextStart);
+    }
+
+    /**
      * Pfad eines Stapels der Seiten eines Space, die in den letzten {@code minutes} Minuten angelegt oder geändert
      * wurden, jüngste Änderung zuerst: eine CQL-Anfrage {@code lastmodified >= now("-Nm")}. Relativ zur Uhr von
      * Confluence, also ohne Zeitzone und ohne Uhrenabweichung des Aufrufers. Absteigend sortiert, damit Seiten, die
@@ -1899,6 +1927,16 @@ final class ConfluenceRestClient {
 
         PageBatch(List<Page> pages, int nextStart) {
             this.pages = Collections.unmodifiableList(pages);
+            this.nextStart = nextStart;
+        }
+    }
+
+    static final class IdBatch {
+        final List<String> ids;
+        final int nextStart;
+
+        IdBatch(List<String> ids, int nextStart) {
+            this.ids = Collections.unmodifiableList(ids);
             this.nextStart = nextStart;
         }
     }

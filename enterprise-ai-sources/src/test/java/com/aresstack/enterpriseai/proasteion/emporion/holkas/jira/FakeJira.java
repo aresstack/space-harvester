@@ -32,6 +32,7 @@ final class FakeJira implements JiraHttpTransport {
     private static final Pattern PROJECT_NOT_IN = Pattern.compile("project not in \\(([^)]*)\\)");
     private static final Pattern TEXT = Pattern.compile("(text|summary) ~ \"((?:[^\"\\\\]|\\\\.)*)\"");
     private static final Pattern KEY_IN = Pattern.compile("key in \\(([^)]*)\\)");
+    private static final Pattern KEY_EQ = Pattern.compile("\\bkey = ([A-Z][A-Z0-9_]*-[0-9]+)");
     private static final Pattern RESOLUTION = Pattern.compile("resolution = Unresolved");
 
     final Map<String, FakeProject> projects = new LinkedHashMap<String, FakeProject>();
@@ -53,6 +54,12 @@ final class FakeJira implements JiraHttpTransport {
     int inlineCommentLimit = Integer.MAX_VALUE;
     /** Statt {@code renderedFields} liefert {@code /issue} nur Wiki-Markup. */
     boolean withoutRenderedFields;
+    /** Schreibende Aufrufe der Jira-Werkzeuge: Pfad (ohne Basis) und JSON-Körper. */
+    final List<String[]> posts = new ArrayList<String[]>();
+    /** Angebotene Übergänge je Vorgang: ID, Name, Zielstatus. */
+    final List<String[]> transitionOffers = new ArrayList<String[]>();
+    /** Feste Antwort auf jeden POST (Fehlerfälle); sonst wie Jira. */
+    JiraHttpResponse forcedPostResponse;
 
     FakeProject project(String key, String name) {
         FakeProject project = new FakeProject(key, name);
@@ -100,6 +107,25 @@ final class FakeJira implements JiraHttpTransport {
         if (path.equals("/rest/api/2/search")) {
             return search(query);
         }
+        Matcher transitions = Pattern.compile("/rest/api/2/issue/([^/]+)/transitions").matcher(path);
+        if (transitions.matches()) {
+            if (!issues.containsKey(transitions.group(1))) {
+                return json(404, "{\"errorMessages\":[\"Issue Does Not Exist\"]}");
+            }
+            JsonArray array = new JsonArray();
+            for (String[] offer : transitionOffers) {
+                JsonObject transition = new JsonObject();
+                transition.addProperty("id", offer[0]);
+                transition.addProperty("name", offer[1]);
+                JsonObject to = new JsonObject();
+                to.addProperty("name", offer[2]);
+                transition.add("to", to);
+                array.add(transition);
+            }
+            JsonObject page = new JsonObject();
+            page.add("transitions", array);
+            return json(200, page.toString());
+        }
         Matcher comments = Pattern.compile("/rest/api/2/issue/([^/]+)/comment").matcher(path);
         if (comments.matches()) {
             FakeIssue issue = issues.get(comments.group(1));
@@ -134,6 +160,49 @@ final class FakeJira implements JiraHttpTransport {
         if (files.containsKey(path)) {
             String type = fileTypes.containsKey(path) ? fileTypes.get(path) : "image/png";
             return new JiraHttpResponse(200, type, files.get(path));
+        }
+        return json(404, "{}");
+    }
+
+    @Override
+    public JiraHttpResponse post(URI uri, Map<String, String> headers, byte[] body, int maxBytes) throws IOException {
+        requests.add(uri);
+        requestHeaders.add(headers);
+        String path = uri.getRawPath().substring(BASE.getRawPath().length());
+        posts.add(new String[] {path, new String(body, StandardCharsets.UTF_8)});
+        if (forcedFailure != null) {
+            throw forcedFailure;
+        }
+        if (forcedPostResponse != null) {
+            return forcedPostResponse;
+        }
+        Matcher comment = Pattern.compile("/rest/api/2/issue/([^/]+)/comment").matcher(path);
+        if (comment.matches()) {
+            FakeIssue issue = issues.get(comment.group(1));
+            if (issue == null) {
+                return json(404, "{\"errorMessages\":[\"Issue Does Not Exist\"]}");
+            }
+            String text = com.google.gson.JsonParser.parseString(new String(body, StandardCharsets.UTF_8))
+                    .getAsJsonObject().get("body").getAsString();
+            issue.comment("Agent", text, "<p>" + text + "</p>");
+            return json(201, "{\"id\":\"" + (10000 + issue.comments.size()) + "\"}");
+        }
+        Matcher transition = Pattern.compile("/rest/api/2/issue/([^/]+)/transitions").matcher(path);
+        if (transition.matches()) {
+            FakeIssue issue = issues.get(transition.group(1));
+            if (issue == null) {
+                return json(404, "{}");
+            }
+            String id = com.google.gson.JsonParser.parseString(new String(body, StandardCharsets.UTF_8))
+                    .getAsJsonObject().getAsJsonObject("transition").get("id").getAsString();
+            for (String[] offer : transitionOffers) {
+                if (offer[0].equals(id)) {
+                    issue.status = offer[2];
+                    return new JiraHttpResponse(204, "application/json", new byte[0]);
+                }
+            }
+            return json(400, "{\"errorMessages\":[\"It seems that you have tried to perform a workflow operation "
+                    + "that is not valid\"],\"errors\":{}}");
         }
         return json(404, "{}");
     }
@@ -179,6 +248,10 @@ final class FakeJira implements JiraHttpTransport {
         }
         Matcher keys = KEY_IN.matcher(jql);
         if (keys.find() && !list(keys.group(1)).contains(issue.key)) {
+            return false;
+        }
+        Matcher key = KEY_EQ.matcher(jql);
+        if (key.find() && !key.group(1).equals(issue.key)) {
             return false;
         }
         if (RESOLUTION.matcher(jql).find() && issue.resolution != null) {

@@ -135,7 +135,8 @@ final class StandingTab extends JPanel {
             + "(Präsens, Futur, Präteritum, „nicht mehr“); eine überholte Seite (Label, Titel, Lage) oder ein Entwurf "
             + "zieht nur Aussagen mit, die selbst nichts über die Zeit sagen.\n\n"
             + "Verneinung und Verbindlichkeit („muss nicht“) ändern den Stand nie und stehen deshalb in jeder Zeile. "
-            + "„unsicher“ heißt: Der Parser ist sich nicht sicher, die Aussage zählt nicht für den Stand der Seite.\n\n"
+            + "„" + StatementProvenance.PROPOSAL + "“ heißt: Der Parser ist sich nicht sicher oder der Prüfschritt "
+            + "hat die Aussage verworfen; sie bleibt sichtbar, zählt aber nicht für den Stand der Seite.\n\n"
             + "Ein Klick auf eine Zeile zeigt Grund und Herkunft, ein Doppelklick springt an die Stelle im Lesetext. "
             + "Die Suche findet Handelnde, Träger, Prädikate, die übrigen Beteiligten in Grundform, Seitentitel und "
             + "vereinfachte Sätze, nicht aber Wörter, die nur im Originalsatz stehen. "
@@ -1260,8 +1261,12 @@ final class StandingTab extends JPanel {
         if (entry.kind() == StatementKind.STATE) {
             parts.add("Zustand");
         }
-        if (entry.uncertain()) {
-            parts.add("unsicher");
+        // A1: Unsicheres trägt das Wort „Vorschlag“ (neutral, nie rot); ein Urteil von Hand geht vor.
+        String marker = StatementProvenance.marker(entry.statement());
+        if (marker != null) {
+            parts.add(marker);
+        } else if (entry.uncertain()) {
+            parts.add(StatementProvenance.PROPOSAL);
         }
         if (entry.decision() != null) {
             parts.add("von Hand");
@@ -1359,31 +1364,10 @@ final class StandingTab extends JPanel {
         } else if (sentence != null && sentence.stale()) {
             lines.add("Originalsatz: nicht mehr ermittelbar, der Text der Seite hat sich geändert.");
         }
-        if (entry.origin() == ParsedStatements.Origin.VORSTUFE) {
-            lines.add("Herkunft: Vorstufe „Sätze vereinfachen“ (KI) · Kennzeichen: " + stageFlag(entry.stageFlag()));
-            String simplified = entry.statement().derivation().simplifiedSentence();
-            if (simplified != null && !simplified.isBlank()) {
-                lines.add("Vereinfachter Satz: „" + simplified.strip() + "“");
-            }
-        } else if (entry.origin() == ParsedStatements.Origin.MODELL) {
-            // ADR 0032, FL4: aus dem Satz, mit dem das Modell eine andere Aussage vervollständigt hat.
-            lines.add(CheckTexts.ORIGIN_LABEL + ": " + CheckTexts.ORIGIN_MODEL);
-            String corrected = entry.statement().derivation().simplifiedSentence();
-            if (corrected != null && !corrected.isBlank()) {
-                lines.add(CheckTexts.MODEL_SENTENCE_LABEL + ": „" + corrected.strip() + "“");
-            }
-        } else {
-            lines.add("Herkunft: Originalsatz");
-        }
-        if (entry.statement().check() != null) {
-            lines.add(CheckTexts.VERDICT_LABEL + ": " + CheckTexts.verdict(entry.statement().check()));
-            String lowered = CheckTexts.lowered(entry.statement());
-            if (lowered != null) {
-                lines.add(CheckTexts.QUALITY_LABEL + ": " + lowered);
-            }
-        }
+        // A1: Herkunft und Prüfstatus wie im Reiter „Aussagen“, aus derselben Stelle.
+        lines.add(StatementProvenance.details(entry.statement(), null, null));
         if (entry.uncertain()) {
-            lines.add("Unsicher: zählt nicht für den Stand der Seite.");
+            lines.add(StatementProvenance.PROPOSAL + ": zählt nicht für den Stand der Seite.");
         }
         if (entry.analysisStale()) {
             lines.add("Die Analyse passt nicht mehr zum Text der Seite.");

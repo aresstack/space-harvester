@@ -152,6 +152,50 @@ class ChangeSyncTest {
     }
 
     @Test
+    void withTheLeanIdListDeletionsAreFoundWithoutListingMetadata() {
+        source.listingPageIds().confirmingDeletion();
+        cached("1");
+        cached("3");
+        source.trash("3");
+
+        SpaceSync.SyncRun run = run(AN_HOUR_AGO);
+
+        assertThat(run.plan().removals().get("3").verdict()).isEqualTo(RemovalCheck.Verdict.DELETED);
+        assertThat(run.confirmed().pages()).containsOnlyKeys("1");
+        assertThat(source.metadataListings).isZero();
+        assertThat(source.trashCalls).isZero();
+    }
+
+    @Test
+    void withTheLeanIdListAReappearingWithheldPageIsVisibleAgain() {
+        source.listingPageIds();
+        cached("1");
+        cached("3");
+        source.trash("3");
+        assertThat(run(AN_HOUR_AGO).confirmed().withheldPageIds()).containsOnlyKeys("3");
+        source.put("3", "DOC", null, "7", null);
+
+        SpaceSync.SyncRun run = run(AN_HOUR_AGO);
+
+        assertThat(run.confirmed().withheldPageIds()).isEmpty();
+        assertThat(run.plan().changes()).extracting(PageChange::pageId).contains("3");
+    }
+
+    @Test
+    void aFailingIdListStillAppliesTheChangesButRemovesNothing() {
+        source.listingPageIds().confirmingDeletion();
+        cached("1");
+        cached("3");
+        source.trash("3").change("1", "4", 5).failListingAtCall(1);
+
+        SpaceSync.SyncRun run = run(AN_HOUR_AGO);
+
+        assertThat(run.confirmed()).isNotNull();
+        assertThat(fetched).containsExactly("1");
+        assertThat(run.plan().removals()).isEmpty();
+    }
+
+    @Test
     void aPageTheCacheNeverKnewIsIgnoredWhenItDisappears() {
         cached("1");
         source.trash("2");
