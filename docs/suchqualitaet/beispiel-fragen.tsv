@@ -1,0 +1,8 @@
+# Testbestand Suchqualität (Q1): erfundenes Beispiel, keine echten Inhalte.
+# Tabulator getrennt, UTF-8; Format: docs/suchqualitaet/README.md
+id	frage	bereich	erwartet	art	bemerkung
+F01	Wer bewilligt den Mittelabruf?	foerder	foerder:1001	einfach	
+F02	Welche Fristen gelten für den Verwendungsnachweis?	foerder:FV	foerder:1004|foerder:1007	verteilt	Fristen stehen auf zwei Seiten
+F03	Was bedeutet VN?	foerder	foerder:1004	akronym	VN auch „Vertragsnummer“
+F04	Wie wird ein Zuschuss beantragt?	foerder:seite:1000+unterseiten	https://wiki.example.org/pages/viewpage.action?pageId=1002	synonym	Seite sagt „Förderantrag“
+F05	Wie hoch ist die Verwaltungspauschale für Dienstreisen?	*		keine	steht nirgends
