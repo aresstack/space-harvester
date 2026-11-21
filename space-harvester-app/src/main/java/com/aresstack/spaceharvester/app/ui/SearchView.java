@@ -213,6 +213,8 @@ public final class SearchView implements View {
     private int batchStart;
     /** Anfrage und Cursor der zuletzt angezeigten Suche, für „Weitere laden“; der Cursor gilt nur für sie. */
     private KeywordSearch.Query lastQuery;
+    /** Der zuletzt gesuchte Text; wechselt der Bereich links, sucht die Suche damit neu (Angelo, 21.11.2026). */
+    private String searchedText;
     /** Ob ein Stapel derselben Suche unvollständig war; bleibt bis zur nächsten Suche. */
     private boolean incomplete;
     /** Zustand je Quelle aus dem ersten Stapel, ergänzt um spätere Ausfälle. */
@@ -550,6 +552,7 @@ public final class SearchView implements View {
      */
     public void scope(List<Explorer.Scope> selection) {
         Set<String> known = knownSources();
+        List<Explorer.Scope> before = scopes;
         scopes = selection.stream().filter(scope -> scope.sourceId() != null && known.contains(scope.sourceId()))
                 .distinct().toList();
         chosen.clear();
@@ -570,6 +573,10 @@ public final class SearchView implements View {
         if (technicalTerms.isSelected() && termsRuntime != null) {
             // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
             searchTechnicalTerms();
+        } else if (!scopes.equals(before) && searchedText != null
+                && searchedText.equals(query.getText().trim())) {
+            // Anderer Bereich links gewählt: der Suchbegriff bleibt, gesucht wird im neuen Bereich (Angelo, 21.11.2026).
+            search();
         }
     }
 
@@ -997,6 +1004,7 @@ public final class SearchView implements View {
             open(runtime, text);
             return;
         }
+        searchedText = text;
         if (searchedSources().isEmpty()) {
             feedback.warning("Keine Wissensquelle angehakt", "In den Suchoptionen (Pfeil im Suchfeld) ist keine "
                     + "Quelle angehakt, die zur Auswahl im Explorer passt.");
