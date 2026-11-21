@@ -53,6 +53,29 @@ class StatementProvenanceTest {
     }
 
     @Test
+    void aParticipantInferredFromTheCaseIsShownAsSuchNextToTheReason() {
+        ParsedStatements.Mention actor = new ParsedStatements.Mention("wiki/1@h#s0.t1", 0, 0, 3, "Amt", "Amt", "Amt",
+                ParsedStatements.MentionKind.NOUN, false, Set.of());
+        ParsedStatements.Mention object = new ParsedStatements.Mention("wiki/1@h#s0.t3", 0, 10, 16, "Antrag",
+                "Antrag", "Antrag", ParsedStatements.MentionKind.NOUN, false, Set.of());
+        ParsedStatements.Statement statement = new ParsedStatements.Statement("wiki/1@h#s0.v2", 0, 4, 9, "prüft",
+                "prüfen", ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(
+                new ParsedStatements.Argument(ParsedStatements.Role.ACTOR, actor.id(), "nsubj", null,
+                        ParsedStatements.Priority.CORE, ParsedStatements.Basis.PARSER, true),
+                new ParsedStatements.Argument(ParsedStatements.Role.AFFECTED_OBJECT, object.id(), "obj?", null,
+                        ParsedStatements.Priority.CORE, ParsedStatements.Basis.CASE_HEURISTIC, false)),
+                Set.of("HEURISTIC_PARTICIPANT"), 0, ParsedStatements.Quality.UNCERTAIN,
+                List.of("HEURISTIC_PARTICIPANT"), ParsedStatements.Review.UNREVIEWED);
+
+        String details = StatementProvenance.details(statement, "MaltParser",
+                java.util.Map.of(actor.id(), actor, object.id(), object));
+
+        assertThat(details).contains("Kennzeichen: Vorschlag", "Gründe: Beteiligter aus dem Kasus geschlossen",
+                "Handelnder „Amt“: Parserkante (nsubj), sicher",
+                "Betroffen „Antrag“: aus dem Kasus geschlossen, unsicher");
+    }
+
+    @Test
     void reasonsAreWordsAndUnknownCodesStayReadable() {
         assertThat(StatementProvenance.reason("HEURISTIC_PARTICIPANT")).isEqualTo("Beteiligter aus dem Kasus "
                 + "geschlossen");
