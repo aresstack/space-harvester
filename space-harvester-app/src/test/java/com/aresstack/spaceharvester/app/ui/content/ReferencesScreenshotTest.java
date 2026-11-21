@@ -35,13 +35,26 @@ class ReferencesScreenshotTest {
                         new PageNode("6", "Betrieb", "DEV", null),
                         new PageNode("7", null, null, null)),
                 new PageLinks.Coverage(184, 210));
-        for (int width : new int[] {1280, 960}) {
+        for (int shot = 0; shot < 4; shot++) {
+            int width = shot % 2 == 0 ? 1280 : 960;
+            boolean withSubpages = shot >= 2;
             JPanel[] surface = new JPanel[1];
             SwingUtilities.invokeAndWait(() -> {
                 References view = new References();
                 JLabel status = Comic.muted(" ");
                 view.onStatus(status::setText);
                 view.show(references);
+                if (withSubpages) {
+                    view.belowLoading(2);
+                    view.below(List.of(
+                            new PageNavigation.SubpageReference(new PageNode("11", "Zahlungen", "DEV", null), true,
+                                    new PageNode("8", "Kassenbuch", "DEV", null)),
+                            new PageNavigation.SubpageReference(new PageNode("11", "Zahlungen", "DEV", null), true,
+                                    new PageNode("2", "Plan", "DEV", null)),
+                            new PageNavigation.SubpageReference(new PageNode("12",
+                                    "Belege und Buchungskennzeichen im Jahresabschluss", "DEV", null), false,
+                                    new PageNode("9", "Revision", "OPS", null))));
+                }
                 JPanel panel = new JPanel(new BorderLayout(0, 8));
                 panel.setBackground(Comic.SURFACE);
                 panel.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
@@ -54,7 +67,7 @@ class ReferencesScreenshotTest {
                 surface[0] = panel;
             });
             SwingUtilities.invokeAndWait(() -> { });
-            Path file = out.resolve("verweise-" + width + ".png");
+            Path file = out.resolve((withSubpages ? "verweise-unterseiten-" : "verweise-") + width + ".png");
             SwingUtilities.invokeAndWait(() -> write(surface[0], file));
         }
     }

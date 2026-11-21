@@ -67,4 +67,41 @@ class ReferencesTest {
         assertThat(view.table().getValueAt(0, 2)).isEqualTo("–");
         assertThat(view.showing()).isTrue();
     }
+
+    /**
+     * Fahrplan P3: die Verweise der Unterseiten stehen abgetrennt darunter, je Zeile mit der Unterseite als Herkunft;
+     * was oben schon steht, steht unten nicht noch einmal. Ein Klick auf die Herkunft öffnet die Unterseite.
+     */
+    @Test
+    void theReferencesOfTheSubpagesFollowBelowWithTheirOrigin() {
+        References view = new References();
+        List<String> opened = new java.util.ArrayList<>();
+        List<String> status = new java.util.ArrayList<>();
+        view.onOpen(opened::add);
+        view.onStatus(status::add);
+        view.show(new PageNavigation.References("wiki", "1", List.of(PLAN), List.of(), new PageLinks.Coverage(1, 1)));
+        assertThat(view.showsBelow()).isFalse();
+        PageNode child = new PageNode("11", "Zahlungen", "DEV", null);
+
+        view.belowLoading(2);
+        assertThat(view.showsBelow()).isTrue();
+        view.below(List.of(new PageNavigation.SubpageReference(child, true, PLAN),
+                new PageNavigation.SubpageReference(child, true, new PageNode("8", "Kassenbuch", "DEV", null)),
+                new PageNavigation.SubpageReference(child, false, ZIEL)));
+
+        assertThat(view.belowCount()).as("„verweist auf Plan“ steht schon oben").isEqualTo(2);
+        assertThat(view.belowTable().getValueAt(0, 1)).isEqualTo("Kassenbuch");
+        assertThat(view.belowTable().getValueAt(0, 3)).isEqualTo("Zahlungen");
+        assertThat(view.belowTable().getValueAt(1, 0)).isEqualTo("verwiesen von");
+        assertThat(status).as("kein Zusatztext, die Zahl steht im Chip (UX)").last().asString()
+                .doesNotContain("Unterseite");
+        assertThat(view.copyText()).contains(TermsTab.BELOW + "\nverweist auf\tKassenbuch\tDEV\tZahlungen");
+
+        view.openBelow(0, 3);
+        view.openBelow(0, 1);
+        assertThat(opened).containsExactly("11", "8");
+
+        view.belowLoading(-1);
+        assertThat(view.showsBelow()).isFalse();
+    }
 }
