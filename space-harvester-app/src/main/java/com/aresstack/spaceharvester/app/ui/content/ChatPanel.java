@@ -226,7 +226,10 @@ public final class ChatPanel extends JPanel {
     /** Name des Chat-Modells und gewählter Denkaufwand; die Knöpfe zeigen sie nur, solange der Platz reicht. */
     private String modelName = NO_MODEL;
     private String effortLevel = EFFORTS.get(1);
-    /** Wie knapp die Fußzeile der Eingabe ist: 0 alles mit Text, 1 Modell nur als Symbol, 2 auch der Denkaufwand. */
+    /**
+     * Wie knapp die Fußzeile der Eingabe ist: 0 alles mit Text, 1 Modell nur als Symbol, 2 auch der Denkaufwand,
+     * 3 ohne die Websuche.
+     */
     private int footerStage;
     private JPanel footerWest;
     private JPanel footerEast;
@@ -1233,15 +1236,17 @@ public final class ChatPanel extends JPanel {
 
     /**
      * Die Fußzeile der Eingabe in der schmalen Leiste (Angelo, 21.11.2026): Reicht der Platz nicht, zeigt erst die
-     * Modellwahl, dann auch der Denkaufwand nur noch das Symbol; der Name steht dann im Tooltip. „Senden“ und die
-     * Symbole rechts bleiben immer ganz sichtbar.
+     * Modellwahl, dann auch der Denkaufwand nur noch das Symbol; der Name steht dann im Tooltip. Reicht auch das
+     * nicht, weicht die Websuche. „Senden“, Anhängen und Diktat bleiben immer ganz sichtbar.
      */
     private void fitFooter() {
         int stage = 0;
         showFooter(0);
         if (footerWest != null && footerWest.getParent() != null && footerWest.getParent().getWidth() > 0) {
-            int room = footerWest.getParent().getWidth() - footerEast.getPreferredSize().width - FOOTER_GAP;
-            while (stage < 2 && footerWest.getPreferredSize().width > room) {
+            // Die Breiten hängen von der Schrift ab, darum wird gemessen statt gerechnet.
+            int width = footerWest.getParent().getWidth() - FOOTER_GAP;
+            while (stage < 3
+                    && footerWest.getPreferredSize().width + footerEast.getPreferredSize().width > width) {
                 showFooter(++stage);
             }
         }
@@ -1257,9 +1262,11 @@ public final class ChatPanel extends JPanel {
         model.setToolTipText(MODEL_TIP + (NO_MODEL.equals(modelName) && stage < 1 ? "" : ": " + modelName));
         effort.setText(stage >= 2 ? null : effortLevel);
         effort.setToolTipText(EFFORT_TIP + ": " + effortLevel);
+        // Letzte Stufe für sehr schmale Leisten oder breite Schriften: die (noch gesperrte) Websuche weicht.
+        web.setVisible(stage < 3);
     }
 
-    /** Für Tests: wie knapp die Fußzeile gerade ist (0, 1 oder 2). */
+    /** Für Tests: wie knapp die Fußzeile gerade ist (0 bis 3). */
     int footerStage() {
         return footerStage;
     }

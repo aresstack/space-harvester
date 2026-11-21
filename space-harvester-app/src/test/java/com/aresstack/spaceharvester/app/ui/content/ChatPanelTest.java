@@ -174,7 +174,7 @@ class ChatPanelTest {
             java.awt.Container west = (java.awt.Container) footer.getComponent(0);
             javax.swing.AbstractButton model = (javax.swing.AbstractButton) west.getComponent(0);
             javax.swing.AbstractButton effort = (javax.swing.AbstractButton) west.getComponent(1);
-            for (int width : new int[] {900, 420, 320, 900}) {
+            for (int width : new int[] {900, 420, 320, 300, 900}) {
                 panel[0].setSize(width, 700);
                 for (int pass = 0; pass < 3; pass++) {
                     layoutAll(panel[0]);
