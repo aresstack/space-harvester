@@ -53,20 +53,34 @@ public class ChangeSync {
     private final int batchSize;
     private final InventoryCollector collector;
     private final RemovalCheck removalCheck;
+    /** Frist gesperrter Seiten je Quelle, wie in der Inventur ({@link SpaceSync}). */
+    private final Function<String, Duration> withheldRetention;
     /** Was indexiert wird; jeder Lauf liest die Markierungen neu. */
     private volatile IndexMarks marks = IndexMarks.NONE;
 
     public ChangeSync(SourceQueries queries, SyncBaselineStore store, Clock clock) {
-        this(queries, store, clock, SourceQueries.MAX_PAGE_METADATA_LIMIT);
+        this(queries, store, clock, sourceId -> SpaceSync.DEFAULT_WITHHELD_RETENTION);
+    }
+
+    /** @param withheldRetention Frist gesperrter Seiten je Quellen-ID, danach entfernt der Lauf ihre Rohdaten */
+    public ChangeSync(SourceQueries queries, SyncBaselineStore store, Clock clock,
+                      Function<String, Duration> withheldRetention) {
+        this(queries, store, clock, SourceQueries.MAX_PAGE_METADATA_LIMIT, withheldRetention);
     }
 
     ChangeSync(SourceQueries queries, SyncBaselineStore store, Clock clock, int batchSize) {
+        this(queries, store, clock, batchSize, sourceId -> SpaceSync.DEFAULT_WITHHELD_RETENTION);
+    }
+
+    ChangeSync(SourceQueries queries, SyncBaselineStore store, Clock clock, int batchSize,
+               Function<String, Duration> withheldRetention) {
         this.queries = Objects.requireNonNull(queries, "queries");
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.batchSize = batchSize;
         this.collector = new InventoryCollector(queries, clock, batchSize);
         this.removalCheck = new RemovalCheck(queries);
+        this.withheldRetention = Objects.requireNonNull(withheldRetention, "withheldRetention");
     }
 
     /** Geänderte Seiten unter diesen Markierungen lädt jeder Lauf vollständig, auch unbekannte. */
@@ -124,6 +138,14 @@ public class ChangeSync {
         Set<String> listedIds = new HashSet<>();
         if (listing != null && listing.confirmed()) {
             listing.pages().forEach(entry -> listedIds.add(entry.page().pageId()));
+            if (baseline != null) {
+                // Gesperrte Seiten, die die Seitenliste wieder nennt, sind wieder sichtbar: wie geändert behandeln.
+                listing.byPageId().forEach((pageId, entry) -> {
+                    if (baseline.withheldPageIds().containsKey(pageId)) {
+                        current.putIfAbsent(pageId, entry);
+                    }
+                });
+            }
         }
         Set<String> reload = from == null || !mode.refreshesContent() ? Set.of()
                 : stale(sourceId, spaceKey, baseline, current, listener);
@@ -166,7 +188,8 @@ public class ChangeSync {
                     sourceId, spaceKey, listing.status());
         }
         changes.sort(Comparator.comparing(PageChange::pageId));
-        SyncPlan plan = new SyncPlan(inventory, baseline, changes, removals);
+        SyncPlan plan = new SyncPlan(inventory, baseline, changes, removals,
+                purgesDue(sourceId, listing, baseline, listedIds));
         try (StagedGeneration staged = store.begin(sourceId, spaceKey)) {
             Set<String> failed = applier.apply(plan, staged, listener);
             SyncBaseline next = next(baseline, known, plan, failed, startedAt);
@@ -197,6 +220,26 @@ public class ChangeSync {
                 .map(pageId -> new PageChange(pageId, PageChange.Kind.MISSING, known.get(pageId), null)).toList();
         return removalCheck.verify(new SyncPlan(listing, baseline, missing, Map.of())).values().stream()
                 .filter(RemovalCheck.Result::removes).toList();
+    }
+
+    /**
+     * Wie in der Inventur ({@link SyncPlan#withPurgesDue}): gesperrte Seiten, deren Frist abgelaufen ist und die die
+     * vollständige Seitenliste nicht wieder nennt, entfernt der Lauf endgültig; ohne vollständige Liste keine.
+     */
+    private Set<String> purgesDue(String sourceId, Inventory listing, SyncBaseline baseline, Set<String> listed) {
+        if (listing == null || !listing.confirmed() || baseline == null) {
+            return Set.of();
+        }
+        Duration retention = withheldRetention.apply(sourceId);
+        Instant cutoff = clock.instant().minus(retention == null || retention.isNegative()
+                ? SpaceSync.DEFAULT_WITHHELD_RETENTION : retention);
+        Set<String> due = new TreeSet<>();
+        baseline.withheldPageIds().forEach((pageId, since) -> {
+            if (!listed.contains(pageId) && !since.isAfter(cutoff)) {
+                due.add(pageId);
+            }
+        });
+        return due;
     }
 
     /** Die Änderungssuche ist gescheitert: nichts wird geschrieben, die Generation bleibt, der Grund reist mit. */
@@ -293,6 +336,12 @@ public class ChangeSync {
                 stale.remove(pageId);
                 missing.remove(pageId);
             }
+        }
+        for (String pageId : plan.purges()) {
+            pages.remove(pageId);
+            stale.remove(pageId);
+            missing.remove(pageId);
+            withheld.remove(pageId);
         }
         if (!unknownFailures.isEmpty()) {
             throw new IllegalArgumentException("Seiten nicht im Plan: " + new TreeSet<>(unknownFailures));

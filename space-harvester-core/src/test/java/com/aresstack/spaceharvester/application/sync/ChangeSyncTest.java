@@ -123,6 +123,35 @@ class ChangeSyncTest {
     }
 
     @Test
+    void aWithheldPageThatReappearsInTheSpaceListIsVisibleAgain() {
+        cached("1");
+        cached("3");
+        source.trash("3");
+        assertThat(run(AN_HOUR_AGO).confirmed().withheldPageIds()).containsOnlyKeys("3");
+        source.put("3", "DOC", null, "7", null);
+
+        SpaceSync.SyncRun run = run(AN_HOUR_AGO);
+
+        assertThat(run.confirmed().withheldPageIds()).isEmpty();
+        assertThat(run.plan().changes()).extracting(PageChange::pageId).contains("3");
+    }
+
+    @Test
+    void aWithheldPageIsPurgedOnceItsRetentionHasPassed() {
+        ChangeSync immediate = new ChangeSync(source.queries(), store, FakeSource.CLOCK, sourceId -> Duration.ZERO);
+        cached("1");
+        cached("3");
+        source.trash("3");
+        immediate.run("wiki", "DOC", AN_HOUR_AGO, applier, SyncListener.NONE);
+
+        SpaceSync.SyncRun run = immediate.run("wiki", "DOC", AN_HOUR_AGO, applier, SyncListener.NONE);
+
+        assertThat(run.plan().purges()).containsExactly("3");
+        assertThat(run.confirmed().withheldPageIds()).isEmpty();
+        assertThat(repository.find(new PageKey("wiki", "3"))).isEmpty();
+    }
+
+    @Test
     void aPageTheCacheNeverKnewIsIgnoredWhenItDisappears() {
         cached("1");
         source.trash("2");

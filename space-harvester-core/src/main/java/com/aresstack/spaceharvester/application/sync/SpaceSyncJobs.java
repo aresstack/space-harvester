@@ -114,7 +114,8 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         this.sync = store == null || fetcher == null ? null : new SpaceSync(queries, store, clock,
                 withheldRetention);
         this.store = store;
-        this.changeSync = store == null || fetcher == null ? null : new ChangeSync(queries, store, clock);
+        this.changeSync = store == null || fetcher == null ? null : new ChangeSync(queries, store, clock,
+                withheldRetention);
         this.eventSync = store == null || fetcher == null ? null : new EventSync(queries, store, clock);
         this.retry = store == null || fetcher == null ? null : new FailedPageRetry(queries, store, clock);
         this.applier = fetcher == null ? null : new PlanApplier(fetcher);
