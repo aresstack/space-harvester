@@ -134,6 +134,10 @@ public class Jobs implements AutoCloseable {
      * {@code BackgroundJobs}.
      */
     static final int BACKGROUND_CAPACITY = 1000;
+    /** Code der Warnung: ein Hintergrundauftrag wartet, weil nur ein Platz eingestellt ist. */
+    public static final String SINGLE_SLOT = "SINGLE_SLOT";
+    static final String SINGLE_SLOT_TEXT = "Wartet, nur ein Platz eingestellt: Hintergrundaufträge laufen erst ab zwei "
+            + "Plätzen unter „Vorbereitung“, damit ein Auftrag des Benutzers immer sofort starten kann";
     /** Downloads ({@link JobType#download()}) in {@link JobStage#PREPARING}. */
     private int preparing;
     /** Downloads in {@link JobStage#DOWNLOADING}. */
@@ -1269,8 +1273,25 @@ public class Jobs implements AutoCloseable {
      * Nimmt keine Aufträge mehr an, bricht wartende ab und fordert den Abbruch der laufenden an. Läuft ein Auftrag über
      * das Ende des Dienstes hinaus, gilt er beim nächsten Start als {@code INTERRUPTED}.
      */
+    /**
+     * Erster Schritt beim Beenden des Dienstes, vor dem Schließen der übrigen Bausteine (Abnahme #1030): laufende
+     * Hintergrundaufträge, die der Benutzer weder angehalten noch abgebrochen hat, gelten ab jetzt als unterbrochen.
+     * Scheitern sie danach, weil etwa der Planer ihre Abrufe abwirft, enden sie trotzdem als {@code INTERRUPTED} und
+     * setzen nach dem Neustart fort.
+     */
+    public void interruptBackground() {
+        synchronized (lock) {
+            for (Job job : open.values()) {
+                if (job.type.background() && !job.cancelRequested && !job.pauseRequested) {
+                    job.shutdownInterrupted = true;
+                }
+            }
+        }
+    }
+
     @Override
     public void close() {
+        interruptBackground();
         synchronized (lock) {
             closed = true;
             Instant now = clock.instant();
@@ -1289,10 +1310,14 @@ public class Jobs implements AutoCloseable {
             // Weckt, wer auf das Ende eines wartenden Auftrags wartet ({@link #await}).
             lock.notifyAll();
             for (Job job : open.values()) {
-                job.cancelRequested = true;
-                if (job.type.background() && !job.pauseRequested) {
-                    job.shutdownInterrupted = true;
+                if (job.type.background()) {
+                    // Abgelegt wird, was der Benutzer wollte: so erkennt der nächste Start ein Anhalten oder einen
+                    // Abbruch des Benutzers ({@link #markInterrupted}) und setzt nur Unterbrochenes fort.
+                    store.save(job.snapshot());
+                    job.cancelRequested = true;
+                    continue;
                 }
+                job.cancelRequested = true;
                 store.save(job.snapshot());
             }
             reconnects.clear();
@@ -1323,6 +1348,13 @@ public class Jobs implements AutoCloseable {
     private void markInterrupted() {
         Instant now = clock.instant();
         for (JobStatus status : store.all()) {
+            if (!status.state().terminal() && status.type().background()
+                    && (status.pauseRequested() || status.cancelRequested())) {
+                // Angehalten oder abgebrochen kurz vor dem Ende oder Absturz: bleibt beim Wunsch des Benutzers, nie
+                // fortsetzen (Abnahme #1030).
+                store.save(status.stoppedByUser(now));
+                continue;
+            }
             if (!status.state().terminal()) {
                 store.save(status.interrupted(new JobError(INTERRUPTED, "Der Dienst wurde während des Auftrags "
                         + "beendet" + (status.type().resumable() ? "; Fortsetzen macht dort weiter, wo er stand"
@@ -1446,7 +1478,8 @@ public class Jobs implements AutoCloseable {
         boolean followUps = general && runningFollowUps + runningBackground < spare;
         // Hintergrund (Angelo 21.11.2026): zusammen mit den Folgeaufträgen nie alle Plätze, damit ein Auftrag des
         // Benutzers immer sofort starten kann.
-        boolean background = general && runningFollowUps + runningBackground < spare;
+        // Abnahme #1030: Obergrenze ohne Mindestplatz; bei nur einem Platz läuft kein Hintergrund (wartet gelb).
+        boolean background = general && runningFollowUps + runningBackground < parallelPreparations - 1;
         boolean preparations = preparing < parallelPreparations;
         Job pick = null;
         Job backgroundPick = null;
@@ -1458,6 +1491,11 @@ public class Jobs implements AutoCloseable {
             if (job.type.background()) {
                 if (backgroundPick == null && background) {
                     backgroundPick = job;
+                }
+                if (parallelPreparations <= 1 && !job.singleSlotNoted) {
+                    job.singleSlotNoted = true;
+                    job.emit(JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, SINGLE_SLOT,
+                            SINGLE_SLOT_TEXT, null, null, null, null);
                 }
                 continue;
             }
@@ -1970,6 +2008,8 @@ public class Jobs implements AutoCloseable {
     private final class Job implements JobContext {
         /** Hintergrund, beim Beenden des Dienstes noch am Laufen: endet als unterbrochen, nicht abgebrochen. */
         volatile boolean shutdownInterrupted;
+        /** Ob „wartet, nur ein Platz eingestellt“ schon gemeldet ist. */
+        boolean singleSlotNoted;
 
 
         final String id;

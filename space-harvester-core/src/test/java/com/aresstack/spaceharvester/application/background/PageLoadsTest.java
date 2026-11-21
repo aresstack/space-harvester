@@ -132,4 +132,94 @@ class PageLoadsTest {
         assertThatThrownBy(() -> loads.load(delegated, "x", pages("1")))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void aMissingSignInOrALostConnectionPausesThePartInsteadOfFailingIt() throws Exception {
+        AcquisitionScheduler failing = new AcquisitionScheduler((caller, key) -> {
+            if (key.pageId().startsWith("s")) {
+                throw new com.aresstack.spaceharvester.application.signin.SignInPendingException("wiki",
+                        "anfrage-erfunden", null);
+            }
+            throw new com.aresstack.spaceharvester.application.sources.SourceAccessException("wiki",
+                    com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNAVAILABLE,
+                    "erfunden nicht erreichbar", new java.net.ConnectException("erfunden"));
+        }, new AcquisitionScheduler.Limits(2, 0, 2, 50));
+        try {
+            BackgroundJobs own = new BackgroundJobs(jobs, "app-failing");
+            PageLoads paused = new PageLoads(own, failing, AccessContext.technicalClient("app"), cache::contains,
+                    key -> Optional.of(key.pageId().startsWith("s") ? "SIGN" : "NET"));
+            BackgroundGroup group = paused.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                    pages("s1", "s2", "n1")).orElseThrow();
+            executor.runAll();
+
+            BackgroundGroup done = own.group(group.groupId()).orElseThrow();
+            JobStatus sign = done.parts().stream().filter(part -> "SIGN".equals(part.partitionKey())).findFirst()
+                    .orElseThrow();
+            JobStatus net = done.parts().stream().filter(part -> "NET".equals(part.partitionKey())).findFirst()
+                    .orElseThrow();
+            assertThat(sign.state()).isEqualTo(JobState.PAUSED);
+            assertThat(sign.pauseReason())
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason.SIGN_IN_REQUIRED);
+            assertThat(sign.lifecycle().key()).isEqualTo("PAUSED_SIGN_IN_REQUIRED");
+            assertThat(net.state()).isEqualTo(JobState.PAUSED);
+            assertThat(net.pauseReason())
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason.CONNECTION_LOST);
+            assertThat(net.error()).isNull();
+        } finally {
+            failing.close();
+        }
+    }
+
+    @Test
+    void ticketsDroppedByTheShutdownCountAsInterruptedNotFailed() throws Exception {
+        java.util.concurrent.CountDownLatch loading = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        AcquisitionScheduler slow = new AcquisitionScheduler((caller, key) -> {
+            loading.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            cache.add(key);
+        }, new AcquisitionScheduler.Limits(1, 0, 1, 50));
+        java.util.concurrent.ExecutorService threads = java.util.concurrent.Executors.newCachedThreadPool();
+        InMemoryJobStore store = new InMemoryJobStore();
+        Jobs real = new Jobs(store, threads, new JobLimits(4, 10, Duration.ofHours(1)),
+                java.time.Clock.systemUTC());
+        try {
+            BackgroundJobs own = new BackgroundJobs(real, "app-slow");
+            PageLoads windowed = new PageLoads(own, slow, AccessContext.technicalClient("app"), cache::contains,
+                    key -> Optional.of("ALPHA"));
+            BackgroundGroup group = windowed.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                    pages("x1", "x2", "x3")).orElseThrow();
+            assertThat(loading.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            // Reihenfolge wie Harvester.close: erst unterbrochen markieren, dann wirft der Planer Wartendes ab.
+            real.interruptBackground();
+            Thread closing = new Thread(() -> {
+                try {
+                    slow.close();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            closing.start();
+            String id = group.parts().getFirst().id();
+            java.time.Instant deadline = java.time.Instant.now().plusSeconds(10);
+            release.countDown();
+            while (!real.status(id).state().terminal() && java.time.Instant.now().isBefore(deadline)) {
+                Thread.sleep(20);
+            }
+            closing.join(10_000);
+            JobStatus part = real.status(id);
+            assertThat(part.state()).isEqualTo(JobState.FAILED);
+            assertThat(part.error().code())
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobLifecycleState.INTERRUPTED);
+        } finally {
+            release.countDown();
+            real.close();
+            threads.shutdownNow();
+        }
+    }
 }

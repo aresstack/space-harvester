@@ -77,8 +77,8 @@ public final class BackgroundJobs {
     }
 
     /**
-     * Startet eine Gruppe mit einem Unterauftrag je Teil. Lehnt {@link Jobs} einen Teil ab (voll oder beendet), endet
-     * der Start dort; bereits angenommene Teile bleiben in der Gruppe.
+     * Startet eine Gruppe mit einem Unterauftrag je Teil, ganz oder gar nicht: Lehnt {@link Jobs} einen Teil ab (voll
+     * oder beendet), werden die schon angenommenen abgebrochen und die Ablehnung geht an den Aufrufer.
      *
      * @param title Titel der Gruppe für die Auftragsliste, etwa „Seiten nachladen“
      * @throws IllegalArgumentException wenn die Art nicht angemeldet ist oder keine Teile da sind
@@ -99,13 +99,25 @@ public final class BackgroundJobs {
             throw new IllegalArgumentException("Mindestens ein Teil");
         }
         List<JobStatus> started = new ArrayList<>();
-        for (BackgroundPart.Draft draft : parts) {
-            Map<String, String> parameters = new HashMap<>(draft.parameters());
-            parameters.put(KIND, registered.id());
-            parameters.put(GROUP, groupId);
-            parameters.put(TITLE, title);
-            started.add(jobs.submit(JobType.BACKGROUND, draft.sourceId(), draft.partitionKey(), null, owner,
-                    parameters, task(false)));
+        try {
+            for (BackgroundPart.Draft draft : parts) {
+                Map<String, String> parameters = new HashMap<>(draft.parameters());
+                parameters.put(KIND, registered.id());
+                parameters.put(GROUP, groupId);
+                parameters.put(TITLE, title);
+                started.add(jobs.submit(JobType.BACKGROUND, draft.sourceId(), draft.partitionKey(), null, owner,
+                        parameters, task(false)));
+            }
+        } catch (RuntimeException e) {
+            // Ganz oder gar nicht (wie GlossaryClassification): keine Teile ohne ihre Gruppe.
+            for (JobStatus accepted : started) {
+                try {
+                    jobs.cancel(accepted.id(), owner);
+                } catch (RuntimeException ignored) {
+                    // Schon beendet: bleibt, wie er ist.
+                }
+            }
+            throw e;
         }
         LOG.log(System.Logger.Level.INFO, "Hintergrund „{0}“ gestartet: {1} Teile", kind, started.size());
         return new BackgroundGroup(groupId, registered.id(), title, started);

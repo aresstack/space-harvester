@@ -111,6 +111,17 @@ public record JobStatus(String id, JobType type, String sourceId, String partiti
         return parameters.get(key);
     }
 
+    /**
+     * Nach einem Neustart: ein Auftrag, den der Benutzer vor dem Ende angehalten ({@link JobState#PAUSED},
+     * {@link PauseReason#USER}) oder abgebrochen ({@link JobState#CANCELLED}) hatte.
+     */
+    JobStatus stoppedByUser(Instant at) {
+        boolean pause = pauseRequested;
+        return new JobStatus(id, type, sourceId, partitionKey, owner, pause ? JobState.PAUSED : JobState.CANCELLED,
+                progress, null, !pause, createdAt, startedAt, at, rootPageId, rootTitle, parameters, false, false,
+                pause ? PauseReason.USER : null);
+    }
+
     /** Derselbe Zustand mit anderem Endzustand und Ende; für Aufträge, die ein Neustart unterbrochen hat. */
     JobStatus interrupted(JobError failure, Instant at) {
         return new JobStatus(id, type, sourceId, partitionKey, owner, JobState.FAILED, progress, failure,

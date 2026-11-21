@@ -3,6 +3,11 @@ package com.aresstack.spaceharvester.application.background;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
+import com.aresstack.spaceharvester.application.signin.SignInPendingException;
+import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
@@ -43,6 +48,7 @@ public final class PageLoads {
     static final int WINDOW = 32;
     /** Fehlercode: Seiten ließen sich nicht laden. */
     public static final String PAGES_MISSING = "PAGES_MISSING";
+    private static final String COMPONENT = "background-pages";
 
     private final BackgroundJobs background;
     private final AcquisitionScheduler scheduler;
@@ -166,9 +172,23 @@ public final class PageLoads {
         }
     }
 
-    /** Wartet auf eine Seite und zählt sie; 1, wenn sie sich nicht laden ließ. */
+    /**
+     * Wartet auf eine Seite und zählt sie; 1, wenn sie sich nicht laden ließ. Fehlt die Anmeldung (auch ein offener
+     * Einmalcode) oder ist die Quelle nicht erreichbar, hält sich der Unterauftrag an (gelb), statt die übrigen Seiten
+     * als Fehler zu zählen; Fortsetzen lädt dann nur, was noch fehlt.
+     */
     private static long finish(JobContext context, AcquisitionScheduler.Ticket ticket) throws InterruptedException {
         boolean loaded = await(context, ticket);
+        if (!loaded) {
+            PauseReason reason = ticket.failure().map(PageLoads::pauseReason).orElse(null);
+            if (reason != null) {
+                context.record(JobEvent.Draft.warning(JobEvent.Category.SOURCE, COMPONENT, reason.name(),
+                        reason == PauseReason.SIGN_IN_REQUIRED
+                                ? "Die Quelle verlangt eine Anmeldung; der Unterauftrag hält sich an"
+                                : "Die Quelle antwortet nicht; der Unterauftrag hält sich an"));
+                context.pause(reason);
+            }
+        }
         context.processed(1);
         if (loaded) {
             context.written(1);
@@ -176,6 +196,28 @@ public final class PageLoads {
         }
         context.failed(1);
         return 1;
+    }
+
+    /** Anmeldung oder Verbindung als Grund zum Anhalten, sonst {@code null} (ein Fehler der Seite). */
+    static PauseReason pauseReason(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof SignInRequiredException || current instanceof SignInPendingException) {
+                return PauseReason.SIGN_IN_REQUIRED;
+            }
+            if (current instanceof SourceAccessException access
+                    && (access.reason() == SourceAccessException.Reason.UNAVAILABLE
+                    || access.reason() == SourceAccessException.Reason.RATE_LIMITED)) {
+                return PauseReason.CONNECTION_LOST;
+            }
+            if (current instanceof java.net.ConnectException || current instanceof java.net.UnknownHostException
+                    || current instanceof java.net.http.HttpConnectTimeoutException) {
+                return PauseReason.CONNECTION_LOST;
+            }
+            if (current.getCause() == current) {
+                break;
+            }
+        }
+        return null;
     }
 
     /**

@@ -2547,6 +2547,16 @@ public final class Harvester implements AutoCloseable {
     /** Beendet Aufträge, schließt die Indizes und die Verbindungen der Quellen. */
     @Override
     public void close() {
+        // Vor allem anderen (Abnahme #1030): laufende Hintergrundaufträge gelten als unterbrochen, bevor der Planer
+        // ihre Abrufe abwirft; sonst endeten sie als gescheitert und setzten nach dem Neustart nicht fort.
+        try {
+            if (jobs != null) {
+                jobs.interruptBackground();
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Hintergrundaufträge nicht als unterbrochen markiert ({0})",
+                    e.getClass().getName());
+        }
         RuntimeException failure = closeAll(resources.reversed(), null);
         if (failure != null) {
             throw failure;
