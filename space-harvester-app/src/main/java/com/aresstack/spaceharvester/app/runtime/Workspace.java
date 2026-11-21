@@ -362,6 +362,45 @@ public final class Workspace {
         return Optional.of(glossary);
     }
 
+    /**
+     * Suchmethode „Nur Fachbegriffe“ (K5b, {@code GET /api/v1/glossary/technical-terms}): vorgeschlagene und bestätigte
+     * Fachbegriffe ohne Einordnung technisch, deren Begriff oder eines ihrer Synonyme zum Suchtext passt.
+     */
+    public com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Page technicalTerms(String q,
+            com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope scope, int limit, String cursor) {
+        return harvester.technicalTerms().search(caller, q, scope, limit, cursor);
+    }
+
+    /** Die nicht abgelehnten Synonyme eines Fachbegriffs, deren Bereich ihn abdeckt (K5b). */
+    public List<com.aresstack.spaceharvester.application.terms.TermRelation> technicalSynonyms(
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry term) {
+        return harvester.technicalTerms().synonymsOf(caller, term);
+    }
+
+    /** Fügt einem Fachbegriff ein Synonym global hinzu oder bestätigt ein vorhandenes gleiches (K5b). */
+    public com.aresstack.spaceharvester.application.terms.TermRelation addTechnicalSynonym(
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry term, String synonym) {
+        return harvester.technicalTerms().addSynonym(caller, term, synonym);
+    }
+
+    /** Der Prüfstatus eines Glossareintrags, leer, wenn es ihn nicht (mehr) gibt oder er verborgen ist. */
+    public Optional<com.aresstack.spaceharvester.application.terms.ReviewStatus> glossaryStatus(String id) {
+        try {
+            return Optional.of(harvester.glossary().entry(caller, id).status());
+        } catch (com.aresstack.spaceharvester.application.glossary.UnknownGlossaryEntryException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Meldet jede Änderung an den Begriffsbeziehungen (ADR 0027), aus beliebigem Thread; kein Abfragen in Abständen.
+     *
+     * @return meldet den Beobachter wieder ab
+     */
+    public Runnable subscribeTermRelations(Runnable onChange) {
+        return harvester.termRelations().subscribe(Objects.requireNonNull(onChange, "onChange"));
+    }
+
     /** Bestätigen ({@code POST …/{id}/confirm?revision=}); wirft bei fremdem Stand {@code RelationConflictException}. */
     public TermRelation confirmRelation(String id, long revision) {
         return harvester.termRelations().confirm(caller, id, revision);
@@ -2377,6 +2416,14 @@ public final class Workspace {
     public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> changeSummary(
             String sourceId, String updateId, String spaceKey) {
         return harvester.changeLog().summary(caller, sourceId, updateId, spaceKey);
+    }
+
+    /**
+     * Ob die abgelegte Zusammenfassung eines Updates noch gilt (Rechte, KI-Freigabe), ohne Inhalt; einmal beim Wechsel
+     * der Update-Kennung (Abnahme #1037). Nie auf dem EDT.
+     */
+    public boolean changeSummaryStillValid(String sourceId, String updateId, String spaceKey) {
+        return harvester.changeLog().summaryStillValid(caller, sourceId, updateId, spaceKey);
     }
 
     /** Startet „Zusammenfassen“ für ein Update in einer Ebene (ADR 0031); {@code spaceKey == null} die ganze Quelle. */

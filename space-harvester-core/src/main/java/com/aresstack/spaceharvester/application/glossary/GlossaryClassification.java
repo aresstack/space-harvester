@@ -90,10 +90,29 @@ public class GlossaryClassification {
     static final int RULE_CHUNK = 50;
     /**
      * Kennung des Ereignisses „Modellphase bewusst ausgelassen“ (ADR 0032, FL5b), mit Grund als Endung:
-     * {@code GLOSSARY_MODEL_SKIPPED:NO_MODEL} oder {@code GLOSSARY_MODEL_SKIPPED:NOT_RELEASED}. Die Auftragsliste
+     * {@code GLOSSARY_MODEL_SKIPPED:NO_MODEL}, {@code GLOSSARY_MODEL_SKIPPED:NO_ANALYSIS:<Seiten>} oder
+     * {@code GLOSSARY_MODEL_SKIPPED:NOT_RELEASED}. Die Auftragsliste
      * zeigt es gelb (ausgelassen), nie rot, ohne den Text zu deuten.
      */
     public static final String MODEL_SKIPPED = "GLOSSARY_MODEL_SKIPPED";
+    /**
+     * Kennung des Ereignisses „Seiten ohne aktuelle Aussagenanalyse“ (D4), wenn die Modellphase über die übrigen lief;
+     * die Zahl hängt als Endung an, etwa {@code GLOSSARY_ANALYSIS_MISSING:2}. Gelb, nie rot.
+     */
+    public static final String ANALYSIS_MISSING = "GLOSSARY_ANALYSIS_MISSING";
+
+    /** Die Zahl am Ende eines Codes {@code …:<Zahl>}, sonst 0. */
+    public static int countOf(String code) {
+        if (code == null) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(code.substring(code.lastIndexOf(':') + 1)));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
     /** Kennung des Ereignisses mit den Zahlen der Regelphase. */
     public static final String RULES_DONE = "GLOSSARY_RULES_DONE";
     /** Kennung des Ereignisses „Modellphase je Seite fertig“ (ADR 0032, FL5c), nur Anzahlen. */
@@ -103,6 +122,8 @@ public class GlossaryClassification {
     public enum SkipReason {
         /** Kein Chat-Modell eingestellt. */
         NO_MODEL,
+        /** Im Bereich keine aktuelle Aussagenanalyse (D4): fehlt oder ist veraltet; nicht dasselbe wie keine Freigabe. */
+        NO_ANALYSIS,
         /** Quelle nicht für die KI freigegeben. */
         NOT_RELEASED;
 
@@ -172,6 +193,18 @@ public class GlossaryClassification {
     private final Supplier<GlossaryRuleSettings> ruleSettings;
     private final Predicate<PageKey> released;
     private final Set<String> started = ConcurrentHashMap.newKeySet();
+    /** Die lokalen Seiten eines Bereichs mit den Rechten des Aufrufers (D4); ohne nur die veralteten Analysen. */
+    private volatile java.util.function.BiFunction<AccessContext, RelationScope,
+            com.aresstack.spaceharvester.application.snapshot.PageSet> localPages;
+
+    /**
+     * Schließt den lokalen Bestand an (D4): Dann zählen zu „ohne aktuelle Aussagenanalyse“ auch die Seiten des
+     * Bereichs, die nie analysiert wurden.
+     */
+    public void localPages(java.util.function.BiFunction<AccessContext, RelationScope,
+            com.aresstack.spaceharvester.application.snapshot.PageSet> pages) {
+        this.localPages = Objects.requireNonNull(pages, "pages");
+    }
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
 
     /**
@@ -339,6 +372,12 @@ public class GlossaryClassification {
     Outcome job(RelationScope scope, JobContext context, AccessContext caller) {
         List<KnowledgeGraph.AnalysedPage> pages = analysed == null ? null
                 : GlossaryOverview.inScope(analysed.apply(caller), scope.sourceId(), scope.spaceKey());
+        // D4: Nur aktuelle Analysen zählen für die Modellphase; veraltete nennt der Lauf, statt sie als fehlende
+        // Freigabe zu melden.
+        List<KnowledgeGraph.AnalysedPage> current = pages == null ? null : pages.stream()
+                .filter(page -> page.page().state() == com.aresstack.spaceharvester.application.knowledge
+                        .PageStatements.State.CURRENT).toList();
+        int missing = pages == null ? 0 : missing(caller, scope, pages, current.size());
         RuleRun rules = pages == null ? null : rules(scope, context, pages);
         if (rules != null && context != null) {
             context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, RULES_DONE,
@@ -354,12 +393,20 @@ public class GlossaryClassification {
         if (!model.available()) {
             skipped = SkipReason.NO_MODEL;
         } else if (phase != null) {
-            if (!phase.anyReleased(pages)) {
+            if (current.isEmpty()) {
+                skipped = SkipReason.NO_ANALYSIS;
+            } else if (!phase.anyReleased(current)) {
                 skipped = SkipReason.NOT_RELEASED;
                 perPage = true;
             } else {
                 phase(context, PHASE);
-                classified = phase.run(scope, pages, context);
+                if (missing > 0 && context != null) {
+                    // Die Phase läuft über die aktuellen; der Rest bleibt gelb benannt.
+                    context.record(new JobEvent.Draft(JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT,
+                            ANALYSIS_MISSING + ":" + missing, "„" + PHASE + "“ nur über aktuelle Analysen: "
+                            + missingAnalysis(missing), null, null, null));
+                }
+                classified = phase.run(scope, current, context);
                 if (context != null) {
                     context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
                             MODEL_DONE, "„" + PHASE + "“: " + classified.describe(), null, null, null));
@@ -373,11 +420,50 @@ public class GlossaryClassification {
         if (skipped != null && context != null) {
             phase(context, PHASE + ": ausgelassen");
             context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
-                    skipped.code(), "„" + PHASE + "“ ausgelassen: " + (skipped == SkipReason.NO_MODEL
-                    ? "kein Modell eingestellt" : perPage ? "keine Seite des Bereichs für die KI freigegeben"
-                    : "Quelle nicht für die KI freigegeben"), null, null, null));
+                    skipped == SkipReason.NO_ANALYSIS ? skipped.code() + ":" + missing : skipped.code(),
+                    "„" + PHASE + "“ ausgelassen: " + skipText(skipped, perPage, missing), null, null, null));
         }
         return new Outcome(rules, modelRun, skipped, classified);
+    }
+
+    /**
+     * Seiten des Bereichs ohne aktuelle Aussagenanalyse: veraltete und, mit lokalem Bestand, nie analysierte (nur
+     * Seiten, keine Anhänge; Rechte des Aufrufers).
+     */
+    private int missing(AccessContext caller, RelationScope scope, List<KnowledgeGraph.AnalysedPage> pages,
+                        int current) {
+        java.util.function.BiFunction<AccessContext, RelationScope,
+                com.aresstack.spaceharvester.application.snapshot.PageSet> local = localPages;
+        int stale = pages.size() - current;
+        if (local == null) {
+            return stale;
+        }
+        com.aresstack.spaceharvester.application.snapshot.PageSet inScope;
+        try {
+            inScope = local.apply(caller, scope);
+        } catch (RuntimeException e) {
+            return stale;
+        }
+        long currentPages = pages.stream().filter(page -> page.page().document().isPage()
+                && page.page().state() == com.aresstack.spaceharvester.application.knowledge.PageStatements.State
+                .CURRENT && inScope.contains(page.page().key())).count();
+        return (int) Math.max(stale, inScope.size() - currentPages);
+    }
+
+    /** Der Grund einer ausgelassenen Modellphase in Worten. */
+    static String skipText(SkipReason skipped, boolean perPage, int stale) {
+        return switch (skipped) {
+            case NO_MODEL -> "kein Modell eingestellt";
+            case NO_ANALYSIS -> missingAnalysis(stale);
+            case NOT_RELEASED -> perPage ? "keine Seite des Bereichs für die KI freigegeben"
+                    : "Quelle nicht für die KI freigegeben";
+        };
+    }
+
+    /** „Aussagenanalyse fehlt“ bzw. „3 Seiten ohne aktuelle Aussagenanalyse“. */
+    public static String missingAnalysis(int stale) {
+        return stale <= 0 ? "Aussagenanalyse fehlt"
+                : stale + (stale == 1 ? " Seite" : " Seiten") + " ohne aktuelle Aussagenanalyse";
     }
 
     /**
@@ -403,13 +489,20 @@ public class GlossaryClassification {
      * @param proposed  davon vorgeschlagen (mit Seitenbeleg, höchstens {@code maxTerms})
      * @param retained  über {@code maxTerms}, unverändert gelassen
      * @param run       Änderungen im Glossar
+     * @param stalePages übersprungene veraltete Aussagenanalysen (D4)
      */
-    record RuleRun(int pages, int terms, int proposed, int retained, Glossary.ProposalRun run) {
+    record RuleRun(int pages, int terms, int proposed, int retained, Glossary.ProposalRun run, int stalePages) {
+
+        RuleRun(int pages, int terms, int proposed, int retained, Glossary.ProposalRun run) {
+            this(pages, terms, proposed, retained, run, 0);
+        }
 
         String describe() {
             return pages + " Seiten, " + terms + " Begriffe, " + proposed + " vorgeschlagen, " + retained
                     + " zurückgestellt; " + run.added() + " neu, " + run.updated() + " geändert, " + run.withdrawn()
-                    + " entfallen, " + run.stale() + " veraltet.";
+                    + " entfallen, " + run.stale() + " veraltet."
+                    + (stalePages > 0 ? " " + stalePages + (stalePages == 1 ? " Seite" : " Seiten")
+                    + " mit veralteter Aussagenanalyse übersprungen." : "");
         }
     }
 
@@ -463,7 +556,7 @@ public class GlossaryClassification {
                         + "{4} neu, {5} geändert, {6} entfallen", scope.sourceId(), pages.size(),
                 batch.derivation().terms().size(), proposals.size(), run.added(), run.updated(), run.withdrawn());
         return new RuleRun(batch.derivation().pages(), batch.derivation().terms().size(), proposals.size(),
-                batch.retained().size(), run);
+                batch.retained().size(), run, batch.derivation().stalePages());
     }
 
     /** Die Phase mit Modell für einen Geltungsbereich einer Quelle; ohne Auftrag aufrufbar für Tests. */

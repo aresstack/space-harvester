@@ -305,6 +305,31 @@ class SearchViewTest {
     }
 
     @Test
+    void onlyTechnicalTermsReplacesTheHitsWithTheGlossaryViewAndNeedsNoText() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].scope(List.of());
+            view[0].technicalTerms.setSelected(true);
+            assertThat(view[0].modeLabel.getText()).isEqualTo(SearchView.TECHNICAL_TERMS_MODE);
+            assertThat(view[0].termsPanel.isVisible()).isTrue();
+            assertThat(view[0].technicalScope()).isEqualTo(
+                    com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope.ALL);
+            view[0].search("");
+            view[0].scope(List.of(new Explorer.Scope("alpha", null)));
+            assertThat(view[0].technicalScope().sourceIds()).containsExactly("alpha");
+            // Auflage AT 5: zwei gewählte Knoten weiten nicht auf alle auf.
+            view[0].scope(List.of(new Explorer.Scope("alpha", "DEV"), new Explorer.Scope("beta", null)));
+            assertThat(view[0].technicalScope().sourceIds()).containsExactlyInAnyOrder("alpha", "beta");
+            view[0].technicalTerms.setSelected(false);
+            assertThat(view[0].modeLabel.getText()).isEqualTo("Modus: Schlagwortsuche");
+            assertThat(view[0].termsPanel.isVisible()).isFalse();
+        });
+    }
+
+    @Test
     void theSemanticCheckboxRunsTheProgressiveSearchOfTheCoreUntilItNamesWhyItEnded() throws Exception {
         start(false, embeddings());
         SearchView[] view = new SearchView[1];
@@ -491,8 +516,10 @@ class SearchViewTest {
             // K5a: „Synonyme der Fachbegriffe einbeziehen“ direkt unter den Nachbarseiten, Standard aus.
             List<String> methods = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
                     .filter(text -> text.equals(SearchView.SEMANTIC) || text.equals(SearchView.NEIGHBORS)
-                            || text.equals(SearchView.SYNONYMS)).toList();
-            assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS, SearchView.SYNONYMS);
+                            || text.equals(SearchView.SYNONYMS) || text.equals(SearchView.TECHNICAL_TERMS)).toList();
+            assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS, SearchView.SYNONYMS,
+                    SearchView.TECHNICAL_TERMS);
+            assertThat(view[0].technicalTerms.isSelected()).as("„Nur Fachbegriffe“ ist Standard aus").isFalse();
             assertThat(view[0].glossarySynonyms.isSelected()).isFalse();
             assertThat(view[0].glossarySynonyms.isEnabled()).isTrue();
             assertThat(view[0].modeLabel.getText()).doesNotContain("Synonyme");
@@ -513,7 +540,9 @@ class SearchViewTest {
             item.doClick();
             assertThat(view[0].sourceBoxes.get("alpha").isSelected()).isTrue();
             // Keine zweite Eingabezeile und keine Umfang-/Modus-Zeile über der Tabelle.
-            assertThat(find(whole(view[0]), javax.swing.JTextField.class)).isEmpty();
+            // (Das Feld „Synonym hinzufügen …“ gehört zur Ansicht „Nur Fachbegriffe“, nicht zur Suchzeile.)
+            assertThat(find(whole(view[0]), javax.swing.JTextField.class)).allMatch(field ->
+                    SwingUtilities.isDescendingFrom(field, view[0].termsPanel));
             assertThat(SwingUtilities.isDescendingFrom(view[0].scopeLabel, view[0].component())).isFalse();
             view[0].search("betrieb");
             view[0].kindBoxes.get(DocumentKind.IMAGE).doClick();

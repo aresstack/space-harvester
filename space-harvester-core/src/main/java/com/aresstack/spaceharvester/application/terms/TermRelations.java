@@ -67,6 +67,8 @@ public class TermRelations {
     private final Clock clock;
     private final TermIndex index;
     private final String processorVersion;
+    /** Beobachter jeder Änderung ({@link #subscribe}). */
+    private final List<Runnable> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
      * @param headers Kopfdaten einer Seite im Cache, für die Rechte an Belegen; leer, wenn sie dort nicht liegt
@@ -475,7 +477,7 @@ public class TermRelations {
             return Optional.of(save(current.with(ReviewStatus.REJECTED, caller.jobOwner(), clock.instant()),
                     "reject", caller.jobOwner()));
         }
-        store.write(List.of(), List.of(id), List.of(new TermRelationStore.AuditEntry(id, "remove",
+        write(List.of(), List.of(id), List.of(new TermRelationStore.AuditEntry(id, "remove",
                 caller.jobOwner(), clock.instant(), null, current.revision() + 1)));
         return Optional.empty();
     }
@@ -580,7 +582,7 @@ public class TermRelations {
             }
         }
         if (!put.isEmpty() || !removed.isEmpty()) {
-            store.write(put.values(), removed, audit);
+            write(put.values(), removed, audit);
         }
         return new ProposalRun(added, updated, withdrawn, suppressed, stale);
     }
@@ -618,7 +620,7 @@ public class TermRelations {
             }
         }
         if (!put.isEmpty() || !removed.isEmpty()) {
-            store.write(put, removed, audit);
+            write(put, removed, audit);
         }
         return removed.size();
     }
@@ -649,7 +651,7 @@ public class TermRelations {
     }
 
     private TermRelation save(TermRelation relation, String action, String actor) {
-        store.write(List.of(relation), List.of(), List.of(new TermRelationStore.AuditEntry(relation.id(), action,
+        write(List.of(relation), List.of(), List.of(new TermRelationStore.AuditEntry(relation.id(), action,
                 actor, clock.instant(), relation.status(), relation.revision())));
         return relation;
     }
@@ -809,6 +811,31 @@ public class TermRelations {
                     .map(header -> access.canRead(caller, page.sourceId(), header.metadata().partitionKey(),
                             page.pageId()))
                     .orElse(false));
+        }
+    }
+
+    /**
+     * Meldet jede Änderung der Beziehungen (anlegen, prüfen, entfernen, Vorschlagsläufe), damit eine Ansicht neu lädt,
+     * sobald es Neues gibt (ADR 0027, kein Abfragen in Abständen). Der Beobachter läuft im schreibenden Thread und
+     * muss schnell sein.
+     *
+     * @return meldet den Beobachter wieder ab
+     */
+    public Runnable subscribe(Runnable listener) {
+        Objects.requireNonNull(listener, "listener");
+        listeners.add(listener);
+        return () -> listeners.remove(listener);
+    }
+
+    private void write(Collection<TermRelation> put, Collection<String> removed,
+                       List<TermRelationStore.AuditEntry> audit) {
+        store.write(put, removed, audit);
+        for (Runnable listener : listeners) {
+            try {
+                listener.run();
+            } catch (RuntimeException e) {
+                // Ein fehlerhafter Beobachter hält die Beziehungen nicht auf.
+            }
         }
     }
 }

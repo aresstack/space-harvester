@@ -21,7 +21,7 @@ import java.util.function.Supplier;
 public final class ChatUpdateSummaryModel implements SummaryModel {
 
     /** Kennung des Verfahrens; ändern sich Anweisung oder Auswertung, steigt die Version. */
-    public static final String ID = "update-summary-v1";
+    public static final String ID = "update-summary-v2";
 
     private final Supplier<AiServiceSettings> settings;
     private final Function<AiServiceSettings, RemoteAi> remote;
