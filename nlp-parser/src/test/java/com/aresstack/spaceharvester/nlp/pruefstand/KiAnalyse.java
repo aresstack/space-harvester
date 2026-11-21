@@ -53,12 +53,27 @@ final class KiAnalyse {
         return String.join("\n", heute.sentences().stream().map(Sentence::text).map(String::strip).toList());
     }
 
+    /**
+     * Der klare Satz, wenn für einen (neuen) Prüftext der Pin einer Modellvariante fehlt: welcher Pin und wie man ihn
+     * erzeugt. Die Zahl wird nur gemessen; Regeln und Anweisung bleiben unverändert.
+     */
+    static String fehlenderPin(Textsatz satz, Variante variante, Text text) {
+        String modell = variante.name().startsWith("ki-") ? variante.name().substring(3) : variante.name();
+        String pfad = satz.name() + "/varianten/" + variante.name() + "/" + text.name() + ".antwort";
+        return "Prüfstand: Für " + satz.name() + "/" + text.name() + " fehlt der Pin der Modellvariante "
+                + variante.name() + " (nlp-parser/src/test/resources/com/aresstack/spaceharvester/nlp/pruefstand/"
+                + pfad + "). Erzeugen mit einem echten Lauf gegen Ollama (nur HTTP-API): ./gradlew :nlp-parser:test "
+                + "--tests '*PruefstandKiLiveTest' -PstatementModelLiveOllama=http://localhost:11434 "
+                + "-PstatementModelLiveModel=<Modell zu " + modell + "> -PstatementModelLiveMissing=true; dann "
+                + "build/reports/pruefstand/pins/" + pfad + " dorthin übernehmen und die Zeile " + satz.name() + " "
+                + variante.name() + " in stand.tsv nachziehen.";
+    }
+
     /** Die Aussagen des Analysators mit den gepinnten Antworten als Befunde zum Satz der Vorgabe (ab 1). */
     static List<Befund> befunde(Textsatz satz, Variante variante, Text text) {
         List<String> antworten = satz.kiAntworten(variante, text);
         if (antworten == null) {
-            throw new IllegalStateException(satz.name() + "/" + variante.name() + "/" + text.name()
-                    + ": keine Modellantworten (.antwort)");
+            throw new IllegalStateException(fehlenderPin(satz, variante, text));
         }
         Deque<String> offen = new ArrayDeque<>(antworten);
         StepModel gepinnt = new StepModel() {

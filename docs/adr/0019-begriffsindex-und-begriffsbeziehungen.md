@@ -159,6 +159,13 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      und ob ein Embedding-Modell da ist). Ohne Modell oder Freigabe nur Regeln, kein Fehler. Der Abgleich lässt
      Bestätigtes und Abgelehntes stehen und zieht nicht mehr gestützte Vorschläge zurück. Schalter
      `space-harvester.terms.synonyms.automatic`, Standard an. Der Knopf bleibt.
+   - Nur von Fachbegriffen aus (K3, Angelo 2026-11-21): `space-harvester.terms.synonyms.glossary-terms-only`,
+     Standard aus. An: ein Kandidatenpaar zählt nur, wenn mindestens ein Begriff ein bestätigter Fachbegriff des
+     Glossars ist (`Glossary.confirmedTerms`: Status bestätigt, nicht `TECHNISCH`, Geltungsbereich berührt den
+     Umfang); diese Begriffe gehen beim Budget `max-terms` vor. Gilt für den automatischen Lauf und ist die
+     Vorbelegung im Startdialog, dort je Lauf änderbar (`SynonymDiscovery.Request.glossaryTermsOnly`). Ist der
+     Schalter an, gehen die Fachbegriffe in `SynonymCandidates.state` ein; ein neu bestätigter Fachbegriff löst den
+     nächsten automatischen Lauf aus.
    - Vektor-Cache (SY2): `SynonymVectorCache`, dauerhaft als `term-relations/synonyms/vectors.json`
      (`FileSynonymVectorCache`), je Modellkennung und SHA-256 der Eingabe ein Vektor mit den Seiten der Eingabe; kein
      Begriff, kein Text. Vektoren aus dem Cache zählen nicht gegen `max-embedded-terms`, das Budget gilt nur für neue;

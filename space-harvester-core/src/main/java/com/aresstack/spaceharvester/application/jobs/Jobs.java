@@ -720,6 +720,7 @@ public class Jobs implements AutoCloseable {
                 job.cancelRequested = true;
                 // Der Benutzer gewinnt auch während des Beendens (Abnahme #1030).
                 job.shutdownInterrupted = false;
+                job.stopRequested();
                 // Wer nach ↻ anhält, will anhalten: kein Neustart danach.
                 job.restartForRetry = false;
                 job.retryFailedRequested = false;
@@ -1068,6 +1069,7 @@ public class Jobs implements AutoCloseable {
             return false;
         }
         job.cancelRequested = true;
+        job.stopRequested();
         job.pauseRequested = false;
         job.detach();
         open.remove(jobId);
@@ -1264,6 +1266,7 @@ public class Jobs implements AutoCloseable {
                 job.cancelRequested = true;
                 // Der Benutzer gewinnt auch während des Beendens: kein „unterbrochen“, kein Fortsetzen danach.
                 job.shutdownInterrupted = false;
+                job.stopRequested();
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = clock.instant();
                     watchStop(job);
@@ -1324,6 +1327,7 @@ public class Jobs implements AutoCloseable {
             for (Job job : queued) {
                 open.remove(job.id);
                 job.cancelRequested = true;
+                job.stopRequested();
                 if (job.type.background()) {
                     // Hintergrund: unterbrochen statt abgebrochen, damit er nach dem Neustart von selbst fortsetzt.
                     job.finish(JobState.FAILED, new JobError(INTERRUPTED, SHUTDOWN_INTERRUPTED), now);
@@ -1341,9 +1345,11 @@ public class Jobs implements AutoCloseable {
                     // Abbruch des Benutzers ({@link #markInterrupted}) und setzt nur Unterbrochenes fort.
                     store.save(job.snapshot());
                     job.cancelRequested = true;
+                    job.stopRequested();
                     continue;
                 }
                 job.cancelRequested = true;
+                job.stopRequested();
                 store.save(job.snapshot());
             }
             reconnects.clear();
@@ -1936,6 +1942,7 @@ public class Jobs implements AutoCloseable {
                 job.pauseRequested = true;
                 job.pauseReason = PauseReason.RETRY;
                 job.cancelRequested = true;
+                job.stopRequested();
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = now;
                     watchStop(job);
@@ -2197,6 +2204,7 @@ public class Jobs implements AutoCloseable {
                     pauseReason = reason == null ? PauseReason.USER : reason;
                     pauseRequested = true;
                     cancelRequested = true;
+                    stopRequested();
                     // Hält er selbst an, etwa ohne Anmeldung oder Verbindung, gilt das statt eines Neustarts für ↻.
                     if (restartForRetry) {
                         restartForRetry = false;
@@ -2344,6 +2352,29 @@ public class Jobs implements AutoCloseable {
         /** Koppelt die Arbeit ab; wartet auf ein gerade entstehendes Ereignis ({@link #emit}). */
         synchronized void detach() {
             detached = true;
+            stopRequested();
+        }
+
+        /** Wer an einer Sperre wartet und bei Abbruch, Anhalten oder Abkoppeln geweckt werden will. */
+        private final java.util.List<Runnable> stopListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        /** Weckt die Wartenden ({@link JobContext#whenStopRequested}); jeder Zuhörer läuft höchstens einmal. */
+        void stopRequested() {
+            for (Runnable listener : stopListeners) {
+                if (stopListeners.remove(listener)) {
+                    listener.run();
+                }
+            }
+        }
+
+        @Override
+        public AutoCloseable whenStopRequested(Runnable listener) {
+            java.util.Objects.requireNonNull(listener, "listener");
+            stopListeners.add(listener);
+            if ((cancelRequested || detached) && stopListeners.remove(listener)) {
+                listener.run();
+            }
+            return () -> stopListeners.remove(listener);
         }
     }
 

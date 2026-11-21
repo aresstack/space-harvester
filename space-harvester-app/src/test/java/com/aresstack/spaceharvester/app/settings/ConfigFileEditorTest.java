@@ -852,6 +852,46 @@ class ConfigFileEditorTest {
         assertThat(unknown.problems()).anyMatch(problem -> problem.contains("space-harvester-app.whisper.model"));
     }
 
+    /** Angelo 21.11.2026: die Spracheingabe hat ihr eigenes Whisper-Modell, unabhängig von dem der Transkripte. */
+    @Test
+    void theDictationModelIsWrittenBesideTheTranscriptModelAndBothStayIndependent() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester-app:\n  output-directory: D:\\out   # bleibt\nspace-harvester:\n"
+                + "  sources: []\n");
+        assertThat(loader.load(file).dictationModel())
+                .isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY);
+
+        editor.save(file, editor.withWhisperModel(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.SMALL));
+        editor.save(file, editor.withDictationModel(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.BASE));
+        String text = Files.readString(file);
+        assertThat(text).contains("  whisper:\n    model: small\n    dictation-model: base\n");
+        AppSettings both = loader.load(file);
+        assertThat(both.whisperModel()).isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.SMALL);
+        assertThat(both.dictationModel()).isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.BASE);
+
+        editor.save(file, editor.withWhisperModel(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY));
+        text = Files.readString(file);
+        assertThat(text).as("Tiny für Transkripte, die Spracheingabe bleibt").doesNotContain("model: tiny")
+                .contains("  whisper:\n    dictation-model: base\n");
+        assertThat(loader.load(file).dictationModel())
+                .isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.BASE);
+
+        editor.save(file, editor.withDictationModel(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY));
+        assertThat(Files.readString(file)).doesNotContain("whisper");
+
+        Files.writeString(file, "space-harvester-app:\n  whisper:\n    dictation-model: riesig\nspace-harvester:\n"
+                + "  sources: []\n");
+        AppSettings unknown = loader.load(file);
+        assertThat(unknown.dictationModel())
+                .isEqualTo(com.aresstack.spaceharvester.app.transcription.WhisperModel.TINY);
+        assertThat(unknown.problems())
+                .anyMatch(problem -> problem.contains("space-harvester-app.whisper.dictation-model"));
+    }
+
     @Test
     void theAnalyticsExportIsWrittenAsABlockUnderTheAppRootAndRemovedWhenAllIsDefault() throws Exception {
         Path file = home.resolve("app.yml");

@@ -41,13 +41,18 @@ final class SubpageSection extends JPanel {
      * @param origin die Unterseite, von der der Eintrag stammt
      * @param others die weiteren Unterseiten, auf denen er außerdem vorkommt (leer: nur hier)
      * @param target die Seite, die ein Klick auf die Zeile öffnet; {@code null}: die Unterseite
+     * @param badge  die Zahl am Chip hinter der Unterseite, wenn der Abschnitt einen hat ({@link #badge(String)})
      */
-    record Row(List<String> cells, PageNode origin, List<PageNode> others, String target) {
+    record Row(List<String> cells, PageNode origin, List<PageNode> others, String target, int badge) {
 
         Row {
             cells = List.copyOf(cells);
             Objects.requireNonNull(origin, "origin");
             others = List.copyOf(others);
+        }
+
+        Row(List<String> cells, PageNode origin, List<PageNode> others, String target) {
+            this(cells, origin, others, target, 0);
         }
 
         Row(List<String> cells, PageNode origin) {
@@ -77,6 +82,9 @@ final class SubpageSection extends JPanel {
     private final BusyOverlay busy;
     private final int maxRows;
     private Consumer<String> onOpen = pageId -> { };
+    private final OriginRenderer origins = new OriginRenderer();
+    /** Wort am Chip hinter jeder Unterseite, etwa „Knoten“; {@code null}: nur „+N“ bei weiteren Unterseiten. */
+    private String badge;
 
     /**
      * @param word    Wort am Zählchip, etwa „Beziehungen“
@@ -111,7 +119,7 @@ final class SubpageSection extends JPanel {
         busy = new BusyOverlay(scroll);
         add(title, BorderLayout.NORTH);
         add(busy, BorderLayout.CENTER);
-        table.getColumnModel().getColumn(columns.length).setCellRenderer(new OriginRenderer());
+        table.getColumnModel().getColumn(columns.length).setCellRenderer(origins);
         javax.swing.ToolTipManager.sharedInstance().registerComponent(table);
         table.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         table.addMouseListener(new MouseAdapter() {
@@ -128,8 +136,22 @@ final class SubpageSection extends JPanel {
                 }
             }
         });
+        if (columns.length == 0) {
+            // Einspaltige Liste: Der Abschnittskopf sagt schon „Aus Unterseiten“ (UX).
+            table.setTableHeader(null);
+            scroll.setColumnHeaderView(null);
+        }
         setVisible(false);
         fit();
+    }
+
+    /**
+     * Statt „+N“ steht hinter jeder Unterseite ein gedämpfter Chip „{@code word} N“ mit {@link Row#badge()}, etwa die
+     * Knotenzahl im Graph (UX-Manager); ein Klick darauf öffnet die Unterseite.
+     */
+    SubpageSection badge(String word) {
+        badge = Objects.requireNonNull(word, "word");
+        return this;
     }
 
     /** {@code listener} öffnet eine Seite über ihre Kennung. */
@@ -205,12 +227,11 @@ final class SubpageSection extends JPanel {
     /** Ob {@code point} auf dem „+N“ der Zeile liegt. */
     private boolean onMore(int row, java.awt.Point point) {
         Row chosen = model.rows.get(row);
-        if (chosen.more() == 0 || table.columnAtPoint(point) != model.columns.length) {
+        if (badge != null || chosen.more() == 0 || table.columnAtPoint(point) != model.columns.length) {
             return false;
         }
         java.awt.Rectangle cell = table.getCellRect(row, model.columns.length, false);
-        java.awt.Component title = table.prepareRenderer(new DefaultTableCellRenderer(), row, model.columns.length);
-        int start = cell.x + titleWidth(row, title.getPreferredSize().width) + 2;
+        int start = cell.x + titleWidth(row, textWidth(chosen.originText())) + 2;
         return point.x >= start && point.x <= start + moreChip(chosen.more()).getPreferredSize().width;
     }
 
@@ -230,11 +251,29 @@ final class SubpageSection extends JPanel {
         return value == null || String.valueOf(value).isBlank() ? null : String.valueOf(value);
     }
 
+    /** Breite eines Titels in der Schrift der Tabelle samt Rand der Zelle. */
+    private int textWidth(String text) {
+        // Der Link malt in der Schrift der Tabelle (OriginRenderer).
+        return table.getFontMetrics(table.getFont()).stringWidth(text) + 4;
+    }
+
     /** So breit steht der Titel der Unterseite vor dem „+N“: ganz, oder gekürzt, wenn beides nicht passt. */
     private int titleWidth(int row, int preferred) {
+        CountChip chip = chip(model.rows.get(row));
         int room = table.getColumnModel().getColumn(model.columns.length).getWidth()
-                - moreChip(model.rows.get(row).more()).getPreferredSize().width - 4;
+                - (chip == null ? 0 : chip.getPreferredSize().width) - 4;
         return Math.max(0, Math.min(preferred, room));
+    }
+
+    /** Der Chip hinter der Unterseite einer Zeile oder {@code null}. */
+    private CountChip chip(Row row) {
+        if (badge != null) {
+            CountChip chip = new CountChip(badge, Comic.MUTED);
+            chip.count(row.badge());
+            String tip = row.badge() + " " + badge + " · Klick öffnet die Unterseite";
+            return chip.tips(tip, tip);
+        }
+        return row.more() > 0 ? moreChip(row.more()) : null;
     }
 
     private static CountChip moreChip(int more) {
@@ -263,7 +302,10 @@ final class SubpageSection extends JPanel {
                 cells.add(String.valueOf(model.getValueAt(i, c)));
             }
             int more = model.rows.get(i).more();
-            if (more > 0) {
+            if (badge != null) {
+                cells.set(cells.size() - 1, cells.get(cells.size() - 1) + " (" + model.rows.get(i).badge() + " "
+                        + badge + ")");
+            } else if (more > 0) {
                 cells.set(cells.size() - 1, cells.get(cells.size() - 1) + " (+" + more + ")");
             }
             text.append(String.join("\t", cells)).append('\n');
@@ -279,7 +321,8 @@ final class SubpageSection extends JPanel {
 
     private void fit() {
         int rows = Math.max(1, Math.min(maxRows, model.getRowCount()));
-        int height = table.getTableHeader().getPreferredSize().height + rows * table.getRowHeight() + 4;
+        int header = table.getTableHeader() == null ? 0 : table.getTableHeader().getPreferredSize().height;
+        int height = header + rows * table.getRowHeight() + 4;
         scroll.setPreferredSize(new Dimension(300, height));
         revalidate();
         repaint();
@@ -304,6 +347,7 @@ final class SubpageSection extends JPanel {
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
                                                        boolean focused, int row, int column) {
             Component title = link.getTableCellRendererComponent(table, value, selected, focused, row, column);
+            link.setFont(table.getFont());
             if (!selected) {
                 title.setForeground(ResearchUiPalette.ACCENT_BLUE);
             }
@@ -311,16 +355,15 @@ final class SubpageSection extends JPanel {
             link.setPreferredSize(null);
             link.setMinimumSize(null);
             link.setMaximumSize(null);
-            int more = model.rows.get(row).more();
-            if (more == 0) {
+            CountChip chip = chip(model.rows.get(row));
+            if (chip == null) {
                 return title;
             }
             cell.removeAll();
             cell.setOpaque(true);
             cell.setBackground(title.getBackground());
-            CountChip chip = moreChip(more);
             // Das „+N“ dicht hinter dem Titel (2 px), der Titel kürzt sich, wenn beides nicht passt.
-            int width = titleWidth(row, title.getPreferredSize().width);
+            int width = titleWidth(row, textWidth(String.valueOf(value)));
             Dimension size = new Dimension(width, table.getRowHeight(row));
             title.setMinimumSize(size);
             title.setMaximumSize(size);

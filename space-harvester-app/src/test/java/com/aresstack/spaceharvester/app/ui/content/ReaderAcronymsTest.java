@@ -345,6 +345,28 @@ class ReaderAcronymsTest {
         assertThat(onEdt(() -> panel.analysisView().proposeIcon().getToolTipText()))
                 .isEqualTo("Synonyme vorschlagen");
 
+        // P3c: Bilder, Aussagen und Graph zeigen nur Vorhandenes; die Unterseite ist nicht analysiert, also steht dort
+        // nichts, und die Statuszeile sagt, für wie viele Unterseiten noch nichts vorliegt. Kein KI-Lauf.
+        Subpages.Below subpagesBelow = onEdt(() -> panel.subpages().below());
+        PageDetailPanel.BelowRows graphRows = PageDetailPanel.belowRows("Graph", workspace, subpagesBelow, () -> true,
+                partial -> { });
+        assertThat(graphRows.rows()).isEmpty();
+        assertThat(graphRows.missing()).isEqualTo(1);
+        assertThat(PageDetailPanel.belowStatus("Graph", 1, graphRows))
+                .isEqualTo("für 1 Unterseite liegt noch nichts vor");
+        PageDetailPanel.BelowRows statementRows = PageDetailPanel.belowRows("Aussagen", workspace, subpagesBelow,
+                () -> true, partial -> { });
+        assertThat(statementRows.rows()).isEmpty();
+        assertThat(statementRows.missing()).isEqualTo(1);
+        assertThat(PageDetailPanel.belowRows("Bilder", workspace, subpagesBelow, () -> true, partial -> { }).rows())
+                .isEmpty();
+        onEdt(() -> {
+            panel.selectTab("Graph");
+            return null;
+        });
+        awaitTrue(() -> onEdt(() -> panel.belowSectionOf("Graph").shown()
+                && panel.belowSectionOf("Graph").count() == 0));
+
         onEdt(() -> {
             panel.subpages().box().setSelected(false);
             return null;
