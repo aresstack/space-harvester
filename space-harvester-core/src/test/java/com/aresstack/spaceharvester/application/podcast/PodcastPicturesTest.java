@@ -55,8 +55,8 @@ class PodcastPicturesTest {
         return new PodcastPictures.PageImageSource() {
             @Override
             public List<Candidate> candidates(String sourceId, List<String> pageIds) {
-                return List.of(new Candidate("p1", "aa", "Logo", "Ein kleines Logo", "image/png"),
-                        new Candidate("p2", "bb", "Ablauf.png", "Ein Ablaufdiagramm des Nachtlaufs", "image/png"));
+                return List.of(new Candidate("p1", "att-p1", "aa", "Logo", "Ein kleines Logo", "image/png"),
+                        new Candidate("p2", "att-p2", "bb", "Ablauf.png", "Ein Ablaufdiagramm des Nachtlaufs", "image/png"));
             }
 
             @Override

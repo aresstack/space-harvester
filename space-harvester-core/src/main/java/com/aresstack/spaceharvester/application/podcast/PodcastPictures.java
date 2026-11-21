@@ -107,9 +107,11 @@ public final class PodcastPictures {
         /**
          * Ein Bild einer Seite mit seiner gespeicherten Beschreibung.
          *
-         * @param sha256 Fingerabdruck der Bytes; dasselbe Bild kommt in einer Folge nur einmal vor
+         * @param assetId die Anhangs-ID des Bildes in der Ablage
+         * @param sha256  Fingerabdruck der Bytes; dasselbe Bild kommt in einer Folge nur einmal vor
          */
-        record Candidate(String pageId, String sha256, String title, String description, String mediaType) {
+        record Candidate(String pageId, String assetId, String sha256, String title, String description,
+                         String mediaType) {
         }
 
         /** Die beschriebenen Bilder dieser Seiten, in Seitenreihenfolge; nie Bilder ohne Beschreibung. */
