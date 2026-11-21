@@ -289,6 +289,18 @@ class ChatToolsTurnTest {
     @Test
     void theOpenPageAndTheSearchHitsWithExcerptAreReleasedButNotTheRest() throws Exception {
         PageKey open = page("datenhaus");
+        // Der Suchindex entsteht nach dem Sync im Hintergrund: erst warten, bis die Suche Auszüge liefert.
+        ChatTools probe = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+            }
+        });
+        await(() -> probe.search("Spool").lines().anyMatch(line -> line.split(" \\| ").length >= 3) ? true : null);
         ScriptedChat port = new ScriptedChat(List.of(
                 (request, listener) -> listener.toolCalls("", List.of(
                         new AiChat.ToolCall("c1", ChatTools.SEARCH, "{\"text\":\"Spool\"}"))),
