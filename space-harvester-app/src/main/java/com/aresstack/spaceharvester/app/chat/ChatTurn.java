@@ -404,6 +404,9 @@ public final class ChatTurn {
                 openRef = ChatTools.ref(openPage);
                 cite(open, openPage);
                 String spaceKey = running.spaceOf(openPage);
+                if (spaceKey == null) {
+                    spaceKey = page.spaceKey();
+                }
                 if (spaceKey != null) {
                     releasePage(spaceKey, openPage);
                 }
@@ -430,6 +433,10 @@ public final class ChatTurn {
             return;
         }
         List<AiChat.Tool> offered = round < MAX_TOOL_ROUNDS ? ChatTools.definitions() : List.of();
+        int roundStart;
+        synchronized (received) {
+            roundStart = received.length();
+        }
         task = port.stream(new AiChat.Request(messages, model, effort, offered), new AiChat.Listener() {
             @Override
             public void delta(String text) {
@@ -441,9 +448,19 @@ public final class ChatTurn {
 
             @Override
             public void completed(String text) {
+                // Kam diese Runde ohne Deltas (nur Abschlusstext), gehört der Text noch an die Antwort, auch wenn
+                // frühere Runden schon Text gestreamt haben (Codex-Befund zu #1003).
+                String late;
                 String full;
                 synchronized (received) {
-                    full = received.length() > 0 ? received.toString() : text;
+                    late = received.length() == roundStart && text != null && !text.isEmpty() ? text : null;
+                    if (late != null) {
+                        received.append(late);
+                    }
+                    full = received.toString();
+                }
+                if (late != null) {
+                    onUi(() -> listener.delta(late));
                 }
                 finish(() -> listener.completed(full));
             }

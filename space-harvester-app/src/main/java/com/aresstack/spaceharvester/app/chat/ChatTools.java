@@ -87,11 +87,25 @@ final class ChatTools {
     private final Map<String, Map<String, PageHolding>> holdings = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, Map<String, String>> titles = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** Liest den Bestand eines Space; für Tests austauschbar. */
+    interface HoldingsReader {
+        Map<String, PageHolding> pages(String sourceId, String spaceKey);
+    }
+
+    private HoldingsReader reader;
+
     ChatTools(Workspace workspace, PageSelection scope, Set<PageKey> granted, Sources sources) {
+        this.reader = (sourceId, spaceKey) -> workspace.holdings(sourceId, spaceKey).pages();
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.scope = scope;
         this.granted = Set.copyOf(granted);
         this.sources = Objects.requireNonNull(sources, "sources");
+    }
+
+    /** Für Tests: ein anderer Zugriff auf den Bestand. */
+    ChatTools holdingsReader(HoldingsReader reader) {
+        this.reader = Objects.requireNonNull(reader, "reader");
+        return this;
     }
 
     /** Die Definitionen für die Anfrage. */
@@ -197,6 +211,9 @@ final class ChatTools {
         int number = sources.cite(new ChatKnowledge.Excerpt(page.title(), key.sourceId(), page.location(),
                 ChatKnowledge.excerpt(text, ChatKnowledge.MAX_HIT_CHARS)), key);
         String spaceKey = spaceOf(key);
+        if (spaceKey == null) {
+            spaceKey = page.spaceKey();
+        }
         if (spaceKey != null) {
             sources.delivered(spaceKey, key);
         }
@@ -225,13 +242,14 @@ final class ChatTools {
             PageMetadata metadata = page.header().metadata();
             return new Page(metadata.title() == null ? key.pageId() : metadata.title(),
                     metadata.url() == null ? null : metadata.url().toString(),
-                    text == null ? "" : text.text().strip());
+                    text == null ? "" : text.text().strip(), metadata.partitionKey());
         } catch (RuntimeException notLocal) {
             return null;
         }
     }
 
-    record Page(String title, String location, String text) {
+    /** @param spaceKey Space laut Kopfdaten (Partition), {@code null}, wenn die Quelle keine nennt */
+    record Page(String title, String location, String text, String spaceKey) {
     }
 
     // ------------------------------------------------------------------ Liste
@@ -241,6 +259,7 @@ final class ChatTools {
             return "Es ist kein Bereich gewählt.";
         }
         List<Entry> entries = new ArrayList<>();
+        boolean unreadable = false;
         PageKey parent = null;
         if (!node.isBlank()) {
             parent = parse(node);
@@ -253,6 +272,10 @@ final class ChatTools {
                 continue;
             }
             Map<String, PageHolding> pages = holdings(space.sourceId(), space.spaceKey());
+            if (pages == null) {
+                unreadable = true;
+                continue;
+            }
             if (parent != null && !pages.containsKey(parent.pageId())) {
                 continue; // der Knoten liegt in einem anderen Space dieser Quelle
             }
@@ -278,7 +301,8 @@ final class ChatTools {
                 : entry.title().toLowerCase(java.util.Locale.ROOT)).thenComparing(entry -> ref(entry.key())));
         int sheets = Math.max(1, (entries.size() + PAGE_SIZE - 1) / PAGE_SIZE);
         if (entries.isEmpty()) {
-            return parent == null ? "Der Bereich enthält keine Seiten." : "Diese Seite hat keine Unterseiten.";
+            return unreadable ? TOO_LARGE
+                    : parent == null ? "Der Bereich enthält keine Seiten." : "Diese Seite hat keine Unterseiten.";
         }
         if (sheet > sheets) {
             return "Blatt " + sheet + " gibt es nicht; es gibt " + sheets + ".";
@@ -295,7 +319,10 @@ final class ChatTools {
             b.append('\n');
         }
         if (sheet < sheets) {
-            b.append("(weiter mit blatt ").append(sheet + 1).append(')');
+            b.append("(weiter mit blatt ").append(sheet + 1).append(")\n");
+        }
+        if (unreadable) {
+            b.append("Hinweis: Nicht alle Spaces ließen sich auflisten (zu groß); nutze ").append(SEARCH).append('.');
         }
         return b.toString().stripTrailing();
     }
@@ -306,24 +333,34 @@ final class ChatTools {
             return null;
         }
         for (var space : scope.spaces()) {
-            if (space.sourceId().equals(key.sourceId())
-                    && holdings(space.sourceId(), space.spaceKey()).containsKey(key.pageId())) {
+            Map<String, PageHolding> pages = space.sourceId().equals(key.sourceId())
+                    ? holdings(space.sourceId(), space.spaceKey()) : null;
+            if (pages != null && pages.containsKey(key.pageId())) {
                 return space.spaceKey();
             }
         }
         return null;
     }
 
-    /** Der Bestand eines Space, je Turn einmal. */
+    /**
+     * Der Bestand eines Space, je Turn einmal; {@code null}, wenn er sich nicht laden ließ (etwa zu groß für die
+     * Bestandsübersicht): Dann sagt die Liste das, statt den Space als leer zu melden (Codex-Befund zu #1003).
+     */
     private Map<String, PageHolding> holdings(String sourceId, String spaceKey) {
-        return holdings.computeIfAbsent(sourceId + "\u0000" + spaceKey, key -> {
+        Map<String, PageHolding> loaded = holdings.computeIfAbsent(sourceId + "\u0000" + spaceKey, key -> {
             try {
-                return workspace.holdings(sourceId, spaceKey).pages();
+                return reader.pages(sourceId, spaceKey);
             } catch (RuntimeException gone) {
-                return Map.of();
+                return UNREADABLE;
             }
         });
+        return loaded == UNREADABLE ? null : loaded;
     }
+
+    private static final Map<String, PageHolding> UNREADABLE = java.util.Collections.unmodifiableMap(
+            new java.util.HashMap<>());
+    static final String TOO_LARGE = "Der Bestand dieses Bereichs lässt sich nicht als Liste zeigen (zu groß); nutze "
+            + SEARCH + ".";
 
     /** Die Titel eines Space aus den Kopfdaten der Seitenliste des Cache, je Turn einmal, ohne Lesetext. */
     private Map<String, String> titles(String sourceId, String spaceKey) {

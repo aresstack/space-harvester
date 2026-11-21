@@ -310,6 +310,43 @@ class ChatToolsTurnTest {
         assertThat(released()).containsExactlyInAnyOrderElementsOf(expected);
     }
 
+    @Test
+    void aSpaceTooLargeForTheOverviewIsNamedInsteadOfListedAsEmpty() {
+        ChatTools tools = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+            }
+        }).holdingsReader((sourceId, spaceKey) -> {
+            throw new IllegalStateException("zu groß");
+        });
+
+        assertThat(tools.list("", 1)).isEqualTo(ChatTools.TOO_LARGE);
+        assertThat(tools.list(ChatTools.ref(page("datenhaus")), 1)).isEqualTo(ChatTools.TOO_LARGE);
+    }
+
+    @Test
+    void anAnswerThatOnlyArrivesAsCompletionFollowsTheNarrationOfAnEarlierRound() throws Exception {
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> {
+                    listener.delta("Ich schaue nach. ");
+                    listener.toolCalls("Ich schaue nach. ", List.of(new AiChat.ToolCall("c1", ChatTools.LIST, "{}")));
+                },
+                (request, listener) -> listener.completed("Drei Seiten.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(events.completed).isEqualTo("Ich schaue nach. Drei Seiten.");
+        assertThat(events.deltas).containsExactly("Ich schaue nach. ", "Drei Seiten.");
+    }
+
     private ChatTurn.Releases releases() {
         return new ChatTurn.Releases() {
             @Override
@@ -383,6 +420,7 @@ class ChatToolsTurnTest {
         final List<String> using = new ArrayList<>();
         final List<Thread> usingThreads = new CopyOnWriteArrayList<>();
         int released;
+        final List<String> deltas = new CopyOnWriteArrayList<>();
         ChatKnowledge.Context context;
         String completed;
         String failed;
@@ -406,6 +444,7 @@ class ChatToolsTurnTest {
 
         @Override
         public void delta(String text) {
+            deltas.add(text);
         }
 
         @Override
