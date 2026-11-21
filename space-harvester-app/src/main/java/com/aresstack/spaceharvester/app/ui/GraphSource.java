@@ -29,6 +29,15 @@ interface GraphSource {
     Graph around(String start, int depth, boolean proposals) throws Exception;
 
     /**
+     * Wie {@link #around(String, int, boolean)}; {@code cancelled} meldet, dass die Anfrage überholt ist, und eine
+     * Quelle, die lange rechnet, bricht dann ab ({@link java.util.concurrent.CancellationException}).
+     */
+    default Graph around(String start, int depth, boolean proposals, java.util.function.BooleanSupplier cancelled)
+            throws Exception {
+        return around(start, depth, proposals);
+    }
+
+    /**
      * Ein Begriff im Graphen.
      *
      * @param key    Suchwert, eindeutig im Graphen
@@ -166,7 +175,8 @@ interface GraphSource {
     /** Die Fachsicht des Core zu einem Startbegriff und einer Tiefe (Paket W1). */
     @FunctionalInterface
     interface DomainFetch {
-        DomainTermGraph.View around(String start, int depth) throws Exception;
+        DomainTermGraph.View around(String start, int depth, java.util.function.BooleanSupplier cancelled)
+                throws Exception;
     }
 
     /**
@@ -178,40 +188,63 @@ interface GraphSource {
     static GraphSource ofDomainTerms(DomainFetch fetch, java.util.function.Function<String, String> analyzerName) {
         Objects.requireNonNull(fetch, "fetch");
         Objects.requireNonNull(analyzerName, "analyzerName");
-        return (start, depth, proposals) -> {
-            DomainTermGraph.View view = fetch.around(start, Math.max(1, Math.min(2, depth)));
-            if (view.outcome() == DomainTermGraph.Outcome.NOT_A_TERM) {
-                return new Graph(List.of(), List.of(), false, "", "„" + start.trim() + "“ " + NOT_A_TERM);
+        return new GraphSource() {
+            @Override
+            public Graph around(String start, int depth, boolean proposals) throws Exception {
+                return around(start, depth, proposals, () -> false);
             }
-            if (view.outcome() == DomainTermGraph.Outcome.EMPTY_START) {
-                return Graph.EMPTY;
+
+            @Override
+            public Graph around(String start, int depth, boolean proposals,
+                                java.util.function.BooleanSupplier cancelled) throws Exception {
+                return domainGraph(fetch.around(start, Math.max(1, Math.min(2, depth)), cancelled), start,
+                        analyzerName);
             }
-            List<Node> nodes = new ArrayList<>();
-            for (DomainTermGraph.Node node : view.nodes()) {
-                nodes.add(new Node(node.key(), node.label(), node.depth(), node.parent(),
-                        node.kind() == DomainTermGraph.NodeKind.SYNONYM));
-            }
-            List<Edge> edges = new ArrayList<>();
-            for (DomainTermGraph.Edge edge : view.edges()) {
-                if (edge.kind() == DomainTermGraph.EdgeKind.SYNONYM) {
-                    edges.add(new Edge(edge.from(), edge.to(), "SYNONYM", true, false, Style.SYNONYM, null,
-                            List.of()));
-                } else {
-                    edges.add(new Edge(edge.from(), edge.to(), "VERB", true, true, Style.VERB,
-                            edge.verb() + " · " + edge.count(), edge.evidence()));
-                }
-            }
-            List<String> notes = new ArrayList<>();
-            if (!view.analyzers().isEmpty()) {
-                notes.add("Aussagen aus " + String.join(", ", view.analyzers().stream().map(analyzerName)
-                        .filter(Objects::nonNull).sorted().toList()));
-            }
-            if (view.skippedStale() > 0) {
-                notes.add(view.skippedStale() + (view.skippedStale() == 1 ? " veraltete Aussage" : " veraltete Aussagen")
-                        + " ausgelassen");
-            }
-            return new Graph(nodes, edges, view.truncated(), String.join(" · ", notes), null);
         };
+    }
+
+    private static Graph domainGraph(DomainTermGraph.View view, String start,
+                                     java.util.function.Function<String, String> analyzerName) {
+        if (view.outcome() == DomainTermGraph.Outcome.NOT_A_TERM) {
+            return new Graph(List.of(), List.of(), false, "", "„" + start.trim() + "“ " + NOT_A_TERM);
+        }
+        if (view.outcome() == DomainTermGraph.Outcome.EMPTY_START) {
+            return Graph.EMPTY;
+        }
+        List<Node> nodes = new ArrayList<>();
+        for (DomainTermGraph.Node node : view.nodes()) {
+            nodes.add(new Node(node.key(), node.label(), node.depth(), node.parent(),
+                    node.kind() == DomainTermGraph.NodeKind.SYNONYM));
+        }
+        List<Edge> edges = new ArrayList<>();
+        for (DomainTermGraph.Edge edge : view.edges()) {
+            if (edge.kind() == DomainTermGraph.EdgeKind.SYNONYM) {
+                edges.add(new Edge(edge.from(), edge.to(), "SYNONYM", true, false, Style.SYNONYM, null,
+                        List.of()));
+            } else {
+                edges.add(new Edge(edge.from(), edge.to(), "VERB", true, true, Style.VERB,
+                        edge.verb() + " · " + edge.count(), edge.evidence()));
+            }
+        }
+        List<String> notes = new ArrayList<>();
+        // Immer die Ablage nennen, aus der gelesen wurde, auch ohne Kante (Auflage Architekt).
+        List<String> names = view.analyzers().stream().map(analyzerName).filter(Objects::nonNull).distinct().sorted()
+                .toList();
+        if (names.isEmpty() && view.analyzer() != null) {
+            String name = analyzerName.apply(view.analyzer()
+                    == com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL
+                    ? com.aresstack.spaceharvester.application.knowledge.ModelStatementAnalyzer.ID
+                    : com.aresstack.spaceharvester.app.nlp.MaltStatementAnalyzer.ID);
+            names = name == null ? List.of() : List.of(name);
+        }
+        if (!names.isEmpty()) {
+            notes.add("Aussagen aus " + String.join(", ", names));
+        }
+        if (view.skippedStale() > 0) {
+            notes.add(view.skippedStale() + (view.skippedStale() == 1 ? " veraltete Aussage" : " veraltete Aussagen")
+                    + " ausgelassen");
+        }
+        return new Graph(nodes, edges, view.truncated(), String.join(" · ", notes), null);
     }
 
     /** Hinweis, wenn der Startbegriff der Fachsicht kein bestätigter Fachbegriff ist. */

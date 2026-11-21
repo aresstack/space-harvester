@@ -68,7 +68,9 @@ public final class TermGraphView {
     static final String NO_VERBS = "Zu diesem Fachbegriff gibt es auf den analysierten, für dich sichtbaren Seiten "
             + "noch keine Aussagen mit anderen Fachbegriffen.";
     static final String DOMAIN = "Nur Fachbegriffe";
-    static final String OPTIONS_TIP = "Optionen: Vorschläge zeigen, Nur Fachbegriffe";
+    static final String OPTIONS_TIP = "Optionen: Nur Fachbegriffe";
+    static final String PROPOSALS_TIP = "Auch vorgeschlagene Beziehungen zeigen, gestrichelt";
+    static final String PROPOSALS_LOCKED = "Gilt nicht in der Fachsicht: sie zeigt nur Bestätigtes";
     static final String TRUNCATED = "Gezeigt werden die ersten " + GraphSource.MAX_NODES + " Begriffe.";
     /** Höchstens so viele Vorschläge zeigt die Begriffssuche am Startfeld. */
     static final int SUGGESTIONS = 8;
@@ -83,8 +85,8 @@ public final class TermGraphView {
     private final JPanel root = new JPanel(new BorderLayout(0, 8));
     private final PlaceholderField start = new PlaceholderField(18, "Startbegriff …");
     private final JComboBox<String> depth = Comic.combo();
-    private final javax.swing.JCheckBoxMenuItem proposals = new javax.swing.JCheckBoxMenuItem("Vorschläge zeigen");
-    /** Die Schalter hinter einem Icon-Knopf am Zeilenende, damit die Reiterzeile auch bei 960 px in eine Zeile passt. */
+    private final javax.swing.JCheckBox proposals = Comic.checkBox("Vorschläge zeigen");
+    /** Die Schalter der Fachsicht hinter einem Icon-Knopf am Zeilenende; die Bestandssicht bleibt unverändert. */
     private final IconButton options = new IconButton(Glyph.FILTER, OPTIONS_TIP);
     private final JPopupMenu optionsMenu = new JPopupMenu();
     private final ComposerButton showButton = Comic.button("Zeigen", "Den Graphen um den Startbegriff zeichnen");
@@ -92,7 +94,10 @@ public final class TermGraphView {
     private final Canvas canvas = new Canvas();
     private final JPopupMenu suggestions = new JPopupMenu();
     private String centre;
-    private int request;
+    /** Zähler der Graph-Anfragen; außerhalb des EDT gelesen, damit eine überholte Berechnung abbricht. */
+    private volatile int request;
+    /** Zähler der Klicks auf Kanten: nur das Overlay der zuletzt geklickten Kante erscheint. */
+    private int evidenceRequest;
     private int suggestRequest;
     private boolean quiet;
     /** Die Seiten der Auswahl links (ADR 0029), außerhalb des EDT gelesen; {@code null} heißt alle. */
@@ -113,14 +118,14 @@ public final class TermGraphView {
             }
             return runtime.workspace().termRelations(term, null, withProposals ? null : ReviewStatus.CONFIRMED,
                     null, TermRelations.MAX_LIMIT, null, scope.get().get()).relations();
-        }), context == null ? null : GraphSource.ofDomainTerms((term, levels) -> {
+        }), context == null ? null : GraphSource.ofDomainTerms((term, levels, cancelled) -> {
             AppRuntime runtime = context.runtime();
             if (runtime == null) {
                 throw new IllegalStateException(TermDirectory.NO_RUNTIME);
             }
             return runtime.workspace().domainTermGraph(term,
                     new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options(levels, false,
-                            scope.get().get()), () -> false);
+                            scope.get().get()), cancelled);
         }, com.aresstack.spaceharvester.app.ui.content.StatementProvenance::analyzer), scope);
     }
 
@@ -142,7 +147,8 @@ public final class TermGraphView {
         depth.addItem("Tiefe 1");
         depth.addItem("Tiefe 2");
         depth.setSelectedIndex(1);
-        proposals.setToolTipText("Auch vorgeschlagene Beziehungen zeigen, gestrichelt");
+        proposals.setOpaque(false);
+        proposals.setToolTipText(PROPOSALS_TIP);
         domain.setToolTipText("Fachsicht: nur bestätigte Fachbegriffe und Synonyme, Verben der Aussagen als Kanten");
 
         JLabel heading = Comic.text("Wissensgraph der Begriffe");
@@ -153,7 +159,7 @@ public final class TermGraphView {
         controls.setOpaque(false);
         controls.add(start);
         controls.add(depth);
-        optionsMenu.add(proposals);
+        controls.add(proposals);
         optionsMenu.add(domain);
         com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(optionsMenu, options);
         options.addActionListener(e -> optionsMenu.show(options, 0, options.getHeight()));
@@ -169,11 +175,11 @@ public final class TermGraphView {
         start.addActionListener(e -> showTerm(start.getText()));
         showButton.addActionListener(e -> showTerm(start.getText()));
         depth.addActionListener(e -> reload());
-        proposals.addActionListener(e -> {
-            markOptions();
-            reload();
-        });
+        proposals.addActionListener(e -> reload());
+        domain.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
         domain.addActionListener(e -> {
+            proposals.setEnabled(!domain.isSelected());
+            proposals.setToolTipText(domain.isSelected() ? PROPOSALS_LOCKED : PROPOSALS_TIP);
             markOptions();
             reload();
         });
@@ -258,7 +264,41 @@ public final class TermGraphView {
 
     /** Der Reiter oder Bereich wird sichtbar: ein schon gezeigter Graph lädt neu, Änderungen anderer Reiter folgen. */
     public void shown() {
+        watch();
         reload();
+    }
+
+    /** Laufzeit, für die {@link #watches} gelten. */
+    private AppRuntime watched;
+    private final List<com.aresstack.spaceharvester.application.observe.Subscription> watches = new ArrayList<>();
+
+    /**
+     * Die Fachsicht folgt Änderungen der Analysen, der KI-Freigabe und abgeschlossenen Aufträgen (neue Analysen) per
+     * Meldung des Core (ADR 0027), kein Polling. Einmal je Laufzeit angemeldet.
+     */
+    private void watch() {
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (runtime == null || runtime == watched) {
+            return;
+        }
+        watches.forEach(com.aresstack.spaceharvester.application.observe.Subscription::close);
+        watches.clear();
+        watched = runtime;
+        Runnable later = () -> javax.swing.SwingUtilities.invokeLater(this::followCore);
+        watches.add(runtime.workspace().subscribeStatementAnalyses(later));
+        watches.add(runtime.workspace().subscribePageReleases(change -> later.run()));
+        watches.add(runtime.workspace().subscribeJobs(status -> {
+            if (status.state().terminal()) {
+                later.run();
+            }
+        }));
+    }
+
+    /** Eine Meldung des Core: eine gezeigte Fachsicht rechnet neu. */
+    private void followCore() {
+        if (domainMode() && root.isShowing()) {
+            reload();
+        }
     }
 
     private void reload() {
@@ -275,9 +315,6 @@ public final class TermGraphView {
     /** Punkt am Filter-Symbol und Tooltip mit den aktiven Optionen, sobald eine vom Standard abweicht. */
     void markOptions() {
         List<String> active = new ArrayList<>();
-        if (proposals.isSelected()) {
-            active.add(proposals.getText());
-        }
         if (domain.isSelected()) {
             active.add(domain.getText());
         }
@@ -312,12 +349,13 @@ public final class TermGraphView {
         int levels = depth.getSelectedIndex() + 1;
         boolean withProposals = proposals.isSelected();
         hint.setText("Lädt …");
-        Background.run(() -> active.around(wanted, levels, withProposals), graph -> {
+        java.util.function.BooleanSupplier overtaken = () -> current != request;
+        Background.run(() -> active.around(wanted, levels, withProposals, overtaken), graph -> {
             if (current == request) {
                 show(graph);
             }
         }, failure -> {
-            if (current == request) {
+            if (current == request && !(failure instanceof java.util.concurrent.CancellationException)) {
                 show(GraphSource.Graph.EMPTY);
                 hint.setText("Graph nicht lesbar: " + failure.getMessage());
             }
@@ -327,6 +365,7 @@ public final class TermGraphView {
     /** Zeigt einen fertigen Graphen. */
     void show(GraphSource.Graph graph) {
         evidence.setVisible(false);
+        canvas.domain(domainMode());
         canvas.graph(graph);
         boolean fach = domainMode();
         String text;
@@ -351,8 +390,9 @@ public final class TermGraphView {
                 + canvas.label(edge.to());
         int total = edgeCount(edge);
         AppRuntime runtime = context == null ? null : context.runtime();
+        int current = ++evidenceRequest;
         if (runtime == null) {
-            evidence.fill(title, total, edge.evidence(), java.util.Map.of()).showAt(canvas, x, y);
+            evidence.fill(title, total, edge.evidence(), java.util.Map.of(), true).showAt(canvas, x, y);
             return;
         }
         java.util.Map<com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph.PageRef,
@@ -360,14 +400,14 @@ public final class TermGraphView {
                 new java.util.LinkedHashMap<>();
         edge.evidence().forEach(item -> byPage.computeIfAbsent(item.page(), unused -> new ArrayList<>())
                 .add(item.statement()));
-        int current = request;
+        int graphRequest = request;
         Background.run(() -> runtime.workspace().statementSentences(byPage), sentences -> {
-            if (current == request && canvas.isShowing()) {
-                evidence.fill(title, total, edge.evidence(), sentences).showAt(canvas, x, y);
+            if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
+                evidence.fill(title, total, edge.evidence(), sentences, false).showAt(canvas, x, y);
             }
         }, failure -> {
-            if (current == request && canvas.isShowing()) {
-                evidence.fill(title, total, edge.evidence(), java.util.Map.of()).showAt(canvas, x, y);
+            if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
+                evidence.fill(title, total, edge.evidence(), java.util.Map.of(), true).showAt(canvas, x, y);
             }
         });
     }
@@ -400,16 +440,20 @@ public final class TermGraphView {
         }
         AppRuntime runtime = context.runtime();
         Supplier<PageSet> pages = scope.get();
-        Background.run(() -> runtime.workspace().terms(new TermQueries.TermSearch(null, null, null, q, false,
-                SUGGESTIONS, null, null, null, pages.get())).terms(), terms -> {
+        boolean fach = domainMode();
+        // Fachsicht: nur bestätigte Fachbegriffe und Synonyme, sonst alle Begriffe der Auswahl.
+        Background.run(() -> fach ? runtime.workspace().domainTermSuggestions(q, SUGGESTIONS)
+                : runtime.workspace().terms(new TermQueries.TermSearch(null, null, null, q, false,
+                SUGGESTIONS, null, null, null, pages.get())).terms().stream().map(TermQueries.TermSummary::term)
+                .toList(), terms -> {
             if (current != suggestRequest || !start.isShowing()) {
                 return;
             }
             suggestions.setVisible(false);
             suggestions.removeAll();
-            for (TermQueries.TermSummary term : terms) {
-                JMenuItem item = new JMenuItem(term.term());
-                item.addActionListener(e -> showTerm(term.term()));
+            for (String term : terms) {
+                JMenuItem item = new JMenuItem(term);
+                item.addActionListener(e -> showTerm(term));
                 suggestions.add(item);
             }
             if (!terms.isEmpty()) {
@@ -433,7 +477,7 @@ public final class TermGraphView {
         return depth;
     }
 
-    javax.swing.JCheckBoxMenuItem proposalsChoice() {
+    javax.swing.JCheckBox proposalsChoice() {
         return proposals;
     }
 
@@ -470,6 +514,13 @@ public final class TermGraphView {
             setPreferredSize(new Dimension(640, 420));
             setFont(Comic.semiBold(13f));
             javax.swing.ToolTipManager.sharedInstance().registerComponent(this);
+        }
+
+        /** Fachsicht: Bögen, freigestellte Beschriftungen und gedrehter Ring; die Bestandssicht zeichnet wie bisher. */
+        private boolean domain;
+
+        void domain(boolean domain) {
+            this.domain = domain;
         }
 
         void graph(GraphSource.Graph graph) {
@@ -591,7 +642,7 @@ public final class TermGraphView {
                 Point2D centre = graph.nodes().isEmpty() ? null : boxes.get(graph.nodes().get(0).key()) == null
                         ? null : new Point2D.Double(boxes.get(graph.nodes().get(0).key()).getCenterX(),
                         boxes.get(graph.nodes().get(0).key()).getCenterY());
-                if (centre != null && offset == 0 && depthOf(edge.from()) > 0 && depthOf(edge.to()) > 0
+                if (domain && centre != null && offset == 0 && depthOf(edge.from()) > 0 && depthOf(edge.to()) > 0
                         && new Line2D.Double(a, b).ptSegDist(centre) < 60) {
                     // Kante zwischen zwei Nachbarn, die durch die Mitte liefe: als Bogen nach außen.
                     double mx = (a.getX() + b.getX()) / 2;
@@ -636,7 +687,7 @@ public final class TermGraphView {
                 double h = metrics.getHeight() + 2;
                 Rectangle2D best = null;
                 int bestHits = Integer.MAX_VALUE;
-                for (double t : LABEL_POSITIONS) {
+                for (double t : domain ? LABEL_POSITIONS : new double[] {0.5}) {
                     Point2D middle = segment.at(t);
                     Rectangle2D candidate = new Rectangle2D.Double(middle.getX() - w / 2, middle.getY() - h / 2, w,
                             h);
@@ -658,7 +709,7 @@ public final class TermGraphView {
                         best = candidate;
                         bestHits = hits;
                     }
-                    if (hits == 0) {
+                    if (hits == 0 || !domain) {
                         break;
                     }
                 }
@@ -747,7 +798,7 @@ public final class TermGraphView {
             centres.put(graph.nodes().get(0).key(), new Point2D.Double(cx, cy));
             int n = first.size();
             // Ab vier Nachbarn um einen halben Schritt gedreht: kein breiter Kasten genau links oder rechts der Mitte.
-            double turn = n >= 4 && n % 2 == 0 ? Math.PI / n : 0;
+            double turn = domain && n >= 4 && n % 2 == 0 ? Math.PI / n : 0;
             for (int i = 0; i < n; i++) {
                 double angle = -Math.PI / 2 + turn + 2 * Math.PI * i / n;
                 angles.put(first.get(i).key(), angle);

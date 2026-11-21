@@ -143,7 +143,7 @@ class TermGraphViewTest {
 
     @Test
     void theDomainViewMapsTermsSynonymsAndVerbEdgesAndSaysWhereTheStatementsComeFrom() throws Exception {
-        GraphSource source = GraphSource.ofDomainTerms((start, depth) -> FACHSICHT, id -> "MaltParser");
+        GraphSource source = GraphSource.ofDomainTerms((start, depth, cancelled) -> FACHSICHT, id -> "MaltParser");
 
         GraphSource.Graph graph = source.around("Antragsteller", 2, false);
 
@@ -155,7 +155,7 @@ class TermGraphViewTest {
                 Tuple.tuple(GraphSource.Style.VERB, "stellen · 3", true),
                 Tuple.tuple(GraphSource.Style.SYNONYM, null, false));
         assertThat(graph.note()).isEqualTo("Aussagen aus MaltParser · 2 veraltete Aussagen ausgelassen");
-        assertThat(GraphSource.ofDomainTerms((start, depth) -> new DomainTermGraph.View(
+        assertThat(GraphSource.ofDomainTerms((start, depth, cancelled) -> new DomainTermGraph.View(
                 DomainTermGraph.Outcome.NOT_A_TERM, List.of(), List.of(), false, 0, Set.of()), id -> id)
                 .around("Kaffee", 1, false).empty()).isEqualTo("„Kaffee“ " + GraphSource.NOT_A_TERM);
     }
@@ -167,7 +167,7 @@ class TermGraphViewTest {
             asked.add("relations");
             return GraphSource.Graph.EMPTY;
         };
-        GraphSource domain = GraphSource.ofDomainTerms((start, depth) -> {
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, cancelled) -> {
             asked.add("domain");
             return FACHSICHT;
         }, id -> "MaltParser");
@@ -219,6 +219,57 @@ class TermGraphViewTest {
                 GraphSource.Style.VERB, "Antragsteller stellen Antrag", 3,
                 List.of("Förderantrag (wiki / FOE)", "Leitfaden (wiki / FOE)"));
         assertThat(opened).containsExactly(new EvidencePopup.Target("wiki", "2", -1, -1));
+    }
+
+    @Test
+    void theInventoryViewStaysAsItWasAndTheStatusAlwaysNamesTheAnalyzer() throws Exception {
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView view = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY,
+                    GraphSource.ofDomainTerms((start, depth, cancelled) -> FACHSICHT, id -> "MaltParser"));
+            seen.add(java.util.Arrays.asList(view.tools().getComponents()).contains(view.proposalsChoice()));
+            seen.add(view.proposalsChoice().isEnabled());
+            view.domainChoice().doClick();
+            seen.add(view.proposalsChoice().isEnabled());
+            seen.add(view.proposalsChoice().getToolTipText());
+            view.domainChoice().doClick();
+            // Bestandssicht: gerade Linien, Beschriftung in der Mitte, Ring nicht gedreht.
+            view.show(new GraphSource.Graph(List.of(new GraphSource.Node("a", "A", 0, null),
+                    new GraphSource.Node("b", "B", 1, "a"), new GraphSource.Node("c", "C", 1, "a"),
+                    new GraphSource.Node("d", "D", 1, "a"), new GraphSource.Node("e", "E", 1, "a")),
+                    List.of(new GraphSource.Edge("b", "d", "ABBREVIATION", true, true),
+                            new GraphSource.Edge("a", "b", "ABBREVIATION", true, true)), false));
+            TermGraphView.Canvas canvas = view.canvas();
+            canvas.setSize(900, 560);
+            Map<String, java.awt.geom.Rectangle2D> boxes = canvas.layout(900, 560);
+            seen.add(boxes.get("b").getCenterX() == boxes.get("a").getCenterX());
+            for (TermGraphView.Canvas.Segment segment : canvas.segments(boxes)) {
+                seen.add(segment.control() == null);
+                seen.add(Math.abs(segment.tag().getCenterX() - (segment.a().getX() + segment.b().getX()) / 2) < 0.5);
+            }
+        });
+        assertThat(seen).containsExactly(true, true, false, TermGraphView.PROPOSALS_LOCKED,
+                true, true, true, true, true);
+
+        GraphSource.Graph empty = GraphSource.ofDomainTerms((start, depth, cancelled) -> new DomainTermGraph.View(
+                DomainTermGraph.Outcome.FOUND, List.of(new DomainTermGraph.Node("antrag", "Antrag",
+                DomainTermGraph.NodeKind.TERM, 0, null)), List.of(), false, 0, Set.of(),
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER),
+                com.aresstack.spaceharvester.app.ui.content.StatementProvenance::analyzer).around("Antrag", 2, false);
+        assertThat(empty.note()).as("ohne Kante und ohne Seite trotzdem die Ablage").isEqualTo("Aussagen aus MaltParser");
+    }
+
+    @Test
+    void theOverlayNeverMakesUpASentence() {
+        com.aresstack.spaceharvester.application.standing.SentenceText found =
+                new com.aresstack.spaceharvester.application.standing.SentenceText("Der Antragsteller stellt den Antrag.",
+                        null, 0, 10, 4, 10, false);
+        com.aresstack.spaceharvester.application.standing.SentenceText changed =
+                new com.aresstack.spaceharvester.application.standing.SentenceText(null, null, 0, 10, 4, 10, true);
+        assertThat(EvidencePopup.sentenceText(found, false)).isEqualTo("Der Antragsteller stellt den Antrag.");
+        assertThat(EvidencePopup.sentenceText(changed, false)).isEqualTo(EvidencePopup.NO_SENTENCE);
+        assertThat(EvidencePopup.sentenceText(null, false)).as("ohne Recht").isEqualTo(EvidencePopup.NO_ACCESS);
+        assertThat(EvidencePopup.sentenceText(found, true)).as("Fehler").isEqualTo(EvidencePopup.UNREADABLE);
     }
 
     private static void awaitTrue(java.util.function.BooleanSupplier condition) throws Exception {

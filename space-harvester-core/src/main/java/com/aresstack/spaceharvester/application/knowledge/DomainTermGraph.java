@@ -61,6 +61,13 @@ public final class DomainTermGraph {
         List<Term> terms(AccessContext caller);
 
         List<Synonym> synonyms(AccessContext caller);
+
+        /**
+         * Bestätigte Einträge der Einordnung „technisch“: Sie werden auch als Ende eines Synonyms kein Knoten.
+         */
+        default List<Term> technical(AccessContext caller) {
+            return List.of();
+        }
     }
 
     /** Art eines Knotens. */
@@ -147,10 +154,13 @@ public final class DomainTermGraph {
      * @param nodes          Knoten, die Mitte zuerst
      * @param truncated      ob es mehr als {@link #MAX_NODES} Knoten gäbe
      * @param skippedStale   Aussagen auf veralteten Seiten, die ausgelassen wurden (nur ohne {@code includeStale})
-     * @param analyzers      Analysatoren der gelesenen Ablage, wie gespeichert (in der Regel genau einer)
+     * @param analyzers      Analysatoren aller gelesenen Seiten der Ablage, wie gespeichert (in der Regel genau einer),
+     *                       auch ohne Kante
+     * @param analyzer       die eingestellte Ablage oder {@code null}, wenn unbekannt; nennt die Statuszeile, wenn
+     *                       noch keine Seite analysiert ist
      */
     public record View(Outcome outcome, List<Node> nodes, List<Edge> edges, boolean truncated, int skippedStale,
-                       Set<String> analyzers) {
+                       Set<String> analyzers, AnalyzerChoice analyzer) {
 
         public View {
             Objects.requireNonNull(outcome, "outcome");
@@ -159,8 +169,14 @@ public final class DomainTermGraph {
             analyzers = Set.copyOf(analyzers);
         }
 
+        /** Ohne Angabe der gewählten Ablage. */
+        public View(Outcome outcome, List<Node> nodes, List<Edge> edges, boolean truncated, int skippedStale,
+                    Set<String> analyzers) {
+            this(outcome, nodes, edges, truncated, skippedStale, analyzers, null);
+        }
+
         static View of(Outcome outcome) {
-            return new View(outcome, List.of(), List.of(), false, 0, Set.of());
+            return new View(outcome, List.of(), List.of(), false, 0, Set.of(), null);
         }
 
         public Node centre() {
@@ -188,14 +204,46 @@ public final class DomainTermGraph {
 
     private final Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed;
     private final Vocabulary vocabulary;
+    private final java.util.function.Supplier<AnalyzerChoice> selected;
 
     public DomainTermGraph(KnowledgeGraph graph, Vocabulary vocabulary) {
-        this(Objects.requireNonNull(graph, "graph")::analysed, vocabulary);
+        this(graph, vocabulary, () -> null);
+    }
+
+    /** @param selected die eingestellte Ablage, aus der {@code graph} liest; für die Statuszeile */
+    public DomainTermGraph(KnowledgeGraph graph, Vocabulary vocabulary,
+                           java.util.function.Supplier<AnalyzerChoice> selected) {
+        this(Objects.requireNonNull(graph, "graph")::analysed, vocabulary, selected);
     }
 
     DomainTermGraph(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed, Vocabulary vocabulary) {
+        this(analysed, vocabulary, () -> null);
+    }
+
+    DomainTermGraph(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed, Vocabulary vocabulary,
+                    java.util.function.Supplier<AnalyzerChoice> selected) {
         this.analysed = Objects.requireNonNull(analysed, "analysed");
         this.vocabulary = Objects.requireNonNull(vocabulary, "vocabulary");
+        this.selected = Objects.requireNonNull(selected, "selected");
+    }
+
+    /**
+     * Vorschläge für das Startfeld der Fachsicht: bestätigte Fachbegriffe und aufgenommene Synonyme, deren Wortlaut
+     * {@code query} enthält; Wortanfänge zuerst, Fachbegriffe vor Synonymen, sonst alphabetisch.
+     */
+    public List<String> suggestions(AccessContext caller, String query, int limit) {
+        Objects.requireNonNull(caller, "caller");
+        String wanted = query == null ? "" : TermText.normalize(query).strip();
+        if (wanted.isEmpty() || limit < 1) {
+            return List.of();
+        }
+        Lexicon lexicon = new Lexicon(vocabulary.terms(caller), vocabulary.synonyms(caller),
+                vocabulary.technical(caller));
+        return lexicon.labels.keySet().stream().filter(key -> key.contains(wanted))
+                .sorted(java.util.Comparator.<String>comparingInt(key -> key.startsWith(wanted) ? 0 : 1)
+                        .thenComparing(key -> lexicon.kinds.get(key))
+                        .thenComparing(lexicon.labels::get, String.CASE_INSENSITIVE_ORDER))
+                .limit(limit).map(lexicon.labels::get).toList();
     }
 
     /**
@@ -213,7 +261,8 @@ public final class DomainTermGraph {
         if (centre.isEmpty()) {
             return View.of(Outcome.EMPTY_START);
         }
-        Lexicon lexicon = new Lexicon(vocabulary.terms(caller), vocabulary.synonyms(caller));
+        Lexicon lexicon = new Lexicon(vocabulary.terms(caller), vocabulary.synonyms(caller),
+                vocabulary.technical(caller));
         if (!lexicon.labels.containsKey(centre)) {
             return View.of(Outcome.NOT_A_TERM);
         }
@@ -221,7 +270,10 @@ public final class DomainTermGraph {
         Map<String, EdgeBuilder> edges = new LinkedHashMap<>();
         lexicon.synonymEdges.forEach(pair -> edges.computeIfAbsent("syn\u0000" + pair[0] + "\u0000" + pair[1],
                 unused -> new EdgeBuilder(pair[0], pair[1], EdgeKind.SYNONYM, null)));
-        int skippedStale = 0;
+        // Je ausgelassener veralteter Aussage die Paare, die sie verbände; gezählt wird erst nach dem Aufbau der Sicht.
+        List<Set<String>> stale = new ArrayList<>();
+        // Dieselbe Sicht, als wären die veralteten Aussagen aktuell: nur was dort läge, zählt als ausgelassen.
+        Map<String, EdgeBuilder> withStale = new LinkedHashMap<>();
         Set<String> analyzers = new LinkedHashSet<>();
         for (KnowledgeGraph.AnalysedPage page : analysed.apply(caller)) {
             if (cancelled.getAsBoolean()) {
@@ -231,6 +283,7 @@ public final class DomainTermGraph {
             if (options.pages() != null && !options.pages().contains(ref.key())) {
                 continue;
             }
+            analyzers.add(page.analysis().analyzerId());
             ParsedStatements result = page.analysis().result();
             Map<String, ParsedStatements.Mention> mentions = new LinkedHashMap<>();
             result.mentions().forEach(mention -> mentions.putIfAbsent(mention.id(), mention));
@@ -257,12 +310,26 @@ public final class DomainTermGraph {
                 if (actors.isEmpty() || objects.isEmpty()) {
                     continue;
                 }
+                String verb = verb(statement);
                 if (ref.state() == PageStatements.State.STALE && !options.includeStale()) {
-                    skippedStale++;
+                    Set<String> pairs = new LinkedHashSet<>();
+                    for (Match actor : actors) {
+                        for (Match object : objects) {
+                            if (!actor.key().equals(object.key())
+                                    && pairs.add(actor.key() + "\u0000" + object.key())) {
+                                withStale.computeIfAbsent("verb\u0000" + actor.key() + "\u0000" + verb + "\u0000"
+                                                + object.key(),
+                                        unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb))
+                                        .add(new Evidence(ref, statement, page.analysis().analyzerId(), actor.text(),
+                                                object.text()));
+                            }
+                        }
+                    }
+                    if (!pairs.isEmpty()) {
+                        stale.add(pairs);
+                    }
                     continue;
                 }
-                String verb = verb(statement);
-                analyzers.add(page.analysis().analyzerId());
                 Set<String> seen = new LinkedHashSet<>();
                 for (Match actor : actors) {
                     for (Match object : objects) {
@@ -278,7 +345,21 @@ public final class DomainTermGraph {
                 }
             }
         }
-        return layout(centre, lexicon, edges, options.depth(), skippedStale, analyzers);
+        View view = layout(centre, lexicon, edges, options.depth(), 0, analyzers);
+        Set<String> shown = new java.util.HashSet<>();
+        if (!stale.isEmpty()) {
+            Map<String, EdgeBuilder> all = new LinkedHashMap<>(withStale);
+            edges.forEach(all::putIfAbsent);
+            layout(centre, lexicon, all, options.depth(), 0, analyzers).nodes()
+                    .forEach(node -> shown.add(node.key()));
+        }
+        // Nur veraltete Aussagen, deren Kante in dieser Sicht läge, wären sie aktuell: beide Enden wären Knoten.
+        int skippedStale = (int) stale.stream().filter(pairs -> pairs.stream().anyMatch(pair -> {
+            int cut = pair.indexOf('\u0000');
+            return shown.contains(pair.substring(0, cut)) && shown.contains(pair.substring(cut + 1));
+        })).count();
+        return new View(view.outcome(), view.nodes(), view.edges(), view.truncated(), skippedStale, analyzers,
+                selected.get());
     }
 
     /**
@@ -374,14 +455,16 @@ public final class DomainTermGraph {
     }
 
     /** Die Knoten mit Geltungsbereichen, für den Abgleich der Erwähnungen. */
-    private static final class Lexicon {
+    static final class Lexicon {
 
         private final Map<String, String> labels = new LinkedHashMap<>();
         private final Map<String, NodeKind> kinds = new LinkedHashMap<>();
         private final Map<String, List<RelationScope>> scopes = new LinkedHashMap<>();
         private final List<String[]> synonymEdges = new ArrayList<>();
 
-        private Lexicon(List<Term> terms, List<Synonym> synonyms) {
+        private Lexicon(List<Term> terms, List<Synonym> synonyms, List<Term> technical) {
+            Set<String> technisch = new java.util.HashSet<>();
+            technical.forEach(term -> technisch.add(TermText.normalize(term.term()).strip()));
             for (Term term : terms) {
                 String key = TermText.normalize(term.term()).strip();
                 if (key.isEmpty()) {
@@ -399,18 +482,48 @@ public final class DomainTermGraph {
                         || !fachbegriffe.contains(from) && !fachbegriffe.contains(to)) {
                     continue;
                 }
-                for (String[] end : List.of(new String[] {from, synonym.fromTerm()},
-                        new String[] {to, synonym.toTerm()})) {
-                    if (!fachbegriffe.contains(end[0])) {
-                        labels.putIfAbsent(end[0], end[1].strip());
-                        kinds.putIfAbsent(end[0], NodeKind.SYNONYM);
-                        scopes.computeIfAbsent(end[0], unused -> new ArrayList<>()).add(synonym.scope());
-                    }
-                }
                 String term = fachbegriffe.contains(from) ? from : to;
                 String other = term.equals(from) ? to : from;
+                if (!fachbegriffe.contains(other) && technisch.contains(other)) {
+                    // Ein bestätigter technischer Eintrag wird auch über ein Synonym kein Knoten der Fachsicht.
+                    continue;
+                }
+                // Nur wo Synonym und Fachbegriff beide gelten: Ein gleich geschriebener Fachbegriff einer anderen
+                // Quelle zieht kein fremdes Synonym nach.
+                List<RelationScope> shared = new ArrayList<>();
+                for (RelationScope termScope : scopes.get(term)) {
+                    intersection(termScope, synonym.scope()).ifPresent(shared::add);
+                }
+                if (shared.isEmpty()) {
+                    continue;
+                }
+                if (!fachbegriffe.contains(other)) {
+                    labels.putIfAbsent(other, (other.equals(from) ? synonym.fromTerm() : synonym.toTerm()).strip());
+                    kinds.putIfAbsent(other, NodeKind.SYNONYM);
+                    scopes.computeIfAbsent(other, unused -> new ArrayList<>()).addAll(shared);
+                }
                 synonymEdges.add(new String[] {term, other});
             }
+        }
+
+        /** Wo beide Geltungsbereiche gelten, oder leer, wenn sie sich nicht überschneiden. */
+        static java.util.Optional<RelationScope> intersection(RelationScope one, RelationScope two) {
+            if (one.global()) {
+                return java.util.Optional.of(two);
+            }
+            if (two.global()) {
+                return java.util.Optional.of(one);
+            }
+            if (!one.sourceId().equals(two.sourceId())) {
+                return java.util.Optional.empty();
+            }
+            if (one.spaceKey() == null) {
+                return java.util.Optional.of(two);
+            }
+            if (two.spaceKey() == null || one.spaceKey().equals(two.spaceKey())) {
+                return java.util.Optional.of(one);
+            }
+            return java.util.Optional.empty();
         }
 
         private Node node(String key, int depth, String parent) {

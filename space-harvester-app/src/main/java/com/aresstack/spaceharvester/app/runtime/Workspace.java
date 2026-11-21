@@ -1304,6 +1304,11 @@ public final class Workspace {
         return harvester.domainTermGraph().around(caller, start, options, cancelled);
     }
 
+    /** Vorschläge für das Startfeld der Fachsicht: nur bestätigte Fachbegriffe und Synonyme. Nie auf dem EDT. */
+    public java.util.List<String> domainTermSuggestions(String query, int limit) {
+        return harvester.domainTermGraph().suggestions(caller, query, limit);
+    }
+
     /**
      * Der Wortlaut zu Aussagen je Seite, etwa den Belegen der Fachsicht: Originalsatz, vereinfachter Satz, Satzgrenzen
      * im Lesetext. Ohne Leserecht am Inhalt fehlt der Eintrag. Nie auf dem EDT.

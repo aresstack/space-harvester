@@ -46,6 +46,10 @@ public final class EvidencePopup extends JPopupMenu {
     static final int MAX_HEIGHT = 420;
     /** Satz, wenn der Lesetext nicht mehr zur Analyse passt und keine Vorstufe vorliegt. */
     static final String NO_SENTENCE = "Satz nicht mehr im Lesetext – die Seite hat sich seit der Analyse geändert.";
+    /** Satz, wenn die Sätze nicht gelesen werden konnten. */
+    static final String UNREADABLE = "Der Satz konnte nicht gelesen werden.";
+    /** Satz, wenn der Aufrufer den Wortlaut der Seite nicht lesen darf. */
+    static final String NO_ACCESS = "Kein Zugriff auf den Wortlaut dieser Seite.";
 
     /** Wohin ein Link springt: Seite und Stelle im Lesetext ({@code start} negativ: nur die Seite). */
     public record Target(String sourceId, String pageId, int start, int end) {
@@ -108,16 +112,18 @@ public final class EvidencePopup extends JPopupMenu {
      * @param title     Kopf, etwa „Antragsteller stellt Antrag“
      * @param total     Zahl der Belege der Kante
      * @param evidence  alle Belege; die Liste scrollt bei mehr als {@link #MAX_HEIGHT}
-     * @param sentences Wortlaut je Aussage-ID ({@link SentenceText}); fehlt einer, steht das Prädikat da
+     * @param sentences Wortlaut je Aussage-ID ({@link SentenceText}); fehlt einer, darf der Aufrufer die Seite nicht
+     *                  lesen
+     * @param failed    ob die Sätze nicht gelesen werden konnten
      */
     EvidencePopup fill(String title, int total, List<DomainTermGraph.Evidence> evidence,
-                       Map<String, SentenceText> sentences) {
+                       Map<String, SentenceText> sentences, boolean failed) {
         heading.setText(title);
         count.count(total);
         rows.removeAll();
         links.clear();
         for (DomainTermGraph.Evidence item : evidence) {
-            rows.add(row(item, sentences.get(item.statement().id())));
+            rows.add(row(item, sentences.get(item.statement().id()), failed));
             rows.add(Box.createVerticalStrut(10));
         }
         rows.revalidate();
@@ -137,12 +143,13 @@ public final class EvidencePopup extends JPopupMenu {
         }
     }
 
-    private JComponent row(DomainTermGraph.Evidence item, SentenceText sentence) {
+    private JComponent row(DomainTermGraph.Evidence item, SentenceText sentence, boolean failed) {
         JPanel row = new JPanel();
         row.setOpaque(false);
         row.setLayout(new BoxLayout(row, BoxLayout.Y_AXIS));
         row.setAlignmentX(LEFT_ALIGNMENT);
-        WrappedText text = Comic.wrapped(sentenceText(item, sentence), Comic.INK, 13f);
+        String said = sentenceText(sentence, failed);
+        WrappedText text = Comic.wrapped(said, said.equals(sentenceOf(sentence)) ? Comic.INK : Comic.MUTED, 13f);
         text.setAlignmentX(LEFT_ALIGNMENT);
         row.add(text);
         JLabel link = link(pageTitle(item));
@@ -173,15 +180,29 @@ public final class EvidencePopup extends JPopupMenu {
         return row;
     }
 
-    /** Der Originalsatz, sonst der vereinfachte Satz der Vorstufe, sonst ein Hinweis mit dem Prädikat. */
-    static String sentenceText(DomainTermGraph.Evidence item, SentenceText sentence) {
+    /**
+     * Der Originalsatz, sonst der vereinfachte Satz der Vorstufe; fehlt beides, warum: nicht lesbar, kein Zugriff oder
+     * die Seite hat sich geändert. Nie ein Ersatz aus Erwähnungen und Prädikat.
+     */
+    static String sentenceText(SentenceText sentence, boolean failed) {
+        if (failed) {
+            return UNREADABLE;
+        }
+        if (sentence == null) {
+            return NO_ACCESS;
+        }
+        String found = sentenceOf(sentence);
+        return found == null ? NO_SENTENCE : found;
+    }
+
+    private static String sentenceOf(SentenceText sentence) {
         if (sentence != null && sentence.original() != null && !sentence.original().isBlank()) {
             return sentence.original();
         }
         if (sentence != null && sentence.simplified() != null && !sentence.simplified().isBlank()) {
             return sentence.simplified() + " (vereinfacht)";
         }
-        return item.fromText() + " … " + item.statement().predicateText() + " … " + item.toText() + " – " + NO_SENTENCE;
+        return null;
     }
 
     /** Seitentitel mit Quelle und Space; veraltete Analysen gekennzeichnet. */

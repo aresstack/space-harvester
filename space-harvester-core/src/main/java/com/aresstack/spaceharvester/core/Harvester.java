@@ -1953,7 +1953,8 @@ public final class Harvester implements AutoCloseable {
      */
     public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph domainTermGraph() {
         return new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph(knowledgeGraph,
-                new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations));
+                new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations),
+                () -> statementAnalyzerChoice);
     }
 
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */
