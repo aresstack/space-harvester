@@ -865,23 +865,42 @@ public final class ConfigFileEditor {
     }
 
     /**
-     * Der Entwurf {@code base} mit dem Whisper-Modell ({@code space-harvester-app.whisper.model}, nur die App); nur
-     * dieser Wert ändert sich. Die Vorgabe (Tiny) entfernt den Block {@code whisper}.
+     * Der Entwurf {@code base} mit dem Whisper-Modell für Transkripte ({@code space-harvester-app.whisper.model}, nur
+     * die App); nur dieser Wert ändert sich, das Modell der Spracheingabe bleibt.
      *
      * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
      */
-    public Draft withWhisperModel(Path file, Draft base,
-                                  com.aresstack.spaceharvester.app.transcription.WhisperModel model) {
-        String value = model == com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT ? null
-                : "whisper:\n  model: " + model.id();
-        String text = appValue(base.text(), "whisper", value);
+    public Draft withWhisperModel(Path file, Draft base, com.aresstack.spaceharvester.app.transcription.WhisperModel model) {
+        return withWhisper(file, base, model, loader.read(file, base.text()).dictationModel(), com.aresstack.spaceharvester.app.transcription.WhisperModel.KEY);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit dem Whisper-Modell für die Spracheingabe im Chat
+     * ({@code space-harvester-app.whisper.dictation-model}, nur die App, Angelo 21.11.2026); nur dieser Wert ändert
+     * sich, das Modell der Transkripte bleibt.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withDictationModel(Path file, Draft base, com.aresstack.spaceharvester.app.transcription.WhisperModel model) {
+        return withWhisper(file, base, loader.read(file, base.text()).whisperModel(), model, com.aresstack.spaceharvester.app.transcription.WhisperModel.DICTATION_KEY);
+    }
+
+    /** Schreibt den Block {@code whisper} mit beiden Modellen; nur Abweichungen von Tiny stehen darin, sonst fehlt er. */
+    private Draft withWhisper(Path file, Draft base, com.aresstack.spaceharvester.app.transcription.WhisperModel transcription, com.aresstack.spaceharvester.app.transcription.WhisperModel dictation, String key) {
+        StringBuilder block = new StringBuilder();
+        if (transcription != com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT) {
+            block.append("\n  model: ").append(transcription.id());
+        }
+        if (dictation != com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT) {
+            block.append("\n  dictation-model: ").append(dictation.id());
+        }
+        String text = appValue(base.text(), "whisper", block.isEmpty() ? null : "whisper:" + block);
         AppSettings settings = loader.read(file, text);
         List<String> before = loader.read(file, base.text()).problems();
         boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
-        if (newProblem || settings.whisperModel() != model) {
+        if (newProblem || settings.whisperModel() != transcription || settings.dictationModel() != dictation) {
             throw new IllegalArgumentException("Das Whisper-Modell ließ sich nicht sicher in die "
-                    + "Konfigurationsdatei schreiben; bitte "
-                    + com.aresstack.spaceharvester.app.transcription.WhisperModel.KEY + " von Hand bearbeiten."
+                    + "Konfigurationsdatei schreiben; bitte " + key + " von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);

@@ -311,6 +311,16 @@ final class AiSettingsPanel {
     final JComboBox<String> whisperChoice = Comic.combo();
     final ComposerButton whisperInstall = Comic.button(WhisperModelSetup.INSTALL,
             "Lädt das gewählte Whisper-Modell von Hugging Face in den Benutzerordner und prüft die Prüfsummen");
+    /**
+     * Auswahl des Whisper-Modells der Spracheingabe im Chat, getrennt von dem der Transkripte (Angelo 21.11.2026:
+     * dort zählt Tempo, Vorgabe Tiny); eine Änderung wird sofort gespeichert und gilt ab der nächsten Aufnahme.
+     */
+    final JComboBox<String> dictationChoice = Comic.combo();
+    final ComposerButton dictationInstall = Comic.button(WhisperModelSetup.INSTALL,
+            "Lädt das gewählte Whisper-Modell der Spracheingabe von Hugging Face in den Benutzerordner und prüft die "
+                    + "Prüfsummen");
+    static final String WHISPER_TRANSCRIPTS_LABEL = "Whisper-Modell Transkripte";
+    static final String WHISPER_DICTATION_LABEL = "Whisper-Modell Spracheingabe";
     /** Während {@link #render} die Auswahl setzt, ist das keine Eingabe des Benutzers. */
     private boolean showingWhisper;
     private final PreferredModels preferred = PreferredModels.bundled();
@@ -424,33 +434,40 @@ final class AiSettingsPanel {
             modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
                             + "bleibt");
-            for (com.aresstack.spaceharvester.app.transcription.WhisperModel each
-                    : com.aresstack.spaceharvester.app.transcription.WhisperModel.values()) {
+            for (com.aresstack.spaceharvester.app.transcription.WhisperModel each : com.aresstack.spaceharvester.app.transcription.WhisperModel.values()) {
                 whisperChoice.addItem(each.described());
+                dictationChoice.addItem(each.described());
             }
-            modelRows.add(WhisperModelSetup.LABEL, Comic.row(whisperChoice, whisperInstall),
-                    "Für Spracheingabe und Video-Transkripte, läuft lokal; größere Modelle erkennen genauer und "
+            modelRows.add(WHISPER_TRANSCRIPTS_LABEL, Comic.row(whisperChoice, whisperInstall),
+                    "Für Video-Transkripte und „In PPTX umwandeln“, läuft lokal; größere Modelle erkennen genauer und "
                             + "rechnen länger. Wird nur nach Rückfrage oder auf Klick einmal von Hugging Face geladen");
+            modelRows.add(WHISPER_DICTATION_LABEL, Comic.row(dictationChoice, dictationInstall),
+                    "Für die Spracheingabe im Chat, läuft lokal; Tiny liefert am schnellsten. Wird nur nach Rückfrage "
+                            + "oder auf Klick einmal von Hugging Face geladen");
             whisperChoice.addActionListener(e -> {
                 int index = whisperChoice.getSelectedIndex();
                 if (showingWhisper || index < 0 || context.settings() == null) {
                     return;
                 }
-                com.aresstack.spaceharvester.app.transcription.WhisperModel chosen =
-                        com.aresstack.spaceharvester.app.transcription.WhisperModel.values()[index];
+                com.aresstack.spaceharvester.app.transcription.WhisperModel chosen = com.aresstack.spaceharvester.app.transcription.WhisperModel.values()[index];
                 if (chosen != context.whisper()) {
-                    context.whisper(chosen, () -> modelsFeedback.success(WhisperModelSetup.LABEL + ": "
+                    context.whisper(chosen, () -> modelsFeedback.success(WHISPER_TRANSCRIPTS_LABEL + ": "
                             + chosen.label()), modelsFeedback::problem);
                 }
             });
-            whisperInstall.addActionListener(e -> {
-                WhisperModelSetup setup = context.whisperModel();
-                if (setup.status().state() == WhisperModelSetup.State.INSTALLING) {
-                    setup.cancel();
-                } else {
-                    setup.install();
+            dictationChoice.addActionListener(e -> {
+                int index = dictationChoice.getSelectedIndex();
+                if (showingWhisper || index < 0 || context.settings() == null) {
+                    return;
+                }
+                com.aresstack.spaceharvester.app.transcription.WhisperModel chosen = com.aresstack.spaceharvester.app.transcription.WhisperModel.values()[index];
+                if (chosen != context.dictationWhisper()) {
+                    context.dictationWhisper(chosen, () -> modelsFeedback.success(WHISPER_DICTATION_LABEL + ": "
+                            + chosen.label()), modelsFeedback::problem);
                 }
             });
+            whisperInstall.addActionListener(e -> installWhisper(context.whisper()));
+            dictationInstall.addActionListener(e -> installWhisper(context.dictationWhisper()));
             context.whisperModel().listen(this::whisperModel);
             parserStatus.setEditable(false);
             parserStatus.setFocusable(false);
@@ -1622,13 +1639,15 @@ final class AiSettingsPanel {
         showingWhisper = true;
         try {
             whisperChoice.setSelectedIndex(context.whisper().ordinal());
+            dictationChoice.setSelectedIndex(context.dictationWhisper().ordinal());
         } finally {
             showingWhisper = false;
         }
-        // Während eines Downloads bleibt die Auswahl stehen, damit klar ist, welches Modell lädt.
+        // Während eines Downloads bleiben beide Auswahlen stehen, damit klar ist, welches Modell lädt.
         whisperChoice.setEnabled(!installing);
-        whisperInstall.setText(installing ? WhisperModelSetup.CANCEL : WhisperModelSetup.INSTALL);
-        whisperInstall.setVisible(status.state() != WhisperModelSetup.State.INSTALLED);
+        dictationChoice.setEnabled(!installing);
+        whisperRow(whisperInstall, context.whisper(), status);
+        whisperRow(dictationInstall, context.dictationWhisper(), status);
         if (installing) {
             modelsFeedback.working(WhisperModelSetup.LABEL + " „" + status.model().label() + "“: "
                     + status.message());
@@ -1636,6 +1655,30 @@ final class AiSettingsPanel {
             modelsFeedback.warning("Whisper-Modell nicht geladen", status.message());
         } else if (status.message() != null) {
             modelsFeedback.success(status.message());
+        }
+    }
+
+    /**
+     * Knopf einer Whisper-Zeile: „Laden“, solange ihr Modell fehlt; „Abbrechen“, während gerade ihr Modell lädt;
+     * gesperrt, während ein anderes lädt (es läuft immer nur ein Download); unsichtbar, sobald das Modell da ist.
+     */
+    private void whisperRow(ComposerButton button, com.aresstack.spaceharvester.app.transcription.WhisperModel model, WhisperModelSetup.Status status) {
+        boolean installing = status.state() == WhisperModelSetup.State.INSTALLING;
+        boolean mine = installing && status.model() == model;
+        button.setText(mine ? WhisperModelSetup.CANCEL : WhisperModelSetup.INSTALL);
+        button.setEnabled(!installing || mine);
+        button.setVisible(mine || !context.whisperModel().installed(model));
+    }
+
+    /** „Laden“ oder „Abbrechen“ einer Whisper-Zeile. */
+    private void installWhisper(com.aresstack.spaceharvester.app.transcription.WhisperModel model) {
+        WhisperModelSetup setup = context.whisperModel();
+        if (setup.status().state() == WhisperModelSetup.State.INSTALLING) {
+            if (setup.status().model() == model) {
+                setup.cancel();
+            }
+        } else {
+            setup.install(model);
         }
     }
 
