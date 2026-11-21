@@ -421,6 +421,11 @@ public class KnowledgeGraph {
         changes.mark("analyses");
     }
 
+    /** Beendet die gebündelte Zustellung beim Schließen der Laufzeit; spätere Vormerkungen bleiben ohne Wirkung. */
+    public void close() {
+        changes.close();
+    }
+
     /**
      * Meldet sich, nachdem Analysen gelöscht wurden ({@link #delete}, {@link #deleteAll}, sofort) und nachdem Analysen
      * neu geschrieben, ersetzt oder entfernt wurden ({@link #analysesChanged()}, gebündelt), damit Stand, Graph,

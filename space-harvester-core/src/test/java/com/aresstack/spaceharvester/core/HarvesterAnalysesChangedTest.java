@@ -78,6 +78,23 @@ class HarvesterAnalysesChangedTest {
         }
     }
 
+    @Test
+    void closingTheRuntimeEndsTheGraphsDeliveryThread() throws InterruptedException {
+        com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph graph;
+        Semaphore reported = new Semaphore(0);
+        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).build()) {
+            graph = harvester.knowledgeGraph();
+            graph.subscribe(reported::release);
+            graph.analysesChanged();
+            assertThat(reported.tryAcquire(10, TimeUnit.SECONDS)).isTrue();
+        }
+        graph.analysesChanged();
+        assertThat(reported.tryAcquire(600, TimeUnit.MILLISECONDS)).as("nach dem Schließen keine Zustellung").isFalse();
+        assertThat(Thread.getAllStackTraces().keySet()).extracting(Thread::getName)
+                .as("kein Zustell-Thread des Graphen bleibt übrig")
+                .noneMatch(name -> name.equals("space-harvester-observe-knowledge-graph"));
+    }
+
     private static SourceSettingsConfig wiki() {
         return new SourceSettingsConfig("wiki", "confluence", "Wiki", SERVER.baseUrl(),
                 new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.PAT, null, null, "token"),

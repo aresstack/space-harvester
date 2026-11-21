@@ -1108,6 +1108,7 @@ public final class Harvester implements AutoCloseable {
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
             observedGraph.set(this.knowledgeGraph);
+            opened.add(this.knowledgeGraph::close);
             // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
             // gemerkten Eingabe-Hash, die Analysen rechnen neu.
             KnowledgeGraph transcriptGraph = this.knowledgeGraph;
