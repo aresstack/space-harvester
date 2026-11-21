@@ -187,6 +187,40 @@ class TermTotalsTest {
         assertThat(terms.totals(CALLER, termSearches().get(0).within(ops)).total()).isZero();
     }
 
+    /** Fahrplan P1: je Begriff die Zahl der Seiten einer Menge, wie {@code terms().pages()} innerhalb der Menge. */
+    @Test
+    void pageCountsEqualThePagesOfEachTermWithinTheSet() {
+        PageSet below = PageSet.ofKeys(List.of(new PageKey("wiki", "2"), new PageKey("wiki", "3"),
+                new PageKey("other", "1")));
+        Map<TermQueries.TermRef, Integer> expected = new HashMap<>();
+        String cursor = null;
+        do {
+            TermQueries.TermList list = terms.terms(CALLER, new TermQueries.TermSearch(null, null, null, null, false,
+                    2, cursor).within(below));
+            list.terms().forEach(term -> expected.put(TermQueries.TermRef.of(term), term.pages()));
+            cursor = list.nextCursor();
+        } while (cursor != null);
+
+        assertThat(terms.pageCounts(CALLER, below)).isEqualTo(expected).isNotEmpty();
+        assertThat(terms.pageCounts(CALLER, below)).containsEntry(new TermQueries.TermRef("bkz", TermKind.ACRONYM), 1)
+                .containsEntry(new TermQueries.TermRef("rsl", TermKind.ACRONYM), 1);
+        assertThat(terms.pageCounts(CALLER, PageSet.EMPTY)).isEmpty();
+
+        hidden.add(new PageKey("wiki", "3"));
+        assertThat(terms.pageCounts(CALLER, PageSet.ofKeys(List.of(new PageKey("wiki", "3"))))).isEmpty();
+    }
+
+    /** Zwei Schreibweisen desselben Suchwerts auf einer Seite: die Seite zählt einmal (Auflage AT zu P1). */
+    @Test
+    void aPageWithTwoSpellingsOfOneTermCountsOnce() {
+        page("wiki", "DEV", "7", "Das Feld order_id steht oben. Unten steht ORDER_ID noch einmal.");
+        PageSet seven = PageSet.ofKeys(List.of(new PageKey("wiki", "7")));
+
+        Map<TermQueries.TermRef, Integer> counts = terms.pageCounts(CALLER, seven);
+        assertThat(counts).isNotEmpty();
+        assertThat(counts.values()).as(counts.toString()).allMatch(count -> count == 1);
+    }
+
     /** Messung für den Architekten: etwa 5.000 Seiten, eine Zählung über alles; die Zeit steht in der Ausgabe. */
     @Test
     void fiveThousandPagesAreCountedInOnePass() {
