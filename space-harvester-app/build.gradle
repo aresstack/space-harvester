@@ -137,7 +137,7 @@ tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'java.awt.headless', 'true'
     // Echttest des Chats mit Werkzeugen (ADR 0033) gegen einen Ollama-Server, nur auf Anfrage:
-    // -PchatLiveOllama=http://localhost:11434 [-PchatLiveModel=gemma4:12b] [-PchatLiveNoToolsModel=PHI:latest]
+    // -PchatLiveOllama=http://localhost:11434 [-PchatLiveModel=gemma4:12b] [-PchatLiveNoToolsModel=qwen2.5-coder:1.5b-base]
     ['chatLiveOllama', 'chatLiveModel', 'chatLiveNoToolsModel'].each { name ->
         if (project.hasProperty(name)) {
             systemProperty "chat.live.${name.substring('chatLive'.length()).uncapitalize()}", project.property(name)

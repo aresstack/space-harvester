@@ -113,6 +113,41 @@ public final class ChatTurn {
         /** Das Modell holt gerade etwas per Werkzeug (ADR 0033); kurzer Text ohne Argumente des Modells. */
         default void using(String what) {
         }
+
+        /** So viele Seiten kamen eben neu auf die Liste freigegebener Seiten (ADR 0028/0033). */
+        default void released(int count) {
+        }
+
+        /** Die Liste freigegebener Seiten ließ sich nicht schreiben. */
+        default void releaseFailed(RuntimeException error) {
+        }
+    }
+
+    /**
+     * Die KI-Freigabe des Chats (ADR 0028, mit Werkzeugen ADR 0033): Mit Werkzeugen kommt nur auf die Liste, was
+     * wirklich an das Modell geht (die offene Seite beim Senden, jede gelesene Seite, jede Seite mit Auszug aus der
+     * Suche; die Liste der Titel nicht). Ohne Werkzeuge gilt die bisherige Regel: die ganze Auswahl beim Senden.
+     * Aufgerufen auf dem Thread des Turns, nie auf dem EDT.
+     */
+    public interface Releases {
+
+        Releases NONE = new Releases() {
+            @Override
+            public int page(String spaceKey, PageKey key) {
+                return 0;
+            }
+
+            @Override
+            public int selection() {
+                return 0;
+            }
+        };
+
+        /** Trägt genau diese Seite ein; die Zahl der neuen Einträge (0 oder 1). */
+        int page(String spaceKey, PageKey key);
+
+        /** Trägt die lokal gespeicherten Seiten der ganzen Auswahl ein; die Zahl der neuen Einträge. */
+        int selection();
     }
 
     /** Der Zugriff auf das Änderungsprotokoll, für Tests austauschbar. */
@@ -146,6 +181,8 @@ public final class ChatTurn {
     private volatile ChatTools tools;
     private final List<ChatKnowledge.Excerpt> cited = new ArrayList<>();
     private final Map<PageKey, Integer> numbers = new HashMap<>();
+    private Releases releases = Releases.NONE;
+    private final Set<PageKey> releasedHere = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public ChatTurn(Workspace workspace, AiChat port, String model, String effort,
                     List<ChatRecord.Message> history, String question, PageSelection scope, String area,
@@ -198,6 +235,12 @@ public final class ChatTurn {
         return this;
     }
 
+    /** Die KI-Freigabe dieses Turns; ohne Aufruf trägt er nichts ein. */
+    public ChatTurn releasing(Releases releases) {
+        this.releases = Objects.requireNonNull(releases, "releases");
+        return this;
+    }
+
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
     public void start() {
         Thread worker = new Thread(this::run, "chat-turn");
@@ -232,6 +275,7 @@ public final class ChatTurn {
 
     /** Ohne Werkzeuge: Wissen aus Suche oder ganzen Seiten im Kontextblock (vor ADR 0033, und als Rückfall). */
     private void runWithSearch() {
+        releaseSelection();
         ChatKnowledge.Context context;
         String asked = question;
         if (kind == Kind.WHATS_NEW) {
@@ -333,7 +377,17 @@ public final class ChatTurn {
      * Antwort oder Werkzeugaufrufen. Jede Runde prüft den Abbruch; die letzte Runde geht ohne Werkzeuge.
      */
     private void runWithTools() {
-        ChatTools running = new ChatTools(workspace, scope, Set.of(), this::cite);
+        ChatTools running = new ChatTools(workspace, scope, Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return ChatTurn.this.cite(excerpt, key);
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+                releasePage(spaceKey, key);
+            }
+        });
         tools = running;
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
@@ -349,6 +403,10 @@ public final class ChatTurn {
                 open = new ChatKnowledge.Excerpt(page.title(), openPage.sourceId(), page.location(), head);
                 openRef = ChatTools.ref(openPage);
                 cite(open, openPage);
+                String spaceKey = running.spaceOf(openPage);
+                if (spaceKey != null) {
+                    releasePage(spaceKey, openPage);
+                }
             }
         }
         if (cancelRequested) {
@@ -447,6 +505,33 @@ public final class ChatTurn {
             next.add(AiChat.Message.tool(call.id(), tools.run(call)));
         }
         round(next, round + 1);
+    }
+
+    /** Trägt eine an das Modell gelieferte Seite ein, je Turn einmal. */
+    private void releasePage(String spaceKey, PageKey key) {
+        if (!releasedHere.add(key)) {
+            return;
+        }
+        try {
+            int added = releases.page(spaceKey, key);
+            if (added > 0) {
+                onUi(() -> listener.released(added));
+            }
+        } catch (RuntimeException e) {
+            onUi(() -> listener.releaseFailed(e));
+        }
+    }
+
+    /** Ohne Werkzeuge: die ganze Auswahl beim Senden (ADR 0028). */
+    private void releaseSelection() {
+        try {
+            int added = releases.selection();
+            if (added > 0) {
+                onUi(() -> listener.released(added));
+            }
+        } catch (RuntimeException e) {
+            onUi(() -> listener.releaseFailed(e));
+        }
     }
 
     /** Nimmt eine gelesene Seite als Quelle auf (oder findet sie wieder) und meldet die Liste; gibt ihre Nummer. */

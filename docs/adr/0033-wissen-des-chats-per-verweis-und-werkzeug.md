@@ -41,8 +41,13 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
 7. **Transport im Core** (`ai.AiChat`): Werkzeugdefinitionen, Aufrufe und Ergebnisse (Rolle `TOOL`); `RemoteAi`
    bildet sie auf die unveränderte EAC-Kopie ab, der Ollama-Adapter auf `tools`/`tool_calls`. Die Werkzeuge selbst
    leben in der App (`app.chat.ChatTools`), wie es ADR 0012 für Werkzeuge vorsieht.
-8. **KI-Freigabe unverändert** (ADR 0028): Beim Senden werden weiter die Seiten der Auswahl eingetragen. Ob künftig
-   nur tatsächlich gelieferte Seiten eingetragen werden, entscheidet Angelo gesondert.
+8. **KI-Freigabe: nur, was an das Modell geht** (Fortschreibung von ADR 0028, Festlegung Architekt 21.11.2026, die
+   vorsichtigere, umkehrbare Variante). Mit Werkzeugen trägt der Chat ein: beim Senden die offene Seite; im Moment
+   der Lieferung jede Seite, die `seite_lesen` liefert, und jede Seite, deren Auszug `im_bereich_suchen` liefert.
+   `seiten_auflisten` (nur Titel) trägt nichts ein. Die ganze Auswahl wird mit Werkzeugen nicht mehr beim Senden
+   eingetragen, sonst gäbe eine Frage an der Wurzel alle Seiten aller Quellen frei. Eine gelieferte Seite steht als
+   eigener Knoten auf der Liste (ohne Unterseiten, `PageReleaseService.releasePage`). Im Rückfall ohne Werkzeuge gilt
+   die bisherige Regel von ADR 0028 (die Auswahl beim Senden). Herkunft „chat“ und Zeitpunkt wie bisher.
 
 ## Folgen
 

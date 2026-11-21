@@ -67,10 +67,13 @@ final class ChatTools {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
-    /** Was das Modell gelesen hat, als nummerierte Quelle. */
+    /** Was das Modell gelesen hat, als nummerierte Quelle, und was an das Modell ging (KI-Freigabe, ADR 0033). */
     interface Sources {
         /** Nimmt die Seite auf (oder findet sie wieder) und gibt ihre Nummer. */
         int cite(ChatKnowledge.Excerpt excerpt, PageKey key);
+
+        /** Text oder Auszug der Seite ging eben an das Modell: Sie kommt auf die Liste freigegebener Seiten. */
+        void delivered(String spaceKey, PageKey key);
     }
 
     private final Workspace workspace;
@@ -193,6 +196,10 @@ final class ChatTools {
         int to = Math.min(text.length(), from + READ_CHARS);
         int number = sources.cite(new ChatKnowledge.Excerpt(page.title(), key.sourceId(), page.location(),
                 ChatKnowledge.excerpt(text, ChatKnowledge.MAX_HIT_CHARS)), key);
+        String spaceKey = spaceOf(key);
+        if (spaceKey != null) {
+            sources.delivered(spaceKey, key);
+        }
         StringBuilder b = new StringBuilder();
         b.append("Quelle [").append(number).append("] ").append(oneLine(page.title())).append('\n');
         b.append("Zeichen ").append(from).append(" bis ").append(to).append(" von ").append(text.length())
@@ -293,6 +300,20 @@ final class ChatTools {
         return b.toString().stripTrailing();
     }
 
+    /** Der Space einer Seite des Bereichs aus dem Bestand; {@code null}, wenn kein Space der Auswahl sie kennt. */
+    String spaceOf(PageKey key) {
+        if (scope == null) {
+            return null;
+        }
+        for (var space : scope.spaces()) {
+            if (space.sourceId().equals(key.sourceId())
+                    && holdings(space.sourceId(), space.spaceKey()).containsKey(key.pageId())) {
+                return space.spaceKey();
+            }
+        }
+        return null;
+    }
+
     /** Der Bestand eines Space, je Turn einmal. */
     private Map<String, PageHolding> holdings(String sourceId, String spaceKey) {
         return holdings.computeIfAbsent(sourceId + "\u0000" + spaceKey, key -> {
@@ -354,6 +375,10 @@ final class ChatTools {
                     : hit.title()));
             if (hit.snippet() != null && !hit.snippet().isBlank()) {
                 b.append(" | ").append(oneLine(ChatKnowledge.excerpt(hit.snippet(), 300)));
+                String spaceKey = hit.spaceKey() != null ? hit.spaceKey() : spaceOf(key);
+                if (spaceKey != null) {
+                    sources.delivered(spaceKey, key);
+                }
             }
             b.append('\n');
             if (seen.size() >= SEARCH_HITS) {

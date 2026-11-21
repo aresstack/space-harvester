@@ -95,7 +95,7 @@ class ChatToolsLiveTest {
 
     @Test
     void aModelWithoutToolsFallsBackSilently() throws Exception {
-        String noTools = System.getProperty("chat.live.noToolsModel", "PHI:latest");
+        String noTools = System.getProperty("chat.live.noToolsModel", "qwen2.5-coder:1.5b-base");
         Workspace workspace = start(noTools);
         PageSelection space = space(workspace);
         Recording port = new Recording(workspace.aiChat());

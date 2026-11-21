@@ -263,6 +263,77 @@ class ChatToolsTurnTest {
         assertThat(port.requests).hasSize(1);
     }
 
+    @Test
+    void withToolsOnlyWhatReachesTheModelIsReleased() throws Exception {
+        PageSelection root = workspace.resolveSelection(Selection.of(Selection.Root.source("handbuch")));
+        PageKey nachtlauf = page("nachtlauf");
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.LIST, "{}"))),
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c2", ChatTools.READ, "{\"kennung\":\"" + ChatTools.ref(nachtlauf) + "\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", root, "Wissensquellen", events,
+                Runnable::run).knowledgeByTools(null).releasing(releases()).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        // Wurzel gewählt, die Liste gelesen, eine Seite gelesen: genau diese eine steht auf der Liste.
+        assertThat(released()).containsExactly(nachtlauf);
+        assertThat(events.released).isEqualTo(1);
+    }
+
+    @Test
+    void theOpenPageAndTheSearchHitsWithExcerptAreReleasedButNotTheRest() throws Exception {
+        PageKey open = page("datenhaus");
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.SEARCH, "{\"text\":\"Spool\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist ein Spool?", space, "Handbuch", events,
+                Runnable::run).knowledgeByTools(open).releasing(releases()).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        String hits = messages.get(messages.size() - 1).text();
+        java.util.Set<PageKey> expected = new java.util.HashSet<>();
+        expected.add(open);
+        for (String line : hits.split("\n")) {
+            if (line.startsWith("- ") && line.split(" \\| ").length >= 3) {
+                expected.add(ChatTools.parse(line.substring(2, line.indexOf(" | "))));
+            }
+        }
+        assertThat(expected).as("Suche lieferte Auszüge").hasSizeGreaterThan(1);
+        assertThat(released()).containsExactlyInAnyOrderElementsOf(expected);
+    }
+
+    private ChatTurn.Releases releases() {
+        return new ChatTurn.Releases() {
+            @Override
+            public int page(String spaceKey, PageKey key) {
+                return workspace.releasePageForChat(spaceKey, key).size();
+            }
+
+            @Override
+            public int selection() {
+                throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
+            }
+        };
+    }
+
+    private List<PageKey> released() {
+        List<PageKey> keys = new ArrayList<>();
+        for (var group : workspace.pageReleaseGroups()) {
+            for (var page : workspace.releasedPages(group.sourceId(), group.spaceKey(), group.node())) {
+                keys.add(page.key());
+            }
+        }
+        return keys;
+    }
+
     private PageKey page(String name) {
         for (Map.Entry<String, java.util.Set<String>> source : space.pages().asMap().entrySet()) {
             for (String pageId : source.getValue()) {
@@ -311,6 +382,7 @@ class ChatToolsTurnTest {
         final CountDownLatch done = new CountDownLatch(1);
         final List<String> using = new ArrayList<>();
         final List<Thread> usingThreads = new CopyOnWriteArrayList<>();
+        int released;
         ChatKnowledge.Context context;
         String completed;
         String failed;
@@ -325,6 +397,11 @@ class ChatToolsTurnTest {
         public void using(String what) {
             using.add(what);
             usingThreads.add(Thread.currentThread());
+        }
+
+        @Override
+        public void released(int count) {
+            released += count;
         }
 
         @Override

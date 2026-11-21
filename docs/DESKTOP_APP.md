@@ -368,8 +368,8 @@ Core selbst.
   endet er, weicht sie von selbst „… abgeschlossen · n Seiten im Bestand unter ‹Datenordner›“ oder „… fehlgeschlagen“
   mit dem Grund, und die bleibt, bis ✕ rechts in der Platte sie schließt (das ✕ hat seit 16.11.2026 jede
   `Feedback`-Platte). Der Chat ist die einzige Ausnahme der KI-Freigabe (ADR 0028): eine nicht freigegebene Quelle
-  steht in der Zeile als „Quelle nicht für KI freigegeben; Senden gibt die gewählten Seiten dauerhaft frei“, gesperrt
-  wird nichts; Senden trägt die lokal gespeicherten Seiten der Auswahl ein (`releasePagesForChat`) und nennt die neuen
+  steht in der Zeile als „Quelle nicht für KI freigegeben; Senden gibt die offene Seite und die Seiten, die der Assistent liest, dauerhaft frei“, gesperrt
+  wird nichts; Senden trägt mit Werkzeugen nur ein, was an das Modell geht (offene Seite, gelesene Seiten, Seiten mit Suchauszug, `releasePageForChat`, ADR 0033), ohne Werkzeuge die lokal gespeicherten Seiten der Auswahl (`releasePagesForChat`), und nennt die neuen
   in der Statuszeile. Der Composer ist eine abgerundete Fläche: **Nachricht…** (Enter sendet, Umschalt+Enter neue
   Zeile), darüber Chips der angehängten Dateien mit ✕ (lesbare Textdateien gehen als Text mit, anderes wird nur
   genannt), unten links das Chat-Modell aus Einstellungen › KI („Kein Chat-Modell“, Klick zeigt es und führt zu den
