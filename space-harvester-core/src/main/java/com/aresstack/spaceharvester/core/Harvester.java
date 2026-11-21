@@ -1114,6 +1114,8 @@ public final class Harvester implements AutoCloseable {
                     presentationStore, withdrawn::mayProcess, builder.exportDirectory().resolve("presentations"));
             com.aresstack.spaceharvester.application.presentation.VideoPresentations presentations =
                     this.videoPresentations;
+            // „Folienwechsel erkennen“ als Hintergrundart (Angelo 21.11.2026), vor resumeInterrupted() angemeldet.
+            presentations.background(backgroundJobs);
             java.util.concurrent.atomic.AtomicReference<StatementAnalysis> graphAnalysis =
                     new java.util.concurrent.atomic.AtomicReference<>();
             releaseRecomputation.withdrawal(pages -> {

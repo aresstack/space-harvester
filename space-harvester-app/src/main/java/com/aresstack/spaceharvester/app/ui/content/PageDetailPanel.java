@@ -2312,8 +2312,7 @@ public final class PageDetailPanel extends JPanel {
         if (size > 0 && "video/mp4".equals(mediaType)) {
             VideoFrameSource frames = new VideoFrameSource(source, id, ranges::read, size, mediaType);
             videoFrames = frames;
-            // Die Marken des Players sind die einzige Quelle der Folien; gespeichert erscheinen sie als Anhänge.
-            originalVideoViewer.onSlides(changes -> slidesFound(frames, changes));
+            // Die gespeicherten Marken sind die einzige Quelle der Folien; ohne sie erkennt sie ein Hintergrundauftrag.
             showVideoMarks(originalVideoViewer, frames);
             // „In PPTX umwandeln“ neben „Herunterladen“ (Angelo 20.11.2026): fünf Aufträge unter „Aufträge“.
             long videoSize = size;
@@ -2599,6 +2598,7 @@ public final class PageDetailPanel extends JPanel {
         videoTranscriptShown = false;
         videoFrames = null;
         stopTranscriptWatch();
+        stopSlidesWait();
         fileContent.removeAll();
         originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
         updateFootTools(tabs.selected());
@@ -3644,8 +3644,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Beim Öffnen eines Videos: gespeicherte Marken zeigt der Player sofort; sonst sucht er sie im Video
-     * ({@link #slidesFound} speichert sie dann).
+     * Beim Öffnen eines Videos: gespeicherte Marken zeigt der Player sofort; sonst erkennt sie der Hintergrundauftrag
+     * „Folienwechsel erkennen“ (Angelo 21.11.2026: alles, was die App von sich aus tut, steht in der Auftragsliste).
      */
     private void showVideoMarks(VideoViewerPanel viewer, VideoFrameSource video) {
         AppRuntime runtime = context.runtime();
@@ -3657,36 +3657,123 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             if (marks.isEmpty()) {
-                viewer.findSlides();
+                detectSlides(runtime, viewer, video);
             } else {
                 viewer.showMarks(marks);
             }
         }, error -> {
-            if (viewer == originalVideoViewer) {
-                viewer.findSlides();
-            }
+            // Ohne lesbare Marken bleibt das Video ohne Folien; der Player spielt trotzdem.
         });
     }
 
+    /** Wartet auf „Folienwechsel erkennen“ des gezeigten Videos: Ring im Player bis zum Ende (Observer, ADR 0027). */
+    private com.aresstack.spaceharvester.app.ui.controls.BackgroundWait slidesWait;
+    /** Meldungen der Gruppe, damit der Tooltip des Rings „wartet“ und „läuft“ unterscheidet. */
+    private com.aresstack.spaceharvester.application.observe.Subscription slidesWatch;
+
     /**
-     * Der Player hat die Marken des Videos gefunden: gespeichert erscheinen sie als virtuelle Anhänge (benannt nach
-     * ihrer Position), deren Standbilder „Anhänge“ zieht. Ohne Marken gibt es keine virtuellen Anhänge.
+     * Startet „Folienwechsel erkennen“ für ein Video ohne Marken oder findet den Lauf, der schon da ist. Ein
+     * gescheiterter oder abgebrochener Lauf startet nicht still neu (Architekt 21.11.2026): der Player nennt ihn.
      */
-    private void slidesFound(VideoFrameSource video, List<Long> changes) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null || video != videoFrames || changes.isEmpty()) {
+    private void detectSlides(AppRuntime runtime, VideoViewerPanel viewer, VideoFrameSource video) {
+        Background.run(() -> runtime.workspace().detectVideoSlides(video.sourceId(), video.pageId()), group -> {
+            if (viewer == originalVideoViewer && group.isPresent()) {
+                followSlides(runtime, viewer, video, group.get());
+            }
+        }, error -> {
+            // Ohne Freigabe oder Quelle bleibt das Video ohne Folien; der Player spielt trotzdem.
+        });
+    }
+
+    private void followSlides(AppRuntime runtime, VideoViewerPanel viewer, VideoFrameSource video,
+                              com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+        stopSlidesWait();
+        String jobId = group.parts().isEmpty() ? null : group.parts().get(0).id();
+        Runnable openJobs = () -> {
+            if (jobId != null) {
+                context.navigator().showJob(jobId);
+            }
+        };
+        if (group.finished()) {
+            slidesEnded(runtime, viewer, video, group, openJobs);
             return;
         }
-        // Wie viele Marken ein Video höchstens bekommt, hat die Erkennung schon begrenzt (die stärksten Wechsel).
-        List<Long> marks = changes;
-        Background.run(() -> {
-            runtime.workspace().saveVideoMarks(video.sourceId(), video.pageId(), marks);
-            return marks.size();
-        }, saved -> attachmentsChanged(video), error -> {
-            if (video == videoFrames) {
-                feedback.problem(error, Problems.Step.PAGE);
+        viewer.slidesDetecting(slidesRunning(group), openJobs);
+        slidesWatch = runtime.workspace().watchBackground(group.groupId(), changed -> {
+            if (viewer == originalVideoViewer && !changed.finished()) {
+                viewer.slidesDetecting(slidesRunning(changed), openJobs);
             }
         });
+        slidesWait = new com.aresstack.spaceharvester.app.ui.controls.BackgroundWait(viewer.slideRing(),
+                runtime.workspace()::whenBackgroundFinished);
+        slidesWait.follow(group.groupId(), "", done -> {
+            closeSlidesWatch();
+            slidesEnded(runtime, viewer, video, done, openJobs);
+        });
+    }
+
+    private static boolean slidesRunning(com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+        return group.parts().stream()
+                .anyMatch(part -> part.state() == com.aresstack.spaceharvester.application.jobs.JobState.RUNNING);
+    }
+
+    /**
+     * Die Erkennung ist fertig: mit Marken ersetzen die Folienknöpfe den Ring ohne Meldung; ohne Marken verschwindet
+     * er. Abgebrochen oder angehalten zeigt der Player einen gelben Hinweis, gescheitert einen roten mit dem Grund.
+     */
+    private void slidesEnded(AppRuntime runtime, VideoViewerPanel viewer, VideoFrameSource video,
+                             com.aresstack.spaceharvester.application.background.BackgroundGroup group,
+                             Runnable openJobs) {
+        if (viewer != originalVideoViewer) {
+            return;
+        }
+        if (group.completed()) {
+            Background.run(() -> runtime.workspace().videoMarks(video.sourceId(), video.pageId()), marks -> {
+                if (viewer != originalVideoViewer) {
+                    return;
+                }
+                if (marks.isEmpty()) {
+                    viewer.noSlides();
+                } else {
+                    // Liste, Bilder und Marken im Player gelten neu.
+                    attachmentsChanged(video);
+                }
+            }, error -> viewer.noSlides());
+            return;
+        }
+        String sentence = slidesSentence(group);
+        boolean failed = group.parts().stream()
+                .anyMatch(part -> part.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED);
+        viewer.slidesUnavailable(sentence, failed, openJobs);
+    }
+
+    /** Der Hinweis zu einem Lauf ohne Ergebnis: Abbruch, Anhalten oder der echte Grund des Fehlers. */
+    static String slidesSentence(com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+        for (com.aresstack.spaceharvester.application.jobs.JobStatus part : group.parts()) {
+            if (part.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED) {
+                String reason = part.error() == null || part.error().message() == null
+                        || part.error().message().isBlank() ? "Auftrag gescheitert" : part.error().message();
+                return "Folienwechsel nicht erkannt: " + reason;
+            }
+        }
+        boolean paused = group.parts().stream()
+                .anyMatch(part -> part.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED);
+        return "Folienwechsel nicht erkannt: Auftrag " + (paused ? "angehalten" : "abgebrochen");
+    }
+
+    private void stopSlidesWait() {
+        if (slidesWait != null) {
+            slidesWait.stop();
+            slidesWait = null;
+        }
+        closeSlidesWatch();
+    }
+
+    private void closeSlidesWatch() {
+        if (slidesWatch != null) {
+            slidesWatch.close();
+            slidesWatch = null;
+        }
     }
 
     /**

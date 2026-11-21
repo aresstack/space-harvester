@@ -888,6 +888,18 @@ public final class Workspace {
                 marks);
     }
 
+    /**
+     * Startet beim Öffnen eines Videos ohne Marken „Folienwechsel erkennen“ als Hintergrundauftrag (Angelo 21.11.2026:
+     * alles, was die App von sich aus tut, steht in der Auftragsliste); je Video und Fassung höchstens einmal.
+     *
+     * @return die Gruppe, wie sie steht (läuft, fertig, gescheitert …); leer, wenn das Video schon Marken hat
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> detectVideoSlides(
+            String sourceId, String pageId) {
+        syncedPage(sourceId, pageId);
+        return harvester.videoPresentations().detectSlides(caller, sourceId, pageId);
+    }
+
     /** Setzt, woher die Werte für den Vergleich zweier Standbilder kommen ({@code space-harvester-app.video.*}). */
     public void slideThresholds(java.util.function.Supplier<
             com.aresstack.spaceharvester.application.marks.SlideFrames.Thresholds> thresholds) {
@@ -2089,6 +2101,17 @@ public final class Workspace {
             java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
         java.util.Objects.requireNonNull(listener, "listener");
         return harvester.backgroundJobs().whenFinished(groupId,
+                group -> javax.swing.SwingUtilities.invokeLater(() -> listener.accept(group)));
+    }
+
+    /**
+     * Meldet jede Änderung einer Hintergrundgruppe auf dem Event Dispatch Thread (Zustand, Zähler), ohne Abfragen
+     * (ADR 0027); etwa damit ein Ring „wartet“ und „läuft“ unterscheidet.
+     */
+    public com.aresstack.spaceharvester.application.observe.Subscription watchBackground(String groupId,
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+        java.util.Objects.requireNonNull(listener, "listener");
+        return harvester.backgroundJobs().watch(groupId,
                 group -> javax.swing.SwingUtilities.invokeLater(() -> listener.accept(group)));
     }
 

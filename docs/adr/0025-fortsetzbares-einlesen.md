@@ -254,3 +254,14 @@ wird automatisch verwaltet.
 7. **Desktop-App.** Die Auftragsverwaltung zeigt Hintergrundaufträge in einem eigenen Reiter „Hintergrund“, je Gruppe
    eine Zeile mit den Unteraufträgen darunter, farblich hervorgehoben (Form mit dem UX-Manager); die Liste der
    Benutzeraufträge bleibt frei davon.
+9. **Folienwechsel erkennen** (Art `video-slides`, `VideoPresentations#detectSlides`, Inventur Nr. 25). Öffnet man ein
+   Video ohne gespeicherte Marken, startet die App einen Unterauftrag mit der Angabe `page`. Seine Arbeit öffnet das
+   Video über den `MediaSource` der App (`VideoMedia#slideChanges`, MP4-Index) und speichert die Marken (`VideoMarks`).
+   Die Gruppen-ID steht fest je Video und Fassung (`video-slides:Quelle:Seite:Revision`). So gibt es höchstens einen
+   offenen Teil. Ein fertiger, gescheiterter oder abgebrochener Lauf startet beim Öffnen nicht still neu; der Player
+   zeigt dann einen Hinweis (gelb bei Abbruch/Anhalten, rot bei Fehler) mit dem Weg zum Wiederholen im Reiter
+   „Hintergrund“. Solange er wartet oder läuft, dreht an der Stelle der Folienknöpfe ein kleiner Ring
+   (`controls.BackgroundWait`). Der Teil trägt seinen Eigentümer (`principal`, `principal.kind`, `via`) und liest die
+   Seite mit dessen Rechten. Lässt sich daraus nach einem Neustart kein Aufrufer bauen (Endnutzer ohne Anmeldedaten),
+   hält er gelb an (`VIDEO_SLIDES_RESUME_BY_HAND`). `autoResume` ist erst wahr, wenn die App ihre Videos liefert.
+   `mediaSource()` setzt dann nur die Teile dieser Art fort (`BackgroundJobs#resumeInterrupted(kind)`).

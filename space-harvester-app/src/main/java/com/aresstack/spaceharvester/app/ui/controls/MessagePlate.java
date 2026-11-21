@@ -87,8 +87,37 @@ public final class MessagePlate extends JPanel {
         setVisible(false);
     }
 
+    /** Ob die Platte gerade als Fehler (rot) steht. */
+    private boolean error;
+
+    /**
+     * Wie {@link #show}, aber als Fehler: roter Rand auf hellrotem Grund (Ampel: rot nur bei Fehlern). Ein späteres
+     * {@link #show} zeigt wieder die gelbe Platte.
+     */
+    public void showError(String sentence, String actionText, Runnable onAction) {
+        show(sentence, actionText, onAction);
+        error = true;
+        style();
+    }
+
+    /** Ob die gezeigte Platte ein Fehler ist (für Tests). */
+    public boolean error() {
+        return error && isVisible();
+    }
+
+    private void style() {
+        setBackground(error ? Comic.CHANGE_REMOVED : Comic.NOTICE);
+        setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(error ? Comic.RED : Comic.YELLOW,
+                1, true), BorderFactory.createEmptyBorder(2, 8, 2, 4)));
+        repaint();
+    }
+
     /** Zeigt {@code sentence} und dahinter {@code actionText} als Link; ohne Aktion ({@code null}) nur den Satz. */
     public void show(String sentence, String actionText, Runnable onAction) {
+        if (error) {
+            error = false;
+            style();
+        }
         text.setText(sentence == null ? "" : sentence);
         action.setText(actionText == null ? "" : actionText);
         action.setVisible(actionText != null);

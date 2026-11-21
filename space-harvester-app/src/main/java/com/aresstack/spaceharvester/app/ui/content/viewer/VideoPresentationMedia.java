@@ -100,6 +100,16 @@ public final class VideoPresentationMedia implements VideoMedia {
                 : new VideoPresentationMedia(remote, size, mediaType, settings, transcription, model);
     }
 
+    /** Die Folienwechsel aus dem MP4-Index, wie früher der Player beim Öffnen; andere Formate haben keine. */
+    @Override
+    public List<Long> slideChanges() throws Exception {
+        boolean mp4 = "video/mp4".equalsIgnoreCase(mediaType);
+        if (!mp4 || size < 16) {
+            return List.of();
+        }
+        return SlideChanges.load(remote::read, size, settings);
+    }
+
     @Override
     public String transcribe(String existing, Consumer<String> partial, Progress progress, BooleanSupplier cancelled)
             throws Exception {

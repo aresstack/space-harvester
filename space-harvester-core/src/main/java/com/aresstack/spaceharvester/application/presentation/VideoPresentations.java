@@ -401,6 +401,143 @@ public final class VideoPresentations {
     /** Setzt, wer nach einem Neustart die Videos liefert ({@link #resume}). */
     public void mediaSource(MediaSource source) {
         this.media = Objects.requireNonNull(source, "source");
+        this.mediaReady = true;
+        // Vor dem Setzen hat der Start die unterbrochene Folienerkennung übersprungen (es gab noch kein Video): jetzt
+        // läuft sie weiter, nur sie (Architekt 21.11.2026).
+        com.aresstack.spaceharvester.application.background.BackgroundJobs current = background;
+        if (current != null) {
+            current.resumeInterrupted(SLIDES_KIND);
+        }
+    }
+
+    // --- Folienwechsel erkennen (Hintergrund) ---------------------------------------------------------------------
+
+    /** Hintergrundart „Folienwechsel erkennen“: liest die Marken eines Videos aus seinem Index und speichert sie. */
+    public static final String SLIDES_KIND = "video-slides";
+
+    /** Angaben eines Teils: wer ihn gestartet hat; nach einem Neustart läuft er nur mit dessen Rechten weiter. */
+    public static final String PRINCIPAL_PARAMETER = "principal";
+    public static final String PRINCIPAL_KIND_PARAMETER = "principal.kind";
+    public static final String VIA_PARAMETER = "via";
+    /** Warnung eines Teils, dessen Auftraggeber sich nicht mehr bestimmen lässt. */
+    public static final String SLIDES_RESUME_BY_HAND = "VIDEO_SLIDES_RESUME_BY_HAND";
+
+    private volatile boolean mediaReady;
+    private volatile com.aresstack.spaceharvester.application.background.BackgroundJobs background;
+    /** Die Auftraggeber laufender Gruppen, mit Anmeldung, solange der Dienst läuft. */
+    private final Map<String, AccessContext> slideCallers = java.util.Collections.synchronizedMap(
+            new LinkedHashMap<>() {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, AccessContext> eldest) {
+                    return size() > 256;
+                }
+            });
+
+    /**
+     * Meldet „Folienwechsel erkennen“ als Hintergrundart an (Angelo 21.11.2026: alles, was die App von sich aus tut,
+     * steht in der Auftragsliste); vor {@code BackgroundJobs#resumeInterrupted()}, damit unterbrochene Teile nach
+     * einem Neustart weiterlaufen, sobald die App ihre Videos liefert ({@link #mediaSource}).
+     */
+    public void background(com.aresstack.spaceharvester.application.background.BackgroundJobs jobs) {
+        this.background = Objects.requireNonNull(jobs, "jobs");
+        jobs.register(new com.aresstack.spaceharvester.application.background.BackgroundKind(SLIDES_KIND,
+                this::slidesWork, () -> mediaReady));
+    }
+
+    /**
+     * Startet „Folienwechsel erkennen“ für ein Video ohne gespeicherte Marken, als Hintergrundauftrag. Je Video und
+     * Fassung gibt es höchstens eine Gruppe: Läuft sie schon, kommt ihre Kennung zurück; ist sie fertig (auch ohne
+     * Marken, etwa bei einem Video ohne Folien) oder gescheitert, abgebrochen oder angehalten, startet nichts still
+     * neu (Architekt 21.11.2026): wiederholt wird im Reiter „Hintergrund“.
+     *
+     * @param caller wer das Video öffnet; der Teil liest die Seite mit dessen Rechten, auch nach einem Neustart
+     * @return die Gruppe, wie sie steht; leer, wenn es Marken gibt oder die Art nicht angemeldet ist
+     */
+    public synchronized Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> detectSlides(
+            AccessContext caller, String sourceId, String pageId) {
+        Objects.requireNonNull(caller, "caller");
+        com.aresstack.spaceharvester.application.background.BackgroundJobs jobs = background;
+        if (jobs == null) {
+            return Optional.empty();
+        }
+        PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
+        String version = snapshot.revision();
+        if (!slides.find(snapshot.key(), version).isEmpty()) {
+            return Optional.empty();
+        }
+        String groupId = slidesGroup(sourceId, pageId, version);
+        Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> existing = jobs.group(groupId);
+        if (existing.isPresent()) {
+            return existing;
+        }
+        Map<String, String> parameters = new HashMap<>();
+        parameters.put(PAGE_PARAMETER, pageId);
+        parameters.put(PRINCIPAL_PARAMETER, caller.principal());
+        parameters.put(PRINCIPAL_KIND_PARAMETER, caller.kind().name());
+        if (caller.via() != null) {
+            parameters.put(VIA_PARAMETER, caller.via());
+        }
+        // Den Aufrufer vor dem Start ablegen: der Teil kann schon während start() laufen.
+        slideCallers.put(groupId, caller);
+        return Optional.of(jobs.start(groupId, SLIDES_KIND, "Folienwechsel erkennen: " + snapshot.metadata().title(),
+                List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft(sourceId,
+                        snapshot.metadata().partitionKey(), parameters))));
+    }
+
+    /** Wer einen Teil gestartet hat: im Speicher, sonst aus seinen Angaben (ohne Anmeldung); ohne beides {@code null}. */
+    private AccessContext slideCaller(com.aresstack.spaceharvester.application.background.BackgroundPart part) {
+        AccessContext known = slideCallers.get(part.groupId());
+        if (known != null) {
+            return known;
+        }
+        String principal = part.parameter(PRINCIPAL_PARAMETER);
+        String kind = part.parameter(PRINCIPAL_KIND_PARAMETER);
+        if (principal == null || kind == null) {
+            return null;
+        }
+        try {
+            return new AccessContext(principal, AccessContext.PrincipalKind.valueOf(kind), part.parameter(VIA_PARAMETER),
+                    null);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Die Gruppe der Folienerkennung eines Videos in einer Fassung. */
+    static String slidesGroup(String sourceId, String pageId, String version) {
+        return SLIDES_KIND + ":" + sourceId + ":" + pageId + ":" + version;
+    }
+
+    private JobTask slidesWork(com.aresstack.spaceharvester.application.background.BackgroundPart part) {
+        String sourceId = part.sourceId();
+        String pageId = part.parameter(PAGE_PARAMETER);
+        return JobTask.blocking(context -> {
+            if (pageId == null) {
+                throw new JobFailedException("NO_PAGE", "Der Auftrag kennt sein Video nicht mehr.");
+            }
+            context.phase(COMPONENT, "Folienwechsel erkennen");
+            AccessContext caller = slideCaller(part);
+            if (caller == null) {
+                // Nie mit fremden Rechten weiter (Architekt 21.11.2026): gelb anhalten, ▶ setzt fort.
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, SLIDES_RESUME_BY_HAND,
+                        "Auftraggeber unbekannt; bitte von Hand fortsetzen"));
+                context.pause(com.aresstack.spaceharvester.application.jobs.PauseReason.USER);
+                return;
+            }
+            PageSnapshot snapshot = fetch.page(caller, sourceId, pageId);
+            context.rootTitle(snapshot.metadata().title());
+            context.discovered(1);
+            String version = snapshot.revision();
+            if (slides.find(snapshot.key(), version).isEmpty()) {
+                List<Long> changes = media.open(sourceId, pageId).slideChanges();
+                context.checkpoint();
+                if (!changes.isEmpty()) {
+                    slides.save(snapshot.key(), version, changes);
+                    context.written(1);
+                }
+            }
+            context.processed(1);
+        });
     }
 
     /** Die Arbeit eines Auftrags aus seinen Angaben, für Aufträge aus der Zeit vor dem letzten Neustart. */
