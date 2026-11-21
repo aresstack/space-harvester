@@ -86,6 +86,8 @@ public final class MainWindow implements AppContext.Navigator {
     private com.aresstack.spaceharvester.app.ui.content.ChatSidebar chatSidebar;
     private ComposerToggleButton chatToggle;
     private boolean chatOpen;
+    /** Eine Antwort kam, während die Leiste zu war: der Chat-Knopf trägt bis zum Aufklappen einen Punkt. */
+    private boolean chatUnread;
     private int chatWidth = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH;
     static final String CHAT_OPEN_KEY = "chat.open";
     static final String CHAT_WIDTH_KEY = "chat.width";
@@ -93,6 +95,7 @@ public final class MainWindow implements AppContext.Navigator {
     /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
     private boolean chatLarge;
     static final String CHAT_TOOLTIP = "Chat (Strg+J)";
+    static final String CHAT_UNREAD_TOOLTIP = "Chat (Strg+J) · neue Antwort";
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
     private JobStatusLine jobStatus;
@@ -317,6 +320,7 @@ public final class MainWindow implements AppContext.Navigator {
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
         chatSidebar.collapseButton().addActionListener(e -> chatOpen(false));
+        chatSidebar.chat().onAnswer(this::chatAnswered);
         chatSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
         chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, work, chatSidebar);
         chatSplit.setBorder(null);
@@ -490,11 +494,32 @@ public final class MainWindow implements AppContext.Navigator {
     void chatOpen(boolean open) {
         chatOpen = open;
         chatToggle.setSelected(open);
+        if (open) {
+            chatUnread(false);
+        }
         WindowSizes.rememberInt(CHAT_OPEN_KEY, open ? 1 : 0);
         placeChat();
         if (open) {
             chatSidebar.chat().focusEditor();
         }
+    }
+
+    /** Eine Antwort ist fertig: Ist die Leiste zu, zeigt der Chat-Knopf einen Punkt, bis sie aufgeklappt wird. */
+    void chatAnswered() {
+        if (!chatOpen) {
+            chatUnread(true);
+        }
+    }
+
+    boolean chatUnread() {
+        return chatUnread;
+    }
+
+    private void chatUnread(boolean unread) {
+        chatUnread = unread;
+        chatToggle.setIcon(unread ? com.aresstack.spaceharvester.app.ui.content.ChatSidebar.unreadIcon()
+                : com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon());
+        chatToggle.setToolTipText(unread ? CHAT_UNREAD_TOOLTIP : CHAT_TOOLTIP);
     }
 
     boolean chatOpen() {

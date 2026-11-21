@@ -196,6 +196,8 @@ public final class ChatPanel extends JPanel {
     private ChatTurn turn;
     /** Der Empfänger des laufenden Turns; beim Loslassen wird er abgemeldet, damit er nur noch speichert. */
     private TurnListener listening;
+    /** Wer erfährt, dass eine Antwort fertig ist (der Punkt am Chat-Knopf, wenn die Leiste zu ist; ADR 0027). */
+    private Runnable answerObserver = () -> { };
     /** Ob die Auswahl links im Core aufgelöst ist; bis dahin sendet der Chat nicht (sonst gälten alte Seiten). */
     private boolean settled;
     /** Ergebnisse der verfolgten Aufträge, gemeldet erst, wenn alle geendet haben. */
@@ -1549,7 +1551,11 @@ public final class ChatPanel extends JPanel {
             if (!detached) {
                 scrollDown();
             }
+            boolean shown = !detached;
             finish(ChatRecord.Message.assistant(full, false, System.currentTimeMillis(), sources), " ");
+            if (shown) {
+                answerObserver.run();
+            }
         }
 
         @Override
@@ -1557,7 +1563,11 @@ public final class ChatPanel extends JPanel {
             show(message);
             bubble.setHeaderColor(Comic.RED);
             // Eine gescheiterte Antwort wird nicht gespeichert (wie im EAC); die Frage bleibt im Chat.
+            boolean shown = !detached;
             finish(null, message.lines().findFirst().orElse(" "));
+            if (shown) {
+                answerObserver.run();
+            }
         }
 
         @Override
@@ -1611,6 +1621,14 @@ public final class ChatPanel extends JPanel {
                 return current == null ? 0 : runtime.workspace().releasePagesForChat(current.toCore(runtime)).size();
             }
         };
+    }
+
+    /**
+     * Meldet, sobald eine Antwort des angezeigten Chats fertig oder gescheitert ist (Observer, kein Polling). Ein
+     * Abbruch meldet nichts: den löst der Benutzer selbst aus.
+     */
+    public void onAnswer(Runnable observer) {
+        answerObserver = observer == null ? () -> { } : observer;
     }
 
     /** Löst die Ansicht vom laufenden Turn: er schreibt seinen Chat zu Ende, zeigt hier aber nichts mehr. */

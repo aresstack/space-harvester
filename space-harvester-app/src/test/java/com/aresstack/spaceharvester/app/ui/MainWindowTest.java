@@ -417,6 +417,20 @@ class MainWindowTest {
                 window.chatOpen(true);
                 layoutAll(surface);
                 assertThat(sidebar.getWidth()).isEqualTo(chatSplit.getWidth());
+                // Eine Antwort bei offener Leiste ist gelesen; bei zugeklappter trägt der Knopf einen Punkt, bis die
+                // Leiste aufgeht.
+                javax.swing.Icon plain = window.chatToggle().getIcon();
+                window.chatAnswered();
+                assertThat(window.chatUnread()).isFalse();
+                assertThat(window.chatToggle().getIcon()).isSameAs(plain);
+                window.chatOpen(false);
+                window.chatAnswered();
+                assertThat(window.chatUnread()).isTrue();
+                assertThat(window.chatToggle().getIcon()).isNotSameAs(plain);
+                assertThat(window.chatToggle().getToolTipText()).isEqualTo(MainWindow.CHAT_UNREAD_TOOLTIP);
+                window.chatToggle().doClick();
+                assertThat(window.chatUnread()).isFalse();
+                assertThat(window.chatToggle().getToolTipText()).isEqualTo(MainWindow.CHAT_TOOLTIP);
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Standard.
                 window.chatLarge(false);

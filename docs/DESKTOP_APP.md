@@ -348,6 +348,8 @@ Core selbst.
   Links daneben **Groß anzeigen**: dieselbe Leiste nimmt die ganze Arbeitsfläche, der Explorer bleibt; derselbe Knopf
   und Esc stellen die vorige Breite wieder her, auch das wird gemerkt. In der schmalen Leiste zeigen unter der Eingabe
   erst die Modellwahl, dann auch der Denkaufwand nur noch ihr Symbol (Name im Tooltip), „Senden“ bleibt ganz sichtbar.
+  Wird eine Antwort fertig, während die Leiste zu ist, trägt der Sprechblasen-Knopf einen blauen Punkt („neue
+  Antwort“ im Tooltip), bis die Leiste aufgeht.
   Der Verlauf folgt der Breite der Leiste, Blasen brechen um. Über der Eingabe stehen die Schnellaktionen des Chats
   als Text-Chips (`ActionChip`, umbrechend): bei einer Seite **Seite zusammenfassen** (nur die Seite) und **Seite samt
   Unterseiten zusammenfassen**, sonst **Bereich zusammenfassen**, dazu **Was ist neu?**; sie wirken immer auf den
