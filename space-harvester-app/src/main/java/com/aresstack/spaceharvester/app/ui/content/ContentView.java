@@ -282,21 +282,34 @@ public final class ContentView implements View {
 
     /**
      * Die Reiter der Seitenansicht als Symbolknöpfe für die Icon-Leiste des Hauptfensters; sie schalten die Mitte um
-     * (Angelo, 13.11.2026). Unten in der Werkzeugleiste stehen nur die Schnellaktionen des Chats ({@link #tools()}).
+     * (Angelo, 13.11.2026).
      */
     public JComponent tabBar() {
         return detail.tabIcons();
     }
 
     /**
-     * Die Werkzeuge der Seitenansicht in der unteren Leiste, je nach Reiter ({@link PageDetailPanel#footTools()}): im
-     * Chat mittig die Schnellaktionen (Angelo, 17.11.2026), in der Leseansicht einer Datei „Speichern“ und „Öffnen“
+     * Die Werkzeuge der Seitenansicht in der unteren Leiste, je nach Reiter ({@link PageDetailPanel#footTools()}):
+     * in der Leseansicht einer Datei „Speichern“ und „Öffnen“
      * neben der Lupe samt „Typ · Größe“ rechts, im Text eines Videos der Transkript-Knopf (Angelo, 19.11.2026).
      */
     @Override
     public JComponent tools() {
         return detail.footTools();
     }
+
+    /**
+     * Der Chat als Seitenleiste für das Hauptfenster (Angelo, 21.11.2026): er steht neben der Arbeitsfläche und bleibt
+     * in jedem Bereich stehen; sein Wissen ist weiter die Auswahl links.
+     */
+    public ChatSidebar chatSidebar() {
+        if (chatSidebar == null) {
+            chatSidebar = new ChatSidebar(detail.chat());
+        }
+        return chatSidebar;
+    }
+
+    private ChatSidebar chatSidebar;
 
     /** Ob die Reiter ihre Auswahl zeigen: nur, solange die Mitte die Seitenansicht zeigt ({@link PillTabs#showSelection}). */
     public void tabsActive(boolean active) {

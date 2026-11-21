@@ -335,15 +335,18 @@ Core selbst.
 - **Chat** (Angelo, 13. und 16.11.2026, `ChatPanel`, Paket `app.chat`) nach `ChatShellPanel`, `ChatComposerPanel`,
   `ChatServiceBinding` und `ChatHistoryBinding` des Enterprise AI Client im Design von Space Harvester; der Chat lebt
   nur in der App (ADR 0012), der Core gibt nur den Chat-Port des KI-Dienstes (`Workspace.aiChat`, eigene SPI `AiChat`, streamend über den
-  unveränderten `OpenAiCompatibleChatAdapter`, Route, TLS und Frist wie alle anderen Aufrufe). Der Reiter hat keine
-  eigene Kopfzeile mehr (Angelo, 17.11.2026): In der Zeile der Bereichsanzeige steht mittig statt der Seitenüberschrift
-  **Chat: ‹Name›** (mit „…“ gekürzt, wenn der Platz nicht reicht) mit dem durchsichtigen Pfeil, der die Chats dieses
-  Bereichs anbietet (zuletzt geänderte zuerst, der aktuelle mit Haken); rechts neben Stern und Dreieck die Symbole
-  **Neuer Chat** (Plus) und **Chat löschen** (Papierkorb, nur bei einem gespeicherten Chat und nicht während einer
-  Antwort; „Diesen Chat wirklich löschen?“, Ja/Nein), nur im Reiter Chat sichtbar. Rechtsklick auf den Namen:
+  unveränderten `OpenAiCompatibleChatAdapter`, Route, TLS und Frist wie alle anderen Aufrufe). Der Chat ist kein
+  Reiter mehr, sondern eine Seitenleiste rechts neben der Arbeitsfläche (Angelo, 21.11.2026, `ChatSidebar`): der
+  Sprechblasen-Knopf oben rechts vor „Aufträge“ (dunkel = offen), Strg+J, „»“ in der Leiste oder ein Doppelklick auf
+  den Teiler klappen sie auf und zu; sie bleibt in jedem Bereich stehen, zugeklappt bleibt nur der schmale Teiler,
+  offen ist sie mindestens 320 px breit (Vorgabe 420), Zustand und Breite gelten für den nächsten Start. Im Kopf der
+  Leiste steht **Chat: ‹Name›** (mit „…“ gekürzt, wenn der Platz nicht reicht) mit dem durchsichtigen Pfeil, der die
+  Chats dieses Bereichs anbietet (zuletzt geänderte zuerst, der aktuelle mit Haken); rechts die Symbole
+  **Neuer Chat** (Plus), **Chat löschen** (Papierkorb, nur bei einem gespeicherten Chat und nicht während einer
+  Antwort; „Diesen Chat wirklich löschen?“, Ja/Nein) und **Chat einklappen**. Rechtsklick auf den Namen:
   **Umbenennen** an Ort und Stelle (Enter übernimmt, Esc verwirft, leer heißt wieder die Kennung) und **Chat löschen**.
-  Unten in der Leiste mit der Lupe stehen mittig die Schnellaktionen des Chats als Text-Chips (`ActionChip`, Angelo
-  17.11.2026, nur im Reiter Chat): bei einer Seite **Seite zusammenfassen** (nur die Seite) und **Seite samt
+  Der Verlauf folgt der Breite der Leiste, Blasen brechen um. Über der Eingabe stehen die Schnellaktionen des Chats
+  als Text-Chips (`ActionChip`, umbrechend): bei einer Seite **Seite zusammenfassen** (nur die Seite) und **Seite samt
   Unterseiten zusammenfassen**, sonst **Bereich zusammenfassen**, dazu **Was ist neu?**; sie wirken immer auf den
   gewählten Knoten samt Unterknoten, nie auf Eltern, und gehen den normalen Sendeweg (Sprechblase, Verlauf, Freigabe).
   **Was ist neu?** (ADR 0030, `ChatTurn.Kind.WHATS_NEW`) nimmt je Quelle der Auswahl die vorige Marke, den Anfang

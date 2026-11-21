@@ -118,7 +118,6 @@ public final class PageDetailPanel extends JPanel {
     static final String STAND = "Stand";
     /** Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links, auch ohne gezeigte Seite. */
     static final String EXPORT = "Export";
-    static final String CHAT = "Chat";
     /**
      * Unterreiter „Beziehungen“ unter „Analysen“ (vorher „Analyse“ unter „Info“, Angelo 20.11.2026): Analyseschritte
      * und Beziehungen der Begriffe der Seite, ohne Seite die der Auswahl.
@@ -129,7 +128,6 @@ public final class PageDetailPanel extends JPanel {
     private static final String EMPTY = "empty";
     private static final String PAGE = "page";
     private static final String EXPORT_CARD = "export";
-    private static final String CHAT_CARD = "chat";
     private static final String STAND_CARD = "standing";
     /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
     private static final String SOURCE_CARD = "source";
@@ -268,7 +266,7 @@ public final class PageDetailPanel extends JPanel {
     private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position shownPosition;
     /** Die Überschrift für die Zeile der Bereichsanzeige ({@link #headerTitle()}): mittig, nie breiter als ihr Text. */
     private final JPanel heading = new JPanel(null) {
-        /** Die Seitenüberschrift oder, im Reiter Chat, „Chat: ‹Name› ▾“ (Angelo, 17.11.2026): das sichtbare Kind. */
+        /** Die Seitenüberschrift: das sichtbare Kind. */
         private java.awt.Component shown() {
             for (java.awt.Component child : getComponents()) {
                 if (child.isVisible()) {
@@ -352,8 +350,8 @@ public final class PageDetailPanel extends JPanel {
     /** Ob die gezeigte Datei leer ist (die Quelle meldet 0 Bytes). */
     private boolean emptyFileShown;
     /**
-     * Die Werkzeuge dieser Ansicht in der Leiste mit der Lupe ({@code ContentView.tools()}), je nach Reiter: im Chat
-     * die Schnellaktionen (mittig), in der Leseansicht einer Datei „Speichern“/„Öffnen“ samt „Typ · Größe“, im Text
+     * Die Werkzeuge dieser Ansicht in der Leiste mit der Lupe ({@code ContentView.tools()}), je nach Reiter: in der
+     * Leseansicht einer Datei „Speichern“/„Öffnen“ samt „Typ · Größe“, im Text
      * eines Videos der Transkript-Knopf (Angelo, 19.11.2026: eine Leiste, die je nach Ansicht wechselt).
      */
     private final JPanel footTools = new JPanel(new BorderLayout());
@@ -573,9 +571,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(ADVANCED, advanced)
                 // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
                 // eigene Karte neben Seite und Hinweis, der Reiter hält nur den Platz.
-                .tab(EXPORT, new JPanel())
-                // Der Chat ebenso: sein Wissen ist die Auswahl links, nicht die gezeigte Seite.
-                .tab(CHAT, new JPanel());
+                .tab(EXPORT, new JPanel());
         // Die Hauptreiter wandern als Symbolknöpfe in die Icon-Leiste oben (Angelo, 13.11.2026);
         // die Unterreiter von „Analysen“ rücken dadurch an die Stelle der bisherigen Reiterzeile.
         java.util.Map<String, Icon> icons = new java.util.LinkedHashMap<>();
@@ -585,7 +581,6 @@ public final class PageDetailPanel extends JPanel {
         icons.put(ANALYSES, PageTabIcons.analyses());
         icons.put(ADVANCED, PageTabIcons.properties());
         icons.put(EXPORT, PageTabIcons.export());
-        icons.put(CHAT, ChatIcons.chat());
         tabIcons = tabs.iconBar(icons);
         // Nachladen nur für den sichtbaren Reiter: beim Wechsel des Haupt- wie des Unterreiters.
         tabs.onSelect(name -> {
@@ -674,9 +669,6 @@ public final class PageDetailPanel extends JPanel {
         // Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
         heading.setOpaque(false);
         heading.add(title);
-        heading.add(chat.header());
-        chat.header().setVisible(false);
-        chat.headerActions().setVisible(false);
         more.addActionListener(e -> PopupHover.clearOnClose(moreMenu(), more)
                 .show(more, 0, more.getHeight()));
         JPanel notices = new JPanel();
@@ -697,7 +689,6 @@ public final class PageDetailPanel extends JPanel {
         deck.add(empty, EMPTY);
         deck.add(page, PAGE);
         deck.add(export, EXPORT_CARD);
-        deck.add(chat, CHAT_CARD);
         // Begriffe vorn in der Reiterzeile des Stands, wie auf der Seite; keine zweite Reiterebene (AT 17.11.2026).
         standing.terms(overviewTerms, visible -> {
             overviewTermsShown = visible;
@@ -845,7 +836,7 @@ public final class PageDetailPanel extends JPanel {
         return star;
     }
 
-    /** Seite oder Hinweis merken; sichtbar wird es erst, wenn weder „Export“ noch „Chat“ gewählt ist. */
+    /** Seite oder Hinweis merken; sichtbar wird es erst, wenn „Export“ nicht gewählt ist. */
     private void showCard(String card) {
         if (!SOURCE_CARD.equals(card)) {
             // Keine Quellenseite mehr: Anmeldung beim Änderungsprotokoll endet, die leere Karte nennt wieder die Seite.
@@ -871,13 +862,6 @@ public final class PageDetailPanel extends JPanel {
         boolean standingShown = standingShown();
         standing.shown(standingShown);
         showOverviewHelp();
-        // Im Reiter Chat steht mittig der Chat statt der Seitenüberschrift, rechts Neuer Chat und Chat löschen.
-        boolean chatTab = CHAT.equals(selected);
-        title.setVisible(!chatTab);
-        chat.header().setVisible(chatTab);
-        chat.headerActions().setVisible(chatTab);
-        // Die Schnellaktionen in der unteren Leiste gehören nur zum Chat.
-        chat.quickActions().setVisible(chatTab);
         updateFootTools(selected);
         heading.revalidate();
         heading.repaint();
@@ -887,7 +871,7 @@ public final class PageDetailPanel extends JPanel {
             page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD : EMPTY;
         }
         boolean wideAdvancedShown = ADVANCED.equals(selected) && wide;
-        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD
+        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD
                 : standingShown ? STAND_CARD : wideAdvancedShown ? WIDE_ADVANCED_CARD : page);
         showRelations();
     }
@@ -948,7 +932,10 @@ public final class PageDetailPanel extends JPanel {
         return export;
     }
 
-    /** Der Reiter „Chat“ (Angelo, 13.11.2026), vorerst ein Click-Dummy; sein Wissen ist die Auswahl links. */
+    /**
+     * Der Chat; sein Wissen ist die Auswahl links. Er steht nicht mehr als Reiter in dieser Ansicht, sondern in der
+     * Seitenleiste des Hauptfensters ({@link ChatSidebar}, Angelo 21.11.2026).
+     */
     public ChatPanel chat() {
         return chat;
     }
@@ -2075,8 +2062,7 @@ public final class PageDetailPanel extends JPanel {
     /** Setzt in {@link #footTools}, was zum Reiter {@code selected} gehört; nichts, wenn er keine Werkzeuge hat. */
     private void updateFootTools(String selected) {
         // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
-        JComponent shown = CHAT.equals(selected) ? chat.quickActions()
-                : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
+        JComponent shown = READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
                 : READ.equals(selected) && videoTranscriptShown ? videoTranscript.action()
                 : null;
         if (footTools.getComponentCount() == (shown == null ? 0 : 1)
@@ -2087,9 +2073,8 @@ public final class PageDetailPanel extends JPanel {
         if (shown != null) {
             footTools.add(shown, BorderLayout.CENTER);
         }
-        // Chat-Chips mittig; Datei-Aktionen und Transkript-Knopf direkt neben der Lupe über die ganze Zeile.
-        footTools.putClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL,
-                shown != null && shown != chat.quickActions());
+        // Datei-Aktionen und Transkript-Knopf direkt neben der Lupe über die ganze Zeile.
+        footTools.putClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL, shown != null);
         footTools.revalidate();
         footTools.repaint();
     }
@@ -4391,7 +4376,7 @@ public final class PageDetailPanel extends JPanel {
     JComponent headerActions() {
         return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp,
                 statementsHelp,
-                standingHelp, glossaryHelp, graphHelp, chat.headerActions(), star, more);
+                standingHelp, glossaryHelp, graphHelp, star, more);
     }
 
     /** Zurück und Vor für die Statuszeile des Hauptfensters. */
