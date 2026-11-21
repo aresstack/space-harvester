@@ -207,6 +207,18 @@ class PageNavigationTest {
             assertThat(references.incoming()).extracting(PageNode::pageId).containsExactly("104");
             assertThat(references.coverage())
                     .isEqualTo(com.aresstack.spaceharvester.application.links.PageLinks.Coverage.HIDDEN);
+
+            // Fahrplan P3: die Verweise von Unterseiten aus dem Verzeichnis, mit der Unterseite als Herkunft; die
+            // gesperrte 300 fehlt als Herkunft wie als Ziel.
+            List<PageNavigation.SubpageReference> below = withLinks.subpageReferences(CLIENT,
+                    com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(List.of(
+                            new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "104"),
+                            new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "300"),
+                            new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "101"))));
+            assertThat(below).extracting(reference -> reference.origin().pageId() + (reference.outgoing() ? " → "
+                    : " ← ") + reference.target().pageId()).containsExactly("101 ← 104", "104 → 101");
+            assertThat(withLinks.subpageReferences(CLIENT,
+                    com.aresstack.spaceharvester.application.snapshot.PageSet.EMPTY)).isEmpty();
         }
     }
 

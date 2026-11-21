@@ -1464,9 +1464,13 @@ public final class PageDetailPanel extends JPanel {
         AppRuntime runtime = context.runtime();
         if (below == null || runtime == null) {
             terms.below(null);
+            references.belowLoading(-1);
+            belowReferencesGeneration++;
             tabStatus(TERMS, " ");
             return;
         }
+        watchLinks(runtime);
+        loadBelowReferences();
         com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
         SelectionTerms selection = new SelectionTerms(workspace, "den Unterseiten", below.pages());
         terms.below(new TermsTab.Below() {
@@ -1487,6 +1491,29 @@ public final class PageDetailPanel extends JPanel {
             }
         });
         tabStatus(TERMS, subpagesStatus("Begriffe", below.size()));
+    }
+
+    /** Zählt die Ladevorgänge der Verweise der Unterseiten; ein überholter zeigt sein Ergebnis nicht. */
+    private long belowReferencesGeneration;
+
+    /** Lädt die Verweise der Unterseiten aus dem Verzeichnis (Fahrplan P3); nie auf dem EDT. */
+    private void loadBelowReferences() {
+        Subpages.Below below = subpages.below();
+        AppRuntime runtime = context.runtime();
+        if (below == null || runtime == null) {
+            return;
+        }
+        long generation = ++belowReferencesGeneration;
+        references.belowLoading(below.size());
+        Background.run(() -> runtime.workspace().subpageReferences(below.pages().pages()), found -> {
+            if (generation == belowReferencesGeneration && below.equals(subpages.below())) {
+                references.below(found);
+            }
+        }, error -> {
+            if (generation == belowReferencesGeneration) {
+                references.below(List.of());
+            }
+        });
     }
 
     /** „Begriffe aus dieser Seite und 3 Unterseiten“ für die Statuszeile. */
@@ -3634,6 +3661,12 @@ public final class PageDetailPanel extends JPanel {
         linksSubscription.close();
         linksRuntime = runtime;
         linksSubscription = runtime.workspace().subscribeLinks(change -> javax.swing.SwingUtilities.invokeLater(() -> {
+            // Die Verweise der Unterseiten kommen nur aus dem Verzeichnis: bei jeder Änderung an einer Unterseite neu.
+            Subpages.Below below = subpages.below();
+            if (below != null && change.sourceId().equals(below.sourceId()) && (change.pageIds().isEmpty()
+                    || change.pageIds().stream().anyMatch(id -> below.pages().contains(below.sourceId(), id)))) {
+                loadBelowReferences();
+            }
             // Nur die ganze Quelle oder die gezeigte Seite: references() fragt die ausgehenden Verweise live bei der
             // Quelle, das soll nicht jede gebündelte Meldung eines Sync auslösen.
             if (!affects(change, sourceId, pageId)) {

@@ -2047,6 +2047,15 @@ public final class Workspace {
     }
 
     /**
+     * Die Verweise der Unterseiten einer Seite aus dem Verzeichnis ({@code PageNavigation.subpageReferences}, Fahrplan
+     * P3). Nie auf dem EDT.
+     */
+    public List<PageNavigation.SubpageReference> subpageReferences(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.navigation().subpageReferences(caller, pages);
+    }
+
+    /**
      * Je Begriff die Zahl der Seiten einer Menge ({@code TermQueries.pageCounts}, Fahrplan P1), etwa für „auch auf N
      * Unterseiten“. Nie auf dem EDT.
      */

@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.links.PageLinks;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
@@ -406,6 +407,58 @@ public class PageNavigation {
         PageLinks.Links local = links.links(caller, new PageKey(sourceId, pageId), spaceKey);
         return new References(sourceId, pageId, outgoing,
                 visible(caller, sourceId, local.incoming().stream().map(this::cachedNode).toList()), local.coverage());
+    }
+
+    /**
+     * Ein Verweis einer Unterseite (Fahrplan P3, „mit Unterseiten“).
+     *
+     * @param origin   die Unterseite, von der der Verweis stammt
+     * @param outgoing {@code true}: die Unterseite verweist auf {@code target}; {@code false}: {@code target} verweist
+     *                 auf sie
+     * @param target   die andere Seite
+     */
+    public record SubpageReference(PageNode origin, boolean outgoing, PageNode target) {
+
+        public SubpageReference {
+            Objects.requireNonNull(origin, "origin");
+            Objects.requireNonNull(target, "target");
+        }
+    }
+
+    /**
+     * Die Verweise der Unterseiten einer Seite in beide Richtungen, aus dem Verzeichnis der lokal gespeicherten Seiten
+     * ({@link PageLinks#links(AccessContext, java.util.Collection)}), ohne die Quelle zu fragen: dynamisch beim
+     * Anzeigen, nichts wird in die Elternseite kopiert (Fahrplan P3). Unterseiten und Ziele ohne Leserecht fehlen.
+     * Reihenfolge: je Unterseite in der Reihenfolge von {@code pages}, erst ausgehend, dann eingehend.
+     *
+     * @param pages die Unterseiten, etwa {@code Holdings.descendants(...).pages()}
+     */
+    public List<SubpageReference> subpageReferences(AccessContext caller, PageSet pages) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(pages, "pages");
+        if (links == null || pages.size() == 0) {
+            return List.of();
+        }
+        List<PageKey> keys = new java.util.ArrayList<>();
+        for (String sourceId : pages.sourceIds()) {
+            for (String pageId : new java.util.TreeSet<>(pages.pagesOf(sourceId))) {
+                keys.add(new PageKey(sourceId, pageId));
+            }
+        }
+        List<SubpageReference> found = new java.util.ArrayList<>();
+        for (Map.Entry<PageKey, PageLinks.Links> entry : links.links(caller, keys).entrySet()) {
+            String sourceId = entry.getKey().sourceId();
+            PageNode origin = cachedNode(entry.getKey());
+            for (PageNode target : visible(caller, sourceId,
+                    entry.getValue().outgoing().stream().map(this::cachedNode).toList())) {
+                found.add(new SubpageReference(origin, true, target));
+            }
+            for (PageNode target : visible(caller, sourceId,
+                    entry.getValue().incoming().stream().map(this::cachedNode).toList())) {
+                found.add(new SubpageReference(origin, false, target));
+            }
+        }
+        return List.copyOf(found);
     }
 
     /** Ein Knoten aus den Kopfdaten im Cache; Titel und Space fehlen, wenn der Cache die Seite nicht kennt. */
