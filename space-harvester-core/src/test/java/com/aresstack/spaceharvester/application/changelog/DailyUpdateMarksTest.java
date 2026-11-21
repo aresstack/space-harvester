@@ -79,10 +79,27 @@ class DailyUpdateMarksTest {
 
         assertThat(legacy.retrySpaces()).containsExactly("A", "B");
         UpdateMark partly = DailyUpdateMarks.merge(legacy, mark("2026-11-21T17:00:00Z", List.of("A"), 0, List.of()));
-        assertThat(partly.failedSyncs()).isEqualTo(2);
+        assertThat(partly.failedSyncs()).as("zwei gescheitert, zwei Spaces, einer erledigt").isEqualTo(1);
         assertThat(partly.retrySpaces()).containsExactly("B");
         UpdateMark all = DailyUpdateMarks.merge(legacy, mark("2026-11-21T17:00:00Z", List.of("A", "B"), 0, List.of()));
         assertThat(all.failedSyncs()).isZero();
         assertThat(all.retrySpaces()).isEmpty();
+    }
+
+    @Test
+    void candidatesOfAnOlderMarkDoNotInflateTheCountOverFurtherRounds() {
+        // Codex zu #1006: alte Runde A/B/C mit einem Fehler, danach am selben Tag erfolgreich D und E.
+        List<UpdateMark> days = DailyUpdateMarks.perDay(List.of(
+                mark("2026-11-21T02:00:00Z", List.of("A", "B", "C"), 1, List.of()),
+                mark("2026-11-21T03:00:00Z", List.of("D"), 0, List.of()),
+                mark("2026-11-21T04:00:00Z", List.of("E"), 0, List.of())), BERLIN);
+
+        assertThat(days).singleElement().satisfies(day -> {
+            assertThat(day.failedSyncs()).isEqualTo(1);
+            assertThat(day.retrySpaces()).containsExactly("A", "B", "C");
+        });
+        UpdateMark retried = DailyUpdateMarks.merge(days.getFirst(),
+                mark("2026-11-21T18:00:00Z", List.of("A", "B", "C"), 0, List.of()));
+        assertThat(retried.failedSyncs()).isZero();
     }
 }

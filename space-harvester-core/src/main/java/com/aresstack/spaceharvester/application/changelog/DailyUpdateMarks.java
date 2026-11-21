@@ -56,15 +56,12 @@ public final class DailyUpdateMarks {
         spaces.addAll(later.spaces());
         Set<String> open = new TreeSet<>(earlier.retrySpaces());
         open.removeAll(later.spaces());
-        int remaining;
-        if (earlier.failedSyncs() == 0 || (!earlier.retrySpaces().isEmpty() && open.isEmpty())) {
-            remaining = 0;
-        } else if (!earlier.failedSpaces().isEmpty()) {
-            // Gescheiterte Aufträge ohne Space (selten) lassen sich keinem Abgleich zuordnen und bleiben stehen.
-            remaining = open.size() + Math.max(0, earlier.failedSyncs() - earlier.failedSpaces().size());
-        } else {
-            remaining = earlier.failedSyncs();
-        }
+        // Die Kandidaten können mehr sein als die gescheiterten Aufträge (alte Marken ohne gescheiterte Spaces: alle Spaces
+        // der Runde); offen bleiben deshalb höchstens so viele, wie gescheitert waren (Codex zu #1006). Gescheiterte
+        // Aufträge ohne Space lassen sich keinem Abgleich zuordnen und bleiben stehen.
+        int withoutSpace = earlier.retrySpaces().isEmpty() ? earlier.failedSyncs()
+                : Math.max(0, earlier.failedSyncs() - earlier.retrySpaces().size());
+        int remaining = Math.min(earlier.failedSyncs(), open.size() + withoutSpace);
         int failed = later.failedSyncs() + remaining;
         Set<String> failedSpaces = new TreeSet<>(later.retrySpaces());
         if (remaining > 0) {

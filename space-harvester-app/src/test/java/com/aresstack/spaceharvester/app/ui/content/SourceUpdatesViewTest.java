@@ -78,7 +78,7 @@ class SourceUpdatesViewTest {
     @Test
     void behindTheRedLineTheCircleArrowsRetryTheFailedSyncsOfTheLatestUpdate() {
         actions.failed = 2;
-        actions.failedSpaces = List.of("CLUK");
+        actions.failedSpaces = List.of("DEV");
         List<String> retried = new ArrayList<>();
         view.onRetry((sourceId, spaces) -> retried.add(sourceId + ":" + spaces));
         view.source("wiki", "Confluence HaVdB");
@@ -91,7 +91,7 @@ class SourceUpdatesViewTest {
 
         retry.doClick();
 
-        assertThat(retried).containsExactly("wiki:[CLUK]");
+        assertThat(retried).containsExactly("wiki:[DEV]");
         assertThat(retry.isEnabled()).as("gesperrt, nicht ausgeblendet").isFalse();
         assertThat(retry.isVisible()).isTrue();
         assertThat(status).contains(SourceUpdatesView.RETRYING);

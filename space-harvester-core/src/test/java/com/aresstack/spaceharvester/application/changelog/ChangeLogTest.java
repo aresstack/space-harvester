@@ -634,7 +634,7 @@ class ChangeLogTest {
             // Die Änderung liegt Tage zurück, der Abgleich ist heute: sie gehört ins Update von heute.
             row(60 * 24 * 3, "101", ChangeKind.NEW, ChangeTrigger.MANUAL, null, "B", null, "1", false);
             mark(60 * 24 * 5, false);
-            marks.add(new UpdateMark("wiki", at(60 * 24 * 5 + 30), "client:b", List.of("OPS"), 2, false,
+            marks.add(new UpdateMark("wiki", at(60 * 24 * 5 + 30), "client:b", List.of("OPS"), 1, false,
                     List.of("OPS")));
             row(60 * 24 * 5 + 40, "102", ChangeKind.NEW, ChangeTrigger.MANUAL, null, "C", null, "1", false);
             marks.add(new UpdateMark("wiki", at(60 * 24 * 5 + 50), "client:a", List.of("OPS"), 0, false));
