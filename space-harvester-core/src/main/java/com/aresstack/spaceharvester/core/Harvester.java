@@ -743,6 +743,15 @@ public final class Harvester implements AutoCloseable {
                     who -> self.knowledgeGraph.analysed(who),
                     () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(),
                     this.aiRelease::mayProcess, clock);
+            // D4: „ohne aktuelle Aussagenanalyse“ zählt auch nie analysierte Seiten des Bereichs, Rechte des Aufrufers.
+            Holdings glossaryHoldings = this.holdings;
+            this.glossaryClassification.localPages((who, scope) -> glossaryHoldings.resolve(who, scope.global()
+                    ? new com.aresstack.spaceharvester.application.holdings.Selection(catalog.all().stream()
+                    .map(source -> com.aresstack.spaceharvester.application.holdings.Selection.Root.source(
+                            source.id())).toList())
+                    : com.aresstack.spaceharvester.application.holdings.Selection.of(
+                    new com.aresstack.spaceharvester.application.holdings.Selection.Root(scope.sourceId(),
+                            scope.spaceKey(), null))).pages());
             // #336: Synonymerkennung auf Knopfdruck; Embedding- und Chat-Modell folgen der Konfiguration, Text nur
             // aus freigegebenen Quellen, Budget aus terms.synonyms.*.
             EmbeddingProcessor embeddingForTerms = embedding;
