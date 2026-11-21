@@ -55,7 +55,8 @@ import java.util.function.Supplier;
 /**
  * „Suchqualität messen“ als Auftrag (Q1b, {@link JobType#SEARCH_QUALITY}): liest den Testbestand, stellt jede Frage
  * über genau den Suchweg des Chats (progressive Suche mit dem eingestellten Profil, im Bereich als Seitenmenge wie
- * {@code ChatTurn}, gleiche Frist) und schreibt nach jeder Frage die lokale Ergebnisdatei, am Ende den Bericht. Ein
+ * {@code ChatTurn}, gleiche Frist) und schreibt nach jeder Frage die lokale Ergebnisdatei, am Ende den Bericht, beides
+ * in den Unterordner {@value #FOLDER} des Ausgabeordners (Angelo #979: alle Ausgaben in den Ausgabeordner). Ein
  * Abbruch schreibt den Bericht der gemessenen Fragen; Fortsetzen misst nur, was in der Ergebnisdatei fehlt, auch nach
  * einem Neustart der App. Auftrag, Zähler und Meldungen tragen nur den Namen des Testbestands und Zahlen, nie eine
  * Frage, einen Titel oder eine Seiten-ID. An der Suche ändert sich nichts.
@@ -76,6 +77,8 @@ public final class SearchQualityRuns {
     public static final String VERSION_PARAMETER = "version";
 
     static final String COMPONENT = "Suchqualität";
+    /** Unterordner des Ausgabeordners für Ergebnisse und Berichte. */
+    public static final String FOLDER = "Suchqualität";
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH-mm");
 
     /**
@@ -83,7 +86,7 @@ public final class SearchQualityRuns {
      *
      * @param suite       Testbestand ({@code fragen.tsv})
      * @param previous    früheres Ergebnis ({@code .tsv}) zum Vergleich oder {@code null}
-     * @param output      Ordner für Ergebnis und Bericht; ohne Angabe der Ordner des Testbestands
+     * @param output      Ausgabeordner der App; Ergebnis und Bericht landen in dessen Unterordner {@value #FOLDER}
      * @param contextSize Treffer, die der Chat ins Modell gibt ({@code ChatKnowledge.MAX_SOURCES})
      * @param timeout     Frist je Frage wie im Chat ({@code ChatTurn.SEARCH_SECONDS})
      * @param version     App-Version
@@ -92,6 +95,7 @@ public final class SearchQualityRuns {
 
         public Request {
             Objects.requireNonNull(suite, "suite");
+            Objects.requireNonNull(output, "output");
             Objects.requireNonNull(timeout, "timeout");
             if (timeout.isNegative() || timeout.isZero()) {
                 throw new IllegalArgumentException("timeout muss positiv sein");
@@ -163,7 +167,7 @@ public final class SearchQualityRuns {
     public JobStatus submit(AccessContext caller, Request request) {
         Objects.requireNonNull(caller, "caller");
         Path suite = request.suite().toAbsolutePath();
-        Path output = request.output() == null ? parent(suite) : request.output().toAbsolutePath();
+        Path output = request.output().toAbsolutePath().resolve(FOLDER);
         Path result = output.resolve(baseName(suite) + " – "
                 + STAMP.format(clock.instant().atZone(ZoneId.systemDefault())) + ".tsv");
         Map<String, String> parameters = new LinkedHashMap<>();
@@ -240,8 +244,14 @@ public final class SearchQualityRuns {
         }
         Map<String, CaseResult> done = new HashMap<>();
         Instant started = clock.instant();
+        SearchProfile settings = profile.get();
         if (Files.exists(resultPath)) {
             QualityResults.Stored earlier = QualityResults.read(Files.readString(resultPath, StandardCharsets.UTF_8));
+            // Ein Ergebnis misst genau einen Stand: geändertes Profil oder anderer Chat-Kontext mischt sonst zwei.
+            if (!earlier.info().profile().equals(describe(settings)) || earlier.info().contextSize() != contextSize) {
+                throw new JobFailedException("PROFILE_CHANGED", "Das Suchprofil hat sich seit dem Abbruch geändert; "
+                        + "Fortsetzen würde zwei Stände mischen. Bitte neu starten.");
+            }
             started = earlier.info().started();
             Set<String> ids = new LinkedHashSet<>();
             suite.cases().forEach(question -> ids.add(question.id()));
@@ -251,19 +261,19 @@ public final class SearchQualityRuns {
                 }
             }
         }
-        SearchProfile settings = profile.get();
         QualityRun.Settings runSettings = new QualityRun.Settings(contextSize, settings.minScore());
         QualityRun run = new QualityRun(searches.apply(caller, timeout), page -> stored(caller, page), runSettings);
         context.discovered(suite.cases().size());
         context.processed(done.size());
-        context.written(done.values().stream().filter(r -> !r.noAnswer() && r.inTop(10)).count());
+        // Dieselbe Leitzahl wie der Bericht: erwartete Fundstelle im Chat-Kontext.
+        context.written(done.values().stream().filter(r -> !r.noAnswer() && r.inTop(contextSize)).count());
         context.failed(done.values().stream().filter(CaseResult::failed).count());
         context.phase(COMPONENT, "Fragen stellen");
         Instant start = started;
         List<CaseResult> measured = new ArrayList<>(done.values());
         QualityRun.Result outcome = run.run(suite.cases(), done, context::cancelRequested, (n, total, r) -> {
             context.processed(1);
-            if (!r.noAnswer() && r.inTop(10)) {
+            if (!r.noAnswer() && r.inTop(contextSize)) {
                 context.written(1);
             }
             if (r.failed()) {
@@ -344,11 +354,6 @@ public final class SearchQualityRuns {
             throw new JobFailedException("RESULT_UNWRITABLE", "Ergebnis nicht schreibbar ("
                     + failed.getClass().getSimpleName() + ")", failed);
         }
-    }
-
-    private static Path parent(Path file) {
-        Path parent = file.getParent();
-        return parent == null ? Path.of(".").toAbsolutePath() : parent;
     }
 
     static String baseName(Path file) {

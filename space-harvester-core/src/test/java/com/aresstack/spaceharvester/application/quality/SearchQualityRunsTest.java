@@ -40,8 +40,18 @@ class SearchQualityRunsTest {
     private final AtomicInteger asked = new AtomicInteger();
 
     private SearchQualityRuns runs(QualitySearch search) {
-        return new SearchQualityRuns(List::of, new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), (caller, timeout) -> search,
-                (caller, key) -> key.equals(new PageKey("q", "1")), SearchProfile::defaults, jobs, clock);
+        return runs(search, SearchProfile::defaults);
+    }
+
+    private SearchQualityRuns runs(QualitySearch search, java.util.function.Supplier<SearchProfile> profile) {
+        return new SearchQualityRuns(List::of, new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW),
+                (caller, timeout) -> search, (caller, key) -> key.equals(new PageKey("q", "1")), profile, jobs,
+                clock);
+    }
+
+    private SearchQualityRuns.Request request(Path suite) {
+        return new SearchQualityRuns.Request(suite, null, folder.resolve("Ausgabe"), 8, Duration.ofSeconds(90),
+                "1.0");
     }
 
     private Path suite() throws Exception {
@@ -62,9 +72,8 @@ class SearchQualityRunsTest {
     };
 
     @Test
-    void theJobWritesResultAndReportNextToTheSuiteAndNamesOnlyTheSuite() throws Exception {
-        JobStatus status = runs(search).submit(CALLER, new SearchQualityRuns.Request(suite(), null, null, 8,
-                Duration.ofSeconds(90), "1.0"));
+    void theJobWritesResultAndReportIntoTheOutputFolderAndNamesOnlyTheSuite() throws Exception {
+        JobStatus status = runs(search).submit(CALLER, request(suite()));
 
         JobStatus done = jobs.status(status.id(), CALLER.jobOwner());
         assertThat(done.type()).isEqualTo(JobType.SEARCH_QUALITY);
@@ -78,7 +87,7 @@ class SearchQualityRunsTest {
         assertThat(done.parameters().toString()).doesNotContain(SECRET);
 
         Path result = Path.of(done.parameter(SearchQualityRuns.RESULT_PARAMETER));
-        assertThat(result.getParent()).isEqualTo(folder.toAbsolutePath());
+        assertThat(result.getParent()).isEqualTo(folder.resolve("Ausgabe").resolve("Suchqualität").toAbsolutePath());
         assertThat(result.getFileName().toString()).startsWith("fragen – 2026-11-2").endsWith(".tsv");
         assertThat(result).exists();
         Path report = SearchQualityRuns.report(result);
@@ -91,8 +100,7 @@ class SearchQualityRunsTest {
     @Test
     void resumingMeasuresOnlyWhatTheResultFileLacks() throws Exception {
         SearchQualityRuns runs = runs(search);
-        JobStatus first = runs.submit(CALLER, new SearchQualityRuns.Request(suite(), null, null, 8,
-                Duration.ofSeconds(90), "1.0"));
+        JobStatus first = runs.submit(CALLER, request(suite()));
         Path result = Path.of(jobs.status(first.id(), CALLER.jobOwner()).parameter(
                 SearchQualityRuns.RESULT_PARAMETER));
         // Ergebnisdatei ohne F2, wie nach einem Abbruch.
@@ -105,6 +113,23 @@ class SearchQualityRunsTest {
 
         assertThat(asked.get()).isEqualTo(1);
         assertThat(Files.readString(result)).contains("F1\t", "F2\t", "F3\t");
+    }
+
+    @Test
+    void resumingAfterTheProfileChangedIsRefusedInsteadOfMixingTwoStates() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<SearchProfile> profile =
+                new java.util.concurrent.atomic.AtomicReference<>(SearchProfile.defaults());
+        SearchQualityRuns runs = runs(search, profile::get);
+        JobStatus first = runs.submit(CALLER, request(suite()));
+        profile.set(SearchProfile.defaults().withExpansion(SearchProfile.Expansion.RULES));
+        asked.set(0);
+
+        runs.resume(first.id(), CALLER.jobOwner());
+
+        JobStatus resumed = jobs.status(first.id(), CALLER.jobOwner());
+        assertThat(resumed.state()).isEqualTo(JobState.FAILED);
+        assertThat(resumed.error().code()).isEqualTo("PROFILE_CHANGED");
+        assertThat(asked.get()).isZero();
     }
 
     @Test

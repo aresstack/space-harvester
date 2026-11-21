@@ -846,7 +846,7 @@ public final class ActivitiesView implements View {
             case METADATA_EXPORT, ANALYTICS_EXPORT -> parameterDirectory(status,
                     com.aresstack.spaceharvester.application.metadata.SourceQueryExports.DIRECTORY, exportDirectory);
             case EXPORT -> exportDirectory;
-            // Ergebnis und Bericht der Suchqualität liegen neben dem Testbestand (Q1).
+            // Ergebnis und Bericht der Suchqualität liegen im Unterordner „Suchqualität“ des Ausgabeordners (Q1).
             case SEARCH_QUALITY -> {
                 String file = status.parameters().get(
                         com.aresstack.spaceharvester.application.quality.SearchQualityRuns.RESULT_PARAMETER);
@@ -1374,7 +1374,7 @@ public final class ActivitiesView implements View {
                         "Unkorrigiert");
                 case SLIDE_NOTES -> new Counters("Folien", "Bearbeitet", "Kommentiert", "Fehlgeschlagen");
                 case PRESENTATION_EXPORT -> new Counters("Folien", "Bearbeitet", "In der Datei", "Ohne Standbild");
-                case SEARCH_QUALITY -> new Counters("Fragen", "Gestellt", "Unter den ersten 10 gefunden",
+                case SEARCH_QUALITY -> new Counters("Fragen", "Gestellt", "Im Chat-Kontext gefunden",
                         "Suche gescheitert");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };

@@ -116,7 +116,7 @@ public enum JobType {
     PRESENTATION_EXPORT,
     /**
      * „Suchqualität messen“ (Q1): stellt die Fragen eines lokalen Testbestands über den Suchweg des Chats und schreibt
-     * Ergebnis und Bericht neben den Testbestand ({@code application.quality.SearchQualityRuns}). Quellenübergreifend
+     * Ergebnis und Bericht in den Unterordner „Suchqualität“ des Ausgabeordners ({@code application.quality.SearchQualityRuns}). Quellenübergreifend
      * ({@link Jobs#ALL_SOURCES}); Liste, Statuszeile und Meldungen nennen nur den Testbestand und Zahlen. Fortsetzen
      * misst nur die Fragen, die im Ergebnis fehlen.
      */
