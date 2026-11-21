@@ -1090,6 +1090,38 @@ public final class Explorer {
     }
 
     /** Umfang aller gewählten Zeilen (Strg-Klick), ohne Doppelte; leer ohne Auswahl. */
+    /** Eine gemerkte Auswahl links: Knoten im Baum oder „Wissensquellen“ (alle). */
+    public record Remembered(TreePath[] paths, boolean global) {
+    }
+
+    /** Merkt sich die Auswahl links, etwa beim Verlassen der Suche (Angelo, 21.11.2026). */
+    public Remembered remember() {
+        TreePath[] paths = tree.getSelectionPaths();
+        return new Remembered(paths == null ? new TreePath[0] : paths.clone(), global);
+    }
+
+    /**
+     * Stellt eine gemerkte Auswahl wieder her; Knoten, die der Baum inzwischen nicht mehr enthält, fallen weg. Gleicht
+     * sie der jetzigen, meldet der Baum nichts, und die Suche bleibt, wie sie war.
+     */
+    public void restore(Remembered remembered) {
+        if (remembered == null) {
+            return;
+        }
+        if (remembered.global()) {
+            selectAll();
+            return;
+        }
+        TreePath[] alive = java.util.Arrays.stream(remembered.paths())
+                .filter(path -> path.getLastPathComponent() instanceof Node node && node.getRoot() == model.getRoot())
+                .toArray(TreePath[]::new);
+        if (alive.length == 0) {
+            clearSelection();
+        } else {
+            tree.setSelectionPaths(alive);
+        }
+    }
+
     public List<Scope> scopes() {
         TreePath[] paths = tree.getSelectionPaths();
         List<Scope> scopes = new ArrayList<>();
@@ -1279,14 +1311,15 @@ public final class Explorer {
 
     /**
      * Ein Klick oder Enter: Seite öffnen bzw. den nächsten Stapel holen. Quelle und Space zeigt schon die Auswahl in
-     * der Mitte (die Quellenseite mit den Updates), ein Klick wechselt dort keinen Reiter.
+     * der Mitte (die Quellenseite mit den Updates), ein Klick wechselt dort keinen Reiter. In der Suche wechselt kein
+     * Klick die Ansicht, die Auswahl ist dort der Filter (Angelo, 21.11.2026).
      */
     private void activate(TreePath path) {
         if (!(path.getLastPathComponent() instanceof Node node)) {
             return;
         }
         switch (node.item()) {
-            case PageItem page -> context.navigator().openPage(page.sourceId(), page.pageId());
+            case PageItem page -> context.navigator().openFromTree(page.sourceId(), page.pageId());
             case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
