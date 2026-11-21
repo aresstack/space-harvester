@@ -89,10 +89,9 @@ class HarvesterAnalysesChangedTest {
             assertThat(reported.tryAcquire(10, TimeUnit.SECONDS)).isTrue();
         }
         graph.analysesChanged();
+        // Der geschlossene Bündler plant nichts mehr (kein neuer Thread); Threads gleichen Namens anderer Graphen im
+        // selben Test-JVM sagen darüber nichts.
         assertThat(reported.tryAcquire(600, TimeUnit.MILLISECONDS)).as("nach dem Schließen keine Zustellung").isFalse();
-        assertThat(Thread.getAllStackTraces().keySet()).extracting(Thread::getName)
-                .as("kein Zustell-Thread des Graphen bleibt übrig")
-                .noneMatch(name -> name.equals("space-harvester-observe-knowledge-graph"));
     }
 
     private static SourceSettingsConfig wiki() {
