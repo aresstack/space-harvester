@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Pager;
 import com.aresstack.spaceharvester.app.ui.Relation;
+import com.aresstack.spaceharvester.application.knowledge.VerbQueries;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
@@ -77,6 +78,22 @@ final class SelectionTerms implements TermsTab.Selection {
                 List.of(List.of(fetch(TermKind.NOUN, q), fetch(TermKind.IDENTIFIER, q))));
     }
 
+    /** Die Verben aus den Aussagen (K1), nach Zahl der Aussagen, wie der Core sie ordnet. */
+    @Override
+    public Pager<VerbQueries.Verb> verbs(String q) {
+        Pager.Fetch<VerbQueries.Verb> fetch = cursor -> {
+            VerbQueries.VerbList list = workspace.verbs(pages(), q == null || q.isBlank() ? null : q, TermsTab.STEP,
+                    cursor);
+            return new Pager.Page<>(list.verbs(), list.nextCursor());
+        };
+        return new Pager<>((one, other) -> 0, List.of(List.of(fetch)));
+    }
+
+    @Override
+    public List<VerbQueries.Occurrence> verbOccurrences(VerbQueries.Verb verb) {
+        return workspace.verbOccurrences(pages(), verb, TermQueries.MAX_LIMIT);
+    }
+
     private Pager.Fetch<TermQueries.TermSummary> fetch(TermKind kind, String q) {
         return cursor -> {
             TermQueries.TermList list = workspace.terms(new TermQueries.TermSearch(null, null, kind,
@@ -105,8 +122,10 @@ final class SelectionTerms implements TermsTab.Selection {
         TermQueries.TermTotals terms = workspace.termTotals(new TermQueries.TermSearch(null, null, null, null, false,
                 TermsTab.STEP, null, null).within(within));
         int relations = workspace.termRelationCounts(within).values().stream().mapToInt(Integer::intValue).sum();
+        VerbQueries.VerbList verbs = workspace.verbs(within, null, 1, null);
         return new TermsTab.Totals(terms.of(TermKind.ACRONYM), terms.of(TermKind.NOUN) + terms.of(TermKind.IDENTIFIER),
-                relations, holdings.counts().stored(), holdings.size());
+                relations, holdings.counts().stored(), holdings.size(), verbs.total(), verbs.unanalysed(),
+                verbs.stalePages());
     }
 
     @Override

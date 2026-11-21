@@ -133,7 +133,7 @@ class ConfigurationManagerConfiguration {
         for (String key : List.of(ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MAX_SIZE,
                 TermSettings.SYNONYMS_MAX_TERMS, TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS,
                 TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, TermSettings.SYNONYMS_AUTOMATIC,
-                EnrichmentSettings.DOCUMENTS_ENABLED,
+                TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY, EnrichmentSettings.DOCUMENTS_ENABLED,
                 EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, ChangeLogSettings.RETENTION,
                 ChangeLogSettings.SHOW_AFTER_UPDATE, SimplificationSettings.MODE, SimplificationSettings.PARALLEL,
                 SimplificationSettings.MODEL, CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL,
