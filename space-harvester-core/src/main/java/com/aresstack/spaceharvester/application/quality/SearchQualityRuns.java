@@ -80,6 +80,10 @@ public final class SearchQualityRuns {
     public static final String NEIGHBORS_PARAMETER = "nachbarseiten";
     /** Zusatz im Namen von Ergebnis und Bericht eines Laufs mit „Nachbarseiten“; ohne bleibt der Name wie bisher. */
     public static final String NEIGHBORS_SUFFIX = " – mit Nachbarseiten";
+    /** Ob mit der Suchmethode „Synonyme der Fachbegriffe“ (K5a) gemessen wird; fehlt er, ohne. */
+    public static final String SYNONYMS_PARAMETER = "synonyme";
+    /** Zusatz im Namen eines Laufs mit „Synonyme der Fachbegriffe“; ohne bleibt der Name wie bisher. */
+    public static final String SYNONYMS_SUFFIX = " – mit Synonymen";
 
     static final String COMPONENT = "Suchqualität";
     /** Unterordner des Ausgabeordners für Ergebnisse und Berichte. */
@@ -96,9 +100,16 @@ public final class SearchQualityRuns {
      * @param timeout     Frist je Frage wie im Chat ({@code ChatTurn.SEARCH_SECONDS})
      * @param version     App-Version
      * @param neighbors   mit der Suchmethode „Nachbarseiten“ (R2), damit ihr Nutzen neben einem Lauf ohne messbar ist
+     * @param synonyms    mit der Suchmethode „Synonyme der Fachbegriffe“ (K5a)
      */
     public record Request(Path suite, Path previous, Path output, int contextSize, Duration timeout, String version,
-                          boolean neighbors) {
+                          boolean neighbors, boolean synonyms) {
+
+        /** Ohne „Synonyme der Fachbegriffe“. */
+        public Request(Path suite, Path previous, Path output, int contextSize, Duration timeout, String version,
+                       boolean neighbors) {
+            this(suite, previous, output, contextSize, timeout, version, neighbors, false);
+        }
 
         /** Ohne „Nachbarseiten“. */
         public Request(Path suite, Path previous, Path output, int contextSize, Duration timeout, String version) {
@@ -129,7 +140,7 @@ public final class SearchQualityRuns {
     /** Die Suche je Frage mit dem Profil des Laufs. */
     @FunctionalInterface
     interface Searches {
-        QualitySearch of(AccessContext caller, Duration timeout, SearchProfile settings);
+        QualitySearch of(AccessContext caller, Duration timeout, SearchProfile settings, boolean synonyms);
     }
 
     /**
@@ -174,7 +185,7 @@ public final class SearchQualityRuns {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.clock = Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(searches, "searches");
-        this.searches = (who, timeout, settings) -> searches.apply(who, timeout);
+        this.searches = (who, timeout, settings, synonyms) -> searches.apply(who, timeout);
     }
 
     /** Liest einen Testbestand zur Vorschau im Startdialog (Zahl der Fragen, Zeilenfehler). */
@@ -189,7 +200,7 @@ public final class SearchQualityRuns {
         Path output = request.output().toAbsolutePath().resolve(FOLDER);
         Path result = reserve(output, baseName(suite) + " – "
                 + STAMP.format(clock.instant().atZone(ZoneId.systemDefault()))
-                + (request.neighbors() ? NEIGHBORS_SUFFIX : ""));
+                + (request.neighbors() ? NEIGHBORS_SUFFIX : "") + (request.synonyms() ? SYNONYMS_SUFFIX : ""));
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put(SUITE_PARAMETER, suite.toString());
         parameters.put(RESULT_PARAMETER, result.toString());
@@ -201,6 +212,9 @@ public final class SearchQualityRuns {
         parameters.put(VERSION_PARAMETER, request.version() == null ? "" : request.version());
         if (request.neighbors()) {
             parameters.put(NEIGHBORS_PARAMETER, "true");
+        }
+        if (request.synonyms()) {
+            parameters.put(SYNONYMS_PARAMETER, "true");
         }
         return jobs.submit(JobType.SEARCH_QUALITY, Jobs.ALL_SOURCES, null, null, caller.jobOwner(), parameters,
                 task(caller, parameters));
@@ -269,12 +283,14 @@ public final class SearchQualityRuns {
         Duration timeout = Duration.ofSeconds(Long.parseLong(parameters.getOrDefault(TIMEOUT_PARAMETER, "90")));
         String version = parameters.getOrDefault(VERSION_PARAMETER, "");
         boolean neighbors = Boolean.parseBoolean(parameters.get(NEIGHBORS_PARAMETER));
+        boolean synonyms = Boolean.parseBoolean(parameters.get(SYNONYMS_PARAMETER));
         return JobTask.blocking(context -> run(caller, suite, result, previous == null ? null : Path.of(previous),
-                contextSize, timeout, version, neighbors, context));
+                contextSize, timeout, version, neighbors, synonyms, context));
     }
 
     private void run(AccessContext caller, Path suitePath, Path resultPath, Path previousPath, int contextSize,
-                     Duration timeout, String version, boolean neighbors, JobContext context) throws IOException {
+                     Duration timeout, String version, boolean neighbors, boolean synonyms, JobContext context)
+            throws IOException {
         context.phase(COMPONENT, "Testbestand lesen");
         QualitySuite suite;
         try {
@@ -294,7 +310,7 @@ public final class SearchQualityRuns {
         if (Files.exists(resultPath) && Files.size(resultPath) > 0) {
             QualityResults.Stored earlier = QualityResults.read(Files.readString(resultPath, StandardCharsets.UTF_8));
             // Ein Ergebnis misst genau einen Stand: geändertes Profil oder anderer Chat-Kontext mischt sonst zwei.
-            if (!earlier.info().profile().equals(describe(settings)) || earlier.info().contextSize() != contextSize) {
+            if (!earlier.info().profile().equals(describe(settings, synonyms)) || earlier.info().contextSize() != contextSize) {
                 throw new JobFailedException("PROFILE_CHANGED", "Das Suchprofil hat sich seit dem Abbruch geändert; "
                         + "Fortsetzen würde zwei Stände mischen. Bitte neu starten.");
             }
@@ -308,7 +324,7 @@ public final class SearchQualityRuns {
             }
         }
         QualityRun.Settings runSettings = new QualityRun.Settings(contextSize, settings.minScore());
-        QualityRun run = new QualityRun(searches.of(caller, timeout, settings), page -> stored(caller, page),
+        QualityRun run = new QualityRun(searches.of(caller, timeout, settings, synonyms), page -> stored(caller, page),
                 runSettings);
         context.discovered(suite.cases().size());
         context.processed(done.size());
@@ -327,11 +343,11 @@ public final class SearchQualityRuns {
                 context.failed(1);
             }
             measured.add(r);
-            write(resultPath, QualityResults.write(info(version, settings, start, suitePath, runSettings,
+            write(resultPath, QualityResults.write(info(version, settings, synonyms, start, suitePath, runSettings,
                     suite.cases().size(), true), ordered(suite, measured)));
         });
         context.phase(COMPONENT, "Bericht schreiben");
-        RunInfo info = info(version, settings, start, suitePath, runSettings, suite.cases().size(),
+        RunInfo info = info(version, settings, synonyms, start, suitePath, runSettings, suite.cases().size(),
                 outcome.cancelled());
         write(resultPath, QualityResults.write(info, outcome.results()));
         QualityComparison comparison = null;
@@ -361,9 +377,9 @@ public final class SearchQualityRuns {
         return ordered;
     }
 
-    private static RunInfo info(String version, SearchProfile profile, Instant started, Path suite,
+    private static RunInfo info(String version, SearchProfile profile, boolean synonyms, Instant started, Path suite,
                                 QualityRun.Settings settings, int total, boolean cancelled) {
-        return new RunInfo(version, describe(profile), started, String.valueOf(suite.getFileName()),
+        return new RunInfo(version, describe(profile, synonyms), started, String.valueOf(suite.getFileName()),
                 settings.contextSize(), settings.relevantScore(), total, cancelled);
     }
 
@@ -377,6 +393,11 @@ public final class SearchQualityRuns {
                 + ", Budget " + profile.timeBudget().toSeconds() + " s / " + profile.searchBudget() + " Anfragen"
                 // Nur wenn an: frühere Ergebnisse ohne die Methode behalten ihre Beschreibung (Fortsetzen).
                 + (profile.neighbors() ? ", Nachbarseiten an" : "");
+    }
+
+    /** Wie {@link #describe(SearchProfile)}, mit „Synonyme der Fachbegriffe“ (K5a) nur, wenn an. */
+    static String describe(SearchProfile profile, boolean synonyms) {
+        return describe(profile) + (synonyms ? ", Synonyme an" : "");
     }
 
     static Path report(Path result) {
@@ -424,9 +445,10 @@ public final class SearchQualityRuns {
      * Die Suche einer Frage wie im Chat: {@code KeywordSearch.Query(...).within(Bereich)} an die progressive Suche mit
      * dem eingestellten Profil; nach der Frist gilt die letzte vorläufige Rangliste.
      */
-    QualitySearch search(AccessContext caller, Duration timeout, SearchProfile settings) {
+    QualitySearch search(AccessContext caller, Duration timeout, SearchProfile settings, boolean synonyms) {
         return (question, interim) -> {
-            KeywordSearch.Query query = new KeywordSearch.Query(question.question(), null, Set.of(), Set.of());
+            KeywordSearch.Query query = new KeywordSearch.Query(question.question(), null, Set.of(), Set.of())
+                    .withGlossarySynonyms(synonyms);
             PageSet scope = scope(caller, question.scope());
             if (scope != null) {
                 if (scope.isEmpty()) {

@@ -92,7 +92,8 @@ public class ProgressiveSearchController {
             throw new InvalidQueryException("Anfrage fehlt");
         }
         KeywordSearch.Query query = new KeywordSearch.Query(request.q(), request.sourceId(), set(request.sourceIds()),
-                set(request.spaceKeys()), set(request.excludeSpaceKeys()));
+                set(request.spaceKeys()), set(request.excludeSpaceKeys()))
+                .withGlossarySynonyms(Boolean.TRUE.equals(request.glossarySynonyms()));
         SearchProfile profile = profile(request, searches.defaults());
         ProgressiveSearches.Tracked tracked = searches.start(caller, query, profile);
         boolean wait = Boolean.TRUE.equals(request.waitForResult())
@@ -237,6 +238,9 @@ public class ProgressiveSearchController {
             @Schema(nullable = true, allowableValues = {"ai", "rules"}) String expansion,
             @Schema(nullable = true, allowableValues = {"keyword", "semantic"}) String ranking,
             @Schema(nullable = true) Boolean neighbors,
+            @Schema(nullable = true, description = "Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a): zu "
+                    + "bestätigten Fachbegriffen des Glossars auch ihre vorgeschlagenen Synonyme; Standard aus")
+            Boolean glossarySynonyms,
             @JsonProperty("wait") @Schema(name = "wait", nullable = true) Boolean waitForResult) {
     }
 

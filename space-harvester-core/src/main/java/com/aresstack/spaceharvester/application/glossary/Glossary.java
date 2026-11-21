@@ -199,19 +199,39 @@ public class Glossary {
         Objects.requireNonNull(scope, "scope");
         Set<String> found = new HashSet<>();
         for (GlossaryEntry entry : store.all()) {
-            if (entry.status() != ReviewStatus.CONFIRMED
-                    || categoryOf(entry) == GlossaryDerivation.Category.TECHNISCH) {
-                continue;
-            }
-            RelationScope own = entry.scope();
-            boolean touches = own.global() || scope.global()
-                    || own.sourceId().equals(scope.sourceId()) && (own.spaceKey() == null || scope.spaceKey() == null
-                    || own.spaceKey().equals(scope.spaceKey()));
-            if (touches) {
+            if (confirmedIn(entry, scope)) {
                 found.add(entry.normalized());
             }
         }
         return found;
+    }
+
+    /**
+     * Wie {@link #confirmedTerms(RelationScope)}, nur die Fachbegriffe, die der Aufrufer sehen darf (K5a: Suchmethode
+     * „Synonyme der Fachbegriffe“): Quellen im Bereich und mit Recht, Belege wie in {@link #entries}. Sichtbar, im
+     * Bereich und bestätigt muss DERSELBE Eintrag sein.
+     */
+    public Set<String> confirmedTerms(AccessContext caller, RelationScope scope) {
+        Objects.requireNonNull(scope, "scope");
+        Visibility visibility = new Visibility(caller);
+        Set<String> found = new HashSet<>();
+        for (GlossaryEntry entry : store.all()) {
+            if (confirmedIn(entry, scope) && visibility.visible(entry).isPresent()) {
+                found.add(entry.normalized());
+            }
+        }
+        return found;
+    }
+
+    /** Bestätigt, nicht {@code TECHNISCH} und im Bereich {@code scope}. */
+    private boolean confirmedIn(GlossaryEntry entry, RelationScope scope) {
+        if (entry.status() != ReviewStatus.CONFIRMED || categoryOf(entry) == GlossaryDerivation.Category.TECHNISCH) {
+            return false;
+        }
+        RelationScope own = entry.scope();
+        return own.global() || scope.global()
+                || own.sourceId().equals(scope.sourceId()) && (own.spaceKey() == null || scope.spaceKey() == null
+                || own.spaceKey().equals(scope.spaceKey()));
     }
 
     /** @throws UnknownGlossaryEntryException wenn es ihn nicht gibt oder er verborgen ist */

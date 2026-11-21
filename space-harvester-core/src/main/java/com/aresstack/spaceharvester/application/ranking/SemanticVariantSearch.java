@@ -83,7 +83,7 @@ public final class SemanticVariantSearch implements VariantSearch {
         // Mit Arten das ganze Fenster der Rangfolge, damit nach dem Filter noch genug Treffer bleiben.
         int window = variant.kinds().isEmpty() ? Math.min(limit, Reranking.MAX_WINDOW) : Reranking.MAX_WINDOW;
         RelevanceSearch.RelevanceResults found = relevance.search(caller, scope, original, variant.text(),
-                variant.excludedSpaceKeys(), window, partOf);
+                variant.excludedSpaceKeys(), window, partOf, variant.glossarySynonyms());
         List<KeywordSearch.Hit> hits = new ArrayList<>(found.hits().size());
         Map<PageKey, Double> scores = new HashMap<>();
         for (RelevanceSearch.RankedHit ranked : found.hits()) {
