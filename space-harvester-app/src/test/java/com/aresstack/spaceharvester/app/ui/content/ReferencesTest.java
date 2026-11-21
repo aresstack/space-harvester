@@ -93,7 +93,8 @@ class ReferencesTest {
         assertThat(view.belowTable().getValueAt(0, 1)).isEqualTo("Kassenbuch");
         assertThat(view.belowTable().getValueAt(0, 3)).isEqualTo("Zahlungen");
         assertThat(view.belowTable().getValueAt(1, 0)).isEqualTo("verwiesen von");
-        assertThat(status).last().asString().endsWith(" · Verweise aus dieser Seite und 2 Unterseiten");
+        assertThat(status).as("kein Zusatztext, die Zahl steht im Chip (UX)").last().asString()
+                .doesNotContain("Unterseite");
         assertThat(view.copyText()).contains(TermsTab.BELOW + "\nverweist auf\tKassenbuch\tDEV\tZahlungen");
 
         view.openBelow(0, 3);

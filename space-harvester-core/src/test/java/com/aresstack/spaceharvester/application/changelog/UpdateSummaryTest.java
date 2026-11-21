@@ -214,6 +214,47 @@ class UpdateSummaryTest {
     }
 
     @Test
+    void perDayASummaryOfTheLastRoundAloneIsNoSummaryOfTheWholeDay() {
+        row(1, "100", "DEV", ChangeKind.NEW, "Start");
+        mark(10, true);
+        row(12, "100", "DEV", ChangeKind.CONTENT_CHANGED, "Startseite");
+        mark(20, false);
+        row(25, "100", "DEV", ChangeKind.CONTENT_CHANGED, "Startseite neu");
+        mark(30, false);
+        header("100", "DEV", "Startseite neu");
+        released.add("100");
+        String last = log.updates(CALLER, "wiki").getFirst().id();
+        // Von vorher: die Zusammenfassung der letzten Runde allein, ohne Beginn der Spanne.
+        store.saveSummary(new StoredSummary("wiki", last, "Nur die letzte Runde.", List.of(), "m", at(31), at(30), 0,
+                "sha", List.of()));
+        ChangeLog daily = new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)),
+                () -> List.of("wiki"), new ChangeLog.Summaries(jobs, model,
+                key -> released.contains(key.pageId()), Clock.fixed(T0.plusSeconds(7200), ZoneOffset.UTC)))
+                .perDay(ZoneOffset.UTC);
+        try (daily) {
+            ChangeUpdate day = daily.updates(CALLER, "wiki").getFirst();
+            assertThat(day.id()).isEqualTo(last);
+            assertThat(day.from()).isEqualTo(at(10));
+            assertThat(log.summary(CALLER, "wiki", last)).as("ohne perDay gilt sie weiter").isPresent();
+            assertThat(day.summarized()).isFalse();
+            assertThat(daily.summary(CALLER, "wiki", last)).isEmpty();
+
+            // Mit Beginn der Spanne: nur für dieselbe Spanne.
+            store.saveSummary(new StoredSummary("wiki", last, null, "Nur die letzte Runde.", List.of(), "m", at(31),
+                    at(30), 0, "sha", List.of(), at(20)));
+            assertThat(daily.summary(CALLER, "wiki", last)).isEmpty();
+            store.saveSummary(new StoredSummary("wiki", last, null, "Der ganze Tag.", List.of(), "m", at(32), at(30),
+                    0, "sha", List.of(), at(10)));
+            assertThat(daily.summary(CALLER, "wiki", last)).map(UpdateSummary::text).contains("Der ganze Tag.");
+            assertThat(daily.updates(CALLER, "wiki").getFirst().summarized()).isTrue();
+
+            // Ein neuer Auftrag legt den Beginn der Spanne mit ab.
+            run(daily.summarize(CALLER, "wiki", last));
+            assertThat(daily.summary(CALLER, "wiki", last)).isPresent();
+        }
+    }
+
+    @Test
     void aWaitingOrRunningSummaryIsReturnedInsteadOfStartingASecondOne() {
         String id = oneUpdate();
 

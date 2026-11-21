@@ -116,7 +116,7 @@ class SignInNoticeTest {
     void theLeftPartLeavesRoomForTheCenterAndTheCopyright() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             JLabel alert = new JLabel("Confluence HaVdB, docs.example.org" + SignInNotice.SUFFIX_MANY);
-            JLabel lead = new JLabel("Seite 3 von 120 · Kurzbeschreibung DATENH V1.0 · Abschnitt 4.2 Schnittstellen");
+            JLabel lead = new JLabel("Seite 3 von 120 · Kurzbeschreibung Nachtlauf V1.0 · Abschnitt 4.2 Schnittstellen");
             JLabel west = new JLabel("Bestand: C:\\Users\\angelo\\.space-harvester\\data\\exports\\confluence");
             JLabel center = new JLabel("Abbrechen");
             JLabel east = new JLabel("© 2026 AresStack");

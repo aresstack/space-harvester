@@ -285,19 +285,37 @@ class ChatTurnTest {
         asked = port.lastRequest.messages().get(port.lastRequest.messages().size() - 1).text();
         assertThat(asked).contains("Grundlage: 2 geänderte Seiten seit dem ");
 
-        // Zwei Abgleiche ohne Änderung danach: Grundlage ist nur die vorige Marke, die alte Änderung gilt nicht mehr
-        // als neu, der feste Satz kommt ohne Modellaufruf.
+        // Zwei Abgleiche ohne Änderung am selben Tag: Es gibt ein Update je Tag (Angelo, 21.11.2026), beide gehören
+        // zum Update von heute; Grundlage bleibt dessen Anfang, die Änderung von heute gilt weiter als neu.
+        java.time.Instant day = latestMark(workspace, "a");
         workspace.startSync("a", spaceA, SyncMode.FULL);
-        awaitMarks(workspace, "a", 3);
+        day = awaitLaterMark(workspace, "a", day);
         workspace.startSync("a", spaceA, SyncMode.FULL);
-        awaitMarks(workspace, "a", 4);
-        before = port.lastRequest;
+        awaitLaterMark(workspace, "a", day);
+        assertThat(workspace.changeUpdates("a").stream().filter(update -> !update.open()).count())
+                .as("Erstbefüllung und ein Update für heute").isEqualTo(2);
         events = new Events();
         new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist neu?", onlyA, "Quelle A",
                 ChatTurn.Kind.WHATS_NEW, events, Runnable::run).start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
-        assertThat(events.completed).isEqualTo(ChatTurn.NOTHING_NEW);
-        assertThat(port.lastRequest).isSameAs(before);
+        assertThat(events.completed).isEqualTo("Antwort");
+        asked = port.lastRequest.messages().get(port.lastRequest.messages().size() - 1).text();
+        assertThat(asked).contains("Grundlage: 1 geänderte Seite seit dem ");
+    }
+
+    /** Ende des jüngsten abgeschlossenen Updates der Quelle. */
+    private static java.time.Instant latestMark(Workspace workspace, String sourceId) {
+        return workspace.changeUpdates(sourceId).stream().filter(update -> !update.open()).findFirst()
+                .map(com.aresstack.spaceharvester.application.changelog.ChangeUpdate::to).orElseThrow();
+    }
+
+    /** Wartet, bis eine neue Runde das jüngste Update der Quelle über {@code after} hinaus verlängert hat. */
+    private static java.time.Instant awaitLaterMark(Workspace workspace, String sourceId, java.time.Instant after)
+            throws InterruptedException {
+        return await(() -> {
+            java.time.Instant latest = latestMark(workspace, sourceId);
+            return latest.isAfter(after) ? latest : null;
+        });
     }
 
     /** Wartet, bis die Quelle so viele abgeschlossene Updates (Marken) im Änderungsprotokoll hat. */

@@ -29,16 +29,16 @@ class HtmlStreamParserTest {
     /** Die Seite aus den Proben der Anhangsanalyse ({@code samples/seite.html}). */
     static final String SEITE = """
             <!doctype html>
-            <html lang="de"><head><meta charset="utf-8"><title>Betriebshandbuch DATENH</title>
+            <html lang="de"><head><meta charset="utf-8"><title>Betriebshandbuch Nachtlauf</title>
             <style>body{font-family:sans-serif}</style><script>var tracking = "nicht für den Leser";</script></head>
             <body><nav><a href="/start">Start</a> | <a href="/hilfe">Hilfe</a></nav>
             <h1>Betriebshandbuch</h1><p>Der <b>Nachtlauf</b> startet um <i>22:00 Uhr</i>, siehe \
             <a href="https://example.org/plan">Ablaufplan</a>.</p>
-            <h2>Schritte</h2><ol><li>Sicherung prüfen</li><li>Job <code>DATENH01</code> starten<ul><li>bei Fehler RC 8: \
+            <h2>Schritte</h2><ol><li>Sicherung prüfen</li><li>Job <code>NACHT01</code> starten<ul><li>bei Fehler RC 8: \
             Bereitschaft anrufen</li></ul></li></ol>
-            <table><tr><th>Job</th><th>Dauer</th></tr><tr><td>DATENH01</td><td>12 min</td></tr><tr><td>DATENH02</td>\
+            <table><tr><th>Job</th><th>Dauer</th></tr><tr><td>NACHT01</td><td>12 min</td></tr><tr><td>NACHT02</td>\
             <td>3 min</td></tr></table>
-            <pre>//DATENH01 JOB (ACCT),'NACHTLAUF'</pre></body></html>
+            <pre>//NACHT01 JOB (ACCT),'NACHTLAUF'</pre></body></html>
             """;
 
     /** {@code samples/hinweise.html}. */

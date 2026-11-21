@@ -11,6 +11,7 @@ import java.awt.geom.Arc2D;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
+import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
 
 /**
@@ -39,7 +40,9 @@ public enum Glyph implements Icon {
     /** „Neue Beziehung …“ und ähnliches Anlegen: ein Plus. */
     PLUS,
     /** „Synonyme vorschlagen“ (KI-Vorschlag): ein großes und ein kleines Funkeln. */
-    SPARKLE;
+    SPARKLE,
+    /** QR-Code (drei Suchmuster und ein paar Module): Zertifikat aus einem QR-Bild lesen (Strang ZX). */
+    QR;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -104,6 +107,19 @@ public enum Glyph implements Icon {
                     arrow.lineTo(8, 10.5);
                     arrow.lineTo(12, 6);
                     g.draw(arrow);
+                }
+                case QR -> {
+                    g.setStroke(new BasicStroke(1.3f));
+                    g.draw(new Rectangle2D.Double(1.5, 1.5, 5, 5));
+                    g.draw(new Rectangle2D.Double(9.5, 1.5, 5, 5));
+                    g.draw(new Rectangle2D.Double(1.5, 9.5, 5, 5));
+                    g.fill(new Rectangle2D.Double(3.3, 3.3, 1.6, 1.6));
+                    g.fill(new Rectangle2D.Double(11.3, 3.3, 1.6, 1.6));
+                    g.fill(new Rectangle2D.Double(3.3, 11.3, 1.6, 1.6));
+                    g.fill(new Rectangle2D.Double(9.5, 9.5, 2, 2));
+                    g.fill(new Rectangle2D.Double(12.5, 12.5, 2, 2));
+                    g.fill(new Rectangle2D.Double(12.5, 9.5, 2, 2));
+                    g.fill(new Rectangle2D.Double(9.5, 12.5, 2, 2));
                 }
                 case SUMMARIZE -> {
                     g.draw(new Line2D.Double(2, 6, 8.5, 6));

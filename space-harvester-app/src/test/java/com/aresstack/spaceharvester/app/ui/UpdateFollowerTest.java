@@ -111,13 +111,13 @@ class UpdateFollowerTest {
 
     private static ChangeUpdate mark(Instant at, boolean initial) {
         return new ChangeUpdate(String.valueOf(at.toEpochMilli()), "wiki", null, at,
-                new UpdateMark("wiki", at, "angelo", List.of("CLUK"), 0, initial), initial,
-                Map.of(ChangeKind.NEW, 1), Map.of("CLUK", 1), 1, 0, 0, false);
+                new UpdateMark("wiki", at, "angelo", List.of("BAU"), 0, initial), initial,
+                Map.of(ChangeKind.NEW, 1), Map.of("BAU", 1), 1, 0, 0, false);
     }
 
     private static ChangeUpdate open() {
         return new ChangeUpdate(ChangeUpdate.OPEN, "wiki", ATTACHED, null, null, false, Map.of(ChangeKind.NEW, 1),
-                Map.of("CLUK", 1), 1, 0, 0, false);
+                Map.of("BAU", 1), 1, 0, 0, false);
     }
 
     private static final class FakeFeed implements UpdateFollower.Feed {

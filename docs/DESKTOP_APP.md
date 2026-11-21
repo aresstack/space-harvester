@@ -345,6 +345,14 @@ Core selbst.
   **Neuer Chat** (Plus), **Chat löschen** (Papierkorb, nur bei einem gespeicherten Chat und nicht während einer
   Antwort; „Diesen Chat wirklich löschen?“, Ja/Nein) und **Chat einklappen**. Rechtsklick auf den Namen:
   **Umbenennen** an Ort und Stelle (Enter übernimmt, Esc verwirft, leer heißt wieder die Kennung) und **Chat löschen**.
+  Links daneben **Groß anzeigen**: dieselbe Leiste nimmt die ganze Arbeitsfläche, der Explorer bleibt; derselbe Knopf
+  und Esc stellen die vorige Breite wieder her, auch das wird gemerkt. In der schmalen Leiste zeigen unter der Eingabe
+  erst die Modellwahl, dann auch der Denkaufwand nur noch ihr Symbol (Name im Tooltip), „Senden“ bleibt ganz sichtbar.
+  Wird eine Antwort fertig, während die Leiste zu ist, trägt der Sprechblasen-Knopf einen blauen Punkt („neue
+  Antwort“ im Tooltip), bis die Leiste aufgeht.
+  Unter einer Antwort stehen ihre Quellen als Links „[n] Titel“ in der Nummer, die die Antwort nennt; sie erscheinen
+  schon während der Antwort. Ein Klick öffnet die Seite links und zeigt sie im Baum, die Leiste bleibt offen (aus
+  „Groß anzeigen“ wird dabei wieder die Leiste). Ein Dateianhang ohne Seite steht als Text da.
   Der Verlauf folgt der Breite der Leiste, Blasen brechen um. Über der Eingabe stehen die Schnellaktionen des Chats
   als Text-Chips (`ActionChip`, umbrechend): bei einer Seite **Seite zusammenfassen** (nur die Seite) und **Seite samt
   Unterseiten zusammenfassen**, sonst **Bereich zusammenfassen**, dazu **Was ist neu?**; sie wirken immer auf den

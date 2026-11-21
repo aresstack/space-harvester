@@ -960,10 +960,10 @@ final class TermsTab extends JPanel {
             belowPanel.repaint();
             return;
         }
-        int mine = belowRequest;
         belowBusy.setBusy(true);
+        // Die Zahlen gelten für die Unterseiten, nicht für den Filter: Ein neuer Filter verwirft sie nicht.
         runner.run(chosen::pageCounts, counts -> {
-            if (mine != belowRequest) {
+            if (chosen != below) {
                 return;
             }
             belowCounts = counts == null ? java.util.Map.of() : java.util.Map.copyOf(counts);
@@ -971,7 +971,7 @@ final class TermsTab extends JPanel {
             fill();
             queryBelow();
         }, failure -> {
-            if (mine == belowRequest) {
+            if (chosen == below) {
                 belowBusy.setBusy(false);
                 hint.setText("Begriffe der Unterseiten nicht lesbar: " + failure.getClass().getSimpleName());
             }

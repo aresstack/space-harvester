@@ -123,7 +123,10 @@ final class AnalysisView extends JPanel {
             add(stepArea, BorderLayout.NORTH);
         }
         relations.heading(heading(), null);
-        relations.onChanged(this::count);
+        relations.onChanged(() -> {
+            count();
+            relationsChanged.run();
+        });
         add(relations.component(), BorderLayout.CENTER);
         if (withSteps) {
             // Fahrplan P3: die Beziehungen der Unterseiten abgetrennt unter denen der Seite.
@@ -239,6 +242,13 @@ final class AnalysisView extends JPanel {
         row0.add(new CopyButton(() -> detailJson));
         popup.clearLinks().text(name(result.processorId()), text.toString()).controls(row0);
         popup.showAt(steps, x, y);
+    }
+
+    private Runnable relationsChanged = () -> { };
+
+    /** {@code listener} läuft, wenn eine Beziehung angelegt, bestätigt, abgelehnt oder entfernt wurde. */
+    void onRelationsChanged(Runnable listener) {
+        relationsChanged = Objects.requireNonNull(listener, "listener");
     }
 
     private com.aresstack.spaceharvester.app.ui.IconButton proposeIcon;

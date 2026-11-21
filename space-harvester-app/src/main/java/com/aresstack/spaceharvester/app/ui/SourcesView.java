@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
@@ -795,6 +796,108 @@ public final class SourcesView implements View {
                 feedback.warning("Nicht prüfbar", "Die Quelle ist abgeschaltet oder wartet auf ihre Zugangsdaten.");
             }
         }, feedback::problem);
+    }
+
+    /** Ob die Quelle über https spricht; BSCW-Quellen alter Form nennen die Adresse in {@code options.rootUrl}. */
+    static boolean https(AppSettings.SourceEntry entry) {
+        java.net.URI base = entry.config().baseUrl();
+        if (base != null) {
+            return "https".equalsIgnoreCase(base.getScheme());
+        }
+        String legacy = entry.config().options() == null ? null : entry.config().options().get("rootUrl");
+        return legacy != null && legacy.strip().toLowerCase(Locale.ROOT).startsWith("https://");
+    }
+
+    private static JPanel transparent() {
+        JPanel panel = new JPanel();
+        panel.setOpaque(false);
+        return panel;
+    }
+
+    /**
+     * Zertifikatsexport der Quelle (Strang ZX): im Hintergrund über den Core, Schleier über der Karte mit Esc,
+     * Ergebnis in der Statuszeile, Fehler in der Meldungsplatte. Datei in den Ausgabeordner, ohne Speichern-Dialog.
+     */
+    private void exportCertificates(SourceCard card, boolean qr) {
+        AppSettings.SourceEntry entry = card.entry;
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || context.settings() == null) {
+            return;
+        }
+        java.nio.file.Path directory = context.settings().outputDirectory();
+        String name = entry.config().title() == null || entry.config().title().isBlank() ? entry.id()
+                : entry.config().title();
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        card.busy("Zertifikate werden gesammelt …", () -> {
+            cancelled.set(true);
+            card.busy(null, null);
+        });
+        Background.run(() -> qr ? runtime.workspace().exportCertificateCodes(entry.id(), directory, cancelled::get)
+                : runtime.workspace().exportCertificates(entry.id(), directory, cancelled::get), found -> {
+            card.busy(null, null);
+            if (cancelled.get()) {
+                return;
+            }
+            if (found.isEmpty()) {
+                feedback.warning("Nicht exportierbar", "Die Quelle " + name + " ist dem Programm nicht bekannt.");
+                return;
+            }
+            com.aresstack.spaceharvester.application.sources.CertificateExport result = found.get();
+            String summary = (qr ? "QR-Codes der Zertifikate von " : "Zertifikate von ") + name + " gespeichert: " + result.file().getFileName()
+                    + " im Ausgabeordner (" + Texts.count((int) result.roots(), "Stammzertifikat", "Stammzertifikate")
+                    + ", " + Texts.count((int) result.intermediates(), "Zwischenzertifikat", "Zwischenzertifikate")
+                    + (result.missing() > 0 ? ", davon " + result.missing() + " nicht vom Server gesendet" : "") + ")";
+            context.events().publish(new com.aresstack.spaceharvester.app.event.StatusMessageEvent(summary,
+                    Integer.MAX_VALUE, com.aresstack.spaceharvester.app.event.Severity.INFO, true));
+            if (!result.serverTrusted() || !result.problems().isEmpty()) {
+                feedback.warning("Zertifikate von " + name + " unvollständig",
+                        String.join(" ", result.problems().isEmpty()
+                                ? List.of("Die Kette des Servers endet an keinem vertrauten Stammzertifikat; "
+                                + "Einzelheiten in LIESMICH.txt im ZIP.") : result.problems()));
+            }
+        }, error -> {
+            card.busy(null, null);
+            if (!(error instanceof java.util.concurrent.CancellationException) && !cancelled.get()) {
+                feedback.problem(error);
+            }
+        });
+    }
+
+    /** Die QR-Codes der vertrauten Zertifikate am Bildschirm (Strang ZX); sammelt im Hintergrund mit Schleier. */
+    private void showCertificateCodes(SourceCard card) {
+        AppSettings.SourceEntry entry = card.entry;
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        String name = entry.config().title() == null || entry.config().title().isBlank() ? entry.id()
+                : entry.config().title();
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        card.busy("Zertifikate werden gesammelt …", () -> {
+            cancelled.set(true);
+            card.busy(null, null);
+        });
+        Background.run(() -> runtime.workspace().certificateCodes(entry.id(), cancelled::get), found -> {
+            card.busy(null, null);
+            if (cancelled.get()) {
+                return;
+            }
+            if (found.isEmpty()) {
+                feedback.warning("Nicht verfügbar", "Die Quelle " + name + " ist dem Programm nicht bekannt.");
+                return;
+            }
+            if (found.get().isEmpty()) {
+                feedback.warning("Keine vertrauten Zertifikate", "Für " + name + " gibt es kein Zertifikat, dem "
+                        + "dieser Rechner vertraut; Einzelheiten zeigt das Archiv unter „Zertifikate exportieren …“.");
+                return;
+            }
+            CertificateCodesView.open(root, name, found.get());
+        }, error -> {
+            card.busy(null, null);
+            if (!(error instanceof java.util.concurrent.CancellationException) && !cancelled.get()) {
+                feedback.problem(error);
+            }
+        });
     }
 
     private void askSecret(AppSettings.SourceEntry entry) {
@@ -1635,11 +1738,15 @@ public final class SourcesView implements View {
         private final IconButton more = new IconButton(Glyph.MORE, "Weitere Aktionen");
 
         private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        /** Schleier über der Karte, solange ein Lauf an ihr hängt (Zertifikatsexport); sonst unsichtbar. */
+        final BusyOverlay busy = new BusyOverlay(transparent());
 
         SourceCard(AppSettings.SourceEntry entry) {
             super(null);
             this.entry = entry;
             setOpaque(true);
+            busy.setVisible(false);
+            add(busy);
             SourceSettingsConfig config = entry.config();
             name.setText(config.title() == null ? config.id() : config.title());
             name.setFont(Comic.semiBold(13.5f));
@@ -1702,6 +1809,30 @@ public final class SourcesView implements View {
             check.setEnabled(running && context.connection(entry.id()).state() != AppContext.Connection.State.CHECKING);
             check.addActionListener(e -> SourcesView.this.check(entry));
             menu.add(check);
+            JMenuItem certificates = new JMenuItem("Zertifikate exportieren …");
+            boolean https = https(entry);
+            // Nie ausblenden, nur sperren: das Menü sieht je Quelle gleich aus (UX-Manager, Strang ZX).
+            certificates.setToolTipText(!https ? "Nur für Quellen mit https"
+                    : "Serverkette samt fehlender Zertifizierungsstellen und das Client-Zertifikat (öffentlicher "
+                    + "Teil) als ZIP mit Anleitung in den Ausgabeordner, zum Import auf einem anderen Rechner");
+            certificates.setEnabled(https && context.runtime() != null && !busy.isBusy());
+            certificates.addActionListener(e -> SourcesView.this.exportCertificates(this, false));
+            menu.add(certificates);
+            // Eigener Eintrag mit Untermenü (ein Elterneintrag mit ▸ löst beim Klick nichts aus; UX-Manager).
+            javax.swing.JMenu codes = new javax.swing.JMenu("Zertifikate als QR-Code");
+            String codesTip = !https ? "Nur für Quellen mit https"
+                    : "Ein QR-Code je vertrautem Zertifikat (Inhalt PEM), zum Abscannen mit dem Telefon";
+            codes.setToolTipText(codesTip);
+            codes.setEnabled(certificates.isEnabled());
+            JMenuItem showCodes = new JMenuItem("Anzeigen …");
+            showCodes.setToolTipText("Die QR-Codes groß am Bildschirm zeigen, einen nach dem anderen");
+            showCodes.addActionListener(e -> SourcesView.this.showCertificateCodes(this));
+            codes.add(showCodes);
+            JMenuItem saveCodes = new JMenuItem("Als Bilder speichern");
+            saveCodes.setToolTipText("Je Zertifikat ein PNG als ZIP in den Ausgabeordner");
+            saveCodes.addActionListener(e -> SourcesView.this.exportCertificates(this, true));
+            codes.add(saveCodes);
+            menu.add(codes);
             JMenuItem export = new JMenuItem("Herunterladen");
             export.setToolTipText("Je Space dieser Quelle sofort einen Download starten");
             export.setEnabled(running);
@@ -1800,6 +1931,19 @@ public final class SourcesView implements View {
         @Override
         public void doLayout() {
             place(getWidth(), true);
+            busy.setBounds(0, 0, getWidth(), getHeight());
+        }
+
+        /** Zeigt bzw. nimmt den Schleier; {@code cancel} ist die Esc-Fläche, {@code null} ohne. */
+        void busy(String text, Runnable cancel) {
+            boolean on = text != null;
+            busy.setText(on ? text : "");
+            busy.onCancel(on ? cancel : null);
+            busy.setVisible(on);
+            busy.setBusy(on);
+            setComponentZOrder(busy, 0);
+            revalidate();
+            repaint();
         }
 
         private int place(int width, boolean apply) {
