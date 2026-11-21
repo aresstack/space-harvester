@@ -900,9 +900,13 @@ public final class Harvester implements AutoCloseable {
             SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
                     new SemanticVariantSearch(relevance, textIndex),
                     new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
-                    HitScorer.of(excerpts), runLog, new NeighborCandidates(pageConnections));
+                    HitScorer.of(excerpts), runLog, new NeighborCandidates(pageConnections),
+                    new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
+                            backgroundJobs));
             // R2: dieselbe Methode zur Schlagwortsuche ohne progressive Suche, als eigener Aufruf nach einem Stapel.
-            this.neighborSearch = new NeighborSearch(keywordSearch, new NeighborCandidates(pageConnections));
+            this.neighborSearch = new NeighborSearch(keywordSearch, new NeighborCandidates(pageConnections),
+                    new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
+                            backgroundJobs));
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
             start.step("Suche");
