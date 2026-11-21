@@ -84,12 +84,20 @@ public final class BackgroundJobs {
      * @throws IllegalArgumentException wenn die Art nicht angemeldet ist oder keine Teile da sind
      */
     public BackgroundGroup start(String kind, String title, List<BackgroundPart.Draft> parts) {
+        return start(UUID.randomUUID().toString(), kind, title, parts);
+    }
+
+    /**
+     * Wie {@link #start(String, String, List)}, mit vorher vergebener Gruppen-ID ({@link #newGroupId()}): für Arten, die
+     * vor dem ersten Lauf etwas zur Gruppe ablegen müssen, denn ein Unterauftrag kann schon während des Starts laufen.
+     */
+    public BackgroundGroup start(String groupId, String kind, String title, List<BackgroundPart.Draft> parts) {
+        Objects.requireNonNull(groupId, "groupId");
         BackgroundKind registered = requireKind(kind);
         Objects.requireNonNull(title, "title");
         if (parts.isEmpty()) {
             throw new IllegalArgumentException("Mindestens ein Teil");
         }
-        String groupId = UUID.randomUUID().toString();
         List<JobStatus> started = new ArrayList<>();
         for (BackgroundPart.Draft draft : parts) {
             Map<String, String> parameters = new HashMap<>(draft.parameters());
@@ -101,6 +109,11 @@ public final class BackgroundJobs {
         }
         LOG.log(System.Logger.Level.INFO, "Hintergrund „{0}“ gestartet: {1} Teile", kind, started.size());
         return new BackgroundGroup(groupId, registered.id(), title, started);
+    }
+
+    /** Eine neue Gruppen-ID für {@link #start(String, String, String, List)}. */
+    public static String newGroupId() {
+        return UUID.randomUUID().toString();
     }
 
     /** Ein wartender oder laufender Unterauftrag dieser Art für Quelle und Space, gegen doppelte Anläufe. */

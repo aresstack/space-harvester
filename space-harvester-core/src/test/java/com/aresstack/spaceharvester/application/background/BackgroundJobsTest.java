@@ -161,6 +161,22 @@ class BackgroundJobsTest {
     }
 
     @Test
+    void anOrderlyShutdownInterruptsBackgroundJobsSoTheyResumeAfterTheRestart() {
+        Jobs first = new Jobs(store, new Steps(), new JobLimits(2, 10, Duration.ofHours(1)), clock);
+        BackgroundGroup group = background(first, new AtomicBoolean(true)).start("demo", "Demo", twoSpaces());
+        // Der erste Teil läuft, der zweite wartet; beide unterbricht das Beenden.
+        first.close();
+
+        Jobs restarted = jobs(executor);
+        List<JobStatus> resumed = background(restarted, new AtomicBoolean(true)).resumeInterrupted();
+        executor.runAll();
+
+        assertThat(resumed).extracting(JobStatus::id).containsExactlyInAnyOrderElementsOf(group.jobIds());
+        assertThat(group.jobIds()).allSatisfy(id -> assertThat(restarted.status(id).state())
+                .isEqualTo(JobState.COMPLETED));
+    }
+
+    @Test
     void afterARestartAKindThatSaysNoStaysInterrupted() {
         Jobs first = jobs(new Steps());
         BackgroundGroup group = background(first, new AtomicBoolean(true)).start("demo", "Demo", twoSpaces());

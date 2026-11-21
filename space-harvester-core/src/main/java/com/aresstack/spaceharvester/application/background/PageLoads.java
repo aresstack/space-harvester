@@ -39,6 +39,10 @@ public final class PageLoads {
     static final String SEPARATOR = "\n";
     /** So oft prüft der wartende Unterauftrag, ob er abgebrochen oder angehalten wurde. */
     static final long CHECK_MILLIS = 500;
+    /** So viele Abrufe hat ein Unterauftrag höchstens zugleich beim Planer. */
+    static final int WINDOW = 32;
+    /** Fehlercode: Seiten ließen sich nicht laden. */
+    public static final String PAGES_MISSING = "PAGES_MISSING";
 
     private final BackgroundJobs background;
     private final AcquisitionScheduler scheduler;
@@ -100,9 +104,10 @@ public final class PageLoads {
         List<BackgroundPart.Draft> parts = new ArrayList<>();
         bySpace.forEach((where, pageIds) -> parts.add(new BackgroundPart.Draft(where.get(0), where.get(1),
                 Map.of(PAGES, String.join(SEPARATOR, pageIds)))));
-        BackgroundGroup group = background.start(KIND, title, parts);
-        callers.put(group.groupId(), caller);
-        return Optional.of(group);
+        // Den Aufrufer vor dem Start ablegen: ein Unterauftrag kann schon während start() laufen.
+        String groupId = BackgroundJobs.newGroupId();
+        callers.put(groupId, caller);
+        return Optional.of(background.start(groupId, KIND, title, parts));
     }
 
     private JobTask work(BackgroundPart part) {
@@ -123,25 +128,54 @@ public final class PageLoads {
         List<PageKey> missing = keys.stream().filter(key -> !cached.test(key)).toList();
         context.discovered(keys.size());
         context.processed(keys.size() - missing.size());
-        List<AcquisitionScheduler.Ticket> tickets = new ArrayList<>();
+        java.util.ArrayDeque<AcquisitionScheduler.Ticket> open = new java.util.ArrayDeque<>();
+        long failed = 0;
         try {
             for (PageKey key : missing) {
-                context.checkpoint();
-                tickets.add(scheduler.request(caller, key, priority()));
-            }
-            for (AcquisitionScheduler.Ticket ticket : tickets) {
-                boolean loaded = await(context, ticket);
-                context.processed(1);
-                if (loaded) {
-                    context.written(1);
-                } else {
-                    context.failed(1);
+                // Höchstens WINDOW Abrufe zugleich, und ein voller Planer heißt warten statt scheitern.
+                while (true) {
+                    context.checkpoint();
+                    if (open.size() >= WINDOW) {
+                        failed += finish(context, open.pollFirst());
+                        continue;
+                    }
+                    try {
+                        open.addLast(scheduler.request(caller, key, priority()));
+                        break;
+                    } catch (java.util.concurrent.RejectedExecutionException e) {
+                        if (!open.isEmpty()) {
+                            failed += finish(context, open.pollFirst());
+                        } else {
+                            Thread.sleep(CHECK_MILLIS);
+                        }
+                    }
                 }
+            }
+            while (!open.isEmpty()) {
+                failed += finish(context, open.pollFirst());
             }
         } finally {
             // Abgebrochen oder angehalten: noch wartende Abrufe entfallen, ein laufender endet regulär.
-            tickets.forEach(AcquisitionScheduler.Ticket::cancel);
+            open.forEach(AcquisitionScheduler.Ticket::cancel);
         }
+        if (failed > 0) {
+            // Gescheitert statt fertig: „Fortsetzen“ lädt dann im selben Eintrag nur, was noch fehlt.
+            throw new com.aresstack.spaceharvester.application.jobs.JobFailedException(PAGES_MISSING,
+                    failed + (failed == 1 ? " Seite ließ" : " Seiten ließen") + " sich nicht laden; Fortsetzen lädt "
+                            + "nur, was noch fehlt");
+        }
+    }
+
+    /** Wartet auf eine Seite und zählt sie; 1, wenn sie sich nicht laden ließ. */
+    private static long finish(JobContext context, AcquisitionScheduler.Ticket ticket) throws InterruptedException {
+        boolean loaded = await(context, ticket);
+        context.processed(1);
+        if (loaded) {
+            context.written(1);
+            return 0;
+        }
+        context.failed(1);
+        return 1;
     }
 
     /**

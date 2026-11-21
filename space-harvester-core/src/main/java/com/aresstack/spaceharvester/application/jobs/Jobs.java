@@ -70,6 +70,9 @@ public class Jobs implements AutoCloseable {
     static final String TIMEOUT = "TIMEOUT";
     static final String UNEXPECTED = "UNEXPECTED";
     static final String SHUTDOWN = "SHUTDOWN";
+    /** Text eines Hintergrundauftrags, den das Beenden des Dienstes unterbrochen hat. */
+    static final String SHUTDOWN_INTERRUPTED = "Der Dienst wurde beendet; der Hintergrundauftrag setzt nach dem "
+            + "Neustart fort";
 
     private static final System.Logger LOG = System.getLogger(Jobs.class.getName());
     private static final String COMPONENT = "Jobs";
@@ -1274,7 +1277,12 @@ public class Jobs implements AutoCloseable {
             for (Job job : queued) {
                 open.remove(job.id);
                 job.cancelRequested = true;
-                job.finish(JobState.CANCELLED, null, now);
+                if (job.type.background()) {
+                    // Hintergrund: unterbrochen statt abgebrochen, damit er nach dem Neustart von selbst fortsetzt.
+                    job.finish(JobState.FAILED, new JobError(INTERRUPTED, SHUTDOWN_INTERRUPTED), now);
+                } else {
+                    job.finish(JobState.CANCELLED, null, now);
+                }
                 store.save(job.snapshot());
             }
             queued.clear();
@@ -1282,6 +1290,9 @@ public class Jobs implements AutoCloseable {
             lock.notifyAll();
             for (Job job : open.values()) {
                 job.cancelRequested = true;
+                if (job.type.background() && !job.pauseRequested) {
+                    job.shutdownInterrupted = true;
+                }
                 store.save(job.snapshot());
             }
             reconnects.clear();
@@ -1431,7 +1442,8 @@ public class Jobs implements AutoCloseable {
         // laufen nach derselben Einstellung „Vorbereitung“ wie die Downloads, sofort wirksam.
         boolean general = running < parallelPreparations;
         int spare = Math.max(1, parallelPreparations - 1);
-        boolean followUps = general && runningFollowUps < spare;
+        // Folge- und Hintergrundaufträge zusammen nie auf allen Plätzen, egal wer zuerst kam.
+        boolean followUps = general && runningFollowUps + runningBackground < spare;
         // Hintergrund (Angelo 21.11.2026): zusammen mit den Folgeaufträgen nie alle Plätze, damit ein Auftrag des
         // Benutzers immer sofort starten kann.
         boolean background = general && runningFollowUps + runningBackground < spare;
@@ -1593,6 +1605,9 @@ public class Jobs implements AutoCloseable {
             Instant now = clock.instant();
             if (cause == null) {
                 job.finish(JobState.COMPLETED, null, now);
+            } else if (job.shutdownInterrupted) {
+                // Hintergrund beim Beenden des Dienstes: unterbrochen, nicht abgebrochen; setzt nach dem Neustart fort.
+                job.finish(JobState.FAILED, new JobError(INTERRUPTED, SHUTDOWN_INTERRUPTED), now);
             } else if (cause instanceof JobCancelledException || job.cancelRequested) {
                 // Auch wenn der Schritt nach dem angeforderten Abbruch anders scheitert, etwa eine abgebrochene
                 // Modellanfrage: Der Benutzer hat abgebrochen oder angehalten, ein Fehler war es nicht.
@@ -1953,6 +1968,9 @@ public class Jobs implements AutoCloseable {
 
     /** Veränderlicher Zustand eines offenen Auftrags; Felder außer den Zählern nur unter {@code lock} ändern. */
     private final class Job implements JobContext {
+        /** Hintergrund, beim Beenden des Dienstes noch am Laufen: endet als unterbrochen, nicht abgebrochen. */
+        volatile boolean shutdownInterrupted;
+
 
         final String id;
         final JobType type;
