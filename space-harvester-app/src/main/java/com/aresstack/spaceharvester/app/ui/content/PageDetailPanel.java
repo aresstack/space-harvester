@@ -255,7 +255,11 @@ public final class PageDetailPanel extends JPanel {
     private final JComponent tabIcons;
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
-    /** Ablage der Aussagenanalyse oben rechts in Aussagen, Graph und Beziehungen (Fahrplan A3). */
+    /**
+     * Ablage der Aussagenanalyse oben rechts in Aussagen und Graph (Fahrplan A3). Nicht bei „Beziehungen“: dort stehen
+     * die beiden Icon-Knöpfe, und die sieben Unterreiter müssen bei 960 px einzeilig bleiben (P1), auch mit der
+     * breiteren Schrift ohne Inter.
+     */
     private final AnalyzerStoreField storeField = new AnalyzerStoreField();
     /** Liegt beim Umschalten der Ablage über den Unterreitern von „Analysen“. */
     private com.aresstack.spaceharvester.app.ui.controls.BusyOverlay storeBusy;
@@ -1073,7 +1077,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private void showRelations() {
         String sub = analysisTabs.selected();
-        storeField.setVisible(STATEMENTS.equals(sub) || GRAPH.equals(sub) || RELATIONS.equals(sub));
+        storeField.setVisible(STATEMENTS.equals(sub) || GRAPH.equals(sub)); // nicht bei „Beziehungen“, siehe Feld
         boolean selected = RELATIONS.equals(analysisTabs.selected());
         analysisView.proposeIcon().setVisible(selected);
         analysisView.createIcon().setVisible(selected);

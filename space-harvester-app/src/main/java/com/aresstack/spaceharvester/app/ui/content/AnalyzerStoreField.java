@@ -8,7 +8,7 @@ import javax.swing.JComboBox;
 import java.util.function.Consumer;
 
 /**
- * Kompaktes Auswahlfeld der Ablage oben rechts in der Reiterzeile von Aussagen, Graph und Beziehungen (Fahrplan A3,
+ * Kompaktes Auswahlfeld der Ablage oben rechts in der Reiterzeile von Aussagen und Graph (Fahrplan A3,
  * UX-Vorgabe): zeigt, aus welcher Ablage (MaltParser oder KI) alle Ansichten lesen, und ändert dieselbe Einstellung wie
  * Einstellungen › Modelle, „Aussagenanalyse“. Setzen von außen meldet nichts. Geschlossen zeigt es nur „Parser“ oder
  * „KI“, damit die sieben Unterreiter bei 960 px in einer Zeile bleiben (P1); Liste und Tooltip nennen die vollen Namen.
