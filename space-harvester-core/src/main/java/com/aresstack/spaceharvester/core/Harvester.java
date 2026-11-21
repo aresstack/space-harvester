@@ -352,6 +352,7 @@ public final class Harvester implements AutoCloseable {
     private FileSynonymVectorCache synonymVectors;
     private final AcronymResolution acronymResolution;
     private final Glossary glossary;
+    private final com.aresstack.spaceharvester.application.glossary.TechnicalTerms technicalTerms;
     private final GlossaryClassification glossaryClassification;
     private final com.aresstack.spaceharvester.application.glossary.GlossaryOverview glossaryOverview;
     private final SynonymDiscovery synonymDiscovery;
@@ -386,6 +387,7 @@ public final class Harvester implements AutoCloseable {
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    private final com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
     private final com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice;
     private final StatementAnalysisJobs statementAnalysisJobs;
@@ -736,6 +738,11 @@ public final class Harvester implements AutoCloseable {
             // #122 Stufe 2: Fachglossar als Nutzerdaten neben den Beziehungen; KI nur auf Knopfdruck, dasselbe Modell.
             this.glossary = new Glossary(catalog, new FileGlossaryStore(builder.dataDirectory.resolve("glossary")),
                     access, cache::findHeader, clock);
+            // K5b: Suchmethode „Nur Fachbegriffe“ über Glossar und Synonymbeziehungen, nichts gespeichert.
+            // Reihenfolge wie im Reiter „Fachglossar“: Wichtigkeit aus der Übersicht (entsteht weiter unten, gefragt
+            // wird erst bei der Suche), je Bereich gehalten bis zur nächsten Aussagenanalyse.
+            this.technicalTerms = new com.aresstack.spaceharvester.application.glossary.TechnicalTerms(glossary,
+                    termRelations, (caller, scope) -> technicalImportance(caller, scope));
             // ADR 0032, FL5b: erste Phase „Begriffe ableiten“ aus den Aussagenanalysen, ohne Modell; Regeln aus
             // glossary.rules.* der wirksamen Konfiguration.
             TermSettings glossaryTerms = builder.terms;
@@ -746,6 +753,15 @@ public final class Harvester implements AutoCloseable {
                     who -> self.knowledgeGraph.analysed(who),
                     () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(),
                     this.aiRelease::mayProcess, clock);
+            // D4: „ohne aktuelle Aussagenanalyse“ zählt auch nie analysierte Seiten des Bereichs, Rechte des Aufrufers.
+            Holdings glossaryHoldings = this.holdings;
+            this.glossaryClassification.localPages((who, scope) -> glossaryHoldings.resolve(who, scope.global()
+                    ? new com.aresstack.spaceharvester.application.holdings.Selection(catalog.all().stream()
+                    .map(source -> com.aresstack.spaceharvester.application.holdings.Selection.Root.source(
+                            source.id())).toList())
+                    : com.aresstack.spaceharvester.application.holdings.Selection.of(
+                    new com.aresstack.spaceharvester.application.holdings.Selection.Root(scope.sourceId(),
+                            scope.spaceKey(), null))).pages());
             // #336: Synonymerkennung auf Knopfdruck; Embedding- und Chat-Modell folgen der Konfiguration, Text nur
             // aus freigegebenen Quellen, Budget aus terms.synonyms.*.
             EmbeddingProcessor embeddingForTerms = embedding;
@@ -762,6 +778,9 @@ public final class Harvester implements AutoCloseable {
             FileSynonymVectorCache synonymVectors = new FileSynonymVectorCache(
                     builder.dataDirectory.resolve("term-relations").resolve("synonyms"));
             synonymCandidates.vectors(synonymVectors);
+            // K3: Synonyme wahlweise nur aus bestätigten Fachbegriffen des Glossars.
+            Glossary synonymGlossary = this.glossary;
+            synonymCandidates.glossaryTerms(scope -> synonymGlossary.confirmedTerms(scope.relationScope()));
             this.synonymVectors = synonymVectors;
             this.synonymDiscovery = new SynonymDiscovery(catalog, synonymCandidates, access, termRelations, judge,
                     synonymCache, jobs,
@@ -1015,7 +1034,7 @@ public final class Harvester implements AutoCloseable {
             this.automaticImages = new com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions(
                     jobs, imageAnalysis, cache::snapshots,
                     () -> this.settings != null ? this.settings.images() : startImages,
-                    sourceId -> catalog.find(sourceId).isPresent());
+                    sourceId -> catalog.find(sourceId).isPresent(), OWNER);
             opened.add(pageReleases.subscribe(automaticImages::releasesChanged));
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
@@ -1102,6 +1121,8 @@ public final class Harvester implements AutoCloseable {
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            this.verbQueries = new com.aresstack.spaceharvester.application.knowledge.VerbQueries(
+                    this.knowledgeGraph);
             // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
             // gemerkten Eingabe-Hash, die Analysen rechnen neu.
             KnowledgeGraph transcriptGraph = this.knowledgeGraph;
@@ -1115,6 +1136,7 @@ public final class Harvester implements AutoCloseable {
             this.glossaryOverview = new com.aresstack.spaceharvester.application.glossary.GlossaryOverview(
                     knowledgeGraph::analysed,
                     () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules(), glossary);
+            knowledgeGraph.subscribe(technicalTerms::forget);
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
@@ -1771,6 +1793,29 @@ public final class Harvester implements AutoCloseable {
         return glossary;
     }
 
+    /** Wichtigkeit je Suchwert für „Nur Fachbegriffe“ (K5b), wie der Reiter „Fachglossar“; ohne Übersicht keine. */
+    private java.util.Map<String, com.aresstack.spaceharvester.application.glossary.GlossaryDerivation.Importance>
+            technicalImportance(AccessContext caller,
+                                com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope scope) {
+        com.aresstack.spaceharvester.application.glossary.GlossaryOverview overview = this.glossaryOverview;
+        if (overview == null || scope.sourceIds().size() > 1) {
+            return java.util.Map.of();
+        }
+        String sourceId = scope.sourceIds().isEmpty() ? null : scope.sourceIds().iterator().next();
+        String spaceKey = sourceId != null && scope.spaceKeys().size() == 1 ? scope.spaceKeys().iterator().next()
+                : null;
+        java.util.Map<String, com.aresstack.spaceharvester.application.glossary.GlossaryDerivation.Importance> result =
+                new java.util.HashMap<>();
+        overview.importance(caller, sourceId, spaceKey, () -> false).rows()
+                .forEach(row -> result.put(row.normalized(), row.importance()));
+        return result;
+    }
+
+    /** Suchmethode „Nur Fachbegriffe“ (K5b): Fachbegriffe zu einem Suchtext, auch über ihre Synonyme. */
+    public com.aresstack.spaceharvester.application.glossary.TechnicalTerms technicalTerms() {
+        return technicalTerms;
+    }
+
     /** „Fachbegriffe ermitteln“: KI-Lauf nur auf ausdrücklichen Wunsch. */
     public GlossaryClassification glossaryClassification() {
         return glossaryClassification;
@@ -1959,6 +2004,11 @@ public final class Harvester implements AutoCloseable {
      */
     public KnowledgeGraph knowledgeGraph() {
         return knowledgeGraph;
+    }
+
+    /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries() {
+        return verbQueries;
     }
 
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */

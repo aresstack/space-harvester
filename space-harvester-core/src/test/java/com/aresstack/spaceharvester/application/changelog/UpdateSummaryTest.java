@@ -322,6 +322,21 @@ class UpdateSummaryTest {
     }
 
     @Test
+    void summaryStillValidSaysOnlyYesOrNoWithTheSameRightsAndRelease() {
+        String id = oneUpdate();
+        assertThat(log.summaryStillValid(CALLER, "wiki", id, null)).as("keine abgelegt").isFalse();
+        run(log.summarize(CALLER, "wiki", id));
+        assertThat(log.summaryStillValid(CALLER, "wiki", id, null)).isTrue();
+
+        hiddenFromReader.add("100");
+        assertThat(log.summaryStillValid(READER, "wiki", id, null)).isFalse();
+        assertThat(log.summaryStillValid(CALLER, "wiki", id, null)).isTrue();
+
+        released.remove("100");
+        assertThat(log.summaryStillValid(CALLER, "wiki", id, null)).isFalse();
+    }
+
+    @Test
     void withdrawingTheReleaseOfAnInputPageDeletesTheSummaryButOtherWithdrawalsDoNot() {
         String id = oneUpdate();
         run(log.summarize(CALLER, "wiki", id));

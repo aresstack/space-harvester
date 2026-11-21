@@ -72,6 +72,16 @@ public interface StatementAnalyzer {
     }
 
     /**
+     * Wie {@link #analyze(String, String, BooleanSupplier, java.util.function.Consumer)}; ein Analysator, der Text an
+     * einen Dienst schickt, prüft {@code released} vor JEDEM Aufruf (ADR 0028: Freigabe während des Laufs entzogen,
+     * nichts mehr senden). Lokale Analysatoren schicken nichts und übergehen es.
+     */
+    default ParsedStatements analyze(String documentId, String text, BooleanSupplier cancelled,
+                                     BooleanSupplier released, java.util.function.Consumer<Costs> costs) {
+        return analyze(documentId, text, cancelled, costs);
+    }
+
+    /**
      * Zahlen eines Laufs des KI-Analysators (Fahrplan Paket A2), ohne Inhalte.
      *
      * @param sentences          Sätze, die an das Modell gingen

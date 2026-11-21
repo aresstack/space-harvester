@@ -62,6 +62,7 @@ public class PageImageAnalysis {
     private final Assets assets;
     private final Enrichments enrichments;
     private final Clock clock;
+    private final ModelPriority priority = new ModelPriority();
 
     public PageImageAnalysis(Assets assets, Enrichments enrichments, Clock clock) {
         this.assets = Objects.requireNonNull(assets, "assets");
@@ -72,6 +73,11 @@ public class PageImageAnalysis {
     /** Ob gerade ein Vision-Modell eingestellt ist. */
     public boolean available() {
         return assets.describerInUse().isPresent();
+    }
+
+    /** Wie viele Beschreibungen zugleich an das eingestellte Modell gehen dürfen ({@code ai.parallel}); ohne Modell 1. */
+    public int parallel() {
+        return assets.describerInUse().map(model -> Math.max(1, model.parallel())).orElse(1);
     }
 
     /**
@@ -133,7 +139,9 @@ public class PageImageAnalysis {
      * @throws SourceAccessException     wenn die Lese-Ansicht nicht ladbar ist
      */
     public PageImages describe(PageSnapshot snapshot) {
-        return describe(snapshot, false, entry -> { });
+        try (ModelPriority.Interactive ignored = priority.interactive()) {
+            return describe(snapshot, false, entry -> { });
+        }
     }
 
     /**
@@ -141,7 +149,24 @@ public class PageImageAnalysis {
      * aufrufenden Thread, damit die Oberfläche Beschreibungen schon während des Laufs zeigt.
      */
     public PageImages describe(PageSnapshot snapshot, java.util.function.Consumer<ImagePayload.Entry> progress) {
+        try (ModelPriority.Interactive ignored = priority.interactive()) {
+            return describe(snapshot, false, progress);
+        }
+    }
+
+    /**
+     * Wie {@link #describe(PageSnapshot, java.util.function.Consumer)} für den Hintergrundlauf „Bilder beschreiben“:
+     * zählt nicht als interaktive Beschreibung ({@link #priority()}), damit der Lauf vor den Klicks des Benutzers
+     * zurücktritt statt vor sich selbst.
+     */
+    public PageImages describeInBackground(PageSnapshot snapshot,
+                                           java.util.function.Consumer<ImagePayload.Entry> progress) {
         return describe(snapshot, false, progress);
+    }
+
+    /** Vorrang der interaktiven Beschreibungen vor dem Hintergrundlauf. */
+    public ModelPriority priority() {
+        return priority;
     }
 
     /**
@@ -150,12 +175,16 @@ public class PageImageAnalysis {
      * Modell, eine Freigabe wird nicht gespeichert; die nächste Seite derselben Quelle bleibt gesperrt.
      */
     public PageImages describeOnce(PageSnapshot snapshot) {
-        return describe(snapshot, true, entry -> { });
+        try (ModelPriority.Interactive ignored = priority.interactive()) {
+            return describe(snapshot, true, entry -> { });
+        }
     }
 
     /** Wie {@link #describeOnce(PageSnapshot)} mit {@code progress} wie bei {@link #describe(PageSnapshot, java.util.function.Consumer)}. */
     public PageImages describeOnce(PageSnapshot snapshot, java.util.function.Consumer<ImagePayload.Entry> progress) {
-        return describe(snapshot, true, progress);
+        try (ModelPriority.Interactive ignored = priority.interactive()) {
+            return describe(snapshot, true, progress);
+        }
     }
 
     private PageImages describe(PageSnapshot snapshot, boolean releasedOnce,
@@ -347,6 +376,12 @@ public class PageImageAnalysis {
      * @throws ImageDescriptionException {@code NOT_CONFIGURED} ohne Vision-Modell, {@code NOT_RELEASED} ohne Freigabe
      */
     public PageImages describeOne(PageSnapshot snapshot, int index, boolean releasedOnce, boolean fresh) {
+        try (ModelPriority.Interactive ignored = priority.interactive()) {
+            return describeOneNow(snapshot, index, releasedOnce, fresh);
+        }
+    }
+
+    private PageImages describeOneNow(PageSnapshot snapshot, int index, boolean releasedOnce, boolean fresh) {
         PageKey key = snapshot.key();
         ImageDescriber model = assets.describerInUse().orElseThrow(() -> new ImageDescriptionException(
                 ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));

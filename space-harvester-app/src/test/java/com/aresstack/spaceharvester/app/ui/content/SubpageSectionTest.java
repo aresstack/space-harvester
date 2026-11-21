@@ -44,4 +44,21 @@ class SubpageSectionTest {
         });
         assertThat(opened).containsExactly("11", "11", "13");
     }
+
+    @Test
+    void aBadgeSectionNamesTheCountBehindEachSubpage() throws Exception {
+        List<String> opened = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            SubpageSection section = new SubpageSection("Unterseiten", 8).badge("Knoten");
+            section.onOpen(opened::add);
+            section.rows(List.of(new SubpageSection.Row(List.of(), new PageNode("11", "Zahlungen", "DEV", null),
+                    List.of(), null, 12)), true);
+            assertThat(section.table().getColumnCount()).isEqualTo(1);
+            assertThat(section.table().getTableHeader()).as("kein Spaltenkopf über der Liste (UX)").isNull();
+            assertThat(section.table().getValueAt(0, 0)).isEqualTo("Zahlungen");
+            assertThat(section.copyText()).isEqualTo(TermsTab.BELOW + "\nZahlungen (12 Knoten)");
+            section.open(0, 0);
+        });
+        assertThat(opened).containsExactly("11");
+    }
 }

@@ -330,6 +330,31 @@ public class Assets implements DocumentInventory {
     /** Laufende Beschreibungen; die Grenze kommt bei jedem Aufruf aus der Einstellung. */
     private final java.util.concurrent.atomic.AtomicInteger describingNow =
             new java.util.concurrent.atomic.AtomicInteger();
+    /**
+     * Eigene Kontingente (Angelo 21.11.2026: „dann hat jeder Job quasi das gleiche Kontingent“): Ein Auftrag, der seine
+     * Beschreibungen in {@link #inLane} laufen lässt, zählt sie in seiner eigenen Spur, nicht in {@link #describingNow};
+     * so verdrängen mehrere Hintergrundaufträge weder einander noch die Beschreibungen, die der Benutzer anstößt.
+     */
+    private final Map<String, java.util.concurrent.atomic.AtomicInteger> lanes = new java.util.HashMap<>();
+    private static final ThreadLocal<String> LANE = new ThreadLocal<>();
+
+    /**
+     * Führt {@code work} in der Spur {@code lane} aus: Beschreibungen in diesem Thread zählen gegen ein eigenes
+     * Kontingent von {@link ImageDescriber#parallel()} gleichzeitigen Aufrufen.
+     */
+    public static <T> T inLane(String lane, java.util.function.Supplier<T> work) {
+        String before = LANE.get();
+        LANE.set(Objects.requireNonNull(lane, "lane"));
+        try {
+            return work.get();
+        } finally {
+            if (before == null) {
+                LANE.remove();
+            } else {
+                LANE.set(before);
+            }
+        }
+    }
     private final Map<String, CompletableFuture<ImageDescription>> describing = new ConcurrentHashMap<>();
 
     /** Alle Anhänge der Seite mit Art, Diagrammbezug und dem abgelegten Stand; lädt nichts herunter. */
@@ -3036,21 +3061,51 @@ public class Assets implements DocumentInventory {
         }
     }
 
-    /** Belegt einen Platz, solange weniger als {@code limit} Beschreibungen laufen. */
-    private boolean enterDescription(int limit) {
+    /**
+     * Belegt in der Spur des Threads einen Platz, solange dort weniger als {@code limit} Beschreibungen laufen.
+     *
+     * @return der belegte Zähler, oder {@code null}, wenn kein Platz frei ist
+     */
+    private java.util.concurrent.atomic.AtomicInteger enterDescription(int limit) {
+        String lane = LANE.get();
+        if (lane != null) {
+            synchronized (lanes) {
+                java.util.concurrent.atomic.AtomicInteger counter =
+                        lanes.computeIfAbsent(lane, key -> new java.util.concurrent.atomic.AtomicInteger());
+                if (counter.get() >= limit) {
+                    return null;
+                }
+                counter.incrementAndGet();
+                return counter;
+            }
+        }
         while (true) {
             int now = describingNow.get();
             if (now >= limit) {
-                return false;
+                return null;
             }
             if (describingNow.compareAndSet(now, now + 1)) {
-                return true;
+                return describingNow;
+            }
+        }
+    }
+
+    private void leaveDescription(java.util.concurrent.atomic.AtomicInteger counter) {
+        if (counter == describingNow) {
+            describingNow.decrementAndGet();
+            return;
+        }
+        synchronized (lanes) {
+            if (counter.decrementAndGet() == 0) {
+                // Leere Spuren fallen weg.
+                lanes.values().removeIf(value -> value == counter);
             }
         }
     }
 
     private ImageDescription generateGated(ImageDescriber model, AssetContent content, String instruction) {
-        if (!enterDescription(Math.max(1, model.parallel()))) {
+        java.util.concurrent.atomic.AtomicInteger slot = enterDescription(Math.max(1, model.parallel()));
+        if (slot == null) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.BUSY,
                     "Zu viele gleichzeitige Bildbeschreibungen", null);
         }
@@ -3063,7 +3118,7 @@ public class Assets implements DocumentInventory {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Beschreibung fehlgeschlagen",
                     e);
         } finally {
-            describingNow.decrementAndGet();
+            leaveDescription(slot);
         }
         if (text == null || text.isBlank()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Leere Beschreibung", null);

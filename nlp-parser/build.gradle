@@ -66,7 +66,8 @@ tasks.named('test') {
     }
     // Zweiter Aussagenanalysator (Fahrplan Paket A2) gegen einen Ollama-Server, nur auf Anfrage und nur über die
     // HTTP-API: -PstatementModelLiveOllama=http://localhost:11434 [-PstatementModelLiveModel=gemma4:12b]
-    ['statementModelLiveOllama', 'statementModelLiveModel'].each { name ->
+    // [-PstatementModelLiveMissing=true: nur Texte ohne gepinnte Antwort, etwa für einen neuen Prüftext]
+    ['statementModelLiveOllama', 'statementModelLiveModel', 'statementModelLiveMissing'].each { name ->
         if (project.hasProperty(name)) {
             systemProperty "statement.model.live.${name.substring('statementModelLive'.length()).uncapitalize()}",
                     project.property(name)

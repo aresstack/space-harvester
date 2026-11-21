@@ -336,6 +336,7 @@ class PageImageAnalysisTest {
         assertThat(jobs.status(job.id()).state())
                 .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
         assertThat(job.type()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.ENRICHMENT);
+        assertThat(job.owner()).as("ohne Eigentümer sieht die App den Auftrag nicht").isNull();
         assertThat(job.parameters()).containsEntry(AutomaticImageDescriptions.TASK_PARAMETER,
                 AutomaticImageDescriptions.TASK);
         assertThat(analysis.read(page("1", "Text")).describedCount()).isEqualTo(1);
@@ -431,6 +432,42 @@ class PageImageAnalysisTest {
         assertThat(next.images()).isEqualTo(1);
         assertThat(next.open()).isZero();
         assertThat(describer.calls).isEqualTo(5);
+    }
+
+    @Test
+    void aPageWithoutReadingViewThatTurnsOutLargeStopsTheNextPageAlsoWhileItWaitsForASlot() {
+        // Ohne gespeicherte Lese-Ansicht zählt Seite 1 vorab als ein Bild, hat aber vier (Codex #1028).
+        for (int i = 1; i <= 4; i++) {
+            source.image("1", "a" + i, "a" + i + ".png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1, (byte) i});
+        }
+        source.image("2", "b1", "b1.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 2, 1});
+        com.aresstack.spaceharvester.application.configuration.ImageSettings three =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 3);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text"), page("2", "Text")).iterator(), () -> three, "wiki"::equals);
+
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki", three, new RecordingContext());
+
+        assertThat(outcome.images()).isEqualTo(4);
+        assertThat(outcome.open()).as("Seite 2 wartet auf den nächsten Lauf").isEqualTo(1);
+        assertThat(describer.calls).isEqualTo(4);
+    }
+
+    @Test
+    void cancellingWhileAPageWaitsForASlotStartsNoFurtherPage() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        RecordingContext context = new RecordingContext();
+        // Während Seite 1 beim Modell ist, bricht der Benutzer ab; Seite 2 wartet da schon auf den einzigen Platz.
+        describer.during = () -> context.cancel = true;
+        com.aresstack.spaceharvester.application.configuration.ImageSettings on =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text"), page("2", "Text")).iterator(), () -> on, "wiki"::equals);
+
+        assertThatThrownBy(() -> automatic.run("wiki", on, context))
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobCancelledException.class);
+        assertThat(describer.calls).as("kein weiterer Aufruf nach dem Abbruch").isEqualTo(1);
     }
 
     @Test
@@ -653,6 +690,109 @@ class PageImageAnalysisTest {
         assertThat(first.failed + second.failed + third.failed).isZero();
     }
 
+    /**
+     * Echttest wie oben, aber mehrere gleichzeitig (Angelo 21.11.2026): vier freigegebene Seiten, {@code ai.parallel}
+     * 2, ohne Obergrenze. Es laufen nie mehr als zwei Bilder zugleich beim Modell, und alle vier werden beschrieben.
+     */
+    @Test
+    void theAutomaticRunDescribesRealImagesInParallelWithALocalVisionModel() throws Exception {
+        String base = System.getenv("OLLAMA_PROBE_IMAGES");
+        org.junit.jupiter.api.Assumptions.assumeTrue(base != null && !base.isBlank());
+        String model = Optional.ofNullable(System.getenv("OLLAMA_PROBE_VISION")).orElse("gemma4:12b");
+        com.aresstack.spaceharvester.source.ai.RemoteAi ai = new com.aresstack.spaceharvester.source.ai.RemoteAi(
+                new com.aresstack.spaceharvester.ai.AiServiceSettings(java.net.URI.create(base), null, model, null,
+                        null, java.time.Duration.ofMinutes(5), null, java.util.Set.of(), null, model)
+                        .withProvider(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA),
+                com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort.direct(),
+                com.aresstack.spaceharvester.source.TrustBundles.NONE, "b1-probe");
+        java.util.concurrent.atomic.AtomicInteger now = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger peak = new java.util.concurrent.atomic.AtomicInteger();
+        List<String> answers = new java.util.concurrent.CopyOnWriteArrayList<>();
+        ImageDescriber vision = new ImageDescriber() {
+            @Override
+            public String id() {
+                return "live-vision";
+            }
+
+            @Override
+            public String modelVersion() {
+                return model;
+            }
+
+            @Override
+            public int parallel() {
+                return 2;
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType) {
+                peak.accumulateAndGet(now.incrementAndGet(), Math::max);
+                try {
+                    String text = ai.describeImage(image, mediaType);
+                    answers.add(text);
+                    return text;
+                } finally {
+                    now.decrementAndGet();
+                }
+            }
+
+            @Override
+            public boolean mayDescribe(String sourceId) {
+                return false;
+            }
+        };
+        String[] words = {"SPOOL", "NACHTLAUF", "DRUCKER", "ARCHIV"};
+        java.awt.Color[] colors = {java.awt.Color.RED, java.awt.Color.BLUE, java.awt.Color.GREEN.darker(),
+                java.awt.Color.MAGENTA};
+        java.util.Set<PageKey> released = new java.util.HashSet<>();
+        List<PageSnapshot> pages = new ArrayList<>();
+        for (int i = 0; i < words.length; i++) {
+            String id = String.valueOf(i + 1);
+            source.image(id, "att" + id, words[i].toLowerCase(java.util.Locale.ROOT) + ".png",
+                    drawn(words[i], colors[i]));
+            released.add(new PageKey("wiki", id));
+            pages.add(page(id, "Text"));
+        }
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "wiki".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(directory), 10_000_000, Clock.systemUTC(), vision,
+                null);
+        assets.pageReleases(released::contains);
+        store = new InMemoryEnrichmentStore();
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, new Enrichments(PROJECTOR,
+                List.of(new ImageProcessor(() -> vision)), store, Clock.systemUTC()), Clock.systemUTC());
+        com.aresstack.spaceharvester.application.configuration.ImageSettings unlimited =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 0);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis,
+                sourceId -> pages.iterator(), () -> unlimited, "wiki"::equals);
+
+        long start = System.currentTimeMillis();
+        RecordingContext context = new RecordingContext();
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki", unlimited, context);
+        long millis = System.currentTimeMillis() - start;
+
+        System.out.println("LIVE-PARALLEL model=" + model + " ms=" + millis + " peak=" + peak.get() + " run="
+                + outcome + " events=" + context.events.stream().map(e -> e.severity() + ":" + e.code()).toList());
+        for (String answer : answers) {
+            String upper = answer.toUpperCase(java.util.Locale.ROOT);
+            System.out.println("LIVE-PARALLEL answer chars=" + answer.length() + " words="
+                    + java.util.Arrays.stream(words).filter(upper::contains).toList());
+        }
+        assertThat(outcome.images()).isEqualTo(4);
+        assertThat(outcome.failed()).isZero();
+        assertThat(peak.get()).as("nie mehr als ai.parallel zugleich, aber mehr als eins").isEqualTo(2);
+        assertThat(answers).hasSize(4).allSatisfy(answer -> assertThat(answer).isNotBlank());
+    }
+
     private static byte[] drawn(String word, java.awt.Color color) throws java.io.IOException {
         java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(480, 240,
                 java.awt.image.BufferedImage.TYPE_INT_RGB);
@@ -670,6 +810,134 @@ class PageImageAnalysisTest {
         return out.toByteArray();
     }
 
+    @Test
+    void theRunCarriesItsOwnerSoTheAppListsIt() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        com.aresstack.spaceharvester.application.configuration.ImageSettings on =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text")).iterator(), () -> on, "wiki"::equals, "kern");
+
+        assertThat(automatic.automatic("wiki").orElseThrow().owner()).isEqualTo("kern");
+    }
+
+    @Test
+    void theRunDescribesSeveralPagesAtOnceUpToTheParallelSetting() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        describer.parallel = 2;
+        java.util.concurrent.CountDownLatch both = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.atomic.AtomicBoolean together = new java.util.concurrent.atomic.AtomicBoolean(true);
+        describer.during = () -> {
+            both.countDown();
+            try {
+                // Der Reihe nach käme der zweite Aufruf erst nach dem Ende des ersten: dann läuft die Frist ab.
+                if (!both.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    together.set(false);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        com.aresstack.spaceharvester.application.configuration.ImageSettings on =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text"), page("2", "Text")).iterator(), () -> on, "wiki"::equals);
+
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki", on, new RecordingContext());
+
+        assertThat(together).as("beide Bilder gleichzeitig beim Modell").isTrue();
+        assertThat(outcome.pages()).isEqualTo(2);
+        assertThat(outcome.images()).isEqualTo(2);
+    }
+
+    @Test
+    void parallelPagesReserveTheLimitBeforeTheyStartSoTheRunDoesNotOvershoot() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        source.image("3", "att3", "karte.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 9});
+        describer.parallel = 3;
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(3);
+        describer.during = () -> {
+            started.countDown();
+            try {
+                // Hielte der Lauf die Grenze nicht vorab, liefen hier alle drei Seiten zugleich los.
+                started.await(1, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        com.aresstack.spaceharvester.application.configuration.ImageSettings two =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 2);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text"), page("2", "Text"), page("3", "Text")).iterator(), () -> two,
+                "wiki"::equals);
+        RecordingContext context = new RecordingContext();
+
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki", two, context);
+
+        assertThat(outcome.images()).isEqualTo(2);
+        assertThat(outcome.open()).isEqualTo(1);
+        assertThat(describer.calls).isEqualTo(2);
+        assertThat(context.incomplete).isTrue();
+    }
+
+    @Test
+    void aRunHasItsOwnContingentAndDoesNotCrowdOutTheUser() throws Exception {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        PageImageAnalysis analysis = analysis();
+        java.util.concurrent.CountDownLatch inLane = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        describer.during = () -> {
+            if (Thread.currentThread().getName().equals("spur")) {
+                inLane.countDown();
+                try {
+                    release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        // Kontingent 1: belegt der Auftrag seinen Platz, bekommt der Benutzer trotzdem sofort einen.
+        java.util.concurrent.FutureTask<PageImages> background = new java.util.concurrent.FutureTask<>(
+                () -> Assets.inLane("images:job-1", () -> analysis.describeInBackground(page("1", "Text"), entry -> { })));
+        Thread lane = new Thread(background, "spur");
+        lane.start();
+        assertThat(inLane.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        PageImages user = analysis.describe(page("2", "Text"));
+        release.countDown();
+
+        assertThat(user.describedCount()).as("kein BUSY für den Benutzer").isEqualTo(1);
+        assertThat(background.get(5, java.util.concurrent.TimeUnit.SECONDS).describedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void theBackgroundRunStepsBackWhileTheUserDescribesImages() throws Exception {
+        source.image("1", "att1", "ablauf.png", PNG);
+        PageImageAnalysis analysis = analysis();
+        com.aresstack.spaceharvester.application.configuration.ImageSettings on =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis,
+                sourceId -> List.of(page("1", "Text")).iterator(), () -> on, "wiki"::equals);
+        RecordingContext context = new RecordingContext();
+        ModelPriority.Interactive user = analysis.priority().interactive();
+
+        java.util.concurrent.CompletableFuture<AutomaticImageDescriptions.Outcome> run =
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> automatic.run("wiki", on, context));
+        long end = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (!context.phases.contains(AutomaticImageDescriptions.WAITING_PHASE) && System.nanoTime() < end) {
+            Thread.onSpinWait();
+        }
+        assertThat(context.phases).contains(AutomaticImageDescriptions.WAITING_PHASE);
+        assertThat(describer.calls).as("solange der Benutzer beschreibt, nichts aus dem Hintergrund").isZero();
+
+        user.close();
+
+        assertThat(run.get(5, java.util.concurrent.TimeUnit.SECONDS).images()).isEqualTo(1);
+    }
+
     private static com.aresstack.spaceharvester.application.jobs.Jobs jobs() {
         return new com.aresstack.spaceharvester.application.jobs.Jobs(
                 new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,
@@ -680,7 +948,8 @@ class PageImageAnalysisTest {
     /** Hält Ereignisse und Zähler eines Laufs fest, ohne Auftragsverwaltung. */
     private static final class RecordingContext implements com.aresstack.spaceharvester.application.jobs.JobContext {
 
-        final List<com.aresstack.spaceharvester.application.jobs.JobEvent.Draft> events = new ArrayList<>();
+        final List<com.aresstack.spaceharvester.application.jobs.JobEvent.Draft> events =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
         long failed;
         boolean incomplete;
 
@@ -689,7 +958,13 @@ class PageImageAnalysisTest {
             return "job-1";
         }
 
-        boolean cancel;
+        volatile boolean cancel;
+        final List<String> phases = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override
+        public void phase(String component, String phase) {
+            phases.add(phase);
+        }
 
         @Override
         public void checkpoint() {
@@ -958,6 +1233,13 @@ class PageImageAnalysisTest {
         boolean released = true;
         boolean fail;
         Runnable during = () -> { };
+        /** Gleichzeitige Aufrufe ({@code ai.parallel}); 1 hält die übrigen Tests der Reihe nach. */
+        int parallel = 1;
+
+        @Override
+        public int parallel() {
+            return parallel;
+        }
 
         @Override
         public String id() {
@@ -974,14 +1256,18 @@ class PageImageAnalysisTest {
 
         @Override
         public String describe(byte[] image, String mediaType, String instruction) {
-            instructions.add(instruction);
+            synchronized (this) {
+                instructions.add(instruction);
+            }
             return describe(image, mediaType);
         }
 
         @Override
         public String describe(byte[] image, String mediaType) {
-            calls++;
-            sizes.add(image.length);
+            synchronized (this) {
+                calls++;
+                sizes.add(image.length);
+            }
             during.run();
             if (fail) {
                 throw new IllegalStateException("Modell nicht erreichbar");
