@@ -99,9 +99,9 @@ class PodcastPicturesLiveTest {
                     ImageIO.write(SvgDrawing.parse(svg).raster(1280), "png",
                             out.resolve("thema-" + (i + 1) + ".png").toFile());
                     Path folder = picture.file().getParent();
+                    String planName = String.format("pic-%02d-plan", 2 + i);
                     try (var plan = Files.list(folder)) {
-                        plan.filter(file -> file.getFileName().toString().startsWith(
-                                String.format("pic-%02d-plan", 2 + i))).forEach(file -> {
+                        plan.filter(file -> file.getFileName().toString().startsWith(planName)).forEach(file -> {
                                     try {
                                         System.out.println("[live] Plan: " + Files.readString(file));
                                     } catch (java.io.IOException e) {
