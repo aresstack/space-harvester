@@ -574,6 +574,14 @@ final class TermsTab extends JPanel {
                 ? term.term() + " · " + term.expansions().get(0) : term.term();
     }
 
+    /** Wie {@link #selectionTooltip}, aber „auf 2 Unterseiten · Klick zeigt die Unterseiten“ (Herkunft, P2). */
+    static String belowTooltip(TermQueries.TermSummary term) {
+        String counts = Texts.count(term.occurrences(), "Fundstelle", "Fundstellen") + " auf "
+                + Texts.count(term.pages(), "Unterseite", "Unterseiten") + " · Klick zeigt die Unterseiten";
+        return term.kind() == TermKind.ACRONYM && !term.expansions().isEmpty()
+                ? String.join(" · ", term.expansions()) + " · " + counts : counts;
+    }
+
     /** „12 Fundstellen auf 4 Seiten · Klick zeigt die Seiten“; bei Akronymen davor die Ausschreibungen. */
     static String selectionTooltip(TermQueries.TermSummary term) {
         String counts = Texts.count(term.occurrences(), "Fundstelle", "Fundstellen") + " auf "
@@ -591,7 +599,7 @@ final class TermsTab extends JPanel {
         occurrences(current, term, chip, () -> mine == request);
     }
 
-    private void occurrences(Selection current, TermQueries.TermSummary term, ResearchPillButton chip,
+    private void occurrences(Selection current, TermQueries.TermSummary term, javax.swing.JComponent chip,
                              java.util.function.BooleanSupplier still) {
         runner.run(() -> current.occurrences(term), found -> {
             if (!still.getAsBoolean()) {
@@ -648,7 +656,7 @@ final class TermsTab extends JPanel {
         for (PageAcronyms.Acronym acronym : visible) {
             chips.add(chip(label(acronym), tooltip(acronym), acronym.occurrences().stream()
                     .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()));
-            alsoBelow(chips, ref(acronym));
+            alsoBelow(chips, ref(acronym), acronym.acronym());
         }
         identifierChips.removeAll();
         int identifiers = 0;
@@ -660,7 +668,7 @@ final class TermsTab extends JPanel {
                 }
                 identifierChips.add(chip(entry.term(), tooltip(entry), entry.occurrences().stream()
                         .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()));
-                alsoBelow(identifierChips, new TermQueries.TermRef(entry.normalized(), entry.kind()));
+                alsoBelow(identifierChips, new TermQueries.TermRef(entry.normalized(), entry.kind()), entry.term());
                 identifiers++;
             }
         }
@@ -991,6 +999,19 @@ final class TermsTab extends JPanel {
         return belowCount.count();
     }
 
+    /** Für Tests: die „+N“-Zusätze an den eigenen Begriffen als Steuerelemente. */
+    List<com.aresstack.spaceharvester.app.ui.controls.CountChip> alsoBelowChips() {
+        List<com.aresstack.spaceharvester.app.ui.controls.CountChip> found = new ArrayList<>();
+        for (JPanel list : List.of(chips, identifierChips)) {
+            for (java.awt.Component component : list.getComponents()) {
+                if (component instanceof com.aresstack.spaceharvester.app.ui.controls.CountChip chip) {
+                    found.add(chip);
+                }
+            }
+        }
+        return found;
+    }
+
     /** Für Tests: die „+N“-Zusätze an den eigenen Begriffen, in Reihenfolge. */
     List<String> alsoBelowTexts() {
         List<String> found = new ArrayList<>();
@@ -1034,8 +1055,9 @@ final class TermsTab extends JPanel {
     }
 
     /** Hängt an eine eigene Pille „+N“, wenn der Begriff auch auf N Unterseiten vorkommt. */
-    private void alsoBelow(JPanel list, TermQueries.TermRef ref) {
-        if (below == null) {
+    private void alsoBelow(JPanel list, TermQueries.TermRef ref, String text) {
+        Below current = below;
+        if (current == null) {
             return;
         }
         Integer count = belowCounts.get(ref);
@@ -1046,7 +1068,13 @@ final class TermsTab extends JPanel {
         com.aresstack.spaceharvester.app.ui.controls.CountChip also =
                 com.aresstack.spaceharvester.app.ui.controls.CountChip.choice("+" + count, Comic.MUTED).tips(tip, tip);
         also.setFocusable(false);
-        also.addActionListener(e -> also.setSelected(false));
+        // Klick: dieselben Fundstellen wie unten, nur auf den Unterseiten; ein Klick dort öffnet die Seite.
+        TermQueries.TermSummary term = new TermQueries.TermSummary(text, ref.normalized(), ref.kind(), 0, count, 1,
+                List.of(text), List.of());
+        also.addActionListener(e -> {
+            also.setSelected(false);
+            occurrences(current.terms(), term, also, () -> below == current);
+        });
         list.add(also);
     }
 
@@ -1133,7 +1161,7 @@ final class TermsTab extends JPanel {
 
     /** Ein Begriff der Unterseiten: Klick zeigt die Unterseiten mit Fundstellen; ein Klick dort öffnet die Seite. */
     private FindablePill belowChip(Selection terms, TermQueries.TermSummary term) {
-        FindablePill chip = chip(selectionLabel(term), selectionTooltip(term), List.of());
+        FindablePill chip = chip(selectionLabel(term), belowTooltip(term), List.of());
         chip.setEnabled(true);
         for (java.awt.event.ActionListener listener : chip.getActionListeners()) {
             chip.removeActionListener(listener);

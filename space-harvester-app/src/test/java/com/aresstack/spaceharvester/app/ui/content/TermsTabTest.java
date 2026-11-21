@@ -257,7 +257,13 @@ class TermsTabTest {
             assertThat(terms.belowCount()).as("ohne den Begriff, der oben steht").isEqualTo(2);
             assertThat(terms.copyText()).contains(TermsTab.BELOW + "\nZV · Zahlungsverkehr\nAntrag");
 
-            // Herkunft: Klick zeigt die Unterseiten mit Fundstellen, ein Klick öffnet die Seite.
+            // Herkunft: der Tooltip nennt die Unterseiten, der Klick zeigt sie, ein Klick öffnet die Seite.
+            assertThat(terms.belowChips().get(1).getToolTipText())
+                    .isEqualTo("3 Fundstellen auf 2 Unterseiten · Klick zeigt die Unterseiten");
+            assertThat(terms.alsoBelowChips().get(0).getToolTipText()).isEqualTo("auch auf 2 Unterseiten");
+            terms.alsoBelowChips().get(0).doClick();
+            assertThat(terms.occurrencePopup().titleText()).isEqualTo("Fundstellen von „RSL“");
+            assertThat(terms.occurrencePopup().linkTexts()).containsExactly("Unterseite A · 1 Fundstelle");
             terms.belowChips().get(1).doClick();
             assertThat(terms.occurrencePopup().linkTexts()).containsExactly("Unterseite A · 1 Fundstelle");
             terms.occurrencePopup().clickLink(0);
