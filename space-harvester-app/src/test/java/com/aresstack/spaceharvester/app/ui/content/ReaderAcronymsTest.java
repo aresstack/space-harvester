@@ -263,6 +263,49 @@ class ReaderAcronymsTest {
                 .contains("wiki", "zweites");
     }
 
+    /**
+     * Fahrplan P2 über die echte Laufzeit: „mit Unterseiten“ ist an einer Seite mit Unterseite frei, Standard aus;
+     * angehakt zeigt „Begriffe“ unter den eigenen die der Unterseite, dynamisch aus dem Core, und ein Begriff beider
+     * Seiten steht einmal oben mit „+1“. An der Unterseite selbst (ohne Unterseiten) ist die Checkbox gesperrt.
+     */
+    @Test
+    void withSubpagesTheTermsTabShowsTheTermsOfTheSubpagesBelowItsOwn() throws Exception {
+        FakeConfluence wiki = confluence("200", "Schnittstellen", WIKI_PAGE);
+        wiki.page("210", "Zahlungen", "DEV", "<p>Ansicht</p>").storage("<p>Der ZV (Zahlungsverkehr) nutzt die "
+                + "API.</p>");
+        wiki.child("200", "210");
+        Workspace workspace = start(serve(wiki), serve(confluence("300", "Leer", "<p>leer</p>")));
+        sync(workspace, "wiki");
+
+        PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
+        open(panel, "wiki", "210", false);
+        awaitTrue(() -> onEdt(() -> panel.subpages().known() != null));
+        assertThat(onEdt(() -> panel.subpages().box().isEnabled())).as("Blatt ohne Unterseiten").isFalse();
+        assertThat(onEdt(() -> panel.subpages().box().getToolTipText())).isEqualTo(Subpages.TIP_NO_CHILDREN);
+
+        open(panel, "wiki", "200", false);
+        awaitTrue(() -> onEdt(() -> panel.subpages().box().isEnabled()));
+        assertThat(onEdt(() -> panel.subpages().checked())).as("Standard aus").isFalse();
+        assertThat(onEdt(() -> panel.terms().showsBelow())).isFalse();
+
+        onEdt(() -> {
+            panel.subpages().box().setSelected(true);
+            return null;
+        });
+        awaitTrue(() -> onEdt(() -> panel.terms().belowChips().stream()
+                .anyMatch(chip -> chip.getText().startsWith("ZV"))));
+        assertThat(onEdt(() -> panel.terms().belowChips())).extracting(chip -> chip.getText())
+                .noneMatch(text -> text.startsWith("API"));
+        assertThat(onEdt(() -> panel.terms().alsoBelowTexts())).contains("+1");
+
+        onEdt(() -> {
+            panel.subpages().box().setSelected(false);
+            return null;
+        });
+        assertThat(onEdt(() -> panel.terms().showsBelow())).isFalse();
+        assertThat(onEdt(() -> panel.terms().alsoBelowTexts())).isEmpty();
+    }
+
     @Test
     void aPageMissingFromTheCacheIsLoadedStoredAndAnalysed() throws Exception {
         FakeConfluence wiki = confluence("200", "Schnittstellen", WIKI_PAGE);

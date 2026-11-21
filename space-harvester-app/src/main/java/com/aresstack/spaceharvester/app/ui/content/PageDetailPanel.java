@@ -186,6 +186,11 @@ public final class PageDetailPanel extends JPanel {
     private final TermsTab terms = new TermsTab();
     private final PassagesTab passages = new PassagesTab();
     private final ImagesTab images = new ImagesTab();
+    /**
+     * Checkbox „mit Unterseiten“ der Analyse-Reiter einer Seite (Fahrplan P2/P3): eine Stellung für alle Reiter, nur
+     * für die Sitzung, Standard aus.
+     */
+    private final Subpages subpages = new Subpages();
     /** Unterreiter „Analysen → Aussagen“ (#499): gespeicherte Analyse der Seite, neu nur auf Knopfdruck. */
     private final StatementsTab statementsView;
     /** Unterreiter „Analysen → Graph“ (#499 F): fokussierte Teilgraphen, geladen erst beim Anzeigen. */
@@ -566,7 +571,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(GRAPH, graph)
                 .tab(RELATIONS, analysisView)
                 // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Beziehungen“ gewählt ist (BG2b).
-                .actions(analysisView.proposeButton(), analysisView.createButton());
+                .actions(subpages.box(), analysisView.proposeButton(), analysisView.createButton());
         originalContent.setOpaque(false);
         fileContent.setOpaque(false);
         originalContent.add(readingPane, ORIGINAL_PAGE_CARD);
@@ -596,6 +601,7 @@ public final class PageDetailPanel extends JPanel {
             showTabStatus();
         });
         analysisTabs.onSelect(name -> {
+            subpages.tab(!PASSAGES.equals(name));
             showRelations();
             if (ANALYSES.equals(tabs.selected())) {
                 loadVisible();
@@ -624,6 +630,8 @@ public final class PageDetailPanel extends JPanel {
         breadcrumbs.onOpen(id -> load(sourceId, id, false));
         references.onOpen(id -> load(sourceId, id, false));
         terms.onJump(this::jumpTo);
+        terms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
+        subpages.onChange(this::subpagesChanged);
         passages.onJump(this::jumpTo);
         statementsView.onJump(this::jumpTo);
         statementsTab(statementsView);
@@ -753,6 +761,7 @@ public final class PageDetailPanel extends JPanel {
         sourceId = null;
         pageId = null;
         page = null;
+        subpages.page(null, null, null, null);
         assetsLoaded = false;
         readingLoaded = false;
         referencesLoaded = false;
@@ -1048,6 +1057,11 @@ public final class PageDetailPanel extends JPanel {
         analysisView.shown(ANALYSES.equals(tabs.selected()) && !wide && selected);
         statementsHelp.setVisible(ANALYSES.equals(tabs.selected()) && !wide
                 && STATEMENTS.equals(analysisTabs.selected()));
+    }
+
+    /** Für Tests: die Checkbox „mit Unterseiten“ der Analyse-Reiter. */
+    Subpages subpages() {
+        return subpages;
     }
 
     /** Für Tests: die ?-Hilfe des Unterreiters „Aussagen“. */
@@ -1448,6 +1462,45 @@ public final class PageDetailPanel extends JPanel {
         showTabStatus();
     }
 
+    /**
+     * „mit Unterseiten“ an- oder abgehakt, oder die Unterseiten haben sich geändert: die Analyse-Reiter zeigen unter
+     * dem Eigenen abgetrennt das der Unterseiten (Fahrplan P2/P3), dynamisch abgefragt, nichts kopiert.
+     */
+    private void subpagesChanged() {
+        Subpages.Below below = subpages.below();
+        AppRuntime runtime = context.runtime();
+        if (below == null || runtime == null) {
+            terms.below(null);
+            tabStatus(TERMS, " ");
+            return;
+        }
+        com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
+        SelectionTerms selection = new SelectionTerms(workspace, "den Unterseiten", below.pages());
+        terms.below(new TermsTab.Below() {
+            @Override
+            public TermsTab.Selection terms() {
+                return selection;
+            }
+
+            @Override
+            public java.util.Map<com.aresstack.spaceharvester.application.terms.TermQueries.TermRef, Integer>
+                    pageCounts() {
+                return workspace.termPageCounts(below.pages().pages());
+            }
+
+            @Override
+            public int pages() {
+                return below.size();
+            }
+        });
+        tabStatus(TERMS, subpagesStatus("Begriffe", below.size()));
+    }
+
+    /** „Begriffe aus dieser Seite und 3 Unterseiten“ für die Statuszeile. */
+    static String subpagesStatus(String what, int pages) {
+        return what + " aus dieser Seite und " + (pages == 1 ? "1 Unterseite" : pages + " Unterseiten");
+    }
+
     private void tabStatus(String tab, String text) {
         tabStatus.put(tab, text == null ? " " : text);
         showTabStatus();
@@ -1462,6 +1515,8 @@ public final class PageDetailPanel extends JPanel {
         views = loaded.enrichments();
         PageSnapshot snapshot = page.snapshot();
         PageMetadata metadata = page.header().metadata();
+        subpages.page(context.runtime() == null ? null : context.runtime().workspace(), sourceId,
+                metadata.partitionKey(), metadata.pageId());
         statementsView.page(snapshot, loaded.reader() == null ? null : loaded.reader().text());
         graphView.page(snapshot.key(), snapshot.spaceKey());
         pageShown.accept(sourceId, metadata.partitionKey());
