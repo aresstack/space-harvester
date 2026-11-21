@@ -316,6 +316,7 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    und Bildbeschreibung). Ihre Arten bauen die Stränge B1 (D2) und A2 (D3).
    „Bilder beschreiben“ hat seine Art (`images`, `ImageDescriptionJobs`): `missing` sind die freigegebenen Seiten, die
    ein Lauf an das Modell gäbe (`ImageDescriptionJobs#missing`), je Space und nur sichtbare. Ein Teil des Planers trägt
-   seine Seiten (`pages`) und beschreibt genau diese; die Liste hat der Planer beim Start mit den Rechten des
-   Aufrufers bestimmt und sie wächst nie, darum läuft der Teil nach einem Neustart ohne Aufrufer weiter. Nicht
-   freigegebene Seiten darunter meldet er gelb wie ein Lauf des Benutzers.
+   seine Seiten (`pages`) und seinen Eigentümer (`principal`, `principal.kind`, `via`) und beschreibt genau diese
+   Seiten mit dessen Rechten; je Seite gelten Inhaltsrecht und KI-Freigabe zum Zeitpunkt der Arbeit. Lässt sich der
+   Eigentümer nach einem Neustart nicht bauen, hält der Teil gelb mit `IMAGES_RESUME_BY_HAND` an wie ein Lauf des
+   Benutzers; nie technische Rechte. Nicht freigegebene Seiten darunter meldet er gelb.

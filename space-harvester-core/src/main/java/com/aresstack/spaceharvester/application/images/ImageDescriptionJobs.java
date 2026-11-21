@@ -79,7 +79,9 @@ public final class ImageDescriptionJobs {
     public static final String USER = "user";
     /** Angaben: der Benutzer, mit dessen Rechten ein von ihm gestarteter Lauf auch nach einem Neustart weiterläuft. */
     public static final String PRINCIPAL = "principal";
+    /** Angabe: Art des Benutzers ({@link AccessContext.PrincipalKind}). */
     public static final String PRINCIPAL_KIND = "principal.kind";
+    /** Angabe: der durchreichende Client eines Endnutzers. */
     public static final String VIA = "via";
     /**
      * Angabe eines Teils des Dienst-Planers (D1): seine Seiten-IDs, durch Zeilenumbruch getrennt
@@ -248,6 +250,14 @@ public final class ImageDescriptionJobs {
         String groupId = BackgroundJobs.newGroupId();
         callers.put(groupId, caller);
         return Optional.of(background.start(groupId, KIND, title, parts));
+    }
+
+    /**
+     * Merkt sich den Aufrufer einer Gruppe, die ein anderer angelegt hat (etwa der Dienst-Planer), bevor ihre Teile
+     * anlaufen; so läuft auch ein Endnutzer, der sich aus den Angaben nicht wiederherstellen lässt, mit seinen Rechten.
+     */
+    public void remember(String groupId, AccessContext caller) {
+        callers.put(Objects.requireNonNull(groupId, "groupId"), Objects.requireNonNull(caller, "caller"));
     }
 
     /**
@@ -428,15 +438,25 @@ public final class ImageDescriptionJobs {
         }
         String listed = part.parameter(PAGES);
         if (listed != null) {
-            // Ein Teil des Dienst-Planers (D1): Seine Seiten hat der Planer beim Start mit den Rechten des Aufrufers
-            // bestimmt (missing() bzw. sichtbare Seiten); die Liste ist fest und wächst nie, darum braucht der Teil
-            // auch nach einem Neustart keinen Aufrufer und läuft nie über mehr als diese Seiten.
+            // Ein Teil des Dienst-Planers (D1): genau seine Seiten, mit den Rechten seines Eigentümers. Lässt der sich
+            // nicht bauen, hält der Teil an wie ein Lauf des Benutzers (Architekt 21.11.2026); je Seite gelten beim
+            // Arbeiten Inhaltsrecht und KI-Freigabe von jetzt, nicht die beim Start.
+            AccessContext owner = caller(part);
+            if (owner == null) {
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, RESUME_BY_HAND,
+                        "Lauf eines Benutzers; bitte von Hand fortsetzen"));
+                context.pause(PauseReason.USER);
+                return;
+            }
+            PageSet visible = scope == null ? null
+                    : scope.resolve(owner, root(part.sourceId(), part.partitionKey(), null, false));
             List<PageSnapshot> chosen = new ArrayList<>();
             for (String pageId : listed.split("\n")) {
                 if (!pageId.isBlank()) {
                     find.apply(new PageKey(part.sourceId(), pageId.strip()))
                             .filter(snapshot -> part.partitionKey() == null
                                     || part.partitionKey().equals(snapshot.spaceKey()))
+                            .filter(snapshot -> visible == null || visible.contains(snapshot.key()))
                             .ifPresent(chosen::add);
                 }
             }
