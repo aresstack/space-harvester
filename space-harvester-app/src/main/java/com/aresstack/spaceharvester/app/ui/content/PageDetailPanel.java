@@ -1652,13 +1652,20 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
-    /** „Bilder aus dieser Seite und 3 Unterseiten · für 2 Unterseiten liegt noch nichts vor“. */
+    /**
+     * „für 2 Unterseiten liegt noch nichts vor“ für die Statuszeile, nur wenn etwas fehlt; die Zahl der Einträge steht
+     * im Chip (UX). Leer ({@code " "}), wenn alles vorliegt.
+     */
     static String belowStatus(String tab, int pages, BelowRows found) {
-        String what = GRAPH.equals(tab) ? "Knoten" : tab;
-        return subpagesStatus(what, pages)
-                + (found.missing() == 0 ? "" : " · für " + (found.missing() == 1 ? "1 Unterseite"
-                : found.missing() + " Unterseiten") + " liegt noch nichts vor")
-                + (found.cut() ? " · unten die ersten 1.000 von mehr" : "");
+        List<String> parts = new java.util.ArrayList<>();
+        if (found.missing() > 0) {
+            parts.add("für " + (found.missing() == 1 ? "1 Unterseite" : found.missing() + " Unterseiten")
+                    + " liegt noch nichts vor");
+        }
+        if (found.cut()) {
+            parts.add("unten die ersten 1.000 von mehr");
+        }
+        return parts.isEmpty() ? " " : String.join(" · ", parts);
     }
 
     /**

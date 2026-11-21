@@ -353,7 +353,7 @@ class ReaderAcronymsTest {
         assertThat(graphRows.rows()).isEmpty();
         assertThat(graphRows.missing()).isEqualTo(1);
         assertThat(PageDetailPanel.belowStatus("Graph", 1, graphRows))
-                .isEqualTo("Knoten aus dieser Seite und 1 Unterseite · für 1 Unterseite liegt noch nichts vor");
+                .isEqualTo("für 1 Unterseite liegt noch nichts vor");
         PageDetailPanel.BelowRows statementRows = PageDetailPanel.belowRows("Aussagen", workspace, subpagesBelow,
                 () -> true, partial -> { });
         assertThat(statementRows.rows()).isEmpty();

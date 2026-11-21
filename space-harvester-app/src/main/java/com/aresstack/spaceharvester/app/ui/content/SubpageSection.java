@@ -136,6 +136,11 @@ final class SubpageSection extends JPanel {
                 }
             }
         });
+        if (columns.length == 0) {
+            // Einspaltige Liste: Der Abschnittskopf sagt schon „Aus Unterseiten“ (UX).
+            table.setTableHeader(null);
+            scroll.setColumnHeaderView(null);
+        }
         setVisible(false);
         fit();
     }
@@ -316,7 +321,8 @@ final class SubpageSection extends JPanel {
 
     private void fit() {
         int rows = Math.max(1, Math.min(maxRows, model.getRowCount()));
-        int height = table.getTableHeader().getPreferredSize().height + rows * table.getRowHeight() + 4;
+        int header = table.getTableHeader() == null ? 0 : table.getTableHeader().getPreferredSize().height;
+        int height = header + rows * table.getRowHeight() + 4;
         scroll.setPreferredSize(new Dimension(300, height));
         revalidate();
         repaint();
