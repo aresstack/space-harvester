@@ -122,8 +122,12 @@ class PageConnectionsTest {
     }
 
     private PageConnections connections(LinkDirectory links) {
+        return connections(links, PageConnections.Budget.DEFAULT);
+    }
+
+    private PageConnections connections(LinkDirectory links, PageConnections.Budget budget) {
         index.publish("wiki", STATE, pages.stream().map(page -> entry(page, confirmed("g1"))).toList());
-        return new PageConnections(catalog, index, guard, links, terms, relations);
+        return new PageConnections(catalog, index, guard, links, terms, relations, budget);
     }
 
     private static PageKey key(String pageId) {
@@ -281,6 +285,42 @@ class PageConnectionsTest {
                 .isInstanceOf(InvalidQueryException.class);
         assertThatThrownBy(() -> new PageConnections.Query(Set.of(), 1, 501))
                 .isInstanceOf(InvalidQueryException.class);
+    }
+
+    @Test
+    void childrenBeyondTheScanBudgetAreFlaggedAsCutAndPartial() {
+        standard();
+        PageConnections.Budget small = new PageConnections.Budget(1, 1_000, 50, 200, 200);
+
+        PageConnections.Connections result = connections(LinkDirectory.NONE, small).connections(CALLER, "wiki", "1",
+                PageConnections.Query.all().withKinds(List.of(ConnectionKind.CHILD)));
+
+        assertThat(result.edges()).hasSize(1);
+        assertThat(result.truncated()).containsExactly(ConnectionKind.CHILD);
+        assertThat(result.coverage()).containsEntry(ConnectionKind.CHILD, Coverage.PARTIAL);
+    }
+
+    @Test
+    void termRelationsStopAtTheirBudgetOfRelationsAndOfLookedUpPages() {
+        standard();
+        relations.add(CALLER, new TermRelations.NewRelation("RSL", "Rückmeldeschlüssel",
+                RelationType.ABBREVIATION, RelationScope.GLOBAL, null, List.of()));
+        relations.add(CALLER, new TermRelations.NewRelation("Beleg", "Buchung", RelationType.RELATED,
+                RelationScope.GLOBAL, null, List.of()));
+        PageConnections.Query query = PageConnections.Query.all().withKinds(List.of(ConnectionKind.TERM_RELATION));
+
+        PageConnections.Connections oneRelation = connections(LinkDirectory.NONE,
+                new PageConnections.Budget(1_000, 1_000, 1, 200, 200)).connections(CALLER, "wiki", "1", query);
+        PageConnections.Connections oneLookup = connections(LinkDirectory.NONE,
+                new PageConnections.Budget(1_000, 1_000, 50, 200, 1)).connections(CALLER, "wiki", "1", query);
+        PageConnections.Connections enough = connections(LinkDirectory.NONE).connections(CALLER, "wiki", "1", query);
+
+        assertThat(oneRelation.edges()).hasSize(1);
+        assertThat(oneRelation.truncated()).containsExactly(ConnectionKind.TERM_RELATION);
+        assertThat(oneLookup.edges()).hasSize(1);
+        assertThat(oneLookup.truncated()).containsExactly(ConnectionKind.TERM_RELATION);
+        assertThat(enough.edges()).hasSize(3);
+        assertThat(enough.truncated()).isEmpty();
     }
 
     @Test

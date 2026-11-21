@@ -48,19 +48,41 @@ import java.util.Set;
  * {@link Connections#truncated()} und {@link Connections#coverage()}.
  *
  * <p>Grenzen: je Art höchstens {@link Query#maxPerKind()}, insgesamt {@link Query#maxEdges()} Kanten; eine Art, von der
- * etwas weggelassen wurde, steht in {@link Connections#truncated()}. Die Reihenfolge folgt {@link ConnectionKind},
- * innerhalb einer Art nach Titel.
+ * etwas weggelassen wurde, steht in {@link Connections#truncated()}. Dazu hat jede Art ein festes Budget an Lesezugriffen
+ * (siehe {@link #MAX_SCAN}, {@link #MAX_TERM_RELATIONS}, {@link #MAX_TERM_LOOKUPS}), unabhängig von
+ * {@code maxPerKind}; wird es erreicht, gilt die Art ebenfalls als gekürzt. Die Reihenfolge folgt
+ * {@link ConnectionKind}, innerhalb einer Art nach Titel, bei gekürzten Arten nur innerhalb des Gelesenen.
  */
 public class PageConnections {
 
-    /** Höchstens so viele Seiten werden je Art aus dem Index gelesen, bevor die Suche abbricht. */
+    /**
+     * Höchstens so viele Einträge liest {@link ConnectionKind#CHILD} aus dem Index (sichtbar oder nicht). Wird die
+     * Grenze erreicht, steht die Art in {@link Connections#truncated()} und ist nur {@link Coverage#PARTIAL}.
+     */
     static final int MAX_SCAN = 1_000;
-    /** Höchstens so viele Begriffe der Ausgangsseite werden betrachtet. */
+    /** Höchstens so viele Begriffe der Ausgangsseite werden betrachtet; darüber gilt die Art als gekürzt. */
     static final int MAX_SEED_TERMS = 1_000;
-    /** Höchstens so viele Fundstellen je Gegenbegriff werden gelesen. */
-    static final int MAX_OCCURRENCES = 600;
+    /**
+     * Budget von {@link ConnectionKind#TERM_RELATION}: höchstens so viele bestätigte Beziehungen werden verfolgt, in
+     * der Reihenfolge von {@code TermRelations#forTerms} (nach Schlüssel). Darüber gilt die Art als gekürzt.
+     */
+    static final int MAX_TERM_RELATIONS = 50;
+    /** Budget von {@link ConnectionKind#TERM_RELATION}: höchstens so viele Fundstellen je Gegenbegriff. */
+    static final int MAX_OCCURRENCES = TermQueries.MAX_LIMIT;
+    /**
+     * Budget von {@link ConnectionKind#TERM_RELATION}: höchstens so viele verschiedene Zielseiten werden im Index
+     * nachgeschlagen. Darüber gilt die Art als gekürzt. Die Ordnung nach Titel gilt dann nur innerhalb des Gelesenen.
+     */
+    static final int MAX_TERM_LOOKUPS = 200;
 
     private static final int BATCH = 100;
+
+    /** Aufwandsgrenzen; in Tests kleiner. */
+    record Budget(int scan, int seedTerms, int termRelations, int occurrences, int termLookups) {
+
+        static final Budget DEFAULT = new Budget(MAX_SCAN, MAX_SEED_TERMS, MAX_TERM_RELATIONS, MAX_OCCURRENCES,
+                MAX_TERM_LOOKUPS);
+    }
 
     private final SourceCatalog catalog;
     private final PageSearchIndex index;
@@ -68,6 +90,7 @@ public class PageConnections {
     private final LinkDirectory links;
     private final TermQueries terms;
     private final TermRelations relations;
+    private final Budget budget;
 
     /**
      * @param links     Verzeichnis der Verweise oder {@link LinkDirectory#NONE}
@@ -76,6 +99,12 @@ public class PageConnections {
      */
     public PageConnections(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, LinkDirectory links,
                            TermQueries terms, TermRelations relations) {
+        this(catalog, index, access, links, terms, relations, Budget.DEFAULT);
+    }
+
+    PageConnections(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, LinkDirectory links,
+                    TermQueries terms, TermRelations relations, Budget budget) {
+        this.budget = Objects.requireNonNull(budget, "budget");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
         this.access = Objects.requireNonNull(access, "access");
@@ -132,6 +161,7 @@ public class PageConnections {
         private final Map<PageKey, Optional<PageHeader>> metadataOnly = new HashMap<>();
         private final Map<PageKey, Optional<PageHeader>> withContent = new HashMap<>();
         private final Set<PageKey> considered = new LinkedHashSet<>();
+        private int termLookups;
 
         Run(AccessContext caller, String sourceId, SearchIndexState state, Query query) {
             this.caller = caller;
@@ -157,9 +187,15 @@ public class PageConnections {
             List<PageHeader> visible = new ArrayList<>();
             String after = null;
             int scanned = 0;
-            while (visible.size() <= query.maxPerKind() && scanned < MAX_SCAN) {
+            boolean more = true;
+            while (more && visible.size() <= query.maxPerKind()) {
+                if (scanned >= budget.scan()) {
+                    truncated.add(ConnectionKind.CHILD);
+                    break;
+                }
+                int requested = Math.min(BATCH, budget.scan() - scanned);
                 List<SearchHit> batch = index.search(byParent, Set.of(seed.key().sourceId()), state.generation(),
-                        after, BATCH);
+                        after, requested);
                 for (SearchHit hit : batch) {
                     scanned++;
                     PageHeader header = hit.page().header();
@@ -167,12 +203,13 @@ public class PageConnections {
                         visible.add(header);
                     }
                 }
-                if (batch.size() < BATCH) {
-                    break;
+                more = !batch.isEmpty() && batch.size() == requested;
+                if (more) {
+                    after = batch.getLast().position();
                 }
-                after = batch.getLast().position();
             }
-            coverage.put(ConnectionKind.CHILD, Coverage.COMPLETE);
+            coverage.put(ConnectionKind.CHILD, truncated.contains(ConnectionKind.CHILD) ? Coverage.PARTIAL
+                    : Coverage.COMPLETE);
             visible.forEach(child -> add(seed, ConnectionKind.CHILD, child, new Provenance.Hierarchy()));
         }
 
@@ -197,7 +234,7 @@ public class PageConnections {
                 if (target.equals(seed.key())) {
                     continue;
                 }
-                if (scanned++ >= MAX_SCAN) {
+                if (scanned++ >= budget.scan()) {
                     truncated.add(kind);
                     break;
                 }
@@ -224,9 +261,14 @@ public class PageConnections {
                 return;
             }
             coverage.put(ConnectionKind.TERM_RELATION, Coverage.COMPLETE);
+            int followed = 0;
             for (TermRelation relation : relations.forTerms(caller, seedTerms, sourceId, spaceKey)) {
                 if (relation.status() != ReviewStatus.CONFIRMED) {
                     continue;
+                }
+                if (followed++ >= budget.termRelations() || termLookups >= budget.termLookups()) {
+                    truncated.add(ConnectionKind.TERM_RELATION);
+                    break;
                 }
                 String from = TermText.normalize(relation.fromTerm());
                 String to = TermText.normalize(relation.toTerm());
@@ -242,19 +284,13 @@ public class PageConnections {
         /** Seiten, auf denen das andere Ende vorkommt, außer der Ausgangsseite. */
         private void counterparts(PageHeader seed, TermRelation relation, String seedTerm, String targetTerm) {
             Set<PageKey> pages = new LinkedHashSet<>();
-            String cursor = null;
-            int read = 0;
-            do {
-                TermQueries.OccurrenceList list = terms.occurrences(caller, new TermQueries.OccurrenceSearch(
-                        targetTerm, null, relation.scope().sourceId(), relation.scope().spaceKey(),
-                        TermQueries.MAX_LIMIT, cursor, 0));
-                for (TermQueries.Occurrence occurrence : list.occurrences()) {
-                    pages.add(new PageKey(occurrence.sourceId(), occurrence.pageId()));
-                }
-                read += list.occurrences().size();
-                cursor = list.nextCursor();
-            } while (cursor != null && read < MAX_OCCURRENCES);
-            if (cursor != null) {
+            TermQueries.OccurrenceList list = terms.occurrences(caller, new TermQueries.OccurrenceSearch(
+                    targetTerm, null, relation.scope().sourceId(), relation.scope().spaceKey(),
+                    Math.min(budget.occurrences(), TermQueries.MAX_LIMIT), null, 0));
+            for (TermQueries.Occurrence occurrence : list.occurrences()) {
+                pages.add(new PageKey(occurrence.sourceId(), occurrence.pageId()));
+            }
+            if (list.nextCursor() != null) {
                 truncated.add(ConnectionKind.TERM_RELATION);
             }
             Provenance.TermLink provenance = new Provenance.TermLink(relation.id(), relation.type(),
@@ -263,6 +299,13 @@ public class PageConnections {
             for (PageKey page : pages) {
                 if (page.equals(seed.key())) {
                     continue;
+                }
+                if (!withContent.containsKey(page)) {
+                    if (termLookups >= budget.termLookups()) {
+                        truncated.add(ConnectionKind.TERM_RELATION);
+                        return;
+                    }
+                    termLookups++;
                 }
                 lookup(page, true).ifPresent(header -> add(seed, ConnectionKind.TERM_RELATION, header, provenance));
             }
@@ -278,7 +321,10 @@ public class PageConnections {
                         null, null, null, false, TermQueries.MAX_LIMIT, cursor).within(only));
                 list.terms().forEach(term -> found.add(term.normalized()));
                 cursor = list.nextCursor();
-            } while (cursor != null && found.size() < MAX_SEED_TERMS);
+            } while (cursor != null && found.size() < budget.seedTerms());
+            if (cursor != null) {
+                truncated.add(ConnectionKind.TERM_RELATION);
+            }
             return found;
         }
 

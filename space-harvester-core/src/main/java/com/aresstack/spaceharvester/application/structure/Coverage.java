@@ -9,8 +9,9 @@ package com.aresstack.spaceharvester.application.structure;
  *   <li>{@link ConnectionKind#PARENT}: {@link #COMPLETE}, wenn die Ausgangsseite keine Elternseite nennt oder die
  *       genannte lokal katalogisiert und sichtbar ist; sonst {@link #PARTIAL} (nicht geerntet, gelöscht oder nicht
  *       sichtbar, bewusst ununterscheidbar).</li>
- *   <li>{@link ConnectionKind#CHILD}: immer {@link #COMPLETE} gegenüber dem <em>lokalen Katalog</em>: alle lokal
- *       katalogisierten, sichtbaren Unterseiten. Ob die Quelle Seiten hat, die nie katalogisiert wurden, weiß der Core
+ *   <li>{@link ConnectionKind#CHILD}: {@link #COMPLETE} gegenüber dem <em>lokalen Katalog</em>: alle lokal
+ *       katalogisierten, sichtbaren Unterseiten wurden gelesen; {@link #PARTIAL}, wenn das Lesebudget
+ *       ({@code PageConnections#MAX_SCAN}) vorher erreicht war. Ob die Quelle Seiten hat, die nie katalogisiert wurden, weiß der Core
  *       nicht; dafür gibt es keine Angabe je Quelle, und G1 erfindet keine.</li>
  *   <li>{@link ConnectionKind#LINKS_TO}/{@link ConnectionKind#LINKED_FROM}: {@link #UNAVAILABLE} ohne Verzeichnis
  *       der Verweise oder wenn es die Seite nicht kennt; {@link #PARTIAL}, wenn es sich selbst als unvollständig
