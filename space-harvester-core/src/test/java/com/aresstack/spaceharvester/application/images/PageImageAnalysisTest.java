@@ -403,6 +403,37 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void aPageWithMoreOpenImagesThanTheWholeLimitStillRunsAsTheFirstOfARun() {
+        // Seite 1 hat vier Bilder bei einer Grenze von drei, Seite 2 eines; beide Listen sind bekannt.
+        for (int i = 1; i <= 4; i++) {
+            source.image("1", "a" + i, "a" + i + ".png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1, (byte) i});
+        }
+        source.image("2", "b1", "b1.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 2, 1});
+        PageImageAnalysis analysis = analysis();
+        List<PageSnapshot> pages = List.of(page("1", "Text"), page("2", "Text"));
+        for (PageSnapshot page : pages) {
+            new ReadingViewStore(store).save(new StoredReadingView(page.key(), "sha256:lese", "1", "", "", "",
+                    source.viewImages(page.key().pageId()), NOW));
+        }
+        com.aresstack.spaceharvester.application.configuration.ImageSettings three =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 3);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis,
+                sourceId -> pages.iterator(), () -> three, "wiki"::equals);
+        RecordingContext context = new RecordingContext();
+
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki", three, context);
+
+        assertThat(outcome.images()).as("die große Seite läuft einmal ganz, statt für immer offen zu bleiben")
+                .isEqualTo(4);
+        assertThat(outcome.open()).as("danach ist die Grenze überzogen, Seite 2 folgt").isEqualTo(1);
+        assertThat(context.incomplete).isTrue();
+        AutomaticImageDescriptions.Outcome next = automatic.run("wiki", three, new RecordingContext());
+        assertThat(next.images()).isEqualTo(1);
+        assertThat(next.open()).isZero();
+        assertThat(describer.calls).isEqualTo(5);
+    }
+
+    @Test
     void theLimitPerRunLeavesTheRestForTheNextRunAndSaysHowManyAreOpen() {
         // Drei Seiten mit je zwei Bildern; deren Liste ist schon bekannt (gespeicherte Lese-Ansicht).
         for (String pageId : List.of("1", "2", "3")) {

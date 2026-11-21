@@ -247,7 +247,7 @@ final class AiSettingsPanel {
             + "Vision-Modell noch keine Beschreibung haben; ein Bild geht nie zweimal an das Modell. Je Lauf gehen "
             + "höchstens so viele Bilder an das Modell, wie hinter „" + IMAGES_PER_RUN_BEFORE + "“ steht (0 = "
             + "unbegrenzt); der Rest folgt beim nächsten Abgleich, und der Auftrag nennt die Zahl der offenen "
-            + "Bilder.\n\n"
+            + "Bilder. Die Grenze kann um die Bilder einer Seite überzogen werden.\n\n"
             + "Ohne Vision-Modell wird nichts beschrieben; der Auftrag endet gelb. Ohne Häkchen gibt es "
             + "Beschreibungen nur über den Knopf im Reiter „Bilder“ der Seite. Gilt ohne Neustart beim nächsten "
             + "Abgleich. Schlüssel in der Konfigurationsdatei: space-harvester.images.automatic und "

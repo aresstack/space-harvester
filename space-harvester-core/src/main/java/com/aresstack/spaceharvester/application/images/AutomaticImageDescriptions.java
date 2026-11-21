@@ -34,7 +34,10 @@ import java.util.function.Supplier;
  * Die Ablage je Prüfsumme und Modell verhindert, dass ein Bild zweimal an das Modell geht.
  *
  * <p>Je Lauf und Quelle gehen höchstens {@code images.max-per-run} Bilder an das Modell ({@code 0} = unbegrenzt); eine
- * Seite, deren offene Bilder nicht mehr in die Grenze passen, bleibt für den nächsten Lauf. Ist die Grenze erreicht,
+ * Seite, deren offene Bilder nicht mehr in die Grenze passen, bleibt für den nächsten Lauf. Die Grenze kann um die
+ * Bilder einer Seite überzogen werden: Eine Seite ohne gespeicherte Lese-Ansicht zählt vorab als ein Bild, und die erste
+ * Seite eines Laufs läuft auch dann, wenn sie allein mehr offene Bilder hat als die ganze Grenze (sonst bliebe sie für
+ * immer offen). Ist die Grenze erreicht,
  * nennt ein gelbes Ereignis ({@value #LIMIT_REACHED}) die Zahl der offenen Bilder. Ohne Vision-Modell endet der Auftrag
  * gelb mit {@value #NO_MODEL}, nie rot. Verlangt die Quelle einen Einmalcode, endet er gelb mit {@value #SIGN_IN},
  * weil niemand ihn im Hintergrund eingeben kann. Abbrechen lässt alles stehen, was schon beschrieben ist. Kein
@@ -157,6 +160,7 @@ public final class AutomaticImageDescriptions {
         int pages = 0;
         int open = 0;
         int failed = 0;
+        boolean oversized = false;
         Iterator<PageSnapshot> all = snapshots.apply(sourceId);
         while (all.hasNext()) {
             context.checkpoint();
@@ -176,10 +180,14 @@ public final class AutomaticImageDescriptions {
                 continue;
             }
             int pending = work.pending;
-            if (pending > budget - sent) {
+            // Eine Seite größer als die ganze Grenze darf als erste des Laufs trotzdem (überzieht einmal).
+            if (pending > budget - sent && !(sent == 0 && !oversized)) {
                 // Passt nicht mehr: bleibt für den nächsten Lauf, kleinere Seiten dürfen noch.
                 open += pending;
                 continue;
+            }
+            if (pending > budget - sent) {
+                oversized = true;
             }
             context.discovered(1);
             try {
