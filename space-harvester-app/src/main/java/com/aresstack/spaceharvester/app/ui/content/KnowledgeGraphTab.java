@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
+import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
@@ -141,6 +142,17 @@ final class KnowledgeGraphTab extends JPanel {
     /** Nur die Auswahl links im Baum (ADR 0029): die Seiten aus {@link #within}; ohne Auswahl ohne Wirkung. */
     private final JCheckBoxMenuItem selectionOnly = check("Nur Auswahl im Baum");
     private PageSet selectionPages;
+    /**
+     * Die Unterseiten der geöffneten Seite, solange „mit Unterseiten“ angehakt ist (ohne die Seite selbst, aus
+     * {@code Holdings#descendants} samt gesperrten), sonst {@code null}; dann rechnet die Seitenansicht über Seite und
+     * Unterseiten mit einer Grenze (W4).
+     */
+    private PageSelection subpages;
+    /** Letztes Ergebnis der Seitenansicht über {@link #subpages}; {@code null}, solange keins vorliegt. */
+    private GraphNeighbourhood.Stack subpageStack;
+    /** Was die Statuszeile zur Seitenansicht mit Unterseiten sagt; {@code null} ohne Unterseiten. */
+    private Coverage coverage;
+    private Consumer<GraphNeighbourhood.Stack> onSubpages = stack -> { };
     private final IconButton pageButton = new IconButton(Glyph.CROSSHAIR, "Diese Seite: Teilgraph der geöffneten Seite");
     private final IconButton expand = new IconButton(Glyph.NEIGHBOURS,
             "Nachbarn erweitern: lädt die direkten Nachbarn des gewählten Knotens dazu (auch Doppelklick)");
@@ -363,6 +375,12 @@ final class KnowledgeGraphTab extends JPanel {
 
     /** Wie {@link #page(PageKey)}, mit dem Space der Seite für den Export-Umfang „Space“. */
     void page(PageKey key, String spaceKey) {
+        if (!Objects.equals(key, page)) {
+            // Die Unterseiten gehören zur vorigen Seite; die neuen meldet die Checkbox, sobald sie ermittelt sind. Bei
+            // derselben Seite (etwa „Seite neu laden“) bleiben sie, die Checkbox meldet dann nichts Neues.
+            subpages = null;
+        }
+        subpageStack = null;
         page = key;
         this.spaceKey = key == null ? null : spaceKey;
         pageChanges++;
@@ -404,6 +422,67 @@ final class KnowledgeGraphTab extends JPanel {
         }
     }
 
+    /**
+     * „mit Unterseiten“ (W4): {@code below} sind die Unterseiten der geöffneten Seite ohne sie selbst, {@code null}
+     * schaltet ab. Eine andere Menge beginnt die Seitenansicht neu (sichtbar sofort, sonst beim nächsten Anzeigen),
+     * dieselbe nur mit {@code reload}: Der Bestand hat sich geändert (Inhalte, Stand der Analysen), die Menge nicht;
+     * dann wie {@link #analysisChanged}. Erweiterungen bleiben Abfragen je Knoten.
+     */
+    void subpages(PageSelection below, boolean reload) {
+        if (sameSet(below, subpages)) {
+            if (reload && below != null) {
+                // Der Abschnitt darunter zeigt bis zum neuen Ergebnis weiter das, was der Graph noch zeigt.
+                analysisChanged();
+            }
+            return;
+        }
+        subpages = below;
+        subpageStack = null;
+        if (page == null) {
+            return;
+        }
+        // Frühere Ansichten galten für eine andere Menge; „Zurück“ darf sie nicht als aktuell zeigen, auch nicht die
+        // gerade gezeigte, die das nächste Laden sonst in die Historie legt.
+        history.clear();
+        dropHistory = true;
+        if (isShowing() && pageLoaded) {
+            showPage();
+        } else {
+            // Eine noch laufende Abfrage galt der alten Menge.
+            generation++;
+            loading = false;
+            pageLoaded = false;
+            entry = null;
+            expansions.clear();
+            requested.clear();
+        }
+        refreshButtons();
+    }
+
+    /**
+     * Dieselbe Menge, wenn Seiten und gesperrte Seiten gleich sind. Zahlen und Space-Übersicht der Auswahl ändern sich
+     * bei jedem Abgleich im Space und dürfen Ansicht, Erweiterungen und „Zurück“ nicht verwerfen.
+     */
+    static boolean sameSet(PageSelection a, PageSelection b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        return a.pages().equals(b.pages()) && Objects.equals(a.locked(), b.locked());
+    }
+
+    /**
+     * {@code listener} bekommt jedes Ergebnis der Seitenansicht mit Unterseiten, auch das bei „Zurück“
+     * wiederhergestellte; bei einem Fehler nur dann {@code null}, wenn es noch kein Ergebnis für diese Unterseiten gibt.
+     */
+    void onSubpages(Consumer<GraphNeighbourhood.Stack> listener) {
+        onSubpages = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Das letzte Ergebnis der Seitenansicht über die aktuellen Unterseiten oder {@code null}. */
+    GraphNeighbourhood.Stack subpageStack() {
+        return subpageStack;
+    }
+
     // ---- Laden
 
     private void showPage() {
@@ -411,7 +490,7 @@ final class KnowledgeGraphTab extends JPanel {
             return;
         }
         pageLoaded = true;
-        start(new Entry.Page(page));
+        start(new Entry.Page(page, subpages));
     }
 
     private void showTerm(String term) {
@@ -447,6 +526,10 @@ final class KnowledgeGraphTab extends JPanel {
 
     /** Filter geändert: dieselbe Einstiegsabfrage samt aller Erweiterungen mit den neuen Filtern. */
     private void reloadFocus() {
+        if (entry instanceof Entry.Page shown && shown.subpages() != subpages) {
+            // Die Seitenansicht gilt immer der aktuellen Menge, auch wenn ihr erstes Laden gescheitert ist.
+            entry = new Entry.Page(shown.key(), subpages);
+        }
         if (entry != null) {
             load(entry, List.copyOf(requested), true);
         } else if (page != null && pageLoaded) {
@@ -473,7 +556,8 @@ final class KnowledgeGraphTab extends JPanel {
         status("Lädt Teilgraph …");
         runner.run(() -> {
             Actions current = actionsOrThrow();
-            GraphNeighbourhood.Subgraph base = replay ? start.run(current, options) : null;
+            GraphNeighbourhood.Stack stack = replay ? start.stack(current, options) : null;
+            GraphNeighbourhood.Subgraph base = stack == null ? null : stack.graph();
             List<GraphNeighbourhood.Subgraph> more = new ArrayList<>();
             for (String nodeId : run) {
                 more.add(current.node(nodeId, options));
@@ -483,7 +567,8 @@ final class KnowledgeGraphTab extends JPanel {
                 boolean exists = !start.run(current, PROBE).nodes().isEmpty();
                 hint = start.emptyHint(exists);
             }
-            return new Loaded(base, more, hint);
+            Coverage covered = stack == null ? null : start.coverage(current, stack);
+            return new Loaded(stack, more, hint, covered);
         }, loaded -> {
             if (mine != generation) {
                 return;
@@ -500,8 +585,9 @@ final class KnowledgeGraphTab extends JPanel {
             entry = start;
             expansions.clear();
             this.appliedFilters = filters;
-            if (loaded.base() != null) {
-                apply(loaded.base(), false);
+            if (loaded.stack() != null) {
+                apply(loaded.stack().graph(), false);
+                coverage = loaded.coverage();
             }
             for (int i = 0; i < loaded.more().size(); i++) {
                 String step = run.get(i);
@@ -520,9 +606,19 @@ final class KnowledgeGraphTab extends JPanel {
             emptyHint = loaded.emptyHint();
             refresh();
             canvas.fit();
+            if (loaded.coverage() != null && start instanceof Entry.Page shown
+                    && Objects.equals(shown.subpages(), subpages)) {
+                subpageStack = loaded.stack();
+                onSubpages.accept(loaded.stack());
+            }
         }, error -> {
             if (mine == generation) {
                 loading = false;
+                // Der Graph bleibt beim letzten Ergebnis, der Abschnitt darunter auch; nur ohne eins endet sein Laden.
+                if (replay && subpageStack == null && start instanceof Entry.Page shown && shown.subpages() != null
+                        && Objects.equals(shown.subpages(), subpages)) {
+                    onSubpages.accept(null);
+                }
                 // Anzeige bleibt beim letzten Stand: Filter und Erweiterungen wieder passend dazu.
                 requested.clear();
                 requested.addAll(expansions);
@@ -554,6 +650,7 @@ final class KnowledgeGraphTab extends JPanel {
         Set<GraphNeighbourhood.EdgeType> types = EnumSet.noneOf(GraphNeighbourhood.EdgeType.class);
         for (GraphNeighbourhood.EdgeType type : GraphNeighbourhood.EdgeType.values()) {
             boolean wanted = type == GraphNeighbourhood.EdgeType.CONTAINS
+                    || type == GraphNeighbourhood.EdgeType.SUBPAGE
                     || type.role() && roles.isSelected()
                     || type == GraphNeighbourhood.EdgeType.NOMINAL && nominal.isSelected()
                     || (type == GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE ? candidates.isSelected()
@@ -750,7 +847,14 @@ final class KnowledgeGraphTab extends JPanel {
         truncated = previous.truncated();
         hidden = previous.hidden();
         merged = previous.merged();
+        coverage = previous.coverage();
         entry = previous.entry();
+        // Der Abschnitt „Aus Unterseiten“ folgt der wiederhergestellten Ansicht (etwa wieder ohne veraltete Seiten).
+        if (previous.stack() != null && previous.stack() != subpageStack && entry instanceof Entry.Page shown
+                && Objects.equals(shown.subpages(), subpages)) {
+            subpageStack = previous.stack();
+            onSubpages.accept(subpageStack);
+        }
         expansions.clear();
         expansions.addAll(previous.expansions());
         requested.clear();
@@ -766,8 +870,11 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     private View snapshot() {
+        GraphNeighbourhood.Stack stack = entry instanceof Entry.Page shown && shown.subpages() != null
+                && Objects.equals(shown.subpages(), subpages) ? subpageStack : null;
         return new View(new LinkedHashMap<>(nodes), new LinkedHashMap<>(edges), copy(positions), focus, truncated,
-                hidden, merged, entry, List.copyOf(expansions), appliedFilters == null ? filters() : appliedFilters);
+                hidden, merged, coverage, stack, entry, List.copyOf(expansions),
+                appliedFilters == null ? filters() : appliedFilters);
     }
 
     private static Map<String, Point2D> copy(Map<String, Point2D> positions) {
@@ -786,6 +893,7 @@ final class KnowledgeGraphTab extends JPanel {
         truncated = false;
         hidden = 0;
         merged = false;
+        coverage = null;
         emptyHint = null;
         detail(null, null);
     }
@@ -886,6 +994,9 @@ final class KnowledgeGraphTab extends JPanel {
 
     String describe(GraphNeighbourhood.Edge edge) {
         StringBuilder text = new StringBuilder(edgeLine(edge)).append('\n');
+        if (edge.type() == GraphNeighbourhood.EdgeType.SUBPAGE) {
+            return text.append("Herkunft: Seitenbaum („mit Unterseiten“) – Struktur, kein Parserbefund.").toString();
+        }
         if (edge.type().crossPage()) {
             text.append(edge.type() == GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE
                     ? "Gleiche Grundform auf einer anderen Seite – Kandidat, keine bestätigte Identität.\n"
@@ -947,7 +1058,14 @@ final class KnowledgeGraphTab extends JPanel {
             case NOMINAL -> "nominaler Bezug";
             case LEXICAL_CANDIDATE -> "gleiche Grundform?";
             case CONFIRMED_TERM_RELATION -> "Begriffsbeziehung";
+            case SUBPAGE -> "Unterseite";
         };
+    }
+
+    /** Strukturkanten (Enthält, Unterseite): dünn, ohne Beschriftung in der Grafik. */
+    private static boolean structure(GraphNeighbourhood.Edge edge) {
+        return edge.type() == GraphNeighbourhood.EdgeType.CONTAINS
+                || edge.type() == GraphNeighbourhood.EdgeType.SUBPAGE;
     }
 
     private static String origin(String origin) {
@@ -972,8 +1090,10 @@ final class KnowledgeGraphTab extends JPanel {
         syncTable();
         canvas.hint(!nodes.isEmpty() ? null : emptyHint != null ? emptyHint
                 : page == null ? "Keine Seite geöffnet." : pageLoaded ? "Kein Teilgraph." : null);
+        String covered = coverage == null ? "" : coverage.text();
         if (nodes.isEmpty()) {
-            status(page == null ? "Keine Seite geöffnet." : pageLoaded ? " " : "Teilgraph lädt beim Öffnen.");
+            status(page == null ? "Keine Seite geöffnet." : !pageLoaded ? "Teilgraph lädt beim Öffnen."
+                    : covered.isEmpty() ? " " : covered.substring(3));
         } else {
             long stalePages = nodes.values().stream().filter(node -> node.page().state() == PageStatements.State.STALE)
                     .map(node -> node.page().key()).distinct().count();
@@ -981,7 +1101,8 @@ final class KnowledgeGraphTab extends JPanel {
                     + (truncated ? " · gekürzt" + (hidden > 0 && !merged ? ", "
                     + (entry instanceof Entry.Term ? "mindestens " : "") + hidden + " weitere Knoten" : "")
                     + " – gezielt erweitern" : "")
-                    + (stalePages > 0 ? " · " + stalePages + " veraltete Seite(n)" : ""));
+                    + (stalePages > 0 ? " · " + stalePages + " veraltete Seite(n)" : "")
+                    + covered);
         }
         refreshButtons();
         canvas.repaint();
@@ -1386,12 +1507,11 @@ final class KnowledgeGraphTab extends JPanel {
                     BasicStroke.JOIN_MITER, 10, new float[] {2, 3}, 0)
                     : new BasicStroke(chosen ? 2.4f : 1.3f);
             g.setStroke(stroke);
-            g.setColor(chosen ? Comic.ORANGE : edge.type() == GraphNeighbourhood.EdgeType.CONTAINS ? Comic.LINE
-                    : Comic.INK);
+            g.setColor(chosen ? Comic.ORANGE : structure(edge) ? Comic.LINE : Comic.INK);
             Point2D end = clip(b, a, nodes.get(edge.to()));
             g.draw(new Line2D.Double(a, end));
             arrow(g, a, end);
-            if (edge.type() != GraphNeighbourhood.EdgeType.CONTAINS) {
+            if (!structure(edge)) {
                 String label = typeLabel(edge.type());
                 FontMetrics metrics = g.getFontMetrics();
                 double mx = (a.getX() + end.getX()) / 2;
@@ -1547,7 +1667,8 @@ final class KnowledgeGraphTab extends JPanel {
 
     private record View(Map<String, GraphNeighbourhood.Node> nodes, Map<String, GraphNeighbourhood.Edge> edges,
                         Map<String, Point2D> positions, String focus, boolean truncated, int hidden, boolean merged,
-                        Entry entry, List<String> expansions, Filters filters) {
+                        Coverage coverage, GraphNeighbourhood.Stack stack, Entry entry, List<String> expansions,
+                        Filters filters) {
     }
 
     private record Filters(boolean documents, boolean statements, boolean mentions, boolean roles, boolean nominal,
@@ -1555,8 +1676,40 @@ final class KnowledgeGraphTab extends JPanel {
                            boolean selectionOnly) {
     }
 
-    private record Loaded(GraphNeighbourhood.Subgraph base, List<GraphNeighbourhood.Subgraph> more,
-                          String emptyHint) {
+    private record Loaded(GraphNeighbourhood.Stack stack, List<GraphNeighbourhood.Subgraph> more,
+                          String emptyHint, Coverage coverage) {
+    }
+
+    /**
+     * Seitenansicht mit Unterseiten (W4): wie viele Unterseiten in die Rechnung eingingen
+     * ({@link GraphNeighbourhood.Stack#considered()}: lesbar, nicht gesperrt, innerhalb der Filter), die Titel der
+     * Seiten ohne Analyse und wie viele veraltete Seiten der Filter „Veraltete zeigen“ ausblendet.
+     */
+    record Coverage(int subpages, List<String> missing, int skippedStale) {
+
+        /** Höchstens so viele Titel ohne Analyse in der Statuszeile, danach „und K weitere“. */
+        static final int NAMED = 3;
+
+        Coverage {
+            missing = List.copyOf(missing);
+        }
+
+        /** „ · mit 2 Unterseiten · ohne Analyse: A, B, C und 2 weitere · 1 veraltete Seite(n) ausgeblendet“. */
+        String text() {
+            StringBuilder text = new StringBuilder(" · mit ").append(subpages)
+                    .append(subpages == 1 ? " Unterseite" : " Unterseiten");
+            if (!missing.isEmpty()) {
+                text.append(" · ohne Analyse: ").append(String.join(", ", missing.subList(0,
+                        Math.min(NAMED, missing.size()))));
+                if (missing.size() > NAMED) {
+                    text.append(" und ").append(missing.size() - NAMED).append(" weitere");
+                }
+            }
+            if (skippedStale > 0) {
+                text.append(" · ").append(skippedStale).append(" veraltete Seite(n) ausgeblendet");
+            }
+            return text.toString();
+        }
     }
 
     /** Einstieg einer Ansicht. */
@@ -1564,13 +1717,41 @@ final class KnowledgeGraphTab extends JPanel {
 
         GraphNeighbourhood.Subgraph run(Actions actions, GraphNeighbourhood.Options options);
 
+        /** Wie {@link #run}, mit Seiten ohne Analyse und ausgeblendeten veralteten Seiten (nur mit Unterseiten). */
+        default GraphNeighbourhood.Stack stack(Actions actions, GraphNeighbourhood.Options options) {
+            return GraphNeighbourhood.Stack.of(run(actions, options));
+        }
+
+        /** Was die Statuszeile zum Ergebnis sagt; {@code null} ohne Unterseiten. Nie auf dem EDT. */
+        default Coverage coverage(Actions actions, GraphNeighbourhood.Stack stack) {
+            return null;
+        }
+
         /** Hinweis bei leerem Ergebnis; {@code exists}: ohne Filter gäbe es etwas. */
         String emptyHint(boolean exists);
 
-        record Page(PageKey key) implements Entry {
+        /** Die Seite, mit {@code subpages} samt ihren Unterseiten („mit Unterseiten“), sonst {@code null}. */
+        record Page(PageKey key, PageSelection subpages) implements Entry {
             @Override
             public GraphNeighbourhood.Subgraph run(Actions actions, GraphNeighbourhood.Options options) {
-                return actions.page(key, options);
+                return stack(actions, options).graph();
+            }
+
+            @Override
+            public GraphNeighbourhood.Stack stack(Actions actions, GraphNeighbourhood.Options options) {
+                return subpages == null ? GraphNeighbourhood.Stack.of(actions.page(key, options))
+                        : actions.pages(key, subpages, options);
+            }
+
+            @Override
+            public Coverage coverage(Actions actions, GraphNeighbourhood.Stack stack) {
+                if (subpages == null) {
+                    return null;
+                }
+                Map<PageKey, String> titles = stack.missing().isEmpty() ? Map.of() : actions.titles(stack.missing());
+                List<String> missing = stack.missing().stream()
+                        .map(key -> titles.getOrDefault(key, "Seite " + key.pageId())).toList();
+                return new Coverage(stack.considered(), missing, stack.skippedStale());
             }
 
             @Override
@@ -1602,6 +1783,17 @@ final class KnowledgeGraphTab extends JPanel {
 
         GraphNeighbourhood.Subgraph page(PageKey key, GraphNeighbourhood.Options options);
 
+        /** Seite samt Unterseiten mit einer Grenze für alle (W4); ohne eigene Umsetzung nur die Seite. */
+        default GraphNeighbourhood.Stack pages(PageKey key, PageSelection subpages,
+                                               GraphNeighbourhood.Options options) {
+            return GraphNeighbourhood.Stack.of(page(key, options));
+        }
+
+        /** Titel von Seiten für die Statuszeile; fehlende (ohne Recht, unbekannt) fehlen in der Antwort. */
+        default Map<PageKey, String> titles(java.util.Collection<PageKey> keys) {
+            return Map.of();
+        }
+
         GraphNeighbourhood.Subgraph node(String nodeId, GraphNeighbourhood.Options options);
 
         GraphNeighbourhood.Subgraph term(String term, GraphNeighbourhood.Options options);
@@ -1620,6 +1812,19 @@ final class KnowledgeGraphTab extends JPanel {
                 @Override
                 public GraphNeighbourhood.Subgraph page(PageKey key, GraphNeighbourhood.Options options) {
                     return workspace.knowledgeGraphOfPage(key, options);
+                }
+
+                @Override
+                public GraphNeighbourhood.Stack pages(PageKey key, PageSelection subpages,
+                                                      GraphNeighbourhood.Options options) {
+                    return workspace.knowledgeGraphOfPages(key, subpages, options);
+                }
+
+                @Override
+                public Map<PageKey, String> titles(java.util.Collection<PageKey> keys) {
+                    Map<PageKey, String> titles = new LinkedHashMap<>();
+                    workspace.pageNodes(keys).forEach((key, node) -> titles.put(key, Breadcrumbs.title(node)));
+                    return titles;
                 }
 
                 @Override

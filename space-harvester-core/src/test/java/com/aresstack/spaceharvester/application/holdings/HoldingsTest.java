@@ -257,6 +257,9 @@ class HoldingsTest {
         assertThat(below.contains("wiki", "3")).isFalse();
         PageSelection subtree = holdings.resolve(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "3")));
         assertThat(below.counts().pages()).isEqualTo(subtree.counts().pages() - 1);
+        assertThat(below.locked()).as("die gesperrte Unterseite, für Ansichten, die Seiten einzeln nennen")
+                .isEqualTo(PageSet.of(Map.of("wiki", List.of("6"))));
+        assertThat(subtree.locked()).isEqualTo(below.locked());
 
         PageSelection leaf = holdings.descendants(CALLER, "wiki", "DEV", "4");
         assertThat(leaf.size()).as("Blatt ohne Unterseiten").isZero();

@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.app.ui.content;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
+import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
@@ -29,6 +31,9 @@ class KnowledgeGraphTabTest {
     private static final String STATEMENT = DOC + "#s1.v3";
     static final String BELEG = DOC + "#s1.t10";
     private static final String OTHER = "handbuch/7@abcdefabcdef#s1.t4";
+    private static final KnowledgeGraph.PageRef SUB_REF = new KnowledgeGraph.PageRef(new PageKey("wiki", "2"), "DEV",
+            "Anhang Alpha", PageStatements.State.CURRENT, null);
+    private static final String SUB_DOC = "wiki/2@fedcba987654";
 
     private final FakeActions actions = new FakeActions();
     private final DeferredRunner runner = new DeferredRunner();
@@ -223,6 +228,212 @@ class KnowledgeGraphTabTest {
         tab.setSelectionOnly(true);
         tab.within(null);
         assertThat(tab.options().pages()).as("Auswahl aufgehoben").isNull();
+    }
+
+    /**
+     * W4: mit „mit Unterseiten“ rechnet die Seitenansicht über Seite und Unterseiten; die Statuszeile nennt die Zahl
+     * der Unterseiten, die Seiten ohne Analyse mit Titel und ausgeblendete veraltete. Abgehakt wieder nur die Seite.
+     */
+    @Test
+    void withSubpagesThePageGraphSpansThePageAndItsSubpagesAndNamesThoseWithoutAnalysis() {
+        PageSelection below = below("2", "3");
+        List<GraphNeighbourhood.Stack> loaded = new ArrayList<>();
+        tab.onSubpages(loaded::add);
+        tab.page(WIKI);
+        tab.subpages(below, false);
+        tab.showPageNow();
+        runner.runAll();
+
+        assertThat(actions.calls).containsExactly("pages wiki/1 +2");
+        assertThat(actions.lastSubpages).isEqualTo(below);
+        assertThat(tab.nodeIds()).contains(DOC, SUB_DOC);
+        assertThat(tab.statusText()).isEqualTo("4 Knoten, 4 Kanten · mit 2 Unterseiten · ohne Analyse: Anhang Beta");
+        assertThat(loaded).hasSize(1);
+        assertThat(tab.subpageStack()).isSameAs(loaded.get(0));
+        assertThat(tab.tableValue(tab.tableRows() - 1, 1)).as("Unterseiten-Kante in der Tabelle benannt")
+                .isEqualTo("Unterseite");
+        assertThat(tab.describe(new GraphNeighbourhood.Edge(DOC, SUB_DOC, GraphNeighbourhood.EdgeType.SUBPAGE,
+                "STRUCTURE", null, null, null, true))).contains("Seitenbaum").doesNotContain("nicht fachlich geprüft");
+
+        // Dieselbe Menge lädt nicht neu; ausgeblendete veraltete Unterseiten nennt die Statuszeile.
+        tab.subpages(below("3", "2"), false);
+        assertThat(actions.calls).hasSize(1);
+        actions.skippedStale = 1;
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(tab.statusText()).endsWith(" · mit 2 Unterseiten · ohne Analyse: Anhang Beta"
+                + " · 1 veraltete Seite(n) ausgeblendet");
+
+        actions.calls.clear();
+        tab.subpages(null, false);
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(actions.calls).as("abgehakt: wieder nur die Seite").containsExactly("page wiki/1");
+        assertThat(tab.statusText()).isEqualTo("3 Knoten, 3 Kanten");
+        assertThat(tab.subpageStack()).isNull();
+    }
+
+    /**
+     * Holdings melden geänderten Bestand bei gleicher Menge (etwa eine Unterseite neu geerntet, ihre Analyse jetzt
+     * veraltet): mit {@code reload} rechnet der Graph neu, ohne nicht.
+     */
+    @Test
+    void theSameSubpagesWithReloadComputeTheGraphAgain() {
+        List<GraphNeighbourhood.Stack> loaded = new ArrayList<>();
+        tab.onSubpages(loaded::add);
+        tab.page(WIKI);
+        tab.subpages(below("2", "3"), false);
+        tab.showPageNow();
+        runner.runAll();
+        GraphNeighbourhood.Stack first = tab.subpageStack();
+
+        tab.subpages(below("2", "3"), false);
+        runner.runAll();
+        assertThat(actions.calls).as("ohne reload nichts neu").containsExactly("pages wiki/1 +2");
+
+        actions.skippedStale = 1;
+        tab.subpages(below("2", "3"), true);
+        assertThat(tab.subpageStack()).as("bis zum neuen Ergebnis das, was der Graph noch zeigt").isSameAs(first);
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(actions.calls).containsExactly("pages wiki/1 +2", "pages wiki/1 +2");
+        assertThat(tab.subpageStack()).isNotSameAs(first);
+        assertThat(tab.subpageStack().skippedStale()).isEqualTo(1);
+        assertThat(loaded).hasSize(2);
+    }
+
+    /** Ein Abgleich im Space ändert Zahlen und Übersicht der Auswahl, nicht die Menge: kein Neubeginn der Ansicht. */
+    @Test
+    void newCountsForTheSameSubpagesKeepTheViewAndOnlyReload() {
+        tab.page(WIKI);
+        tab.subpages(below("2", "3"), false);
+        tab.showPageNow();
+        runner.runAll();
+        GraphNeighbourhood.Stack first = tab.subpageStack();
+        PageSelection recounted = new PageSelection(below("2", "3").pages(), new HoldingCounts(2, 1, 1, 0),
+                List.of(), false, below("2", "3").locked());
+
+        tab.subpages(recounted, true);
+
+        assertThat(KnowledgeGraphTab.sameSet(recounted, below("2", "3"))).isTrue();
+        assertThat(tab.subpageStack()).as("kein Neubeginn: der Abschnitt zeigt weiter das Gezeigte").isSameAs(first);
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(actions.calls).containsExactly("pages wiki/1 +2", "pages wiki/1 +2");
+        assertThat(KnowledgeGraphTab.sameSet(below("2"), below("2", "3"))).isFalse();
+        assertThat(KnowledgeGraphTab.sameSet(null, null)).isTrue();
+        assertThat(KnowledgeGraphTab.sameSet(below("2"), null)).isFalse();
+    }
+
+    /** „Seite neu laden“ zeigt dieselbe Seite noch einmal: die Unterseiten bleiben, die Checkbox meldet nichts Neues. */
+    @Test
+    void showingTheSamePageAgainKeepsTheSubpages() {
+        tab.page(WIKI, "DEV");
+        tab.subpages(below("2", "3"), false);
+        tab.showPageNow();
+        runner.runAll();
+
+        tab.page(WIKI, "DEV");
+        assertThat(tab.subpageStack()).as("die Ansicht beginnt neu").isNull();
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(actions.calls).containsExactly("pages wiki/1 +2", "pages wiki/1 +2");
+        assertThat(tab.subpageStack()).isNotNull();
+        assertThat(tab.statusText()).contains(" · mit 2 Unterseiten");
+        // W4 c: der Export bleibt beim Umfang der Seite, Unterseiten-Kanten gibt es nur in der Ansicht.
+        assertThat(tab.exportChoices().getFirst().scope())
+                .isEqualTo(new KnowledgeGraphExportUseCase.Scope.Page("wiki", "1"));
+
+        tab.page(new PageKey("wiki", "9"), "DEV");
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(actions.calls.getLast()).as("andere Seite: ohne Unterseiten, bis die Checkbox sie meldet")
+                .isEqualTo("page wiki/9");
+    }
+
+    /** Eine andere Menge verwirft die Historie, auch die gerade gezeigte Ansicht der alten Menge. */
+    @Test
+    void newSubpagesLeaveNothingForBackFromTheOldSet() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(tab.backOffered()).isFalse();
+
+        tab.subpages(below("2", "3"), false);
+        tab.showPageNow();
+        runner.runAll();
+
+        assertThat(actions.calls).containsExactly("page wiki/1", "pages wiki/1 +2");
+        assertThat(tab.backOffered()).as("die Ansicht nur der Seite gehört nicht in die Historie").isFalse();
+    }
+
+    /** „Zurück“ bringt mit der Ansicht und ihren Filtern auch das Ergebnis, das der Abschnitt darunter zeigt. */
+    @Test
+    void backRestoresTheSubpageResultOfTheRestoredView() {
+        List<GraphNeighbourhood.Stack> loaded = new ArrayList<>();
+        tab.onSubpages(loaded::add);
+        actions.skippedStale = 1;
+        tab.page(WIKI);
+        tab.subpages(below("2", "3"), false);
+        tab.showPageNow();
+        runner.runAll();
+        GraphNeighbourhood.Stack staleHidden = tab.subpageStack();
+        assertThat(staleHidden.skippedStale()).isEqualTo(1);
+
+        tab.toggleShowStale();
+        runner.runAll();
+        assertThat(tab.subpageStack().skippedStale()).isZero();
+
+        tab.clickBack();
+        assertThat(tab.showsStale()).isFalse();
+        assertThat(tab.subpageStack()).isSameAs(staleHidden);
+        assertThat(loaded).hasSize(3).last().isSameAs(staleHidden);
+    }
+
+    /** Scheitert das Neuladen, bleibt der Abschnitt beim Ergebnis, das der Graph weiter zeigt. */
+    @Test
+    void aFailedReloadKeepsTheSubpageResultTheGraphStillShows() {
+        List<GraphNeighbourhood.Stack> loaded = new ArrayList<>();
+        tab.onSubpages(loaded::add);
+        tab.page(WIKI);
+        tab.subpages(below("2", "3"), false);
+        tab.showPageNow();
+        runner.runAll();
+        GraphNeighbourhood.Stack shown = tab.subpageStack();
+
+        actions.pagesFailure = new IllegalStateException("Ablage gesperrt");
+        tab.toggleShowStale();
+        runner.runAll();
+
+        assertThat(tab.statusText()).startsWith("Graph nicht geladen");
+        assertThat(tab.subpageStack()).isSameAs(shown);
+        assertThat(loaded).as("keine leere Meldung an den Abschnitt").containsExactly(shown);
+
+        // Ohne früheres Ergebnis endet das Laden des Abschnitts mit „nichts“.
+        tab.page(new PageKey("wiki", "9"));
+        tab.subpages(below("2"), false);
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(loaded).hasSize(2).last().isNull();
+    }
+
+    /** Die Statuszeile zählt nur die Unterseiten, die in die Rechnung eingingen (Filter, Rechte, Sperre). */
+    @Test
+    void theStatusCountsOnlyTheSubpagesTheGraphConsidered() {
+        actions.considered = 1;
+        tab.page(WIKI);
+        tab.subpages(below("2", "3", "4"), false);
+        tab.showPageNow();
+        runner.runAll();
+
+        assertThat(tab.statusText()).contains(" · mit 1 Unterseite · ").doesNotContain("3 Unterseiten");
+    }
+
+    @Test
+    void theStatusNamesAtMostThreeSubpagesWithoutAnalysis() {
+        assertThat(new KnowledgeGraphTab.Coverage(5, List.of("Alpha", "Beta", "Gamma", "Delta", "Epsilon"), 0).text())
+                .isEqualTo(" · mit 5 Unterseiten · ohne Analyse: Alpha, Beta, Gamma und 2 weitere");
+        assertThat(new KnowledgeGraphTab.Coverage(1, List.of(), 0).text()).isEqualTo(" · mit 1 Unterseite");
     }
 
     @Test
@@ -452,6 +663,11 @@ class KnowledgeGraphTabTest {
         assertThat(tab.exportEnabled()).isTrue();
     }
 
+    /** Unterseiten wie aus {@code Holdings#descendants}, erfundene Seiten-IDs der Quelle „wiki“. */
+    private static PageSelection below(String... pageIds) {
+        return new PageSelection(PageSet.of(Map.of("wiki", List.of(pageIds))), HoldingCounts.ZERO, List.of(), true);
+    }
+
     static final class FakeActions implements KnowledgeGraphTab.Actions {
 
         final List<String> calls = new ArrayList<>();
@@ -459,6 +675,11 @@ class KnowledgeGraphTabTest {
         boolean pageStale;
         boolean confirmed;
         GraphNeighbourhood.Options lastOptions;
+        PageSelection lastSubpages;
+        int skippedStale;
+        /** Wie viele Unterseiten der Core berücksichtigt; negativ: alle übergebenen. */
+        int considered = -1;
+        RuntimeException pagesFailure;
         final List<String> exports = new ArrayList<>();
         RuntimeException exportFailure;
         RuntimeException deleteFailure;
@@ -505,6 +726,35 @@ class KnowledgeGraphTabTest {
                             "obj", null, "s1", true),
                     new GraphNeighbourhood.Edge(DOC, BELEG, GraphNeighbourhood.EdgeType.CONTAINS, "STRUCTURE", null,
                             null, null, true)), false, 0);
+        }
+
+        @Override
+        public GraphNeighbourhood.Stack pages(PageKey key, PageSelection subpages,
+                                              GraphNeighbourhood.Options options) {
+            if (options.maxNodes() > 1) {
+                calls.add("pages " + key.sourceId() + "/" + key.pageId() + " +" + subpages.size());
+                lastSubpages = subpages;
+            }
+            if (pagesFailure != null) {
+                throw pagesFailure;
+            }
+            int before = calls.size();
+            GraphNeighbourhood.Subgraph base = page(key, options);
+            calls.subList(before, calls.size()).clear();
+            List<GraphNeighbourhood.Node> nodes = new ArrayList<>(base.nodes());
+            nodes.add(new GraphNeighbourhood.Node(SUB_DOC, PageGraph.NodeKind.DOCUMENT, "Anhang Alpha", null, SUB_REF,
+                    -1, -1, false));
+            List<GraphNeighbourhood.Edge> edges = new ArrayList<>(base.edges());
+            edges.add(new GraphNeighbourhood.Edge(DOC, SUB_DOC, GraphNeighbourhood.EdgeType.SUBPAGE, "STRUCTURE", null,
+                    null, null, true));
+            return new GraphNeighbourhood.Stack(new GraphNeighbourhood.Subgraph(DOC, nodes, edges, false, 0),
+                    List.of(new PageKey("wiki", "3")), options.includeStale() ? 0 : skippedStale,
+                    considered < 0 ? subpages.size() : considered);
+        }
+
+        @Override
+        public Map<PageKey, String> titles(java.util.Collection<PageKey> keys) {
+            return keys.contains(new PageKey("wiki", "3")) ? Map.of(new PageKey("wiki", "3"), "Anhang Beta") : Map.of();
         }
 
         @Override

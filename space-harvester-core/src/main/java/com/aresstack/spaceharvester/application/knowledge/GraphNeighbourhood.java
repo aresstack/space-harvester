@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.application.knowledge;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.holdings.PageSelection;
+import com.aresstack.spaceharvester.application.holdings.SpaceSummary;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.util.ArrayList;
@@ -59,7 +61,12 @@ public class GraphNeighbourhood {
         /** Gleiche normalisierte Grundform auf einer anderen Seite: unbestätigter Kandidat, keine Identität. */
         LEXICAL_CANDIDATE,
         /** Bestätigte Begriffsbeziehung (ADR 0019) zu einer Erwähnung auf einer anderen Seite. */
-        CONFIRMED_TERM_RELATION;
+        CONFIRMED_TERM_RELATION,
+        /**
+         * Dokument einer Seite → Dokument einer ihrer Unterseiten ({@link #pages}, „mit Unterseiten“): Struktur aus dem
+         * Seitenbaum wie {@link #CONTAINS}, keine Rolle und keine Verbindung zwischen Erwähnungen.
+         */
+        SUBPAGE;
 
         /** Verbindung zwischen zwei Seiten (gestrichelt darzustellen). */
         public boolean crossPage() {
@@ -68,7 +75,7 @@ public class GraphNeighbourhood {
 
         /** Rolle einer Aussage. */
         public boolean role() {
-            return this != CONTAINS && this != NOMINAL && !crossPage();
+            return this != CONTAINS && this != SUBPAGE && this != NOMINAL && !crossPage();
         }
     }
 
@@ -128,6 +135,34 @@ public class GraphNeighbourhood {
     }
 
     /**
+     * Eine Seite samt Unterseiten als ein Teilgraph ({@link #pages}).
+     *
+     * @param graph        Teilgraph über die ganze Menge; Grenzen, {@code truncated} und {@code hidden} gelten für die
+     *                     ganze Menge, jeder Knoten trägt seine Herkunftsseite ({@link Node#page()})
+     * @param missing      Seiten der Menge, die der Aufrufer lesen darf, die nicht gesperrt sind und die schlicht keine
+     *                     (aktuelle oder veraltete) Analyse haben; nur Schlüssel, keine Titel; die Seite zuerst, dann
+     *                     nach Quelle und Seiten-ID. Gesperrte Seiten und Seiten ohne Leserecht stehen weder hier noch
+     *                     als Knoten im Graphen noch in einem Zähler.
+     * @param skippedStale Seiten der Menge, die nur fehlen, weil sie veraltet sind und
+     *                     {@link Options#includeStale()} aus ist
+     * @param considered   wie viele Unterseiten (ohne die Seite selbst) in die Rechnung eingingen: lesbar, nicht gesperrt
+     *                     und innerhalb von Quellen- und Seitengrenze ({@link Options#sourceId()},
+     *                     {@link Options#pages()}), mit oder ohne Analyse
+     */
+    public record Stack(Subgraph graph, List<PageKey> missing, int skippedStale, int considered) {
+
+        public Stack {
+            Objects.requireNonNull(graph, "graph");
+            missing = List.copyOf(missing);
+        }
+
+        /** Nur ein Teilgraph, ohne Unterseiten. */
+        public static Stack of(Subgraph graph) {
+            return new Stack(graph, List.of(), 0, 0);
+        }
+    }
+
+    /**
      * Grenzen und Filter.
      *
      * @param kinds        sichtbare Knotenarten
@@ -180,73 +215,215 @@ public class GraphNeighbourhood {
         if (found.isEmpty() || !admitted(found.get().page(), options)) {
             return Subgraph.empty();
         }
-        KnowledgeGraph.AnalysedPage page = found.get();
-        PageGraph projection = page.graph();
-        Map<String, PageGraph.Node> local = new LinkedHashMap<>();
-        projection.nodes().forEach(node -> local.put(node.id(), node));
-        PageGraph.Node document = projection.nodes().getFirst();
-        Builder builder = new Builder(options);
-        builder.node(node(page, document));
-        // Platz nur freihalten, wenn nach den Filtern Verbindungen übrig bleiben.
-        List<KnowledgeGraph.Link> links = crossPageAllowed(options) ? graph.links(caller, key).stream()
-                .filter(link -> options.types().contains(type(link)) && admitted(link.target(), options))
-                .toList() : List.of();
-        if (!links.isEmpty()) {
-            builder.reserve(Math.max(1, options.maxNodes() / 5), Math.max(1, options.maxEdges() / 5));
+        return collect(caller, new Projection(found.get()), List.of(), options);
+    }
+
+    /**
+     * Eine Seite samt Unterseiten als ein Teilgraph (Checkbox „mit Unterseiten“): wie {@link #page}, nur über die
+     * Menge aus Seite und Unterseiten, mit <em>einem</em> Satz Grenzen für die ganze Menge. Verbindungen zu anderen
+     * Seiten bleiben in der Menge ({@link Options#within}); eine schon gesetzte Grenze {@link Options#pages()} schneidet
+     * die Menge weiter. Reihenfolge, damit jede Seite zu Wort kommt: das Dokument der Seite, dann die Dokumente der
+     * Unterseiten (nach Titel ohne Groß-/Kleinschreibung, dann Seiten-ID) je mit {@link EdgeType#SUBPAGE}-Kante; die
+     * Kernaussagen der Seite, dann die der Unterseiten, dann ebenso die übrigen Aussagen; Verbindungen innerhalb der
+     * Menge; was danach Platz hat wie bei {@link #page}, die Seite jeweils vor ihren Unterseiten. Vorab kommen nur
+     * höchstens {@code max(1, maxNodes / 4)} Dokumente von Unterseiten; die übrigen folgen je vor den Aussagen ihrer
+     * Unterseite, soweit Platz ist, sonst zählen sie als ausgeblendet. So bleibt auch bei vielen Unterseiten Platz für
+     * die Kernaussagen der Seite.
+     *
+     * <p>Gesperrte Unterseiten ({@link PageSelection#locked()}) und Seiten, die der Aufrufer nicht lesen darf
+     * ({@link KnowledgeGraph#readable}), erscheinen nirgends: weder als Knoten noch in {@link Stack#missing()} noch in
+     * {@link Stack#considered()}. {@link Stack#missing()} nennt nur lesbare, nicht gesperrte Seiten ohne Analyse.
+     * Veraltete Seiten zählen bei {@code includeStale = false} in {@link Stack#skippedStale()}; Seiten außerhalb der
+     * Quellen- oder Seitengrenze fallen still weg. Ohne Unterseiten genau wie {@link #page}.
+     *
+     * @param subpages die Unterseiten aus {@code Holdings#descendants} mit den Rechten des Aufrufers (ohne die Seite
+     *                 selbst, sonst wird sie übergangen) oder {@code null}
+     */
+    public Stack pages(AccessContext caller, PageKey page, PageSelection subpages, Options options) {
+        Objects.requireNonNull(page, "page");
+        List<PageKey> keys = new ArrayList<>();
+        keys.add(page);
+        if (subpages != null) {
+            subpages.pages().asMap().forEach((sourceId, pageIds) -> pageIds.stream().sorted()
+                    .map(pageId -> new PageKey(sourceId, pageId))
+                    .filter(key -> !key.equals(page) && !subpages.locked().contains(key))
+                    .forEach(keys::add));
         }
-        // 1. Aussagen mit ihren Beteiligten, Kern zuerst.
-        List<PageGraph.Node> statements = new ArrayList<>(projection.nodes().stream()
-                .filter(node -> node.kind() == PageGraph.NodeKind.STATEMENT).toList());
-        statements.sort(Comparator.comparingInt((PageGraph.Node node) -> rank(page, node))
-                .thenComparingInt(PageGraph.Node::start));
-        statements(builder, page, projection, local, document.id(), statements);
-        // 2. Verbindungen zu anderen Seiten.
-        builder.release();
-        candidates(caller, page, null, links, builder, mentionId -> local.containsKey(mentionId)
-                && attach(builder, page, projection, document.id(), local.get(mentionId)));
-        // 3. Nicht verbrauchter Platz geht zuerst an Aussagen, die in Schritt 1 keinen Platz fanden.
-        statements(builder, page, projection, local, document.id(), statements);
-        // 4. Nominale Bezüge (auch Ketten), dann übrige Erwähnungen.
-        boolean grown = true;
-        while (grown) {
-            grown = false;
-            for (PageGraph.Edge edge : projection.edges()) {
-                if (edge.kind() != PageGraph.EdgeKind.NOMINAL || builder.has(edge.from()) == builder.has(edge.to())) {
-                    continue;
+        Options within = keys.size() == 1 ? options : options.within(PageSet.ofKeys(options.pages() == null ? keys
+                : keys.stream().filter(options.pages()::contains).toList()));
+        Options anyState = new Options(within.maxNodes(), within.maxEdges(), within.kinds(), within.types(), true,
+                within.sourceId(), within.spaceKey(), within.pages());
+        Projection head = null;
+        List<Projection> below = new ArrayList<>();
+        List<PageKey> missing = new ArrayList<>();
+        int skippedStale = 0;
+        int considered = 0;
+        for (PageKey key : keys) {
+            if (within.pages() != null && !within.pages().contains(key)
+                    || within.sourceId() != null && !within.sourceId().equals(key.sourceId())) {
+                continue;
+            }
+            Optional<KnowledgeGraph.AnalysedPage> found = graph.page(caller, key);
+            if (found.isEmpty() && !graph.readable(caller, key, spaceOf(subpages, key))) {
+                continue; // ohne Leserecht: weder Knoten noch „ohne Analyse“ noch gezählt
+            }
+            if (!key.equals(page)) {
+                considered++;
+            }
+            if (found.isEmpty()) {
+                missing.add(key);
+            } else if (admitted(found.get().page(), within)) {
+                Projection projection = new Projection(found.get());
+                if (key.equals(page)) {
+                    head = projection;
+                } else {
+                    below.add(projection);
                 }
-                String missing = builder.has(edge.from()) ? edge.to() : edge.from();
-                grown |= builder.connect(edge(edge), node(page, local.get(missing)));
+            } else if (found.get().page().state() == PageStatements.State.STALE
+                    && admitted(found.get().page(), anyState)) {
+                skippedStale++;
             }
         }
-        for (PageGraph.Node mention : projection.nodes()) {
-            if (mention.kind() == PageGraph.NodeKind.MENTION && !builder.connected(mention.id())) {
-                attach(builder, page, projection, document.id(), mention);
+        below.sort(Comparator.comparing((Projection projection) -> title(projection.page.page()),
+                        String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(projection -> projection.page.page().key().pageId())
+                .thenComparing(projection -> projection.page.page().key().sourceId()));
+        if (head == null && below.isEmpty()) {
+            return new Stack(Subgraph.empty(), missing, skippedStale, considered);
+        }
+        return new Stack(collect(caller, head, below, within), missing, skippedStale, considered);
+    }
+
+    /** Der Space einer Seite der Auswahl, wenn ihre Quelle dort genau einen hat; sonst {@code null}. */
+    private static String spaceOf(PageSelection selection, PageKey key) {
+        if (selection == null) {
+            return null;
+        }
+        List<String> spaces = selection.spaces().stream().filter(space -> space.sourceId().equals(key.sourceId()))
+                .map(SpaceSummary::spaceKey).distinct().toList();
+        return spaces.size() == 1 ? spaces.getFirst() : null;
+    }
+
+    private static String title(KnowledgeGraph.PageRef page) {
+        return page.title() == null ? page.key().pageId() : page.title();
+    }
+
+    /**
+     * Baut den Teilgraphen einer Seite ({@code head}, darf fehlen) und ihrer Unterseiten mit einem gemeinsamen
+     * {@link Builder}; ohne Unterseiten genau die Schritte von {@link #page}.
+     */
+    private Subgraph collect(AccessContext caller, Projection head, List<Projection> subpages, Options options) {
+        List<Projection> parts = new ArrayList<>();
+        if (head != null) {
+            parts.add(head);
+        }
+        parts.addAll(subpages);
+        Builder builder = new Builder(options);
+        String focus = head == null ? null : head.document().id();
+        if (head != null) {
+            builder.node(node(head.page, head.document()));
+        }
+        // Dokumente der ersten Unterseiten vor allem anderen, je mit Unterseiten-Kante vom Dokument der Seite; nur ein
+        // Viertel der Grenze, damit die Kernaussagen der Seite auch bei vielen Unterseiten Platz finden.
+        for (Projection subpage : subpages.subList(0, Math.min(subpages.size(), Math.max(1, options.maxNodes() / 4)))) {
+            subpageDocument(builder, focus, subpage);
+        }
+        // Platz nur freihalten, wenn nach den Filtern Verbindungen übrig bleiben.
+        boolean linked = false;
+        for (Projection part : parts) {
+            part.links = crossPageAllowed(options) ? graph.links(caller, part.page.page().document()).stream()
+                    .filter(link -> options.types().contains(type(link)) && admitted(link.target(), options))
+                    .toList() : List.of();
+            linked |= !part.links.isEmpty();
+        }
+        if (linked) {
+            builder.reserve(Math.max(1, options.maxNodes() / 5), Math.max(1, options.maxEdges() / 5));
+        }
+        // 1. Aussagen mit ihren Beteiligten, Kern zuerst: erst die Kernaussagen aller Seiten, dann die übrigen. Die
+        // übrigen Dokumente der Unterseiten je vor deren Aussagen, soweit Platz ist (sonst ausgeblendet gezählt).
+        for (boolean core : new boolean[] {true, false}) {
+            for (Projection part : parts) {
+                if (part != head) {
+                    subpageDocument(builder, focus, part);
+                }
+                statements(builder, part, part.statements().stream()
+                        .filter(statement -> core(part.page, statement.id()) == core).toList());
+            }
+        }
+        // 2. Verbindungen zu anderen Seiten.
+        builder.release();
+        for (Projection part : parts) {
+            candidates(caller, part.page, null, part.links, builder, mentionId -> part.nodes.containsKey(mentionId)
+                    && attach(builder, part.page, part.graph, part.document().id(), part.nodes.get(mentionId)));
+        }
+        // 3. Nicht verbrauchter Platz geht zuerst an Aussagen, die in Schritt 1 keinen Platz fanden.
+        for (Projection part : parts) {
+            statements(builder, part, part.statements());
+        }
+        // 4. Nominale Bezüge (auch Ketten), dann übrige Erwähnungen.
+        for (Projection part : parts) {
+            boolean grown = true;
+            while (grown) {
+                grown = false;
+                for (PageGraph.Edge edge : part.graph.edges()) {
+                    if (edge.kind() != PageGraph.EdgeKind.NOMINAL
+                            || builder.has(edge.from()) == builder.has(edge.to())) {
+                        continue;
+                    }
+                    String missing = builder.has(edge.from()) ? edge.to() : edge.from();
+                    grown |= builder.connect(edge(edge), node(part.page, part.nodes.get(missing)));
+                }
+            }
+        }
+        for (Projection part : parts) {
+            for (PageGraph.Node mention : part.graph.nodes()) {
+                if (mention.kind() == PageGraph.NodeKind.MENTION && !builder.connected(mention.id())) {
+                    attach(builder, part.page, part.graph, part.document().id(), mention);
+                }
             }
         }
         // 5. Kanten zwischen schon aufgenommenen Knoten nachtragen: Rollen zuerst, dann nominale Bezüge.
         for (boolean roles : new boolean[] {true, false}) {
-            for (PageGraph.Edge edge : projection.edges()) {
-                Edge mapped = edge(edge);
-                boolean wanted = roles ? mapped.type().role() : mapped.type() == EdgeType.NOMINAL;
-                if (wanted && builder.has(edge.from()) && builder.has(edge.to())) {
-                    builder.connect(mapped, node(page, local.get(edge.to())));
+            for (Projection part : parts) {
+                for (PageGraph.Edge edge : part.graph.edges()) {
+                    Edge mapped = edge(edge);
+                    boolean wanted = roles ? mapped.type().role() : mapped.type() == EdgeType.NOMINAL;
+                    if (wanted && builder.has(edge.from()) && builder.has(edge.to())) {
+                        builder.connect(mapped, node(part.page, part.nodes.get(edge.to())));
+                    }
                 }
             }
         }
-        return builder.build(document.id());
+        return builder.build(focus);
+    }
+
+    /**
+     * Das Dokument einer Unterseite mit {@link EdgeType#SUBPAGE}-Kante vom Dokument der Seite ({@code focus}); ohne
+     * Seite oder ohne sichtbare Unterseiten-Kanten allein. Schon aufgenommen: nichts; ohne Platz zählt es als
+     * ausgeblendet.
+     */
+    private static void subpageDocument(Builder builder, String focus, Projection subpage) {
+        Node document = node(subpage.page, subpage.document());
+        if (builder.has(document.id())) {
+            return;
+        }
+        if (focus != null && builder.has(focus) && builder.options.types().contains(EdgeType.SUBPAGE)) {
+            builder.connect(new Edge(focus, document.id(), EdgeType.SUBPAGE, "STRUCTURE", null, null, null, true),
+                    document);
+        } else {
+            builder.node(document);
+        }
     }
 
     /** Aussagen in der gegebenen Reihenfolge, jede mit ihren Rollenkanten und Beteiligten, soweit Platz ist. */
-    private static void statements(Builder builder, KnowledgeGraph.AnalysedPage page, PageGraph projection,
-                                   Map<String, PageGraph.Node> local, String document,
-                                   List<PageGraph.Node> statements) {
+    private static void statements(Builder builder, Projection part, List<PageGraph.Node> statements) {
         for (PageGraph.Node statement : statements) {
-            if (!attach(builder, page, projection, document, statement)) {
+            if (!attach(builder, part.page, part.graph, part.document().id(), statement)) {
                 continue;
             }
-            for (PageGraph.Edge role : projection.edgesOf(statement.id())) {
+            for (PageGraph.Edge role : part.graph.edgesOf(statement.id())) {
                 if (role.from().equals(statement.id()) && edge(role).type().role()) {
-                    builder.connect(edge(role), node(page, local.get(role.to())));
+                    builder.connect(edge(role), node(part.page, part.nodes.get(role.to())));
                 }
             }
         }
@@ -344,17 +521,39 @@ public class GraphNeighbourhood {
         return builder.build(focus);
     }
 
-    /** Die Standardprojektion einer Seite mit Knoten nach ID, einmal je Seite einer Begriffssuche. */
+    /**
+     * Die Standardprojektion einer Seite mit Knoten nach ID, einmal je Seite einer Begriffssuche oder eines
+     * Seitengraphen.
+     */
     private static final class Projection {
 
         private final KnowledgeGraph.AnalysedPage page;
         private final PageGraph graph;
         private final Map<String, PageGraph.Node> nodes = new LinkedHashMap<>();
+        /** Verbindungen zu anderen Seiten nach den Filtern; nur im Seitengraphen gesetzt. */
+        private List<KnowledgeGraph.Link> links = List.of();
+        private List<PageGraph.Node> statements;
 
         private Projection(KnowledgeGraph.AnalysedPage page) {
             this.page = page;
             this.graph = page.graph();
             graph.nodes().forEach(node -> nodes.put(node.id(), node));
+        }
+
+        PageGraph.Node document() {
+            return graph.nodes().getFirst();
+        }
+
+        /** Die Aussagen, Kern zuerst, jeweils in Textreihenfolge. */
+        List<PageGraph.Node> statements() {
+            if (statements == null) {
+                List<PageGraph.Node> sorted = new ArrayList<>(graph.nodes().stream()
+                        .filter(node -> node.kind() == PageGraph.NodeKind.STATEMENT).toList());
+                sorted.sort(Comparator.comparingInt((PageGraph.Node node) -> rank(page, node))
+                        .thenComparingInt(PageGraph.Node::start));
+                statements = List.copyOf(sorted);
+            }
+            return statements;
         }
     }
 
@@ -578,8 +777,9 @@ public class GraphNeighbourhood {
                 return false;
             }
             String key = edge.from() + "|" + edge.to() + "|" + edge.type();
-            if (edges.containsKey(key)) {
-                return true;
+            if (edges.containsKey(key) || edge.type().crossPage()
+                    && edges.containsKey(edge.to() + "|" + edge.from() + "|" + edge.type())) {
+                return true; // eine Verbindung zwischen zwei Seiten der Menge nur einmal, nicht in beide Richtungen
             }
             if (edges.size() >= options.maxEdges() - reservedEdges) {
                 truncated = true;

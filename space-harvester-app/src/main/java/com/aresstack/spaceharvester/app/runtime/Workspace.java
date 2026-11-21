@@ -1397,6 +1397,17 @@ public final class Workspace {
         return new GraphNeighbourhood(harvester.knowledgeGraph()).page(caller, key, options);
     }
 
+    /**
+     * Teilgraph einer Seite samt Unterseiten („mit Unterseiten“): eine Grenze für die ganze Menge, Seiten ohne Analyse
+     * und ausgeblendete veraltete Seiten gezählt; gesperrte und nicht lesbare Unterseiten erscheinen nirgends.
+     * {@code subpages} aus {@link #descendants} (ohne die Seite selbst) oder {@code null}. Nie auf dem EDT.
+     */
+    public GraphNeighbourhood.Stack knowledgeGraphOfPages(PageKey page,
+            com.aresstack.spaceharvester.application.holdings.PageSelection subpages,
+            GraphNeighbourhood.Options options) {
+        return new GraphNeighbourhood(harvester.knowledgeGraph()).pages(caller, page, subpages, options);
+    }
+
     /** Direkte Nachbarn eines Knotens („Nachbarn erweitern“). */
     public GraphNeighbourhood.Subgraph knowledgeGraphOfNode(String nodeId, GraphNeighbourhood.Options options) {
         return new GraphNeighbourhood(harvester.knowledgeGraph()).node(caller, nodeId, options);

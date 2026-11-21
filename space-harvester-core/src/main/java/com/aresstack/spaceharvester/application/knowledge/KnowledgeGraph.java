@@ -256,6 +256,19 @@ public class KnowledgeGraph {
     }
 
     /**
+     * Ob der Aufrufer den Inhalt der Seite lesen darf ({@link AccessGuard#canRead}), gleich ob sie analysiert ist; der
+     * Space aus dem Bestand, sonst {@code spaceKey}. Für Listen von Seiten „ohne Analyse“: Sie nennen nur Seiten, die
+     * der Aufrufer lesen darf, denn {@link #page} unterscheidet „nicht analysiert“ nicht von „nicht lesbar“.
+     */
+    public boolean readable(AccessContext caller, PageKey key, String spaceKey) {
+        if (!activeSources.test(key.sourceId())) {
+            return false;
+        }
+        String space = snapshots.apply(key).map(PageSnapshot::spaceKey).orElse(spaceKey);
+        return access.canRead(caller, key.sourceId(), space, key.pageId());
+    }
+
+    /**
      * Ein sichtbares analysiertes Dokument: Seite, Anhang oder enthaltene Datei (ADR 0026, Punkt 10). Leer ohne Analyse
      * oder ohne Leserecht auf die Seite (nicht unterscheidbar); ein Dokument hat die Rechte seiner Seite.
      */
