@@ -72,14 +72,22 @@ public final class ChangeLog implements AutoCloseable {
      * Was „Zusammenfassen“ braucht (ADR 0030, Abschnitt 5).
      *
      * @param released ob eine Seite an den KI-Dienst darf ({@code AiRelease::mayProcess}, ADR 0028)
+     * @param material Lesetext und Space-Namen, damit die Zusammenfassung sagt, worum es geht (Angelo, 21.11.2026)
      */
-    public record Summaries(Jobs jobs, SummaryModel model, Predicate<PageKey> released, Clock clock) {
+    public record Summaries(Jobs jobs, SummaryModel model, Predicate<PageKey> released, Clock clock,
+                            SummaryMaterial material) {
 
         public Summaries {
             Objects.requireNonNull(jobs, "jobs");
             Objects.requireNonNull(model, "model");
             Objects.requireNonNull(released, "released");
             Objects.requireNonNull(clock, "clock");
+            material = material == null ? SummaryMaterial.NONE : material;
+        }
+
+        /** Ohne Lesetext und Space-Namen: nur Titel, Pfade und Unterschiede. */
+        public Summaries(Jobs jobs, SummaryModel model, Predicate<PageKey> released, Clock clock) {
+            this(jobs, model, released, clock, SummaryMaterial.NONE);
         }
     }
 
@@ -446,7 +454,12 @@ public final class ChangeLog implements AutoCloseable {
         }
         ChangeReport report = report(caller, sourceId, update, spaceKey);
         Map<String, String> titles = new HashMap<>();
-        report.pages().forEach(page -> titles.put(page.pageId(), page.title()));
+        Map<String, String> pageSpaces = new HashMap<>();
+        report.pages().forEach(page -> {
+            titles.put(page.pageId(), page.title());
+            pageSpaces.put(page.pageId(), page.spaceKey());
+        });
+        stored.get().inputPages().forEach(page -> pageSpaces.putIfAbsent(page.pageId(), page.spaceKey()));
         List<SummaryStatement> statements = new ArrayList<>();
         for (StoredSummary.Statement statement : stored.get().statements()) {
             List<SummaryPage> pages = new ArrayList<>();
@@ -454,17 +467,44 @@ public final class ChangeLog implements AutoCloseable {
                 String title = titles.containsKey(pageId) ? titles.get(pageId)
                         : headers.apply(new PageKey(sourceId, pageId)).map(found -> found.metadata().title())
                         .orElse(null);
-                pages.add(new SummaryPage(pageId, title));
+                pages.add(new SummaryPage(pageId, title, pageSpaces.get(pageId)));
             }
-            statements.add(new SummaryStatement(statement.text(), pages));
+            statements.add(new SummaryStatement(statement.text(), pages, statement.title(), statement.details()));
         }
+        Map<String, String> spaceNames = spaceNames(sourceId, pageSpaces);
         // Offenes Update mit neuen Änderungen oder abgeschlossenes, in das ein Schritt später nachkam.
         boolean stale = !UpdateSummarizer.reportSha256(report, page -> contentState(page, span))
                 .equals(stored.get().reportSha256());
         return Optional.of(new UpdateSummary(sourceId, update, spaceKey, stored.get().text(), statements,
                 stored.get().model(),
-                stored.get().createdAt(), stored.get().unreadableChanges(), stale));
+                stored.get().createdAt(), stored.get().unreadableChanges(), stale, spaceNames));
     }
+
+    /** Anzeigenamen der Spaces, soweit bekannt, je Space über eine seiner Seiten; ohne Zusammenfassungen keine. */
+    private Map<String, String> spaceNames(String sourceId, Map<String, String> pageSpaces) {
+        Map<String, String> names = new HashMap<>();
+        if (summaries == null) {
+            return names;
+        }
+        Map<String, List<String>> bySpace = new TreeMap<>();
+        pageSpaces.forEach((pageId, spaceKey) -> {
+            if (spaceKey != null) {
+                bySpace.computeIfAbsent(spaceKey, ignored -> new ArrayList<>()).add(pageId);
+            }
+        });
+        bySpace.forEach((spaceKey, pageIds) -> {
+            for (String pageId : pageIds.subList(0, Math.min(3, pageIds.size()))) {
+                Optional<String> name = summaries.material().spaceName(new PageKey(sourceId, pageId), spaceKey)
+                        .filter(found -> !found.isBlank());
+                if (name.isPresent()) {
+                    names.put(spaceKey, name.get());
+                    break;
+                }
+            }
+        });
+        return names;
+    }
+
 
     /**
      * Startet „Zusammenfassen“ für ein Update als Auftrag; nur auf Wunsch, nie von selbst. Das Ergebnis meldet
@@ -521,8 +561,16 @@ public final class ChangeLog implements AutoCloseable {
                     // Mit Unterschieden (CL5); withDiff prüft das Leserecht am Inhalt je Seite.
                     ChangeReport report = report(caller, sourceId, update, spaceKey, true);
                     Visibility visible = new Visibility(caller);
+                    // Lesetext nur, wo der Auftraggeber den Inhalt lesen darf; die KI-Freigabe prüft der Summarizer.
+                    Function<ReportedPage, Optional<String>> text = page -> access.permits(caller,
+                            ResourceScope.page(page.sourceId(), page.spaceKey(), page.pageId()), AccessKind.CONTENT)
+                            ? runtime.material().text(new PageKey(page.sourceId(), page.pageId())) : Optional.empty();
+                    Map<String, String> reportSpaces = new LinkedHashMap<>();
+                    report.pages().forEach(page -> reportSpaces.put(page.pageId(), page.spaceKey()));
+                    Map<String, String> names = spaceNames(sourceId, reportSpaces);
                     UpdateSummarizer.Result result = new UpdateSummarizer(runtime.model(), runtime.released())
-                            .summarize(report, page -> releasedPath(page, visible, runtime.released()), context);
+                            .summarize(report, page -> releasedPath(page, visible, runtime.released()), text, names,
+                                    context);
                     Instant now = runtime.clock().instant();
                     store.saveSummary(new StoredSummary(sourceId, update, spaceKey, result.text(), result.statements(),
                             runtime.model().version(), now, report.update().to() != null ? report.update().to() : now,

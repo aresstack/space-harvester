@@ -114,6 +114,7 @@ final class SourceUpdatesView extends JPanel {
             JLabel.LEFT);
     private Consumer<String> onStatus = text -> { };
     private Consumer<ReportedPage> onOpen = page -> { };
+    private java.util.function.BiConsumer<String, String> onOpenSpace = (source, space) -> { };
     private java.util.function.BiConsumer<String, List<String>> onRetry;
     private ZoneId zone = ZoneId.systemDefault();
 
@@ -245,6 +246,11 @@ final class SourceUpdatesView extends JPanel {
     /** {@code listener} öffnet eine Seite aus dem Bericht. */
     void onOpen(Consumer<ReportedPage> listener) {
         onOpen = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** {@code listener} öffnet einen Space (Quelle, Space-Schlüssel), etwa aus der Zusammenfassung. */
+    void onOpenSpace(java.util.function.BiConsumer<String, String> listener) {
+        onOpenSpace = Objects.requireNonNull(listener, "listener");
     }
 
     /**
@@ -819,11 +825,15 @@ final class SourceUpdatesView extends JPanel {
         reportRenders++;
         reportBody.removeAll();
         ChangeUpdate update = found.update();
-        JLabel title = new JLabel(heading(update));
+        // Eine Zeile für den Zeitraum (Angelo, 21.11.2026): „von bis“ statt Datum und darunter derselbe Zeitraum.
+        boolean span = !update.open() && update.from() != null;
+        JLabel title = new JLabel(span ? when(update.from()) + " bis " + heading(update) : heading(update));
         title.setFont(Comic.semiBold(15f));
         title.setForeground(Comic.INK);
         add(reportBody, title);
-        add(reportBody, Comic.wrapped(period(update), Comic.MUTED, 12.5f));
+        if (!span) {
+            add(reportBody, Comic.wrapped(period(update), Comic.MUTED, 12.5f));
+        }
         // Was früher in der Liste unter dem Datum stand; die Wolke oben trägt nur Datum und Benutzer.
         add(reportBody, Comic.wrapped(counts(update), Comic.MUTED, 12.5f));
         if (update.mark() != null && update.mark().failedSyncs() > 0) {
@@ -958,34 +968,83 @@ final class SourceUpdatesView extends JPanel {
         reportBody.repaint();
     }
 
-    /** Die Zusammenfassung; jede Aussage verweist auf ihre Seiten. */
+    /**
+     * Die Zusammenfassung (Angelo, 21.11.2026): oben der Überblick, darunter die Themen je Space, Space mit Namen und
+     * anklickbar, darunter klein die Zahlen. Themen über mehrere Spaces stehen für sich. Je Thema Titel, kurzer Text,
+     * ein Knopf für die ausführliche KI-Zusammenfassung und die Seiten, ab {@link #OPEN_LINKS} zugeklappt. Spaces ohne
+     * Thema (etwa ohne KI-Freigabe) stehen aufklappbar am Ende. Die Modellkennung steht nur im Tooltip.
+     */
     private void renderSummary(ChangeReport found) {
         JLabel title = new JLabel("Zusammenfassung");
         title.setFont(Comic.semiBold(14f));
         title.setForeground(Comic.INK);
         add(reportBody, title);
-        add(reportBody, Comic.wrapped(summaryMeta(summary), Comic.MUTED, 12f));
+        WrappedText meta = Comic.wrapped(summaryMeta(summary), Comic.MUTED, 12f);
+        meta.setName("summary-meta");
+        meta.setToolTipText(summaryModelTip(summary));
+        add(reportBody, meta);
         if (summary.stale()) {
             add(reportBody, Comic.wrapped("Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht "
                     + "alles.", Comic.ORANGE, 12.5f));
         }
-        List<SummaryStatement> statements = summary.statements().isEmpty() && summary.text() != null
-                ? List.of(new SummaryStatement(summary.text(), List.of())) : summary.statements();
-        for (SummaryStatement statement : statements) {
+        // Ältere Zusammenfassungen (ohne Themen) haben als Text nur ihre Aussagen aneinandergereiht: dann nur diese.
+        boolean topical = summary.statements().stream().anyMatch(statement -> statement.title() != null);
+        if (summary.text() != null && !summary.text().isBlank() && (topical || summary.statements().isEmpty())) {
             reportBody.add(Box.createVerticalStrut(6));
-            add(reportBody, Comic.wrapped(statement.text(), Comic.TEXT, 13.5f));
-            if (!statement.pages().isEmpty()) {
-                JPanel links = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(
-                        java.awt.FlowLayout.LEFT, 10, 0));
-                links.setOpaque(false);
-                for (SummaryPage page : statement.pages()) {
-                    links.add(pageLink(page, found));
+            add(reportBody, Comic.wrapped(summary.text(), Comic.TEXT, 13.5f));
+        }
+        Map<String, List<ReportedPage>> bySpace = new java.util.LinkedHashMap<>();
+        found.pages().forEach(page -> bySpace.computeIfAbsent(page.spaceKey(), ignored -> new ArrayList<>())
+                .add(page));
+        Map<String, List<SummaryStatement>> topics = topicsBySpace(summary.statements());
+        // Spaces mit Themen, die mit den meisten Seiten zuerst; danach was mehrere Spaces betrifft.
+        List<String> spaces = new ArrayList<>(topics.keySet());
+        spaces.remove(ACROSS_SPACES);
+        spaces.sort(java.util.Comparator.comparingInt((String key) -> -bySpace.getOrDefault(key, List.of()).size())
+                .thenComparing(key -> summary.spaceName(key), String.CASE_INSENSITIVE_ORDER));
+        if (topics.containsKey(ACROSS_SPACES)) {
+            spaces.add(0, ACROSS_SPACES);
+        }
+        boolean flat = summary.statements().stream().flatMap(statement -> statement.pages().stream())
+                .allMatch(page -> page.spaceKey() == null);
+        for (String space : spaces) {
+            reportBody.add(Box.createVerticalStrut(flat ? 0 : 12));
+            if (!flat) {
+                add(reportBody, spaceHeading(space));
+            }
+            if (!ACROSS_SPACES.equals(space)) {
+                String numbers = spaceCounts(bySpace.getOrDefault(space, List.of()));
+                if (!numbers.isEmpty()) {
+                    add(reportBody, Comic.wrapped(numbers, Comic.MUTED, 12f));
                 }
-                add(reportBody, links);
+            }
+            for (SummaryStatement statement : topics.get(space)) {
+                renderTopic(statement, found, ACROSS_SPACES.equals(space));
             }
         }
+        List<String> rest = bySpace.keySet().stream().filter(key -> key != null && !topics.containsKey(key))
+                .sorted(java.util.Comparator.comparing(key -> summary.spaceName(key), String.CASE_INSENSITIVE_ORDER))
+                .toList();
+        if (!rest.isEmpty() && !flat) {
+            reportBody.add(Box.createVerticalStrut(12));
+            JPanel list = new JPanel();
+            list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+            list.setOpaque(false);
+            for (String key : rest) {
+                JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+                row.setOpaque(false);
+                row.add(spaceLink(key, 12.5f));
+                JLabel numbers = new JLabel("  " + spaceCounts(bySpace.get(key)));
+                numbers.setFont(Comic.regular(12f));
+                numbers.setForeground(Comic.MUTED);
+                row.add(numbers);
+                add(list, row);
+            }
+            add(reportBody, toggle((rest.size() == 1 ? "Ein weiterer Space" : rest.size() + " weitere Spaces")
+                    + " ohne Thema in der Zusammenfassung", list, false));
+        }
         if (summary.unreadableChanges() > 0) {
-            reportBody.add(Box.createVerticalStrut(6));
+            reportBody.add(Box.createVerticalStrut(8));
             add(reportBody, Comic.wrapped(summary.unreadableChanges() == 1
                     ? "Eine Änderung durfte die KI nicht lesen; sie fehlt in der Zusammenfassung."
                     : summary.unreadableChanges() + " Änderungen durfte die KI nicht lesen; sie fehlen in der "
@@ -994,10 +1053,155 @@ final class SourceUpdatesView extends JPanel {
         reportBody.add(Box.createVerticalStrut(12));
     }
 
+    /** Schlüssel der Gruppe „Über mehrere Spaces“; kein Space-Schlüssel kann so heißen. */
+    static final String ACROSS_SPACES = "\u0000mehrere";
+    /** Bis zu so vielen Seiten stehen die Verweise eines Themas offen da, darüber zugeklappt. */
+    static final int OPEN_LINKS = 3;
+
+    /**
+     * Die Themen je Space: ein Thema mit Seiten aus genau einem Space gehört zu ihm, eines aus mehreren Spaces zu
+     * {@link #ACROSS_SPACES}, eines ohne bekannten Space (ältere Zusammenfassungen) ebenfalls dorthin, ohne Überschrift.
+     */
+    static Map<String, List<SummaryStatement>> topicsBySpace(List<SummaryStatement> statements) {
+        Map<String, List<SummaryStatement>> grouped = new java.util.LinkedHashMap<>();
+        for (SummaryStatement statement : statements) {
+            java.util.Set<String> spaces = new java.util.TreeSet<>();
+            statement.pages().stream().map(SummaryPage::spaceKey).filter(Objects::nonNull).forEach(spaces::add);
+            String key = spaces.size() == 1 ? spaces.iterator().next() : ACROSS_SPACES;
+            grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(statement);
+        }
+        return grouped;
+    }
+
+    private JComponent spaceHeading(String space) {
+        if (ACROSS_SPACES.equals(space)) {
+            JLabel label = new JLabel("Über mehrere Spaces");
+            label.setFont(Comic.semiBold(14f));
+            label.setForeground(Comic.INK);
+            return label;
+        }
+        return spaceLink(space, 14f);
+    }
+
+    /** Der Space mit Namen; ein Klick wählt ihn links im Baum. */
+    private JLabel spaceLink(String space, float size) {
+        JLabel link = new JLabel(summary.spaceName(space));
+        link.setName("summary-space");
+        link.setFont(Comic.semiBold(size));
+        link.setForeground(Comic.BLUE);
+        String name = summary.spaceName(space);
+        clickable(() -> onOpenSpace.accept(sourceId, space),
+                name.equals(space) ? "Space öffnen" : "Space " + space + " öffnen", link);
+        return link;
+    }
+
+    /** Die Zahlen eines Space klein: „3 neu · 1 geändert“. */
+    static String spaceCounts(List<ReportedPage> pages) {
+        Map<ChangeKind, Integer> kinds = new java.util.EnumMap<>(ChangeKind.class);
+        pages.forEach(page -> kinds.merge(page.kind(), 1, Integer::sum));
+        List<String> parts = new ArrayList<>();
+        kinds.forEach((kind, count) -> parts.add(count + " " + kindLabel(kind).toLowerCase(Locale.GERMAN)));
+        return String.join(" · ", parts);
+    }
+
+    /** Ein Thema: Titel mit Details-Knopf, kurzer Text, Seiten. */
+    private void renderTopic(SummaryStatement statement, ChangeReport found, boolean across) {
+        reportBody.add(Box.createVerticalStrut(6));
+        if (statement.title() != null && !statement.title().isBlank()) {
+            JPanel head = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+            head.setOpaque(false);
+            JLabel topic = new JLabel(statement.title());
+            topic.setName("summary-topic");
+            topic.setFont(Comic.semiBold(13.5f));
+            topic.setForeground(Comic.INK);
+            head.add(topic);
+            if (statement.details() != null && !statement.details().isBlank()) {
+                com.aresstack.spaceharvester.app.ui.IconButton details =
+                        new com.aresstack.spaceharvester.app.ui.IconButton(
+                                com.aresstack.spaceharvester.app.ui.Glyph.SUMMARIZE, DETAILS_TIP).compact();
+                details.setName("summary-details");
+                details.setForeground(Comic.BLUE);
+                details.addActionListener(e -> showDetails(statement, found, details));
+                head.add(Box.createHorizontalStrut(4));
+                head.add(details);
+            }
+            head.setMaximumSize(new Dimension(Integer.MAX_VALUE, head.getPreferredSize().height));
+            add(reportBody, head);
+        }
+        String text = statement.text();
+        if (across) {
+            java.util.Set<String> names = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            statement.pages().stream().map(SummaryPage::spaceKey).filter(Objects::nonNull)
+                    .forEach(key -> names.add(summary.spaceName(key)));
+            if (!names.isEmpty()) {
+                text += " (" + String.join(", ", names) + ")";
+            }
+        }
+        add(reportBody, Comic.wrapped(text, Comic.TEXT, 13.5f));
+        if (statement.pages().isEmpty()) {
+            return;
+        }
+        JPanel links = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(
+                java.awt.FlowLayout.LEFT, 10, 0));
+        links.setOpaque(false);
+        for (SummaryPage page : statement.pages()) {
+            links.add(pageLink(page, found));
+        }
+        if (statement.pages().size() <= OPEN_LINKS) {
+            add(reportBody, links);
+        } else {
+            add(reportBody, toggle(pages(statement.pages().size()), links, false));
+        }
+    }
+
+    static final String DETAILS_TIP = "Ausführliche KI-Zusammenfassung dieses Themas";
+
+    /** Das Fenster mit der ausführlichen Zusammenfassung eines Themas; darunter die Seiten zum Öffnen. */
+    private void showDetails(SummaryStatement statement, ChangeReport found, Component owner) {
+        com.aresstack.spaceharvester.app.ui.controls.InfoPopup popup =
+                new com.aresstack.spaceharvester.app.ui.controls.InfoPopup()
+                        .text(statement.title() == null ? "Details" : statement.title(), statement.details());
+        for (SummaryPage page : statement.pages()) {
+            ReportedPage reported = found.pages().stream().filter(p -> p.pageId().equals(page.pageId())).findFirst()
+                    .orElse(null);
+            if (reported != null && openable(reported)) {
+                String title = page.title() != null && !page.title().isBlank() ? page.title() : page.pageId();
+                popup.link("→ " + title, () -> onOpen.accept(reported));
+            }
+        }
+        popup.showAt(owner, 0, owner.getHeight());
+    }
+
+    /** Ein aufklappbarer Abschnitt: Pfeil und Beschriftung, darunter der Inhalt. */
+    private static JComponent toggle(String label, JComponent content, boolean open) {
+        JPanel box = new JPanel();
+        box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
+        box.setOpaque(false);
+        JLabel head = new JLabel((open ? "▾ " : "▸ ") + label);
+        head.setName("summary-toggle");
+        head.setFont(Comic.semiBold(12.5f));
+        head.setForeground(Comic.BLUE);
+        content.setVisible(open);
+        content.setAlignmentX(LEFT_ALIGNMENT);
+        clickable(() -> {
+            content.setVisible(!content.isVisible());
+            head.setText((content.isVisible() ? "▾ " : "▸ ") + label);
+            box.revalidate();
+            box.repaint();
+        }, "Auf- oder zuklappen", head);
+        add(box, head);
+        add(box, content);
+        return box;
+    }
+
+    /** „Erstellt am …“ ohne Technik; das Modell steht im Tooltip ({@link #summaryModelTip}). */
     String summaryMeta(UpdateSummary shownSummary) {
-        String model = shownSummary.model() == null || shownSummary.model().isBlank() ? ""
-                : " mit " + shownSummary.model();
-        return "Erstellt am " + when(shownSummary.createdAt()) + model;
+        return "Erstellt am " + when(shownSummary.createdAt());
+    }
+
+    static String summaryModelTip(UpdateSummary shownSummary) {
+        return shownSummary.model() == null || shownSummary.model().isBlank() ? null
+                : "Erstellt mit " + shownSummary.model();
     }
 
     /** Verweis einer Aussage auf eine Seite; anklickbar, wenn die Seite im Bericht steht und sich öffnen lässt. */
@@ -1246,6 +1450,16 @@ final class SourceUpdatesView extends JPanel {
             if (summary != null) {
                 text.append("\n\nZusammenfassung (").append(summaryMeta(summary)).append(')');
                 text.append("\n").append(summary.text());
+                for (SummaryStatement statement : summary.statements()) {
+                    text.append("\n\n");
+                    if (statement.title() != null && !statement.title().isBlank()) {
+                        text.append(statement.title()).append('\n');
+                    }
+                    text.append(statement.text());
+                    if (statement.details() != null && !statement.details().isBlank()) {
+                        text.append("\n").append(statement.details());
+                    }
+                }
             }
             return text.toString();
         }
@@ -1402,6 +1616,11 @@ final class SourceUpdatesView extends JPanel {
     /** Klickt den Seitenverweis einer Aussage an; {@code false}, wenn es ihn nicht gibt oder er nicht klickbar ist. */
     boolean clickSummaryLink(String title) {
         return clickLink(reportBody, "→ " + title);
+    }
+
+    /** Tests: klickt einen Text der Zusammenfassung (Space, Auf-/Zuklappen). */
+    boolean clickSummaryText(String text) {
+        return clickLink(reportBody, text);
     }
 
     private static boolean clickLink(java.awt.Container container, String text) {

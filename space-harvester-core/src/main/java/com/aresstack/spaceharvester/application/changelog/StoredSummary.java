@@ -20,12 +20,22 @@ public record StoredSummary(String sourceId, String updateId, String spaceKey, S
                             Instant createdAt, Instant at, int unreadableChanges, String reportSha256,
                             List<InputPage> inputPages, Instant from) {
 
-    /** Eine Aussage mit den IDs ihrer Seiten. */
-    public record Statement(String text, List<String> pageIds) {
+    /**
+     * Eine Aussage (seit {@code update-summary-v2} ein Thema) mit den IDs ihrer Seiten.
+     *
+     * @param title   kurzer Titel des Themas, {@code null} bei älteren Zusammenfassungen
+     * @param details ausführlichere Zusammenfassung für das Detailfenster, {@code null} wenn keine vorliegt
+     */
+    public record Statement(String text, List<String> pageIds, String title, String details) {
 
         public Statement {
             Objects.requireNonNull(text, "text");
             pageIds = List.copyOf(pageIds);
+        }
+
+        /** Ohne Titel und Details. */
+        public Statement(String text, List<String> pageIds) {
+            this(text, pageIds, null, null);
         }
     }
 

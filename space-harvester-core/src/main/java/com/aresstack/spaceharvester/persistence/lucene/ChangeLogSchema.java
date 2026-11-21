@@ -431,6 +431,12 @@ final class ChangeLogSchema {
         for (StoredSummary.Statement statement : summary.statements()) {
             ObjectNode row = statements.addObject();
             row.put("text", statement.text());
+            if (statement.title() != null) {
+                row.put("title", statement.title());
+            }
+            if (statement.details() != null) {
+                row.put("details", statement.details());
+            }
             ArrayNode pages = row.putArray("pageIds");
             statement.pageIds().forEach(pages::add);
         }
@@ -465,7 +471,9 @@ final class ChangeLogSchema {
         for (JsonNode row : json.path("statements")) {
             List<String> pages = new ArrayList<>();
             row.path("pageIds").forEach(page -> pages.add(page.asString()));
-            statements.add(new StoredSummary.Statement(row.path("text").asString(), pages));
+            statements.add(new StoredSummary.Statement(row.path("text").asString(), pages,
+                    row.hasNonNull("title") ? row.path("title").asString() : null,
+                    row.hasNonNull("details") ? row.path("details").asString() : null));
         }
         List<StoredSummary.InputPage> inputs = new ArrayList<>();
         for (JsonNode page : json.path("inputPages")) {
