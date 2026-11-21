@@ -449,6 +449,18 @@ public final class MainWindow implements AppContext.Navigator {
                 chatOpen(!chatOpen);
             }
         });
+        // Esc stellt aus der großen Chat-Ansicht die Leiste wieder her, gleich wo der Fokus steht (auch im Explorer);
+        // Felder und Overlays mit eigenem Esc gehen vor, weil diese Bindung als letzte gefragt wird.
+        surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_ESCAPE, 0), "chat-shrink");
+        surface.getActionMap().put("chat-shrink", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                if (chatOpen && chatLarge) {
+                    chatLarge(false);
+                }
+            }
+        });
         surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
                 java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
         surface.getActionMap().put("find", new javax.swing.AbstractAction() {
@@ -514,7 +526,7 @@ public final class MainWindow implements AppContext.Navigator {
             chatSidebar.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
             chatSidebar.shown(chatOpen);
             boolean large = chatOpen && chatLarge;
-            chatSidebar.large(large, () -> chatLarge(false));
+            chatSidebar.large(large);
             // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
             chatSplit.getLeftComponent().setVisible(!large);
             // Zugeklappt lässt sich der Teiler nicht ziehen, nur doppelt klicken.
@@ -563,6 +575,18 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void show(AppContext.Section section) {
+        // Wer einen Bereich aufruft, will ihn sehen: aus der großen Chat-Ansicht wird wieder die Leiste. Nur die
+        // Auswahl im Explorer lässt sie groß, denn dort wählt man den Bereich der nächsten Frage.
+        if (chatSplit != null && chatOpen && chatLarge) {
+            chatLarge = false;
+            WindowSizes.rememberInt(CHAT_LARGE_KEY, 0);
+            placeChat();
+        }
+        showSection(section);
+    }
+
+    /** Zeigt den Bereich, ohne die große Chat-Ansicht zu verlassen (Auswahl im Explorer). */
+    private void showSection(AppContext.Section section) {
         if (section == AppContext.Section.STATUS) {
             show(AppContext.Section.SETTINGS);
             settings.select(SettingsView.DIAGNOSIS);
@@ -606,14 +630,14 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openPage(String sourceId, String pageId) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPage(sourceId, pageId);
     }
 
     @Override
     public void openPassage(String sourceId, String passageId) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPassage(sourceId, passageId);
     }
@@ -625,14 +649,14 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openSpace(String sourceId, String spaceKey) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
         explorer.reveal(sourceId, spaceKey);
     }
 
     @Override
     public void openSource(String sourceId, String title) {
-        show(AppContext.Section.CONTENT);
+        showSection(AppContext.Section.CONTENT);
         content.openSource(sourceId, title);
     }
 

@@ -30,22 +30,12 @@ public final class ChatSidebar extends JPanel {
     private final ChatPanel chat;
     private final IconButton collapse = new IconButton(collapseIcon(), COLLAPSE).compact();
     private final IconButton enlarge = new IconButton(enlargeIcon(false), ENLARGE).compact();
-    private Runnable onEscape = () -> { };
 
     ChatSidebar(ChatPanel chat) {
         super(new BorderLayout());
         this.chat = chat;
         setBackground(Comic.SURFACE);
         JPanel actions = Comic.row(chat.headerActions(), enlarge, collapse);
-        // Esc stellt aus der großen Ansicht die Leiste wieder her; Felder mit eigenem Esc (Umbenennen) gehen vor.
-        getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(
-                javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ESCAPE, 0), "chat-shrink");
-        getActionMap().put("chat-shrink", new javax.swing.AbstractAction() {
-            @Override
-            public void actionPerformed(java.awt.event.ActionEvent e) {
-                onEscape.run();
-            }
-        });
         JPanel head = new JPanel(new BorderLayout(8, 0));
         head.setOpaque(false);
         head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
@@ -85,12 +75,11 @@ public final class ChatSidebar extends JPanel {
         return enlarge;
     }
 
-    /** Zeigt am Knopf, ob die Leiste gerade groß ist: Symbol und Tooltip wechseln, Esc gilt nur in der großen Ansicht. */
-    public void large(boolean large, Runnable shrink) {
+    /** Zeigt am Knopf, ob die Leiste gerade groß ist: Symbol und Tooltip wechseln. */
+    public void large(boolean large) {
         enlarge.setIcon(enlargeIcon(large));
         enlarge.setToolTipText(large ? SHRINK : ENLARGE);
         enlarge.getAccessibleContext().setAccessibleName(large ? SHRINK : ENLARGE);
-        onEscape = large && shrink != null ? shrink : () -> { };
     }
 
     /** Groß anzeigen: zwei Pfeile in die Ecken; in der großen Ansicht zeigen sie nach innen. */

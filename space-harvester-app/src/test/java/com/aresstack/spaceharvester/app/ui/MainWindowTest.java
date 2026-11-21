@@ -387,14 +387,27 @@ class MainWindowTest {
                 assertThat(bar.enlargeButton().getToolTipText())
                         .isEqualTo(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.SHRINK);
                 assertThat(WindowSizes.recallInt(MainWindow.CHAT_LARGE_KEY, -1)).isEqualTo(1);
-                bar.getActionMap().get("chat-shrink").actionPerformed(null);
+                surface.getActionMap().get("chat-shrink").actionPerformed(null);
                 layoutAll(surface);
                 assertThat(window.chatLarge()).isFalse();
                 assertThat(chatSplit.getLeftComponent().isVisible()).isTrue();
                 assertThat(sidebar.getWidth()).isEqualTo(width + 60);
                 assertThat(WindowSizes.recallInt(MainWindow.CHAT_WIDTH_KEY, -1)).isEqualTo(width + 60);
+                assertThat(surface.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW).get(
+                        javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ESCAPE, 0)))
+                        .as("Esc gilt im ganzen Fenster, auch mit Fokus im Explorer").isEqualTo("chat-shrink");
+                // Wer einen Bereich aufruft, sieht ihn: aus groß wird wieder die Leiste. Die Auswahl im Explorer
+                // (openSource) lässt sie groß.
+                bar.enlargeButton().doClick();
+                window.openSource("gibt-es-nicht", "Quelle");
+                assertThat(window.chatLarge()).isTrue();
+                window.show(AppContext.Section.SETTINGS);
+                layoutAll(surface);
+                assertThat(window.chatLarge()).isFalse();
+                assertThat(chatSplit.getLeftComponent().isVisible()).isTrue();
+                assertThat(sidebar.getWidth()).isEqualTo(width + 60);
                 // Esc tut in der Leiste nichts; zugeklappt und wieder auf bleibt „groß“ gemerkt.
-                bar.getActionMap().get("chat-shrink").actionPerformed(null);
+                surface.getActionMap().get("chat-shrink").actionPerformed(null);
                 assertThat(window.chatOpen()).isTrue();
                 bar.enlargeButton().doClick();
                 window.chatOpen(false);
