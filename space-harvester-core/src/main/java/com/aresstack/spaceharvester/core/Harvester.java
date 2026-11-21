@@ -2105,12 +2105,13 @@ public final class Harvester implements AutoCloseable {
 
     /**
      * Fachsicht des Wissensgraphen (Paket W1): bestätigte Fachbegriffe und Synonyme als Knoten, Verben der Aussagen als
-     * Kanten; liest nur, rechnet nie.
+     * Kanten; liest nur. Das Vertrauen je Beleg (W2) kommt aus dem Abgleich der Analysatoren (K2).
      */
     public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph domainTermGraph() {
         return new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph(knowledgeGraph,
                 new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations),
-                this::statementAnalyzerChoice);
+                this::statementAnalyzerChoice,
+                com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Comparison.of(analyzerComparison));
     }
 
     /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */

@@ -65,8 +65,11 @@ public final class TermGraphView {
             + "Grundform zugeordnet, nie als identisch behauptet. Gelesen wird nur aus der Ablage des eingestellten "
             + "Analysators; veraltete Aussagen bleiben weg.\n\n"
             + "Die Linie zeigt, wie sicher eine Verbindung ist: kräftig, wenn mindestens ein Beleg geprüft ist (von Hand "
-            + "bestätigt oder vom Prüfschritt als stimmig bewertet), gestrichelt, wenn keiner geprüft ist. Im Overlay "
-            + "steht die Stufe an jedem Beleg. „Nur geprüft“ zählt nur geprüfte Belege; Verbindungen ohne solche "
+            + "bestätigt oder vom Prüfschritt als stimmig bewertet), dünn, wenn Parser und KI den Satz gleich lesen "
+            + "(einig), gestrichelt, wenn nur eine Lesart vorliegt, gepunktet mit „≠“, wenn Parser und KI ihn "
+            + "verschieden lesen und kein Beleg geprüft ist (abweichend). Verglichen wird nur, wenn beide die Seite in "
+            + "derselben Fassung analysiert haben. Im Overlay steht die Stufe an jedem Beleg, bei einem abweichenden "
+            + "auch, wie die andere Seite ihn liest. „Nur geprüft“ zählt nur geprüfte Belege; Verbindungen ohne solche "
             + "fallen weg.";
     static final String NO_NEIGHBOURS = "Zu diesem Begriff gibt es noch keine Beziehungen.";
     static final String NO_VERBS = "Zu diesem Fachbegriff gibt es auf den analysierten, für dich sichtbaren Seiten "

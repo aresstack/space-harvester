@@ -110,40 +110,56 @@ public final class DomainTermGraph {
     public enum Trust {
         /** Von Hand bestätigt ({@link ParsedStatements.Review#CONFIRMED}) oder vom Prüfschritt bestätigt. */
         GEPRUEFT,
-        /** Die andere Ablage (Parser bzw. KI) liest den Satz gleich ({@link Agreement#AGREES}). */
+        /** Die andere Ablage (Parser bzw. KI) liest den Satz gleich ({@link AnalyzerComparison.Agreement#AGREES}). */
         EINIG,
         /** Nur die Lesart des gewählten Analysators, nicht geprüft. */
         UNGEPRUEFT,
-        /** Die andere Ablage liest den Satz anders ({@link Agreement#DIFFERS}); nicht geprüft. */
+        /** Die andere Ablage liest den Satz anders ({@link AnalyzerComparison.Agreement#DIFFERS}); nicht geprüft. */
         ABWEICHEND
     }
 
-    /** Ob die andere Ablage eine Aussage gleich liest; die Vergleichslogik liegt allein beim Vergleich der Analysatoren. */
-    public enum Agreement {
-        AGREES,
-        DIFFERS,
-        NOT_COMPARABLE
-    }
-
-    /** Port für den Vergleich der Analysatoren (K2); bis er angeschlossen ist, {@link #NONE}. */
+    /**
+     * Port für den Vergleich der Analysatoren (K2, {@link AnalyzerComparison}); die Vergleichslogik liegt allein dort.
+     * Gefragt wird je Seite und Abruf höchstens einmal, und nur, wenn eine Aussage der Seite eine Kante trägt.
+     */
     @FunctionalInterface
     public interface Comparison {
 
-        /** Kein Vergleich: jede Aussage ist {@link Agreement#NOT_COMPARABLE}. */
-        Comparison NONE = (caller, page, statement) -> Agreement.NOT_COMPARABLE;
+        /** Kein Vergleich: jede Aussage ist {@link AnalyzerComparison.Agreement#NOT_COMPARABLE}. */
+        Comparison NONE = (caller, page) -> Map.of();
 
-        Agreement agreement(AccessContext caller, KnowledgeGraph.PageRef page, ParsedStatements.Statement statement);
+        /**
+         * Die Abgleiche einer Seite je Aussage-ID der eingestellten Ablage ({@link AnalyzerComparison#comparisons});
+         * fehlt eine ID, ist die Aussage nicht vergleichbar.
+         */
+        Map<String, AnalyzerComparison.Comparison> comparisons(AccessContext caller, KnowledgeGraph.PageRef page);
+
+        /**
+         * Der Abgleich der beiden Ablagen als Port. Eine Seite, die nicht (mehr) im Bestand liegt oder nicht lesbar
+         * ist, ist nicht vergleichbar; die Fachsicht selbst bleibt stehen.
+         */
+        static Comparison of(AnalyzerComparison analyzers) {
+            Objects.requireNonNull(analyzers, "analyzers");
+            return (caller, page) -> {
+                try {
+                    return analyzers.comparisons(caller, page.key());
+                } catch (com.aresstack.spaceharvester.application.query.CacheMissException
+                         | com.aresstack.spaceharvester.application.access.AccessDeniedException e) {
+                    return Map.of();
+                }
+            };
+        }
     }
 
     /**
      * Die Stufe eines Belegs: geprüft geht vor, dann der Vergleich der Analysatoren.
      */
-    static Trust trust(ParsedStatements.Statement statement, Agreement agreement) {
+    static Trust trust(ParsedStatements.Statement statement, AnalyzerComparison.Agreement agreement) {
         if (statement.review() == ParsedStatements.Review.CONFIRMED || statement.check() != null
                 && statement.check().verdict() == ParsedStatements.Verdict.STIMMT) {
             return Trust.GEPRUEFT;
         }
-        return switch (agreement == null ? Agreement.NOT_COMPARABLE : agreement) {
+        return switch (agreement == null ? AnalyzerComparison.Agreement.NOT_COMPARABLE : agreement) {
             case AGREES -> Trust.EINIG;
             case DIFFERS -> Trust.ABWEICHEND;
             case NOT_COMPARABLE -> Trust.UNGEPRUEFT;
@@ -159,9 +175,11 @@ public final class DomainTermGraph {
      * @param fromText    Wortlaut der Erwähnung, die auf den Ausgangsknoten passt
      * @param toText      Wortlaut der Erwähnung, die auf den Zielknoten passt
      * @param trust       Vertrauen in diesen Beleg (Paket W2)
+     * @param comparison  Abgleich mit der anderen Ablage (K2) oder {@code null}, wenn nicht gefragt (von Hand bestätigt)
+     *                    bzw. nicht vergleichbar; bei {@link Trust#ABWEICHEND} mit der Lesart der anderen Ablage
      */
     public record Evidence(KnowledgeGraph.PageRef page, ParsedStatements.Statement statement, String analyzerId,
-                           String fromText, String toText, Trust trust) {
+                           String fromText, String toText, Trust trust, AnalyzerComparison.Comparison comparison) {
 
         public Evidence {
             Objects.requireNonNull(page, "page");
@@ -169,10 +187,23 @@ public final class DomainTermGraph {
             trust = trust == null ? Trust.UNGEPRUEFT : trust;
         }
 
+        /** Mit Stufe, ohne Abgleich. */
+        public Evidence(KnowledgeGraph.PageRef page, ParsedStatements.Statement statement, String analyzerId,
+                        String fromText, String toText, Trust trust) {
+            this(page, statement, analyzerId, fromText, toText, trust, null);
+        }
+
         /** Ohne Vergleich der Analysatoren. */
         public Evidence(KnowledgeGraph.PageRef page, ParsedStatements.Statement statement, String analyzerId,
                         String fromText, String toText) {
-            this(page, statement, analyzerId, fromText, toText, DomainTermGraph.trust(statement, Agreement.NOT_COMPARABLE));
+            this(page, statement, analyzerId, fromText, toText,
+                    DomainTermGraph.trust(statement, AnalyzerComparison.Agreement.NOT_COMPARABLE), null);
+        }
+
+        /** Die Lesart der anderen Ablage, wenn sie abweicht; sonst {@code null}. */
+        public AnalyzerComparison.Reading otherReading() {
+            return trust == Trust.ABWEICHEND && comparison != null
+                    && comparison.agreement() == AnalyzerComparison.Agreement.DIFFERS ? comparison.other() : null;
         }
     }
 
@@ -401,6 +432,8 @@ public final class DomainTermGraph {
             }
             analyzers.add(page.analysis().analyzerId());
             ParsedStatements result = page.analysis().result();
+            // Abgleich der Seite erst, wenn eine Aussage eine Kante trägt, und dann nur einmal.
+            Map<String, AnalyzerComparison.Comparison> compared = null;
             Map<String, ParsedStatements.Mention> mentions = new LinkedHashMap<>();
             result.mentions().forEach(mention -> mentions.putIfAbsent(mention.id(), mention));
             for (ParsedStatements.Statement statement : result.statements()) {
@@ -426,8 +459,18 @@ public final class DomainTermGraph {
                 if (actors.isEmpty() || objects.isEmpty()) {
                     continue;
                 }
-                Trust trust = trust(statement, statement.review() == ParsedStatements.Review.CONFIRMED
-                        ? Agreement.NOT_COMPARABLE : comparison.agreement(caller, ref, statement));
+                AnalyzerComparison.Comparison match = null;
+                if (statement.review() != ParsedStatements.Review.CONFIRMED) {
+                    if (compared == null) {
+                        compared = Objects.requireNonNullElse(comparison.comparisons(caller, ref), Map.of());
+                    }
+                    match = compared.get(statement.id());
+                    if (match != null && match.own() == null) {
+                        // Nur in der anderen Ablage: gleich gebaute Kennung, aber nicht diese Aussage.
+                        match = null;
+                    }
+                }
+                Trust trust = trust(statement, match == null ? null : match.agreement());
                 if (options.checkedOnly() && trust != Trust.GEPRUEFT) {
                     // Auch veraltet nicht mitzählen: in „nur geprüft“ läge die Kante ohnehin nicht.
                     continue;
@@ -443,7 +486,7 @@ public final class DomainTermGraph {
                                                 + object.key(),
                                         unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb))
                                         .add(new Evidence(ref, statement, page.analysis().analyzerId(), actor.text(),
-                                                object.text(), trust));
+                                                object.text(), trust, match));
                             }
                         }
                     }
@@ -461,7 +504,7 @@ public final class DomainTermGraph {
                         }
                         String key = "verb\u0000" + actor.key() + "\u0000" + verb + "\u0000" + object.key();
                         Evidence item = new Evidence(ref, statement, page.analysis().analyzerId(), actor.text(),
-                                object.text(), trust);
+                                object.text(), trust, match);
                         edges.computeIfAbsent(key,
                                 unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb)).add(item);
                         withStale.computeIfAbsent(key,

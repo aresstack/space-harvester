@@ -66,6 +66,7 @@ public final class EvidencePopup extends JPopupMenu {
     private final JScrollPane scroll = Comic.scroll(rows);
     private final List<JLabel> links = new ArrayList<>();
     private final List<CountChip> stages = new ArrayList<>();
+    private final List<String> otherTexts = new ArrayList<>();
     private Consumer<Target> onOpen = target -> { };
 
     EvidencePopup() {
@@ -128,6 +129,7 @@ public final class EvidencePopup extends JPopupMenu {
         rows.removeAll();
         links.clear();
         stages.clear();
+        otherTexts.clear();
         List<WrappedText> texts = new ArrayList<>();
         for (DomainTermGraph.Evidence item : evidence) {
             rows.add(row(item, sentences.get(item.statement().id()), failed, texts));
@@ -174,6 +176,16 @@ public final class EvidencePopup extends JPopupMenu {
         text.setAlignmentX(LEFT_ALIGNMENT);
         texts.add(text);
         row.add(text);
+        String other = otherText(item);
+        if (other != null) {
+            // Bei abweichenden Belegen: wie die andere Ablage den Satz liest, nur was abweicht (K2).
+            WrappedText otherLine = Comic.wrapped(other, Comic.MUTED, 12f);
+            otherLine.setAlignmentX(LEFT_ALIGNMENT);
+            texts.add(otherLine);
+            otherTexts.add(other);
+            row.add(Box.createVerticalStrut(2));
+            row.add(otherLine);
+        }
         JLabel link = link(pageTitle(item));
         JPanel foot = new JPanel();
         foot.setOpaque(false);
@@ -226,6 +238,39 @@ public final class EvidencePopup extends JPopupMenu {
             case UNGEPRUEFT -> "Nur diese Lesart liegt vor, nicht geprüft";
             case ABWEICHEND -> "Parser und KI lesen diesen Satz verschieden, nicht geprüft";
         };
+    }
+
+    /**
+     * Die Lesart der anderen Ablage bei einem abweichenden Beleg, nur in dem, was abweicht: „Sprachmodell (KI) liest
+     * anders: Verb „senden“ · Handelnde „Kunde““; sonst {@code null}. Die Wortlaute kommen normalisiert aus dem Abgleich.
+     */
+    static String otherText(DomainTermGraph.Evidence item) {
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Reading other = item.otherReading();
+        if (other == null) {
+            return null;
+        }
+        java.util.Set<com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference> differences =
+                item.comparison().differences();
+        List<String> parts = new ArrayList<>();
+        if (differences.contains(com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.VERB)) {
+            parts.add("Verb " + quoted(other.verb() == null ? java.util.Set.of() : java.util.Set.of(other.verb())));
+        }
+        if (differences.contains(com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.ACTOR)) {
+            parts.add("Handelnde " + quoted(other.actors()));
+        }
+        if (differences.contains(
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.AFFECTED_OBJECT)) {
+            parts.add("Betroffene " + quoted(other.affected()));
+        }
+        String name = other.analyzer() == com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL
+                ? com.aresstack.spaceharvester.app.ui.content.StatementProvenance.LANGUAGE_MODEL
+                : com.aresstack.spaceharvester.app.ui.content.StatementProvenance.MALTPARSER;
+        return name + " liest anders" + (parts.isEmpty() ? "" : ": " + String.join(" · ", parts));
+    }
+
+    private static String quoted(java.util.Collection<String> words) {
+        return words.isEmpty() ? "keine" : words.stream().map(word -> "„" + word + "“")
+                .collect(java.util.stream.Collectors.joining(", "));
     }
 
     /**
@@ -294,6 +339,10 @@ public final class EvidencePopup extends JPopupMenu {
 
     int countValue() {
         return count.count();
+    }
+
+    List<String> otherTexts() {
+        return List.copyOf(otherTexts);
     }
 
     List<String> stageTexts() {
