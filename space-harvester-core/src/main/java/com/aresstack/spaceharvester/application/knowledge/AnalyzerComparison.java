@@ -38,7 +38,8 @@ import java.util.function.Supplier;
  * <p>Abweichend ({@link Agreement#DIFFERS}) ist ein anderes Verblemma (über {@link TermText#normalize}) oder ein
  * Handelnder oder Betroffener ohne Gegenstück: Beteiligte werden über ihre Zeichenspannen eins zu eins zugeordnet,
  * nicht über Wörter; eine leere gegen eine nicht leere Menge weicht ab. Die Wortlaute der {@link Reading} dienen nur
- * der Anzeige.
+ * der Anzeige. Trennbare Verben bekommen keine Sonderregel: Liest ein Analysator „legt … fest“ als „legen“ statt
+ * „festlegen“, ist das eine Fehllesung mit anderer Bedeutung und gilt als abweichendes Verb.
  */
 public final class AnalyzerComparison {
 

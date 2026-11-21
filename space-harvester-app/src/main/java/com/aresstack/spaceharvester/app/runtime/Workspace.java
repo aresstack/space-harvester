@@ -1309,7 +1309,10 @@ public final class Workspace {
         return deleted;
     }
 
-    /** Meldet sich, nachdem Aussagen-Analysen gelöscht wurden ({@code KnowledgeGraph.subscribe}); kein Polling. */
+    /**
+     * Meldet sich, nachdem Aussagen-Analysen gelöscht, neu geschrieben oder ersetzt wurden oder eine andere Ablage
+     * eingestellt ist ({@code KnowledgeGraph.subscribe}), auf einem Thread des Core; kein Polling.
+     */
     public Subscription subscribeStatementAnalyses(Runnable listener) {
         return harvester.knowledgeGraph().subscribe(listener);
     }
@@ -1372,6 +1375,32 @@ public final class Workspace {
     /** Erwähnungen eines Begriffs mit ihren Aussagen über alle sichtbaren analysierten Seiten. */
     public GraphNeighbourhood.Subgraph knowledgeGraphOfTerm(String term, GraphNeighbourhood.Options options) {
         return new GraphNeighbourhood(harvester.knowledgeGraph()).term(caller, term, options);
+    }
+
+    /**
+     * Fachsicht des Wissensgraphen um einen Startbegriff (Paket W1): bestätigte Fachbegriffe und Synonyme als Knoten,
+     * Verben der Aussagen als Kanten. Rechtegeprüft, rechnet nie; nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.View domainTermGraph(String start,
+            com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options options,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.domainTermGraph().around(caller, start, options, cancelled);
+    }
+
+    /** Vorschläge für das Startfeld der Fachsicht: nur bestätigte Fachbegriffe und Synonyme. Nie auf dem EDT. */
+    public java.util.List<String> domainTermSuggestions(String query, int limit) {
+        return harvester.domainTermGraph().suggestions(caller, query, limit);
+    }
+
+    /**
+     * Der Wortlaut zu Aussagen je Seite, etwa den Belegen der Fachsicht: Originalsatz, vereinfachter Satz, Satzgrenzen
+     * im Lesetext. Ohne Leserecht am Inhalt fehlt der Eintrag. Nie auf dem EDT.
+     */
+    public java.util.Map<String, com.aresstack.spaceharvester.application.standing.SentenceText> statementSentences(
+            java.util.Map<com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph.PageRef,
+                    java.util.List<com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Statement>>
+                    byPage) {
+        return harvester.statusQuo().statementSentences(caller, byPage);
     }
 
     /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */
@@ -1976,6 +2005,63 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #pauseAllJobs()}, aber nur für einen Reiter der Auftragsverwaltung: {@code background} nur
+     * Hintergrundaufträge, sonst nur die übrigen (UX 21.11.2026).
+     */
+    public AllJobs.Outcome pauseAllJobs(boolean background) {
+        return AllJobs.apply(AllJobs.toPause(jobs(background)), job -> pauseJob(job.id()));
+    }
+
+    /** Wie {@link #resumeAllJobs()}, nur für einen Reiter ({@link #pauseAllJobs(boolean)}). */
+    public AllJobs.Outcome resumeAllJobs(boolean background) {
+        return AllJobs.apply(AllJobs.toResume(jobs(background)),
+                job -> performJobAction(job.id(), JobAction.RESUME));
+    }
+
+    /** Wie {@link #cancelAllJobs()}, nur für einen Reiter ({@link #pauseAllJobs(boolean)}). */
+    public AllJobs.Outcome cancelAllJobs(boolean background) {
+        return AllJobs.apply(AllJobs.toCancel(jobs(background)),
+                job -> performJobAction(job.id(), JobAction.CANCEL));
+    }
+
+    /**
+     * Abonniert das Ende einer Hintergrundgruppe (Angelo 21.11.2026): {@code listener} läuft einmal auf dem Event
+     * Dispatch Thread, sobald kein Unterauftrag mehr wartet oder läuft, sofort, wenn sie schon fertig ist. Bis dahin
+     * zeigt die abonnierende Stelle etwa den drehenden Ring ({@code controls.BackgroundWait}).
+     */
+    public com.aresstack.spaceharvester.application.observe.Subscription whenBackgroundFinished(String groupId,
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+        java.util.Objects.requireNonNull(listener, "listener");
+        return harvester.backgroundJobs().whenFinished(groupId,
+                group -> javax.swing.SwingUtilities.invokeLater(() -> listener.accept(group)));
+    }
+
+    /** Die Aufträge eines Reiters: nur Hintergrundaufträge oder nur die übrigen. */
+    private List<JobStatus> jobs(boolean background) {
+        return jobs().stream().filter(job -> job.type().background() == background).toList();
+    }
+
+    /**
+     * Eine Aktion für alle Unteraufträge einer Hintergrundgruppe (ADR 0025 Nachtrag), die Zeile der Gruppe im Reiter
+     * „Hintergrund“: Anhalten, Fortsetzen, Abbrechen, Jetzt starten und Löschen wirken auf jeden Unterauftrag, für den
+     * es jetzt geht.
+     */
+    public AllJobs.Outcome performBackgroundGroupAction(String groupId, JobAction action) {
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background = harvester.backgroundJobs();
+        List<JobStatus> parts = background.group(groupId)
+                .map(com.aresstack.spaceharvester.application.background.BackgroundGroup::parts).orElse(List.of());
+        return switch (action) {
+            case PAUSE -> AllJobs.apply(AllJobs.toPause(parts), job -> pauseJob(job.id()));
+            case RESUME -> AllJobs.apply(parts.stream().filter(job -> job.lifecycle().allows(JobAction.RESUME))
+                    .toList(), job -> performJobAction(job.id(), JobAction.RESUME));
+            case CANCEL -> AllJobs.apply(AllJobs.toCancel(parts), job -> performJobAction(job.id(), JobAction.CANCEL));
+            case START_NOW, DELETE -> AllJobs.apply(parts.stream().filter(job -> job.lifecycle().allows(action))
+                    .toList(), job -> performJobAction(job.id(), action));
+            default -> new AllJobs.Outcome(0, 0, null);
+        };
+    }
+
+    /**
      * „Alle fortsetzen“: setzt alle angehaltenen Aufträge im selben Eintrag fort ({@link AllJobs#toResume}), älteste
      * zuerst; fertige, gescheiterte und abgebrochene bleiben, wie sie sind.
      */
@@ -2091,6 +2177,8 @@ public final class Workspace {
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
         // Auch die Dateien („Datei erzeugen“) gehören zu ihrem Export und gehen nie verloren.
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.CONVERSION));
+        // Hintergrundaufträge (ADR 0025 Nachtrag) stößt der Core selbst an; sie stehen im Reiter „Hintergrund“.
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.BACKGROUND));
         // Aufträge des Aufrufers der App (Zusammenfassen, Synonymlauf, Aussagenanalyse) sind ebenso global sichtbar.
         for (String owner : jobOwners()) {
             if (!owner.equals(Harvester.OWNER)) {
@@ -2542,13 +2630,21 @@ public final class Workspace {
      * abgebrochen. @return Anzahl
      */
     public int deleteAllJobs() {
+        return deleteAllJobs(jobs().stream().map(JobStatus::id).toList());
+    }
+
+    /**
+     * Wie {@link #deleteAllJobs()}, nur für die genannten Aufträge, etwa die eines Reiters der Auftragsliste: laufende
+     * und wartende werden vorher abgebrochen. @return Anzahl
+     */
+    public int deleteAllJobs(java.util.Collection<String> jobIds) {
         int deleted = 0;
-        for (JobStatus status : jobs()) {
+        for (String id : jobIds) {
             try {
-                deleteJob(status.id());
+                deleteJob(id);
                 deleted++;
             } catch (UnknownJobException e) {
-                activities.forget(status.id());
+                activities.forget(id);
             }
         }
         return deleted;

@@ -290,10 +290,24 @@ public final class StatusQuo {
      */
     public Map<String, SentenceText> sentences(AccessContext caller, Collection<StatusQuoEntry> entries) {
         Objects.requireNonNull(caller, "caller");
-        Map<KnowledgeGraph.PageRef, List<StatusQuoEntry>> byPage = new LinkedHashMap<>();
+        Map<KnowledgeGraph.PageRef, List<ParsedStatements.Statement>> byPage = new LinkedHashMap<>();
         for (StatusQuoEntry entry : Objects.requireNonNull(entries, "entries")) {
-            byPage.computeIfAbsent(entry.page(), ignored -> new ArrayList<>()).add(entry);
+            byPage.computeIfAbsent(entry.page(), ignored -> new ArrayList<>()).add(entry.statement());
         }
+        return statementSentences(caller, byPage);
+    }
+
+    /**
+     * Wie {@link #sentences}, für Aussagen je Seite ohne Eintrag der Sicht, etwa die Belege der Fachsicht (Paket W1).
+     * Dieselben Rechte und dieselbe Regel für den Originalsatz.
+     *
+     * @return Wortlaut je Aussage-ID
+     */
+    public Map<String, SentenceText> statementSentences(AccessContext caller,
+                                                        Map<KnowledgeGraph.PageRef, List<ParsedStatements.Statement>>
+                                                                byPage) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(byPage, "byPage");
         Map<String, SentenceText> texts = new LinkedHashMap<>();
         byPage.forEach((page, list) -> {
             PageKey key = page.key();
@@ -308,8 +322,7 @@ public final class StatusQuo {
                     .forEach(sentence -> bounds.put(sentence.index(), sentence)));
             Optional<String> text = analysis.flatMap(found -> sentences.text(page,
                     found.analysis().inputSha256()));
-            for (StatusQuoEntry entry : list) {
-                ParsedStatements.Statement statement = entry.statement();
+            for (ParsedStatements.Statement statement : list) {
                 ParsedStatements.Sentence sentence = bounds.get(statement.sentence());
                 boolean known = analysis.isPresent() && analysis.get().analysis().result().statements().stream()
                         .anyMatch(candidate -> candidate.id().equals(statement.id()));
