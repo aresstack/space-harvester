@@ -170,7 +170,7 @@ class QualityRunTest {
 
         assertThat(stored.errors()).isEmpty();
         assertThat(stored.info()).isEqualTo(info);
-        assertThat(stored.results()).usingRecursiveComparison().isEqualTo(before);
+        assertThat(stored.results()).isEqualTo(before);
 
         Fake better = new Fake(Map.of(
                 "A", List.of(hit("1", 0.9)),
