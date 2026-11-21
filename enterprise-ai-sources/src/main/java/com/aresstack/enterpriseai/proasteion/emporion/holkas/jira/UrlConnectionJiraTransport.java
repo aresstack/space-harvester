@@ -66,6 +66,39 @@ public final class UrlConnectionJiraTransport implements JiraHttpTransport {
         }
     }
 
+    @Override
+    public JiraHttpResponse post(URI uri, Map<String, String> headers, byte[] body, int maxBytes) throws IOException {
+        String scheme = uri.getScheme();
+        if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
+            throw new IOException("nur http/https unterstützt: " + scheme);
+        }
+        HttpURLConnection connection = open(uri);
+        try {
+            connection.setRequestMethod("POST");
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(connectTimeoutMillis);
+            connection.setReadTimeout(readTimeoutMillis);
+            connection.setUseCaches(false);
+            connection.setDoOutput(true);
+            for (Map.Entry<String, String> header : headers.entrySet()) {
+                connection.setRequestProperty(header.getKey(), header.getValue());
+            }
+            connection.setRequestProperty("Content-Type", "application/json;charset=UTF-8");
+            // Jira Data Center lehnt schreibende Aufrufe ohne diesen Header teils als XSRF ab.
+            connection.setRequestProperty("X-Atlassian-Token", "no-check");
+            connection.setFixedLengthStreamingMode(body.length);
+            try (java.io.OutputStream out = connection.getOutputStream()) {
+                out.write(body);
+            }
+            int status = connection.getResponseCode();
+            InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            byte[] received = stream == null ? new byte[0] : readLimited(stream, maxBytes);
+            return new JiraHttpResponse(status, connection.getContentType(), received);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
     private HttpURLConnection open(URI uri) throws IOException {
         if (routes != null) {
             return RouteConnections.open(uri, routes, sslSocketFactory, userAgent);

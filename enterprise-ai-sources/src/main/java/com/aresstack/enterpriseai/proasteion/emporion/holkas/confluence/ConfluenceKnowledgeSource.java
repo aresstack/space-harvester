@@ -29,6 +29,8 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.ImageSource;
 import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
+import com.aresstack.enterpriseai.source.api.PartitionIdListingSource;
+import com.aresstack.enterpriseai.source.api.PartitionIds;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
@@ -106,7 +108,7 @@ import java.util.regex.Pattern;
  */
 public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
         AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ChangeListingSource,
-        ResourceMetadataSource,
+        PartitionIdListingSource, ResourceMetadataSource,
         StoredContentSource, AttachmentListSource, AttachmentSearchSource, RestQuerySource {
 
     static final String PAGE_CONTENT_TYPE = "text/html";
@@ -122,6 +124,8 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
      * Gesamtzahl.
      */
     static final int MAX_PARTITION_BATCH = 100;
+    /** Größter Stapel der reinen ID-Liste ({@link #resourceIds}): ohne {@code expand} erlaubt Confluence 200. */
+    static final int MAX_ID_BATCH = 200;
     /**
      * {@link StoredContent#nativeFormat()} der Seiten-Snapshots: REST-Content-JSON mit der sortierten
      * {@code expand}-Liste; eine andere Liste ergibt ein anderes, nicht vergleichbares Format.
@@ -677,6 +681,36 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
         }
         return new PartitionResources(resources,
                 batch.nextStart < 0 ? "" : partitionCursor(partitionKey, batch.nextStart));
+    }
+
+    /**
+     * Nur die Content-IDs aller Seiten eines Space ({@code /rest/api/content?type=page&spaceKey=...} ohne
+     * {@code expand}), in Stapeln bis {@link #MAX_ID_BATCH}; für den Abgleich, welche bekannten Seiten fehlen. Der
+     * Cursor ist wie bei {@link #resources} an den Space gebunden.
+     */
+    @Override
+    public PartitionIds resourceIds(final String partitionKey, String cursor, final int limit)
+            throws KnowledgeSourceException {
+        if (!ConfluenceIds.isSpaceKey(partitionKey)) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "Kein Space dieser Quelle: " + partitionKey);
+        }
+        if (limit < 1) {
+            throw new IllegalArgumentException("limit must be at least 1");
+        }
+        final boolean first = cursor == null || cursor.isEmpty();
+        final int start = first ? 0 : partitionCursorStart(partitionKey, cursor);
+        final int batchSize = Math.min(limit, MAX_ID_BATCH);
+        ConfluenceRestClient.IdBatch batch = withSession(new Operation<ConfluenceRestClient.IdBatch>() {
+            @Override
+            public ConfluenceRestClient.IdBatch run(Session session) throws KnowledgeSourceException {
+                // Ein unbekannter Space liefert eine leere Liste; nur am Anfang eigens nachfragen.
+                if (first && client.space(session, partitionKey) == null) {
+                    throw new KnowledgeSourceException(Kind.NOT_FOUND, "Space nicht gefunden: " + partitionKey);
+                }
+                return client.spacePageIdBatch(session, partitionKey, start, batchSize);
+            }
+        });
+        return new PartitionIds(batch.ids, batch.nextStart < 0 ? "" : partitionCursor(partitionKey, batch.nextStart));
     }
 
     /**

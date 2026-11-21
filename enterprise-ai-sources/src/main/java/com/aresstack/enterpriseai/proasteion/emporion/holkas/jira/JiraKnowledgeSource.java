@@ -81,7 +81,7 @@ import java.util.regex.Pattern;
  * mit dem Ende des Aufrufs. Ohne {@link JiraConfig#credentialRef()} fragt er keine an (z. B. reine mTLS-Anmeldung).
  */
 public class JiraKnowledgeSource implements SearchableKnowledgeSource, PageViewSource, AddressableKnowledgeSource,
-        PartitionListingSource, ResourceMetadataSource, StoredContentSource, RestQuerySource {
+        PartitionListingSource, ResourceMetadataSource, StoredContentSource, RestQuerySource, JiraIssueOperations {
 
     static final String ISSUE_CONTENT_TYPE = "text/markdown";
     /** {@link StoredContent#nativeFormat()} der Vorgangs-Snapshots: REST-Antwort von {@code /issue} mit gerenderten Feldern. */
@@ -231,6 +231,24 @@ public class JiraKnowledgeSource implements SearchableKnowledgeSource, PageViewS
             clauses.add("project not in (" + String.join(", ", excluded) + ")");
         }
         return withFilter(String.join(" AND ", clauses)) + " ORDER BY updated DESC";
+    }
+
+    /** Am Schluss einer freien JQL-Abfrage: {@code ORDER BY …} ohne Anführungszeichen. */
+    private static final Pattern ORDER_BY = Pattern.compile("(?i)\\s*\\bORDER\\s+BY\\b[^\"']*$");
+
+    /**
+     * Eine freie JQL-Abfrage (Werkzeug {@code jira_search}) mit der Einschränkung der Quelle: die Bedingung in Klammern,
+     * damit ein {@code OR} darin die Einschränkung nicht aufhebt; {@code ORDER BY} bleibt am Schluss.
+     */
+    private String restricted(String jql) {
+        Matcher order = ORDER_BY.matcher(jql);
+        boolean sorted = order.find();
+        String condition = sorted ? jql.substring(0, order.start()).trim() : jql;
+        String sort = sorted ? " " + jql.substring(order.start()).trim() : "";
+        if (condition.isEmpty()) {
+            return config.jqlFilter().isEmpty() ? sort.trim() : config.jqlFilter() + sort;
+        }
+        return withFilter("(" + condition + ")") + sort;
     }
 
     private String withFilter(String jql) {
@@ -689,6 +707,123 @@ public class JiraKnowledgeSource implements SearchableKnowledgeSource, PageViewS
     private String base() {
         String base = config.baseUrl().toString();
         return base.endsWith("/") ? base : base + "/";
+    }
+
+    // --- JiraIssueOperations (Jira-Werkzeuge) -------------------------------------------------------------------
+
+    @Override
+    public URI baseUrl() {
+        return config.baseUrl();
+    }
+
+    @Override
+    public String issueKey(String keyOrAddress) {
+        if (keyOrAddress == null) {
+            return null;
+        }
+        String value = keyOrAddress.trim();
+        String upper = value.toUpperCase(Locale.ROOT);
+        if (JiraIds.isIssueKey(upper)) {
+            return upper;
+        }
+        String prefix = JiraIds.SCHEME + ":" + locator + "/issue/";
+        if (value.regionMatches(true, 0, prefix, 0, prefix.length())) {
+            String key = value.substring(prefix.length()).toUpperCase(Locale.ROOT);
+            return JiraIds.isIssueKey(key) ? key : null;
+        }
+        return issueKeyOf(value);
+    }
+
+    @Override
+    public JiraIssueOperations.IssueSearch searchIssues(final String jql, final int limit)
+            throws KnowledgeSourceException {
+        if (jql == null || jql.trim().isEmpty()) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "JQL fehlt");
+        }
+        final int max = Math.max(1, Math.min(100, limit));
+        return withSession(new Operation<JiraIssueOperations.IssueSearch>() {
+            @Override
+            public JiraIssueOperations.IssueSearch run(Session session) throws KnowledgeSourceException {
+                SearchResult result = client.search(session, restricted(jql.trim()), 0, max,
+                        JiraRestClient.LIST_FIELDS);
+                List<IssueSummary> issues = new ArrayList<IssueSummary>();
+                for (Issue issue : result.issues) {
+                    issues.add(summary(issue));
+                }
+                return new JiraIssueOperations.IssueSearch(issues, result.total);
+            }
+        });
+    }
+
+    @Override
+    public IssueSummary issueSummary(final String issueKey) throws KnowledgeSourceException {
+        final String key = requireKey(issueKey);
+        return withSession(new Operation<IssueSummary>() {
+            @Override
+            public IssueSummary run(Session session) throws KnowledgeSourceException {
+                // Die Suche nach dem Schlüssel liefert die Listenfelder ohne Beschreibung und Kommentare.
+                SearchResult result = client.search(session, "key = " + key, 0, 1, JiraRestClient.LIST_FIELDS);
+                for (Issue issue : result.issues) {
+                    if (key.equals(issue.key)) {
+                        return summary(issue);
+                    }
+                }
+                throw new KnowledgeSourceException(Kind.NOT_FOUND, "Vorgang " + key + " nicht gefunden");
+            }
+        });
+    }
+
+    @Override
+    public List<Transition> transitions(final String issueKey) throws KnowledgeSourceException {
+        final String key = requireKey(issueKey);
+        return withSession(new Operation<List<Transition>>() {
+            @Override
+            public List<Transition> run(Session session) throws KnowledgeSourceException {
+                return client.transitions(session, key);
+            }
+        });
+    }
+
+    @Override
+    public String addComment(final String issueKey, final String body) throws KnowledgeSourceException {
+        final String key = requireKey(issueKey);
+        if (body == null || body.trim().isEmpty()) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Kommentar ist leer");
+        }
+        return withSession(new Operation<String>() {
+            @Override
+            public String run(Session session) throws KnowledgeSourceException {
+                return client.addComment(session, key, body.trim());
+            }
+        });
+    }
+
+    @Override
+    public void transition(final String issueKey, final String transitionId) throws KnowledgeSourceException {
+        final String key = requireKey(issueKey);
+        if (transitionId == null || !transitionId.trim().matches("[0-9]{1,9}")) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Übergangs-ID fehlt oder ist keine Zahl");
+        }
+        withSession(new Operation<Void>() {
+            @Override
+            public Void run(Session session) throws KnowledgeSourceException {
+                client.transition(session, key, transitionId.trim());
+                return null;
+            }
+        });
+    }
+
+    private static String requireKey(String issueKey) throws KnowledgeSourceException {
+        String key = issueKey == null ? "" : issueKey.trim().toUpperCase(Locale.ROOT);
+        if (!JiraIds.isIssueKey(key)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "kein Vorgangs-Schlüssel (Form ABC-123)");
+        }
+        return key;
+    }
+
+    private IssueSummary summary(Issue issue) {
+        return new IssueSummary(issue.key, issue.summary, issue.issueType, issue.status, issue.assignee,
+                issue.updated, browse(issue.key));
     }
 
     private URI browse(String key) {

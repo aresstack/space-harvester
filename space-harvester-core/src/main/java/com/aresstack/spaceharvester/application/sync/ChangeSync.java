@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import com.aresstack.spaceharvester.application.sources.PageIdBatch;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
@@ -24,7 +25,8 @@ import java.util.function.Function;
 /**
  * Nachholen verpasster Änderungen eines Space (ADR 0014): Der Lauf fragt die Quelle nach den seit {@code since}
  * geänderten Seiten ({@link com.aresstack.spaceharvester.application.sources.HarvestSource#listsChanges()}) und
- * vergleicht die vollständige Seitenliste des Space mit dem Bekannten, um gelöschte Seiten zu erkennen.
+ * vergleicht alle Seiten-IDs des Space (die schlanke ID-Liste der Quelle, sonst die Seitenliste) mit dem Bekannten,
+ * um gelöschte Seiten zu erkennen.
  *
  * <ul>
  *   <li>Geändert und bekannt (Generation oder Cache): wie im Abgleich eingeordnet, also neuer Inhalt nur bei neuer
@@ -133,18 +135,14 @@ public class ChangeSync {
                 current.put(entry.page().pageId(), entry);
             }
         }
-        // Gelöschte Seiten: die vollständige Seitenliste des Space, verglichen mit dem Bekannten (wie die Inventur).
-        Inventory listing = from == null ? null : collector.collect(sourceId, spaceKey, listener::checkpoint);
-        Set<String> listedIds = new HashSet<>();
-        if (listing != null && listing.confirmed()) {
-            listing.pages().forEach(entry -> listedIds.add(entry.page().pageId()));
-            if (baseline != null) {
-                // Gesperrte Seiten, die die Seitenliste wieder nennt, sind wieder sichtbar: wie geändert behandeln.
-                listing.byPageId().forEach((pageId, entry) -> {
-                    if (baseline.withheldPageIds().containsKey(pageId)) {
-                        current.putIfAbsent(pageId, entry);
-                    }
-                });
+        // Gelöschte Seiten: alle Seiten-IDs des Space, verglichen mit dem Bekannten; null = keine vollständige Liste.
+        Set<String> listedIds = from == null ? null : listedIds(sourceId, spaceKey, listener);
+        if (listedIds != null && baseline != null) {
+            // Wieder gelistete gesperrte Seiten sind wieder sichtbar: Kopfdaten holen, wie geändert behandeln.
+            for (String pageId : baseline.withheldPageIds().keySet()) {
+                if (listedIds.contains(pageId) && !current.containsKey(pageId)) {
+                    reappeared(sourceId, spaceKey, pageId, listener).ifPresent(entry -> current.put(pageId, entry));
+                }
             }
         }
         Set<String> reload = from == null || !mode.refreshesContent() ? Set.of()
@@ -176,20 +174,16 @@ public class ChangeSync {
             }
         });
         Map<String, RemovalCheck.Result> removals = new HashMap<>();
-        if (listing != null && listing.confirmed()) {
-            removals(listing, baseline, known, current.keySet(), listedIds).forEach(removal -> {
+        if (listedIds != null) {
+            removals(sourceId, spaceKey, baseline, known, current.keySet(), listedIds).forEach(removal -> {
                 changes.add(new PageChange(removal.pageId(), PageChange.Kind.MISSING, known.get(removal.pageId()),
                         null));
                 removals.put(removal.pageId(), removal);
             });
-        } else if (listing != null) {
-            // Ohne vollständige Liste keine Löschung: die Änderungen gelten, Löschungen erkennt der nächste Lauf.
-            LOG.log(System.Logger.Level.INFO, "Änderungssuche {0}/{1}: Seitenliste {2}, Löschungen nicht geprüft",
-                    sourceId, spaceKey, listing.status());
         }
         changes.sort(Comparator.comparing(PageChange::pageId));
         SyncPlan plan = new SyncPlan(inventory, baseline, changes, removals,
-                purgesDue(sourceId, listing, baseline, listedIds));
+                purgesDue(sourceId, baseline, listedIds));
         try (StagedGeneration staged = store.begin(sourceId, spaceKey)) {
             Set<String> failed = applier.apply(plan, staged, listener);
             SyncBaseline next = next(baseline, known, plan, failed, startedAt);
@@ -200,11 +194,63 @@ public class ChangeSync {
     }
 
     /**
+     * Alle Seiten-IDs des Space: die schlanke ID-Liste der Quelle ({@link SourceQueries#pageIds}, Confluence ohne
+     * {@code expand}), sonst die Seitenliste samt Kopfdaten wie in der Inventur. Scheitert sie, {@code null}: Die
+     * Änderungen gelten trotzdem, Löschungen prüft der nächste Lauf.
+     */
+    private Set<String> listedIds(String sourceId, String spaceKey, SyncListener listener) {
+        if (queries.listsPageIds(sourceId)) {
+            Set<String> ids = new HashSet<>();
+            Set<String> cursors = new HashSet<>();
+            String cursor = null;
+            try {
+                do {
+                    listener.checkpoint();
+                    PageIdBatch batch = queries.pageIds(sourceId, spaceKey, cursor, SourceQueries.MAX_PAGE_ID_LIMIT);
+                    ids.addAll(batch.pageIds());
+                    cursor = batch.nextCursor();
+                    if (cursor != null && !cursors.add(cursor)) {
+                        throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE,
+                                "Die Quelle hat denselben Cursor wiederholt geliefert", null);
+                    }
+                } while (cursor != null);
+            } catch (SourceAccessException e) {
+                LOG.log(System.Logger.Level.INFO, "Änderungssuche {0}/{1}: ID-Liste abgebrochen ({2}), Löschungen "
+                        + "nicht geprüft", sourceId, spaceKey, e.reason());
+                return null;
+            }
+            return ids;
+        }
+        Inventory listing = collector.collect(sourceId, spaceKey, listener::checkpoint);
+        if (!listing.confirmed()) {
+            LOG.log(System.Logger.Level.INFO, "Änderungssuche {0}/{1}: Seitenliste {2}, Löschungen nicht geprüft",
+                    sourceId, spaceKey, listing.status());
+            return null;
+        }
+        Set<String> ids = new HashSet<>();
+        listing.pages().forEach(entry -> ids.add(entry.page().pageId()));
+        return ids;
+    }
+
+    /** Kopfdaten einer wieder gelisteten gesperrten Seite, wenn die Quelle sie liefert und sie im Space liegt. */
+    private java.util.Optional<PageMetadataListing.Entry> reappeared(String sourceId, String spaceKey, String pageId,
+                                                                     SyncListener listener) {
+        listener.checkpoint();
+        try {
+            PageMetadataListing.Entry entry = queries.pageMetadata(sourceId, pageId).entry();
+            return spaceKey.equals(entry.page().partitionKey()) && pageId.equals(entry.page().pageId())
+                    ? java.util.Optional.of(entry) : java.util.Optional.empty();
+        } catch (SourceAccessException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
+    /**
      * Bekannte Seiten (Generation, Cache, nicht geladene), die weder die Änderungsliste noch die vollständige
-     * Seitenliste nennt, fragt der Lauf einzeln nach ({@link RemovalCheck}): gelöscht, nicht mehr sichtbar oder
+     * ID-Liste nennt, fragt der Lauf einzeln nach ({@link RemovalCheck}): gelöscht, nicht mehr sichtbar oder
      * verschoben fallen aus dem Space; was nicht prüfbar oder doch vorhanden ist, bleibt.
      */
-    private List<RemovalCheck.Result> removals(Inventory listing, SyncBaseline baseline,
+    private List<RemovalCheck.Result> removals(String sourceId, String spaceKey, SyncBaseline baseline,
                                                Map<String, BaselineEntry> known, Set<String> changed,
                                                Set<String> listed) {
         Set<String> candidates = new TreeSet<>(known.keySet());
@@ -216,9 +262,7 @@ public class ChangeSync {
         if (candidates.isEmpty()) {
             return List.of();
         }
-        List<PageChange> missing = candidates.stream()
-                .map(pageId -> new PageChange(pageId, PageChange.Kind.MISSING, known.get(pageId), null)).toList();
-        return removalCheck.verify(new SyncPlan(listing, baseline, missing, Map.of())).values().stream()
+        return removalCheck.verify(sourceId, spaceKey, candidates, listed).values().stream()
                 .filter(RemovalCheck.Result::removes).toList();
     }
 
@@ -226,8 +270,8 @@ public class ChangeSync {
      * Wie in der Inventur ({@link SyncPlan#withPurgesDue}): gesperrte Seiten, deren Frist abgelaufen ist und die die
      * vollständige Seitenliste nicht wieder nennt, entfernt der Lauf endgültig; ohne vollständige Liste keine.
      */
-    private Set<String> purgesDue(String sourceId, Inventory listing, SyncBaseline baseline, Set<String> listed) {
-        if (listing == null || !listing.confirmed() || baseline == null) {
+    private Set<String> purgesDue(String sourceId, SyncBaseline baseline, Set<String> listed) {
+        if (listed == null || baseline == null) {
             return Set.of();
         }
         Duration retention = withheldRetention.apply(sourceId);
