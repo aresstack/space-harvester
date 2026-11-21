@@ -715,7 +715,7 @@ public class Glossary {
     }
 
     /** Präfix des ganzen Suchwerts oder eines seiner Wörter, wie die Begriffssuche. */
-    private static boolean matches(String normalized, String q) {
+    static boolean matches(String normalized, String q) {
         if (normalized.startsWith(q)) {
             return true;
         }
@@ -727,7 +727,7 @@ public class Glossary {
         return false;
     }
 
-    private static String sortKey(GlossaryEntry entry) {
+    static String sortKey(GlossaryEntry entry) {
         return entry.normalized() + '\u0000' + entry.id();
     }
 
