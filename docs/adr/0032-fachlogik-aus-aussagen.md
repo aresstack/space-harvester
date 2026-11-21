@@ -290,7 +290,9 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   geprüft werden. Stand und Prüfung teilen sich die Revision des Eintrags (ein Zähler, ein Konflikt).
 - Protokoll: Setzen ist `review`, Zurücknehmen eine eigene Zeile `unreview`, beide mit dem Wert der Prüfung; `remove`
   (Stand gelöscht, Quelle entfernt) trägt die zuletzt gültige Prüfung mit.
-- Beobachter: Jede Änderung meldet `StatusQuo#subscribe` (ADR 0027, kein Polling).
+- Beobachter: Jede Änderung meldet `StatusQuo#subscribe` (ADR 0027, kein Polling). Gesetzte, zurückgenommene oder mit
+  der Quelle entfernte Prüfungen melden zusätzlich `StatusQuo#subscribeReviews`; der Harvester gibt das an
+  `KnowledgeGraph#analysesChanged` weiter, damit Graph, Aussagen und Verben ohne Klick nachziehen.
 - Sicht: Eine verworfene Aussage fehlt in den Einträgen und Zahlen, ihre Entscheidung steht in
   `StatusQuoView#rejectedDecisions`, damit die Prüfung zurückgenommen werden kann; veraltet ist sie nicht. Veraltet
   (`staleDecisions`) sind auch reine Prüfungen verschwundener Aussagen, aber nur Einträge des gelesenen Analysators.

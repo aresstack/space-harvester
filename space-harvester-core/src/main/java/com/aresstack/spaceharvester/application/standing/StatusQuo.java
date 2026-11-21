@@ -65,6 +65,8 @@ public final class StatusQuo {
     private final Clock clock;
     private final SentenceSource sentences;
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
+    /** Beobachter nur für Änderungen von Prüfungen (sie ändern die wirksame Prüfung der Analysen). */
+    private final List<Runnable> reviewListeners = new CopyOnWriteArrayList<>();
 
     /**
      * @param analysed sichtbare analysierte Seiten des Aufrufers, etwa {@code knowledgeGraph::analysed}
@@ -292,6 +294,7 @@ public final class StatusQuo {
                     decision.revision())));
         }
         changed();
+        reviewsChanged();
         return decision;
     }
 
@@ -318,6 +321,7 @@ public final class StatusQuo {
                     clock.instant()) : null, StandingDecisionStore.AuditEntry.UNREVIEW, caller.jobOwner());
         }
         changed();
+        reviewsChanged();
         return true;
     }
 
@@ -345,7 +349,21 @@ public final class StatusQuo {
                             decision.review(), decision.revision())).toList());
         }
         changed();
+        if (gone.stream().anyMatch(decision -> decision.review() != null)) {
+            reviewsChanged();
+        }
         return gone.size();
+    }
+
+    /**
+     * Meldet einen Beobachter nur für gesetzte, zurückgenommene oder mit der Quelle entfernte Prüfungen an; damit zieht
+     * der Harvester den Knowledge Graph nach ({@code KnowledgeGraph#analysesChanged}), denn eine Prüfung ändert die
+     * wirksame Prüfung der Analysen. Eine Änderung nur des Stands meldet sich hier nicht.
+     */
+    public Subscription subscribeReviews(Runnable listener) {
+        Objects.requireNonNull(listener, "listener");
+        reviewListeners.add(listener);
+        return () -> reviewListeners.remove(listener);
     }
 
     /** Meldet einen Beobachter für jede Änderung einer Entscheidung an. */
@@ -480,7 +498,15 @@ public final class StatusQuo {
         }
     }
 
+    private void reviewsChanged() {
+        deliver(reviewListeners);
+    }
+
     private void changed() {
+        deliver(listeners);
+    }
+
+    private static void deliver(List<Runnable> listeners) {
         for (Runnable listener : listeners) {
             try {
                 listener.run();

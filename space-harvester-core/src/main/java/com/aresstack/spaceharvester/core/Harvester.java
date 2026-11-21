@@ -1081,9 +1081,24 @@ public final class Harvester implements AutoCloseable {
             // Fahrplan Paket A2: die Analysen des KI-Analysators liegen in einer eigenen Ablage und überschreiben die des
             // MaltParsers nie; Graph, Stand, Begriffe und Export lesen aus genau einer, der eingestellten (Vorgabe
             // MaltParser).
-            KnowledgeGraphStore graphStore = new AnalyzerStores(new FileKnowledgeGraphStore(
-                    builder.dataDirectory.resolve("knowledge-graph")), new FileKnowledgeGraphStore(
-                    builder.dataDirectory.resolve("knowledge-graph-model")), () -> statementAnalyzerChoice);
+            // Jede neue, ersetzte oder entfernte Analyse meldet sich beim Graphen (D6), gleich aus welchem Auftrag. Die
+            // Meldung sitzt innen an jeder Ablage, damit AnalyzerStores als solche erkennbar bleibt.
+            java.util.concurrent.atomic.AtomicReference<KnowledgeGraph> observedGraph =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            Runnable analysesChanged = () -> {
+                KnowledgeGraph graph = observedGraph.get();
+                if (graph != null) {
+                    graph.analysesChanged();
+                }
+            };
+            KnowledgeGraphStore graphStore = new AnalyzerStores(
+                    new com.aresstack.spaceharvester.application.knowledge.ObservedKnowledgeGraphStore(
+                            new FileKnowledgeGraphStore(builder.dataDirectory.resolve("knowledge-graph")),
+                            analysesChanged),
+                    new com.aresstack.spaceharvester.application.knowledge.ObservedKnowledgeGraphStore(
+                            new FileKnowledgeGraphStore(builder.dataDirectory.resolve("knowledge-graph-model")),
+                            analysesChanged),
+                    () -> statementAnalyzerChoice);
             StatementAnalyzer statementAnalyzer = builder.statementAnalyzer;
             // Fahrplan Paket A2: zweiter Analysator über den eingestellten KI-Dienst, derselbe Modellweg wie Vorstufe
             // und Prüfschritt (Temperatur 0, Denken aus); nur auf Auftrag, an den Dienst nur Seiten mit KI-Freigabe.
@@ -1108,6 +1123,8 @@ public final class Harvester implements AutoCloseable {
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            observedGraph.set(this.knowledgeGraph);
+            opened.add(this.knowledgeGraph::close);
             this.verbQueries = new com.aresstack.spaceharvester.application.knowledge.VerbQueries(
                     this.knowledgeGraph);
             // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
@@ -1146,6 +1163,9 @@ public final class Harvester implements AutoCloseable {
                                     .filter(text -> text.inputSha256().equals(inputSha256)).map(PageText::text);
                         }
                     });
+            // Eine gesetzte oder zurückgenommene Prüfung ändert die wirksame Prüfung der Analysen: Graph, Fachsicht,
+            // Aussagen und Verben ziehen ohne Klick nach (W3, D6).
+            opened.add(statusQuo.subscribeReviews(knowledgeGraph::analysesChanged));
             this.readingAdvice = new com.aresstack.spaceharvester.application.standing.ReadingAdvice(statusQuo,
                     knowledgeGraph::analysed,
                     new com.aresstack.spaceharvester.application.standing.ChangeLogRecentChanges(changeLog), clock);
@@ -1681,7 +1701,13 @@ public final class Harvester implements AutoCloseable {
 
     /** Stellt ein, aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2). */
     public void statementAnalyzerChoice(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice choice) {
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice before = this.statementAnalyzerChoice;
         this.statementAnalyzerChoice = java.util.Objects.requireNonNull(choice, "choice");
+        // Eine andere Ablage: Graph, Fachsicht und Verben lesen neu (D6).
+        KnowledgeGraph graph = this.knowledgeGraph;
+        if (before != choice && graph != null) {
+            graph.analysesChanged();
+        }
     }
 
     public AiRelease aiRelease() {

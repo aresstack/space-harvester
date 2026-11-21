@@ -81,6 +81,7 @@ StandingDecision review(AccessContext caller, PageKey page, String statementId, 
 boolean withdrawReview(AccessContext caller, PageKey page, String statementId, Long expectedRevision)
 List<StandingDecisionStore.AuditEntry> history(AccessContext caller, PageKey page, String statementId)
 Subscription subscribe(Runnable listener)
+Subscription subscribeReviews(Runnable listener)   // nur Prüfungen; Harvester → KnowledgeGraph#analysesChanged
 ```
 
 In der App: `Workspace#decideStanding`, `#clearStanding`, `#reviewStatement`, `#withdrawStatementReview`,

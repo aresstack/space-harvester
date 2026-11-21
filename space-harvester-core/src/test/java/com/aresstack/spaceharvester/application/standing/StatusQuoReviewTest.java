@@ -57,8 +57,11 @@ class StatusQuoReviewTest {
         String id = first.statements.getFirst().id();
         AtomicInteger notified = new AtomicInteger();
         statusQuo.subscribe(notified::incrementAndGet);
+        AtomicInteger reviews = new AtomicInteger();
+        statusQuo.subscribeReviews(reviews::incrementAndGet);
 
         statusQuo.decide(EDITOR, first.key, id, Standing.UEBERHOLT, 0L);
+        assertThat(reviews).as("nur der Stand: keine Prüfungsmeldung").hasValue(0);
         StandingDecision reviewed = statusQuo.review(EDITOR, first.key, id, Review.CONFIRMED, 1L);
 
         assertThat(reviewed.standing()).as("Stand bleibt beim Prüfen").isEqualTo(Standing.UEBERHOLT);
@@ -82,6 +85,7 @@ class StatusQuoReviewTest {
 
         assertThat(store.all()).as("ohne Stand und Prüfung gelöscht").isEmpty();
         assertThat(notified).hasValue(4);
+        assertThat(reviews).as("Prüfen und Zurücknehmen melden sich für den Graphen").hasValue(2);
         assertThat(statusQuo.history(EDITOR, first.key, id))
                 .extracting(StandingDecisionStore.AuditEntry::action, StandingDecisionStore.AuditEntry::standing,
                         StandingDecisionStore.AuditEntry::review, StandingDecisionStore.AuditEntry::revision)
