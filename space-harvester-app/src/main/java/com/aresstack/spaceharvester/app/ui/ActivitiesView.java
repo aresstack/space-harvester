@@ -846,6 +846,12 @@ public final class ActivitiesView implements View {
             case METADATA_EXPORT, ANALYTICS_EXPORT -> parameterDirectory(status,
                     com.aresstack.spaceharvester.application.metadata.SourceQueryExports.DIRECTORY, exportDirectory);
             case EXPORT -> exportDirectory;
+            // Ergebnis und Bericht der Suchqualität liegen neben dem Testbestand (Q1).
+            case SEARCH_QUALITY -> {
+                String file = status.parameters().get(
+                        com.aresstack.spaceharvester.application.quality.SearchQualityRuns.RESULT_PARAMETER);
+                yield file == null ? null : java.nio.file.Path.of(file).toAbsolutePath().getParent();
+            }
             default -> null;
         };
     }
@@ -865,6 +871,11 @@ public final class ActivitiesView implements View {
 
     /** Quelle / Space eines Auftrags, bei einem Seiten-Download dazu „ab“ seiner Startseite. */
     static String where(JobStatus status) {
+        if (status.type() == JobType.SEARCH_QUALITY) {
+            // Nur der Name des Testbestands, nie eine Frage (Q1).
+            String suite = com.aresstack.spaceharvester.application.quality.SearchQualityRuns.suiteName(status);
+            return suite.isEmpty() ? "Testbestand" : "Testbestand „" + suite + "“";
+        }
         String where = status.partitionKey() == null || status.partitionKey().isBlank()
                 ? status.sourceId() : status.sourceId() + " / " + status.partitionKey();
         return status.rootPageId() == null ? where : where + " ab „" + startPage(status) + "“";
@@ -1283,6 +1294,10 @@ public final class ActivitiesView implements View {
                         + com.aresstack.spaceharvester.application.presentation.TranscriptSections.clock(total * 1000),
                         p.processed(), total);
             }
+            if (type == JobType.SEARCH_QUALITY && total > 0) {
+                return new Step((phase == null ? Texts.type(type) : phase) + " · " + p.processed() + " von " + total
+                        + " Fragen" + (p.failed() > 0 ? ", " + p.failed() + " gescheitert" : ""), p.processed(), total);
+            }
             if (type.presentation()) {
                 // „In PPTX umwandeln“: Folien, Transkriptpakete oder das eine Transkript.
                 String unit = type == JobType.TRANSCRIPT_CORRECTION ? " Abschnitten"
@@ -1359,6 +1374,8 @@ public final class ActivitiesView implements View {
                         "Unkorrigiert");
                 case SLIDE_NOTES -> new Counters("Folien", "Bearbeitet", "Kommentiert", "Fehlgeschlagen");
                 case PRESENTATION_EXPORT -> new Counters("Folien", "Bearbeitet", "In der Datei", "Ohne Standbild");
+                case SEARCH_QUALITY -> new Counters("Fragen", "Gestellt", "Unter den ersten 10 gefunden",
+                        "Suche gescheitert");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }

@@ -358,6 +358,7 @@ public final class Harvester implements AutoCloseable {
     private final ConnectionBudget connections;
     private final PageImageAnalysis imageAnalysis;
     private final com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations;
+    private final com.aresstack.spaceharvester.application.quality.SearchQualityRuns searchQuality;
     private final Simplifications simplifications;
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
@@ -1150,6 +1151,15 @@ public final class Harvester implements AutoCloseable {
                     new FileReadStates(builder.assetDirectory()), clock);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads, sourceQueryExports);
             jobActions.presentations(videoPresentations);
+            // Q1: Suchqualität über den Suchweg des Chats; der Bereich wie im Chat als Seitenmenge aus dem Bestand.
+            Holdings selectionHoldings = this.holdings;
+            PageQueries cachedPages = this.pages;
+            this.searchQuality = new com.aresstack.spaceharvester.application.quality.SearchQualityRuns(catalog::all,
+                    access, key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
+                    (who, selection) -> selectionHoldings.resolve(who, selection).pages(),
+                    (who, key) -> cachedPages.cached(who, key.sourceId(), key.pageId()).isPresent(),
+                    () -> this.progressiveSearch, this::searchProfile, jobs, clock);
+            jobActions.searchQuality(searchQuality);
             // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
             // mit derselben Lese- und Exportprüfung wie beim Start.
             jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action,
@@ -1822,6 +1832,11 @@ public final class Harvester implements AutoCloseable {
      * „In PPTX umwandeln“ (Angelo 20.11.2026): aus einem Video mit Folienmarken eine PowerPoint-Datei mit Vortragstext
      * je Folie, als fünf Aufträge in der Auftragsliste.
      */
+    /** „Suchqualität messen“ (Q1): Testbestand lesen, Auftrag starten und fortsetzen. */
+    public com.aresstack.spaceharvester.application.quality.SearchQualityRuns searchQuality() {
+        return searchQuality;
+    }
+
     public com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations() {
         return videoPresentations;
     }

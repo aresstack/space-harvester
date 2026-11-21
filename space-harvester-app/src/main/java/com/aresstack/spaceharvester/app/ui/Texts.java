@@ -149,6 +149,7 @@ public final class Texts {
             case TRANSCRIPT_CORRECTION -> "Transkript korrigieren";
             case SLIDE_NOTES -> "Folienkommentare";
             case PRESENTATION_EXPORT -> "PPTX erzeugen";
+            case SEARCH_QUALITY -> "Suchqualität messen";
         };
     }
 

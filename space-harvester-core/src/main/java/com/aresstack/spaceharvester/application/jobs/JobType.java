@@ -113,7 +113,14 @@ public enum JobType {
      * „PPTX erzeugen“ für „In PPTX umwandeln“: die PowerPoint-Datei mit je Folie ihrem Standbild und dem Vortragstext
      * als Notiz im Ausgabeordner; wartet auf {@link #SLIDE_NOTES}.
      */
-    PRESENTATION_EXPORT;
+    PRESENTATION_EXPORT,
+    /**
+     * „Suchqualität messen“ (Q1): stellt die Fragen eines lokalen Testbestands über den Suchweg des Chats und schreibt
+     * Ergebnis und Bericht neben den Testbestand ({@code application.quality.SearchQualityRuns}). Quellenübergreifend
+     * ({@link Jobs#ALL_SOURCES}); Liste, Statuszeile und Meldungen nennen nur den Testbestand und Zahlen. Fortsetzen
+     * misst nur die Fragen, die im Ergebnis fehlen.
+     */
+    SEARCH_QUALITY;
 
     /** Gehört zu „In PPTX umwandeln“ (Angelo 20.11.2026). */
     public boolean presentation() {
@@ -153,7 +160,8 @@ public enum JobType {
      */
     public boolean resumable() {
         return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD
-                || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT || presentation();
+                || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT || presentation()
+                || this == SEARCH_QUALITY;
     }
 
     /** Export aus der Quelle per REST-Abfrage (Metadaten, Analytics): Gescheitertes fragt ein neuer Lauf erneut. */

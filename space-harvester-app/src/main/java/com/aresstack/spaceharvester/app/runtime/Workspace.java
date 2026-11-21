@@ -1328,6 +1328,33 @@ public final class Workspace {
     }
 
     /**
+     * Liest einen Testbestand der Suchqualität (Q1) zur Vorschau: gültige Fragen und Zeilenfehler. Seitenadressen löst
+     * es über die Adressmuster der Quellen auf, ohne Seiten zu laden.
+     */
+    public com.aresstack.spaceharvester.application.quality.QualitySuite readQualitySuite(java.nio.file.Path suite)
+            throws java.io.IOException {
+        return harvester.searchQuality().read(caller, suite);
+    }
+
+    /**
+     * Startet „Suchqualität messen“ (Q1) als Auftrag über genau den Suchweg des Chats: so viele Treffer im
+     * Chat-Kontext wie {@link com.aresstack.spaceharvester.app.chat.ChatKnowledge#MAX_SOURCES}, dieselbe Frist wie
+     * {@link com.aresstack.spaceharvester.app.chat.ChatTurn#SEARCH_SECONDS}. Ergebnis und Bericht liegen neben dem
+     * Testbestand.
+     *
+     * @param previous früheres Ergebnis zum Vergleich oder {@code null}
+     */
+    public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous, String version) {
+        JobStatus status = harvester.searchQuality().submit(caller,
+                new com.aresstack.spaceharvester.application.quality.SearchQualityRuns.Request(suite, previous, null,
+                        com.aresstack.spaceharvester.app.chat.ChatKnowledge.MAX_SOURCES,
+                        java.time.Duration.ofSeconds(com.aresstack.spaceharvester.app.chat.ChatTurn.SEARCH_SECONDS),
+                        version));
+        activities.remember(status.id());
+        return status;
+    }
+
+    /**
      * Ob die progressive Suche semantisch ordnet ({@code SearchProfile.Ranking.SEMANTIC}): nur mit einem wirksamen
      * Embedding-Modell; ohne Modell gibt es keine semantische Suche (ADR 0017).
      */
