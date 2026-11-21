@@ -162,6 +162,118 @@ class TermsTabTest {
         });
     }
 
+    /**
+     * Fahrplan P2: „mit Unterseiten“ zeigt unter den eigenen Begriffen abgetrennt die der Unterseiten; ein Begriff, der
+     * oben schon steht, bekommt dort „+N“ und steht unten nicht noch einmal. Abgehakt verschwindet der Abschnitt, die
+     * eigenen Begriffe bleiben stehen.
+     */
+    @Test
+    void withSubpagesTheTermsOfTheSubpagesFollowSeparatelyAndDuplicatesStayOnTop() throws Exception {
+        PageAcronyms.Acronym rsl = new PageAcronyms.Acronym("RSL", 1, "Rückmeldeschlüssel", null,
+                List.of(new PageAcronyms.Occurrence(0, 3)));
+        TermsTab.Selection subpageTerms = new TermsTab.Selection() {
+            @Override
+            public String title() {
+                return "den Unterseiten";
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary> acronyms(String q) {
+                return pager(List.of(summary("RSL", TermKind.ACRONYM, "Rückmeldeschlüssel"),
+                        summary("ZV", TermKind.ACRONYM, "Zahlungsverkehr")));
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary> identifiers(String q) {
+                return pager(List.of(summary("Antrag", TermKind.NOUN, null)));
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<com.aresstack.spaceharvester.app.ui.Relation> relations(
+                    String q) {
+                return pager(List.of());
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.terms.TermQueries.OccurrenceList occurrences(
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary term) {
+                return new com.aresstack.spaceharvester.application.terms.TermQueries.OccurrenceList(term.normalized(),
+                        List.of(occurrence("7", "Unterseite A")), null);
+            }
+        };
+        TermsTab.Below below = new TermsTab.Below() {
+            @Override
+            public TermsTab.Selection terms() {
+                return subpageTerms;
+            }
+
+            @Override
+            public java.util.Map<com.aresstack.spaceharvester.application.terms.TermQueries.TermRef, Integer>
+                    pageCounts() {
+                return java.util.Map.of(
+                        new com.aresstack.spaceharvester.application.terms.TermQueries.TermRef("rsl",
+                                TermKind.ACRONYM), 2,
+                        new com.aresstack.spaceharvester.application.terms.TermQueries.TermRef("zv",
+                                TermKind.ACRONYM), 1,
+                        new com.aresstack.spaceharvester.application.terms.TermQueries.TermRef("antrag",
+                                TermKind.NOUN), 1);
+            }
+
+            @Override
+            public int pages() {
+                return 2;
+            }
+        };
+        List<com.aresstack.spaceharvester.application.terms.TermQueries.Occurrence> opened = new ArrayList<>();
+        TermsTab[] tab = new TermsTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new TermsTab();
+            tab[0].runner(new TermsTab.Runner() {
+                @Override
+                public <T> void run(java.util.concurrent.Callable<T> work, java.util.function.Consumer<T> onSuccess,
+                                    java.util.function.Consumer<Throwable> onFailure) {
+                    try {
+                        onSuccess.accept(work.call());
+                    } catch (Exception e) {
+                        onFailure.accept(e);
+                    }
+                }
+            });
+            tab[0].onOpen(opened::add);
+            tab[0].show(new PageAcronyms(PageAcronyms.State.CURRENT, RESULT, List.of(rsl), List.of()));
+            assertThat(tab[0].showsBelow()).as("Standard aus").isFalse();
+            tab[0].below(below);
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsTab terms = tab[0];
+            assertThat(terms.chips()).extracting(chip -> chip.getText()).containsExactly("RSL · Rückmeldeschlüssel");
+            assertThat(terms.alsoBelowTexts()).containsExactly("+2");
+            assertThat(terms.showsBelow()).isTrue();
+            assertThat(terms.belowChips()).extracting(chip -> chip.getText())
+                    .containsExactly("ZV · Zahlungsverkehr", "Antrag");
+            assertThat(terms.belowCount()).as("ohne den Begriff, der oben steht").isEqualTo(2);
+            assertThat(terms.copyText()).contains(TermsTab.BELOW + "\nZV · Zahlungsverkehr\nAntrag");
+
+            // Herkunft: Klick zeigt die Unterseiten mit Fundstellen, ein Klick öffnet die Seite.
+            terms.belowChips().get(1).doClick();
+            assertThat(terms.occurrencePopup().linkTexts()).containsExactly("Unterseite A · 1 Fundstelle");
+            terms.occurrencePopup().clickLink(0);
+            assertThat(opened).extracting(hit -> hit.pageId()).containsExactly("7");
+
+            terms.below(null);
+            assertThat(terms.showsBelow()).isFalse();
+            assertThat(terms.alsoBelowTexts()).isEmpty();
+            assertThat(terms.chips()).extracting(chip -> chip.getText()).containsExactly("RSL · Rückmeldeschlüssel");
+        });
+        assertThat(PageDetailPanel.subpagesStatus("Begriffe", 3)).isEqualTo("Begriffe aus dieser Seite und 3 "
+                + "Unterseiten");
+        assertThat(PageDetailPanel.subpagesStatus("Begriffe", 1)).isEqualTo("Begriffe aus dieser Seite und 1 "
+                + "Unterseite");
+    }
+
     @Test
     void theStatusLineSaysFromHowManyPagesTheTermsCome() throws Exception {
         assertThat(TermsTab.coverage(new TermsTab.Totals(1, 2, 3, 1240, 1300)))

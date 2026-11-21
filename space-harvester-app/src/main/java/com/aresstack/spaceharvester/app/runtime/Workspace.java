@@ -2036,6 +2036,25 @@ public final class Workspace {
         return harvester.holdings().resolve(caller, selection);
     }
 
+    /**
+     * Die Nachfahren einer Seite ohne die Seite selbst ({@code Holdings.descendants}, Fahrplan P1): für „mit
+     * Unterseiten“ in den Analyse-Reitern. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.holdings.PageSelection descendants(String sourceId,
+                                                                                       String spaceKey,
+                                                                                       String pageId) {
+        return harvester.holdings().descendants(caller, sourceId, spaceKey, pageId);
+    }
+
+    /**
+     * Je Begriff die Zahl der Seiten einer Menge ({@code TermQueries.pageCounts}, Fahrplan P1), etwa für „auch auf N
+     * Unterseiten“. Nie auf dem EDT.
+     */
+    public java.util.Map<TermQueries.TermRef, Integer> termPageCounts(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.terms().pageCounts(caller, pages);
+    }
+
     // --- KI-Freigabe je Seite (ADR 0028) ----------------------------------------------------------------------------
 
     /**

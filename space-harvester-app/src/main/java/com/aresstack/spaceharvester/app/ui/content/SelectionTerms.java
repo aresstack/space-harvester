@@ -23,6 +23,9 @@ final class SelectionTerms implements TermsTab.Selection {
     private final Workspace workspace;
     private final ExportPanel.Selection selection;
     private final AppRuntime runtime;
+    /** Fest aufgelöste Seiten, etwa die Unterseiten einer Seite (Fahrplan P2); sonst {@code null}. */
+    private final com.aresstack.spaceharvester.application.holdings.PageSelection fixed;
+    private final String fixedTitle;
     private PageSet pages;
     private boolean resolved;
 
@@ -30,17 +33,33 @@ final class SelectionTerms implements TermsTab.Selection {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.workspace = runtime.workspace();
         this.selection = Objects.requireNonNull(selection, "selection");
+        this.fixed = null;
+        this.fixedTitle = null;
+    }
+
+    /**
+     * Die Begriffe einer schon aufgelösten Seitenmenge, etwa der Unterseiten einer Seite für den Abschnitt „Aus
+     * Unterseiten“ (Fahrplan P2).
+     */
+    SelectionTerms(Workspace workspace, String title,
+                   com.aresstack.spaceharvester.application.holdings.PageSelection pages) {
+        this.runtime = null;
+        this.workspace = Objects.requireNonNull(workspace, "workspace");
+        this.selection = null;
+        this.fixed = Objects.requireNonNull(pages, "pages");
+        this.fixedTitle = Objects.requireNonNull(title, "title");
     }
 
     @Override
     public String title() {
-        return selection.title();
+        return fixed != null ? fixedTitle : selection.title();
     }
 
     /** Die Seiten der Auswahl; {@code null} beim Wissensquellen-Kopf (keine Grenze). */
     synchronized PageSet pages() {
         if (!resolved) {
-            pages = selection.global() ? null : workspace.resolveSelection(selection.toCore(runtime)).pages();
+            pages = fixed != null ? fixed.pages() : selection.global() ? null
+                    : workspace.resolveSelection(selection.toCore(runtime)).pages();
             resolved = true;
         }
         return pages;
@@ -81,8 +100,8 @@ final class SelectionTerms implements TermsTab.Selection {
     public TermsTab.Totals totals() {
         PageSet within = pages();
         // Der Bestand der Auswahl, wie ihn der Export-Reiter zeigt: lokal gespeicherte von allen Seiten.
-        com.aresstack.spaceharvester.application.holdings.PageSelection holdings =
-                workspace.resolveSelection(selection.toCore(runtime));
+        com.aresstack.spaceharvester.application.holdings.PageSelection holdings = fixed != null ? fixed
+                : workspace.resolveSelection(selection.toCore(runtime));
         TermQueries.TermTotals terms = workspace.termTotals(new TermQueries.TermSearch(null, null, null, null, false,
                 TermsTab.STEP, null, null).within(within));
         int relations = workspace.termRelationCounts(within).values().stream().mapToInt(Integer::intValue).sum();

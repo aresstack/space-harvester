@@ -153,8 +153,44 @@ final class TermsTab extends JPanel {
     record Span(int start, int end) {
     }
 
+    /** Überschrift des Abschnitts mit den Begriffen der Unterseiten (Fahrplan P2). */
+    static final String BELOW = "Aus Unterseiten";
+
+    /**
+     * Die Unterseiten einer Seite für den Abschnitt „Aus Unterseiten“ (Fahrplan P2): ihre Begriffe als Auswahl und je
+     * Begriff die Zahl der Unterseiten, auf denen er vorkommt. Nie auf dem EDT abfragen.
+     */
+    interface Below {
+
+        /** Die Begriffe der Unterseiten, wie bei Ordner und Space. */
+        Selection terms();
+
+        /** Je Begriff die Zahl der Unterseiten mit einer Fundstelle. */
+        java.util.Map<TermQueries.TermRef, Integer> pageCounts() throws Exception;
+
+        /** Zahl der Unterseiten. */
+        int pages();
+    }
+
+    private final JPanel belowPanel = new JPanel(new BorderLayout(0, 6));
+    private final com.aresstack.spaceharvester.app.ui.controls.SectionHeader belowHeader =
+            new com.aresstack.spaceharvester.app.ui.controls.SectionHeader(BELOW, true, this::belowToggled);
+    private final com.aresstack.spaceharvester.app.ui.controls.CountChip belowCount =
+            new com.aresstack.spaceharvester.app.ui.controls.CountChip("Begriffe", Comic.MUTED);
+    private final JPanel belowChips = new JPanel(new WrapFlow());
+    private final JPanel belowRelations = new JPanel();
+    private final JPanel belowBody = new JPanel(new BorderLayout(0, 6));
+    private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay belowBusy;
+    private Below below;
+    private java.util.Map<TermQueries.TermRef, Integer> belowCounts = java.util.Map.of();
+    private final List<Section<?>> belowSections = new ArrayList<>();
+    private int belowRequest;
+    private boolean belowLoading;
+    private java.util.Set<String> ownRelationLines = java.util.Set.of();
+
     TermsTab() {
         super(new BorderLayout(0, 10));
+        belowBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(belowBody);
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
 
@@ -208,6 +244,7 @@ final class TermsTab extends JPanel {
         column.setOpaque(false);
         column.add(lists, BorderLayout.NORTH);
         column.add(hint, BorderLayout.CENTER);
+        column.add(belowSection(), BorderLayout.SOUTH);
         JPanel body = new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(new BorderLayout());
         body.add(column, BorderLayout.NORTH);
 
@@ -218,6 +255,8 @@ final class TermsTab extends JPanel {
         scroll.getVerticalScrollBar().getModel().addChangeListener(e -> {
             if (selection != null && nearEnd()) {
                 more();
+            } else if (below != null && nearEnd()) {
+                moreBelow();
             }
         });
 
@@ -275,6 +314,11 @@ final class TermsTab extends JPanel {
         completeness.setText(complete == null ? " " : complete);
         tone(completeness, acronyms != null && acronyms.warnings().isEmpty() ? Comic.GREEN : Comic.ORANGE);
         fill();
+        if (below != null) {
+            // Neue eigene Begriffe: was oben steht, steht unten nicht noch einmal.
+            belowCount.count(belowEntries());
+            queryBelow();
+        }
     }
 
     /**
@@ -286,6 +330,8 @@ final class TermsTab extends JPanel {
         relationCount.setToolTipText(relations == null ? "Beziehungen liegen für diese Seite nicht vor"
                 : "Bestätigte und vorgeschlagene Beziehungen zwischen den Begriffen dieser Seite");
         relationLines.removeAll();
+        ownRelationLines = relations == null ? java.util.Set.of()
+                : relations.stream().map(Relation::line).collect(java.util.stream.Collectors.toUnmodifiableSet());
         for (Relation relation : relations == null ? List.<Relation>of() : relations) {
             JLabel line = Comic.text(relation.line());
             line.setAlignmentX(LEFT_ALIGNMENT);
@@ -312,6 +358,7 @@ final class TermsTab extends JPanel {
      * Bezeichner, dann Beziehungen, und laden beim Scrollen nach.
      */
     void selection(Selection chosen) {
+        below(null);
         selection = Objects.requireNonNull(chosen, "chosen");
         shown = null;
         shownTerms = null;
@@ -411,6 +458,7 @@ final class TermsTab extends JPanel {
             query();
         } else {
             fill();
+            queryBelow();
         }
     }
 
@@ -540,8 +588,13 @@ final class TermsTab extends JPanel {
             return;
         }
         int mine = request;
+        occurrences(current, term, chip, () -> mine == request);
+    }
+
+    private void occurrences(Selection current, TermQueries.TermSummary term, ResearchPillButton chip,
+                             java.util.function.BooleanSupplier still) {
         runner.run(() -> current.occurrences(term), found -> {
-            if (mine != request) {
+            if (!still.getAsBoolean()) {
                 return;
             }
             popup.clearLinks();
@@ -562,7 +615,7 @@ final class TermsTab extends JPanel {
             }
             popup.showAt(chip, 0, chip.getHeight());
         }, failure -> {
-            if (mine == request) {
+            if (still.getAsBoolean()) {
                 hint.setText("Fundstellen nicht lesbar: " + failure.getClass().getSimpleName());
             }
         });
@@ -595,6 +648,7 @@ final class TermsTab extends JPanel {
         for (PageAcronyms.Acronym acronym : visible) {
             chips.add(chip(label(acronym), tooltip(acronym), acronym.occurrences().stream()
                     .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()));
+            alsoBelow(chips, ref(acronym));
         }
         identifierChips.removeAll();
         int identifiers = 0;
@@ -606,6 +660,7 @@ final class TermsTab extends JPanel {
                 }
                 identifierChips.add(chip(entry.term(), tooltip(entry), entry.occurrences().stream()
                         .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()));
+                alsoBelow(identifierChips, new TermQueries.TermRef(entry.normalized(), entry.kind()));
                 identifiers++;
             }
         }
@@ -631,7 +686,18 @@ final class TermsTab extends JPanel {
             text.append("Bezeichner\n").append(String.join("\n", identifiers)).append("\n\n");
         }
         if (!relations.isEmpty()) {
-            text.append("Beziehungen\n").append(String.join("\n", relations)).append("\n");
+            text.append("Beziehungen\n").append(String.join("\n", relations)).append("\n\n");
+        }
+        if (showsBelow()) {
+            List<String> fromBelow = new ArrayList<>(belowChips().stream().map(ResearchPillButton::getText).toList());
+            for (java.awt.Component component : belowRelations.getComponents()) {
+                if (component instanceof JLabel line) {
+                    fromBelow.add(line.getText());
+                }
+            }
+            if (!fromBelow.isEmpty()) {
+                text.append(BELOW).append("\n").append(String.join("\n", fromBelow)).append("\n");
+            }
         }
         return text.toString().stripTrailing();
     }
@@ -742,7 +808,9 @@ final class TermsTab extends JPanel {
     List<ResearchPillButton> chips() {
         List<ResearchPillButton> list = new ArrayList<>();
         for (java.awt.Component component : chips.getComponents()) {
-            list.add((ResearchPillButton) component);
+            if (component instanceof ResearchPillButton pill) {
+                list.add(pill);
+            }
         }
         return list;
     }
@@ -750,7 +818,9 @@ final class TermsTab extends JPanel {
     List<ResearchPillButton> identifierChips() {
         List<ResearchPillButton> list = new ArrayList<>();
         for (java.awt.Component component : identifierChips.getComponents()) {
-            list.add((ResearchPillButton) component);
+            if (component instanceof ResearchPillButton pill) {
+                list.add(pill);
+            }
         }
         return list;
     }
@@ -815,5 +885,261 @@ final class TermsTab extends JPanel {
             }
             return new java.awt.Dimension(available, height + rowHeight + getVgap());
         }
+    }
+
+    // --- Aus Unterseiten (Fahrplan P2) ---------------------------------------------------------------------------
+
+    private JPanel belowSection() {
+        belowPanel.setOpaque(false);
+        belowChips.setOpaque(false);
+        belowRelations.setOpaque(false);
+        belowRelations.setLayout(new BoxLayout(belowRelations, BoxLayout.Y_AXIS));
+        belowBody.setOpaque(false);
+        belowBody.add(belowChips, BorderLayout.NORTH);
+        belowBody.add(belowRelations, BorderLayout.CENTER);
+        belowCount.setFocusable(false);
+        belowCount.tips("Begriffe der Unterseiten, die nicht schon oben stehen",
+                "Begriffe der Unterseiten, die nicht schon oben stehen");
+        // Die Zahl ist nur eine Anzeige, kein Filter.
+        belowCount.addActionListener(e -> belowCount.setSelected(false));
+        JPanel title = new JPanel(new BorderLayout(8, 0));
+        title.setOpaque(false);
+        title.add(belowHeader, BorderLayout.CENTER);
+        JPanel chipCell = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        chipCell.setOpaque(false);
+        chipCell.add(belowCount);
+        title.add(chipCell, BorderLayout.EAST);
+        JPanel head = new JPanel(new BorderLayout(0, 6));
+        head.setOpaque(false);
+        // Die dünne Linie über dem Abschnitt trennt das Eigene von dem der Unterseiten.
+        head.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.MUTED),
+                BorderFactory.createEmptyBorder(8, 0, 0, 0)));
+        head.add(title, BorderLayout.CENTER);
+        belowPanel.add(head, BorderLayout.NORTH);
+        belowPanel.add(belowBusy, BorderLayout.CENTER);
+        belowPanel.setVisible(false);
+        return belowPanel;
+    }
+
+    private void belowToggled() {
+        belowBusy.setVisible(belowHeader.isOpen());
+        belowPanel.revalidate();
+        belowPanel.repaint();
+    }
+
+    /**
+     * Zeigt unter den eigenen Begriffen der Seite abgetrennt die ihrer Unterseiten ({@code null}: Abschnitt weg). Die
+     * eigenen Einträge bleiben stehen; ein Begriff, der oben schon steht, bekommt dort „+N“ statt einer zweiten Pille.
+     */
+    void below(Below chosen) {
+        if (chosen == below) {
+            return;
+        }
+        below = chosen;
+        belowRequest++;
+        belowLoading = false;
+        belowCounts = java.util.Map.of();
+        belowSections.clear();
+        belowChips.removeAll();
+        belowRelations.removeAll();
+        belowCount.count(0);
+        belowBusy.setBusy(false);
+        belowPanel.setVisible(chosen != null && selection == null);
+        if (chosen == null || selection != null) {
+            fill();
+            belowPanel.revalidate();
+            belowPanel.repaint();
+            return;
+        }
+        int mine = belowRequest;
+        belowBusy.setBusy(true);
+        runner.run(chosen::pageCounts, counts -> {
+            if (mine != belowRequest) {
+                return;
+            }
+            belowCounts = counts == null ? java.util.Map.of() : java.util.Map.copyOf(counts);
+            belowCount.count(belowEntries());
+            fill();
+            queryBelow();
+        }, failure -> {
+            if (mine == belowRequest) {
+                belowBusy.setBusy(false);
+                hint.setText("Begriffe der Unterseiten nicht lesbar: " + failure.getClass().getSimpleName());
+            }
+        });
+    }
+
+    /** Ob der Abschnitt „Aus Unterseiten“ gerade zu sehen ist. */
+    boolean showsBelow() {
+        return below != null && belowPanel.isVisible();
+    }
+
+    /** Für Tests: die Pillen im Abschnitt „Aus Unterseiten“. */
+    List<ResearchPillButton> belowChips() {
+        List<ResearchPillButton> found = new ArrayList<>();
+        for (java.awt.Component component : belowChips.getComponents()) {
+            if (component instanceof ResearchPillButton pill) {
+                found.add(pill);
+            }
+        }
+        return found;
+    }
+
+    /** Für Tests: die Zahl am Abschnitt „Aus Unterseiten“. */
+    int belowCount() {
+        return belowCount.count();
+    }
+
+    /** Für Tests: die „+N“-Zusätze an den eigenen Begriffen, in Reihenfolge. */
+    List<String> alsoBelowTexts() {
+        List<String> found = new ArrayList<>();
+        for (JPanel list : List.of(chips, identifierChips)) {
+            for (java.awt.Component component : list.getComponents()) {
+                if (component instanceof com.aresstack.spaceharvester.app.ui.controls.CountChip chip) {
+                    found.add(chip.getText());
+                }
+            }
+        }
+        return found;
+    }
+
+    /** Die eigenen Begriffe der Seite, wie der Core sie zählt. */
+    private java.util.Set<TermQueries.TermRef> ownRefs() {
+        java.util.Set<TermQueries.TermRef> own = new java.util.HashSet<>();
+        if (shown != null && shown.state() == PageAcronyms.State.CURRENT) {
+            shown.acronyms().forEach(acronym -> own.add(ref(acronym)));
+        }
+        if (shownTerms != null && shownTerms.state() == PageTerms.State.CURRENT) {
+            shownTerms.terms().forEach(entry -> own.add(new TermQueries.TermRef(entry.normalized(), entry.kind())));
+        }
+        return own;
+    }
+
+    private static TermQueries.TermRef ref(PageAcronyms.Acronym acronym) {
+        return new TermQueries.TermRef(com.aresstack.spaceharvester.application.terms.TermText.normalize(
+                acronym.acronym()), TermKind.ACRONYM);
+    }
+
+    /** Zahl der Begriffe der Unterseiten, die nicht schon oben stehen. */
+    private int belowEntries() {
+        java.util.Set<TermQueries.TermRef> own = ownRefs();
+        int count = 0;
+        for (TermQueries.TermRef ref : belowCounts.keySet()) {
+            if (!own.contains(ref)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** Hängt an eine eigene Pille „+N“, wenn der Begriff auch auf N Unterseiten vorkommt. */
+    private void alsoBelow(JPanel list, TermQueries.TermRef ref) {
+        if (below == null) {
+            return;
+        }
+        Integer count = belowCounts.get(ref);
+        if (count == null || count == 0) {
+            return;
+        }
+        String tip = "auch auf " + (count == 1 ? "1 Unterseite" : count + " Unterseiten");
+        com.aresstack.spaceharvester.app.ui.controls.CountChip also =
+                com.aresstack.spaceharvester.app.ui.controls.CountChip.choice("+" + count, Comic.MUTED).tips(tip, tip);
+        also.setFocusable(false);
+        also.addActionListener(e -> also.setSelected(false));
+        list.add(also);
+    }
+
+    /** Lädt den Abschnitt „Aus Unterseiten“ neu (Unterseiten oder Filter geändert); die eigenen Begriffe bleiben. */
+    private void queryBelow() {
+        Below current = below;
+        belowRequest++;
+        belowLoading = false;
+        belowSections.clear();
+        belowChips.removeAll();
+        belowRelations.removeAll();
+        if (current == null || selection != null) {
+            belowBusy.setBusy(false);
+            return;
+        }
+        String q = filter.getText() == null ? "" : filter.getText().trim();
+        Selection terms = current.terms();
+        java.util.Set<TermQueries.TermRef> own = ownRefs();
+        Consumer<List<TermQueries.TermSummary>> appendTerms = found -> {
+            for (TermQueries.TermSummary term : found) {
+                if (!own.contains(TermQueries.TermRef.of(term))) {
+                    belowChips.add(belowChip(terms, term));
+                }
+            }
+            belowChips.revalidate();
+            belowChips.repaint();
+        };
+        belowSections.add(new Section<>(terms.acronyms(q), appendTerms));
+        belowSections.add(new Section<>(terms.identifiers(q), appendTerms));
+        belowSections.add(new Section<>(terms.relations(q), found -> {
+            for (Relation relation : found) {
+                if (!ownRelationLines.contains(relation.line())) {
+                    JLabel line = Comic.text(relation.line());
+                    line.setAlignmentX(LEFT_ALIGNMENT);
+                    belowRelations.add(line);
+                }
+            }
+            belowRelations.revalidate();
+            belowRelations.repaint();
+        }));
+        belowBusy.setBusy(true);
+        moreBelow();
+    }
+
+    /** Lädt den nächsten Schritt des Abschnitts „Aus Unterseiten“; nie zwei zugleich. */
+    void moreBelow() {
+        if (belowLoading || below == null || selection != null) {
+            return;
+        }
+        for (Section<?> section : belowSections) {
+            if (section.pager.hasMore()) {
+                loadBelow(section);
+                return;
+            }
+        }
+        belowBusy.setBusy(false);
+    }
+
+    private <T> void loadBelow(Section<T> section) {
+        int mine = belowRequest;
+        belowLoading = true;
+        runner.run(() -> section.pager.next(STEP), items -> {
+            if (mine != belowRequest) {
+                return;
+            }
+            belowLoading = false;
+            // Teilergebnisse sofort; die Überlagerung bleibt nur, solange noch nachgeladen wird.
+            section.append.accept(items);
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                if (mine == belowRequest && (nearEnd() || !scroll.isShowing())) {
+                    moreBelow();
+                } else if (mine == belowRequest) {
+                    belowBusy.setBusy(false);
+                }
+            });
+        }, failure -> {
+            if (mine == belowRequest) {
+                belowLoading = false;
+                belowBusy.setBusy(false);
+                hint.setText("Begriffe der Unterseiten nicht lesbar: " + failure.getClass().getSimpleName());
+            }
+        });
+    }
+
+    /** Ein Begriff der Unterseiten: Klick zeigt die Unterseiten mit Fundstellen; ein Klick dort öffnet die Seite. */
+    private FindablePill belowChip(Selection terms, TermQueries.TermSummary term) {
+        FindablePill chip = chip(selectionLabel(term), selectionTooltip(term), List.of());
+        chip.setEnabled(true);
+        for (java.awt.event.ActionListener listener : chip.getActionListeners()) {
+            chip.removeActionListener(listener);
+        }
+        int mine = belowRequest;
+        chip.addActionListener(e -> occurrences(terms, term, chip, () -> mine == belowRequest));
+        return chip;
     }
 }
