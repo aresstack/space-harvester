@@ -50,21 +50,24 @@ class JobsBackgroundTest {
 
     @Test
     void aBackgroundJobWaitsWhileAnotherJobWaits() {
-        Jobs jobs = jobs(1, 5);
+        Jobs jobs = jobs(2, 5);
         JobStatus sync = jobs.submit(JobType.SYNC, "wiki", "ALPHA", null, null, Map.of(), idle());
         JobStatus export = jobs.submit(JobType.EXPORT, "wiki", "BETA", null, null, Map.of(), idle());
+        JobStatus later = jobs.submit(JobType.SYNC, "wiki", "DELTA", null, null, Map.of(), idle());
         JobStatus background = jobs.submit(JobType.BACKGROUND, "wiki", "GAMMA", null, null, Map.of(), idle());
 
         assertThat(jobs.status(sync.id()).state()).isEqualTo(JobState.RUNNING);
-        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.QUEUED);
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.RUNNING);
+        assertThat(jobs.status(later.id()).state()).isEqualTo(JobState.QUEUED);
         assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.QUEUED);
 
         executor.runNext();
 
-        // Der Export kam später als der Abgleich, aber vor den Hintergrund.
-        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.RUNNING);
+        // Der Abgleich kam vor dem Hintergrund und bekommt den freien Platz.
+        assertThat(jobs.status(later.id()).state()).isEqualTo(JobState.RUNNING);
         assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.QUEUED);
 
+        executor.runNext();
         executor.runNext();
 
         assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.RUNNING);
@@ -100,5 +103,28 @@ class JobsBackgroundTest {
 
         assertThat(restarted.status(background.id()).state()).isEqualTo(JobState.COMPLETED);
         assertThat(restarted.status(background.id()).parameters()).containsEntry("k", "v");
+    }
+
+    @Test
+    void withASingleSlotNoBackgroundJobRunsAndItSaysWhy() {
+        Jobs jobs = jobs(1, 5);
+
+        JobStatus background = jobs.submit(JobType.BACKGROUND, "wiki", "ALPHA", null, null, Map.of(), idle());
+        assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.QUEUED);
+        assertThat(jobs.events(background.id())).filteredOn(event -> Jobs.SINGLE_SLOT.equals(event.code()))
+                .singleElement().satisfies(event -> {
+                    assertThat(event.severity()).isEqualTo(JobEvent.Severity.WARNING);
+                    assertThat(event.message()).startsWith("Wartet, nur ein Platz eingestellt");
+                });
+
+        // Der eine Platz gehört dem Benutzer.
+        JobStatus sync = jobs.submit(JobType.SYNC, "wiki", "BETA", null, null, Map.of(), idle());
+        assertThat(jobs.status(sync.id()).state()).isEqualTo(JobState.RUNNING);
+        executor.runNext();
+        assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.QUEUED);
+
+        // Ab zwei Plätzen läuft er.
+        jobs.parallelPreparations(2);
+        assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.RUNNING);
     }
 }

@@ -280,4 +280,46 @@ class BackgroundJobsTest {
         }
     }
 
+
+    @Test
+    void aPauseOrCancelOfTheUserJustBeforeTheEndIsKeptAfterTheRestartAndNeverResumed() {
+        Jobs first = new Jobs(store, new Steps(), new JobLimits(4, 10, Duration.ofHours(1)), clock);
+        BackgroundGroup group = background(first, new AtomicBoolean(true)).start("demo", "Demo", twoSpaces());
+        String paused = group.parts().get(0).id();
+        String cancelled = group.parts().get(1).id();
+        // Beide laufen; der Benutzer hält den einen an und bricht den anderen ab, dann endet der Dienst, bevor die
+        // Arbeit es merkt (oder er stürzt ab).
+        first.pause(paused, OWNER);
+        first.cancel(cancelled, OWNER);
+        first.close();
+
+        Jobs restarted = jobs(executor);
+        List<JobStatus> resumed = background(restarted, new AtomicBoolean(true)).resumeInterrupted();
+        executor.runAll();
+
+        assertThat(resumed).isEmpty();
+        assertThat(restarted.status(paused).state()).isEqualTo(JobState.PAUSED);
+        assertThat(restarted.status(paused).pauseReason())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason.USER);
+        assertThat(restarted.status(cancelled).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(seen).isEmpty();
+    }
+
+    @Test
+    void aRejectedPartTakesBackThePartsAlreadyAccepted() {
+        Jobs jobs = jobs(executor);
+        BackgroundJobs background = background(jobs, new AtomicBoolean(true));
+        List<BackgroundPart.Draft> tooMany = new java.util.ArrayList<>();
+        for (int i = 0; i < 1001; i++) {
+            tooMany.add(new BackgroundPart.Draft("wiki", "S" + i, Map.of()));
+        }
+
+        assertThatThrownBy(() -> background.start("demo", "Zu viele", tooMany))
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException.class);
+        executor.runAll();
+
+        assertThat(jobs.list(OWNER, JobType.BACKGROUND)).isNotEmpty().allSatisfy(status ->
+                assertThat(status.state()).isEqualTo(JobState.CANCELLED));
+        assertThat(seen).isEmpty();
+    }
 }
