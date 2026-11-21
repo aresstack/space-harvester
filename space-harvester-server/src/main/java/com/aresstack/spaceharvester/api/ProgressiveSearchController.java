@@ -191,7 +191,7 @@ public class ProgressiveSearchController {
                     request.minScore() == null ? defaults.minScore() : request.minScore(), timeBudget,
                     or(request.searchBudget(), defaults.searchBudget()),
                     or(request.limitPerSearch(), defaults.limitPerSearch()), defaults.execution(), expansion,
-                    defaults.ranking());
+                    defaults.ranking(), Boolean.TRUE.equals(request.neighbors()));
         } catch (IllegalArgumentException e) {
             // Die Meldung stammt aus der Prüfung des Profils und nennt nur die Grenze.
             throw new InvalidQueryException(e.getMessage());
@@ -220,6 +220,9 @@ public class ProgressiveSearchController {
      * @param expansion        {@code ai} (Standard; ohne Chat-Modell wie {@code rules}) oder {@code rules}
      * @param ranking          {@code keyword} (Standard, Schlagwortsuche) oder {@code semantic} (Vektoren im Cache,
      *                         ADR 0013; ohne Embedding-Modell 503 {@code semantic-search-unavailable})
+     * @param neighbors        Suchmethode „Nachbarseiten“ (R2): {@code true} nimmt nach den Varianten Eltern-, Unterseiten
+     *                         und Verweisziele bzw. -quellen der besten Treffer als Kandidaten und bewertet sie wie jeden
+     *                         Treffer gegen q; Standard {@code false}, dann unverändert
      * @param waitForResult    JSON {@code wait}: bis zum Abschluss warten und die fertige Liste liefern
      */
     public record ProgressiveRequest(
@@ -233,6 +236,7 @@ public class ProgressiveSearchController {
             @Schema(nullable = true) Integer searchBudget, @Schema(nullable = true) Integer limitPerSearch,
             @Schema(nullable = true, allowableValues = {"ai", "rules"}) String expansion,
             @Schema(nullable = true, allowableValues = {"keyword", "semantic"}) String ranking,
+            @Schema(nullable = true) Boolean neighbors,
             @JsonProperty("wait") @Schema(name = "wait", nullable = true) Boolean waitForResult) {
     }
 

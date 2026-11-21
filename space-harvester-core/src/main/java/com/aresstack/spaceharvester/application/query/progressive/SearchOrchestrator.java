@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import java.time.Duration;
 import java.time.Instant;
@@ -48,6 +49,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Kosinusähnlichkeit zu ihr als Bewertung ({@link VariantSearch.Outcome#scores()}); der {@link HitScorer} bewertet
  * dann nicht, damit keine Werte verschiedener Modelle gemischt werden.
  *
+ * <p>Mit {@link SearchProfile#neighbors()} (Suchmethode „Nachbarseiten“, R2, nur mit Haken) läuft nach der letzten
+ * Variante eine weitere Suchanfrage: die ursprüngliche Anfrage, begrenzt auf die Nachbarn der besten bestätigten
+ * Treffer im Strukturgraphen ({@link NeighborSource}) innerhalb des bisherigen Umfangs. Ihre Treffer werden wie die
+ * jeder Variante bewertet und zusammengeführt und tragen zusätzlich die Ursache {@link HitReason.Kind#NEIGHBOR}; ein
+ * Nachbar, den die Anfrage nicht trifft, erscheint nicht. Ohne Haken bleibt der Ablauf unverändert.
+ *
  * <p>Ein Agent wartet auf {@link ProgressiveSearch#result()}, eine Oberfläche bekommt unterwegs
  * {@link ProgressiveSearchListener}-Ereignisse; beides ist derselbe Vorgang. Rechte prüft die {@link VariantSearch}:
  * Was der Aufrufer nicht sehen darf, erscheint weder als Treffer noch in einer Zahl. Suchtexte und Seiten-IDs kommen
@@ -71,6 +78,7 @@ public final class SearchOrchestrator implements AutoCloseable {
     private final HitScorer scorer;
     private final ExecutorService executor;
     private final SearchRunLog runs;
+    private final NeighborSource neighbors;
     private final Set<Run> active = ConcurrentHashMap.newKeySet();
 
     /** Eine Strategie für beide Einstellungen von {@link SearchProfile#expansion()}. */
@@ -109,6 +117,14 @@ public final class SearchOrchestrator implements AutoCloseable {
      */
     public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
                               QueryExpansionStrategy rules, HitScorer scorer, SearchRunLog runs) {
+        this(search, semantic, expansion, rules, scorer, runs, NeighborSource.NONE);
+    }
+
+    /** @param neighbors Kandidaten der Suchmethode „Nachbarseiten“ (R2) oder {@link NeighborSource#NONE} */
+    public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
+                              QueryExpansionStrategy rules, HitScorer scorer, SearchRunLog runs,
+                              NeighborSource neighbors) {
+        this.neighbors = Objects.requireNonNull(neighbors, "neighbors");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.search = Objects.requireNonNull(search, "search");
         this.semantic = semantic;
@@ -294,7 +310,7 @@ public final class SearchOrchestrator implements AutoCloseable {
                     } else {
                         expanded.cancel(false);
                     }
-                    finish(Completion.QUALITY_REACHED);
+                    conclude(Completion.QUALITY_REACHED);
                     return;
                 }
                 addVariants(awaitExpansion(expanded));
@@ -314,19 +330,19 @@ public final class SearchOrchestrator implements AutoCloseable {
                     }
                     // Die Frist zuerst: Eine Suche, die an der Zeit endet, behauptet nie das Qualitätsziel.
                     if ((remaining || !late.isEmpty()) && (budgetHit || System.nanoTime() >= deadline)) {
-                        finish(Completion.BUDGET_EXHAUSTED);
+                        conclude(Completion.BUDGET_EXHAUSTED);
                         return;
                     }
                     if (successes > 0 && quality.satisfied(state())) {
-                        finish(Completion.QUALITY_REACHED);
+                        conclude(Completion.QUALITY_REACHED);
                         return;
                     }
                     if (remaining && searches >= profile.searchBudget()) {
-                        finish(Completion.BUDGET_EXHAUSTED);
+                        conclude(Completion.BUDGET_EXHAUSTED);
                         return;
                     }
                     if (!remaining) {
-                        finish(successes == 0 ? Completion.FAILED
+                        conclude(successes == 0 ? Completion.FAILED
                                 : budgetHit ? Completion.BUDGET_EXHAUSTED : Completion.ALL_VARIANTS_DONE);
                         return;
                     }
@@ -339,6 +355,138 @@ public final class SearchOrchestrator implements AutoCloseable {
                 LOG.log(System.Logger.Level.WARNING, "Progressive Suche gescheitert ({0})", e.getClass().getName());
                 noteFailure(e);
                 finish(Completion.FAILED);
+            }
+        }
+
+        /**
+         * Schließt die Suche ab; vorher, nur mit {@link SearchProfile#neighbors()}, der Schritt „Nachbarn“. Er läuft
+         * nicht nach einem Abbruch, ohne erfolgreiche Suchanfrage und nicht über die Gesamtfrist hinaus.
+         */
+        private void conclude(Completion reason) {
+            if (profile.neighbors() && reason != Completion.FAILED && !cancelled() && successes > 0
+                    && System.nanoTime() < deadline) {
+                try {
+                    neighborStep();
+                } catch (RuntimeException e) {
+                    // Die Methode ergänzt nur; ihr Scheitern lässt die Treffer der Suche stehen.
+                    LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesucht ({0})", e.getClass().getName());
+                }
+                if (cancelled()) {
+                    finish(Completion.CANCELLED);
+                    return;
+                }
+            }
+            finish(reason);
+        }
+
+        /**
+         * Suchmethode „Nachbarseiten“ (R2): Nachbarn der besten bestätigten Treffer als Kandidaten, gesucht mit der
+         * ursprünglichen Anfrage in derselben Suche, begrenzt auf sie und den bisherigen Umfang. Was zurückkommt,
+         * traf die Anfrage und wird wie jeder Treffer bewertet und zusammengeführt.
+         */
+        private void neighborStep() {
+            List<KeywordSearch.Hit> seeds = ranked().stream().filter(RankedHit::confirmed)
+                    .limit(NeighborCandidates.MAX_SEEDS).map(RankedHit::hit).toList();
+            // Die Nachbarsuche ist eine Suchanfrage wie jede andere und zählt gegen das Budget.
+            if (seeds.isEmpty() || searches >= profile.searchBudget()) {
+                return;
+            }
+            Map<PageKey, HitReason.Neighbor> found = collect(seeds);
+            if (found == null || cancelled() || System.nanoTime() >= deadline) {
+                return;
+            }
+            Map<PageKey, HitReason.Neighbor> candidates = new LinkedHashMap<>();
+            found.forEach((key, via) -> {
+                // Schon gefunden: kein Kandidat. Außerhalb der Seiten der Suche: nie.
+                if (!entries.containsKey(key) && (query.pages() == null || query.pages().contains(key))) {
+                    candidates.put(key, via);
+                }
+            });
+            if (candidates.isEmpty() || cancelled()) {
+                return;
+            }
+            KeywordSearch.Query within = query.within(PageSet.ofKeys(candidates.keySet()));
+            searches++;
+            CompletableFuture<VariantSearch.Outcome> future = CompletableFuture.supplyAsync(() -> {
+                slots.acquireUninterruptibly();
+                try {
+                    return attempt(within);
+                } finally {
+                    slots.release();
+                }
+            }, executor);
+            // Kehrt sie erst nach dem Abbruch zurück, kennt finish ihr Laden nicht: hier abbrechen (wie in start).
+            future.thenAccept(late -> {
+                KeywordSearch.Progress progress = late.results().progress();
+                if (cancelled() && progress != null && !progress.done()) {
+                    cancelLoading(progress.id());
+                }
+            });
+            long until = Math.min(deadline, System.nanoTime() + profile.execution().variantTimeout().toNanos());
+            VariantSearch.Outcome outcome;
+            try {
+                CompletableFuture.anyOf(future, cancelSignal).get(Math.max(0, until - System.nanoTime()),
+                        TimeUnit.NANOSECONDS);
+                if (!future.isDone()) {
+                    return;
+                }
+                outcome = future.join();
+            } catch (TimeoutException e) {
+                LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht in der Frist");
+                return;
+            } catch (ExecutionException | CompletionException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesucht ({0})", cause.getClass().getName());
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cancelSignal.complete(null);
+                return;
+            }
+            KeywordSearch.Results results = outcome.results();
+            if (results.progress() != null && !results.progress().done()) {
+                loads.add(results.progress().id());
+            }
+            List<Entry> unscored = new ArrayList<>();
+            int added = 0;
+            for (boolean confirmed : new boolean[] {true, false}) {
+                for (KeywordSearch.Hit hit : confirmed ? results.hits() : results.found()) {
+                    HitReason.Neighbor via = candidates.get(new PageKey(hit.sourceId(), hit.pageId()));
+                    if (via == null) {
+                        continue;
+                    }
+                    KeywordSearch.Hit marked = hit.withReasons(HitReason.union(hit.reasons(),
+                            List.of(HitReason.neighbor(query.text(), via))));
+                    added += merge(0, marked, confirmed, unscored, outcome.scores());
+                }
+            }
+            newInWave = added;
+            score(unscored);
+            emit(() -> listener.ranked(ranked()));
+        }
+
+        /**
+         * Sammelt die Nachbarn der Treffer im Hintergrund; gewartet wird höchstens bis zur Gesamtfrist oder zum
+         * Abbruch. {@code null}, wenn das nicht reichte oder das Sammeln scheiterte.
+         */
+        private Map<PageKey, HitReason.Neighbor> collect(List<KeywordSearch.Hit> seeds) {
+            CompletableFuture<Map<PageKey, HitReason.Neighbor>> future =
+                    CompletableFuture.supplyAsync(() -> neighbors.neighbors(caller, seeds), executor);
+            try {
+                CompletableFuture.anyOf(future, cancelSignal).get(Math.max(0, deadline - System.nanoTime()),
+                        TimeUnit.NANOSECONDS);
+                return future.isDone() ? future.join() : null;
+            } catch (TimeoutException e) {
+                LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht in der Frist gesammelt");
+                return null;
+            } catch (ExecutionException | CompletionException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesammelt ({0})", cause.getClass().getName());
+                return null;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cancelSignal.complete(null);
+                return null;
             }
         }
 

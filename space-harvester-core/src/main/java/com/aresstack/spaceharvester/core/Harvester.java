@@ -118,6 +118,8 @@ import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
 import com.aresstack.spaceharvester.application.query.progressive.AiQueryExpansion;
 import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
 import com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion;
+import com.aresstack.spaceharvester.application.query.progressive.NeighborCandidates;
+import com.aresstack.spaceharvester.application.query.progressive.NeighborSearch;
 import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
@@ -331,6 +333,7 @@ public final class Harvester implements AutoCloseable {
     private final boolean fillFollows;
     private final boolean parallelismFollows;
     private final SearchOrchestrator progressiveSearch;
+    private final NeighborSearch neighborSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
     private final PageConnections pageConnections;
@@ -861,7 +864,9 @@ public final class Harvester implements AutoCloseable {
             SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
                     new SemanticVariantSearch(relevance, textIndex),
                     new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
-                    HitScorer.of(excerpts), runLog);
+                    HitScorer.of(excerpts), runLog, new NeighborCandidates(pageConnections));
+            // R2: dieselbe Methode zur Schlagwortsuche ohne progressive Suche, als eigener Aufruf nach einem Stapel.
+            this.neighborSearch = new NeighborSearch(keywordSearch, new NeighborCandidates(pageConnections));
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
             start.step("Suche");
@@ -1784,6 +1789,11 @@ public final class Harvester implements AutoCloseable {
      */
     public SearchOrchestrator progressiveSearch() {
         return progressiveSearch;
+    }
+
+    /** Suchmethode „Nachbarseiten“ (R2) zur Schlagwortsuche, nach einem Stapel; nur mit Haken des Benutzers. */
+    public NeighborSearch neighborSearch() {
+        return neighborSearch;
     }
 
     /**

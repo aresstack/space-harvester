@@ -377,8 +377,12 @@ public class SearchController {
      * @param variantOrigin    woher die Variante stammt, wenn bekannt
      * @param inTitle          Wörter der Anfrage (wie der Index sie zerlegt) im Titel bzw. Dateinamen
      * @param inText           Wörter der Anfrage im Text
+     * @param viaSourceId      bei {@code neighbor} (Suchmethode „Nachbarseiten“, R2) die Quelle der Ausgangsseite
+     * @param viaPageId        bei {@code neighbor} die Ausgangsseite, ein Treffer derselben Suche
+     * @param viaTitle         bei {@code neighbor} ihr Titel
+     * @param viaEdge          bei {@code neighbor} die Kante von der Ausgangsseite zum Treffer
      */
-    public record HitReasonResponse(@Schema(allowableValues = {"text", "source", "semantic"}) String kind,
+    public record HitReasonResponse(@Schema(allowableValues = {"text", "source", "semantic", "neighbor"}) String kind,
                                     String query,
                                     @Schema(nullable = true) String relationTerm,
                                     @Schema(nullable = true) String relationCounterpart,
@@ -387,7 +391,12 @@ public class SearchController {
                                     @Schema(nullable = true) Integer variantPriority,
                                     @Schema(nullable = true, allowableValues = {"rules", "model"})
                                     String variantOrigin,
-                                    List<String> inTitle, List<String> inText) {
+                                    List<String> inTitle, List<String> inText,
+                                    @Schema(nullable = true) String viaSourceId,
+                                    @Schema(nullable = true) String viaPageId,
+                                    @Schema(nullable = true) String viaTitle,
+                                    @Schema(nullable = true, allowableValues = {"parent", "child", "links-to",
+                                            "linked-from"}) String viaEdge) {
 
         static List<HitReasonResponse> of(KeywordSearch.Hit hit) {
             return hit.reasons().stream().map(HitReasonResponse::of).toList();
@@ -396,12 +405,15 @@ public class SearchController {
         static HitReasonResponse of(HitReason reason) {
             HitReason.Relation relation = reason.relation();
             HitReason.Variant variant = reason.variant();
+            HitReason.Neighbor via = reason.via();
             return new HitReasonResponse(reason.kind().name().toLowerCase(Locale.ROOT), reason.query(),
                     relation == null ? null : relation.term(), relation == null ? null : relation.counterpart(),
                     relation == null ? null : relation.type(), variant == null ? null : variant.priority(),
                     variant == null || variant.origin() == null ? null
                             : variant.origin().name().toLowerCase(Locale.ROOT),
-                    reason.inTitle(), reason.inText());
+                    reason.inTitle(), reason.inText(), via == null ? null : via.sourceId(),
+                    via == null ? null : via.pageId(), via == null ? null : via.title(),
+                    via == null ? null : via.edge().name().toLowerCase(Locale.ROOT).replace('_', '-'));
         }
     }
 
