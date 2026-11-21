@@ -168,6 +168,32 @@ public final class Workspace {
         return harvester.navigation().references(caller, sourceId, pageId);
     }
 
+    /**
+     * Ein Stapel des Verzeichnisses der Verben in {@code within} ({@code VerbQueries.verbs}, Paket K1): aus den
+     * Aussagen des Vorgabe-Analysators, mit den Rechten des Aufrufers. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries.VerbList verbs(
+            com.aresstack.spaceharvester.application.snapshot.PageSet within, String q, int limit, String cursor) {
+        return harvester.verbQueries().verbs(caller, within, q, limit, cursor);
+    }
+
+    /**
+     * Die Verben einer Seite mit ihren Aussagen ({@code VerbQueries.onPage}, Paket K1); {@code null} ohne Analyse,
+     * {@code stale} bei veralteter. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries.PageVerbs pageVerbs(String sourceId,
+                                                                                              String pageId) {
+        return harvester.verbQueries().onPage(caller,
+                new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
+    }
+
+    /** Die Fundstellen eines Verbs in {@code within} ({@code VerbQueries.occurrences}, Paket K1). Nie auf dem EDT. */
+    public List<com.aresstack.spaceharvester.application.knowledge.VerbQueries.Occurrence> verbOccurrences(
+            com.aresstack.spaceharvester.application.snapshot.PageSet within,
+            com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb verb, int limit) {
+        return harvester.verbQueries().occurrences(caller, within, verb.lemma(), verb.fromText(), limit);
+    }
+
     /** Fundstellen eines Begriffs auf sichtbaren Seiten ({@code TermQueries.occurrences}, #119). */
     public TermQueries.OccurrenceList occurrences(TermQueries.OccurrenceSearch search) {
         return harvester.terms().occurrences(caller, search);
@@ -2334,6 +2360,14 @@ public final class Workspace {
     public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> changeSummary(
             String sourceId, String updateId, String spaceKey) {
         return harvester.changeLog().summary(caller, sourceId, updateId, spaceKey);
+    }
+
+    /**
+     * Ob die abgelegte Zusammenfassung eines Updates noch gilt (Rechte, KI-Freigabe), ohne Inhalt; einmal beim Wechsel
+     * der Update-Kennung (Abnahme #1037). Nie auf dem EDT.
+     */
+    public boolean changeSummaryStillValid(String sourceId, String updateId, String spaceKey) {
+        return harvester.changeLog().summaryStillValid(caller, sourceId, updateId, spaceKey);
     }
 
     /** Startet „Zusammenfassen“ für ein Update in einer Ebene (ADR 0031); {@code spaceKey == null} die ganze Quelle. */

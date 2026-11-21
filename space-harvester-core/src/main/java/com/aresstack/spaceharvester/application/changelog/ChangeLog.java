@@ -507,6 +507,23 @@ public final class ChangeLog implements AutoCloseable {
 
 
     /**
+     * Ob die abgelegte Zusammenfassung eines Updates für den Aufrufer noch gilt: dieselben Rechte und dieselbe
+     * KI-Freigabe wie beim Lesen ({@link #summary(AccessContext, String, String, String)}), aber ohne die Spanne zu
+     * prüfen und ohne Inhalt. Für die Ansicht, die eine Zusammenfassung weiter zeigt, während das Tages-Update beim
+     * Verlängern seine Kennung wechselt und die neue still entsteht (Abnahme #1037); einmal je Wechsel, nie abgefragt.
+     * {@code false}, wenn keine abgelegt ist.
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     */
+    public boolean summaryStillValid(AccessContext caller, String sourceId, String update, String spaceKey) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(update, "update");
+        requireReadable(caller, sourceId);
+        Visibility visible = new Visibility(caller);
+        return store.summary(sourceId, update, spaceKey).filter(found -> valid(found, visible)).isPresent();
+    }
+
+    /**
      * Startet „Zusammenfassen“ für ein Update als Auftrag; nur auf Wunsch, nie von selbst. Das Ergebnis meldet
      * {@link #subscribe} für die Quelle, sobald es abgelegt ist; eine frühere Zusammenfassung desselben Updates wird
      * ersetzt.
