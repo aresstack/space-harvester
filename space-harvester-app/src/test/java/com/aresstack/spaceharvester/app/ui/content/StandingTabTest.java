@@ -549,6 +549,32 @@ class StandingTabTest {
     }
 
     @Test
+    void anEntryCarryingOnlyAReviewIsShownWithoutStandingAndCannotBeClearedAsStanding() {
+        // ADR 0032 W3: ein Eintrag kann nur die Prüfung tragen; der Stand ist dann null.
+        Instant at = Instant.parse("2026-11-16T10:00:00Z");
+        StandingDecision reviewed = new StandingDecision(new PageKey("wiki", "2"), "wiki/2@old#s1.v1",
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER, null,
+                ParsedStatements.Review.REJECTED, 2, "angelo", at, "angelo", at);
+        StatusQuoView base = view();
+        StandingTab tab = new Fixture(new StatusQuoView(base.entries(), base.states(), base.pages(), base.counts(),
+                base.certainCounts(), List.of(reviewed))).shownTab();
+
+        assertThat(tab.rows().get(1)).isEqualTo(new StandingTab.Stale(reviewed));
+        tab.click(1);
+        assertThat(tab.popup().bodyText()).contains("Von Hand „verworfen“");
+        assertThat(tab.overlayButton(StandingTab.CLEAR_TIP).isEnabled()).isFalse();
+        com.aresstack.spaceharvester.application.standing.StandingDecision.Target target = reviewed.target();
+        assertThat(StandingTab.history(List.of(
+                new com.aresstack.spaceharvester.application.standing.StandingDecisionStore.AuditEntry(
+                        target, "review", "angelo", at, null,
+                        ParsedStatements.Review.REJECTED, 1),
+                new com.aresstack.spaceharvester.application.standing.StandingDecisionStore.AuditEntry(
+                        target, "unreview", "angelo", at, null,
+                        ParsedStatements.Review.REJECTED, 1))))
+                .contains("„verworfen“ gesetzt").contains("Prüfung zurückgenommen (war „verworfen“)");
+    }
+
+    @Test
     void reloadedSettingsAreReadAgainWhenShown() {
         Fixture fixture = new Fixture(view());
         StandingTab tab = fixture.shownTab();

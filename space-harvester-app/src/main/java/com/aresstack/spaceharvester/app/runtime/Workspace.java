@@ -2484,9 +2484,24 @@ public final class Workspace {
         return harvester.statusQuo().decide(caller, page, statementId, standing, expectedRevision);
     }
 
-    /** Löscht eine Entscheidung zum Stand; danach gelten wieder die Regeln. */
+    /** Löscht den Stand von Hand; danach gelten wieder die Regeln. Eine Prüfung im selben Eintrag bleibt. */
     public boolean clearStanding(PageKey page, String statementId, long expectedRevision) {
         return harvester.statusQuo().clear(caller, page, statementId, expectedRevision);
+    }
+
+    /**
+     * Bestätigt oder verwirft eine Aussage von Hand (ADR 0032 W3), für die Ablage des Analysators, in deren Analyse sie
+     * steht. Revision des Eintrags gemeinsam mit dem Stand.
+     */
+    public com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey page,
+            String statementId, com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review review,
+            long expectedRevision) {
+        return harvester.statusQuo().review(caller, page, statementId, review, expectedRevision);
+    }
+
+    /** Nimmt die Prüfung einer Aussage zurück (eigener Eintrag im Protokoll); ein Stand von Hand bleibt. */
+    public boolean withdrawStatementReview(PageKey page, String statementId, long expectedRevision) {
+        return harvester.statusQuo().withdrawReview(caller, page, statementId, expectedRevision);
     }
 
     /** Das Protokoll der Entscheidungen zu Aussage oder Seite, älteste zuerst. */

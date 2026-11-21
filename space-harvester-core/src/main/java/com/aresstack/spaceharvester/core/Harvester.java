@@ -1147,8 +1147,14 @@ public final class Harvester implements AutoCloseable {
                     return Optional.empty();
                 }
             };
+            // ADR 0032, FL6 und W3: Entscheidungen zu Stand und Prüfung als Nutzerdaten. Die Prüfung durch Menschen wirkt
+            // an einer Stelle beim Lesen der Analysen (Aussagen-Reiter und Knowledge Graph), direkt aus der Ablage.
+            com.aresstack.spaceharvester.application.standing.StandingDecisionStore standingDecisions =
+                    new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
+                            builder.dataDirectory.resolve("standing"));
             this.statementAnalysis = new StatementAnalysis(readerText, graphStore, access, () -> statementAnalyzer,
-                    clock, simplified, checked, () -> modelAnalyzer, withdrawn::mayProcess);
+                    clock, simplified, checked, () -> modelAnalyzer, withdrawn::mayProcess,
+                    new com.aresstack.spaceharvester.application.standing.DecisionReviews(standingDecisions));
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
@@ -1171,8 +1177,7 @@ public final class Harvester implements AutoCloseable {
                     () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules(), glossary);
             knowledgeGraph.subscribe(technicalTerms::forget);
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
-                    cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
-                    builder.dataDirectory.resolve("standing")), access,
+                    cache::findHeader, standingDecisions, access,
                     () -> com.aresstack.spaceharvester.application.standing.StandingWords.of(
                             this.settings.standing()), clock,
                     new com.aresstack.spaceharvester.application.standing.SentenceSource() {
@@ -1193,6 +1198,9 @@ public final class Harvester implements AutoCloseable {
                                     .filter(text -> text.inputSha256().equals(inputSha256)).map(PageText::text);
                         }
                     });
+            // Eine gesetzte oder zurückgenommene Prüfung ändert die wirksame Prüfung der Analysen: Graph, Fachsicht,
+            // Aussagen und Verben ziehen ohne Klick nach (W3, D6).
+            opened.add(statusQuo.subscribeReviews(knowledgeGraph::analysesChanged));
             this.readingAdvice = new com.aresstack.spaceharvester.application.standing.ReadingAdvice(statusQuo,
                     knowledgeGraph::analysed,
                     new com.aresstack.spaceharvester.application.standing.ChangeLogRecentChanges(changeLog), clock);
