@@ -19,6 +19,9 @@ package com.aresstack.spaceharvester.application.structure;
  *   <li>{@link ConnectionKind#TERM_RELATION}: {@link #UNAVAILABLE} ohne Begriffsindex oder wenn für die Seite keine
  *       aktuellen Begriffe im Index liegen (nicht analysiert oder ohne Begriffe); sonst {@link #COMPLETE} gegenüber
  *       dem lokalen Inhalt. Begriffe werden nur aus lokal gespeichertem Text gewonnen.</li>
+ *   <li>{@link ConnectionKind#SIMILAR_SECTION}: {@link #UNAVAILABLE} ohne eingestelltes Embedding-Modell oder wenn für
+ *       die Ausgangsseite keine Vektoren des aktuellen Modells gespeichert sind; sonst {@link #COMPLETE} gegenüber den
+ *       gespeicherten Vektoren. Seiten ohne Vektoren kommen nie als Ziel vor. Es wird nichts eingebettet.</li>
  * </ul>
  */
 public enum Coverage {

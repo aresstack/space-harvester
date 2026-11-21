@@ -14,7 +14,12 @@ public enum ConnectionKind {
      * Ein Begriff der Ausgangsseite steht in einer bestätigten Beziehung zu einem Begriff, der auf der Zielseite
      * vorkommt. Die Beziehungsart (auch „verwandt“) steht in der Herkunft.
      */
-    TERM_RELATION(Basis.CONFIRMED);
+    TERM_RELATION(Basis.CONFIRMED),
+    /**
+     * Ein Abschnitt der Zielseite ähnelt einem Abschnitt der Ausgangsseite: Kosinus der gespeicherten Vektoren ab der
+     * Schwelle. Berechnet, nie eine Aussage der Quelle oder eines Menschen.
+     */
+    SIMILAR_SECTION(Basis.COMPUTED);
 
     private final Basis basis;
 

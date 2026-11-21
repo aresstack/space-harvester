@@ -56,4 +56,27 @@ public sealed interface Provenance {
             return Basis.CONFIRMED;
         }
     }
+
+    /**
+     * Ähnlichkeit zweier Abschnitte aus gespeicherten Vektoren; der ähnlichste Abschnittspaar je Zielseite.
+     *
+     * @param similarity    Kosinusähnlichkeit zwischen -1 und 1
+     * @param seedChunk     Nummer des Stücks der Ausgangsseite, ab 0
+     * @param seedSection   seine Überschriftenkette oder {@code null}
+     * @param targetChunk   Nummer des Stücks der Zielseite, ab 0
+     * @param targetSection seine Überschriftenkette oder {@code null}
+     * @param model         Version des Embedding-Prozessors, aus der beide Vektoren stammen
+     */
+    record Similarity(double similarity, int seedChunk, String seedSection, int targetChunk, String targetSection,
+                      String model) implements Provenance {
+
+        public Similarity {
+            Objects.requireNonNull(model, "model");
+        }
+
+        @Override
+        public Basis basis() {
+            return Basis.COMPUTED;
+        }
+    }
 }

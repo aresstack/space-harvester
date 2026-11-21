@@ -4,6 +4,11 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
+import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
@@ -37,21 +42,22 @@ import java.util.Set;
 
 /**
  * Anwendungsfall „Zusammenhänge einer Seite“ (Strukturgraph, Paket G1): Elternseite und Unterseiten, Verweise in beide
- * Richtungen und bestätigte Begriffsbeziehungen, jede Kante mit Art, Grundlage und Herkunft. Abgeleitet bei der
+ * Richtungen, bestätigte Begriffsbeziehungen und (abschaltbar, nur aus gespeicherten Vektoren) ähnliche Abschnitte, jede Kante mit Art, Grundlage und Herkunft. Abgeleitet bei der
  * Abfrage aus dem lokalen Suchindex, dem Verzeichnis der Verweise und dem Begriffsindex; nichts wird gespeichert,
  * nichts geht an einen KI-Dienst, Aussagen werden nicht gelesen. Ergänzt den Wissensgraphen der OO-Analyse
  * ({@code application.knowledge}), ersetzt ihn nicht.
  *
  * <p>Rechte: Die Ausgangsseite braucht {@link AccessKind#METADATA} und {@link AccessKind#CONTENT}, sonst gilt sie als
  * nicht im Cache. Ziele aus Hierarchie und Verweisen brauchen {@code metadata} (nur Titel und Lage), Ziele aus
- * Begriffsbeziehungen den Inhalt, denn die Fundstelle stammt aus ihm. Was fehlt, fehlt ohne Spur: in Kanten, Zählern,
+ * Begriffsbeziehungen und ähnlichen Abschnitten den Inhalt, denn die Kante stammt aus ihm. Was fehlt, fehlt ohne Spur: in Kanten, Zählern,
  * {@link Connections#truncated()} und {@link Connections#coverage()}.
  *
  * <p>Grenzen: je Art höchstens {@link Query#maxPerKind()}, insgesamt {@link Query#maxEdges()} Kanten; eine Art, von der
  * etwas weggelassen wurde, steht in {@link Connections#truncated()}. Dazu hat jede Art ein festes Budget an Lesezugriffen
  * (siehe {@link #MAX_SCAN}, {@link #MAX_TERM_RELATIONS}, {@link #MAX_TERM_LOOKUPS}), unabhängig von
  * {@code maxPerKind}; wird es erreicht, gilt die Art ebenfalls als gekürzt. Die Reihenfolge folgt
- * {@link ConnectionKind}, innerhalb einer Art nach Titel, bei gekürzten Arten nur innerhalb des Gelesenen.
+ * {@link ConnectionKind}, innerhalb einer Art nach Titel ({@link ConnectionKind#SIMILAR_SECTION} absteigend nach
+ * Ähnlichkeit), bei gekürzten Arten nur innerhalb des Gelesenen.
  */
 public class PageConnections {
 
@@ -74,14 +80,42 @@ public class PageConnections {
      * nachgeschlagen. Darüber gilt die Art als gekürzt. Die Ordnung nach Titel gilt dann nur innerhalb des Gelesenen.
      */
     static final int MAX_TERM_LOOKUPS = 200;
+    /**
+     * Budget von {@link ConnectionKind#SIMILAR_SECTION}: höchstens so viele Stücke der Ausgangsseite (die ersten) suchen
+     * Nachbarn. Hat die Seite mehr, gilt die Art als gekürzt.
+     */
+    static final int MAX_SIMILAR_CHUNKS = 16;
+    /** Budget von {@link ConnectionKind#SIMILAR_SECTION}: höchstens so viele sichtbare Zielseiten werden übernommen. */
+    static final int MAX_SIMILAR_LOOKUPS = 60;
 
     private static final int BATCH = 100;
 
     /** Aufwandsgrenzen; in Tests kleiner. */
-    record Budget(int scan, int seedTerms, int termRelations, int occurrences, int termLookups) {
+    record Budget(int scan, int seedTerms, int termRelations, int occurrences, int termLookups, int similarChunks,
+                  int similarLookups) {
 
         static final Budget DEFAULT = new Budget(MAX_SCAN, MAX_SEED_TERMS, MAX_TERM_RELATIONS, MAX_OCCURRENCES,
-                MAX_TERM_LOOKUPS);
+                MAX_TERM_LOOKUPS, MAX_SIMILAR_CHUNKS, MAX_SIMILAR_LOOKUPS);
+
+        Budget(int scan, int seedTerms, int termRelations, int occurrences, int termLookups) {
+            this(scan, seedTerms, termRelations, occurrences, termLookups, MAX_SIMILAR_CHUNKS, MAX_SIMILAR_LOOKUPS);
+        }
+    }
+
+    /**
+     * Gespeicherte Vektoren für {@link ConnectionKind#SIMILAR_SECTION}; gelesen, nie erzeugt.
+     *
+     * @param store     Anreicherungen mit den Stücken der Seiten
+     * @param index     Vektorablage für die Nachbarsuche
+     * @param embedding Embedding-Prozessor, nur für die aktuelle Version
+     */
+    public record Vectors(EnrichmentStore store, EmbeddingIndex index, EmbeddingProcessor embedding) {
+
+        public Vectors {
+            Objects.requireNonNull(store, "store");
+            Objects.requireNonNull(index, "index");
+            Objects.requireNonNull(embedding, "embedding");
+        }
     }
 
     private final SourceCatalog catalog;
@@ -90,6 +124,7 @@ public class PageConnections {
     private final LinkDirectory links;
     private final TermQueries terms;
     private final TermRelations relations;
+    private final Vectors vectors;
     private final Budget budget;
 
     /**
@@ -99,11 +134,18 @@ public class PageConnections {
      */
     public PageConnections(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, LinkDirectory links,
                            TermQueries terms, TermRelations relations) {
-        this(catalog, index, access, links, terms, relations, Budget.DEFAULT);
+        this(catalog, index, access, links, terms, relations, null, Budget.DEFAULT);
+    }
+
+    /** @param vectors gespeicherte Vektoren oder {@code null}, dann ist {@link ConnectionKind#SIMILAR_SECTION} nie da */
+    public PageConnections(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, LinkDirectory links,
+                           TermQueries terms, TermRelations relations, Vectors vectors) {
+        this(catalog, index, access, links, terms, relations, vectors, Budget.DEFAULT);
     }
 
     PageConnections(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, LinkDirectory links,
-                    TermQueries terms, TermRelations relations, Budget budget) {
+                    TermQueries terms, TermRelations relations, Vectors vectors, Budget budget) {
+        this.vectors = vectors;
         this.budget = Objects.requireNonNull(budget, "budget");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
@@ -144,6 +186,9 @@ public class PageConnections {
         }
         if (query.wants(ConnectionKind.TERM_RELATION)) {
             run.termRelations(seed);
+        }
+        if (query.wants(ConnectionKind.SIMILAR_SECTION)) {
+            run.similar(seed);
         }
         return run.result(ref(seed));
     }
@@ -328,6 +373,88 @@ public class PageConnections {
             return found;
         }
 
+        void similar(PageHeader seed) {
+            if (vectors == null || !vectors.embedding().available()) {
+                markUnavailable(ConnectionKind.SIMILAR_SECTION);
+                return;
+            }
+            String version = vectors.embedding().version();
+            List<EmbeddingPayload.Chunk> chunks = chunks(seed.key(), version).orElse(List.of());
+            if (chunks.isEmpty()) {
+                markUnavailable(ConnectionKind.SIMILAR_SECTION);
+                return;
+            }
+            coverage.put(ConnectionKind.SIMILAR_SECTION, Coverage.COMPLETE);
+            if (chunks.size() > budget.similarChunks()) {
+                truncated.add(ConnectionKind.SIMILAR_SECTION);
+            }
+            Set<String> sources = SearchScope.authorize(access, catalog, caller, PageSearchQuery.of(null, List.of(),
+                    null, null, null, null, null, null, SearchSort.TITLE)).sourceIds();
+            if (sources.isEmpty()) {
+                return;
+            }
+            int k = Math.min(EmbeddingIndex.MAX_K, query.maxPerKind() * 4 + 3);
+            Map<PageKey, Best> best = new LinkedHashMap<>();
+            for (int i = 0; i < Math.min(chunks.size(), budget.similarChunks()); i++) {
+                EmbeddingPayload.Chunk origin = chunks.get(i);
+                for (EmbeddingIndex.ChunkHit hit : vectors.index().nearest(sources, version,
+                        EmbeddingIndex.normalized(origin.vector()), k)) {
+                    if (hit.similarity() < query.minSimilarity()) {
+                        break;
+                    }
+                    if (hit.page().equals(seed.key())) {
+                        continue;
+                    }
+                    Best current = best.get(hit.page());
+                    if (current == null || hit.similarity() > current.hit().similarity()) {
+                        best.put(hit.page(), new Best(i, origin.section(), hit));
+                    }
+                }
+            }
+            List<Best> ranked = new ArrayList<>(best.values());
+            ranked.sort(Comparator.comparingDouble((Best candidate) -> -candidate.hit().similarity())
+                    .thenComparing(candidate -> candidate.hit().page().sourceId())
+                    .thenComparing(candidate -> candidate.hit().page().pageId()));
+            // Das Budget zählt nur sichtbare Zielseiten, damit gesperrte das Kennzeichen „gekürzt“ nie beeinflussen; die
+            // Zahl der Kandidaten ist ohnehin durch Stücke mal k begrenzt.
+            int added = 0;
+            for (Best candidate : ranked) {
+                if (added > query.maxPerKind()) {
+                    break;
+                }
+                PageKey page = candidate.hit().page();
+                Optional<PageHeader> header = lookup(page, true);
+                if (header.isEmpty()) {
+                    continue;
+                }
+                if (added >= budget.similarLookups()) {
+                    truncated.add(ConnectionKind.SIMILAR_SECTION);
+                    break;
+                }
+                String targetSection = chunks(page, version).filter(found -> candidate.hit().chunk() < found.size())
+                        .map(found -> found.get(candidate.hit().chunk()).section()).orElse(null);
+                add(seed, ConnectionKind.SIMILAR_SECTION, header.get(), new Provenance.Similarity(
+                        candidate.hit().similarity(), candidate.seedChunk(), candidate.seedSection(),
+                        candidate.hit().chunk(), targetSection, version));
+                added++;
+            }
+        }
+
+        /** Die Stücke des gespeicherten Embedding-Ergebnisses einer Seite mit genau dieser Version. */
+        private Optional<List<EmbeddingPayload.Chunk>> chunks(PageKey page, String version) {
+            for (Enrichment found : vectors.store().find(page)) {
+                if ("embedding".equals(found.processorId()) && found.status() == Enrichment.Status.OK
+                        && found.processorVersion().equals(version)) {
+                    try {
+                        return Optional.of(EmbeddingPayload.parse(found.payloadJson()).chunks());
+                    } catch (IllegalArgumentException e) {
+                        return Optional.empty();
+                    }
+                }
+            }
+            return Optional.empty();
+        }
+
         private void markUnavailable(ConnectionKind kind) {
             if (query.wants(kind)) {
                 coverage.put(kind, Coverage.UNAVAILABLE);
@@ -374,9 +501,7 @@ public class PageConnections {
             List<Connection> edges = new ArrayList<>();
             for (ConnectionKind kind : ConnectionKind.values()) {
                 List<Connection> ofKind = new ArrayList<>(dedupe(found.getOrDefault(kind, List.of())));
-                ofKind.sort(Comparator.comparing((Connection edge) -> edge.target().title(),
-                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
-                        .thenComparing(edge -> edge.target().key().pageId()));
+                ofKind.sort(kind == ConnectionKind.SIMILAR_SECTION ? BY_SIMILARITY : BY_TITLE);
                 if (ofKind.size() > query.maxPerKind()) {
                     ofKind = ofKind.subList(0, query.maxPerKind());
                     truncated.add(kind);
@@ -399,6 +524,17 @@ public class PageConnections {
         }
     }
 
+    private static final Comparator<Connection> BY_TITLE = Comparator.comparing(
+                    (Connection edge) -> edge.target().title(), Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+            .thenComparing(edge -> edge.target().key().pageId());
+
+    private static final Comparator<Connection> BY_SIMILARITY = Comparator.comparingDouble(
+            (Connection edge) -> -((Provenance.Similarity) edge.provenance()).similarity()).thenComparing(BY_TITLE);
+
+    /** Das ähnlichste Stückpaar zu einer Zielseite. */
+    private record Best(int seedChunk, String seedSection, EmbeddingIndex.ChunkHit hit) {
+    }
+
     private static PageSearchQuery byId(PageKey page) {
         return PageSearchQuery.of(page.sourceId(), List.of(), null, page.pageId(), null, null, null, null,
                 SearchSort.PAGE_ID);
@@ -414,13 +550,16 @@ public class PageConnections {
      * @param kinds      gewünschte Arten; leer heißt keine
      * @param maxPerKind höchstens so viele Kanten je Art, 1 bis {@link #MAX_PER_KIND}
      * @param maxEdges   höchstens so viele Kanten insgesamt, 1 bis {@link #MAX_EDGES}
+     * @param minSimilarity Schwelle für {@link ConnectionKind#SIMILAR_SECTION}, -1 bis 1
      */
-    public record Query(Set<ConnectionKind> kinds, int maxPerKind, int maxEdges) {
+    public record Query(Set<ConnectionKind> kinds, int maxPerKind, int maxEdges, double minSimilarity) {
 
         public static final int DEFAULT_MAX_PER_KIND = 10;
         public static final int MAX_PER_KIND = 50;
         public static final int DEFAULT_MAX_EDGES = 200;
         public static final int MAX_EDGES = 500;
+        /** Wie bei den verwandten Abschnitten. */
+        public static final double DEFAULT_MIN_SIMILARITY = 0.80;
 
         public Query {
             kinds = kinds == null || kinds.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(kinds));
@@ -430,16 +569,24 @@ public class PageConnections {
             if (maxEdges < 1 || maxEdges > MAX_EDGES) {
                 throw new InvalidQueryException("maxEdges muss zwischen 1 und " + MAX_EDGES + " liegen");
             }
+            if (Double.isNaN(minSimilarity) || minSimilarity < -1 || minSimilarity > 1) {
+                throw new InvalidQueryException("minSimilarity muss zwischen -1 und 1 liegen");
+            }
+        }
+
+        public Query(Set<ConnectionKind> kinds, int maxPerKind, int maxEdges) {
+            this(kinds, maxPerKind, maxEdges, DEFAULT_MIN_SIMILARITY);
         }
 
         /** Alle Arten mit den Standardgrenzen. */
         public static Query all() {
-            return new Query(EnumSet.allOf(ConnectionKind.class), DEFAULT_MAX_PER_KIND, DEFAULT_MAX_EDGES);
+            return new Query(EnumSet.allOf(ConnectionKind.class), DEFAULT_MAX_PER_KIND, DEFAULT_MAX_EDGES,
+                    DEFAULT_MIN_SIMILARITY);
         }
 
         public Query withKinds(Collection<ConnectionKind> value) {
             return new Query(value == null || value.isEmpty() ? Set.of() : EnumSet.copyOf(value), maxPerKind,
-                    maxEdges);
+                    maxEdges, minSimilarity);
         }
 
         public boolean wants(ConnectionKind kind) {
