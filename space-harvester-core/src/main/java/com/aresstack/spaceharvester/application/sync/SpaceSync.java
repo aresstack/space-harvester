@@ -246,11 +246,17 @@ public class SpaceSync {
      * @param failedPageIds Seiten, deren Abgleich fehlgeschlagen ist
      * @param confirmed     die neu bestätigte Generation oder {@code null}
      * @param notConfirmed  warum keine Generation bestätigt und nichts geschrieben wurde, sonst {@code null}
+     * @param cause         der Fehler der Quelle hinter {@code notConfirmed}, soweit bekannt, sonst {@code null}
      */
-    public record SyncRun(SyncPlan plan, Set<String> failedPageIds, SyncBaseline confirmed, String notConfirmed) {
+    public record SyncRun(SyncPlan plan, Set<String> failedPageIds, SyncBaseline confirmed, String notConfirmed,
+                          RuntimeException cause) {
 
         public SyncRun {
             failedPageIds = Set.copyOf(failedPageIds);
+        }
+
+        public SyncRun(SyncPlan plan, Set<String> failedPageIds, SyncBaseline confirmed, String notConfirmed) {
+            this(plan, failedPageIds, confirmed, notConfirmed, null);
         }
 
         public SyncSummary summary() {

@@ -120,3 +120,14 @@ und 6, soweit sie widersprechen, drei voneinander unabhängige Ebenen:
 - App: je Space ein Schalter „Regelmäßig abgleichen“ mit Intervall; Einstellung „Gesperrte Seiten entfernen nach“.
 - docs/PARITY.md: Abgleich ohne Erstbefüllung und getrennte Löschfeststellung sind Erweiterungen gegenüber dem
   Enterprise AI Client.
+
+## Nachtrag (21.11.2026): Löschungen ohne Papierkorb
+
+Die Papierkorbabfrage aus der Fortschreibung vom 18.10. entfällt. Confluence Data Center lässt `status=trashed` je
+Space oft nur Space-Administratoren lesen und antwortet sonst mit HTTP 403; das brach das Nachholen in diesen Spaces ab
+(`SYNC_INCOMPLETE`, keine Generation). Die Änderungsliste (CQL `lastmodified`) nennt gelöschte Seiten nicht, weil die
+Suche nur aktuelle Inhalte liefert. Deshalb vergleicht das Nachholen jetzt die vollständige Seitenliste des Space mit
+dem Bekannten: Was fehlt und auch nicht geändert gemeldet wurde, wird einzeln nachgefragt (`RemovalCheck`) und wie in
+der Inventur entfernt (`DELETED`, `MOVED_OUT`) oder gesperrt (`INACCESSIBLE`). Scheitert nur die Seitenliste, gelten die
+Änderungen trotzdem, Löschungen prüft der nächste Lauf. Scheitert die Änderungsliste, nennt der Auftrag den echten Grund
+(Fehlerart und Meldung der Quelle, HTTP-Status in der Diagnose).
