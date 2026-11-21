@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLSocketFactory;
@@ -79,6 +80,8 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     private final String displayName;
     /** Ob {@code auth.type pat} gilt: das Token ohne Benutzer unter demselben Verweis wie bei {@code basic}. */
     private final boolean tokenAuth;
+    /** Passt die geöffnete Quelle an, etwa Jira ({@link EacSourceAdapters#jira()}); sonst unverändert. */
+    private final UnaryOperator<OpenedSource> opened;
 
     public KnowledgeSourceProviderAdapter(KnowledgeSourceProvider provider) {
         this.fixed = Objects.requireNonNull(provider, "provider");
@@ -91,17 +94,20 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         this.needsCredentials = false;
         this.displayName = null;
         this.tokenAuth = false;
+        this.opened = UnaryOperator.identity();
     }
 
     private KnowledgeSourceProviderAdapter(ConnectedProvider factory, String credentialKey, String titleField) {
         this(factory, Objects.requireNonNull(factory.provider(new Connection(KnowledgeSourceProviderAdapter::none,
-                HttpRoutePort.direct(), null, null)), "provider"), credentialKey, titleField, true, false, false, null, false);
+                HttpRoutePort.direct(), null, null)), "provider"), credentialKey, titleField, true, false, false, null, false,
+                UnaryOperator.identity());
     }
 
     private KnowledgeSourceProviderAdapter(ConnectedProvider factory, KnowledgeSourceProvider unconnected,
                                            String credentialKey, String titleField, boolean tls,
                                            boolean credentialRefPassThrough, boolean needsCredentials,
-                                           String displayName, boolean tokenAuth) {
+                                           String displayName, boolean tokenAuth,
+                                           UnaryOperator<OpenedSource> opened) {
         this.fixed = null;
         this.factory = Objects.requireNonNull(factory, "factory");
         this.unconnected = unconnected;
@@ -112,6 +118,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         this.needsCredentials = needsCredentials;
         this.displayName = displayName;
         this.tokenAuth = tokenAuth;
+        this.opened = Objects.requireNonNull(opened, "opened");
     }
 
     /**
@@ -133,7 +140,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     public KnowledgeSourceProviderAdapter withoutTls() {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, false,
-                credentialRefPassThrough, needsCredentials, displayName, tokenAuth);
+                credentialRefPassThrough, needsCredentials, displayName, tokenAuth, opened);
     }
 
     /**
@@ -147,14 +154,14 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             throw new IllegalStateException("ohne Anmeldefeld gibt es keinen Verweis");
         }
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls, true,
-                needsCredentials, displayName, tokenAuth);
+                needsCredentials, displayName, tokenAuth, opened);
     }
 
     /** Der Typ verlangt Zugangsdaten ({@link SourceAdapter#needsCredentials()}), etwa JES oder NDV. */
     public KnowledgeSourceProviderAdapter requiringCredentials() {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
-                credentialRefPassThrough, true, displayName, tokenAuth);
+                credentialRefPassThrough, true, displayName, tokenAuth, opened);
     }
 
     /**
@@ -167,14 +174,26 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             throw new IllegalStateException("ohne Anmeldefeld gibt es kein Token");
         }
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
-                credentialRefPassThrough, needsCredentials, displayName, true);
+                credentialRefPassThrough, needsCredentials, displayName, true, opened);
     }
 
     /** Eigener Anzeigename für Auswahllisten statt dem des Upstream-Typs. */
     public KnowledgeSourceProviderAdapter named(String displayName) {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
-                credentialRefPassThrough, needsCredentials, Objects.requireNonNull(displayName, "displayName"), tokenAuth);
+                credentialRefPassThrough, needsCredentials, Objects.requireNonNull(displayName, "displayName"), tokenAuth,
+                opened);
+    }
+
+    /**
+     * Passt jede geöffnete Quelle an, bevor der Core sie nutzt: etwa ein anderer Umfang oder ein umhüllter Port
+     * (Jira, {@link EacSourceAdapters#jira()}).
+     */
+    public KnowledgeSourceProviderAdapter whenOpened(UnaryOperator<OpenedSource> opened) {
+        requireConnected();
+        return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
+                credentialRefPassThrough, needsCredentials, displayName, tokenAuth,
+                Objects.requireNonNull(opened, "opened"));
     }
 
     private void requireConnected() {
@@ -211,8 +230,42 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
      */
     @Override
     public List<SourceField> fields() {
-        return SourceFields.of(unconnected.type(), credentialKey == null || credentialRefPassThrough
+        Set<String> outside = new java.util.HashSet<>(credentialKey == null || credentialRefPassThrough
                 ? Set.of(titleKey()) : Set.of(titleKey(), credentialKey));
+        outside.addAll(certificateKeys());
+        return SourceFields.of(unconnected.type(), outside);
+    }
+
+    /**
+     * Schlüssel eines eigenen Zertifikatsfelds des Upstream-Typs ({@code CLIENT_CERTIFICATE}, etwa Jira:
+     * {@code clientCertificate.alias}) samt Schalter und Präfix; leer ohne TLS oder ohne solches Feld. Bei Typen mit
+     * TLS kommt das Client-Zertifikat aus {@code client-certificate} des Katalogs ({@link SourceTls}), damit eine
+     * Quelle es nicht an zwei Stellen hat; das Feld des Typs fehlt deshalb und sein Schalter steht fest auf aus.
+     */
+    private Set<String> certificateKeys() {
+        Set<String> keys = new java.util.LinkedHashSet<>();
+        if (!tls) {
+            return keys;
+        }
+        for (SourceSettingField field : unconnected.type().fields()) {
+            if (field.kind() == SourceSettingField.Kind.CLIENT_CERTIFICATE) {
+                keys.add(field.key());
+                keys.add(field.certificateUseKey());
+            }
+        }
+        return keys;
+    }
+
+    /** Präfixe der Zertifikatsangaben nur in der Datei, etwa {@code clientCertificate.keyStoreFile}. */
+    private Set<String> certificatePrefixes() {
+        Set<String> prefixes = new java.util.LinkedHashSet<>();
+        for (String key : certificateKeys()) {
+            int dot = key.lastIndexOf('.');
+            if (dot > 0) {
+                prefixes.add(key.substring(0, dot + 1));
+            }
+        }
+        return prefixes;
     }
 
     /** Typen mit Netz, außer nach {@link #withoutTls}. */
@@ -262,6 +315,12 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             }
             problems.addAll(unresolved(secrets));
         }
+        for (String key : config.options().keySet()) {
+            if (certificateKeys().contains(key)
+                    || certificatePrefixes().stream().anyMatch(prefix -> key.startsWith(prefix))) {
+                problems.add("options." + key + " ist nicht erlaubt; dafür gibt es client-certificate");
+            }
+        }
         if (config.options().containsKey(titleKey())) {
             problems.add("options." + titleKey() + " ist nicht erlaubt; dafür gibt es title");
         }
@@ -300,8 +359,8 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         }
         KnowledgeSourceProvider provider = fixed != null ? fixed : connect(config, context);
         try {
-            return OpenedSource.discovering(provider.open(SourceAddress.of(address), settings),
-                    provider.scope(settings));
+            return opened.apply(OpenedSource.discovering(provider.open(SourceAddress.of(address), settings),
+                    provider.scope(settings)));
         } catch (IllegalArgumentException e) {
             throw new InvalidSourceConfigurationException(List.of(e.getMessage()));
         }
@@ -415,6 +474,13 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         }
         if (credentialKey != null && usesReference(config.auth())) {
             values.put(credentialKey, ConfiguredSecrets.refFor(config.id()).id());
+        }
+        // Zertifikat nur aus client-certificate (SourceTls): der Typ nimmt die Socket-Fabrik der Quelle und fragt
+        // weder ein eigenes Feld noch den Tresoreintrag (MM_CertAlias) nach einem Zertifikat.
+        for (String key : certificateKeys()) {
+            if (key.endsWith(".use")) {
+                values.put(key, "false");
+            }
         }
         return SourceSettings.of(values);
     }

@@ -44,7 +44,8 @@ class HarvesterEacSourcesTest {
 
     @Test
     void theCopiedSourceTypesAreKnownWithoutOwnRegistration() {
-        assertThat(ConfiguredSourceCatalog.TYPES).contains("ftp", "jes", "ndv", "sharepoint", "betaview", "outlook");
+        assertThat(ConfiguredSourceCatalog.TYPES).contains("ftp", "jes", "ndv", "sharepoint", "betaview", "outlook",
+                "jira");
     }
 
     @Test
@@ -64,6 +65,7 @@ class HarvesterEacSourcesTest {
                             tuple("betaview", "BetaView", true, "baseUrl", true),
                             tuple("outlook", "Outlook", false, "mailbox", false),
                             tuple("mediawiki", "MediaWiki", false, "apiUrl", true),
+                            tuple("jira", "Jira", false, "baseUrl", true),
                             tuple("git", "Git-Repository", false, "url", true));
         }
     }

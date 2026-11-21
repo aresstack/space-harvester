@@ -9,6 +9,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewCr
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.JesSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.jira.JiraSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.NdvSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.outlook.OutlookSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointCredentials;
@@ -20,7 +21,8 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePoi
  * {@link KnowledgeSourceProviderAdapter} als eine Partition je Quelle: {@code ftp} (MVS-Datensätze und Member), {@code jes}
  * (Spool), {@code ndv} (Natural Development Server), {@code sharepoint} (Dokumentbibliotheken) und {@code betaview}
  * (Listen und Reports eines Favoriten) sowie {@code outlook} (lokale Postfachdateien .pst/.ost unter
- * {@code options.mailbox}, ohne Zugangsdaten). Die Einstellungen stehen unter {@code options} mit den Schlüsseln des
+ * {@code options.mailbox}, ohne Zugangsdaten) und {@code jira} (Vorgänge von Jira Data Center, eine Partition je
+ * Projekt, {@link #jira()}). Die Einstellungen stehen unter {@code options} mit den Schlüsseln des
  * Upstream-Typs, der Titel unter {@code title}.
  *
  * <p>Anmeldung (#188, ADR 0022) wie bei MediaWiki: {@code auth.type basic} mit Benutzer und Passwort setzt
@@ -66,6 +68,23 @@ public final class EacSourceAdapters {
                 ref -> betaViewCredentials(connection.secrets(), ref), connection.routes(), connection.tls(),
                 connection.userAgent(), DocumentExtraction.detector(), DocumentExtraction.registry()),
                 CREDENTIAL_REF, null).withCredentialRefPassThrough().requiringCredentials();
+    }
+
+    /**
+     * Jira Data Center (REST-API 2, nur lesend) wie im Enterprise AI Client ({@code AdapterAssembly.sourceProviders}):
+     * Projekte sind die Partitionen, Vorgänge die Seiten, die Lese-Ansicht kommt aus {@code PageViewSource}. Adresse
+     * {@code options.baseUrl}, Einschränkung {@code options.jql}. Anmeldung {@code basic} (Benutzer und Passwort) oder
+     * {@code pat} (Personal Access Token, als Bearer); ein eigener KeePass-Verweis unter {@code options.credentialRef}
+     * geht wie bei SharePoint an den Anbieter des Programms. Das Client-Zertifikat kommt aus {@code client-certificate}
+     * (siehe {@link KnowledgeSourceProviderAdapter}); das eigene Feld des Typs bleibt deshalb ungenutzt. Abgelegt wird
+     * der Lesetext samt aller Kommentare, ohne Startpunkte gilt die Liste je Projekt ({@code JiraSnapshots}).
+     */
+    public static SourceAdapter jira() {
+        return KnowledgeSourceProviderAdapter.connected(connection -> new JiraSourceProvider(connection.secrets(),
+                connection.routes(), connection.tls(), connection.userAgent(), (alias, keyStoreFile, passwordRef) -> {
+                    throw new IllegalArgumentException("Client-Zertifikat für Jira unter client-certificate angeben");
+                }), CREDENTIAL_REF, null).withCredentialRefPassThrough().acceptingToken()
+                .whenOpened(JiraSnapshots::adapt);
     }
 
     public static SourceAdapter outlook() {
