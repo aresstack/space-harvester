@@ -60,7 +60,7 @@ class CertificatePackageTest {
 
     @Test
     void serverSendsOnlyLeafAndThePackageFillsTheChainFromTheTrustStore() throws IOException {
-        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(server),
+        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(server), true,
                 List.of(root, intermediate), List.of(), List.of(), List.of(), NOW);
 
         assertThat(bundle.serverTrusted()).isTrue();
@@ -86,7 +86,7 @@ class CertificatePackageTest {
     @Test
     void certificatesSentByTheServerAndVerifiedUpToAnAnchorAreImportable() {
         CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test",
-                List.of(server, intermediate), List.of(root), List.of(), List.of(), List.of(), NOW);
+                List.of(server, intermediate), true, List.of(root), List.of(), List.of(), List.of(), NOW);
 
         assertThat(bundle.serverTrusted()).isTrue();
         assertThat(bundle.entries()).filteredOn(e -> e.role() == CertificatePackage.Role.INTERMEDIATE)
@@ -96,7 +96,7 @@ class CertificatePackageTest {
     @Test
     void aChainEndingAtNoAnchorIsNeverImportable() throws IOException {
         CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test",
-                List.of(foreignServer, foreignRoot), List.of(root, intermediate), List.of(), List.of(), List.of(),
+                List.of(foreignServer, foreignRoot), false, List.of(root, intermediate), List.of(), List.of(), List.of(),
                 NOW);
 
         assertThat(bundle.serverTrusted()).isFalse();
@@ -106,12 +106,36 @@ class CertificatePackageTest {
         assertThat(zip).doesNotContainKey("kette.pem").containsKey("3-Server/Fremde Wurzel.cer");
         assertThat(zip.keySet()).noneMatch(name -> name.startsWith("1-") || name.startsWith("2-"));
         assertThat(zip.get("importieren.cmd")).doesNotContain("certutil").contains("Keine vertrauten Zertifikate");
-        assertThat(zip.get("LIESMICH.txt")).contains("ACHTUNG").contains("KEINEM");
+        assertThat(zip.get("LIESMICH.txt")).contains("ACHTUNG").contains("NICHT an");
+    }
+
+    @Test
+    void aSelfSignedCertificateAboveAnIntermediateFromTheTrustStoreIsNeverImportedAsRoot() throws IOException {
+        // Windows nennt auch Zwischenzertifikate (Speicher „Zwischenzertifizierungsstellen“) als akzeptierte
+        // Aussteller; das ist keine Vertrauensaussage für ein selbstsigniertes Zertifikat, das nur der Server schickt.
+        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test",
+                List.of(server, intermediate, root), true, List.of(intermediate), List.of(), List.of(), List.of(),
+                NOW);
+
+        assertThat(bundle.count(CertificatePackage.Role.ROOT)).isZero();
+        assertThat(bundle.count(CertificatePackage.Role.INTERMEDIATE)).isEqualTo(1);
+        Map<String, String> zip = unzip(bundle);
+        assertThat(zip.get("importieren.cmd")).doesNotContain("addstore Root").contains("addstore CA");
+        assertThat(zip).containsKey("3-Server/Erfundene Wurzel.cer");
+        assertThat(count(zip.get("kette.pem"), "BEGIN CERTIFICATE")).isEqualTo(1);
+    }
+
+    @Test
+    void theServerVerdictComesFromTheSourceTrustNotFromThePath() {
+        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(server), false,
+                List.of(root, intermediate), List.of(), List.of(), List.of(), NOW);
+
+        assertThat(bundle.serverTrusted()).isFalse();
     }
 
     @Test
     void withoutHandshakeThePackageStillHasTheClientChainAndTheReason() throws IOException {
-        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(),
+        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(), false,
                 List.of(root, intermediate), List.of(server, intermediate), List.of("Keine Kette vom Server: TCP"),
                 List.of(), NOW);
 
@@ -134,14 +158,14 @@ class CertificatePackageTest {
 
     @Test
     void equalNamesAreSeparatedByTheirFingerprint() {
-        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(server),
+        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(server), true,
                 List.of(root, intermediate), List.of(foreignServer), List.of(), List.of(), NOW);
 
         assertThat(bundle.entries()).extracting(CertificatePackage.Entry::path)
                 .contains("3-Server/wiki.beispiel.test.cer").doesNotHaveDuplicates()
                 .anyMatch(path -> path.matches("4-Client/wiki\\.beispiel\\.test\\.cer"));
         CertificatePackage twice = CertificatePackage.of("Wiki", "wiki.beispiel.test",
-                List.of(server, foreignServer), List.of(root, intermediate), List.of(), List.of(), List.of(), NOW);
+                List.of(server, foreignServer), true, List.of(root, intermediate), List.of(), List.of(), List.of(), NOW);
         assertThat(twice.entries()).extracting(CertificatePackage.Entry::path)
                 .anyMatch(path -> path.matches("3-Server/wiki\\.beispiel\\.test \\([0-9a-f]{8}\\)\\.cer"));
     }

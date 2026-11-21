@@ -153,8 +153,8 @@ public final class SourceCertificates {
         }
         List<X509Certificate> anchors = anchors(recorder, config.id(), problems);
         List<X509Certificate> client = client(config, problems, notes);
-        return CertificatePackage.of(title(config), base.getHost(), recorder.chain(), anchors, client, problems,
-                notes, now);
+        return CertificatePackage.of(title(config), base.getHost(), recorder.chain(),
+                recorder.checked() && recorder.rejection() == null, anchors, client, problems, notes, now);
     }
 
     private static List<X509Certificate> anchors(ChainRecordingTrustManager recorder, String sourceId,
