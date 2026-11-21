@@ -321,6 +321,14 @@ final class AiSettingsPanel {
                     + "Prüfsummen");
     static final String WHISPER_TRANSCRIPTS_LABEL = "Whisper-Modell Transkripte";
     static final String WHISPER_DICTATION_LABEL = "Whisper-Modell Spracheingabe";
+    static final String WHISPER_TRANSCRIPTS_HELP = "Für Video-Transkripte und „In PPTX umwandeln“, läuft lokal; größere "
+            + "Modelle erkennen genauer und rechnen länger. Wird nur nach Rückfrage oder auf Klick einmal von Hugging "
+            + "Face geladen.";
+    static final String WHISPER_DICTATION_HELP = "Für die Spracheingabe im Chat, läuft lokal; Tiny liefert am "
+            + "schnellsten. Wird nur nach Rückfrage oder auf Klick einmal von Hugging Face geladen.";
+    static final String WHISPER_INSTALL_TIP = "Lädt das gewählte Whisper-Modell von Hugging Face in den Benutzerordner "
+            + "und prüft die Prüfsummen";
+    static final String WHISPER_BUSY_TIP = "Es lädt gerade ein anderes Modell";
     /** Während {@link #render} die Auswahl setzt, ist das keine Eingabe des Benutzers. */
     private boolean showingWhisper;
     private final PreferredModels preferred = PreferredModels.bundled();
@@ -438,12 +446,11 @@ final class AiSettingsPanel {
                 whisperChoice.addItem(each.described());
                 dictationChoice.addItem(each.described());
             }
-            modelRows.add(WHISPER_TRANSCRIPTS_LABEL, Comic.row(whisperChoice, whisperInstall),
-                    "Für Video-Transkripte und „In PPTX umwandeln“, läuft lokal; größere Modelle erkennen genauer und "
-                            + "rechnen länger. Wird nur nach Rückfrage oder auf Klick einmal von Hugging Face geladen");
-            modelRows.add(WHISPER_DICTATION_LABEL, Comic.row(dictationChoice, dictationInstall),
-                    "Für die Spracheingabe im Chat, läuft lokal; Tiny liefert am schnellsten. Wird nur nach Rückfrage "
-                            + "oder auf Klick einmal von Hugging Face geladen");
+            // Hilfetexte als ?-Knopf am Zeilenende, keine Hinweiszeile darunter (UX-Manager 21.11.2026).
+            modelRows.add(WHISPER_TRANSCRIPTS_LABEL, Comic.row(whisperChoice, whisperInstall,
+                    new HelpButton(Dialogs.CLOSE_SIZE, WHISPER_TRANSCRIPTS_LABEL, WHISPER_TRANSCRIPTS_HELP)), null);
+            modelRows.add(WHISPER_DICTATION_LABEL, Comic.row(dictationChoice, dictationInstall,
+                    new HelpButton(Dialogs.CLOSE_SIZE, WHISPER_DICTATION_LABEL, WHISPER_DICTATION_HELP)), null);
             whisperChoice.addActionListener(e -> {
                 int index = whisperChoice.getSelectedIndex();
                 if (showingWhisper || index < 0 || context.settings() == null) {
@@ -1667,6 +1674,7 @@ final class AiSettingsPanel {
         boolean mine = installing && status.model() == model;
         button.setText(mine ? WhisperModelSetup.CANCEL : WhisperModelSetup.INSTALL);
         button.setEnabled(!installing || mine);
+        button.setToolTipText(installing && !mine ? WHISPER_BUSY_TIP : WHISPER_INSTALL_TIP);
         button.setVisible(mine || !context.whisperModel().installed(model));
     }
 

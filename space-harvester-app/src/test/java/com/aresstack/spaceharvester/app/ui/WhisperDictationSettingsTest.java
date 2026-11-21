@@ -79,6 +79,11 @@ class WhisperDictationSettingsTest {
         assertThat(WhisperModelLocation.dictation()).isEqualTo(WhisperModel.BASE);
         assertThat(WhisperModelLocation.selected()).isEqualTo(WhisperModel.SMALL);
         assertThat(Files.readString(config)).contains("    model: small\n", "    dictation-model: base\n");
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].dictationInstall.isVisible()).as("Base fehlt: Laden sichtbar").isTrue();
+            assertThat(panel[0].dictationInstall.isEnabled()).as("kein Download läuft").isTrue();
+            assertThat(panel[0].dictationInstall.getText()).isEqualTo(WhisperModelSetup.INSTALL);
+        });
 
         String directory = System.getenv("SCREENSHOTS_DIR");
         if (directory != null && !directory.isBlank()) {

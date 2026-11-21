@@ -56,6 +56,9 @@ Modelle erkennen genauer und rechnen länger.
 - **Whisper-Modell Spracheingabe** gilt für das Mikrofon im Chat, wo schnelle Ergebnisse zählen; es bleibt Tiny, auch
   wenn für Transkripte ein größeres Modell eingestellt ist. Schlüssel: `space-harvester-app.whisper.dictation-model`.
 
+Wer vor dieser Fassung unter `whisper.model` ein größeres Modell eingestellt hatte, diktiert danach mit Tiny; ein anderes
+Modell für die Spracheingabe lässt sich in der zweiten Zeile wählen.
+
 Wird ein eingestelltes Modell gebraucht (Spracheingabe im Chat, **Transkript erzeugen**, **In PPTX umwandeln**) und
 liegt noch nicht auf dem Rechner, fragt die App, ob sie es von Hugging Face laden soll. Nach **Ja** lädt sie es über
 Proxy und Zertifikate der App nach `%USERPROFILE%\.space-harvester\models\whisper-<Modell>`, prüft jede Datei gegen
