@@ -461,6 +461,25 @@ public class PageNavigation {
         return List.copyOf(found);
     }
 
+    /**
+     * Titel und Space von Seiten aus dem Cache, etwa für die Herkunft unter „Aus Unterseiten“ (Fahrplan P3); Seiten
+     * ohne Leserecht fehlen, unbekannte bleiben ohne Titel.
+     *
+     * @return je sichtbarer Seite ihr Knoten, in der Reihenfolge der Eingabe
+     */
+    public Map<PageKey, PageNode> nodes(AccessContext caller, java.util.Collection<PageKey> keys) {
+        Objects.requireNonNull(caller, "caller");
+        Map<PageKey, PageNode> found = new java.util.LinkedHashMap<>();
+        for (PageKey key : new java.util.LinkedHashSet<>(keys)) {
+            PageNode node = withSpace(key.sourceId(), cachedNode(key));
+            if (access.permits(caller, ResourceScope.page(key.sourceId(), node.partitionKey(), node.pageId()),
+                    AccessKind.METADATA)) {
+                found.put(key, node);
+            }
+        }
+        return found;
+    }
+
     /** Ein Knoten aus den Kopfdaten im Cache; Titel und Space fehlen, wenn der Cache die Seite nicht kennt. */
     private PageNode cachedNode(PageKey key) {
         if (cache != null) {
