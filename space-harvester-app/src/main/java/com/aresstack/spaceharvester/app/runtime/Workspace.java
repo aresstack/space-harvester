@@ -168,6 +168,32 @@ public final class Workspace {
         return harvester.navigation().references(caller, sourceId, pageId);
     }
 
+    /**
+     * Ein Stapel des Verzeichnisses der Verben in {@code within} ({@code VerbQueries.verbs}, Paket K1): aus den
+     * Aussagen des Vorgabe-Analysators, mit den Rechten des Aufrufers. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries.VerbList verbs(
+            com.aresstack.spaceharvester.application.snapshot.PageSet within, String q, int limit, String cursor) {
+        return harvester.verbQueries().verbs(caller, within, q, limit, cursor);
+    }
+
+    /**
+     * Die Verben einer Seite mit ihren Aussagen ({@code VerbQueries.onPage}, Paket K1); {@code null} ohne Analyse,
+     * {@code stale} bei veralteter. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries.PageVerbs pageVerbs(String sourceId,
+                                                                                              String pageId) {
+        return harvester.verbQueries().onPage(caller,
+                new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
+    }
+
+    /** Die Fundstellen eines Verbs in {@code within} ({@code VerbQueries.occurrences}, Paket K1). Nie auf dem EDT. */
+    public List<com.aresstack.spaceharvester.application.knowledge.VerbQueries.Occurrence> verbOccurrences(
+            com.aresstack.spaceharvester.application.snapshot.PageSet within,
+            com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb verb, int limit) {
+        return harvester.verbQueries().occurrences(caller, within, verb.lemma(), verb.fromText(), limit);
+    }
+
     /** Fundstellen eines Begriffs auf sichtbaren Seiten ({@code TermQueries.occurrences}, #119). */
     public TermQueries.OccurrenceList occurrences(TermQueries.OccurrenceSearch search) {
         return harvester.terms().occurrences(caller, search);
@@ -279,8 +305,12 @@ public final class Workspace {
      * @param maxJudgedPairs höchstens so viele Paare an das Chat-Modell, {@code null} für den Wert der Konfiguration
      */
     public JobStatus startSynonymDiscovery(SynonymScope scope, Integer maxJudgedPairs) {
-        JobStatus status = harvester.synonymDiscovery().start(caller,
-                new SynonymDiscovery.Request(scope, maxJudgedPairs));
+        return startSynonymDiscovery(new SynonymDiscovery.Request(scope, maxJudgedPairs));
+    }
+
+    /** Wie {@link #startSynonymDiscovery(SynonymScope, Integer)} mit allen Angaben des Formulars (K3). */
+    public JobStatus startSynonymDiscovery(SynonymDiscovery.Request request) {
+        JobStatus status = harvester.synonymDiscovery().start(caller, request);
         activities.remember(status.id());
         return status;
     }
@@ -330,6 +360,45 @@ public final class Workspace {
      */
     public Optional<GlossaryAccess> glossary() {
         return Optional.of(glossary);
+    }
+
+    /**
+     * Suchmethode „Nur Fachbegriffe“ (K5b, {@code GET /api/v1/glossary/technical-terms}): vorgeschlagene und bestätigte
+     * Fachbegriffe ohne Einordnung technisch, deren Begriff oder eines ihrer Synonyme zum Suchtext passt.
+     */
+    public com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Page technicalTerms(String q,
+            com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope scope, int limit, String cursor) {
+        return harvester.technicalTerms().search(caller, q, scope, limit, cursor);
+    }
+
+    /** Die nicht abgelehnten Synonyme eines Fachbegriffs, deren Bereich ihn abdeckt (K5b). */
+    public List<com.aresstack.spaceharvester.application.terms.TermRelation> technicalSynonyms(
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry term) {
+        return harvester.technicalTerms().synonymsOf(caller, term);
+    }
+
+    /** Fügt einem Fachbegriff ein Synonym global hinzu oder bestätigt ein vorhandenes gleiches (K5b). */
+    public com.aresstack.spaceharvester.application.terms.TermRelation addTechnicalSynonym(
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry term, String synonym) {
+        return harvester.technicalTerms().addSynonym(caller, term, synonym);
+    }
+
+    /** Der Prüfstatus eines Glossareintrags, leer, wenn es ihn nicht (mehr) gibt oder er verborgen ist. */
+    public Optional<com.aresstack.spaceharvester.application.terms.ReviewStatus> glossaryStatus(String id) {
+        try {
+            return Optional.of(harvester.glossary().entry(caller, id).status());
+        } catch (com.aresstack.spaceharvester.application.glossary.UnknownGlossaryEntryException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Meldet jede Änderung an den Begriffsbeziehungen (ADR 0027), aus beliebigem Thread; kein Abfragen in Abständen.
+     *
+     * @return meldet den Beobachter wieder ab
+     */
+    public Runnable subscribeTermRelations(Runnable onChange) {
+        return harvester.termRelations().subscribe(Objects.requireNonNull(onChange, "onChange"));
     }
 
     /** Bestätigen ({@code POST …/{id}/confirm?revision=}); wirft bei fremdem Stand {@code RelationConflictException}. */
@@ -1229,7 +1298,10 @@ public final class Workspace {
         return deleted;
     }
 
-    /** Meldet sich, nachdem Aussagen-Analysen gelöscht wurden ({@code KnowledgeGraph.subscribe}); kein Polling. */
+    /**
+     * Meldet sich, nachdem Aussagen-Analysen gelöscht, neu geschrieben oder ersetzt wurden oder eine andere Ablage
+     * eingestellt ist ({@code KnowledgeGraph.subscribe}), auf einem Thread des Core; kein Polling.
+     */
     public Subscription subscribeStatementAnalyses(Runnable listener) {
         return harvester.knowledgeGraph().subscribe(listener);
     }
@@ -1292,6 +1364,32 @@ public final class Workspace {
     /** Erwähnungen eines Begriffs mit ihren Aussagen über alle sichtbaren analysierten Seiten. */
     public GraphNeighbourhood.Subgraph knowledgeGraphOfTerm(String term, GraphNeighbourhood.Options options) {
         return new GraphNeighbourhood(harvester.knowledgeGraph()).term(caller, term, options);
+    }
+
+    /**
+     * Fachsicht des Wissensgraphen um einen Startbegriff (Paket W1): bestätigte Fachbegriffe und Synonyme als Knoten,
+     * Verben der Aussagen als Kanten. Rechtegeprüft, rechnet nie; nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.View domainTermGraph(String start,
+            com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options options,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.domainTermGraph().around(caller, start, options, cancelled);
+    }
+
+    /** Vorschläge für das Startfeld der Fachsicht: nur bestätigte Fachbegriffe und Synonyme. Nie auf dem EDT. */
+    public java.util.List<String> domainTermSuggestions(String query, int limit) {
+        return harvester.domainTermGraph().suggestions(caller, query, limit);
+    }
+
+    /**
+     * Der Wortlaut zu Aussagen je Seite, etwa den Belegen der Fachsicht: Originalsatz, vereinfachter Satz, Satzgrenzen
+     * im Lesetext. Ohne Leserecht am Inhalt fehlt der Eintrag. Nie auf dem EDT.
+     */
+    public java.util.Map<String, com.aresstack.spaceharvester.application.standing.SentenceText> statementSentences(
+            java.util.Map<com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph.PageRef,
+                    java.util.List<com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Statement>>
+                    byPage) {
+        return harvester.statusQuo().statementSentences(caller, byPage);
     }
 
     /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */
@@ -1905,6 +2003,63 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #pauseAllJobs()}, aber nur für einen Reiter der Auftragsverwaltung: {@code background} nur
+     * Hintergrundaufträge, sonst nur die übrigen (UX 21.11.2026).
+     */
+    public AllJobs.Outcome pauseAllJobs(boolean background) {
+        return AllJobs.apply(AllJobs.toPause(jobs(background)), job -> pauseJob(job.id()));
+    }
+
+    /** Wie {@link #resumeAllJobs()}, nur für einen Reiter ({@link #pauseAllJobs(boolean)}). */
+    public AllJobs.Outcome resumeAllJobs(boolean background) {
+        return AllJobs.apply(AllJobs.toResume(jobs(background)),
+                job -> performJobAction(job.id(), JobAction.RESUME));
+    }
+
+    /** Wie {@link #cancelAllJobs()}, nur für einen Reiter ({@link #pauseAllJobs(boolean)}). */
+    public AllJobs.Outcome cancelAllJobs(boolean background) {
+        return AllJobs.apply(AllJobs.toCancel(jobs(background)),
+                job -> performJobAction(job.id(), JobAction.CANCEL));
+    }
+
+    /**
+     * Abonniert das Ende einer Hintergrundgruppe (Angelo 21.11.2026): {@code listener} läuft einmal auf dem Event
+     * Dispatch Thread, sobald kein Unterauftrag mehr wartet oder läuft, sofort, wenn sie schon fertig ist. Bis dahin
+     * zeigt die abonnierende Stelle etwa den drehenden Ring ({@code controls.BackgroundWait}).
+     */
+    public com.aresstack.spaceharvester.application.observe.Subscription whenBackgroundFinished(String groupId,
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+        java.util.Objects.requireNonNull(listener, "listener");
+        return harvester.backgroundJobs().whenFinished(groupId,
+                group -> javax.swing.SwingUtilities.invokeLater(() -> listener.accept(group)));
+    }
+
+    /** Die Aufträge eines Reiters: nur Hintergrundaufträge oder nur die übrigen. */
+    private List<JobStatus> jobs(boolean background) {
+        return jobs().stream().filter(job -> job.type().background() == background).toList();
+    }
+
+    /**
+     * Eine Aktion für alle Unteraufträge einer Hintergrundgruppe (ADR 0025 Nachtrag), die Zeile der Gruppe im Reiter
+     * „Hintergrund“: Anhalten, Fortsetzen, Abbrechen, Jetzt starten und Löschen wirken auf jeden Unterauftrag, für den
+     * es jetzt geht.
+     */
+    public AllJobs.Outcome performBackgroundGroupAction(String groupId, JobAction action) {
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background = harvester.backgroundJobs();
+        List<JobStatus> parts = background.group(groupId)
+                .map(com.aresstack.spaceharvester.application.background.BackgroundGroup::parts).orElse(List.of());
+        return switch (action) {
+            case PAUSE -> AllJobs.apply(AllJobs.toPause(parts), job -> pauseJob(job.id()));
+            case RESUME -> AllJobs.apply(parts.stream().filter(job -> job.lifecycle().allows(JobAction.RESUME))
+                    .toList(), job -> performJobAction(job.id(), JobAction.RESUME));
+            case CANCEL -> AllJobs.apply(AllJobs.toCancel(parts), job -> performJobAction(job.id(), JobAction.CANCEL));
+            case START_NOW, DELETE -> AllJobs.apply(parts.stream().filter(job -> job.lifecycle().allows(action))
+                    .toList(), job -> performJobAction(job.id(), action));
+            default -> new AllJobs.Outcome(0, 0, null);
+        };
+    }
+
+    /**
      * „Alle fortsetzen“: setzt alle angehaltenen Aufträge im selben Eintrag fort ({@link AllJobs#toResume}), älteste
      * zuerst; fertige, gescheiterte und abgebrochene bleiben, wie sie sind.
      */
@@ -2020,6 +2175,8 @@ public final class Workspace {
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
         // Auch die Dateien („Datei erzeugen“) gehören zu ihrem Export und gehen nie verloren.
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.CONVERSION));
+        // Hintergrundaufträge (ADR 0025 Nachtrag) stößt der Core selbst an; sie stehen im Reiter „Hintergrund“.
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.BACKGROUND));
         // Aufträge des Aufrufers der App (Zusammenfassen, Synonymlauf, Aussagenanalyse) sind ebenso global sichtbar.
         for (String owner : jobOwners()) {
             if (!owner.equals(Harvester.OWNER)) {
@@ -2109,6 +2266,22 @@ public final class Workspace {
     public List<PageNavigation.SubpageReference> subpageReferences(
             com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
         return harvester.navigation().subpageReferences(caller, pages);
+    }
+
+    /**
+     * Je Suchwert die Seiten einer Menge ({@code TermQueries.pagesByTerm}, Fahrplan P3), etwa für die Herkunft einer
+     * Beziehung unter „Aus Unterseiten“. Nie auf dem EDT.
+     */
+    public java.util.Map<String, List<com.aresstack.spaceharvester.application.snapshot.PageKey>> termPages(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.terms().pagesByTerm(caller, pages);
+    }
+
+    /** Titel und Space von Seiten aus dem Cache ({@code PageNavigation.nodes}); Seiten ohne Recht fehlen. */
+    public java.util.Map<com.aresstack.spaceharvester.application.snapshot.PageKey,
+            com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode> pageNodes(
+            java.util.Collection<com.aresstack.spaceharvester.application.snapshot.PageKey> keys) {
+        return harvester.navigation().nodes(caller, keys);
     }
 
     /**
@@ -2325,6 +2498,14 @@ public final class Workspace {
         return harvester.changeLog().summary(caller, sourceId, updateId, spaceKey);
     }
 
+    /**
+     * Ob die abgelegte Zusammenfassung eines Updates noch gilt (Rechte, KI-Freigabe), ohne Inhalt; einmal beim Wechsel
+     * der Update-Kennung (Abnahme #1037). Nie auf dem EDT.
+     */
+    public boolean changeSummaryStillValid(String sourceId, String updateId, String spaceKey) {
+        return harvester.changeLog().summaryStillValid(caller, sourceId, updateId, spaceKey);
+    }
+
     /** Startet „Zusammenfassen“ für ein Update in einer Ebene (ADR 0031); {@code spaceKey == null} die ganze Quelle. */
     public JobStatus summarizeUpdate(String sourceId, String updateId, String spaceKey) {
         return harvester.changeLog().summarize(caller, sourceId, updateId, spaceKey);
@@ -2447,13 +2628,21 @@ public final class Workspace {
      * abgebrochen. @return Anzahl
      */
     public int deleteAllJobs() {
+        return deleteAllJobs(jobs().stream().map(JobStatus::id).toList());
+    }
+
+    /**
+     * Wie {@link #deleteAllJobs()}, nur für die genannten Aufträge, etwa die eines Reiters der Auftragsliste: laufende
+     * und wartende werden vorher abgebrochen. @return Anzahl
+     */
+    public int deleteAllJobs(java.util.Collection<String> jobIds) {
         int deleted = 0;
-        for (JobStatus status : jobs()) {
+        for (String id : jobIds) {
             try {
-                deleteJob(status.id());
+                deleteJob(id);
                 deleted++;
             } catch (UnknownJobException e) {
-                activities.forget(status.id());
+                activities.forget(id);
             }
         }
         return deleted;

@@ -73,6 +73,11 @@ public final class SearchView implements View {
     static final String SEMANTIC = "Semantische Suche";
     /** Suchmethode „Nachbarseiten“ (R2). */
     static final String NEIGHBORS = "Nachbarseiten einbeziehen";
+    /** Suchmethode „Nur Fachbegriffe“ (K5b). */
+    static final String TECHNICAL_TERMS = "Nur Fachbegriffe";
+    static final String TECHNICAL_TERMS_TIP = "Zeigt statt der Seiten die Fachbegriffe des Glossars und ihre Synonyme "
+            + "zum Prüfen; der Chat übernimmt diese Methode nicht";
+    static final String TECHNICAL_TERMS_MODE = "Modus: Fachbegriffe";
     /** Gelbe Zeile, wenn die Nachbarseiten nicht geprüft werden konnten; kein Fehler der Suche. */
     static final String NEIGHBORS_UNCHECKED = "Nachbarseiten konnten nicht geprüft werden";
     /** Statuszeile, solange fehlende Nachbarn im Hintergrund laden. */
@@ -90,6 +95,19 @@ public final class SearchView implements View {
      * ({@link SearchMethods}); der Chat folgt ihr.
      */
     final JCheckBox neighbors = checkBox(NEIGHBORS, NEIGHBORS_TIP);
+    /**
+     * Suchmethode „Nur Fachbegriffe“ (K5b, Angelo 21.11.2026; Standard aus, gilt für die Sitzung): statt der
+     * Trefferliste die Fachbegriffe des Glossars links und ihre Synonyme rechts, je mit Bestätigen und Ablehnen
+     * ({@link TechnicalTermsPanel}). Eine Pflegeansicht; der Chat übernimmt sie nicht.
+     */
+    final JCheckBox technicalTerms = checkBox(TECHNICAL_TERMS, TECHNICAL_TERMS_TIP);
+    /** Die Ansicht der Methode „Nur Fachbegriffe“ in der Mitte statt der Treffer. */
+    final TechnicalTermsPanel termsPanel;
+    /** Mitte: Trefferliste oder Fachbegriffe. */
+    private final java.awt.CardLayout centerCards = new java.awt.CardLayout();
+    private final JPanel center = new JPanel(centerCards);
+    private static final String HITS_CARD = "hits";
+    private static final String TERMS_CARD = "terms";
     /** Die Suche, nach deren Stapel die Nachbarseiten noch gesucht werden; -1 ohne. */
     private int neighborsFor = -1;
     /** Beobachtet das Nachladen fehlender Nachbarn der laufenden Anfrage; {@code null} ohne. */
@@ -147,6 +165,18 @@ public final class SearchView implements View {
     /** Die laufende Schlagwortsuche bzw. das Laden des nächsten Stapels im Hintergrund; {@code null} ohne. */
     private Future<?> searching;
     final JLabel status = Comic.muted(" ");
+    /** Wie viel des Bereichs lokal liegt (K6), aus dem Bestand; nach Meldungen des Bestands neu gezählt. */
+    final JLabel localShare = Comic.muted(" ");
+    /** Anmeldungen beim Bestand für die Quellen bzw. Spaces des Bereichs; ersetzt bei jedem neuen Bereich. */
+    private final List<Subscription> localShareWatch = new java.util.ArrayList<>();
+    /** Zählt Bereiche; ein Ergebnis zu einem überholten Bereich wird verworfen. */
+    private int localShareRequest;
+    /** Eine Zählung läuft; Meldungen währenddessen lösen genau eine weitere danach aus. */
+    private boolean localShareCounting;
+    private boolean localShareAgain;
+    /** Der Bereich der zuletzt angemeldeten Zählung, damit gleicher Bereich nicht neu anmeldet. */
+    private com.aresstack.spaceharvester.application.holdings.Selection localShareArea;
+    private AppRuntime localShareRuntime;
     private final Feedback feedback = new Feedback();
     /** Stand der Suche in der Statuszeile des Hauptfensters: Ladestand bzw. Ende, Abbrechen, Zahl der Treffer. */
     final JLabel progressText = Comic.muted(" ");
@@ -210,6 +240,15 @@ public final class SearchView implements View {
         more.setVisible(false);
         semantic.setSelected(false);
         semantic.addItemListener(e -> mode());
+        termsPanel = new TechnicalTermsPanel(error -> feedback.problem(error));
+        technicalTerms.setSelected(SearchMethods.user().technicalTermsOnly());
+        technicalTerms.addItemListener(e -> {
+            SearchMethods.user().technicalTermsOnly(technicalTerms.isSelected());
+            mode();
+            if (technicalTerms.isSelected()) {
+                searchTechnicalTerms();
+            }
+        });
         neighbors.setSelected(SearchMethods.user().neighbors());
         neighbors.addItemListener(e -> {
             SearchMethods.user().neighbors(neighbors.isSelected());
@@ -286,7 +325,10 @@ public final class SearchView implements View {
         more.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         more.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, more.getPreferredSize().height));
         list.add(more, BorderLayout.SOUTH);
-        root.add(list, BorderLayout.CENTER);
+        center.setOpaque(false);
+        center.add(list, HITS_CARD);
+        center.add(termsPanel, TERMS_CARD);
+        root.add(center, BorderLayout.CENTER);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
         // Der Stand steht in der Statuszeile des Hauptfensters: Ladestand, Abbrechen bzw. Endzustand, Treffer.
@@ -306,6 +348,10 @@ public final class SearchView implements View {
         status.addPropertyChangeListener("text", e -> status.setToolTipText(
                 status.getText() == null || status.getText().isBlank() ? null : status.getText()));
         statusInfo.add(status);
+        statusInfo.add(javax.swing.Box.createHorizontalStrut(8));
+        localShare.setToolTipText(LocalShare.TIP);
+        localShare.setMinimumSize(new java.awt.Dimension(0, 0));
+        statusInfo.add(localShare);
     }
 
     /**
@@ -340,6 +386,9 @@ public final class SearchView implements View {
             + "Die Häkchen oben nehmen Quellen und Dateitypen aus der Suche.<br>"
             + "Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage<br>"
             + "geordnet; braucht ein Embedding-Modell (Einstellungen › Modelle).<br>"
+            + "Nur Fachbegriffe: links die Fachbegriffe des Glossars zum Suchtext (auch über Synonyme), rechts<br>"
+            + "ihre Synonyme, je zum Bestätigen oder Ablehnen; leeres Feld zeigt alle des Bereichs. Eine Pflege-<br>"
+            + "ansicht ohne Seitentreffer, der Chat übernimmt sie deshalb nicht.<br>"
             + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) öffnet die Seite direkt.<br>"
             + "Doppelklick auf einen Treffer öffnet ihn unter Inhalte.</html>";
 
@@ -399,6 +448,7 @@ public final class SearchView implements View {
         options.add(caption("Suchmethoden"));
         options.add(menuItem(semantic));
         options.add(menuItem(neighbors));
+        options.add(menuItem(technicalTerms));
         options.add(notes);
         options.revalidate();
     }
@@ -504,6 +554,90 @@ public final class SearchView implements View {
                     .map(scope -> title(scope.sourceId())
                             + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
         }
+        watchLocalShare();
+        if (technicalTerms.isSelected() && termsRuntime != null) {
+            // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
+            searchTechnicalTerms();
+        }
+    }
+
+    /**
+     * Zählt für die Statuszeile, wie viel des Bereichs lokal liegt (K6), und meldet sich beim Bestand der berührten
+     * Quellen bzw. Spaces an, damit Laden, Abgleich oder Bereinigen die Zahl nachführen; kein Zeitgeber.
+     */
+    private void watchLocalShare() {
+        AppRuntime runtime = context.runtime();
+        com.aresstack.spaceharvester.application.holdings.Selection area = runtime == null ? null
+                : LocalShare.selection(searchedSources(), scopes);
+        if (runtime == localShareRuntime && java.util.Objects.equals(area, localShareArea)) {
+            return;
+        }
+        localShareRuntime = runtime;
+        localShareArea = area;
+        localShareWatch.forEach(Subscription::close);
+        localShareWatch.clear();
+        localShareRequest++;
+        localShareAgain = false;
+        if (area == null || area.roots().isEmpty()) {
+            localShare.setText(" ");
+            return;
+        }
+        com.aresstack.spaceharvester.application.holdings.HoldingsListener listener =
+                new com.aresstack.spaceharvester.application.holdings.HoldingsListener() {
+                    @Override
+                    public void pagesChanged(String source, String space, Set<String> pageIds) {
+                        SwingUtilities.invokeLater(SearchView.this::countLocalShare);
+                    }
+
+                    @Override
+                    public void spaceChanged(String source, String space) {
+                        SwingUtilities.invokeLater(SearchView.this::countLocalShare);
+                    }
+                };
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : area.roots()) {
+            try {
+                localShareWatch.add(runtime.workspace().subscribeHoldings(root.sourceId(), root.spaceKey(),
+                        listener));
+            } catch (RuntimeException gone) {
+                // Die Quelle gibt es in dieser Laufzeit nicht mehr; der nächste Bereich räumt sie weg.
+            }
+        }
+        localShareCounting = false;
+        countLocalShare();
+    }
+
+    /** Liest die Zahlen aus dem Bestand im Hintergrund; läuft schon eine Zählung, folgt genau eine weitere. */
+    private void countLocalShare() {
+        AppRuntime runtime = context.runtime();
+        com.aresstack.spaceharvester.application.holdings.Selection area = localShareArea;
+        if (runtime == null || area == null || area.roots().isEmpty()) {
+            return;
+        }
+        if (localShareCounting) {
+            localShareAgain = true;
+            return;
+        }
+        localShareCounting = true;
+        int id = localShareRequest;
+        Background.run(() -> LocalShare.line(runtime.workspace().resolveSelection(area)), line -> {
+            if (id != localShareRequest) {
+                return;
+            }
+            localShareCounting = false;
+            localShare.setText(line.isEmpty() ? " " : line);
+            if (localShareAgain) {
+                localShareAgain = false;
+                countLocalShare();
+            }
+        }, error -> {
+            if (id != localShareRequest) {
+                return;
+            }
+            localShareCounting = false;
+            localShare.setText(" ");
+            LOG.log(System.Logger.Level.INFO, "Bestand des Suchbereichs nicht gezählt ({0})",
+                    error.getClass().getName());
+        });
     }
 
     /**
@@ -668,8 +802,47 @@ public final class SearchView implements View {
 
     /** Nennt den Modus der nächsten Suche neben dem Umfang. */
     private void mode() {
-        modeLabel.setText((semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
+        boolean terms = technicalTerms.isSelected();
+        modeLabel.setText(terms ? TECHNICAL_TERMS_MODE
+                : (semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
                 + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : ""));
+        centerCards.show(center, terms ? TERMS_CARD : HITS_CARD);
+        AppRuntime runtime = context.runtime();
+        if (!terms || runtime == null) {
+            termsRuntime = null;
+            termsPanel.close();
+        } else if (runtime != termsRuntime) {
+            termsRuntime = runtime;
+            termsPanel.access(TechnicalTermsPanel.of(runtime.workspace()));
+        }
+    }
+
+    /** Die Laufzeit, an die {@link #termsPanel} gebunden ist; {@code null} ohne. */
+    private AppRuntime termsRuntime;
+
+    /** „Nur Fachbegriffe“: Suchtext (leer heißt alle) im links gewählten Bereich. */
+    private void searchTechnicalTerms() {
+        if (termsRuntime == null) {
+            return;
+        }
+        if (searchedSources().isEmpty()) {
+            // Wie die übrige Suche: ohne angehakte Quelle wird nicht gesucht, gelb statt still alles.
+            feedback.warning("Keine Wissensquelle angehakt", "In den Suchoptionen (Pfeil im Suchfeld) ist keine "
+                    + "der gewählten Quellen angehakt.");
+            termsPanel.clear();
+            return;
+        }
+        feedback.clear();
+        termsPanel.search(query.getText(), technicalScope());
+    }
+
+    /**
+     * Der Bereich für „Nur Fachbegriffe“ wie bei der übrigen Suche ({@link #chosenSources()},
+     * {@link #chosenSpaces()}): mehrere gewählte Knoten oder abgewählte Quellen weiten nie auf alle auf.
+     */
+    com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope technicalScope() {
+        return new com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope(chosenSources(),
+                chosenSpaces());
     }
 
     /** Tooltip der Trefferliste. */
@@ -750,6 +923,11 @@ public final class SearchView implements View {
         if (runtime.workspace().sources().isEmpty()) {
             feedback.warning("Keine Quelle eingerichtet", "Wissensquellen legst du unter Wissensquellen verwalten "
                     + "an (rechts oben).");
+            return;
+        }
+        if (technicalTerms.isSelected()) {
+            mode();
+            searchTechnicalTerms();
             return;
         }
         if (text.isEmpty()) {

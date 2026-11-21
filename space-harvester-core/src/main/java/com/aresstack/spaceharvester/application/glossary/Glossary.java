@@ -187,6 +187,30 @@ public class Glossary {
         return new Page(found, null);
     }
 
+    /**
+     * Die bestätigten Fachbegriffe (normalisiert), deren Geltungsbereich {@code scope} berührt (K3): Status
+     * {@link ReviewStatus#CONFIRMED}, ohne Einordnung {@code TECHNISCH}. Für Läufe ohne Aufrufer wie die
+     * Synonymerkennung; liefert nur Schlüssel, die der Lauf im Begriffsindex ohnehin sieht.
+     */
+    public Set<String> confirmedTerms(RelationScope scope) {
+        Objects.requireNonNull(scope, "scope");
+        Set<String> found = new HashSet<>();
+        for (GlossaryEntry entry : store.all()) {
+            if (entry.status() != ReviewStatus.CONFIRMED
+                    || categoryOf(entry) == GlossaryDerivation.Category.TECHNISCH) {
+                continue;
+            }
+            RelationScope own = entry.scope();
+            boolean touches = own.global() || scope.global()
+                    || own.sourceId().equals(scope.sourceId()) && (own.spaceKey() == null || scope.spaceKey() == null
+                    || own.spaceKey().equals(scope.spaceKey()));
+            if (touches) {
+                found.add(entry.normalized());
+            }
+        }
+        return found;
+    }
+
     /** @throws UnknownGlossaryEntryException wenn es ihn nicht gibt oder er verborgen ist */
     public GlossaryEntry entry(AccessContext caller, String id) {
         return store.find(id).flatMap(new Visibility(caller)::visible)
@@ -691,7 +715,7 @@ public class Glossary {
     }
 
     /** Präfix des ganzen Suchwerts oder eines seiner Wörter, wie die Begriffssuche. */
-    private static boolean matches(String normalized, String q) {
+    static boolean matches(String normalized, String q) {
         if (normalized.startsWith(q)) {
             return true;
         }
@@ -703,7 +727,7 @@ public class Glossary {
         return false;
     }
 
-    private static String sortKey(GlossaryEntry entry) {
+    static String sortKey(GlossaryEntry entry) {
         return entry.normalized() + '\u0000' + entry.id();
     }
 

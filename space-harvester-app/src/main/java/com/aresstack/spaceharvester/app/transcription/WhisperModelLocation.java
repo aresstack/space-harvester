@@ -23,6 +23,7 @@ public final class WhisperModelLocation {
     static final String LEGACY_TINY_FOLDER = "whisper-tiny-" + WhisperModel.TINY.revision();
 
     private static volatile WhisperModel selected = WhisperModel.DEFAULT;
+    private static volatile WhisperModel dictation = WhisperModel.DEFAULT;
 
     private WhisperModelLocation() {
     }
@@ -36,6 +37,18 @@ public final class WhisperModelLocation {
         return selected;
     }
 
+    /**
+     * Das unter Einstellungen › Modelle gewählte Modell der Spracheingabe im Chat
+     * ({@value WhisperModel#DICTATION_KEY}), getrennt von dem der Transkripte; gilt ab der nächsten Aufnahme.
+     */
+    public static void selectDictation(WhisperModel model) {
+        dictation = model == null ? WhisperModel.DEFAULT : model;
+    }
+
+    public static WhisperModel dictation() {
+        return dictation;
+    }
+
     /** Der Ordner aller Modelle im Benutzerordner. */
     public static Path modelsDirectory() {
         return Paths.get(System.getProperty("user.home", "."), ".space-harvester", "models");
@@ -47,7 +60,15 @@ public final class WhisperModelLocation {
      * @throws WhisperModelMissingException wenn es noch nicht geladen ist
      */
     public static Path resolve() throws WhisperModelMissingException {
-        WhisperModel model = selected;
+        return resolve(selected);
+    }
+
+    /**
+     * Der Ordner von {@code model}.
+     *
+     * @throws WhisperModelMissingException wenn es noch nicht geladen ist
+     */
+    public static Path resolve(WhisperModel model) throws WhisperModelMissingException {
         return find(model).orElseThrow(() -> new WhisperModelMissingException(model));
     }
 

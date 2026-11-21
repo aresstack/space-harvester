@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.images;
 
+import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ImageDescriptionException;
 import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
@@ -27,9 +28,8 @@ import java.util.function.Supplier;
 /**
  * Bilder automatisch beschreiben (Fahrplan B1): Folgeschritt nach der Anreicherung einer Quelle und nach neuer
  * KI-Freigabe, gebaut wie die automatischen Synonyme ({@code SynonymDiscovery#automatic}). Nichts geschieht, solange
- * {@code images.automatic} aus ist (Standard). Sonst beschreibt ein eigener, abbrechbarer Auftrag
- * ({@link JobType#ENRICHMENT} mit {@value #TASK_PARAMETER} = {@value #TASK}) über denselben Weg wie der Knopf im Reiter
- * „Bilder“ ({@link PageImageAnalysis#describe}, also auch dieselbe Anmeldung, OTP und Bildablage) die Bilder der Seiten,
+ * {@code images.automatic} aus ist (Standard). Sonst beschreibt ein eigener, abbrechbarer Auftrag über denselben Weg wie der Knopf im
+ * Reiter „Bilder“ ({@link PageImageAnalysis#describe}, also auch dieselbe Anmeldung, OTP und Bildablage) die Bilder der Seiten,
  * die für das Vision-Modell freigegeben sind (ADR 0028) und für das eingestellte Modell noch keine Beschreibung haben.
  * Die Ablage je Prüfsumme und Modell verhindert, dass ein Bild zweimal an das Modell geht.
  *
@@ -42,6 +42,12 @@ import java.util.function.Supplier;
  * gelb mit {@value #NO_MODEL}, nie rot. Verlangt die Quelle einen Einmalcode, endet er gelb mit {@value #SIGN_IN},
  * weil niemand ihn im Hintergrund eingeben kann. Abbrechen lässt alles stehen, was schon beschrieben ist. Kein
  * Zeitgeber, kein Abfragen: ausgelöst wird nur durch Abgleich und Freigabe.
+ *
+ * <p>Nachrangig (Angelo 21.11.2026): Der Auftrag wartet hinter Abgleichen und Exporten ({@link JobType#followUp()})
+ * und tritt vor jedem Bild zurück, solange der Benutzer selbst Bilder beschreiben lässt ({@link ModelPriority}, Phase
+ * {@value #WAITING_PHASE}). Mehrere gleichzeitig (Angelo 21.11.2026): Bis zu {@code ai.parallel} Seiten laufen
+ * zugleich, mit eigenem Kontingent je Auftrag ({@link Assets#inLane}), so dass ein Lauf die Beschreibungen anderer
+ * Aufträge nicht verdrängt.
  */
 public final class AutomaticImageDescriptions {
 
@@ -62,6 +68,8 @@ public final class AutomaticImageDescriptions {
     public static final String MODEL_FAILED = "IMAGES_MODEL_FAILED";
     /** Ereignis mit den Zahlen des Laufs. */
     public static final String DONE = "IMAGES_DONE";
+    /** Phase, solange der Lauf vor einer Beschreibung des Benutzers zurücktritt. */
+    public static final String WAITING_PHASE = "Wartet auf freies Modell";
     /** Komponente der Ereignisse. */
     static final String COMPONENT = "Images";
 
@@ -72,6 +80,8 @@ public final class AutomaticImageDescriptions {
     private final Function<String, Iterator<PageSnapshot>> snapshots;
     private final Supplier<ImageSettings> settings;
     private final Function<String, Boolean> knownSource;
+    /** Eigentümer der Aufträge; die App zeigt nur Aufträge ihrer Eigentümer an. */
+    private final String owner;
     /** Je Quelle der Auftrag, der noch wartet; ein zweiter Anlass plant dann keinen weiteren ein. */
     private final Map<String, String> waiting = new HashMap<>();
 
@@ -83,6 +93,18 @@ public final class AutomaticImageDescriptions {
     public AutomaticImageDescriptions(Jobs jobs, PageImageAnalysis analysis,
                                       Function<String, Iterator<PageSnapshot>> snapshots,
                                       Supplier<ImageSettings> settings, Function<String, Boolean> knownSource) {
+        this(jobs, analysis, snapshots, settings, knownSource, null);
+    }
+
+    /**
+     * Wie oben, mit dem Eigentümer der Aufträge, etwa {@code Harvester#OWNER}: Ohne ihn sieht die App die Aufträge
+     * nicht in ihrer Liste.
+     */
+    public AutomaticImageDescriptions(Jobs jobs, PageImageAnalysis analysis,
+                                      Function<String, Iterator<PageSnapshot>> snapshots,
+                                      Supplier<ImageSettings> settings, Function<String, Boolean> knownSource,
+                                      String owner) {
+        this.owner = owner;
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.analysis = Objects.requireNonNull(analysis, "analysis");
         this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
@@ -110,17 +132,8 @@ public final class AutomaticImageDescriptions {
             waiting.remove(sourceId);
             JobStatus status;
             try {
-                status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, null, Map.of(TASK_PARAMETER, TASK),
-                        JobTask.blocking(context -> {
-                            synchronized (waiting) {
-                                waiting.remove(sourceId, context.jobId());
-                            }
-                            ImageSettings now = settings.get();
-                            // Inzwischen abgeschaltet: ein wartender Auftrag schickt nichts mehr an das Modell.
-                            if (now != null && now.automatic()) {
-                                run(sourceId, now, context);
-                            }
-                        }));
+                status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, owner,
+                        Map.of(TASK_PARAMETER, TASK), task(sourceId));
             } catch (JobCapacityExceededException | IllegalStateException e) {
                 LOG.log(System.Logger.Level.INFO, "Bildbeschreibung für {0} nicht eingeplant ({1}); der nächste "
                         + "Abgleich holt sie nach", sourceId, e.getClass().getSimpleName());
@@ -132,6 +145,19 @@ public final class AutomaticImageDescriptions {
             LOG.log(System.Logger.Level.INFO, "Bildbeschreibung für {0} automatisch eingeplant", sourceId);
             return Optional.of(status);
         }
+    }
+
+    /** Die Arbeit eines Laufs; ist {@code images.automatic} inzwischen aus, geht nichts an das Modell. */
+    private JobTask task(String sourceId) {
+        return JobTask.blocking(context -> {
+            synchronized (waiting) {
+                waiting.remove(sourceId, context.jobId());
+            }
+            ImageSettings now = settings.get();
+            if (now != null && now.automatic()) {
+                run(sourceId, now, context);
+            }
+        });
     }
 
     /** Beobachter der Liste freigegebener Seiten (ADR 0028): neu freigegebene Seiten beschreibt der nächste Lauf. */
@@ -150,8 +176,17 @@ public final class AutomaticImageDescriptions {
     record Outcome(int pages, int images, int open, int failed) {
     }
 
-    /** Der Lauf; im Auftrag, für Tests auch direkt. */
+    /** Der Lauf über alle Spaces der Quelle; für Tests. */
     Outcome run(String sourceId, ImageSettings chosen, JobContext context) {
+        return run(sourceId, null, chosen, context);
+    }
+
+    /**
+     * Der Lauf eines Unterauftrags: die Seiten eines Space ({@code null} = alle) mit eigenem Kontingent von
+     * {@code ai.parallel} gleichzeitigen Beschreibungen ({@link Assets#inLane}). Bis zu so viele Seiten laufen
+     * zugleich, jede Seite Bild für Bild; die Obergrenze gilt je Lauf.
+     */
+    Outcome run(String sourceId, String space, ImageSettings chosen, JobContext context) {
         context.phase(COMPONENT, "Bilder beschreiben");
         ImageSettings limits = chosen == null ? ImageSettings.DEFAULT : chosen;
         if (!analysis.available()) {
@@ -160,100 +195,122 @@ public final class AutomaticImageDescriptions {
             return new Outcome(0, 0, 0, 0);
         }
         int budget = limits.unlimited() ? Integer.MAX_VALUE : limits.maxPerRun();
-        int sent = 0;
-        int pages = 0;
-        int open = 0;
-        int failed = 0;
-        boolean oversized = false;
-        Iterator<PageSnapshot> all = snapshots.apply(sourceId);
-        while (all.hasNext()) {
-            context.checkpoint();
-            PageSnapshot snapshot = all.next();
-            if (!analysis.released(snapshot.key())) {
-                continue;
-            }
-            PageImages before;
-            try {
-                before = analysis.read(snapshot);
-            } catch (RuntimeException e) {
-                failed++;
-                continue;
-            }
-            Work work = work(before);
-            if (work == Work.NONE) {
-                continue;
-            }
-            int pending = work.pending;
-            // Eine Seite größer als die ganze Grenze darf als erste des Laufs trotzdem (überzieht einmal).
-            if (pending > budget - sent && !(sent == 0 && !oversized)) {
-                // Passt nicht mehr: bleibt für den nächsten Lauf, kleinere Seiten dürfen noch.
-                open += pending;
-                continue;
-            }
-            if (pending > budget - sent) {
-                oversized = true;
-            }
-            context.discovered(1);
-            try {
-                // Zwischen den Bildern einer Seite: Abbrechen wirkt nach dem laufenden Bild, und ein ausgefallenes
-                // Modell bekommt nach den Wiederholungen dieses Bildes keine weiteren.
-                PageImages after = analysis.describe(snapshot, entry -> {
-                    context.checkpoint();
-                    if (entry.status() == ImageStatus.FAILED && PageImageAnalysis.modelFailure(entry.reason())) {
-                        throw new ModelDown(entry.reason());
-                    }
+        int parallel = Math.max(1, analysis.parallel());
+        String lane = "images:" + context.jobId();
+        Tally tally = new Tally();
+        java.util.concurrent.Semaphore slots = new java.util.concurrent.Semaphore(parallel);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(parallel,
+                work -> {
+                    Thread thread = new Thread(work, "bilder-beschreiben");
+                    thread.setDaemon(true);
+                    return thread;
                 });
-                int described = newlyDescribed(before, after);
-                sent += described;
-                pages++;
-                List<String> failures = after.images().stream().filter(image -> image.status() == ImageStatus.FAILED)
-                        .map(ImagePayload.Entry::reason).toList();
-                if (failures.isEmpty()) {
-                    context.written(1);
-                } else {
-                    failed++;
-                    context.failed(1);
-                    if (failures.stream().anyMatch(PageImageAnalysis::modelFailure)) {
-                        // Ein ausgefallenes Modell bekommt keine weiteren Bilder; der nächste Lauf versucht es neu.
-                        context.record(modelFailed(failures.stream().filter(PageImageAnalysis::modelFailure)
-                                .findFirst().orElseThrow()));
-                        context.processed(1);
-                        break;
-                    }
+        List<java.util.concurrent.Future<?>> running = new java.util.ArrayList<>();
+        RuntimeException stopped = null;
+        try {
+            Iterator<PageSnapshot> all = snapshots.apply(sourceId);
+            while (all.hasNext() && tally.stop.get() == null) {
+                context.checkpoint();
+                PageSnapshot snapshot = all.next();
+                if (space != null && !space.equals(snapshot.spaceKey())) {
+                    continue;
                 }
-            } catch (ModelDown e) {
-                failed++;
-                context.failed(1);
-                context.record(modelFailed(e.reason));
-                context.processed(1);
-                break;
-            } catch (SignInRequiredException e) {
-                context.record(JobEvent.Draft.warning(JobEvent.Category.SOURCE, COMPONENT, SIGN_IN,
-                        "Die Quelle verlangt einen Einmalcode; Bilder dieses Laufs bewusst ausgelassen"));
-                context.processed(1);
-                break;
-            } catch (ImageDescriptionException e) {
-                if (e.reason() == ImageDescriptionException.Reason.NOT_CONFIGURED) {
-                    context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, NO_MODEL,
-                            "Kein Vision-Modell eingestellt; Bilder bewusst nicht beschrieben"));
-                    context.processed(1);
+                if (!analysis.released(snapshot.key())) {
+                    continue;
+                }
+                PageImages before;
+                try {
+                    before = analysis.read(snapshot);
+                } catch (RuntimeException e) {
+                    tally.failed.incrementAndGet();
+                    continue;
+                }
+                Work work = work(before);
+                if (work == Work.NONE) {
+                    continue;
+                }
+                int pending = work.pending;
+                // Erst den Platz, dann die Entscheidung über die Grenze (Codex #1028): So rechnet sie mit den
+                // berichtigten Zahlen aller Seiten, die vor dem freien Platz fertig wurden. Kein Takt: wartet am
+                // Semaphor, bis ein Arbeiter fertig ist.
+                slots.acquireUninterruptibly();
+                try {
+                    context.checkpoint();
+                } catch (RuntimeException e) {
+                    slots.release();
+                    throw e;
+                }
+                if (tally.stop.get() != null) {
+                    slots.release();
                     break;
                 }
-                // NOT_RELEASED: die Freigabe fiel eben weg, die Seite bleibt draußen.
-                if (e.reason() != ImageDescriptionException.Reason.NOT_RELEASED) {
-                    failed++;
-                    context.failed(1);
+                boolean fits;
+                synchronized (tally) {
+                    // Eine Seite größer als die ganze Grenze darf als erste des Laufs trotzdem (überzieht einmal).
+                    fits = pending <= budget - tally.reserved || tally.reserved == 0 && !tally.oversized;
+                    if (!fits) {
+                        // Passt nicht mehr: bleibt für den nächsten Lauf, kleinere Seiten dürfen noch.
+                        tally.open += pending;
+                    } else {
+                        if (pending > budget - tally.reserved) {
+                            tally.oversized = true;
+                        }
+                        tally.reserved += pending;
+                    }
                 }
-            } catch (com.aresstack.spaceharvester.application.jobs.JobCancelledException e) {
-                throw e;
-            } catch (RuntimeException e) {
-                // Eine Seite, deren Lese-Ansicht oder Bilder sich nicht laden lassen, hält die übrigen nicht auf.
-                failed++;
-                context.failed(1);
-                LOG.log(System.Logger.Level.WARNING, "Bilder einer Seite in {0} nicht beschrieben ({1})", sourceId,
-                        e.getClass().getName());
+                if (!fits) {
+                    slots.release();
+                    continue;
+                }
+                context.discovered(1);
+                running.add(pool.submit(() -> {
+                    try {
+                        Assets.inLane(lane, () -> {
+                            page(sourceId, snapshot, before, pending, tally, context);
+                            return null;
+                        });
+                    } finally {
+                        slots.release();
+                    }
+                }));
             }
-            context.processed(1);
+        } catch (RuntimeException e) {
+            stopped = e;
+        } finally {
+            // Erst wenn alle Arbeiter ihr laufendes Bild beendet haben, endet der Lauf: nichts arbeitet abgekoppelt.
+            boolean interrupted = false;
+            for (java.util.concurrent.Future<?> page : running) {
+                while (true) {
+                    try {
+                        page.get();
+                        break;
+                    } catch (java.util.concurrent.ExecutionException e) {
+                        if (stopped == null && e.getCause() instanceof RuntimeException cause) {
+                            stopped = cause;
+                        }
+                        break;
+                    } catch (java.util.concurrent.CancellationException e) {
+                        break;
+                    } catch (InterruptedException e) {
+                        // Ende der Anwendung (Codex #1028): die Arbeiter unterbrechen und trotzdem auf sie warten,
+                        // damit kein Arbeiter den Auftrag überlebt; die Unterbrechung gilt danach wieder.
+                        interrupted = true;
+                        tally.stop.compareAndSet(null, "INTERRUPTED");
+                        pool.shutdownNow();
+                    }
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            pool.shutdown();
+        }
+        if (stopped != null) {
+            throw stopped;
+        }
+        int open;
+        synchronized (tally) {
+            open = tally.open;
         }
         if (open > 0) {
             context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, LIMIT_REACHED,
@@ -261,10 +318,112 @@ public final class AutomaticImageDescriptions {
                             + (open == 1 ? " Bild bleibt" : " Bilder bleiben") + " für den nächsten Lauf offen"));
             context.incomplete();
         }
+        int pages = tally.pages.get();
+        int sent = tally.sent.get();
+        int failed = tally.failed.get();
         context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, DONE,
                 pages + (pages == 1 ? " Seite, " : " Seiten, ") + sent + (sent == 1 ? " Bild" : " Bilder")
                         + " beschrieben" + (failed > 0 ? ", " + failed + " Seiten nicht" : ""), null, null, null));
         return new Outcome(pages, sent, open, failed);
+    }
+
+    /** Zähler eines Laufs, von mehreren Arbeitern zugleich geschrieben. */
+    private static final class Tally {
+        final java.util.concurrent.atomic.AtomicInteger sent = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger pages = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
+        /** Warum der Lauf keine weiteren Seiten beginnt (Modell aus, Einmalcode, kein Modell); der erste gilt. */
+        final java.util.concurrent.atomic.AtomicReference<String> stop =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        /** Vorgemerkte Bilder; nach jeder Seite um die tatsächlich beschriebenen berichtigt. Unter {@code this}. */
+        int reserved;
+        int open;
+        boolean oversized;
+    }
+
+    /** Eine Seite in einem Arbeiter. */
+    private void page(String sourceId, PageSnapshot snapshot, PageImages before, int pending, Tally tally,
+                      JobContext context) {
+        if (tally.stop.get() != null) {
+            return;
+        }
+        try {
+            context.checkpoint();
+            // Zwischen den Bildern einer Seite: Abbrechen wirkt nach dem laufenden Bild, und ein ausgefallenes
+            // Modell bekommt nach den Wiederholungen dieses Bildes keine weiteren.
+            // Nachrangig: vor jedem Bild zurücktreten, solange der Benutzer selbst Bilder beschreiben lässt.
+            if (analysis.priority().awaitIdle(context, () -> waitingForModel(context))) {
+                context.phase(COMPONENT, "Bilder beschreiben");
+            }
+            PageImages after = analysis.describeInBackground(snapshot, entry -> {
+                context.checkpoint();
+                if (entry.status() == ImageStatus.FAILED && PageImageAnalysis.modelFailure(entry.reason())) {
+                    throw new ModelDown(entry.reason());
+                }
+                if (tally.stop.get() != null) {
+                    throw new ModelDown(null);
+                }
+                if (analysis.priority().awaitIdle(context, () -> waitingForModel(context))) {
+                    context.phase(COMPONENT, "Bilder beschreiben");
+                }
+            });
+            int described = newlyDescribed(before, after);
+            tally.sent.addAndGet(described);
+            synchronized (tally) {
+                tally.reserved += described - pending;
+            }
+            tally.pages.incrementAndGet();
+            List<String> failures = after.images().stream().filter(image -> image.status() == ImageStatus.FAILED)
+                    .map(ImagePayload.Entry::reason).toList();
+            if (failures.isEmpty()) {
+                context.written(1);
+            } else {
+                tally.failed.incrementAndGet();
+                context.failed(1);
+                failures.stream().filter(PageImageAnalysis::modelFailure).findFirst()
+                        .ifPresent(reason -> stop(tally, MODEL_FAILED, () -> context.record(modelFailed(reason))));
+            }
+        } catch (ModelDown e) {
+            if (e.reason != null) {
+                tally.failed.incrementAndGet();
+                context.failed(1);
+                stop(tally, MODEL_FAILED, () -> context.record(modelFailed(e.reason)));
+            }
+        } catch (SignInRequiredException e) {
+            stop(tally, SIGN_IN, () -> context.record(JobEvent.Draft.warning(JobEvent.Category.SOURCE, COMPONENT,
+                    SIGN_IN, "Die Quelle verlangt einen Einmalcode; Bilder dieses Laufs bewusst ausgelassen")));
+        } catch (ImageDescriptionException e) {
+            if (e.reason() == ImageDescriptionException.Reason.NOT_CONFIGURED) {
+                stop(tally, NO_MODEL, () -> context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT,
+                        NO_MODEL, "Kein Vision-Modell eingestellt; Bilder bewusst nicht beschrieben")));
+            } else if (e.reason() != ImageDescriptionException.Reason.NOT_RELEASED) {
+                // NOT_RELEASED: die Freigabe fiel eben weg, die Seite bleibt draußen.
+                tally.failed.incrementAndGet();
+                context.failed(1);
+            }
+        } catch (com.aresstack.spaceharvester.application.jobs.JobCancelledException e) {
+            // Abbrechen oder Anhalten: keine weitere Seite beginnen.
+            tally.stop.compareAndSet(null, "CANCELLED");
+            throw e;
+        } catch (RuntimeException e) {
+            // Eine Seite, deren Lese-Ansicht oder Bilder sich nicht laden lassen, hält die übrigen nicht auf.
+            tally.failed.incrementAndGet();
+            context.failed(1);
+            LOG.log(System.Logger.Level.WARNING, "Bilder einer Seite in {0} nicht beschrieben ({1})", sourceId,
+                    e.getClass().getName());
+        }
+        context.processed(1);
+    }
+
+    /** Hält den Lauf an; nur der erste Grund meldet sich. */
+    private static void stop(Tally tally, String code, Runnable report) {
+        if (tally.stop.compareAndSet(null, code)) {
+            report.run();
+        }
+    }
+
+    private static void waitingForModel(JobContext context) {
+        context.phase(COMPONENT, WAITING_PHASE);
     }
 
     private static JobEvent.Draft modelFailed(String reason) {

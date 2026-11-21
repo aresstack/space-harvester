@@ -69,6 +69,17 @@ class PruefstandTest {
         }
     }
 
+    /** Fehlt der Pin einer Modellvariante, sagt der Prüfstand, welcher fehlt und wie man ihn erzeugt. */
+    @Test
+    void fehlenderPinWirdKlarGemeldet() {
+        Textsatz satz = Textsatz.alle().get(0);
+        Textsatz.Text text = satz.texte().get(0);
+        String satzName = KiAnalyse.fehlenderPin(satz, new Textsatz.Variante("ki-erfunden-1b", ""), text);
+        assertTrue(satzName.contains(satz.name() + "/varianten/ki-erfunden-1b/" + text.name() + ".antwort"), satzName);
+        assertTrue(satzName.contains("-PstatementModelLiveMissing=true"), satzName);
+        assertTrue(satzName.contains("stand.tsv"), satzName);
+    }
+
     @Test
     void verbabgleichNachStamm() {
         assertTrue(Bewertung.verbPasst("abrufen", "abrufen"));

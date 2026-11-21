@@ -188,6 +188,15 @@ public final class AppContext {
          * ohne {@code spaceKeys} jeden Space der Quelle.
          */
         default void retrySyncs(String sourceId, java.util.List<String> spaceKeys) {
+            retrySyncs(sourceId, spaceKeys, jobs -> { });
+        }
+
+        /**
+         * Wie {@link #retrySyncs(String, java.util.List)}; {@code started} erfährt die Kennungen der gestarteten
+         * Aufträge, damit eine offene Ansicht ihr Ende abonnieren kann (Angelo, 21.11.2026).
+         */
+        default void retrySyncs(String sourceId, java.util.List<String> spaceKeys,
+                                java.util.function.Consumer<java.util.List<String>> started) {
         }
 
         void search(String text);
@@ -1061,7 +1070,9 @@ public final class AppContext {
     private WhisperModelSetup whisperModel;
 
     /**
-     * Das Whisper-Modell für Spracheingabe und Transkripte, gemeinsam für Einstellungen, Chat und Videos. Es liegt
+     * Die Whisper-Modelle für Spracheingabe und Transkripte, gemeinsam für Einstellungen, Chat und Videos; ein Download
+     * läuft für alle sichtbar, egal für welche Stelle. Das eingestellte Modell ist das der Transkripte, die
+     * Spracheingabe fragt mit {@link #dictationWhisper()} nach ihrem eigenen. Es liegt
      * nicht im Programm, sondern wird nach Rückfrage von Hugging Face nach {@code ~/.space-harvester/models} geladen,
      * über Proxy und TLS der App.
      */
@@ -1086,33 +1097,55 @@ public final class AppContext {
         return whisperModel;
     }
 
-    /** Das eingestellte Whisper-Modell; ohne geladene Einstellungen Tiny. */
+    /** Das eingestellte Whisper-Modell der Transkripte; ohne geladene Einstellungen Tiny. */
     public com.aresstack.spaceharvester.app.transcription.WhisperModel whisper() {
         AppSettings current = settings;
         return current == null ? com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT
                 : current.whisperModel();
     }
 
+    /** Das eingestellte Whisper-Modell der Spracheingabe im Chat; ohne geladene Einstellungen Tiny. */
+    public com.aresstack.spaceharvester.app.transcription.WhisperModel dictationWhisper() {
+        AppSettings current = settings;
+        return current == null ? com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT : current.dictationModel();
+    }
+
     /**
-     * Speichert das Whisper-Modell ({@code space-harvester-app.whisper.model}) in der Datei, ohne Neustart der
-     * Laufzeit: Spracheingabe und Transkripte nehmen es beim nächsten Gebrauch.
+     * Speichert das Whisper-Modell der Transkripte ({@code space-harvester-app.whisper.model}) in der Datei, ohne
+     * Neustart der Laufzeit: Transkripte nehmen es beim nächsten Gebrauch.
      */
-    public void whisper(com.aresstack.spaceharvester.app.transcription.WhisperModel model, Runnable done,
-                        Consumer<Throwable> failed) {
-        whisperWanted = model;
+    public void whisper(com.aresstack.spaceharvester.app.transcription.WhisperModel model, Runnable done, Consumer<Throwable> failed) {
+        saveWhisper(model, false, done, failed);
+    }
+
+    /**
+     * Speichert das Whisper-Modell der Spracheingabe ({@code space-harvester-app.whisper.dictation-model}) in der
+     * Datei, ohne Neustart der Laufzeit: es gilt ab der nächsten Aufnahme (Angelo 21.11.2026).
+     */
+    public void dictationWhisper(com.aresstack.spaceharvester.app.transcription.WhisperModel model, Runnable done, Consumer<Throwable> failed) {
+        saveWhisper(model, true, done, failed);
+    }
+
+    private void saveWhisper(com.aresstack.spaceharvester.app.transcription.WhisperModel model, boolean dictation, Runnable done, Consumer<Throwable> failed) {
+        if (dictation) {
+            dictationWanted = model;
+        } else {
+            whisperWanted = model;
+        }
         Background.run(() -> {
             synchronized (consoleLock) {
-                com.aresstack.spaceharvester.app.transcription.WhisperModel wanted = whisperWanted;
+                com.aresstack.spaceharvester.app.transcription.WhisperModel wanted = dictation ? dictationWanted : whisperWanted;
                 ConfigFileEditor editor = new ConfigFileEditor(loader);
                 String text = Files.isRegularFile(configFile)
                         ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
-                editor.save(configFile, editor.withWhisperModel(configFile,
-                        new ConfigFileEditor.Draft(text, null), wanted), !editor.fileHasPlaintextSecret(configFile));
+                ConfigFileEditor.Draft base = new ConfigFileEditor.Draft(text, null);
+                editor.save(configFile, dictation ? editor.withDictationModel(configFile, base, wanted)
+                        : editor.withWhisperModel(configFile, base, wanted), !editor.fileHasPlaintextSecret(configFile));
                 return wanted;
             }
         }, saved -> {
             if (settings != null) {
-                settings = settings.withWhisperModel(saved);
+                settings = dictation ? settings.withDictationModel(saved) : settings.withWhisperModel(saved);
             }
             fire();
             done.run();
@@ -1123,6 +1156,7 @@ public final class AppContext {
     }
 
     private volatile com.aresstack.spaceharvester.app.transcription.WhisperModel whisperWanted;
+    private volatile com.aresstack.spaceharvester.app.transcription.WhisperModel dictationWanted;
 
     /** Beendet die Laufzeit (beim Schließen des Fensters); schließt Lucene-Indizes und gibt ihre Sperren frei. */
     public void shutdown() {
@@ -1135,6 +1169,7 @@ public final class AppContext {
     private void fire() {
         // Spracheingabe und Transkripte lesen das eingestellte Modell beim nächsten Gebrauch.
         com.aresstack.spaceharvester.app.transcription.WhisperModelLocation.select(whisper());
+        com.aresstack.spaceharvester.app.transcription.WhisperModelLocation.selectDictation(dictationWhisper());
         Runnable notify = () -> new ArrayList<>(listeners).forEach(listener -> listener.accept(this));
         if (SwingUtilities.isEventDispatchThread()) {
             notify.run();

@@ -116,6 +116,13 @@ class TermConfiguration {
                 headers(repository.getIfAvailable(), reader.getIfAvailable()), Clock.systemUTC());
     }
 
+    /** Suchmethode „Nur Fachbegriffe“ (K5b): Glossar und Synonymbeziehungen, nichts gespeichert. */
+    @Bean
+    com.aresstack.spaceharvester.application.glossary.TechnicalTerms technicalTerms(Glossary glossary,
+                                                                                    TermRelations relations) {
+        return new com.aresstack.spaceharvester.application.glossary.TechnicalTerms(glossary, relations);
+    }
+
     /** „Fachbegriffe ermitteln“: dasselbe Chat-Modell wie die Akronymauflösung, nur auf Knopfdruck. */
     @Bean
     GlossaryClassification glossaryClassification(SourceCatalog catalog, AccessGuard access,
@@ -162,7 +169,8 @@ class TermConfiguration {
                                       ObjectProvider<EmbeddingProcessor> embeddings, LiveConfiguration live,
                                       ObjectProvider<SnapshotRepository> repository,
                                       ObjectProvider<PageCacheReader> reader, SentenceSegmenter sentences,
-                                      ObjectProvider<AiRelease> release, FileSynonymVectorCache vectors) {
+                                      ObjectProvider<AiRelease> release, FileSynonymVectorCache vectors,
+                                      ObjectProvider<Glossary> glossary) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -175,6 +183,11 @@ class TermConfiguration {
                 () -> processor == null ? Optional.empty() : processor.currentProvider(), judge::mayProcess,
                 termsVersion(sentences));
         candidates.vectors(vectors);
+        // K3: Synonyme wahlweise nur aus bestätigten Fachbegriffen des Glossars.
+        candidates.glossaryTerms(scope -> {
+            Glossary terms = glossary.getIfAvailable();
+            return terms == null ? java.util.Set.of() : terms.confirmedTerms(scope.relationScope());
+        });
         SynonymDiscovery discovery = new SynonymDiscovery(catalog, candidates, access, relations, judge, resolutions,
                 jobs, () -> live.current().terms().synonyms(), Clock.systemUTC());
         // ADR 0028: Textstellen von Seiten auf der Liste freigegebener Seiten gehen auch aus gesperrten Quellen hinaus.

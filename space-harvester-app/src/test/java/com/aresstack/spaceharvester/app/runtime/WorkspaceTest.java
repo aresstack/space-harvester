@@ -897,6 +897,42 @@ class WorkspaceTest {
                 .anySatisfy(p -> assertThat(p).contains("unbekannt"));
     }
 
+    /**
+     * Hintergrund-Reiter gegen den echten Harvester (Abnahme #1032): eine Gruppenzeile liest ohne Fehler, weil ihre
+     * synthetische ID nie an den Core geht, und „Alle löschen“ eines Reiters löscht nur dessen Aufträge.
+     */
+    @Test
+    void aBackgroundGroupRowReadsWithoutTheCoreAndDeletingOneTabKeepsTheOther() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                started.harvester().backgroundJobs();
+        background.register(new com.aresstack.spaceharvester.application.background.BackgroundKind("probe",
+                part -> com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> { })));
+        com.aresstack.spaceharvester.application.background.BackgroundGroup group = background.start("probe",
+                "Probe laden", List.of(
+                        new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("handbuch",
+                                "ALPHA", Map.of()),
+                        new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("handbuch",
+                                "BETA", Map.of())));
+        java.util.concurrent.CountDownLatch finished = new java.util.concurrent.CountDownLatch(1);
+        background.whenFinished(group.groupId(), done -> finished.countDown());
+        assertThat(finished.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        Object[] read = com.aresstack.spaceharvester.app.ui.ActivitiesView.read(workspace,
+                "background-group:" + group.groupId());
+        @SuppressWarnings("unchecked")
+        List<JobStatus> jobs = (List<JobStatus>) read[0];
+        assertThat(jobs).filteredOn(job -> job.type() == com.aresstack.spaceharvester.application.jobs.JobType
+                .BACKGROUND).extracting(JobStatus::id).containsExactlyInAnyOrderElementsOf(group.jobIds());
+        assertThat(read[1]).as("kein Detail aus dem Core für eine Gruppenzeile").isNull();
+
+        JobStatus sync = await(workspace, workspace.startSync("handbuch", workspace.spaces("handbuch").get(0).key()));
+        assertThat(workspace.deleteAllJobs(List.of(sync.id()))).isEqualTo(1);
+        assertThat(workspace.jobs()).extracting(JobStatus::id).containsAll(group.jobIds())
+                .doesNotContain(sync.id());
+    }
+
     private AppRuntime start() throws Exception {
         runtime = AppRuntime.start(settings(Map.of("WIKI_TOKEN", TOKEN,
                 "CLIENT_PASSWORD", TestCertificates.CLIENT_PASSWORD)), new AppRuntime.SessionSecrets(), "test");

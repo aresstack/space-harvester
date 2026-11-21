@@ -465,6 +465,43 @@ public class TermQueries {
     }
 
     /**
+     * Auf welchen sichtbaren Seiten einer Seitenmenge jeder Suchwert vorkommt, über alle Arten (Fahrplan P3): die
+     * Herkunft einer Beziehung unter „Aus Unterseiten“ sind die Seiten ihrer beiden Begriffe. Ein Durchgang wie
+     * {@link #pageCounts}; Fundstellen in Anhängen zählen nicht.
+     *
+     * @return je Suchwert ({@link TermText#normalize}) die Seiten, sortiert nach Quelle und Seite
+     */
+    public Map<String, List<PageKey>> pagesByTerm(AccessContext caller, PageSet pages) {
+        Objects.requireNonNull(pages, "pages");
+        if (pages.size() == 0) {
+            return Map.of();
+        }
+        Set<String> sourceIds = within(scope(caller, null, null), pages);
+        TermIndex.Filter filter = new TermIndex.Filter(sourceIds, null, null, null, processorVersion, null,
+                TermOrigin.PAGES, pages);
+        Visibility visibility = new Visibility(caller, null);
+        Map<String, Set<PageKey>> seen = new java.util.HashMap<>();
+        String from = null;
+        while (true) {
+            List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
+            for (TermPosting posting : batch) {
+                if (!posting.ofDocument() && visibility.current(posting).isPresent()) {
+                    seen.computeIfAbsent(posting.normalized(), term -> new TreeSet<>(
+                            java.util.Comparator.comparing(PageKey::sourceId).thenComparing(PageKey::pageId)))
+                            .add(posting.page());
+                }
+            }
+            if (batch.size() < TermIndex.MAX_BATCH) {
+                break;
+            }
+            from = batch.get(batch.size() - 1).sortKey();
+        }
+        Map<String, List<PageKey>> result = new java.util.HashMap<>();
+        seen.forEach((term, keys) -> result.put(term, List.copyOf(keys)));
+        return Map.copyOf(result);
+    }
+
+    /**
      * Fundstellen eines Begriffs.
      *
      * @throws UnknownSourceException bei unbekannter {@code sourceId}

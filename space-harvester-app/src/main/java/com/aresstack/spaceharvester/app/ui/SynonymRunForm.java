@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
@@ -39,6 +40,8 @@ final class SynonymRunForm extends JPanel {
     private final JComboBox<String> source = Comic.combo();
     private final JComboBox<String> space = Comic.combo();
     private final JSpinner pairs;
+    /** Wie unter Einstellungen › Modelle: dieselbe Beschriftung, derselbe Hilfetext. */
+    private final javax.swing.JCheckBox glossaryOnly = Comic.checkBox(AiSettingsPanel.GLOSSARY_SYNONYMS_TEXT);
     private final WrappedText status = Comic.hint(" ");
     private final List<HarvestSource> sources;
     private final Function<String, List<Partition>> spaces;
@@ -54,6 +57,16 @@ final class SynonymRunForm extends JPanel {
      */
     SynonymRunForm(List<HarvestSource> sources, Function<String, List<Partition>> spaces,
                    Function<SynonymScope, SynonymDiscovery.Availability> availability, int maxJudgedPairs) {
+        this(sources, spaces, availability, maxJudgedPairs, false);
+    }
+
+    /**
+     * @param glossaryTermsOnly Vorbelegung „Synonyme zu: Nur zu bestätigten Fachbegriffen“ (K3, aus
+     *                          {@code terms.synonyms.glossary-terms-only})
+     */
+    SynonymRunForm(List<HarvestSource> sources, Function<String, List<Partition>> spaces,
+                   Function<SynonymScope, SynonymDiscovery.Availability> availability, int maxJudgedPairs,
+                   boolean glossaryTermsOnly) {
         super(new BorderLayout(0, 8));
         setOpaque(false);
         JPanel fields = new JPanel(new GridLayout(0, 1, 0, 4));
@@ -75,6 +88,12 @@ final class SynonymRunForm extends JPanel {
         fields.add(source);
         fields.add(Comic.caption("Space"));
         fields.add(space);
+        glossaryOnly.setSelected(glossaryTermsOnly);
+        glossaryOnly.setOpaque(false);
+        glossaryOnly.setToolTipText(AiSettingsPanel.GLOSSARY_SYNONYMS_TIP);
+        fields.add(Comic.caption(AiSettingsPanel.GLOSSARY_SYNONYMS_LABEL));
+        fields.add(Comic.row(glossaryOnly, new HelpButton(Dialogs.CLOSE_SIZE, AiSettingsPanel.GLOSSARY_SYNONYMS_LABEL,
+                AiSettingsPanel.GLOSSARY_SYNONYMS_HELP)));
         fields.add(Comic.caption("Zusätzlich vom Chat-Modell prüfen lassen, höchstens Paare"));
         fields.add(pairs);
         add(fields, BorderLayout.NORTH);
@@ -144,7 +163,12 @@ final class SynonymRunForm extends JPanel {
     }
 
     SynonymDiscovery.Request request() {
-        return new SynonymDiscovery.Request(scope(), (Integer) pairs.getValue());
+        return new SynonymDiscovery.Request(scope(), (Integer) pairs.getValue(), glossaryOnly.isSelected());
+    }
+
+    /** Für Tests: „Synonyme zu: Nur zu bestätigten Fachbegriffen“. */
+    javax.swing.JCheckBox glossaryOnlyBox() {
+        return glossaryOnly;
     }
 
     int maxJudgedPairs() {

@@ -221,6 +221,21 @@ class TermTotalsTest {
         assertThat(counts.values()).as(counts.toString()).allMatch(count -> count == 1);
     }
 
+    /** Fahrplan P3: je Suchwert die Seiten der Menge, über alle Arten; verborgene Seiten fehlen. */
+    @Test
+    void pagesByTermNameTheVisiblePagesOfEachTermWithinTheSet() {
+        PageSet below = PageSet.ofKeys(List.of(new PageKey("wiki", "1"), new PageKey("wiki", "2"),
+                new PageKey("other", "1")));
+        Map<String, List<PageKey>> pages = terms.pagesByTerm(CALLER, below);
+        assertThat(pages.get("rsl")).containsExactly(new PageKey("wiki", "1"), new PageKey("wiki", "2"));
+        assertThat(pages.get("bkz")).containsExactly(new PageKey("other", "1"), new PageKey("wiki", "1"));
+        assertThat(pages).doesNotContainKey("zv");
+
+        hidden.add(new PageKey("wiki", "2"));
+        assertThat(terms.pagesByTerm(CALLER, below).get("rsl")).containsExactly(new PageKey("wiki", "1"));
+        assertThat(terms.pagesByTerm(CALLER, PageSet.EMPTY)).isEmpty();
+    }
+
     /** Messung für den Architekten: etwa 5.000 Seiten, eine Zählung über alles; die Zeit steht in der Ausgabe. */
     @Test
     void fiveThousandPagesAreCountedInOnePass() {
