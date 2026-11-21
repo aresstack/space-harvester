@@ -161,8 +161,8 @@ class WorkspaceTest {
             assertThat(await(workspace, listed).state().terminal()).isTrue();
         }
         // Die Synonymerkennung nach der Anreicherung läuft sichtbar als Hintergrundauftrag (#1052).
-        assertThat(workspace.jobs()).filteredOn(job -> job.type().background())
-                .extracting(job -> job.parameter(BackgroundJobs.TITLE))
+        assertThat(workspace.jobs()).filteredOn(entry -> entry.type().background())
+                .extracting(entry -> entry.parameter(BackgroundJobs.TITLE))
                 .contains(SynonymDiscovery.BACKGROUND_TITLE);
         assertThat(CONFLUENCE.requestHeaders()).anySatisfy(headers ->
                 assertThat(headers.values()).contains("Bearer " + TOKEN));
