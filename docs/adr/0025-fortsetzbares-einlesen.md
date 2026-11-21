@@ -254,3 +254,38 @@ wird automatisch verwaltet.
 7. **Desktop-App.** Die Auftragsverwaltung zeigt Hintergrundaufträge in einem eigenen Reiter „Hintergrund“, je Gruppe
    eine Zeile mit den Unteraufträgen darunter, farblich hervorgehoben (Form mit dem UX-Manager); die Liste der
    Benutzeraufträge bleibt frei davon.
+
+## Nachtrag 21.11.2026: Dienst-Planer (D1)
+
+Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel
+ausdrücklich startet, soll nicht von Hand die Vorstufen anstoßen müssen; die Vorstufen verhalten sich wie
+Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
+
+1. **Beschreibung.** `AnalysisService` (`application.background.services`): Kennung, Titel, Starttyp
+   (`ServiceStart` AUTOMATIC/MANUAL/DISABLED, zur Laufzeit gelesen), Vorstufen als Kennungen, `BackgroundKind` der
+   Arbeit (oder noch keine) und `missing(caller, PageSet)` → `MissingPages` je Quelle und Space mit den Rechten des
+   Aufrufers; Seiten ohne Zugriff nur als Zahl, nie mit Titeln. „Lokal“ heißt bestätigter Text in aktueller Fassung
+   (Holdings `LOCAL`), `OUTDATED` zählt als fehlend.
+2. **Planer.** `ServicePlanner#register` weist einen Zyklus mit `IllegalStateException` ab und lässt alles, wie es war.
+   `ServicePlanner#start(caller, ziel, PageSet)` löst die Vorstufen topologisch auf und legt EINE Hintergrundgruppe an
+   (`BackgroundJobs#startSteps`, ganz oder gar nicht, Gruppenart = Art des Ziels), je Stufe und Space ein Unterauftrag.
+   Ein ausdrücklich gestartetes Ziel startet auch MANUAL-Vorstufen; DISABLED startet nie und wird gelb als „bewusst
+   ausgelassen“ gemeldet. AUTOMATIC heißt zusätzlich: startet auf seinen bisherigen Auslösern. Die Vorgaben der
+   Starttypen ändern am heutigen Verhalten nichts. Eine Vorstufe ohne fehlende Seiten legt nichts an; das Ziel legt
+   seinen Teil je Space immer an, sobald die Seitenmenge für den Aufrufer nicht leer ist. Läuft schon ein Teil gleicher
+   Art für Quelle und Space (`BackgroundJobs#running`), wird er Vorgänger statt neu angelegt, auch aus einer fremden
+   Gruppe (gezeigt werden nur Art und Space).
+3. **Warten je Space.** Ein Teil trägt die IDs seiner Vorgänger (`Jobs.AFTER`, Liste) und startet erst, wenn keiner ihn
+   mehr hält (`Jobs.PredecessorGate`): offen, angehalten oder unterbrochen und fortsetzbar hält; fertig, gescheitert,
+   abgebrochen, gelöscht oder unterbrochen ohne angemeldete, fortsetzbare Art gibt frei. Ein gesperrter Teil zählt für
+   die Vorfahrt nicht als wartend und hält keinen anderen Auftrag auf; er meldet einmal „wartet auf „Vorstufe““
+   (`Jobs.WAITING_FOR`). Teile anderer Spaces warten nie mit.
+4. **Fehler und Pause.** Eine gescheiterte, abgebrochene oder gelöschte Vorstufe hält die Kette nicht auf: die
+   Folgestufe läuft über das Vorhandene und meldet gelb mit Grund (`BackgroundJobs.PREDECESSOR_MISSING`). Eine
+   angehaltene Vorstufe hält die Kette an. Abbruch der Gruppe bricht auch gesperrte Teile ab, Pause pausiert sie, und
+   Fortsetzen setzt die Sperre wieder ein.
+5. **Neustart.** Die Vorgänger stehen in den Angaben; `resumeInterrupted` setzt die ältesten Teile zuerst fort, darum
+   läuft eine unterbrochene Kette in derselben Reihenfolge weiter.
+6. **Erste Dienste** (`Harvester#servicePlanner`) nur als Beschreibung: Indexieren (AUTOMATIC), Bilder beschreiben
+   (wie `images.automatic`), Aussagenanalyse (MANUAL), Glossar (AUTOMATIC), Wissensgraph (MANUAL, nach Aussagenanalyse
+   und Bildbeschreibung). Ihre Arten bauen die Stränge B1 (D2) und A2 (D3).
