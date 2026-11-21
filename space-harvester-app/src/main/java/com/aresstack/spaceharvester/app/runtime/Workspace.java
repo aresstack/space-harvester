@@ -332,6 +332,24 @@ public final class Workspace {
         return Optional.of(glossary);
     }
 
+    /**
+     * Suchmethode „Nur Fachbegriffe“ (K5b, {@code GET /api/v1/glossary/technical-terms}): vorgeschlagene und bestätigte
+     * Fachbegriffe ohne Einordnung technisch, deren Begriff oder eines ihrer Synonyme zum Suchtext passt.
+     */
+    public com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Page technicalTerms(String q,
+            com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope scope, int limit, String cursor) {
+        return harvester.technicalTerms().search(caller, q, scope, limit, cursor);
+    }
+
+    /**
+     * Meldet jede Änderung an den Begriffsbeziehungen (ADR 0027), aus beliebigem Thread; kein Abfragen in Abständen.
+     *
+     * @return meldet den Beobachter wieder ab
+     */
+    public Runnable subscribeTermRelations(Runnable onChange) {
+        return harvester.termRelations().subscribe(Objects.requireNonNull(onChange, "onChange"));
+    }
+
     /** Bestätigen ({@code POST …/{id}/confirm?revision=}); wirft bei fremdem Stand {@code RelationConflictException}. */
     public TermRelation confirmRelation(String id, long revision) {
         return harvester.termRelations().confirm(caller, id, revision);

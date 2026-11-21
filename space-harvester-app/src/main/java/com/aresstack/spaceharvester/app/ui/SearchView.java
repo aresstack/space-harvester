@@ -72,6 +72,11 @@ public final class SearchView implements View {
     static final String SEMANTIC = "Semantische Suche";
     /** Suchmethode „Nachbarseiten“ (R2). */
     static final String NEIGHBORS = "Nachbarseiten einbeziehen";
+    /** Suchmethode „Nur Fachbegriffe“ (K5b). */
+    static final String TECHNICAL_TERMS = "Nur Fachbegriffe";
+    static final String TECHNICAL_TERMS_TIP = "Zeigt statt der Seiten die Fachbegriffe des Glossars und ihre Synonyme "
+            + "zum Prüfen; der Chat übernimmt diese Methode nicht";
+    static final String TECHNICAL_TERMS_MODE = "Modus: Fachbegriffe";
     /** Gelbe Zeile, wenn die Nachbarseiten nicht geprüft werden konnten; kein Fehler der Suche. */
     static final String NEIGHBORS_UNCHECKED = "Nachbarseiten konnten nicht geprüft werden";
 
@@ -87,6 +92,19 @@ public final class SearchView implements View {
      * ({@link SearchMethods}); der Chat folgt ihr.
      */
     final JCheckBox neighbors = checkBox(NEIGHBORS, NEIGHBORS_TIP);
+    /**
+     * Suchmethode „Nur Fachbegriffe“ (K5b, Angelo 21.11.2026; Standard aus, gilt für die Sitzung): statt der
+     * Trefferliste die Fachbegriffe des Glossars links und ihre Synonyme rechts, je mit Bestätigen und Ablehnen
+     * ({@link TechnicalTermsPanel}). Eine Pflegeansicht; der Chat übernimmt sie nicht.
+     */
+    final JCheckBox technicalTerms = checkBox(TECHNICAL_TERMS, TECHNICAL_TERMS_TIP);
+    /** Die Ansicht der Methode „Nur Fachbegriffe“ in der Mitte statt der Treffer. */
+    final TechnicalTermsPanel termsPanel;
+    /** Mitte: Trefferliste oder Fachbegriffe. */
+    private final java.awt.CardLayout centerCards = new java.awt.CardLayout();
+    private final JPanel center = new JPanel(centerCards);
+    private static final String HITS_CARD = "hits";
+    private static final String TERMS_CARD = "terms";
     /** Die Suche, nach deren Stapel die Nachbarseiten noch gesucht werden; -1 ohne. */
     private int neighborsFor = -1;
     /** Läuft die Nachbarsuche dieser Anfrage, wartet „Weitere laden“: Der nächste Stapel verwürfe sonst ihre Treffer. */
@@ -215,6 +233,15 @@ public final class SearchView implements View {
         more.setVisible(false);
         semantic.setSelected(false);
         semantic.addItemListener(e -> mode());
+        termsPanel = new TechnicalTermsPanel(error -> feedback.problem(error));
+        technicalTerms.setSelected(SearchMethods.user().technicalTermsOnly());
+        technicalTerms.addItemListener(e -> {
+            SearchMethods.user().technicalTermsOnly(technicalTerms.isSelected());
+            mode();
+            if (technicalTerms.isSelected()) {
+                searchTechnicalTerms();
+            }
+        });
         neighbors.setSelected(SearchMethods.user().neighbors());
         neighbors.addItemListener(e -> {
             SearchMethods.user().neighbors(neighbors.isSelected());
@@ -291,7 +318,10 @@ public final class SearchView implements View {
         more.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         more.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, more.getPreferredSize().height));
         list.add(more, BorderLayout.SOUTH);
-        root.add(list, BorderLayout.CENTER);
+        center.setOpaque(false);
+        center.add(list, HITS_CARD);
+        center.add(termsPanel, TERMS_CARD);
+        root.add(center, BorderLayout.CENTER);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
         // Der Stand steht in der Statuszeile des Hauptfensters: Ladestand, Abbrechen bzw. Endzustand, Treffer.
@@ -349,6 +379,9 @@ public final class SearchView implements View {
             + "Die Häkchen oben nehmen Quellen und Dateitypen aus der Suche.<br>"
             + "Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage<br>"
             + "geordnet; braucht ein Embedding-Modell (Einstellungen › Modelle).<br>"
+            + "Nur Fachbegriffe: links die Fachbegriffe des Glossars zum Suchtext (auch über Synonyme), rechts<br>"
+            + "ihre Synonyme, je zum Bestätigen oder Ablehnen; leeres Feld zeigt alle des Bereichs. Eine Pflege-<br>"
+            + "ansicht ohne Seitentreffer, der Chat übernimmt sie deshalb nicht.<br>"
             + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) öffnet die Seite direkt.<br>"
             + "Doppelklick auf einen Treffer öffnet ihn unter Inhalte.</html>";
 
@@ -408,6 +441,7 @@ public final class SearchView implements View {
         options.add(caption("Suchmethoden"));
         options.add(menuItem(semantic));
         options.add(menuItem(neighbors));
+        options.add(menuItem(technicalTerms));
         options.add(notes);
         options.revalidate();
     }
@@ -514,6 +548,10 @@ public final class SearchView implements View {
                             + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
         }
         watchLocalShare();
+        if (technicalTerms.isSelected() && termsRuntime != null) {
+            // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
+            searchTechnicalTerms();
+        }
     }
 
     /**
@@ -757,8 +795,49 @@ public final class SearchView implements View {
 
     /** Nennt den Modus der nächsten Suche neben dem Umfang. */
     private void mode() {
-        modeLabel.setText((semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
+        boolean terms = technicalTerms.isSelected();
+        modeLabel.setText(terms ? TECHNICAL_TERMS_MODE
+                : (semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
                 + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : ""));
+        centerCards.show(center, terms ? TERMS_CARD : HITS_CARD);
+        AppRuntime runtime = context.runtime();
+        if (!terms || runtime == null) {
+            termsRuntime = null;
+            termsPanel.close();
+        } else if (runtime != termsRuntime) {
+            termsRuntime = runtime;
+            termsPanel.access(TechnicalTermsPanel.of(runtime.workspace()));
+        }
+    }
+
+    /** Die Laufzeit, an die {@link #termsPanel} gebunden ist; {@code null} ohne. */
+    private AppRuntime termsRuntime;
+
+    /** „Nur Fachbegriffe“: Suchtext (leer heißt alle) im links gewählten Bereich. */
+    private void searchTechnicalTerms() {
+        if (termsRuntime == null) {
+            return;
+        }
+        feedback.clear();
+        termsPanel.search(query.getText(), technicalScope());
+    }
+
+    /**
+     * Der Bereich für „Nur Fachbegriffe“ wie bei der übrigen Suche: ein gewählter Knoten (Quelle oder Space) bzw. eine
+     * einzige angehakte Quelle; sonst alle, denn das Glossar kennt keine Menge von Quellen.
+     */
+    com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope technicalScope() {
+        Set<String> searched = searchedSources();
+        List<Explorer.Scope> within = scopes.stream().filter(scope -> searched.contains(scope.sourceId())).toList();
+        if (within.size() == 1) {
+            return new com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope(
+                    within.get(0).sourceId(), within.get(0).spaceKey());
+        }
+        if (within.isEmpty() && searched.size() == 1 && searched.size() < sourceBoxes.size()) {
+            return new com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope(
+                    searched.iterator().next(), null);
+        }
+        return com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope.ALL;
     }
 
     /** Tooltip der Trefferliste. */
@@ -839,6 +918,11 @@ public final class SearchView implements View {
         if (runtime.workspace().sources().isEmpty()) {
             feedback.warning("Keine Quelle eingerichtet", "Wissensquellen legst du unter Wissensquellen verwalten "
                     + "an (rechts oben).");
+            return;
+        }
+        if (technicalTerms.isSelected()) {
+            mode();
+            searchTechnicalTerms();
             return;
         }
         if (text.isEmpty()) {
