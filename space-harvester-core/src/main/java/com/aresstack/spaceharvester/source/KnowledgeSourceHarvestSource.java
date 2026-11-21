@@ -20,6 +20,8 @@ import com.aresstack.enterpriseai.source.api.PageNavigationSource;
 import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
 import com.aresstack.enterpriseai.source.api.ChangeListingSource;
+import com.aresstack.enterpriseai.source.api.PartitionIdListingSource;
+import com.aresstack.enterpriseai.source.api.PartitionIds;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
@@ -49,6 +51,7 @@ import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachments;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.PageIdBatch;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.SignInChallenge;
 import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
@@ -842,6 +845,26 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         return new PageMetadataBatch(batch.resources().stream()
                 .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+    }
+
+    @Override
+    public boolean listsPageIds() {
+        return port instanceof PartitionIdListingSource;
+    }
+
+    @Override
+    public PageIdBatch pageIds(String partitionKey, String cursor, int limit) {
+        if (!(port instanceof PartitionIdListingSource ids)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
+                    "Quelle liefert keine reine ID-Liste", null);
+        }
+        PartitionIds batch;
+        try {
+            batch = ids.resourceIds(partitionKey, cursor == null ? "" : cursor, limit);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return new PageIdBatch(batch.localIds(), batch.nextCursor());
     }
 
     private ChangeListingSource changes() {

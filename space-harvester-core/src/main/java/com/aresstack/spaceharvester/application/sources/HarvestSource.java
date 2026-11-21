@@ -376,6 +376,27 @@ public interface HarvestSource {
     }
 
     /**
+     * Ob die Quelle die IDs aller Seiten einer Partition ohne Metadaten liefern kann ({@link #pageIds}); dann erkennt
+     * das Nachholen gelöschte Seiten mit dieser schlanken Liste statt mit der Seitenliste samt Kopfdaten.
+     */
+    default boolean listsPageIds() {
+        return false;
+    }
+
+    /**
+     * Ein Stapel reiner Seiten-IDs einer Partition (Confluence: {@code /rest/api/content} ohne {@code expand}, 200 je
+     * Anfrage).
+     *
+     * @param cursor {@code null} für den ersten Stapel, sonst {@link PageIdBatch#nextCursor()}
+     * @throws SourceAccessException {@code UNSUPPORTED} ohne {@link #listsPageIds()} oder für einen fremden Cursor,
+     *                               sonst wie {@link #pageMetadata(String, String, int)}
+     */
+    default PageIdBatch pageIds(String partitionKey, String cursor, int limit) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle liefert keine reine ID-Liste", null);
+    }
+
+    /**
      * Ob die Quelle Änderungsereignisse lesen kann, die sie selbst verschickt (Confluence-Webhooks, ADR 0014); dann
      * liest {@link #changeEvents} den Rumpf eines Aufrufs.
      */

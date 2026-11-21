@@ -89,6 +89,26 @@ public class SourceQueries {
                 cursor == null || cursor.isEmpty() ? null : cursor, limit));
     }
 
+    /** Größter Stapel der reinen ID-Liste ({@link #pageIds}). */
+    public static final int MAX_PAGE_ID_LIMIT = 200;
+
+    /** Ob die Quelle eine reine ID-Liste liefert ({@link HarvestSource#listsPageIds()}). */
+    public boolean listsPageIds(String sourceId) {
+        return source(sourceId).listsPageIds();
+    }
+
+    /**
+     * Ein Stapel reiner Seiten-IDs einer Partition ({@link HarvestSource#pageIds}).
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED}, wenn die Quelle keine ID-Liste liefert
+     */
+    public PageIdBatch pageIds(String sourceId, String partitionKey, String cursor, int limit) {
+        if (limit < 1 || limit > MAX_PAGE_ID_LIMIT) {
+            throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_PAGE_ID_LIMIT + " liegen");
+        }
+        return source(sourceId).pageIds(partitionKey, cursor == null || cursor.isEmpty() ? null : cursor, limit);
+    }
+
     /** Ob die Quelle Änderungen gezielt meldet ({@link HarvestSource#listsChanges()}). */
     public boolean listsChanges(String sourceId) {
         return source(sourceId).listsChanges();
