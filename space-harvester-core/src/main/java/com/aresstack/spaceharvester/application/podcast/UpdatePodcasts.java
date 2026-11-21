@@ -1,6 +1,5 @@
 package com.aresstack.spaceharvester.application.podcast;
 
-import com.aresstack.enterpriseai.astu.acropolis.speech.TextAnalysisService;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
@@ -72,7 +71,6 @@ public final class UpdatePodcasts {
     private final PodcastSpeech speech;
     private final PodcastStore store;
     private final PodcastVoices voices;
-    private final TextAnalysisService analysis;
     private final IntSupplier parallel;
     private final Listeners<Runnable> listeners = new Listeners<>("Podcast");
     private final Object starting = new Object();
@@ -81,16 +79,15 @@ public final class UpdatePodcasts {
 
     /**
      * @param model    das Chat-Modell der Planung und der Texte
-     * @param analysis Satzanalyse des Vorlesens; {@code null} = Schnitt an Satzzeichen
      * @param parallel so viele Anfragen schickt der Auftrag höchstens zugleich an das Chat-Modell ({@code ai.parallel})
      */
     public UpdatePodcasts(Jobs jobs, StepModel model, PodcastSpeech speech, PodcastStore store, PodcastVoices voices,
-                          TextAnalysisService analysis, IntSupplier parallel) {
-        this(jobs, model, speech, store, voices, analysis, parallel, UpdatePodcasts::pauseBefore);
+                          IntSupplier parallel) {
+        this(jobs, model, speech, store, voices, parallel, UpdatePodcasts::pauseBefore);
     }
 
     UpdatePodcasts(Jobs jobs, StepModel model, PodcastSpeech speech, PodcastStore store, PodcastVoices voices,
-                   TextAnalysisService analysis, IntSupplier parallel,
+                   IntSupplier parallel,
                    java.util.function.ObjIntConsumer<JobContext> waits) {
         this.waits = Objects.requireNonNull(waits, "waits");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
@@ -98,7 +95,6 @@ public final class UpdatePodcasts {
         this.speech = Objects.requireNonNull(speech, "speech");
         this.store = Objects.requireNonNull(store, "store");
         this.voices = Objects.requireNonNull(voices, "voices");
-        this.analysis = analysis;
         this.parallel = Objects.requireNonNull(parallel, "parallel");
     }
 
@@ -226,7 +222,7 @@ public final class UpdatePodcasts {
         if (models.isEmpty()) {
             throw new JobFailedException("NO_SPEECH_MODEL", "Der KI-Dienst bietet kein Sprachmodell (TTS) an");
         }
-        PodcastSpeaker speaker = new PodcastSpeaker(speech.port(), models, voices, analysis);
+        PodcastSpeaker speaker = new PodcastSpeaker(speech, models, voices);
         PodcastVoices.Pair pair = store.meta(key).filter(meta -> speaker.model().equals(meta.model()))
                 .map(meta -> new PodcastVoices.Pair(meta.host(), meta.cohost())).orElse(speaker.pair());
         store.saveMeta(new PodcastStore.Meta(key, summary.sourceId(), summary.updateId(), summary.spaceKey(),

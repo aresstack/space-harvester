@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.application.podcast;
+package com.aresstack.spaceharvester.source.ai;
 
 import com.aresstack.enterpriseai.speech.api.TextAnalysisEngine;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
@@ -11,13 +11,13 @@ import java.util.Objects;
  * ({@code OpenNlpSentenceSegmenter}, deutsches OpenNLP-Modell im Klassenpfad). Eine Spracherkennung gibt es nicht: der
  * Podcast ist deutsch und spricht mit einer Stimme je Sprecher.
  */
-public final class SentenceAnalysis {
+final class SentenceAnalysis {
 
     private SentenceAnalysis() {
     }
 
     /** Eine Engine über diese Satzgrenzen. */
-    public static TextAnalysisEngine engine(SentenceSegmenter sentences) {
+    static TextAnalysisEngine engine(SentenceSegmenter sentences) {
         Objects.requireNonNull(sentences, "sentences");
         return new TextAnalysisEngine() {
             @Override

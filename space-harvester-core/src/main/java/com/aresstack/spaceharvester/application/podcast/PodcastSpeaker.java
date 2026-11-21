@@ -1,10 +1,5 @@
 package com.aresstack.spaceharvester.application.podcast;
 
-import com.aresstack.enterpriseai.astu.acropolis.speech.AudioPlayback;
-import com.aresstack.enterpriseai.astu.acropolis.speech.ReadAloudService;
-import com.aresstack.enterpriseai.astu.acropolis.speech.SpeechChunking;
-import com.aresstack.enterpriseai.astu.acropolis.speech.TextAnalysisService;
-import com.aresstack.enterpriseai.speech.api.SpeechSynthesisPort;
 import com.aresstack.spaceharvester.application.podcast.PodcastPlan.Speaker;
 import com.aresstack.spaceharvester.application.podcast.PodcastPlan.Turn;
 
@@ -19,14 +14,12 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Spricht den Text eines Abschnitts über den Vorlese-Ablauf des Enterprise AI Client ({@link ReadAloudService}, unverändert
- * kopiert): Aufbereitung zu sprechbaren Zeichen, Satzanalyse über OpenNLP ({@link TextAnalysisService}) und der
- * Stimmstabilitäts-Fix, der lange Stücke nach etwa 500 Zeichen an der nächsten Satzgrenze beendet, weil generative
- * Stimmen wie Orpheus über rund 1000 Zeichen ihre Stimme wechseln. Statt abzuspielen sammelt eine eigene
- * {@link AudioPlayback} die WAV-Stücke; die Beiträge des Abschnitts werden mit kurzen Pausen zu einer WAV-Datei.
+ * Spricht die Beiträge eines Abschnitts über {@link PodcastSpeech} und fügt sie mit kurzen Pausen zu einer WAV-Datei.
+ * Die Sprachausgabe nimmt den Vorlese-Ablauf des Enterprise AI Client: Aufbereitung zu sprechbaren Zeichen,
+ * Satzanalyse und der Stimmstabilitäts-Fix, der lange Stücke nach etwa 500 Zeichen an der nächsten Satzgrenze beendet,
+ * weil generative Stimmen wie Orpheus über rund 1000 Zeichen ihre Stimme wechseln.
  *
  * <p>Selbstheilend (Angelo 21.11.2026): Scheitert ein Beitrag auch nach den Wiederholungen des Ablaufs, versucht der
  * Sprecher ihn Satz für Satz, dann mit der anderen Stimme, dann mit dem nächsten Sprachmodell des Dienstes. Erst wenn
@@ -34,33 +27,23 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class PodcastSpeaker {
 
-    /** Versuche je Stück im Vorlese-Ablauf (wie dessen Regler: 1 bis 5). */
-    static final int ATTEMPTS = 3;
-    /** Parallele Synthesen je Beitrag. */
-    static final int WORKERS = 2;
     /** Pause zwischen zwei Beiträgen. */
     static final int PAUSE_MILLIS = 350;
     /** Höchstens so viele Sprachmodelle werden versucht. */
     static final int MAX_MODELS = 2;
 
-    private final SpeechSynthesisPort port;
+    private final PodcastSpeech speech;
     private final List<String> models;
     private final PodcastVoices voices;
-    private final TextAnalysisService analysis;
 
-    /**
-     * @param models die Sprachmodelle des Dienstes, bevorzugtes zuerst ({@link PodcastVoices#ranked})
-     * @param analysis Satzanalyse; {@code null} = Schnitt an Satzzeichen
-     */
-    public PodcastSpeaker(SpeechSynthesisPort port, List<String> models, PodcastVoices voices,
-                          TextAnalysisService analysis) {
-        this.port = Objects.requireNonNull(port, "port");
+    /** @param models die Sprachmodelle des Dienstes, bevorzugtes zuerst ({@link PodcastVoices#ranked}) */
+    public PodcastSpeaker(PodcastSpeech speech, List<String> models, PodcastVoices voices) {
+        this.speech = Objects.requireNonNull(speech, "speech");
         if (models.isEmpty()) {
             throw new IllegalArgumentException("models must not be empty");
         }
         this.models = List.copyOf(models.subList(0, Math.min(MAX_MODELS, models.size())));
         this.voices = Objects.requireNonNull(voices, "voices");
-        this.analysis = analysis;
     }
 
     /** Das bevorzugte Modell, dessen Stimmen der Podcast trägt. */
@@ -112,61 +95,31 @@ public final class PodcastSpeaker {
             String voice = turn.speaker() == Speaker.HOST ? pair.host() : pair.cohost();
             String other = turn.speaker() == Speaker.HOST ? pair.cohost() : pair.host();
             List<Attempt> attempts = new ArrayList<>();
-            attempts.add(new Attempt(voice, SpeechChunking.PARAGRAPHS, null));
-            attempts.add(new Attempt(voice, SpeechChunking.SENTENCES, "Satz für Satz"));
+            attempts.add(new Attempt(voice, false, null));
+            attempts.add(new Attempt(voice, true, "Satz für Satz"));
             if (other != null && !other.equals(voice)) {
-                attempts.add(new Attempt(other, SpeechChunking.SENTENCES, "mit der anderen Stimme"));
+                attempts.add(new Attempt(other, true, "mit der anderen Stimme"));
             }
             for (Attempt attempt : attempts) {
-                AtomicReference<String> problem = new AtomicReference<>();
-                List<byte[]> wavs = synthesize(model, attempt.voice(), attempt.chunking(), turn.text(), problem);
-                if (problem.get() == null && !wavs.isEmpty()) {
-                    if (attempt.note() != null || m > 0) {
-                        repairs.add("Beitrag " + (attempt.note() == null ? "" : attempt.note() + " ")
-                                + (m > 0 ? "mit dem Sprachmodell " + model : "") + "gesprochen");
+                try {
+                    List<byte[]> wavs = speech.speak(model, attempt.voice(), turn.text(), attempt.sentences());
+                    if (!wavs.isEmpty()) {
+                        if (attempt.note() != null || m > 0) {
+                            repairs.add("Beitrag " + (attempt.note() == null ? "" : attempt.note() + " ")
+                                    + (m > 0 ? "mit dem Sprachmodell " + model + " " : "") + "gesprochen");
+                        }
+                        return wavs;
                     }
-                    return wavs;
+                    lastProblem = "kein Audio";
+                } catch (IOException | RuntimeException e) {
+                    lastProblem = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 }
-                lastProblem = problem.get() == null ? "kein Audio" : problem.get();
             }
         }
         throw new IOException("Sprachausgabe gescheitert (" + lastProblem + ")");
     }
 
-    private record Attempt(String voice, SpeechChunking chunking, String note) {
-    }
-
-    private List<byte[]> synthesize(String model, String voice, SpeechChunking chunking, String text,
-                                    AtomicReference<String> problem) {
-        Collector collector = new Collector();
-        ReadAloudService service = new ReadAloudService(port, model, voice, collector, chunking, WORKERS, ATTEMPTS,
-                analysis, null, true);
-        service.speak(text, new ReadAloudService.Listener() {
-            @Override
-            public void failed(String message) {
-                problem.compareAndSet(null, message);
-            }
-        });
-        return collector.wavs;
-    }
-
-    /** Sammelt die Stücke statt sie abzuspielen. */
-    private static final class Collector implements AudioPlayback {
-
-        final List<byte[]> wavs = new ArrayList<>();
-
-        @Override
-        public void play(byte[] wav) {
-            wavs.add(wav);
-        }
-
-        @Override
-        public void finish() {
-        }
-
-        @Override
-        public void stop() {
-        }
+    private record Attempt(String voice, boolean sentences, String note) {
     }
 
     private static AudioInputStream stream(byte[] wav) throws IOException {
