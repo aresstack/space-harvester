@@ -400,7 +400,9 @@ public final class PodcastWriter {
             speaker = speaker.other();
         }
         for (Story story : stories) {
-            String where = story.place().isEmpty() ? "" : " Zu finden " + story.place() + ".";
+            // Der Ort hat höchstens ein Drittel des Beitrags: lange Seitentitel lassen dem Inhalt immer Platz.
+            String where = story.place().isEmpty() ? ""
+                    : " Zu finden " + cut(story.place(), MAX_TURN_CHARS / 3) + ".";
             turns.add(new Turn(speaker, cut(spoken(story.title() + ": " + flat(story.text())), MAX_TURN_CHARS
                     - where.length()) + where));
             speaker = speaker.other();
@@ -578,6 +580,9 @@ public final class PodcastWriter {
     }
 
     static String cut(String text, int max) {
+        if (max < 2) {
+            return text.isEmpty() ? text : "…";
+        }
         if (text.length() <= max) {
             return text;
         }

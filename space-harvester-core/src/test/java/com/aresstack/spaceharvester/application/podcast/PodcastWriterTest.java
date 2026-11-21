@@ -58,6 +58,20 @@ class PodcastWriterTest {
     }
 
     @Test
+    void theFallbackScriptKeepsRoomForTheContentWhenThePlaceIsLong() {
+        String longTitle = "Sehr langer Seitentitel ".repeat(12);
+        PodcastWriter.Material material = new PodcastWriter.Material("", List.of(new PodcastWriter.Story("Nordlicht",
+                "Der Lauf prüft vorher den Spool-Bereich.", List.of("auf der Seite „" + longTitle + "“",
+                "auf der Seite „" + longTitle + " 2“"))), null);
+        PodcastPlan.Topic topic = new PodcastPlan.Topic("Nordlicht", "", 0.5, List.of(), List.of(1));
+
+        List<Turn> turns = PodcastWriter.fallbackScript(material, topic, false, false);
+
+        assertThat(turns).hasSize(1);
+        assertThat(turns.get(0).text()).contains("Spool-Bereich").hasSizeLessThanOrEqualTo(PodcastWriter.MAX_TURN_CHARS + 20);
+    }
+
+    @Test
     void aSegmentNeverEndsWithAnOpenQuestion() {
         Segment segment = new Segment("Umzug", List.of(new Beat(Speaker.HOST, "erzählt"),
                 new Beat(Speaker.COHOST, "fragt")));
