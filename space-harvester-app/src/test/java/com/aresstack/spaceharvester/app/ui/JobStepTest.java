@@ -82,6 +82,24 @@ class JobStepTest {
                 .isTrue();
     }
 
+    @Test
+    void theSynonymRunIsNamedInsteadOfPlainEnrichment() {
+        JobStatus synonyms = new JobStatus("j3", JobType.ENRICHMENT, "wiki", null, "space-harvester-core",
+                JobState.QUEUED, new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, null, null,
+                java.util.Map.of(com.aresstack.spaceharvester.application.terms.SynonymDiscovery.TASK_PARAMETER,
+                        com.aresstack.spaceharvester.application.terms.SynonymDiscovery.TASK), false, false, null);
+
+        assertThat(Texts.type(synonyms)).isEqualTo("Synonyme erkennen");
+    }
+
+    @Test
+    void aGlossaryRunOverASubtreeNamesThePageWithItsSubpages() {
+        JobStatus glossary = new JobStatus("j2", JobType.GLOSSARY, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, "42", "Betriebshandbuch");
+
+        assertThat(ActivitiesView.where(glossary)).isEqualTo("wiki / OPS · „Betriebshandbuch“ samt Unterseiten");
+    }
+
     private static JobStatus job(String rootPageId, String rootTitle) {
         return new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.RUNNING, new JobProgress(0, 0, 0, 0),
                 null, false, Instant.EPOCH, null, null, rootPageId, rootTitle);

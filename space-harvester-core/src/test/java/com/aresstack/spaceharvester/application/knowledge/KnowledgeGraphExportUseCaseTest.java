@@ -46,9 +46,12 @@ class KnowledgeGraphExportUseCaseTest {
     private final Set<String> denied = new HashSet<>();
     private final AccessGuard access = new AccessGuard((context, scope, kind) ->
             scope.pageId() != null && denied.contains(scope.pageId()) ? AccessDecision.DENY : AccessDecision.ALLOW);
+    private final com.aresstack.spaceharvester.application.standing.StandingDecisionStore decisions =
+            com.aresstack.spaceharvester.application.standing.StandingDecisionStore.inMemory();
     private final StatementAnalysis statements = new StatementAnalysis(
             snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)), store, access, () -> parser,
-            StatementAnalysisTest.clock());
+            StatementAnalysisTest.clock(), null, null, () -> null, page -> false,
+            new com.aresstack.spaceharvester.application.standing.DecisionReviews(decisions));
     private final KnowledgeGraph graph = new KnowledgeGraph(store, access, key -> Optional.ofNullable(cache.get(key)),
             snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)), statements,
             KnowledgeGraph.TermExpansion.NONE);
@@ -284,6 +287,25 @@ class KnowledgeGraphExportUseCaseTest {
             assertThat(node.has("actor")).as("ein Träger handelt nie").isFalse();
         });
         assertThat(doc.path("@context").toString()).contains("\"bearer\"");
+    }
+
+    @Test
+    void verificationStatusIsTheEffectiveReviewOfAHuman() throws Exception {
+        // ADR 0032 W3: die Prüfung liegt in der Ablage der Entscheidungen, nie in der Analyse.
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.");
+        PageKey key = new PageKey("wiki", "1");
+        String id = store.find(key).orElseThrow().result().statements().getFirst().id();
+        java.time.Instant at = java.time.Instant.parse("2026-11-20T09:00:00Z");
+        decisions.write(List.of(new com.aresstack.spaceharvester.application.standing.StandingDecision(key, id,
+                AnalyzerChoice.PARSER, null, ParsedStatements.Review.CONFIRMED, 1, "anna", at, "anna", at)),
+                List.of(), List.of());
+
+        run(new Scope.Page("wiki", "1"));
+
+        assertThat(nodes(read(), "Statement")).singleElement().satisfies(node -> assertThat(
+                node.path("verificationStatus").asString()).isEqualTo("CONFIRMED"));
+        assertThat(store.find(key).orElseThrow().result().statements().getFirst().review())
+                .isEqualTo(ParsedStatements.Review.UNREVIEWED);
     }
 
     private static List<JsonNode> nodes(JsonNode doc, String type) {

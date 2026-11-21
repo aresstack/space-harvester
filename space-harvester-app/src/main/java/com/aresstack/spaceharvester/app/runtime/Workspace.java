@@ -1433,6 +1433,16 @@ public final class Workspace {
         return harvester.keywordSearch().search(caller, query, cursor, limit, null, found);
     }
 
+    /**
+     * Suchmethode „Synonyme der Fachbegriffe“ (K5a): wie viele Synonymvorschläge die Suche {@code query} je Quelle
+     * höchstens stellen würde, vor der Grenze {@code SearchExpansion.MAX_EXPANSIONS}; derselbe Umfang und dieselbe
+     * Entdoppelung wie die Suche. Wirft, wenn das Glossar nicht lesbar ist; nie auf dem EDT.
+     */
+    public int glossarySynonymsWanted(KeywordSearch.Query query) {
+        harvester.glossarySynonyms().requireReadable(caller);
+        return harvester.keywordSearch().glossarySynonymsWanted(caller, query);
+    }
+
     /** Wie weit die Seiten eines Stapels der Schlagwortsuche geladen sind ({@code Results.progress()}). */
     public java.util.Optional<KeywordSearch.Progress> keywordSearchProgress(String id) {
         return harvester.keywordSearch().progress(id);
@@ -1505,11 +1515,18 @@ public final class Workspace {
     /** Wie oben, mit bzw. ohne die Suchmethode „Nachbarseiten“ (R2), damit ihr Nutzen messbar ist. */
     public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
                                         java.nio.file.Path output, String version, boolean neighbors) {
+        return startSearchQuality(suite, previous, output, version, neighbors, false);
+    }
+
+    /** Wie oben, zusätzlich mit bzw. ohne die Suchmethode „Synonyme der Fachbegriffe“ (K5a). */
+    public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
+                                        java.nio.file.Path output, String version, boolean neighbors,
+                                        boolean synonyms) {
         JobStatus status = harvester.searchQuality().submit(caller,
                 new com.aresstack.spaceharvester.application.quality.SearchQualityRuns.Request(suite, previous, output,
                         com.aresstack.spaceharvester.app.chat.ChatKnowledge.MAX_SOURCES,
                         java.time.Duration.ofSeconds(com.aresstack.spaceharvester.app.chat.ChatTurn.SEARCH_SECONDS),
-                        version, neighbors));
+                        version, neighbors, synonyms));
         activities.remember(status.id());
         return status;
     }
@@ -2467,9 +2484,24 @@ public final class Workspace {
         return harvester.statusQuo().decide(caller, page, statementId, standing, expectedRevision);
     }
 
-    /** Löscht eine Entscheidung zum Stand; danach gelten wieder die Regeln. */
+    /** Löscht den Stand von Hand; danach gelten wieder die Regeln. Eine Prüfung im selben Eintrag bleibt. */
     public boolean clearStanding(PageKey page, String statementId, long expectedRevision) {
         return harvester.statusQuo().clear(caller, page, statementId, expectedRevision);
+    }
+
+    /**
+     * Bestätigt oder verwirft eine Aussage von Hand (ADR 0032 W3), für die Ablage des Analysators, in deren Analyse sie
+     * steht. Revision des Eintrags gemeinsam mit dem Stand.
+     */
+    public com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey page,
+            String statementId, com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review review,
+            long expectedRevision) {
+        return harvester.statusQuo().review(caller, page, statementId, review, expectedRevision);
+    }
+
+    /** Nimmt die Prüfung einer Aussage zurück (eigener Eintrag im Protokoll); ein Stand von Hand bleibt. */
+    public boolean withdrawStatementReview(PageKey page, String statementId, long expectedRevision) {
+        return harvester.statusQuo().withdrawReview(caller, page, statementId, expectedRevision);
     }
 
     /** Das Protokoll der Entscheidungen zu Aussage oder Seite, älteste zuerst. */

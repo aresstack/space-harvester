@@ -248,6 +248,17 @@ public final class ChatTurn {
 
     private boolean neighbors;
 
+    /**
+     * Suchmethode „Synonyme der Fachbegriffe“ (K5a): die Stellung der Suchoptionen beim Senden; die Suche im Bereich
+     * sucht dann zu bestätigten Fachbegriffen auch ihre vorgeschlagenen Synonyme.
+     */
+    public ChatTurn searchingGlossarySynonyms(boolean on) {
+        this.glossarySynonyms = on;
+        return this;
+    }
+
+    private boolean glossarySynonyms;
+
     /** Die KI-Freigabe dieses Turns; ohne Aufruf trägt er nichts ein. */
     public ChatTurn releasing(Releases releases) {
         this.releases = Objects.requireNonNull(releases, "releases");
@@ -400,7 +411,7 @@ public final class ChatTurn {
             public void delivered(String spaceKey, PageKey key) {
                 releasePage(spaceKey, key);
             }
-        }).neighbors(neighbors);
+        }).neighbors(neighbors).glossarySynonyms(glossarySynonyms);
         tools = running;
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
@@ -785,7 +796,8 @@ public final class ChatTurn {
         if (text.length() > MAX_QUERY_CHARS) {
             text = text.substring(0, MAX_QUERY_CHARS);
         }
-        KeywordSearch.Query query = new KeywordSearch.Query(text, null, Set.of(), Set.of()).within(scope.pages());
+        KeywordSearch.Query query = new KeywordSearch.Query(text, null, Set.of(), Set.of()).within(scope.pages())
+                .withGlossarySynonyms(glossarySynonyms);
         AtomicReference<List<ProgressiveResult.RankedHit>> latest = new AtomicReference<>(List.of());
         ProgressiveSearch running = workspace.progressiveSearch(query, new ProgressiveSearchListener() {
             @Override

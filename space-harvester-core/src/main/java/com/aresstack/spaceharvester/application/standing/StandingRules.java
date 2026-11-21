@@ -87,13 +87,14 @@ public final class StandingRules {
     /**
      * Stand einer Aussage.
      *
-     * @param decision Entscheidung zu genau dieser Aussage oder {@code null}
+     * @param decision Entscheidung zu genau dieser Aussage oder {@code null}; trägt sie nur die Prüfung, gelten die
+     *                 Regeln
      * @param cap      Vorgabe der Seite oder {@code null}
      */
     public static StatementStanding statement(ParsedStatements.Statement statement, StandingDecision decision,
                                               PageCap cap) {
         Objects.requireNonNull(statement, "statement");
-        if (decision != null) {
+        if (decision != null && decision.hasStanding()) {
             return new StatementStanding(decision.standing(), StandingBasis.DECISION, StandingReason.DECISION);
         }
         StatementStanding own = own(statement);

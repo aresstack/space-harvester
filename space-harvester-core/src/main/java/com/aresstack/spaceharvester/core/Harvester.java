@@ -162,9 +162,9 @@ import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.persistence.files.FileSynonymVectorCache;
 import com.aresstack.spaceharvester.application.glossary.Glossary;
+import com.aresstack.spaceharvester.application.glossary.GlossarySynonyms;
 import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.terms.AcronymResolution;
-import com.aresstack.spaceharvester.application.terms.ResolutionCache;
 import com.aresstack.spaceharvester.application.terms.SynonymCandidates;
 import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
@@ -352,6 +352,7 @@ public final class Harvester implements AutoCloseable {
     private FileSynonymVectorCache synonymVectors;
     private final AcronymResolution acronymResolution;
     private final Glossary glossary;
+    private final GlossarySynonyms glossarySynonyms;
     private final com.aresstack.spaceharvester.application.glossary.TechnicalTerms technicalTerms;
     private final GlossaryClassification glossaryClassification;
     private final com.aresstack.spaceharvester.application.glossary.GlossaryOverview glossaryOverview;
@@ -747,9 +748,12 @@ public final class Harvester implements AutoCloseable {
             // glossary.rules.* der wirksamen Konfiguration.
             TermSettings glossaryTerms = builder.terms;
             Harvester self = this; // der Wissensgraph entsteht weiter unten, gefragt wird erst im Auftrag
+            // D4: Modellantworten des Glossars dauerhaft im Datei-Cache wie bei den Synonymen.
+            FileResolutionCache glossaryCache = new FileResolutionCache(builder.dataDirectory.resolve("glossary")
+                    .resolve(GlossaryClassification.CACHE_DIRECTORY));
             this.glossaryClassification = new GlossaryClassification(catalog, enrichmentStore, access,
                     cache::findHeader, key -> cache.find(key).flatMap(projector::project), glossary, chatModel,
-                    ResolutionCache.inMemory(), jobs, termProcessor.version(), GlossaryClassification.Budget.DEFAULT,
+                    glossaryCache, jobs, termProcessor.version(), GlossaryClassification.Budget.DEFAULT,
                     who -> self.knowledgeGraph.analysed(who),
                     () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(),
                     this.aiRelease::mayProcess, clock);
@@ -762,6 +766,9 @@ public final class Harvester implements AutoCloseable {
                     : com.aresstack.spaceharvester.application.holdings.Selection.of(
                     new com.aresstack.spaceharvester.application.holdings.Selection.Root(scope.sourceId(),
                             scope.spaceKey(), null))).pages());
+            // D4.2: eine Seite samt Unterseiten mit den Rechten des Aufrufers.
+            this.glossaryClassification.subtrees((caller, sourceId, spaceKey, pageId) -> holdings.resolve(caller,
+                    Selection.of(Selection.Root.subtree(sourceId, spaceKey, pageId))).pages());
             // #336: Synonymerkennung auf Knopfdruck; Embedding- und Chat-Modell folgen der Konfiguration, Text nur
             // aus freigegebenen Quellen, Budget aus terms.synonyms.*.
             EmbeddingProcessor embeddingForTerms = embedding;
@@ -786,6 +793,8 @@ public final class Harvester implements AutoCloseable {
                     synonymCache, jobs,
                     () -> (this.settings != null ? this.settings.terms() : startTerms).synonyms(), clock);
             synonymDiscovery.pageReleases(pageReleases::contains);
+            // D4.4: Der automatische Lauf gehört wie die übrigen Hintergrundaufträge dem Core.
+            synonymDiscovery.owner(OWNER);
             // SY1: Neue KI-Freigaben von Seiten lösen den automatischen Lauf ihrer Quelle aus.
             opened.add(pageReleases.subscribe(synonymDiscovery::releasesChanged));
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
@@ -851,6 +860,8 @@ public final class Harvester implements AutoCloseable {
             } else {
                 excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
             }
+            // K5a: vorgeschlagene Synonyme bestätigter Fachbegriffe, nur mit der Suchmethode „Synonyme der Fachbegriffe“.
+            this.glossarySynonyms = new GlossarySynonyms(glossary, termRelations);
             this.keywordSearch = new KeywordSearch(catalog, access,
                     new PassageSnippets(textIndex, enrichmentStore::find), prefetch, builder.discoveryQueries,
                     excerpts, builder.selection(), runLog, findings,
@@ -859,7 +870,7 @@ public final class Harvester implements AutoCloseable {
                         if (before != null) {
                             before.searching(sourceIds);
                         }
-                    }, SearchExpansion.typed(termRelations::counterparts));
+                    }, SearchExpansion.typed(termRelations::counterparts), glossarySynonyms.expansion());
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -1093,6 +1104,8 @@ public final class Harvester implements AutoCloseable {
                 documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
                 // ADR 0032, FL5c: KI-Einordnungen mit Belegen von entzogenen Seiten fallen auf den Regelstand zurück
                 this.glossary.withdrawAi(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                // D4.3: die Modellantworten des Glossars zu Quellen mit entzogenen Seiten.
+                this.glossaryClassification.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // SY2: Vektoren der Synonymerkennung aus diesen Seiten und der Stand ihrer Quellen.
@@ -1134,8 +1147,14 @@ public final class Harvester implements AutoCloseable {
                     return Optional.empty();
                 }
             };
+            // ADR 0032, FL6 und W3: Entscheidungen zu Stand und Prüfung als Nutzerdaten. Die Prüfung durch Menschen wirkt
+            // an einer Stelle beim Lesen der Analysen (Aussagen-Reiter und Knowledge Graph), direkt aus der Ablage.
+            com.aresstack.spaceharvester.application.standing.StandingDecisionStore standingDecisions =
+                    new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
+                            builder.dataDirectory.resolve("standing"));
             this.statementAnalysis = new StatementAnalysis(readerText, graphStore, access, () -> statementAnalyzer,
-                    clock, simplified, checked, () -> modelAnalyzer, withdrawn::mayProcess);
+                    clock, simplified, checked, () -> modelAnalyzer, withdrawn::mayProcess,
+                    new com.aresstack.spaceharvester.application.standing.DecisionReviews(standingDecisions));
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
@@ -1158,8 +1177,7 @@ public final class Harvester implements AutoCloseable {
                     () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules(), glossary);
             knowledgeGraph.subscribe(technicalTerms::forget);
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
-                    cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
-                    builder.dataDirectory.resolve("standing")), access,
+                    cache::findHeader, standingDecisions, access,
                     () -> com.aresstack.spaceharvester.application.standing.StandingWords.of(
                             this.settings.standing()), clock,
                     new com.aresstack.spaceharvester.application.standing.SentenceSource() {
@@ -1180,6 +1198,9 @@ public final class Harvester implements AutoCloseable {
                                     .filter(text -> text.inputSha256().equals(inputSha256)).map(PageText::text);
                         }
                     });
+            // Eine gesetzte oder zurückgenommene Prüfung ändert die wirksame Prüfung der Analysen: Graph, Fachsicht,
+            // Aussagen und Verben ziehen ohne Klick nach (W3, D6).
+            opened.add(statusQuo.subscribeReviews(knowledgeGraph::analysesChanged));
             this.readingAdvice = new com.aresstack.spaceharvester.application.standing.ReadingAdvice(statusQuo,
                     knowledgeGraph::analysed,
                     new com.aresstack.spaceharvester.application.standing.ChangeLogRecentChanges(changeLog), clock);
@@ -1292,6 +1313,7 @@ public final class Harvester implements AutoCloseable {
                     .synonymCache(synonymCache)
                     .synonymVectors(synonymVectors)
                     .glossary(glossary)
+                    .glossaryCache(glossaryCache)
                     .factEdits(factEditStore, clock)
                     .knowledgeGraph(graphStore, graph::forgetInputs)
                     .standing(statusQuo)
@@ -1812,6 +1834,11 @@ public final class Harvester implements AutoCloseable {
     /** KI-Akronymauflösung als Vorschlagslauf je Quelle (#122). */
     public AcronymResolution acronymResolution() {
         return acronymResolution;
+    }
+
+    /** Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a). */
+    public GlossarySynonyms glossarySynonyms() {
+        return glossarySynonyms;
     }
 
     /** Fachglossar: Pflege von Hand und Abgleich der KI-Läufe. */

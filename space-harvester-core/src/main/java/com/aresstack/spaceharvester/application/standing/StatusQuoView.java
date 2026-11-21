@@ -12,16 +12,29 @@ import java.util.Map;
  * @param pages            Stand je Seite bzw. Dokument, in der Reihenfolge der Seiten
  * @param counts           Anzahl der Aussagen aus aktuellen Analysen je Stand (alle Stände, auch 0)
  * @param certainCounts    Anzahl der sicheren Aussagen aus aktuellen Analysen je Stand
- * @param staleDecisions   Entscheidungen zu Aussagen sichtbarer Seiten, die es in der aktuellen Analyse nicht mehr
- *                         gibt (Text geändert, Vorstufe entzogen): Sie greifen nicht mehr und warten darauf, neu
- *                         getroffen oder gelöscht zu werden
- * @param staleEntries     Einträge aus veralteten Analysen ({@link StatusQuoEntry#analysisStale()}): Sie stehen in
- *                         {@code entries}, zählen aber weder in den Zahlen noch im Stand je Seite, in {@code states}
- *                         oder bei möglichen Widersprüchen
+ * @param staleDecisions    Entscheidungen zu Aussagen sichtbarer Seiten, die es in der aktuellen Analyse nicht mehr
+ *                          gibt (Text geändert, Vorstufe entzogen): Sie greifen nicht mehr und warten darauf, neu
+ *                          getroffen oder gelöscht zu werden. Stand oder Prüfung; nur Einträge für die Ablage des
+ *                          Analysators, aus der die Seite gelesen wurde
+ * @param staleEntries      Einträge aus veralteten Analysen ({@link StatusQuoEntry#analysisStale()}): Sie stehen in
+ *                          {@code entries}, zählen aber weder in den Zahlen noch im Stand je Seite, in {@code states}
+ *                          oder bei möglichen Widersprüchen
+ * @param rejectedDecisions Entscheidungen zu Aussagen der aktuellen Analyse, die ein Mensch verworfen hat
+ *                          ({@code REJECTED}, ADR 0032 W3): Die Aussage zählt nicht und fehlt in {@code entries}, die
+ *                          Entscheidung bleibt hier erreichbar, damit die Prüfung zurückgenommen werden kann. Nie
+ *                          veraltet, solange es die Aussage gibt
  */
 public record StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> states, List<PageStanding> pages,
                             Map<Standing, Integer> counts, Map<Standing, Integer> certainCounts,
-                            List<StandingDecision> staleDecisions, int staleEntries) {
+                            List<StandingDecision> staleDecisions, int staleEntries,
+                            List<StandingDecision> rejectedDecisions) {
+
+    /** Ohne verworfene Aussagen. */
+    public StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> states, List<PageStanding> pages,
+                         Map<Standing, Integer> counts, Map<Standing, Integer> certainCounts,
+                         List<StandingDecision> staleDecisions, int staleEntries) {
+        this(entries, states, pages, counts, certainCounts, staleDecisions, staleEntries, List.of());
+    }
 
     /** Mit der Zahl der veralteten Einträge aus {@code entries}. */
     public StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> states, List<PageStanding> pages,
@@ -38,5 +51,6 @@ public record StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> sta
         counts = PageStanding.complete(counts);
         certainCounts = PageStanding.complete(certainCounts);
         staleDecisions = List.copyOf(staleDecisions);
+        rejectedDecisions = List.copyOf(rejectedDecisions);
     }
 }

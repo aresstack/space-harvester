@@ -240,7 +240,7 @@ public class KnowledgeGraph {
      * oder ohne Leserecht auf die Seite (nicht unterscheidbar); ein Dokument hat die Rechte seiner Seite.
      */
     public Optional<AnalysedPage> page(AccessContext caller, DocumentKey document) {
-        return store.find(document).flatMap(analysis -> visible(caller, analysis));
+        return store.find(document).flatMap(analysis -> visible(caller, analysis, statements.reviews().snapshot()));
     }
 
     /**
@@ -251,7 +251,7 @@ public class KnowledgeGraph {
     Optional<AnalysedPage> document(AccessContext caller, PageKey key, String fileName) {
         return store.documents().stream()
                 .filter(analysis -> analysis.key().equals(key) && analysis.document().fileName().equals(fileName))
-                .findFirst().flatMap(analysis -> visible(caller, analysis));
+                .findFirst().flatMap(analysis -> visible(caller, analysis, statements.reviews().snapshot()));
     }
 
     /**
@@ -429,7 +429,8 @@ public class KnowledgeGraph {
     /**
      * Meldet sich, nachdem Analysen gelöscht wurden ({@link #delete}, {@link #deleteAll}, sofort) und nachdem Analysen
      * neu geschrieben, ersetzt oder entfernt wurden ({@link #analysesChanged()}, gebündelt), damit Stand, Graph,
-     * Fachsicht, Verben und Glossar neu lesen. Kein Polling.
+     * Fachsicht, Verben und Glossar neu lesen, auch nach einer geänderten Prüfung durch Menschen (Harvester gibt
+     * {@code StatusQuo#subscribe} hierher weiter). Kein Polling.
      */
     public com.aresstack.spaceharvester.application.observe.Subscription subscribe(Runnable listener) {
         return listeners.add(Objects.requireNonNull(listener, "listener"));
@@ -450,11 +451,13 @@ public class KnowledgeGraph {
 
     private List<AnalysedPage> visible(AccessContext caller) {
         List<AnalysedPage> pages = new ArrayList<>();
+        // Eine Momentaufnahme der Prüfungen durch Menschen für den ganzen Lesevorgang, nicht je Analyse neu gelesen.
+        java.util.function.UnaryOperator<PageStatementAnalysis> reviewed = statements.reviews().snapshot();
         for (PageStatementAnalysis analysis : store.all()) {
-            visible(caller, analysis).ifPresent(pages::add);
+            visible(caller, analysis, reviewed).ifPresent(pages::add);
         }
         for (PageStatementAnalysis analysis : store.documents()) {
-            visible(caller, analysis).ifPresent(pages::add);
+            visible(caller, analysis, reviewed).ifPresent(pages::add);
         }
         // Die Seite vor ihren Dokumenten: ihr Schlüssel ist ein Präfix der Schlüssel ihrer Dokumente.
         pages.sort(Comparator.comparing((AnalysedPage page) -> page.page().key().sourceId())
@@ -463,7 +466,12 @@ public class KnowledgeGraph {
         return pages;
     }
 
-    private Optional<AnalysedPage> visible(AccessContext caller, PageStatementAnalysis analysis) {
+    /**
+     * Die eine Lesestelle des Graphen: Rechte, Stand der Analyse und die wirksame Prüfung durch Menschen
+     * ({@link StatementReviews}, ADR 0032 W3). Der Graph schreibt nie zurück, die Ablage behält die gespeicherte Prüfung.
+     */
+    private Optional<AnalysedPage> visible(AccessContext caller, PageStatementAnalysis analysis,
+                                           java.util.function.UnaryOperator<PageStatementAnalysis> reviewed) {
         PageKey key = analysis.key();
         if (!activeSources.test(key.sourceId())) {
             return Optional.empty();
@@ -480,7 +488,7 @@ public class KnowledgeGraph {
         PageRef ref = new PageRef(key, spaceKey, analysis.title(),
                 reason == null ? PageStatements.State.CURRENT : PageStatements.State.STALE, reason,
                 analysis.document());
-        return Optional.of(new AnalysedPage(ref, analysis));
+        return Optional.of(new AnalysedPage(ref, reviewed.apply(analysis)));
     }
 
     private Optional<String> input(PageSnapshot snapshot) {
