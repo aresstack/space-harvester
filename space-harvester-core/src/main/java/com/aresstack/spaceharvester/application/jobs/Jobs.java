@@ -1284,26 +1284,7 @@ public class Jobs implements AutoCloseable {
      */
     public Optional<JobStatus> cancelIfWaiting(String jobId, String owner, String reason) {
         requireOwner(status(jobId), owner);
-        synchronized (lock) {
-            Job job = open.get(jobId);
-            if (job == null || job.state != JobState.QUEUED) {
-                return Optional.empty();
-            }
-            job.cancelRequested = true;
-            job.shutdownInterrupted = false;
-            job.pauseRequested = false;
-            job.restartForRetry = false;
-            queued.remove(job);
-            open.remove(jobId);
-            lock.notifyAll();
-            job.finish(JobState.CANCELLED, null, clock.instant());
-            keepResumable(job);
-            job.emit(true, JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, "CANCELLED", reason, null,
-                    null, null, null);
-            JobStatus status = job.snapshot();
-            store.save(status);
-            return Optional.of(status);
-        }
+        return Optional.ofNullable(cancel(jobId, Objects.requireNonNull(reason, "reason"), true));
     }
 
     /**
@@ -1314,8 +1295,20 @@ public class Jobs implements AutoCloseable {
      * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID gibt
      */
     public JobStatus cancel(String jobId) {
+        return cancel(jobId, null, false);
+    }
+
+    /**
+     * Der eine Abbruchweg für {@link #cancel(String)} und {@link #cancelIfWaiting}: mit {@code onlyIfWaiting} nur,
+     * solange der Auftrag unter der Sperre noch {@link JobState#QUEUED} ist (sonst {@code null}); {@code reason} ersetzt
+     * den Text des gelben Ereignisses für einen wartenden Auftrag.
+     */
+    private JobStatus cancel(String jobId, String reason, boolean onlyIfWaiting) {
         synchronized (lock) {
             Job job = open.get(jobId);
+            if (onlyIfWaiting && (job == null || job.state != JobState.QUEUED)) {
+                return null;
+            }
             if (job != null) {
                 job.cancelRequested = true;
                 // Der Benutzer gewinnt auch während des Beendens: kein „unterbrochen“, kein Fortsetzen danach.
@@ -1340,7 +1333,8 @@ public class Jobs implements AutoCloseable {
                 // könnte eine Löschung dazwischen eines verwaist zurücklassen.
                 job.emit(wasQueued, wasQueued ? JobEvent.Severity.WARNING : JobEvent.Severity.INFO,
                         JobEvent.Category.JOB, COMPONENT, wasQueued ? "CANCELLED" : null,
-                        wasQueued ? "Auftrag vor dem Start abgebrochen" : "Abbruch angefordert", null, null, null,
+                        wasQueued ? (reason == null ? "Auftrag vor dem Start abgebrochen" : reason)
+                                : "Abbruch angefordert", null, null, null,
                         null);
                 JobStatus status = job.snapshot();
                 store.save(status);
