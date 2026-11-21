@@ -2,8 +2,11 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
+import com.aresstack.spaceharvester.app.ui.controls.MarkedTextRenderer;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.query.DocumentKind;
+import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
@@ -111,6 +114,11 @@ public final class SearchView implements View {
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
+    /** Einzelheiten des Treffergrunds (R1). */
+    private final InfoPopup reasons = new InfoPopup();
+    /** Auszug mit der Marke des Treffergrunds vorn. */
+    private final MarkedTextRenderer excerpts = new MarkedTextRenderer(row -> row < model.rows.size()
+            ? model.rows.get(row).mark() : null);
     /**
      * Drehender Ring über der Trefferliste, solange eine Suche läuft, mit roter Stopp-Fläche „Abbrechen“ in der Mitte
      * (Klick oder Esc). Die Treffer, die schon da sind, bleiben stehen und bedienbar, der Schleier lässt die Maus durch.
@@ -202,6 +210,12 @@ public final class SearchView implements View {
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 1 && showReasons(e)) {
+                    return;
+                }
+                if (e.getClickCount() == 2) {
+                    reasons.setVisible(false);
+                }
                 int row = table.getSelectedRow();
                 if (e.getClickCount() == 2 && row >= 0) {
                     Hit hit = model.rows.get(table.convertRowIndexToModel(row));
@@ -215,6 +229,14 @@ public final class SearchView implements View {
             }
         });
         table.setToolTipText("Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs");
+        table.getColumnModel().getColumn(HitsModel.EXCERPT).setCellRenderer(excerpts);
+        table.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                table.setCursor(onMark(e) ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                        : java.awt.Cursor.getDefaultCursor());
+            }
+        });
 
         buildSearchBar();
         JPanel head = new JPanel(new BorderLayout(0, 8));
@@ -252,6 +274,30 @@ public final class SearchView implements View {
         status.addPropertyChangeListener("text", e -> status.setToolTipText(
                 status.getText() == null || status.getText().isBlank() ? null : status.getText()));
         statusInfo.add(status);
+    }
+
+    /**
+     * Ein Klick auf die Marke des Treffergrunds vorn im Auszug zeigt die Einzelheiten im Overlay (R1).
+     *
+     * @return ob der Klick die Marke traf
+     */
+    private boolean showReasons(MouseEvent e) {
+        if (!onMark(e)) {
+            return false;
+        }
+        Hit hit = model.rows.get(table.convertRowIndexToModel(table.rowAtPoint(e.getPoint())));
+        reasons.text(HitReasons.HEADING, HitReasons.details(hit.reasons())).showAt(table, e.getX(), e.getY());
+        return true;
+    }
+
+    /** Ob die Maus auf der Marke des Treffergrunds steht; dasselbe Maß wie beim Zeichnen. */
+    private boolean onMark(MouseEvent e) {
+        int row = table.rowAtPoint(e.getPoint());
+        int column = table.columnAtPoint(e.getPoint());
+        if (row < 0 || column < 0 || table.convertColumnIndexToModel(column) != HitsModel.EXCERPT) {
+            return false;
+        }
+        return excerpts.markBounds(table, row, column).contains(e.getPoint());
     }
 
     /** Hinweise zur Suche, früher im Tooltip des Infosymbols, jetzt lesbar im Popup. */
@@ -1340,9 +1386,19 @@ public final class SearchView implements View {
      *
      * @param attachment Dateiname des Anhangs, in dessen Text der Treffer liegt (#183), oder {@code null}
      * @param passageId  Passage-ID des Absatzes, aus dem der Auszug stammt, oder {@code null}
+     * @param reasons    warum der Treffer gefunden wurde (R1), wie die Suche es meldet
      */
     record Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt,
-               String attachment, String passageId) {
+               String attachment, String passageId, List<HitReason> reasons) {
+
+        Hit {
+            reasons = reasons == null ? List.of() : List.copyOf(reasons);
+        }
+
+        Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt,
+            String attachment, String passageId) {
+            this(sourceId, pageId, title, spaceKey, snippet, modifiedAt, attachment, passageId, List.of());
+        }
 
         Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt) {
             this(sourceId, pageId, title, spaceKey, snippet, modifiedAt, null, null);
@@ -1363,6 +1419,11 @@ public final class SearchView implements View {
             return text.isEmpty() ? where : where + " · " + text;
         }
 
+        /** Die Marke des Treffergrunds vor dem Auszug oder {@code null} (R1). */
+        MarkedTextRenderer.Mark mark() {
+            return HitReasons.mark(reasons);
+        }
+
         /** Eine aufgelöste Adresse; statt eines Auszugs die Version. */
         static Hit of(PageAddresses.Match match) {
             return new Hit(match.sourceId(), match.pageId(), match.title(), match.spaceKey(),
@@ -1372,13 +1433,16 @@ public final class SearchView implements View {
         static Hit of(KeywordSearch.Hit hit) {
             return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt(),
                     hit.attachment() == null ? null : hit.attachment().title().isBlank()
-                            ? hit.attachment().attachmentId() : hit.attachment().title(), hit.passageId());
+                            ? hit.attachment().attachmentId() : hit.attachment().title(), hit.passageId(),
+                    hit.reasons());
         }
     }
 
     static final class HitsModel extends AbstractTableModel {
 
         private static final String[] COLUMNS = {"Titel", "Quelle", "Space", "Auszug", "Geändert"};
+        /** Spalte des Auszugs, vorn mit der Marke des Treffergrunds. */
+        static final int EXCERPT = 3;
         List<Hit> rows = new ArrayList<>();
 
         void set(List<Hit> hits) {
