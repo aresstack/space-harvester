@@ -713,7 +713,7 @@ public class KeywordSearch {
                 List<PageTextIndex.Match> matches = new ArrayList<>(searchTexts(query.text(), searchable, query,
                         wanted));
                 // Ursachen je Seite (R1): jede Anfrage, die sie im Index lieferte, mit den Wörtern, die trafen.
-                Map<String, List<HitReason>> textReasons = new HashMap<>();
+                Map<String, List<DocumentReason>> textReasons = new HashMap<>();
                 noteTextReasons(textReasons, matches, query.text(), null);
                 // Erweiterungen je Quelle, nur in dieser Quelle gesucht, damit Beziehungen ihres Umfangs bleiben.
                 for (String sourceId : searchable) {
@@ -758,7 +758,7 @@ public class KeywordSearch {
                     fromCache.add(new Candidate(match.sourceId(), hit, true, seen, match.inAttachment()
                             ? new AttachmentMatch(match.attachmentId(), match.attachmentTitle(), match.partId(),
                                     match.partTitle()) : null,
-                            match.passageId(), textReasons.getOrDefault(mark, List.of())));
+                            match.passageId(), reasonsFor(textReasons.getOrDefault(mark, List.of()), match)));
                 }
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Volltextindex nicht lesbar ({0})", e.getClass().getName());
@@ -1211,13 +1211,42 @@ public class KeywordSearch {
         }
     }
 
+    /**
+     * Eine Ursache aus dem Volltextindex mit dem Dokument (Seite, Anhang oder enthaltene Datei), in dem ihre Wörter
+     * trafen.
+     */
+    private record DocumentReason(String document, HitReason reason) {
+    }
+
     /** Merkt je Seite die Anfrage, die sie im Volltextindex lieferte, mit den Wörtern, die dort trafen (R1). */
-    private static void noteTextReasons(Map<String, List<HitReason>> reasons, List<PageTextIndex.Match> matches,
+    private static void noteTextReasons(Map<String, List<DocumentReason>> reasons, List<PageTextIndex.Match> matches,
                                         String text, HitReason.Relation relation) {
         for (PageTextIndex.Match match : matches) {
             HitReason reason = HitReason.text(text, relation, match.words().inTitle(), match.words().inText());
-            reasons.merge(mark(match.sourceId(), match.pageId()), List.of(reason), HitReason::union);
+            reasons.computeIfAbsent(mark(match.sourceId(), match.pageId()), key -> new ArrayList<>())
+                    .add(new DocumentReason(document(match), reason));
         }
+    }
+
+    /**
+     * Die Ursachen einer Seite für den Treffer mit dem Dokument {@code shown}. Fand eine Anfrage die Seite über ein
+     * anderes Dokument (etwa einen anderen Anhang), bleibt sie Ursache, aber ohne Wörter: Sie stehen nicht im
+     * gezeigten Dokument.
+     */
+    private static List<HitReason> reasonsFor(List<DocumentReason> found, PageTextIndex.Match shown) {
+        String document = document(shown);
+        List<HitReason> reasons = List.of();
+        for (DocumentReason entry : found) {
+            HitReason reason = entry.document().equals(document) ? entry.reason()
+                    : HitReason.text(entry.reason().query(), entry.reason().relation(), List.of(), List.of());
+            reasons = HitReason.union(reasons, List.of(reason));
+        }
+        return reasons;
+    }
+
+    private static String document(PageTextIndex.Match match) {
+        return match.inAttachment() ? match.attachmentId() + "\u0000" + (match.partId() == null ? "" : match.partId())
+                : "";
     }
 
     /**
