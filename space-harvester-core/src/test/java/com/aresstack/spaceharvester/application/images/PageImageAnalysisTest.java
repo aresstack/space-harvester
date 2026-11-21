@@ -412,6 +412,122 @@ class PageImageAnalysisTest {
         assertThat(describer.calls).isEqualTo(4);
     }
 
+    /**
+     * Echttest des automatischen Laufs gegen ein Ollama auf diesem Rechner (nur HTTP-API, erfundene Bilder): zwei
+     * freigegebene Seiten mit je einem Bild, eine nicht freigegebene, Obergrenze 1 je Lauf. Läuft nur mit
+     * {@code OLLAMA_PROBE_IMAGES} (Basis-URL, etwa {@code http://localhost:11434}) und optional
+     * {@code OLLAMA_PROBE_VISION} (Vorgabe {@code gemma4:12b}); in der CI übersprungen.
+     */
+    @Test
+    void theAutomaticRunDescribesRealImagesWithALocalVisionModel() throws Exception {
+        String base = System.getenv("OLLAMA_PROBE_IMAGES");
+        org.junit.jupiter.api.Assumptions.assumeTrue(base != null && !base.isBlank());
+        String model = Optional.ofNullable(System.getenv("OLLAMA_PROBE_VISION")).orElse("gemma4:12b");
+        com.aresstack.spaceharvester.source.ai.RemoteAi ai = new com.aresstack.spaceharvester.source.ai.RemoteAi(
+                new com.aresstack.spaceharvester.ai.AiServiceSettings(java.net.URI.create(base), null, model, null,
+                        null, java.time.Duration.ofMinutes(5), null, java.util.Set.of(), null, model)
+                        .withProvider(com.aresstack.spaceharvester.ai.AiProvider.OLLAMA),
+                com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort.direct(),
+                com.aresstack.spaceharvester.source.TrustBundles.NONE, "b1-probe");
+        List<String> answers = new java.util.concurrent.CopyOnWriteArrayList<>();
+        ImageDescriber vision = new ImageDescriber() {
+            @Override
+            public String id() {
+                return "live-vision";
+            }
+
+            @Override
+            public String modelVersion() {
+                return model;
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType) {
+                String text = ai.describeImage(image, mediaType);
+                answers.add(text);
+                return text;
+            }
+
+            @Override
+            public boolean mayDescribe(String sourceId) {
+                return false;
+            }
+        };
+        source.image("1", "att1", "spool.png", drawn("SPOOL", java.awt.Color.RED));
+        source.image("2", "att2", "nachtlauf.png", drawn("NACHTLAUF", java.awt.Color.BLUE));
+        source.image("3", "att3", "geheim.png", drawn("GEHEIM", java.awt.Color.BLACK));
+        java.util.Set<PageKey> released = java.util.Set.of(new PageKey("wiki", "1"), new PageKey("wiki", "2"));
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "wiki".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(directory), 1000, Clock.systemUTC(), vision,
+                null);
+        assets.pageReleases(released::contains);
+        store = new InMemoryEnrichmentStore();
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, new Enrichments(PROJECTOR,
+                List.of(new ImageProcessor(() -> vision)), store, Clock.systemUTC()), Clock.systemUTC());
+        List<PageSnapshot> pages = List.of(page("1", "Text"), page("2", "Text"), page("3", "Text"));
+        com.aresstack.spaceharvester.application.configuration.ImageSettings limit =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 1);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis,
+                sourceId -> pages.iterator(), () -> limit, "wiki"::equals);
+
+        long start = System.currentTimeMillis();
+        RecordingContext first = new RecordingContext();
+        AutomaticImageDescriptions.Outcome one = automatic.run("wiki", limit, first);
+        RecordingContext second = new RecordingContext();
+        AutomaticImageDescriptions.Outcome two = automatic.run("wiki", limit, second);
+        RecordingContext third = new RecordingContext();
+        AutomaticImageDescriptions.Outcome three = automatic.run("wiki", limit, third);
+        long millis = System.currentTimeMillis() - start;
+
+        System.out.println("LIVE model=" + model + " ms=" + millis + " runs=" + one + " / " + two + " / " + three);
+        for (int i = 0; i < answers.size(); i++) {
+            String answer = answers.get(i);
+            System.out.println("LIVE answer" + (i + 1) + " chars=" + answer.length() + " spool="
+                    + answer.toUpperCase(java.util.Locale.ROOT).contains("SPOOL") + " nachtlauf="
+                    + answer.toUpperCase(java.util.Locale.ROOT).contains("NACHTLAUF") + " geheim="
+                    + answer.toUpperCase(java.util.Locale.ROOT).contains("GEHEIM"));
+        }
+        System.out.println("LIVE events1=" + first.events.stream().map(e -> e.severity() + ":" + e.code()).toList()
+                + " events2=" + second.events.stream().map(e -> e.severity() + ":" + e.code()).toList()
+                + " events3=" + third.events.stream().map(e -> e.severity() + ":" + e.code()).toList());
+        assertThat(one.images()).isEqualTo(1);
+        assertThat(one.open()).isEqualTo(1);
+        assertThat(first.incomplete).isTrue();
+        assertThat(two.images()).isEqualTo(1);
+        assertThat(two.open()).isZero();
+        assertThat(three.images()).as("alles beschrieben, das Modell wird nicht erneut gefragt").isZero();
+        assertThat(answers).hasSize(2).allSatisfy(answer -> assertThat(answer).isNotBlank());
+        assertThat(analysis.read(pages.get(2)).reason()).isEqualTo(PageImages.SOURCE_NOT_RELEASED);
+        assertThat(first.failed + second.failed + third.failed).isZero();
+    }
+
+    private static byte[] drawn(String word, java.awt.Color color) throws java.io.IOException {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(480, 240,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = image.createGraphics();
+        g.setColor(java.awt.Color.WHITE);
+        g.fillRect(0, 0, 480, 240);
+        g.setColor(color);
+        g.fillOval(20, 40, 160, 160);
+        g.setColor(java.awt.Color.BLACK);
+        g.setFont(new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.BOLD, 44));
+        g.drawString(word, 200, 135);
+        g.dispose();
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", out);
+        return out.toByteArray();
+    }
+
     private static com.aresstack.spaceharvester.application.jobs.Jobs jobs() {
         return new com.aresstack.spaceharvester.application.jobs.Jobs(
                 new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,
