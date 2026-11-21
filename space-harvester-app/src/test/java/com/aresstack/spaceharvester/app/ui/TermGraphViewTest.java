@@ -2,6 +2,11 @@ package com.aresstack.spaceharvester.app.ui;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
+import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
+import com.aresstack.spaceharvester.application.knowledge.PageStatements;
+import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.terms.RelationOrigin;
 import com.aresstack.spaceharvester.application.terms.RelationScope;
 import com.aresstack.spaceharvester.application.terms.RelationType;
@@ -15,6 +20,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import org.assertj.core.groups.Tuple;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
 
@@ -121,6 +128,106 @@ class TermGraphViewTest {
             seen.add(view.hint());
         });
         assertThat(seen).containsExactly("false", " ", TermGraphView.NO_NEIGHBOURS);
+    }
+
+    /** Fachsicht wie vom Core: Antragsteller —stellt→ Antrag, Antrag ~ Gesuch (Begriffe erfunden). */
+    private static final DomainTermGraph.View FACHSICHT = new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND,
+            List.of(new DomainTermGraph.Node("antragsteller", "Antragsteller", DomainTermGraph.NodeKind.TERM, 0, null),
+                    new DomainTermGraph.Node("antrag", "Antrag", DomainTermGraph.NodeKind.TERM, 1, "antragsteller"),
+                    new DomainTermGraph.Node("gesuch", "Gesuch", DomainTermGraph.NodeKind.SYNONYM, 2, "antrag")),
+            List.of(new DomainTermGraph.Edge("antragsteller", "antrag", DomainTermGraph.EdgeKind.VERB, "stellen", 3,
+                            List.of(evidence("1", "Förderantrag"), evidence("2", "Leitfaden"))),
+                    new DomainTermGraph.Edge("antrag", "gesuch", DomainTermGraph.EdgeKind.SYNONYM, null, 0,
+                            List.of())),
+            false, 2, Set.of("maltparser-de"));
+
+    @Test
+    void theDomainViewMapsTermsSynonymsAndVerbEdgesAndSaysWhereTheStatementsComeFrom() throws Exception {
+        GraphSource source = GraphSource.ofDomainTerms((start, depth) -> FACHSICHT, id -> "MaltParser");
+
+        GraphSource.Graph graph = source.around("Antragsteller", 2, false);
+
+        assertThat(graph.nodes()).extracting(GraphSource.Node::label, GraphSource.Node::synonym)
+                .containsExactly(Tuple.tuple("Antragsteller", false), Tuple.tuple("Antrag", false),
+                        Tuple.tuple("Gesuch", true));
+        assertThat(graph.edges()).extracting(GraphSource.Edge::style, GraphSource.Edge::label,
+                GraphSource.Edge::directed).containsExactly(
+                Tuple.tuple(GraphSource.Style.VERB, "stellen · 3", true),
+                Tuple.tuple(GraphSource.Style.SYNONYM, null, false));
+        assertThat(graph.note()).isEqualTo("Aussagen aus MaltParser · 2 veraltete Aussagen ausgelassen");
+        assertThat(GraphSource.ofDomainTerms((start, depth) -> new DomainTermGraph.View(
+                DomainTermGraph.Outcome.NOT_A_TERM, List.of(), List.of(), false, 0, Set.of()), id -> id)
+                .around("Kaffee", 1, false).empty()).isEqualTo("„Kaffee“ " + GraphSource.NOT_A_TERM);
+    }
+
+    @Test
+    void onlyDomainTermsSwitchesTheSourceAndAClickOnAVerbEdgeShowsItsEvidence() throws Exception {
+        List<String> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        GraphSource relations = (start, depth, proposals) -> {
+            asked.add("relations");
+            return GraphSource.Graph.EMPTY;
+        };
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth) -> {
+            asked.add("domain");
+            return FACHSICHT;
+        }, id -> "MaltParser");
+        List<Object> seen = new ArrayList<>();
+        List<EvidencePopup.Target> opened = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView view = new TermGraphView(null, relations, domain);
+            assertThat(view.domainChoice().isSelected()).as("Standard aus").isFalse();
+            view.showTerm("Antragsteller");
+        });
+        awaitTrue(() -> asked.contains("relations"));
+        assertThat(asked).as("ohne Haken bleibt die bisherige Sicht").containsExactly("relations");
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView view = new TermGraphView(null, relations, domain);
+            view.onOpen(opened::add);
+            view.domainChoice().setSelected(true);
+            try {
+                view.show(domain.around("Antragsteller", 2, false));
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+            seen.add(view.hint());
+            TermGraphView.Canvas canvas = view.canvas();
+            canvas.setSize(900, 560);
+            TermGraphView.Canvas.Segment verb = canvas.segments(canvas.layout(900, 560)).getFirst();
+            Point onLabel = new Point((int) verb.tag().getCenterX(), (int) verb.tag().getCenterY());
+            seen.add(canvas.edgeAt(onLabel).style());
+            view.showEvidenceFor(canvas.edgeAt(onLabel));
+            EvidencePopup popup = view.evidencePopup();
+            seen.add(popup.headingText());
+            seen.add(popup.countValue());
+            seen.add(popup.linkTexts());
+            popup.clickLink(1);
+            BufferedImage image = new BufferedImage(900, 560, BufferedImage.TYPE_INT_RGB);
+            canvas.paint(image.getGraphics());
+        });
+        assertThat(seen).containsExactly(
+                "3 Fachbegriffe · 2 Verbindungen · Aussagen aus MaltParser · 2 veraltete Aussagen ausgelassen",
+                GraphSource.Style.VERB, "Antragsteller stellen Antrag", 3,
+                List.of("Förderantrag (wiki / FOE)", "Leitfaden (wiki / FOE)"));
+        assertThat(opened).containsExactly(new EvidencePopup.Target("wiki", "2", -1, -1));
+    }
+
+    private static void awaitTrue(java.util.function.BooleanSupplier condition) throws Exception {
+        long until = System.currentTimeMillis() + 5000;
+        while (!condition.getAsBoolean()) {
+            if (System.currentTimeMillis() > until) {
+                throw new AssertionError("Bedingung nicht erfüllt");
+            }
+            SwingUtilities.invokeAndWait(() -> { });
+            Thread.onSpinWait();
+        }
+    }
+
+    private static DomainTermGraph.Evidence evidence(String pageId, String title) {
+        ParsedStatements.Statement statement = new ParsedStatements.Statement("wiki/" + pageId + "@x#s0.v1", 0, 4,
+                10, "stellt", "stellen", ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(),
+                Set.of(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED);
+        return new DomainTermGraph.Evidence(new KnowledgeGraph.PageRef(new PageKey("wiki", pageId), "FOE", title,
+                PageStatements.State.CURRENT, null), statement, "maltparser-de", "Antragsteller", "Antrag");
     }
 
     private static TermRelation relation(String from, String to, RelationType type, ReviewStatus status) {

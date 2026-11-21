@@ -1294,6 +1294,27 @@ public final class Workspace {
         return new GraphNeighbourhood(harvester.knowledgeGraph()).term(caller, term, options);
     }
 
+    /**
+     * Fachsicht des Wissensgraphen um einen Startbegriff (Paket W1): bestätigte Fachbegriffe und Synonyme als Knoten,
+     * Verben der Aussagen als Kanten. Rechtegeprüft, rechnet nie; nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.View domainTermGraph(String start,
+            com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options options,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.domainTermGraph().around(caller, start, options, cancelled);
+    }
+
+    /**
+     * Der Wortlaut zu Aussagen je Seite, etwa den Belegen der Fachsicht: Originalsatz, vereinfachter Satz, Satzgrenzen
+     * im Lesetext. Ohne Leserecht am Inhalt fehlt der Eintrag. Nie auf dem EDT.
+     */
+    public java.util.Map<String, com.aresstack.spaceharvester.application.standing.SentenceText> statementSentences(
+            java.util.Map<com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph.PageRef,
+                    java.util.List<com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Statement>>
+                    byPage) {
+        return harvester.statusQuo().statementSentences(caller, byPage);
+    }
+
     /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */
     public Optional<byte[]> storedImage(String sourceId, ImagePayload.Entry image) {
         return storedImage(sourceId, image, null);

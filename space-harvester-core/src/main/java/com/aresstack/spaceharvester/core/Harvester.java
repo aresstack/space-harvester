@@ -1947,6 +1947,15 @@ public final class Harvester implements AutoCloseable {
         return knowledgeGraph;
     }
 
+    /**
+     * Fachsicht des Wissensgraphen (Paket W1): bestätigte Fachbegriffe und Synonyme als Knoten, Verben der Aussagen als
+     * Kanten; liest nur, rechnet nie.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph domainTermGraph() {
+        return new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph(knowledgeGraph,
+                new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations));
+    }
+
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */
     public com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo() {
         return statusQuo;

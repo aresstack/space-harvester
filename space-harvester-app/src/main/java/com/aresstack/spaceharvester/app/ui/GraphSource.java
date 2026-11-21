@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermRelation;
 import com.aresstack.spaceharvester.application.terms.TermText;
@@ -35,10 +36,15 @@ interface GraphSource {
      * @param depth  Abstand zur Mitte: 0 die Mitte, 1 Nachbar, 2 Nachbar eines Nachbarn
      * @param parent Schlüssel des Knotens, über den er gefunden wurde; {@code null} für die Mitte
      */
-    record Node(String key, String label, int depth, String parent) {
+    record Node(String key, String label, int depth, String parent, boolean synonym) {
         public Node {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(label, "label");
+        }
+
+        /** Ein Begriff, kein Synonym der Fachsicht. */
+        Node(String key, String label, int depth, String parent) {
+            this(key, label, depth, parent, false);
         }
     }
 
@@ -50,15 +56,48 @@ interface GraphSource {
      * @param type      Art als Name von {@code RelationType}, für die Beschriftung ({@link Relation#typeText})
      * @param confirmed bestätigt; sonst ein Vorschlag (gestrichelt)
      * @param directed  ob die Richtung zählt (Pfeil)
+     * @param style     wie die Kante gezeichnet wird
+     * @param label     Beschriftung der Fachsicht („Grundform · N“) oder {@code null} für die Art der Beziehung
+     * @param evidence  Belege einer Verb-Kante der Fachsicht, sonst leer
      */
-    record Edge(String from, String to, String type, boolean confirmed, boolean directed) {
+    record Edge(String from, String to, String type, boolean confirmed, boolean directed, Style style, String label,
+                List<DomainTermGraph.Evidence> evidence) {
+
+        public Edge {
+            style = style == null ? Style.RELATION : style;
+            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        }
+
+        /** Eine Beziehung zwischen Begriffen (wie vor der Fachsicht). */
+        Edge(String from, String to, String type, boolean confirmed, boolean directed) {
+            this(from, to, type, confirmed, directed, Style.RELATION, null, List.of());
+        }
     }
 
-    /** Knoten (die Mitte zuerst) und Kanten; {@code truncated}, wenn es mehr als {@link #MAX_NODES} Knoten gäbe. */
-    record Graph(List<Node> nodes, List<Edge> edges, boolean truncated) {
+    /** Zeichenart einer Kante. */
+    enum Style {
+        /** Beziehung zwischen Begriffen: Farbe je Art, beschriftet mit der Art. */
+        RELATION,
+        /** Verb der Fachsicht: Pfeil mit Beschriftung „Grundform · N“. */
+        VERB,
+        /** Synonym der Fachsicht: dünne Linie ohne Pfeil und ohne Beschriftung. */
+        SYNONYM
+    }
+
+    /**
+     * Knoten (die Mitte zuerst) und Kanten; {@code truncated}, wenn es mehr als {@link #MAX_NODES} Knoten gäbe.
+     * {@code note} ergänzt die Statuszeile (Fachsicht: Ablage, ausgelassene veraltete Aussagen) oder ist leer;
+     * {@code empty} erklärt einen leeren Graphen oder ist {@code null}.
+     */
+    record Graph(List<Node> nodes, List<Edge> edges, boolean truncated, String note, String empty) {
         public Graph {
             nodes = List.copyOf(nodes);
             edges = List.copyOf(edges);
+            note = note == null ? "" : note;
+        }
+
+        Graph(List<Node> nodes, List<Edge> edges, boolean truncated) {
+            this(nodes, edges, truncated, "", null);
         }
 
         static final Graph EMPTY = new Graph(List.of(), List.of(), false);
@@ -123,4 +162,58 @@ interface GraphSource {
             return new Graph(new ArrayList<>(nodes.values()), shown, truncated);
         };
     }
+
+    /** Die Fachsicht des Core zu einem Startbegriff und einer Tiefe (Paket W1). */
+    @FunctionalInterface
+    interface DomainFetch {
+        DomainTermGraph.View around(String start, int depth) throws Exception;
+    }
+
+    /**
+     * Die Fachsicht (Paket W1): bestätigte Fachbegriffe und Synonyme als Knoten, Verben der Aussagen als Kanten. Nimmt
+     * keine Vorschläge auf; der Schalter „Vorschläge zeigen“ wirkt hier nicht.
+     *
+     * @param analyzerName lesbarer Name einer Analysator-Kennung für die Statuszeile
+     */
+    static GraphSource ofDomainTerms(DomainFetch fetch, java.util.function.Function<String, String> analyzerName) {
+        Objects.requireNonNull(fetch, "fetch");
+        Objects.requireNonNull(analyzerName, "analyzerName");
+        return (start, depth, proposals) -> {
+            DomainTermGraph.View view = fetch.around(start, Math.max(1, Math.min(2, depth)));
+            if (view.outcome() == DomainTermGraph.Outcome.NOT_A_TERM) {
+                return new Graph(List.of(), List.of(), false, "", "„" + start.trim() + "“ " + NOT_A_TERM);
+            }
+            if (view.outcome() == DomainTermGraph.Outcome.EMPTY_START) {
+                return Graph.EMPTY;
+            }
+            List<Node> nodes = new ArrayList<>();
+            for (DomainTermGraph.Node node : view.nodes()) {
+                nodes.add(new Node(node.key(), node.label(), node.depth(), node.parent(),
+                        node.kind() == DomainTermGraph.NodeKind.SYNONYM));
+            }
+            List<Edge> edges = new ArrayList<>();
+            for (DomainTermGraph.Edge edge : view.edges()) {
+                if (edge.kind() == DomainTermGraph.EdgeKind.SYNONYM) {
+                    edges.add(new Edge(edge.from(), edge.to(), "SYNONYM", true, false, Style.SYNONYM, null,
+                            List.of()));
+                } else {
+                    edges.add(new Edge(edge.from(), edge.to(), "VERB", true, true, Style.VERB,
+                            edge.verb() + " · " + edge.count(), edge.evidence()));
+                }
+            }
+            List<String> notes = new ArrayList<>();
+            if (!view.analyzers().isEmpty()) {
+                notes.add("Aussagen aus " + String.join(", ", view.analyzers().stream().map(analyzerName)
+                        .filter(Objects::nonNull).sorted().toList()));
+            }
+            if (view.skippedStale() > 0) {
+                notes.add(view.skippedStale() + (view.skippedStale() == 1 ? " veraltete Aussage" : " veraltete Aussagen")
+                        + " ausgelassen");
+            }
+            return new Graph(nodes, edges, view.truncated(), String.join(" · ", notes), null);
+        };
+    }
+
+    /** Hinweis, wenn der Startbegriff der Fachsicht kein bestätigter Fachbegriff ist. */
+    String NOT_A_TERM = "ist kein bestätigter Fachbegriff und kein bestätigtes Synonym im Glossar.";
 }
