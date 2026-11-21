@@ -154,6 +154,34 @@ class KeywordSearchDiscoveryTest {
     }
 
     @Test
+    void wordsFoundInAnotherDocumentOfThePageAreNotAttributedToTheShownOne() {
+        // R1 (Codex-Befund #993): Die Seite selbst passt auf „RSL“, ein Anhang auf die Ausweitung. Gezeigt wird die
+        // Seite; die Ausweitung bleibt Ursache, aber ohne die Wörter des Anhangs.
+        SearchExpansion expansion = SearchExpansion.typed((caller, term, sourceId, spaceKey) ->
+                "RSL".equals(term) ? List.of(new SearchExpansion.Counterpart("Rückmeldeschlüssel", "abbreviation"))
+                        : List.of());
+        wiki.results("RSL", "1");
+        when(texts.search(org.mockito.ArgumentMatchers.eq("RSL"), any(), any(), anyInt())).thenReturn(List.of(
+                new PageTextIndex.Match("wiki", "1", "DEV", "Seite", "Auszug").withWords(
+                        new PageTextIndex.Words(List.of(), List.of("rsl")))));
+        when(texts.search(org.mockito.ArgumentMatchers.eq("Rückmeldeschlüssel"), any(), any(), anyInt()))
+                .thenReturn(List.of(new PageTextIndex.Match("wiki", "1", "DEV", "", "Auszug", "att", "liste.pdf")
+                        .withWords(new PageTextIndex.Words(List.of(), List.of("rückmeldeschlüssel")))));
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.topN(KeywordSearch.MAX_LIMIT), SearchRunLog.NONE, FindingCatalog.NONE,
+                () -> true, KeywordSearch.BeforeSearch.NONE, expansion)
+                .search(APP, new KeywordSearch.Query("RSL", "wiki", Set.of(), Set.of("DEV"), Set.of()), null, 50);
+
+        assertThat(results.hits()).singleElement().satisfies(hit -> {
+            assertThat(hit.attachment()).isNull();
+            assertThat(hit.reasons()).containsExactly(HitReason.text("RSL", null, List.of(), List.of("rsl")),
+                    HitReason.text("Rückmeldeschlüssel", new HitReason.Relation("RSL", "Rückmeldeschlüssel",
+                            "abbreviation"), List.of(), List.of()));
+        });
+    }
+
+    @Test
     void aProvisionalHitNamesTheSourceQueryWithoutWords() {
         // R1: Was nur die Quelle meldet, trägt keine erfundene Fundstelle.
         wiki.results("Hashicorp Vault", "9");
