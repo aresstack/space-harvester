@@ -1432,6 +1432,8 @@ public final class ActivitiesView implements View {
     javax.swing.JPopupMenu moreJobsMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
         javax.swing.JMenuItem quality = new javax.swing.JMenuItem(SearchQualityStart.MENU, Glyph.CROSSHAIR);
+        // Glyph zeichnet sich gesperrt selbst grau; ohne eigenes Sperr-Symbol ließe Swing nur die Lücke stehen.
+        quality.setDisabledIcon(Glyph.CROSSHAIR);
         quality.setFont(Comic.regular(13f));
         quality.setToolTipText(SearchQualityStart.MENU_TIP);
         quality.setEnabled(context.runtime() != null);
@@ -1440,6 +1442,7 @@ public final class ActivitiesView implements View {
         menu.add(quality);
         menu.addSeparator();
         javax.swing.JMenuItem all = new javax.swing.JMenuItem(DELETE_ALL, Glyph.TRASH);
+        all.setDisabledIcon(Glyph.TRASH);
         all.setFont(Comic.regular(13f));
         all.setToolTipText("Alle Aufträge samt Diagnose löschen; laufende werden vorher abgebrochen");
         all.setEnabled(!model.rows.isEmpty());
