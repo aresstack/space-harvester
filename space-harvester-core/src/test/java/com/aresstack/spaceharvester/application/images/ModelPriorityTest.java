@@ -64,7 +64,8 @@ class ModelPriorityTest {
         fail.countDown();
 
         assertThat(background.get(5, TimeUnit.SECONDS)).isTrue();
-        assertThat(interactive).isCompletedExceptionally();
+        // Die Freigabe geschieht beim Schließen, die Ausnahme erreicht den Future erst danach: mit Frist warten.
+        assertThat(interactive).failsWithin(5, TimeUnit.SECONDS);
     }
 
     @Test

@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.changelog.ChangeLog;
 import com.aresstack.spaceharvester.application.changelog.ChangeLogStore;
 import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
 import com.aresstack.spaceharvester.application.changelog.SummaryModel;
+import com.aresstack.spaceharvester.application.changelog.SnapshotSummaryMaterial;
 import com.aresstack.spaceharvester.application.changelog.TextContentDiffer;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
@@ -43,11 +44,11 @@ class ChangeLogConfiguration {
     ChangeLog changeLog(ObjectProvider<LucenePageCache> cache, AccessGuard access, SourceCatalog catalog, Jobs jobs,
                         SummaryModel summaries, AiRelease release) {
         LucenePageCache available = cache.getIfAvailable();
+        PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
+                new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
         if (available != null) {
             // CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
-            available.contentDiffer(new TextContentDiffer(PageTextProjector.firstOf(List.of(
-                    new ConfluenceStorageTextProjector(), new LocalFilesTextProjector(),
-                    new KnowledgeDocumentTextProjector()))));
+            available.contentDiffer(new TextContentDiffer(projector));
             // ADR 0031: Bearbeiter der gespeicherten Fassung in der Protokollzeile.
             available.editors(new com.aresstack.spaceharvester.source.confluence.ConfluenceEditors());
         }
@@ -56,7 +57,9 @@ class ChangeLogConfiguration {
                 : available::findHeader;
         // ADR 0030, Abschnitt 5: Zusammenfassen nur auf Wunsch, an das Modell nur Seiten mit KI-Freigabe.
         return new ChangeLog(store, access, headers, () -> catalog.all().stream().map(HarvestSource::id).toList(),
-                new ChangeLog.Summaries(jobs, summaries, release::mayProcess, Clock.systemUTC()))
+                new ChangeLog.Summaries(jobs, summaries, release::mayProcess, Clock.systemUTC(),
+                        // Worum es geht (Angelo, 21.11.2026): Lesetext und Space-Namen aus dem Cache.
+                        available == null ? null : new SnapshotSummaryMaterial(available::find, projector)))
                 // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Servers.
                 .perDay(java.time.ZoneId.systemDefault());
     }
