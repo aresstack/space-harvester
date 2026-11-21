@@ -108,6 +108,7 @@ public final class FileResolutionCache implements ResolutionCache {
      * Vergisst die Ergebnisse aller Schlüssel, auf die {@code keys} zutrifft, etwa Space- und globale Läufe, an
      * denen eine bereinigte Quelle beteiligt war.
      */
+    @Override
     public synchronized void removeSources(java.util.function.Predicate<String> keys) {
         if (bySource.keySet().removeIf(keys)) {
             store();

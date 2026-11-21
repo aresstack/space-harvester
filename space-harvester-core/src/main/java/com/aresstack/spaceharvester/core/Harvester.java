@@ -1085,6 +1085,8 @@ public final class Harvester implements AutoCloseable {
                 documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
                 // ADR 0032, FL5c: KI-Einordnungen mit Belegen von entzogenen Seiten fallen auf den Regelstand zurück
                 this.glossary.withdrawAi(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                // D4.3: die Modellantworten des Glossars zu Quellen mit entzogenen Seiten.
+                this.glossaryClassification.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // SY2: Vektoren der Synonymerkennung aus diesen Seiten und der Stand ihrer Quellen.

@@ -374,6 +374,21 @@ public class GlossaryClassification {
         return submitted;
     }
 
+    /**
+     * KI-Freigabe entzogen (ADR 0028, „Entfernen löscht KI-Ergebnisse“): vergisst die Modellantworten aller Quellen
+     * dieser Seiten im Ergebnis-Cache ({@link #cacheKeysOf}); andere Quellen bleiben.
+     */
+    public void withdrawn(Collection<PageKey> pages) {
+        pages.stream().map(PageKey::sourceId).distinct().forEach(sourceId -> {
+            try {
+                cache.removeSources(cacheKeysOf(sourceId));
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Glossar-Cache von {0} nicht geleert ({1})", sourceId,
+                        e.getClass().getName());
+            }
+        });
+    }
+
     /** Ob der Auftrag von {@link #start} stammt. */
     public boolean started(String jobId) {
         return jobId != null && started.contains(jobId);
