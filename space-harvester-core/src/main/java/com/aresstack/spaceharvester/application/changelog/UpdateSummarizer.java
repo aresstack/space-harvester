@@ -95,8 +95,8 @@ final class UpdateSummarizer {
             Antworte nur mit einem JSON-Objekt ohne weiteren Text:
             {"zusammenfassung": "...", "themen": [{"titel": "...", "text": "...", "details": "...", "seiten": ["<id>", ...]}]}
             Regeln: Deutsch, sachlich. "zusammenfassung": zwei bis vier Sätze Überblick, worum es inhaltlich ging.
-            Je Thema: "titel" höchstens acht Wörter; "text" zwei bis drei Sätze, was inhaltlich neu ist oder sich geändert
-            hat; "details" eine ausführlichere Zusammenfassung von vier bis zehn Sätzen mit den wichtigsten Inhalten,
+            Je Thema: "titel" höchstens acht Wörter; "text" zwei bis drei Sätze mit dem Inhalt selbst (Ergebnisse,
+            Beschlüsse, Änderungen), nie nur die Feststellung, dass Seiten erstellt oder geändert wurden; "details" eine ausführlichere Zusammenfassung von vier bis zehn Sätzen mit den wichtigsten Inhalten,
             Festlegungen, Terminen und Beteiligten Stellen (keine Personennamen), so dass man die Seiten nicht öffnen muss;
             "seiten" die ids aller Seiten des Themas, nur ids aus der Eingabe. Jede Seite gehört zu genau einem Thema.
             Höchstens 30 Themen. Nenne Spaces mit ihrem Namen, nie mit einem Schlüssel. Seitenzahlen gehören nicht in die
@@ -113,8 +113,8 @@ final class UpdateSummarizer {
             Regeln: Deutsch, sachlich. "zusammenfassung": zwei bis vier Sätze Überblick, worum es inhaltlich ging.
             Themen, die inhaltlich zusammengehören, auch aus verschiedenen Teilen oder Spaces, legst du zu einem Thema
             zusammen und nennst in "aus" die ids aller zusammengelegten Themen; alle übrigen übernimmst du mit ihrer id.
-            Jede id der Eingabe steht in genau einem Thema. "titel" höchstens acht Wörter, "text" zwei bis drei Sätze, was
-            inhaltlich neu ist oder sich geändert hat. Höchstens 30 Themen. Nenne Spaces mit ihrem Namen. Erfinde nichts.
+            Jede id der Eingabe steht in genau einem Thema. "titel" höchstens acht Wörter, "text" zwei bis drei Sätze mit
+            dem Inhalt selbst, nie nur die Feststellung, dass Seiten erstellt oder geändert wurden. Höchstens 30 Themen. Nenne Spaces mit ihrem Namen. Erfinde nichts.
             Nicht lesbare Änderungen erwähnst du nur als Zahl.
             """;
 
