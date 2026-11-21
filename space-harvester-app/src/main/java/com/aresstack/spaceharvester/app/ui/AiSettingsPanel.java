@@ -212,6 +212,23 @@ final class AiSettingsPanel {
     final HelpButton automaticSynonymsHelp = new HelpButton(Dialogs.CLOSE_SIZE, AUTOMATIC_SYNONYMS_LABEL,
             AUTOMATIC_SYNONYMS_HELP);
     static final String AUTOMATIC_SYNONYMS_LABEL = "Synonyme";
+    /**
+     * Synonyme nur zu bestätigten Fachbegriffen ({@code space-harvester.terms.synonyms.glossary-terms-only}, K3,
+     * Angelo 21.11.2026): Vorgabe für den automatischen Lauf und Vorbelegung des Startdialogs. Standard aus.
+     */
+    static final String GLOSSARY_SYNONYMS_TEXT = "Nur zu bestätigten Fachbegriffen";
+    static final String GLOSSARY_SYNONYMS_TIP = "Synonyme nur zu bestätigten Fachbegriffen des Glossars vorschlagen; "
+            + "ohne Häkchen zu allen Begriffen";
+    final javax.swing.JCheckBox glossarySynonyms = Comic.checkBox(GLOSSARY_SYNONYMS_TEXT);
+    static final String GLOSSARY_SYNONYMS_LABEL = "Synonyme zu";
+    static final String GLOSSARY_SYNONYMS_HELP = "Mit Häkchen sucht die Synonymerkennung nur Synonyme zu Begriffen, "
+            + "die du im Fachglossar als Fachbegriff bestätigt hast; ein Paar zählt, wenn mindestens einer der beiden "
+            + "Begriffe ein solcher Fachbegriff ist. Ohne Häkchen (Standard) gehen alle Begriffe ein, die mit den "
+            + "meisten Seiten zuerst.\n\nGilt für den Lauf nach jedem Abgleich und ist die Vorbelegung im Dialog "
+            + "„Synonyme vorschlagen“, dort je Lauf änderbar. Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.terms.synonyms.glossary-terms-only.";
+    final HelpButton glossarySynonymsHelp = new HelpButton(Dialogs.CLOSE_SIZE, GLOSSARY_SYNONYMS_LABEL,
+            GLOSSARY_SYNONYMS_HELP);
     static final String AUTOMATIC_SYNONYMS_TEXT = "Nach jedem Abgleich vorschlagen";
     /** Die Zeile auf der Abschlussseite des Assistenten. */
     static final String AUTOMATIC_SYNONYMS_ON = "nach jedem Abgleich";
@@ -334,6 +351,24 @@ final class AiSettingsPanel {
     final JComboBox<String> whisperChoice = Comic.combo();
     final ComposerButton whisperInstall = Comic.button(WhisperModelSetup.INSTALL,
             "Lädt das gewählte Whisper-Modell von Hugging Face in den Benutzerordner und prüft die Prüfsummen");
+    /**
+     * Auswahl des Whisper-Modells der Spracheingabe im Chat, getrennt von dem der Transkripte (Angelo 21.11.2026:
+     * dort zählt Tempo, Vorgabe Tiny); eine Änderung wird sofort gespeichert und gilt ab der nächsten Aufnahme.
+     */
+    final JComboBox<String> dictationChoice = Comic.combo();
+    final ComposerButton dictationInstall = Comic.button(WhisperModelSetup.INSTALL,
+            "Lädt das gewählte Whisper-Modell der Spracheingabe von Hugging Face in den Benutzerordner und prüft die "
+                    + "Prüfsummen");
+    static final String WHISPER_TRANSCRIPTS_LABEL = "Whisper-Modell Transkripte";
+    static final String WHISPER_DICTATION_LABEL = "Whisper-Modell Spracheingabe";
+    static final String WHISPER_TRANSCRIPTS_HELP = "Für Video-Transkripte und „In PPTX umwandeln“, läuft lokal; größere "
+            + "Modelle erkennen genauer und rechnen länger. Wird nur nach Rückfrage oder auf Klick einmal von Hugging "
+            + "Face geladen.";
+    static final String WHISPER_DICTATION_HELP = "Für die Spracheingabe im Chat, läuft lokal; Tiny liefert am "
+            + "schnellsten. Wird nur nach Rückfrage oder auf Klick einmal von Hugging Face geladen.";
+    static final String WHISPER_INSTALL_TIP = "Lädt das gewählte Whisper-Modell von Hugging Face in den Benutzerordner "
+            + "und prüft die Prüfsummen";
+    static final String WHISPER_BUSY_TIP = "Es lädt gerade ein anderes Modell";
     /** Während {@link #render} die Auswahl setzt, ist das keine Eingabe des Benutzers. */
     private boolean showingWhisper;
     private final PreferredModels preferred = PreferredModels.bundled();
@@ -414,6 +449,8 @@ final class AiSettingsPanel {
         automaticSynonyms.setToolTipText("Synonymlauf für eine Quelle nach jedem Abgleich und nach neuer KI-Freigabe; "
                 + "ohne Häkchen nur auf Klick");
         modelRows.add(AUTOMATIC_SYNONYMS_LABEL, Comic.row(automaticSynonyms, automaticSynonymsHelp), null);
+        glossarySynonyms.setToolTipText(GLOSSARY_SYNONYMS_TIP);
+        modelRows.add(GLOSSARY_SYNONYMS_LABEL, Comic.row(glossarySynonyms, glossarySynonymsHelp), null);
         statementAnalyzer.addItem(ANALYZER_PARSER);
         statementAnalyzer.addItem(ANALYZER_MODEL);
         statementAnalyzer.setToolTipText(AnalyzerNames.STORE_TOOLTIP);
@@ -452,33 +489,39 @@ final class AiSettingsPanel {
             modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
                             + "bleibt");
-            for (com.aresstack.spaceharvester.app.transcription.WhisperModel each
-                    : com.aresstack.spaceharvester.app.transcription.WhisperModel.values()) {
+            for (com.aresstack.spaceharvester.app.transcription.WhisperModel each : com.aresstack.spaceharvester.app.transcription.WhisperModel.values()) {
                 whisperChoice.addItem(each.described());
+                dictationChoice.addItem(each.described());
             }
-            modelRows.add(WhisperModelSetup.LABEL, Comic.row(whisperChoice, whisperInstall),
-                    "Für Spracheingabe und Video-Transkripte, läuft lokal; größere Modelle erkennen genauer und "
-                            + "rechnen länger. Wird nur nach Rückfrage oder auf Klick einmal von Hugging Face geladen");
+            // Hilfetexte als ?-Knopf am Zeilenende, keine Hinweiszeile darunter (UX-Manager 21.11.2026).
+            modelRows.add(WHISPER_TRANSCRIPTS_LABEL, Comic.row(whisperChoice, whisperInstall,
+                    new HelpButton(Dialogs.CLOSE_SIZE, WHISPER_TRANSCRIPTS_LABEL, WHISPER_TRANSCRIPTS_HELP)), null);
+            modelRows.add(WHISPER_DICTATION_LABEL, Comic.row(dictationChoice, dictationInstall,
+                    new HelpButton(Dialogs.CLOSE_SIZE, WHISPER_DICTATION_LABEL, WHISPER_DICTATION_HELP)), null);
             whisperChoice.addActionListener(e -> {
                 int index = whisperChoice.getSelectedIndex();
                 if (showingWhisper || index < 0 || context.settings() == null) {
                     return;
                 }
-                com.aresstack.spaceharvester.app.transcription.WhisperModel chosen =
-                        com.aresstack.spaceharvester.app.transcription.WhisperModel.values()[index];
+                com.aresstack.spaceharvester.app.transcription.WhisperModel chosen = com.aresstack.spaceharvester.app.transcription.WhisperModel.values()[index];
                 if (chosen != context.whisper()) {
-                    context.whisper(chosen, () -> modelsFeedback.success(WhisperModelSetup.LABEL + ": "
+                    context.whisper(chosen, () -> modelsFeedback.success(WHISPER_TRANSCRIPTS_LABEL + ": "
                             + chosen.label()), modelsFeedback::problem);
                 }
             });
-            whisperInstall.addActionListener(e -> {
-                WhisperModelSetup setup = context.whisperModel();
-                if (setup.status().state() == WhisperModelSetup.State.INSTALLING) {
-                    setup.cancel();
-                } else {
-                    setup.install();
+            dictationChoice.addActionListener(e -> {
+                int index = dictationChoice.getSelectedIndex();
+                if (showingWhisper || index < 0 || context.settings() == null) {
+                    return;
+                }
+                com.aresstack.spaceharvester.app.transcription.WhisperModel chosen = com.aresstack.spaceharvester.app.transcription.WhisperModel.values()[index];
+                if (chosen != context.dictationWhisper()) {
+                    context.dictationWhisper(chosen, () -> modelsFeedback.success(WHISPER_DICTATION_LABEL + ": "
+                            + chosen.label()), modelsFeedback::problem);
                 }
             });
+            whisperInstall.addActionListener(e -> installWhisper(context.whisper()));
+            dictationInstall.addActionListener(e -> installWhisper(context.dictationWhisper()));
             context.whisperModel().listen(this::whisperModel);
             parserStatus.setEditable(false);
             parserStatus.setFocusable(false);
@@ -587,6 +630,7 @@ final class AiSettingsPanel {
         chatMaxTokens.setText(current.chatMaxTokens() == null ? "" : current.chatMaxTokens());
         judgedPairs.setValue(Math.min(savedBudget(settings).maxJudgedPairs(), SynonymRunForm.MAX_PAIRS));
         automaticSynonyms.setSelected(savedBudget(settings).automatic());
+        glossarySynonyms.setSelected(savedBudget(settings).glossaryTermsOnly());
         ImageSettings images = savedImages(settings);
         automaticImages.setSelected(images.automatic());
         imagesPerRun.setValue(Math.min(images.maxPerRun(), MAX_IMAGES_PER_RUN));
@@ -961,6 +1005,7 @@ final class AiSettingsPanel {
                 || !accessDraft().equals(shownAccess))
                 || judgedPairs() != savedBudget(settings).maxJudgedPairs()
                 || automaticSynonyms() != savedBudget(settings).automatic()
+                || glossarySynonyms() != savedBudget(settings).glossaryTermsOnly()
                 || !images().equals(savedImages(settings))
                 || !simplification().equals(savedSimplification(settings))
                 || !check().equals(savedCheck(settings))
@@ -1020,12 +1065,14 @@ final class AiSettingsPanel {
         AiAccess chosen = ollama ? shownAccess : accessDraft();
         int judged = judgedPairs();
         boolean automatic = automaticSynonyms();
+        boolean glossaryOnly = glossarySynonyms();
         SimplificationSettings simplification = simplification();
         CheckSettings check = check();
         ImageSettings images = images();
         AnalyzerSettings analyzer = analyzer();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)
                 && judged == savedBudget(settings).maxJudgedPairs() && automatic == savedBudget(settings).automatic()
+                && glossaryOnly == savedBudget(settings).glossaryTermsOnly()
                 && simplification.equals(savedSimplification(settings)) && check.equals(savedCheck(settings))
                 && images.equals(savedImages(settings)) && analyzer.equals(savedAnalyzer(settings))) {
             if (!quiet) {
@@ -1083,7 +1130,7 @@ final class AiSettingsPanel {
         Background.run(() -> {
             if (ollama) {
                 Measured measured = measure(context, runtime, draft, new char[0], false);
-                store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check,
+                store(context, measured.draft(), new char[0], chosen, judged, automatic, glossaryOnly, simplification, check,
                         images, analyzer);
                 return measured;
             }
@@ -1096,7 +1143,7 @@ final class AiSettingsPanel {
                 try {
                     Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
                             false);
-                    store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check,
+                    store(context, measured.draft(), new char[0], chosen, judged, automatic, glossaryOnly, simplification, check,
                         images, analyzer);
                     return measured;
                 } finally {
@@ -1106,8 +1153,8 @@ final class AiSettingsPanel {
                 }
             }
             Measured measured = measure(context, runtime, draft, key, true);
-            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, automatic, simplification,
-                    check, images, analyzer);
+            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, automatic, glossaryOnly,
+                    simplification, check, images, analyzer);
             return measured;
         }, measured -> {
             if (!ollama && !chosen.fromKeePass() && !vault && key.length > 0) {
@@ -1215,13 +1262,20 @@ final class AiSettingsPanel {
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
                       Boolean automatic, SimplificationSettings simplification, CheckSettings check,
                       ImageSettings images) throws IOException {
-        store(context, draft, key, access, judgedPairs, automatic, simplification, check, images, null);
+        store(context, draft, key, access, judgedPairs, automatic, null, simplification, check, images, null);
+    }
+
+    /** Wie oben, dazu „Synonyme nur zu bestätigten Fachbegriffen“ (K3); {@code null} lässt den Wert stehen. */
+    static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
+                      Boolean automatic, Boolean glossaryOnly, SimplificationSettings simplification,
+                      CheckSettings check, ImageSettings images) throws IOException {
+        store(context, draft, key, access, judgedPairs, automatic, glossaryOnly, simplification, check, images, null);
     }
 
     /** Wie oben, dazu die Aussagenanalyse ({@code statements.analyzer}); {@code null} oder unverändert lässt sie. */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
-                      Boolean automatic, SimplificationSettings simplification, CheckSettings check,
-                      ImageSettings images, AnalyzerSettings analyzer) throws IOException {
+                      Boolean automatic, Boolean glossaryOnly, SimplificationSettings simplification,
+                      CheckSettings check, ImageSettings images, AnalyzerSettings analyzer) throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
@@ -1235,6 +1289,9 @@ final class AiSettingsPanel {
         }
         if (automatic != null) {
             wanted = wanted.withAutomatic(automatic);
+        }
+        if (glossaryOnly != null) {
+            wanted = wanted.withGlossaryTermsOnly(glossaryOnly);
         }
         if (!wanted.equals(budget)) {
             written = editor.withSynonymBudget(context.configFile(), written, wanted);
@@ -1342,6 +1399,11 @@ final class AiSettingsPanel {
         return (check.scope() == CheckScope.ALL ? CHECK_ALL : CHECK_UNCERTAIN_AND_STAGE)
                 + " · " + check.parallel() + " " + CHECK_PARALLEL_UNIT + " · "
                 + (check.model() == null ? "mit dem Text-Modell" : "Modell " + check.model());
+    }
+
+    /** Ob Synonyme nur zu bestätigten Fachbegriffen gesucht werden (K3). */
+    boolean glossarySynonyms() {
+        return glossarySynonyms.isSelected();
     }
 
     /** Ob nach jedem Abgleich einer Quelle ein Synonymlauf startet. */
@@ -1678,13 +1740,15 @@ final class AiSettingsPanel {
         showingWhisper = true;
         try {
             whisperChoice.setSelectedIndex(context.whisper().ordinal());
+            dictationChoice.setSelectedIndex(context.dictationWhisper().ordinal());
         } finally {
             showingWhisper = false;
         }
-        // Während eines Downloads bleibt die Auswahl stehen, damit klar ist, welches Modell lädt.
+        // Während eines Downloads bleiben beide Auswahlen stehen, damit klar ist, welches Modell lädt.
         whisperChoice.setEnabled(!installing);
-        whisperInstall.setText(installing ? WhisperModelSetup.CANCEL : WhisperModelSetup.INSTALL);
-        whisperInstall.setVisible(status.state() != WhisperModelSetup.State.INSTALLED);
+        dictationChoice.setEnabled(!installing);
+        whisperRow(whisperInstall, context.whisper(), status);
+        whisperRow(dictationInstall, context.dictationWhisper(), status);
         if (installing) {
             modelsFeedback.working(WhisperModelSetup.LABEL + " „" + status.model().label() + "“: "
                     + status.message());
@@ -1692,6 +1756,31 @@ final class AiSettingsPanel {
             modelsFeedback.warning("Whisper-Modell nicht geladen", status.message());
         } else if (status.message() != null) {
             modelsFeedback.success(status.message());
+        }
+    }
+
+    /**
+     * Knopf einer Whisper-Zeile: „Laden“, solange ihr Modell fehlt; „Abbrechen“, während gerade ihr Modell lädt;
+     * gesperrt, während ein anderes lädt (es läuft immer nur ein Download); unsichtbar, sobald das Modell da ist.
+     */
+    private void whisperRow(ComposerButton button, com.aresstack.spaceharvester.app.transcription.WhisperModel model, WhisperModelSetup.Status status) {
+        boolean installing = status.state() == WhisperModelSetup.State.INSTALLING;
+        boolean mine = installing && status.model() == model;
+        button.setText(mine ? WhisperModelSetup.CANCEL : WhisperModelSetup.INSTALL);
+        button.setEnabled(!installing || mine);
+        button.setToolTipText(installing && !mine ? WHISPER_BUSY_TIP : WHISPER_INSTALL_TIP);
+        button.setVisible(mine || !context.whisperModel().installed(model));
+    }
+
+    /** „Laden“ oder „Abbrechen“ einer Whisper-Zeile. */
+    private void installWhisper(com.aresstack.spaceharvester.app.transcription.WhisperModel model) {
+        WhisperModelSetup setup = context.whisperModel();
+        if (setup.status().state() == WhisperModelSetup.State.INSTALLING) {
+            if (setup.status().model() == model) {
+                setup.cancel();
+            }
+        } else {
+            setup.install(model);
         }
     }
 

@@ -349,6 +349,7 @@ public final class Harvester implements AutoCloseable {
     private FileSynonymVectorCache synonymVectors;
     private final AcronymResolution acronymResolution;
     private final Glossary glossary;
+    private final com.aresstack.spaceharvester.application.glossary.TechnicalTerms technicalTerms;
     private final GlossaryClassification glossaryClassification;
     private final com.aresstack.spaceharvester.application.glossary.GlossaryOverview glossaryOverview;
     private final SynonymDiscovery synonymDiscovery;
@@ -367,6 +368,10 @@ public final class Harvester implements AutoCloseable {
     private final ExportConversions conversions;
     private final DocumentRereads rereads;
     private final JobActions jobActions;
+    /** Hintergrundaufträge (Angelo 21.11.2026, ADR 0025 Nachtrag). */
+    private final com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs;
+    /** „Seiten nachladen“ als Hintergrundauftrag. */
+    private final com.aresstack.spaceharvester.application.background.PageLoads pageLoads;
     private final Assets assets;
     private final com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses transcriptAnalyses;
     private final ConnectionBudget connections;
@@ -379,6 +384,7 @@ public final class Harvester implements AutoCloseable {
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    private final com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
     private final com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice;
     private final StatementAnalysisJobs statementAnalysisJobs;
@@ -729,6 +735,11 @@ public final class Harvester implements AutoCloseable {
             // #122 Stufe 2: Fachglossar als Nutzerdaten neben den Beziehungen; KI nur auf Knopfdruck, dasselbe Modell.
             this.glossary = new Glossary(catalog, new FileGlossaryStore(builder.dataDirectory.resolve("glossary")),
                     access, cache::findHeader, clock);
+            // K5b: Suchmethode „Nur Fachbegriffe“ über Glossar und Synonymbeziehungen, nichts gespeichert.
+            // Reihenfolge wie im Reiter „Fachglossar“: Wichtigkeit aus der Übersicht (entsteht weiter unten, gefragt
+            // wird erst bei der Suche), je Bereich gehalten bis zur nächsten Aussagenanalyse.
+            this.technicalTerms = new com.aresstack.spaceharvester.application.glossary.TechnicalTerms(glossary,
+                    termRelations, (caller, scope) -> technicalImportance(caller, scope));
             // ADR 0032, FL5b: erste Phase „Begriffe ableiten“ aus den Aussagenanalysen, ohne Modell; Regeln aus
             // glossary.rules.* der wirksamen Konfiguration.
             TermSettings glossaryTerms = builder.terms;
@@ -739,6 +750,15 @@ public final class Harvester implements AutoCloseable {
                     who -> self.knowledgeGraph.analysed(who),
                     () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(),
                     this.aiRelease::mayProcess, clock);
+            // D4: „ohne aktuelle Aussagenanalyse“ zählt auch nie analysierte Seiten des Bereichs, Rechte des Aufrufers.
+            Holdings glossaryHoldings = this.holdings;
+            this.glossaryClassification.localPages((who, scope) -> glossaryHoldings.resolve(who, scope.global()
+                    ? new com.aresstack.spaceharvester.application.holdings.Selection(catalog.all().stream()
+                    .map(source -> com.aresstack.spaceharvester.application.holdings.Selection.Root.source(
+                            source.id())).toList())
+                    : com.aresstack.spaceharvester.application.holdings.Selection.of(
+                    new com.aresstack.spaceharvester.application.holdings.Selection.Root(scope.sourceId(),
+                            scope.spaceKey(), null))).pages());
             // #336: Synonymerkennung auf Knopfdruck; Embedding- und Chat-Modell folgen der Konfiguration, Text nur
             // aus freigegebenen Quellen, Budget aus terms.synonyms.*.
             EmbeddingProcessor embeddingForTerms = embedding;
@@ -755,6 +775,9 @@ public final class Harvester implements AutoCloseable {
             FileSynonymVectorCache synonymVectors = new FileSynonymVectorCache(
                     builder.dataDirectory.resolve("term-relations").resolve("synonyms"));
             synonymCandidates.vectors(synonymVectors);
+            // K3: Synonyme wahlweise nur aus bestätigten Fachbegriffen des Glossars.
+            Glossary synonymGlossary = this.glossary;
+            synonymCandidates.glossaryTerms(scope -> synonymGlossary.confirmedTerms(scope.relationScope()));
             this.synonymVectors = synonymVectors;
             this.synonymDiscovery = new SynonymDiscovery(catalog, synonymCandidates, access, termRelations, judge,
                     synonymCache, jobs,
@@ -784,6 +807,12 @@ public final class Harvester implements AutoCloseable {
                     null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
             opened.add(scheduler);
             this.acquisition = scheduler;
+            // Hintergrundaufträge: was die App von sich aus anstößt, nachrangig und nach einem Neustart fortgesetzt.
+            this.backgroundJobs = new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, OWNER);
+            this.pageLoads = new com.aresstack.spaceharvester.application.background.PageLoads(backgroundJobs,
+                    scheduler, AccessContext.technicalClient(OWNER),
+                    key -> texts.cachedVersion(key, cache::findHeader, cache::find).isPresent(),
+                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
             SearchHitPrefetch prefetch = null;
             // ADR 0015: Folgt das Vorabladen der Konfiguration, gibt es den Lader immer; ob ein Stapel lädt, liest die
             // Suche je Stapel aus search.prefetch-hits.
@@ -930,7 +959,10 @@ public final class Harvester implements AutoCloseable {
                     () -> catalog.all().stream().map(HarvestSource::id).toList(),
                     new ChangeLog.Summaries(jobs, new ChatUpdateSummaryModel(
                             () -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles, builder.userAgent),
-                            summaryRelease::mayProcess, clock))
+                            summaryRelease::mayProcess, clock,
+                            // Worum es geht (Angelo, 21.11.2026): Lesetext und Space-Namen aus dem Cache.
+                            new com.aresstack.spaceharvester.application.changelog.SnapshotSummaryMaterial(
+                                    cache::find, pageTexts)))
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault());
             opened.add(changeLog);
@@ -1002,7 +1034,7 @@ public final class Harvester implements AutoCloseable {
             this.automaticImages = new com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions(
                     jobs, imageAnalysis, cache::snapshots,
                     () -> this.settings != null ? this.settings.images() : startImages,
-                    sourceId -> catalog.find(sourceId).isPresent());
+                    sourceId -> catalog.find(sourceId).isPresent(), OWNER);
             opened.add(pageReleases.subscribe(automaticImages::releasesChanged));
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
@@ -1068,9 +1100,24 @@ public final class Harvester implements AutoCloseable {
             // Fahrplan Paket A2: die Analysen des KI-Analysators liegen in einer eigenen Ablage und überschreiben die des
             // MaltParsers nie; Graph, Stand, Begriffe und Export lesen aus genau einer, der eingestellten (Vorgabe
             // MaltParser).
-            KnowledgeGraphStore graphStore = new AnalyzerStores(new FileKnowledgeGraphStore(
-                    builder.dataDirectory.resolve("knowledge-graph")), new FileKnowledgeGraphStore(
-                    builder.dataDirectory.resolve("knowledge-graph-model")), this::statementAnalyzerChoice);
+            // Jede neue, ersetzte oder entfernte Analyse meldet sich beim Graphen (D6), gleich aus welchem Auftrag. Die
+            // Meldung sitzt innen an jeder Ablage, damit AnalyzerStores als solche erkennbar bleibt.
+            java.util.concurrent.atomic.AtomicReference<KnowledgeGraph> observedGraph =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            Runnable analysesChanged = () -> {
+                KnowledgeGraph graph = observedGraph.get();
+                if (graph != null) {
+                    graph.analysesChanged();
+                }
+            };
+            KnowledgeGraphStore graphStore = new AnalyzerStores(
+                    new com.aresstack.spaceharvester.application.knowledge.ObservedKnowledgeGraphStore(
+                            new FileKnowledgeGraphStore(builder.dataDirectory.resolve("knowledge-graph")),
+                            analysesChanged),
+                    new com.aresstack.spaceharvester.application.knowledge.ObservedKnowledgeGraphStore(
+                            new FileKnowledgeGraphStore(builder.dataDirectory.resolve("knowledge-graph-model")),
+                            analysesChanged),
+                    this::statementAnalyzerChoice);
             StatementAnalyzer statementAnalyzer = builder.statementAnalyzer;
             // Fahrplan Paket A2: zweiter Analysator über den eingestellten KI-Dienst, derselbe Modellweg wie Vorstufe
             // und Prüfschritt (Temperatur 0, Denken aus); nur auf Auftrag, an den Dienst nur Seiten mit KI-Freigabe.
@@ -1090,6 +1137,10 @@ public final class Harvester implements AutoCloseable {
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            observedGraph.set(this.knowledgeGraph);
+            opened.add(this.knowledgeGraph::close);
+            this.verbQueries = new com.aresstack.spaceharvester.application.knowledge.VerbQueries(
+                    this.knowledgeGraph);
             // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
             // gemerkten Eingabe-Hash, die Analysen rechnen neu.
             KnowledgeGraph transcriptGraph = this.knowledgeGraph;
@@ -1103,6 +1154,7 @@ public final class Harvester implements AutoCloseable {
             this.glossaryOverview = new com.aresstack.spaceharvester.application.glossary.GlossaryOverview(
                     knowledgeGraph::analysed,
                     () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules(), glossary);
+            knowledgeGraph.subscribe(technicalTerms::forget);
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
@@ -1218,6 +1270,7 @@ public final class Harvester implements AutoCloseable {
                     (who, key) -> cachedPages.cached(who, key.sourceId(), key.pageId()).isPresent(),
                     () -> this.progressiveSearch, this::searchProfile, jobs, clock);
             jobActions.searchQuality(searchQuality);
+            jobActions.background(backgroundJobs);
             // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
             // mit derselben Lese- und Exportprüfung wie beim Start.
             jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action,
@@ -1280,6 +1333,9 @@ public final class Harvester implements AutoCloseable {
             // ADR 0026, Punkt 11 (AP5c): nach einem Wechsel der Extraktor-Version oder geänderten Grenzen liest ein
             // eigener Auftrag die abgelegten Dokumente neu, ohne den Start aufzuhalten.
             rereads.afterChange(catalog.configs().stream().map(SourceSettingsConfig::id).toList(), OWNER);
+            // Hintergrundaufträge, die das Beenden unterbrochen hat, laufen von selbst weiter; erst jetzt, da alle Arten
+            // angemeldet sind.
+            backgroundJobs.resumeInterrupted();
             start.step("Zeitpläne und Nachholen");
             this.resources = List.copyOf(opened);
             start.done();
@@ -1379,7 +1435,14 @@ public final class Harvester implements AutoCloseable {
         SearchReranker nextReranker = reranker;
         ConfigurationListener.Preparation releases = releaseRecomputation.prepare(change);
         return () -> {
+            com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice storeBefore = statementAnalyzerChoice();
             settings = next;
+            // Eine andere Ablage der Aussagenanalyse (statements.analyzer): Graph, Stand, Glossar, Fachsicht und Verben
+            // lesen neu, ohne Klick (D6/D6a).
+            KnowledgeGraph graph = this.knowledgeGraph;
+            if (graph != null && storeBefore != next.analyzer().analyzer()) {
+                graph.analysesChanged();
+            }
             if (network != null) {
                 // Vor dem Austausch der Modelle; die schon gebauten halten Route und Vertrauen über den Katalog.
                 catalog.reconfigure(network);
@@ -1755,6 +1818,29 @@ public final class Harvester implements AutoCloseable {
         return glossary;
     }
 
+    /** Wichtigkeit je Suchwert für „Nur Fachbegriffe“ (K5b), wie der Reiter „Fachglossar“; ohne Übersicht keine. */
+    private java.util.Map<String, com.aresstack.spaceharvester.application.glossary.GlossaryDerivation.Importance>
+            technicalImportance(AccessContext caller,
+                                com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope scope) {
+        com.aresstack.spaceharvester.application.glossary.GlossaryOverview overview = this.glossaryOverview;
+        if (overview == null || scope.sourceIds().size() > 1) {
+            return java.util.Map.of();
+        }
+        String sourceId = scope.sourceIds().isEmpty() ? null : scope.sourceIds().iterator().next();
+        String spaceKey = sourceId != null && scope.spaceKeys().size() == 1 ? scope.spaceKeys().iterator().next()
+                : null;
+        java.util.Map<String, com.aresstack.spaceharvester.application.glossary.GlossaryDerivation.Importance> result =
+                new java.util.HashMap<>();
+        overview.importance(caller, sourceId, spaceKey, () -> false).rows()
+                .forEach(row -> result.put(row.normalized(), row.importance()));
+        return result;
+    }
+
+    /** Suchmethode „Nur Fachbegriffe“ (K5b): Fachbegriffe zu einem Suchtext, auch über ihre Synonyme. */
+    public com.aresstack.spaceharvester.application.glossary.TechnicalTerms technicalTerms() {
+        return technicalTerms;
+    }
+
     /** „Fachbegriffe ermitteln“: KI-Lauf nur auf ausdrücklichen Wunsch. */
     public GlossaryClassification glossaryClassification() {
         return glossaryClassification;
@@ -1945,6 +2031,21 @@ public final class Harvester implements AutoCloseable {
         return knowledgeGraph;
     }
 
+    /**
+     * Fachsicht des Wissensgraphen (Paket W1): bestätigte Fachbegriffe und Synonyme als Knoten, Verben der Aussagen als
+     * Kanten; liest nur, rechnet nie.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph domainTermGraph() {
+        return new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph(knowledgeGraph,
+                new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations),
+                this::statementAnalyzerChoice);
+    }
+
+    /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries() {
+        return verbQueries;
+    }
+
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */
     public com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo() {
         return statusQuo;
@@ -2117,6 +2218,19 @@ public final class Harvester implements AutoCloseable {
      */
     public JobActions jobActions() {
         return jobActions;
+    }
+
+    /**
+     * Hintergrundaufträge (ADR 0025 Nachtrag): Gruppen mit einem Unterauftrag je Space, nachrangig, nach einem Neustart
+     * fortgesetzt; Arten melden sich mit {@code register} an.
+     */
+    public com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs() {
+        return backgroundJobs;
+    }
+
+    /** „Seiten nachladen“ als Hintergrundauftrag, etwa fehlende Nachbarseiten eines Suchtreffers. */
+    public com.aresstack.spaceharvester.application.background.PageLoads pageLoads() {
+        return pageLoads;
     }
 
     /** Alle Aufträge dieses Harvesters. */
@@ -2518,6 +2632,16 @@ public final class Harvester implements AutoCloseable {
     /** Beendet Aufträge, schließt die Indizes und die Verbindungen der Quellen. */
     @Override
     public void close() {
+        // Vor allem anderen (Abnahme #1030): laufende Hintergrundaufträge gelten als unterbrochen, bevor der Planer
+        // ihre Abrufe abwirft; sonst endeten sie als gescheitert und setzten nach dem Neustart nicht fort.
+        try {
+            if (jobs != null) {
+                jobs.interruptBackground();
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Hintergrundaufträge nicht als unterbrochen markiert ({0})",
+                    e.getClass().getName());
+        }
         RuntimeException failure = closeAll(resources.reversed(), null);
         if (failure != null) {
             throw failure;

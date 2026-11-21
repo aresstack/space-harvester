@@ -96,6 +96,13 @@ tasks.named('test') {
     // Wie ein Programm, das beim Start ProxyAuthenticator.allowBasicTunneling() ruft: Das JDK liest die Property nur
     // einmal, beim ersten HttpURLConnection-Aufbau, und der kann in einem früheren Test liegen.
     systemProperty 'jdk.http.auth.tunneling.disabledSchemes', ''
+    // Echttest der Update-Zusammenfassung gegen einen Ollama-Server (nur HTTP-API), nur auf Anfrage:
+    // -PsummaryLiveOllama=http://127.0.0.1:11434 [-PsummaryLiveModel=gemma4:12b]
+    ['summaryLiveOllama', 'summaryLiveModel'].each { name ->
+        if (project.hasProperty(name)) {
+            systemProperty "summary.live.${name.substring('summaryLive'.length()).uncapitalize()}", project.property(name)
+        }
+    }
 }
 
 // Testgruppe mit kleinem Heap (ADR 0026, Abnahme 5): Ein PDF über 300 MiB, ein Excel mit 1 Mio. Zeilen und weitere

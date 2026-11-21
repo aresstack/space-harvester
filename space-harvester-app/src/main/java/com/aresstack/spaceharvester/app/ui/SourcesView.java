@@ -1275,6 +1275,13 @@ public final class SourcesView implements View {
 
         /** Mindestens ein Space startete nicht, oder das Nachholen scheiterte. */
         void failed(String message);
+
+        /**
+         * Die Aufträge, die tatsächlich angelaufen sind, auch wenn andere Spaces nicht starteten; vor {@link #started}
+         * bzw. {@link #failed}. Wer ihr Ende abonnieren will, bekommt sie so immer.
+         */
+        default void accepted(List<String> jobs) {
+        }
     }
 
     /** Wie {@link #catchUp(String, List)}, meldet den Ausgang zusätzlich an {@code report}. */
@@ -1312,6 +1319,9 @@ public final class SourcesView implements View {
             }
             return new CatchUpStarted(jobs, failed);
         }, started -> {
+            if (!started.jobs().isEmpty()) {
+                report.accepted(List.copyOf(started.jobs()));
+            }
             if (started.failed().isEmpty()) {
                 report.started(started.jobs());
             } else {

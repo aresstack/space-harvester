@@ -53,7 +53,8 @@ public final class ConfigurationOverlay {
             ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MEDIA_TYPES,
             ExportSettings.ATTACHMENTS_MAX_SIZE, TermSettings.SYNONYMS_MAX_TERMS,
             TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS,
-            TermSettings.SYNONYMS_AUTOMATIC, EnrichmentSettings.DOCUMENTS_ENABLED, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
+            TermSettings.SYNONYMS_AUTOMATIC, TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY,
+            EnrichmentSettings.DOCUMENTS_ENABLED, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
             SimplificationSettings.MODE, SimplificationSettings.PARALLEL, SimplificationSettings.MODEL,
             StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS, CheckSettings.SCOPE, CheckSettings.PARALLEL,
             CheckSettings.MODEL, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN, AnalyzerSettings.ANALYZER,
@@ -146,6 +147,8 @@ public final class ConfigurationOverlay {
         put(properties, TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, configuration.terms().synonyms().maxEmbeddedTerms());
         put(properties, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, configuration.terms().synonyms().maxJudgedPairs());
         put(properties, TermSettings.SYNONYMS_AUTOMATIC, configuration.terms().synonyms().automatic());
+        put(properties, TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY,
+                configuration.terms().synonyms().glossaryTermsOnly());
         put(properties, EnrichmentSettings.DOCUMENTS_ENABLED, configuration.enrichment().documents());
         put(properties, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
                 configuration.enrichment().documentEmbeddingMaxChars());

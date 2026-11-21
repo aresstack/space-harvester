@@ -129,17 +129,27 @@ public final class KnowledgeGraphJsonLd {
     }
 
     /**
-     * Aussage, auf die ein Teilsatz-Beteiligter verweist: gleicher Satz, Prädikat am Kopf des Teilsatzes
-     * ({@code …#s3.t4} → {@code …#s3.v4}), oder {@code null}, wenn der Kopf kein Vollverb ist.
+     * Aussage, auf die ein Teilsatz-Beteiligter verweist: gleicher Satz, beim Parser Prädikat am Kopf des Teilsatzes
+     * ({@code …#s3.t4} → {@code …#s3.v4}), beim KI-Analysator die genannte Aussage ({@code …#s3.kv1} →
+     * {@code …#s3.v1}); {@code null}, wenn es sie nicht gibt. Nur der lokale Teil nach {@code #} zählt.
      */
     static String clauseStatement(ParsedStatements result, ParsedStatements.Mention mention) {
-        int at = mention.id().lastIndexOf(".t");
-        if (at < 0) {
+        int hash = mention.id().lastIndexOf('#');
+        if (hash < 0) {
             return null;
         }
-        String candidate = mention.id().substring(0, at) + ".v" + mention.id().substring(at + 2);
+        String prefix = mention.id().substring(0, hash + 1);
+        java.util.regex.Matcher m = CLAUSE_ID.matcher(mention.id().substring(hash + 1));
+        if (!m.matches()) {
+            return null;
+        }
+        String candidate = prefix + m.group(1) + (m.group(2) != null ? ".v" + m.group(2) : "." + m.group(3));
         return result.statements().stream().anyMatch(s -> s.id().equals(candidate)) ? candidate : null;
     }
+
+    /** Lokale ID eines Teilsatz-Beteiligten: Parser {@code s3.t4} oder KI-Analysator {@code s3.kv1}. */
+    private static final java.util.regex.Pattern CLAUSE_ID =
+            java.util.regex.Pattern.compile("^(.*)\\.(?:t(\\d+)|k(v\\d+))$");
 
     /**
      * IRI einer Erwähnung oder Aussage aus ihrer lokalen ID ({@code quelle/seite@fassung#s1.t2}): Fassung plus lokaler

@@ -65,8 +65,9 @@ final class WhisperDictationService {
     }
 
     private void load() throws IOException {
-        // Ein anderes Modell unter Einstellungen › Modelle gilt ab der nächsten Aufnahme.
-        java.nio.file.Path model = WhisperModelLocation.resolve();
+        // Die Spracheingabe hat ihr eigenes Modell (Einstellungen › Modelle, Vorgabe Tiny); eine andere Wahl gilt ab
+        // der nächsten Aufnahme.
+        java.nio.file.Path model = WhisperModelLocation.resolve(WhisperModelLocation.dictation());
         if (transcriber == null || !model.equals(loadedModel)) {
             transcriber = new WhisperTranscriber(model);
             loadedModel = model;

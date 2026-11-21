@@ -424,7 +424,9 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                     read.integer(TermSettings.SYNONYMS_MAX_TERMS, SynonymBudget.DEFAULT.maxTerms()),
                     read.integer(TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, SynonymBudget.DEFAULT.maxEmbeddedTerms()),
                     read.integer(TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, SynonymBudget.DEFAULT.maxJudgedPairs()),
-                    read.bool(TermSettings.SYNONYMS_AUTOMATIC, SynonymBudget.DEFAULT.automatic())));
+                    read.bool(TermSettings.SYNONYMS_AUTOMATIC, SynonymBudget.DEFAULT.automatic()),
+                    read.bool(TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY,
+                            SynonymBudget.DEFAULT.glossaryTermsOnly())));
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(TermSettings.SYNONYMS_MAX_TERMS, e.getMessage()));
         }
