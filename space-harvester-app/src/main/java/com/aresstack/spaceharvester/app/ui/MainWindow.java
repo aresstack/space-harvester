@@ -816,7 +816,12 @@ public final class MainWindow implements AppContext.Navigator {
                         if (!jobs.isEmpty()) {
                             showJob(jobs.get(0));
                         }
-                        startedJobs.accept(List.copyOf(jobs));
+                    }
+
+                    @Override
+                    public void accepted(List<String> jobs) {
+                        // Auch bei teilweisem Scheitern: was angelaufen ist, verfolgt die offene Ansicht.
+                        startedJobs.accept(jobs);
                     }
 
                     @Override

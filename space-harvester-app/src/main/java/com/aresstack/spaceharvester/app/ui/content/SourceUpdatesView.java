@@ -150,6 +150,8 @@ final class SourceUpdatesView extends JPanel {
     private boolean quietPending;
     /** Die Wiederholung läuft noch: Meldungen lesen neu, aber nichts fasst mit Ring zusammen. */
     private boolean retrying;
+    /** Das Neu-Lesen nach der Wiederholung läuft; erst danach darf {@link #quietRefresh} entscheiden. */
+    private boolean quietReading;
     /**
      * Die bisherige Zusammenfassung, die während des stillen Laufs stehen bleibt; das Tages-Update wechselt beim
      * Verlängern seine Kennung, für die neue gibt es noch keine.
@@ -289,6 +291,7 @@ final class SourceUpdatesView extends JPanel {
         retryGeneration++;
         quietPending = false;
         retrying = false;
+        quietReading = false;
         carried = null;
         updates = List.of();
         selected = null;
@@ -524,6 +527,11 @@ final class SourceUpdatesView extends JPanel {
             windows.clear();
             windows.addAll(found.texts());
             shown = found.report();
+            if (found.summary() == null && carried != null && updateId.equals(carried.updateId())) {
+                // Dieselbe Kennung ohne Zusammenfassung heißt: der Core hat sie verworfen (Rechte, KI-Freigabe), nicht
+                // bloß die Spanne verlängert. Dann bleibt auch die alte nicht stehen.
+                carried = null;
+            }
             summary = found.summary();
             available = found.available();
             autoSummarize();
@@ -1048,13 +1056,18 @@ final class SourceUpdatesView extends JPanel {
             return;
         }
         quietPending = true;
+        quietReading = true;
         // Liste neu, dann das gezeigte Update samt Zusammenfassung neu lesen: ein abgeschlossenes Update liest die
         // Liste sonst nur bei geändertem Eintrag neu, die Zusammenfassung kann aber inzwischen veraltet sein.
+        Runnable read = () -> {
+            quietReading = false;
+            quietRefresh();
+        };
         reload(() -> {
             if (selected != null && Objects.equals(source, sourceId)) {
-                select(selected, true, this::quietRefresh);
+                select(selected, true, read);
             } else {
-                quietRefresh();
+                read.run();
             }
         });
     }
@@ -1064,7 +1077,7 @@ final class SourceUpdatesView extends JPanel {
      * neu. Ist der Reiter verdeckt, wartet das bis {@link #becameVisible}.
      */
     private void quietRefresh() {
-        if (!quietPending || !showing.getAsBoolean()) {
+        if (!quietPending || quietReading || !showing.getAsBoolean()) {
             return;
         }
         quietPending = false;

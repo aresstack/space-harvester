@@ -513,8 +513,10 @@ class SourceUpdatesViewTest {
         actions.retryJobs.put("sync-2", JobState.RUNNING);
         summary.followRetry("wiki", List.of("sync-1", "sync-2"));
 
-        // Während der Wiederholung verliert das Update seine Zusammenfassung (neue Spanne): keine sichtbare Neuerstellung.
-        actions.stored = null;
+        // Während der Wiederholung wird die Zusammenfassung veraltet: keine sichtbare Neuerstellung, kein Hinweis.
+        actions.stored = new UpdateSummary("wiki", actions.second().id(), "Bisher: eine Seite geändert.",
+                List.of(new SummaryStatement("Bisher: eine Seite geändert.", List.of())), "gpt-test", SECOND, 0,
+                true);
         actions.listener.changed("wiki");
         javax.swing.SwingUtilities.invokeAndWait(() -> { });
         assertThat(actions.summarizeCalls).as("nicht mitten in der Wiederholung").isZero();
@@ -559,6 +561,23 @@ class SourceUpdatesViewTest {
         assertThat(summary.reportTexts()).contains("Bisher: eine Seite geändert.");
         actions.finish(JobState.COMPLETED);
         assertThat(summary.reportTexts()).contains("Das Betriebshandbuch wurde überarbeitet.");
+    }
+
+    @Test
+    void aSummaryTheCoreDiscardedForTheSameUpdateIsNotKeptOnScreen() throws Exception {
+        actions.stored = new UpdateSummary("wiki", actions.second().id(), "Vertraulich bisher.", List.of(),
+                "gpt-test", SECOND, 0, false);
+        summary.source("wiki", "Confluence HaVdB");
+        actions.retryJobs.put("sync-1", JobState.RUNNING);
+        summary.followRetry("wiki", List.of("sync-1"));
+
+        // Gleiche Kennung, keine Zusammenfassung mehr: verworfen (etwa KI-Freigabe entzogen), nicht verlängert.
+        actions.stored = null;
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        actions.finishRetry("sync-1");
+
+        assertThat(summary.reportTexts()).doesNotContain("Vertraulich bisher.");
     }
 
     @Test
