@@ -2962,6 +2962,42 @@ public class Assets implements DocumentInventory {
         }
     }
 
+    /**
+     * Übernimmt die Beschreibung eines Bildes der Lese-Ansicht (Reiter „Bilder“, ADR 0021) in den Volltextindex, wenn
+     * das Bild ein Anhang dieser Seite ist, der dort schon steht (B2): wie beim Ablegen der Anhänge
+     * ({@link #indexStored}) als Text des Bildanhangs, nur sofort statt beim nächsten Ablegen. Nur Beschreibungen mit
+     * dem Standard-Prompt des eingestellten Modells; Bilder, die kein Anhang sind, und eigene Prompts (Marken eines
+     * Videos) bleiben draußen. Fragt weder Quelle noch Modell; Fehler bleiben hier.
+     *
+     * @return ob der Index geändert wurde
+     */
+    public boolean indexDescription(PageKey page, String spaceKey, DescribedImage described) {
+        Objects.requireNonNull(page, "page");
+        Asset asset = described == null ? null : described.asset();
+        if (texts == null || asset == null || spaceKey == null || asset.attachmentId() == null
+                || describer == null || !describer.available()
+                || !page.sourceId().equals(asset.sourceId()) || !page.pageId().equals(asset.pageId())
+                || !describer.id().equals(described.description().describer())
+                || !describer.modelVersion().equals(described.description().modelVersion())) {
+            return false;
+        }
+        try {
+            if (texts.attachmentInputSha256(page, asset.attachmentId()).isEmpty()) {
+                return false;
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex eines Anhangs in {0} nicht lesbar ({1})",
+                    page.sourceId(), e.getClass().getName());
+            return false;
+        }
+        boolean changed = indexText(page, spaceKey, asset, described.description().text(),
+                "describer:" + described.description().describer() + ":" + described.description().modelVersion());
+        if (changed) {
+            flushIndex();
+        }
+        return changed;
+    }
+
     /** Die Beschreibung kommt wie der Text eines Dokuments in den Volltextindex (#183). */
     private DescribedImage indexed(PageAttachmentList list, DescribedImage described) {
         if (indexDescription(list, described.asset(), described.description())) {

@@ -328,6 +328,61 @@ class AttachmentTextSearchTest {
     }
 
     @Test
+    void aDescriptionFromTheImagesTabReachesTheIndexAtOnceAndLeavesItWithTheRelease() {
+        // B2: Ein Bild der Lese-Ansicht, das ein Anhang der Seite ist, wird im Reiter „Bilder“ beschrieben; seine
+        // Beschreibung steht sofort im Volltextindex, nicht erst beim nächsten Ablegen der Anhänge.
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 7, 8, 9};
+        files.put("att7", png);
+        ImageDescriber vision = new ImageDescriber() {
+            @Override
+            public String id() {
+                return "vision";
+            }
+
+            @Override
+            public String modelVersion() {
+                return "v1";
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType) {
+                return "Glasfaser zwischen zwei Rechenzentren";
+            }
+        };
+        PageAttachmentList list = list("101", attachment("att7", "Netzplan Foto.png", "image/png"));
+        Assets assets = assets(vision);
+        KeywordSearch search = search(allow());
+        assets.harvest(list);
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        PageKey page = new PageKey("wiki", "101");
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/Netzplan%20Foto.png", "Netzplan Foto.png", "att7",
+                "image/png", "1");
+
+        Assets.DescribedImage described = assets.describeViewImage("wiki", "101", "1", image);
+        assertThat(assets.indexDescription(page, "DEV", described)).isTrue();
+
+        List<KeywordSearch.Hit> hits = search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits();
+        assertThat(hits).extracting(KeywordSearch.Hit::pageId).containsExactly("101");
+        assertThat(hits.getFirst().attachment()).isEqualTo(new KeywordSearch.AttachmentMatch("att7",
+                "Netzplan Foto.png"));
+        assertThat(assets.indexDescription(page, "DEV", described)).as("unverändert").isFalse();
+        // Ein späteres Ablegen der Anhänge schreibt denselben Stand und ändert nichts mehr.
+        Optional<String> state = index.attachmentInputSha256(page, "att7");
+        assets.harvest(list);
+        assertThat(index.attachmentInputSha256(page, "att7")).isEqualTo(state);
+
+        // Bilder, die kein Anhang im Index sind (eingebettete Adressen), legen keinen neuen Eintrag an.
+        assertThat(assets.indexDescription(new PageKey("wiki", "102"), "DEV", described)).isFalse();
+
+        // ADR 0028: Die Seite verliert die Freigabe; nur noch der Dateiname steht im Index.
+        assets.withdrawDescriptions(Map.of(page, "DEV"), Set.of(), key -> false);
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Netzplan"), null, 10).hits())
+                .extracting(KeywordSearch.Hit::matchedIn).containsExactly(KeywordSearch.MatchedIn.ATTACHMENT);
+    }
+
+    @Test
     void aDiagramAttachmentStandsInTheIndexWithItsFileName() {
         files.put("att3", "<mxfile><diagram name=\"x\"/></mxfile>".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         assets().harvest(list("101", attachment("att3", "Topologie Netzwerk.drawio", "application/vnd.jgraph.mxfile")));
