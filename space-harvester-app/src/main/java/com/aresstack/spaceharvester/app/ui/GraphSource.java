@@ -256,17 +256,49 @@ interface GraphSource {
         };
     }
 
-    /** Tooltip einer Verb-Kante: Stufe, Analysatoren der Belege, was ein Klick tut. */
+    /**
+     * Tooltip einer Verb-Kante: die genauen Stufen ihrer Belege mit Anzahl, im selben Wortlaut wie die Pillen im
+     * Overlay ({@link #stage}); die Linie fasst nur zusammen.
+     */
     private static String edgeTip(DomainTermGraph.Edge edge,
                                   java.util.function.Function<String, String> analyzerName) {
-        List<String> analyzers = edge.evidence().stream().map(DomainTermGraph.Evidence::analyzerId).distinct()
-                .map(analyzerName).filter(Objects::nonNull).sorted().toList();
-        return trustText(edge.trust(), edge.differs())
-                + (analyzers.isEmpty() ? "" : " · Aussagen aus " + String.join(", ", analyzers))
-                + " – Klick zeigt die Belege";
+        Map<String, Integer> stages = new LinkedHashMap<>();
+        edge.evidence().forEach(item -> stages.merge(stage(item, analyzerName), 1, Integer::sum));
+        List<String> parts = new ArrayList<>();
+        stages.forEach((stage, count) -> parts.add(stage + " " + count));
+        String head = parts.isEmpty() ? trustText(edge.trust(), edge.differs()) : capitalize(String.join(" · ", parts));
+        return head + " – Klick zeigt die Belege";
     }
 
-    /** Stufen in Worten (Paket W2). */
+    /**
+     * Genaue Stufe eines Belegs (Pille im Overlay, Tooltip der Kante): „von Hand bestätigt“, „vom Prüfschritt
+     * bestätigt“, „Parser und KI einig“, „nur &lt;Analysator&gt;“ oder „abweichend“.
+     */
+    static String stage(DomainTermGraph.Evidence item, java.util.function.Function<String, String> analyzerName) {
+        return switch (item.trust()) {
+            case GEPRUEFT -> item.statement().review()
+                    == com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review.CONFIRMED
+                    ? STAGE_BY_HAND : STAGE_BY_CHECK;
+            case EINIG -> STAGE_AGREED;
+            case UNGEPRUEFT -> {
+                String name = item.analyzerId() == null ? null : analyzerName.apply(item.analyzerId());
+                yield "nur " + (name == null ? "Analysator" : name);
+            }
+            case ABWEICHEND -> STAGE_DIFFERS;
+        };
+    }
+
+    private static String capitalize(String text) {
+        return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
+    }
+
+    /** Genaue Stufen je Beleg (Paket W2). */
+    String STAGE_BY_HAND = "von Hand bestätigt";
+    String STAGE_BY_CHECK = "vom Prüfschritt bestätigt";
+    String STAGE_AGREED = "Parser und KI einig";
+    String STAGE_DIFFERS = "abweichend";
+
+    /** Stufen einer Kante in Worten (Paket W2). */
     String TRUST_CHECKED = "Geprüft";
     String TRUST_AGREED = "Parser und KI einig";
     String TRUST_UNCHECKED = "Ungeprüft";

@@ -171,7 +171,7 @@ public final class EvidencePopup extends JPopupMenu {
         foot.setOpaque(false);
         foot.setLayout(new BoxLayout(foot, BoxLayout.X_AXIS));
         foot.setAlignmentX(LEFT_ALIGNMENT);
-        CountChip stage = CountChip.tag(stageWord(item.trust()), Comic.MUTED, stageTip(item));
+        CountChip stage = CountChip.tag(stageWord(item), Comic.MUTED, stageTip(item));
         stages.add(stage);
         foot.add(stage);
         foot.add(Box.createHorizontalStrut(8));
@@ -204,23 +204,18 @@ public final class EvidencePopup extends JPopupMenu {
         return row;
     }
 
-    /** Stufe eines Belegs als kurzes Wort für die Pille (Paket W2). */
-    static String stageWord(DomainTermGraph.Trust trust) {
-        return switch (trust) {
-            case GEPRUEFT -> "geprüft";
-            case EINIG -> "einig";
-            case UNGEPRUEFT -> "ungeprüft";
-            case ABWEICHEND -> "abweichend";
-        };
+    /** Genaue Stufe eines Belegs für die Pille, im Wortlaut des Kanten-Tooltips (Paket W2). */
+    static String stageWord(DomainTermGraph.Evidence item) {
+        return GraphSource.stage(item, com.aresstack.spaceharvester.app.ui.content.StatementProvenance::analyzer);
     }
 
     private static String stageTip(DomainTermGraph.Evidence item) {
-        String analyzer = com.aresstack.spaceharvester.app.ui.content.StatementProvenance.analyzer(item.analyzerId());
         return switch (item.trust()) {
-            case GEPRUEFT -> "Von Hand bestätigt oder vom Prüfschritt als stimmig bewertet";
-            case EINIG -> "Parser und KI lesen diesen Satz gleich";
-            case UNGEPRUEFT -> "Nur die Lesart " + (analyzer == null ? "des Analysators" : "von " + analyzer)
-                    + ", nicht geprüft";
+            case GEPRUEFT -> item.statement().review()
+                    == com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review.CONFIRMED
+                    ? "Ein Mensch hat diese Aussage bestätigt" : "Der Prüfschritt hat diese Aussage als stimmig bewertet";
+            case EINIG -> "Parser und KI lesen diesen Satz gleich, nicht geprüft";
+            case UNGEPRUEFT -> "Nur diese Lesart liegt vor, nicht geprüft";
             case ABWEICHEND -> "Parser und KI lesen diesen Satz verschieden, nicht geprüft";
         };
     }

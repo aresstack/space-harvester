@@ -73,6 +73,8 @@ public final class TermGraphView {
             + "noch keine Aussagen mit anderen Fachbegriffen.";
     static final String DOMAIN = "Nur Fachbegriffe";
     static final String CHECKED = "Nur geprüft";
+    static final String CHECKED_TIP = "Nur Verbindungen mit geprüften Belegen; die Zahl zählt nur diese";
+    static final String CHECKED_LOCKED = "Gilt nur mit „Nur Fachbegriffe“";
     static final String OPTIONS_TIP = "Optionen: Vorschläge zeigen, Nur Fachbegriffe, Nur geprüft";
     static final String TRUNCATED = "Gezeigt werden die ersten " + GraphSource.MAX_NODES + " Begriffe.";
     /** Höchstens so viele Vorschläge zeigt die Begriffssuche am Startfeld. */
@@ -151,8 +153,11 @@ public final class TermGraphView {
         depth.setSelectedIndex(1);
         proposals.setToolTipText("Auch vorgeschlagene Beziehungen zeigen, gestrichelt");
         domain.setToolTipText("Fachsicht: nur bestätigte Fachbegriffe und Synonyme, Verben der Aussagen als Kanten");
-        checked.setToolTipText("Nur Verbindungen mit geprüften Belegen; die Zahl zählt nur diese (nur in der Fachsicht)");
-        checked.setEnabled(false);
+        checkedState(false);
+        for (javax.swing.JCheckBoxMenuItem item : List.of(proposals, domain, checked)) {
+            // Wie die Suchoptionen: das Popup bleibt beim Umschalten offen.
+            item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
+        }
 
         JLabel heading = Comic.text("Wissensgraph der Begriffe");
         heading.setFont(Comic.semiBold(15f));
@@ -184,7 +189,7 @@ public final class TermGraphView {
             reload();
         });
         domain.addActionListener(e -> {
-            checked.setEnabled(domain.isSelected());
+            checkedState(domain.isSelected());
             markOptions();
             reload();
         });
@@ -301,6 +306,12 @@ public final class TermGraphView {
         }
         options.marked(!active.isEmpty());
         options.setToolTipText(active.isEmpty() ? OPTIONS_TIP : "Optionen – aktiv: " + String.join(", ", active));
+    }
+
+    /** „Nur geprüft“ wirkt nur in der Fachsicht; gesperrt nennt der Tooltip den Grund. */
+    private void checkedState(boolean enabled) {
+        checked.setEnabled(enabled);
+        checked.setToolTipText(enabled ? CHECKED_TIP : CHECKED_LOCKED);
     }
 
     IconButton optionsButton() {
