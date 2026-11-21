@@ -157,6 +157,14 @@ final class SourceUpdatesView extends JPanel {
      * Verlängern seine Kennung, für die neue gibt es noch keine.
      */
     private UpdateSummary carried;
+    /**
+     * Ob die festgehaltene Zusammenfassung nach dem Wechsel der Update-Kennung noch gilt: {@code null} ungeprüft,
+     * dann einmal geprüft ({@link Actions#summaryStillValid}); gezeigt wird sie unter neuer Kennung nur nach „ja“.
+     */
+    private Boolean carriedValid;
+    private boolean carriedChecking;
+    /** Abo der KI-Freigabe, solange eine Zusammenfassung festgehalten ist: jede Änderung verwirft sie. */
+    private Subscription releaseWatch = Subscription.NONE;
     /** Ob ein Chat-Modell eingestellt ist. */
     private boolean available = true;
     private int generation;
@@ -292,7 +300,7 @@ final class SourceUpdatesView extends JPanel {
         quietPending = false;
         retrying = false;
         quietReading = false;
-        carried = null;
+        dropCarried();
         updates = List.of();
         selected = null;
         windows.clear();
@@ -459,7 +467,7 @@ final class SourceUpdatesView extends JPanel {
     /** Wählt ein Update und lädt seinen Bericht. */
     void select(String updateId) {
         if (!Objects.equals(updateId, selected)) {
-            carried = null;
+            dropCarried();
         }
         select(updateId, false, () -> { });
     }
@@ -530,7 +538,10 @@ final class SourceUpdatesView extends JPanel {
             if (found.summary() == null && carried != null && updateId.equals(carried.updateId())) {
                 // Dieselbe Kennung ohne Zusammenfassung heißt: der Core hat sie verworfen (Rechte, KI-Freigabe), nicht
                 // bloß die Spanne verlängert. Dann bleibt auch die alte nicht stehen.
-                carried = null;
+                dropCarried();
+            } else if (found.summary() == null && carried != null && carriedValid == null) {
+                // Neue Kennung (Tages-Update verlängert): einmal fragen, ob die alte noch gilt; bis dahin nicht zeigen.
+                checkCarried(current, id, space);
             }
             summary = found.summary();
             available = found.available();
@@ -728,7 +739,7 @@ final class SourceUpdatesView extends JPanel {
         jobWatch = Subscription.NONE;
         if (run.quiet()) {
             // Ab jetzt gilt, was der Core liefert: die neue Zusammenfassung, sonst der Einstieg.
-            carried = null;
+            dropCarried();
         }
         onStatus.accept(switch (status.state()) {
             case COMPLETED -> run.quiet() ? "Zusammenfassung aktualisiert" : "Zusammenfassung erstellt";
@@ -1001,9 +1012,11 @@ final class SourceUpdatesView extends JPanel {
         retryWatch.close();
         int mine = ++retryGeneration;
         retrying = true;
-        if (mode == Mode.SUMMARY && carried == null) {
+        if (mode == Mode.SUMMARY && carried == null && summary != null) {
             // Das Tages-Update wechselt beim Verlängern seine Kennung: die bisherige Zusammenfassung festhalten.
             carried = summary;
+            carriedValid = null;
+            watchReleases(current);
         }
         java.util.Set<String> open = java.util.concurrent.ConcurrentHashMap.newKeySet();
         open.addAll(jobIds);
@@ -1037,6 +1050,65 @@ final class SourceUpdatesView extends JPanel {
                 }
             });
         }
+    }
+
+    /** Vergisst die festgehaltene Zusammenfassung samt Prüfung und Abo der KI-Freigabe. */
+    private void dropCarried() {
+        carried = null;
+        carriedValid = null;
+        releaseWatch.close();
+        releaseWatch = Subscription.NONE;
+    }
+
+    /** Jede Änderung der KI-Freigabe verwirft die festgehaltene Zusammenfassung sofort (Abnahme #1037). */
+    private void watchReleases(Actions current) {
+        releaseWatch.close();
+        try {
+            releaseWatch = current.subscribeReleases(() -> SwingUtilities.invokeLater(() -> {
+                if (carried != null) {
+                    dropCarried();
+                    // Auch die gezeigte Zusammenfassung neu beim Core lesen: er prüft die Freigabe erneut.
+                    if (selected != null) {
+                        select(selected, true, () -> { });
+                    } else if (shown != null) {
+                        renderReport(shown);
+                    }
+                }
+            }));
+        } catch (RuntimeException e) {
+            releaseWatch = Subscription.NONE;
+        }
+    }
+
+    /** Einmal je Wechsel der Kennung: gilt die festgehaltene noch? Bei „nein“ verschwindet sie sofort. */
+    private void checkCarried(Actions current, String source, String space) {
+        UpdateSummary held = carried;
+        if (carriedChecking) {
+            return;
+        }
+        carriedChecking = true;
+        runner.run(() -> current.summaryStillValid(source, held.updateId(), space), valid -> {
+            carriedChecking = false;
+            if (carried != held) {
+                return;
+            }
+            if (Boolean.TRUE.equals(valid)) {
+                carriedValid = Boolean.TRUE;
+            } else {
+                dropCarried();
+            }
+            if (shown != null) {
+                renderReport(shown);
+            }
+        }, failure -> {
+            carriedChecking = false;
+            if (carried == held) {
+                dropCarried();
+                if (shown != null) {
+                    renderReport(shown);
+                }
+            }
+        });
     }
 
     /** Ob die Ansicht gerade still aktualisiert: Wiederholung läuft, wartet auf Sichtbarkeit oder fasst still zusammen. */
@@ -1089,7 +1161,7 @@ final class SourceUpdatesView extends JPanel {
             possible = false;
         }
         if (!outdated || !possible || running != null) {
-            carried = null;
+            dropCarried();
             if (shown != null) {
                 renderReport(shown);
             }
@@ -1100,7 +1172,7 @@ final class SourceUpdatesView extends JPanel {
         autoStarted.add(autoKey(sourceId, spaceKey, selected));
         summarize(true, true);
         if (running == null) {
-            carried = null;
+            dropCarried();
         }
         renderReport(shown);
     }
@@ -1110,7 +1182,8 @@ final class SourceUpdatesView extends JPanel {
         ChangeUpdate update = found.update();
         if (summary != null) {
             renderSummary(found, summary);
-        } else if (carried != null && quietPhase()) {
+        } else if (carried != null && quietPhase()
+                && (carried.updateId().equals(update.id()) || Boolean.TRUE.equals(carriedValid))) {
             // Still neu zusammenfassen: bis die neue da ist, bleibt die bisherige stehen.
             renderSummary(found, carried);
         } else if (update.initial()) {
@@ -1464,6 +1537,16 @@ final class SourceUpdatesView extends JPanel {
         /** Die gespeicherte Zusammenfassung des Updates, {@code null} ohne. */
         UpdateSummary summary(String sourceId, String updateId, String spaceKey);
 
+        /** Ob die abgelegte Zusammenfassung eines (auch früheren) Updates noch gilt; ohne Inhalt. */
+        default boolean summaryStillValid(String sourceId, String updateId, String spaceKey) {
+            return false;
+        }
+
+        /** Meldet Änderungen der KI-Freigabe (ADR 0028), auf irgendeinem Thread. */
+        default Subscription subscribeReleases(Runnable listener) {
+            return Subscription.NONE;
+        }
+
         /** Ob ein Chat-Modell für Zusammenfassungen eingestellt ist. */
         boolean summariesAvailable();
 
@@ -1505,6 +1588,16 @@ final class SourceUpdatesView extends JPanel {
                 @Override
                 public UpdateSummary summary(String sourceId, String updateId, String spaceKey) {
                     return workspace.changeSummary(sourceId, updateId, spaceKey).orElse(null);
+                }
+
+                @Override
+                public boolean summaryStillValid(String sourceId, String updateId, String spaceKey) {
+                    return workspace.changeSummaryStillValid(sourceId, updateId, spaceKey);
+                }
+
+                @Override
+                public Subscription subscribeReleases(Runnable listener) {
+                    return workspace.subscribePageReleases(change -> listener.run());
                 }
 
                 @Override

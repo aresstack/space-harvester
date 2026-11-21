@@ -581,6 +581,47 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void aRevokedReleaseWithAnExtendedUpdateRemovesThePreviousSummaryAtOnce() throws Exception {
+        actions.stored = new UpdateSummary("wiki", actions.second().id(), "Vertraulich bisher.", List.of(),
+                "gpt-test", SECOND, 0, false);
+        summary.source("wiki", "Confluence HaVdB");
+        actions.retryJobs.put("sync-1", JobState.RUNNING);
+        summary.followRetry("wiki", List.of("sync-1"));
+
+        // KI-Freigabe entzogen und das Tages-Update verlängert (neue Kennung): einmal geprüft, „nein“.
+        actions.stillValid = false;
+        actions.secondShift = 60_000;
+        actions.stored = null;
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+
+        assertThat(actions.validityChecks).isEqualTo(1);
+        assertThat(summary.reportTexts()).doesNotContain("Vertraulich bisher.");
+        assertThat(summary.busy()).isFalse();
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(actions.validityChecks).as("nur einmal je Wechsel").isEqualTo(1);
+    }
+
+    @Test
+    void aReleaseChangeDuringTheQuietRunDropsThePreviousSummary() throws Exception {
+        actions.stored = new UpdateSummary("wiki", actions.second().id(), "Bisher.", List.of(), "gpt-test", SECOND,
+                0, true);
+        summary.source("wiki", "Confluence HaVdB");
+        actions.retryJobs.put("sync-1", JobState.RUNNING);
+        summary.followRetry("wiki", List.of("sync-1"));
+        actions.finishRetry("sync-1");
+        assertThat(actions.summarizeCalls).isEqualTo(1);
+        assertThat(summary.reportTexts()).contains("Bisher.");
+
+        actions.stored = null;
+        actions.releases.run();
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(summary.reportTexts()).doesNotContain("Bisher.");
+        assertThat(summary.busy()).isFalse();
+    }
+
+    @Test
     void aRetryThatChangedNothingStartsNoModelRun() throws Exception {
         actions.stored = new UpdateSummary("wiki", actions.second().id(), "Unverändert.", List.of(), "gpt-test",
                 SECOND, 0, false);
@@ -965,6 +1006,22 @@ class SourceUpdatesViewTest {
         @Override
         public UpdateSummary summary(String sourceId, String updateId, String spaceKey) {
             return stored;
+        }
+
+        boolean stillValid = true;
+        int validityChecks;
+        Runnable releases;
+
+        @Override
+        public boolean summaryStillValid(String sourceId, String updateId, String spaceKey) {
+            validityChecks++;
+            return stillValid;
+        }
+
+        @Override
+        public Subscription subscribeReleases(Runnable listener) {
+            releases = listener;
+            return () -> releases = null;
         }
 
         @Override

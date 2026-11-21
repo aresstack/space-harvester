@@ -2332,6 +2332,14 @@ public final class Workspace {
         return harvester.changeLog().summary(caller, sourceId, updateId, spaceKey);
     }
 
+    /**
+     * Ob die abgelegte Zusammenfassung eines Updates noch gilt (Rechte, KI-Freigabe), ohne Inhalt; einmal beim Wechsel
+     * der Update-Kennung (Abnahme #1037). Nie auf dem EDT.
+     */
+    public boolean changeSummaryStillValid(String sourceId, String updateId, String spaceKey) {
+        return harvester.changeLog().summaryStillValid(caller, sourceId, updateId, spaceKey);
+    }
+
     /** Startet „Zusammenfassen“ für ein Update in einer Ebene (ADR 0031); {@code spaceKey == null} die ganze Quelle. */
     public JobStatus summarizeUpdate(String sourceId, String updateId, String spaceKey) {
         return harvester.changeLog().summarize(caller, sourceId, updateId, spaceKey);
