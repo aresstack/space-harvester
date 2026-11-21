@@ -150,4 +150,40 @@ class SearchOrchestratorNeighborsTest {
         assertThat(ids(result)).containsExactly("o", "a");
         assertThat(queries).hasSize(1);
     }
+
+    @Test
+    void anExhaustedSearchBudgetStartsNoNeighborSearch() throws Exception {
+        ProgressiveResult result = run(neighbors, profile().withNeighbors(true).withBudget(Duration.ofSeconds(30), 1),
+                KeywordSearch.Query.of(ORIGINAL));
+
+        assertThat(ids(result)).containsExactly("o", "a");
+        assertThat(queries).hasSize(1);
+        assertThat(seedsSeen).isEmpty();
+    }
+
+    @Test
+    void slowCollectingOfNeighborsDoesNotHoldTheSearchBeyondItsDeadline() throws Exception {
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        NeighborSource slow = (caller, seeds) -> {
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return neighbors.neighbors(caller, seeds);
+        };
+        orchestrator = new SearchOrchestrator(search, null, (original, max) -> List.of(),
+                (original, max) -> List.of(), HitScorer.none(), com.aresstack.spaceharvester.application.searchrun
+                .SearchRunLog.NONE, slow);
+        long start = System.nanoTime();
+
+        ProgressiveResult result = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                profile().withNeighbors(true).withBudget(Duration.ofMillis(800), 12)).result().get(5, TimeUnit.SECONDS);
+        Duration took = Duration.ofNanos(System.nanoTime() - start);
+        release.countDown();
+
+        assertThat(took).isLessThan(Duration.ofSeconds(4));
+        assertThat(ids(result)).containsExactly("o", "a");
+        assertThat(queries).hasSize(1);
+    }
 }

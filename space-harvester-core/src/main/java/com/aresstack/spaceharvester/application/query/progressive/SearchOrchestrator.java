@@ -387,11 +387,16 @@ public final class SearchOrchestrator implements AutoCloseable {
         private void neighborStep() {
             List<KeywordSearch.Hit> seeds = ranked().stream().filter(RankedHit::confirmed)
                     .limit(NeighborCandidates.MAX_SEEDS).map(RankedHit::hit).toList();
-            if (seeds.isEmpty()) {
+            // Die Nachbarsuche ist eine Suchanfrage wie jede andere und zählt gegen das Budget.
+            if (seeds.isEmpty() || searches >= profile.searchBudget()) {
+                return;
+            }
+            Map<PageKey, HitReason.Neighbor> found = collect(seeds);
+            if (found == null || cancelled() || System.nanoTime() >= deadline) {
                 return;
             }
             Map<PageKey, HitReason.Neighbor> candidates = new LinkedHashMap<>();
-            neighbors.neighbors(caller, seeds).forEach((key, via) -> {
+            found.forEach((key, via) -> {
                 // Schon gefunden: kein Kandidat. Außerhalb der Seiten der Suche: nie.
                 if (!entries.containsKey(key) && (query.pages() == null || query.pages().contains(key))) {
                     candidates.put(key, via);
@@ -410,6 +415,13 @@ public final class SearchOrchestrator implements AutoCloseable {
                     slots.release();
                 }
             }, executor);
+            // Kehrt sie erst nach dem Abbruch zurück, kennt finish ihr Laden nicht: hier abbrechen (wie in start).
+            future.thenAccept(late -> {
+                KeywordSearch.Progress progress = late.results().progress();
+                if (cancelled() && progress != null && !progress.done()) {
+                    cancelLoading(progress.id());
+                }
+            });
             long until = Math.min(deadline, System.nanoTime() + profile.execution().variantTimeout().toNanos());
             VariantSearch.Outcome outcome;
             try {
@@ -451,6 +463,31 @@ public final class SearchOrchestrator implements AutoCloseable {
             newInWave = added;
             score(unscored);
             emit(() -> listener.ranked(ranked()));
+        }
+
+        /**
+         * Sammelt die Nachbarn der Treffer im Hintergrund; gewartet wird höchstens bis zur Gesamtfrist oder zum
+         * Abbruch. {@code null}, wenn das nicht reichte oder das Sammeln scheiterte.
+         */
+        private Map<PageKey, HitReason.Neighbor> collect(List<KeywordSearch.Hit> seeds) {
+            CompletableFuture<Map<PageKey, HitReason.Neighbor>> future =
+                    CompletableFuture.supplyAsync(() -> neighbors.neighbors(caller, seeds), executor);
+            try {
+                CompletableFuture.anyOf(future, cancelSignal).get(Math.max(0, deadline - System.nanoTime()),
+                        TimeUnit.NANOSECONDS);
+                return future.isDone() ? future.join() : null;
+            } catch (TimeoutException e) {
+                LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht in der Frist gesammelt");
+                return null;
+            } catch (ExecutionException | CompletionException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesammelt ({0})", cause.getClass().getName());
+                return null;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cancelSignal.complete(null);
+                return null;
+            }
         }
 
         /** Merkt die Fehlerart; eine Meldung des KI-Dienstes schlägt eine abgelaufene Frist. */
