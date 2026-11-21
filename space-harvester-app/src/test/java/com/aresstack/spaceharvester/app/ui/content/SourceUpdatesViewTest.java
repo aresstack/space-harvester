@@ -79,7 +79,7 @@ class SourceUpdatesViewTest {
     void anUpdateMarkedByTheCoreItselfShowsOnlyTheDate() {
         ChangeUpdate s = actions.second();
         ChangeUpdate byCore = new ChangeUpdate(s.id(), s.sourceId(), s.from(), s.to(), new UpdateMark("wiki", SECOND,
-                com.aresstack.spaceharvester.core.Harvester.OWNER, List.of("CLUK"), 0, false), false, s.kinds(),
+                com.aresstack.spaceharvester.core.Harvester.OWNER, List.of("BAU"), 0, false), false, s.kinds(),
                 s.spaces(), s.pages(), s.loaded(), s.reloaded(), false);
         view.zone(ZoneOffset.UTC);
 
@@ -93,7 +93,7 @@ class SourceUpdatesViewTest {
         ChangeUpdate changed = actions.second();
         ChangeUpdate initial = actions.initial();
         ChangeUpdate empty = new ChangeUpdate("leer", "wiki", changed.to(), changed.to().plusSeconds(3600),
-                new UpdateMark("wiki", changed.to().plusSeconds(3600), "angelo", List.of("CLUK"), 0, false), false,
+                new UpdateMark("wiki", changed.to().plusSeconds(3600), "angelo", List.of("BAU"), 0, false), false,
                 Map.of(), Map.of(), 0, 0, 0, false);
 
         assertThat(SourceUpdatesView.preselected(List.of(open, empty, changed, initial)))
@@ -292,8 +292,8 @@ class SourceUpdatesViewTest {
 
         List<String> texts = view.reportTexts();
         assertThat(texts).contains("Geändert (1)", "Umbenannt (1)", "Entfernt (1)", "Betriebshandbuch", "Alte Seite")
-                .contains("CLUK › Fachverfahren · Version 7 statt 6 · Inhalt noch nicht geladen")
-                .contains("CLUK · früher „Kurzbeschreibung“")
+                .contains("BAU › Fachverfahren · Version 7 statt 6 · Inhalt noch nicht geladen")
+                .contains("BAU · früher „Kurzbeschreibung“")
                 .contains("Außerdem im Bestand: 4 Inhalte erstmals lokal geladen, 1 geänderter Inhalt nachgeladen.");
         assertThat(texts).as("geladen und nachgeladen sind keine Änderungen der Quelle")
                 .noneMatch(text -> text.startsWith("Erstmals geladen") || text.startsWith("Nachgeladen"));
@@ -319,7 +319,7 @@ class SourceUpdatesViewTest {
 
         assertThat(view.reportTexts()).contains(
                 "Erstbefüllung: 340 Seiten kamen in den Bestand. Eine Seitenliste gibt es dafür nicht.",
-                "Space CLUK: 300 Seiten", "Space DEV: 40 Seiten");
+                "Space BAU: 300 Seiten", "Space DEV: 40 Seiten");
     }
 
     @Test
@@ -449,7 +449,7 @@ class SourceUpdatesViewTest {
         assertThat(summary.clickSummaryLink("Betriebshandbuch")).isTrue();
         assertThat(opened).singleElement().satisfies(page -> assertThat(page.pageId()).isEqualTo("11"));
         assertThat(summary.clickSummaryLink("Alte Seite")).as("entfernte Seiten öffnen nichts").isFalse();
-        assertThat(summary.clickSummaryLink("Kurzbeschreibung DATENH")).as("ohne Titel: Titel aus dem Bericht").isTrue();
+        assertThat(summary.clickSummaryLink("Kurzbeschreibung Nachtlauf")).as("ohne Titel: Titel aus dem Bericht").isTrue();
     }
 
     @Test
@@ -493,7 +493,7 @@ class SourceUpdatesViewTest {
     void clickingThroughLevelsCancelsWaitingAutoJobsSoAtMostOneIsActive() {
         actions.jobNow = JobState.QUEUED;
         summary.source("wiki", "Confluence HaVdB");
-        summary.source("wiki", "CLUK", "CLUK");
+        summary.source("wiki", "BAU", "BAU");
         summary.source("wiki", "ARCH", "ARCH");
 
         assertThat(actions.summarizeCalls).isEqualTo(3);
@@ -507,7 +507,7 @@ class SourceUpdatesViewTest {
         actions.jobNow = JobState.QUEUED;
         actions.reuseJob = "fremd-1";
         summary.source("wiki", "Confluence HaVdB");
-        summary.source("wiki", "CLUK", "CLUK");
+        summary.source("wiki", "BAU", "BAU");
         assertThat(actions.cancels).as("eigener, neuer Auftrag: abgebrochen").isEqualTo(1);
 
         summary.source("wiki", "Confluence HaVdB");
@@ -518,14 +518,14 @@ class SourceUpdatesViewTest {
     @Test
     void aRunningAutoJobFinishesAndTheNextLevelGetsItsJobAfterwards() throws Exception {
         summary.source("wiki", "Confluence HaVdB");
-        summary.source("wiki", "CLUK", "CLUK");
+        summary.source("wiki", "BAU", "BAU");
 
         assertThat(actions.summarizeCalls).as("ein laufender bleibt, kein zweiter").isEqualTo(1);
         assertThat(actions.cancels).isZero();
 
         actions.finish(JobState.COMPLETED);
         assertThat(actions.summarizeCalls).as("danach der für die gezeigte Ebene").isEqualTo(2);
-        assertThat(summary.spaceKey()).isEqualTo("CLUK");
+        assertThat(summary.spaceKey()).isEqualTo("BAU");
     }
 
     @Test
@@ -672,7 +672,7 @@ class SourceUpdatesViewTest {
 
         private UpdateSummary summaryOf() {
             String first = "Das Betriebshandbuch wurde überarbeitet.";
-            String second = "Eine alte Seite ist weggefallen, eine andere heißt jetzt „Kurzbeschreibung DATENH“.";
+            String second = "Eine alte Seite ist weggefallen, eine andere heißt jetzt „Kurzbeschreibung Nachtlauf“.";
             return new UpdateSummary("wiki", second().id(), first + " " + second, List.of(
                     new SummaryStatement(first, List.of(new SummaryPage("11", "Betriebshandbuch"))),
                     new SummaryStatement(second, List.of(new SummaryPage("13", "Alte Seite"),
@@ -683,7 +683,7 @@ class SourceUpdatesViewTest {
 
         ChangeUpdate open() {
             return new ChangeUpdate(ChangeUpdate.OPEN, "wiki", SECOND, null, null, false, Map.of(ChangeKind.NEW, 1),
-                    Map.of("CLUK", 1), 1, 0, 0, false);
+                    Map.of("BAU", 1), 1, 0, 0, false);
         }
 
         ChangeUpdate second() {
@@ -692,16 +692,16 @@ class SourceUpdatesViewTest {
             kinds.put(ChangeKind.RENAMED, 1);
             kinds.put(ChangeKind.REMOVED, 1);
             return new ChangeUpdate(String.valueOf(SECOND.toEpochMilli()), "wiki", FIRST, SECOND,
-                    new UpdateMark("wiki", SECOND, "angelo", List.of("CLUK"), 0, false), false, kinds,
-                    Map.of("CLUK", 3), 3, 4, 1, false);
+                    new UpdateMark("wiki", SECOND, "angelo", List.of("BAU"), 0, false), false, kinds,
+                    Map.of("BAU", 3), 3, 4, 1, false);
         }
 
         ChangeUpdate initial() {
             Map<String, Integer> spaces = new HashMap<>();
-            spaces.put("CLUK", 300);
+            spaces.put("BAU", 300);
             spaces.put("DEV", 40);
             return new ChangeUpdate(String.valueOf(FIRST.toEpochMilli()), "wiki", null, FIRST,
-                    new UpdateMark("wiki", FIRST, "angelo", List.of("CLUK", "DEV"), 0, true), true,
+                    new UpdateMark("wiki", FIRST, "angelo", List.of("BAU", "DEV"), 0, true), true,
                     Map.of(ChangeKind.NEW, 340), spaces, 340, 0, 0, false);
         }
 
@@ -731,16 +731,16 @@ class SourceUpdatesViewTest {
             }
             if (updateId.equals(ChangeUpdate.OPEN)) {
                 List<ReportedPage> pages = new ArrayList<>(List.of(page("20", ChangeKind.NEW, "Neue Seite",
-                        List.of("CLUK"), null, null, null, false)));
+                        List.of("BAU"), null, null, null, false)));
                 if (openGrows) {
-                    pages.add(page("21", ChangeKind.NEW, "Noch eine Seite", List.of("CLUK"), null, null, null, false));
+                    pages.add(page("21", ChangeKind.NEW, "Noch eine Seite", List.of("BAU"), null, null, null, false));
                 }
                 return new ChangeReport(open(), pages);
             }
             return new ChangeReport(second(), List.of(
-                    page("11", ChangeKind.CONTENT_CHANGED, "Betriebshandbuch", List.of("CLUK", "Fachverfahren"),
+                    page("11", ChangeKind.CONTENT_CHANGED, "Betriebshandbuch", List.of("BAU", "Fachverfahren"),
                             null, "6", "7", true),
-                    page("12", ChangeKind.RENAMED, "Kurzbeschreibung DATENH", List.of("CLUK"), "Kurzbeschreibung",
+                    page("12", ChangeKind.RENAMED, "Kurzbeschreibung Nachtlauf", List.of("BAU"), "Kurzbeschreibung",
                             null, null, false),
                     page("13", ChangeKind.REMOVED, "Alte Seite", List.of(), null, null, null, false)));
         }
@@ -838,7 +838,7 @@ class SourceUpdatesViewTest {
         private static ReportedPage page(String id, ChangeKind kind, String title, List<String> path,
                                          String oldTitle, String oldVersion, String newVersion,
                                          boolean pending) {
-            return new ReportedPage("wiki", "CLUK", id, kind, Set.of(kind), title, path,
+            return new ReportedPage("wiki", "BAU", id, kind, Set.of(kind), title, path,
                     URI.create("https://wiki.example/" + id), oldVersion, newVersion, oldTitle, title, null, null,
                     null, null, pending, SECOND, null);
         }
