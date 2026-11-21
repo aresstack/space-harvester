@@ -66,7 +66,6 @@ final class References extends JPanel {
     private final JPanel belowBody = new JPanel(new BorderLayout());
     private com.aresstack.spaceharvester.app.ui.controls.BusyOverlay belowBusy;
     private boolean belowShown;
-    private int belowPages;
     private List<com.aresstack.spaceharvester.application.navigation.PageNavigation.SubpageReference> lastBelow;
 
     private JPanel belowSection() {
@@ -123,7 +122,6 @@ final class References extends JPanel {
      */
     void belowLoading(int pages) {
         belowShown = pages >= 0;
-        belowPages = Math.max(pages, 0);
         lastBelow = null;
         belowModel.set(List.of());
         belowCount.count(0);
@@ -157,12 +155,9 @@ final class References extends JPanel {
         onStatus.accept(status());
     }
 
+    /** Die Fußzeile bleibt der Hinweis zu den eigenen Verweisen; die Zahl der Unterseiten-Verweise zeigt der Chip (UX). */
     private String status() {
-        if (!belowShown) {
-            return hint;
-        }
-        String own = hint.endsWith(".") ? hint.substring(0, hint.length() - 1) : hint;
-        return own + " · " + PageDetailPanel.subpagesStatus("Verweise", belowPages);
+        return hint;
     }
 
     /** Für Tests: der Abschnitt „Aus Unterseiten“. */
