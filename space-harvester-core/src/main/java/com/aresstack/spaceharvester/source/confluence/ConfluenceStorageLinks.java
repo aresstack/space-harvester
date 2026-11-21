@@ -231,6 +231,9 @@ public final class ConfluenceStorageLinks implements PageLinkExtractor {
             path = withoutScheme.substring(end);
         } else if (href.startsWith("/") && !href.startsWith("//")) {
             path = href;
+        } else if (!href.isEmpty() && "#?".indexOf(href.charAt(0)) < 0 && !hasScheme(href)) {
+            // Relativ zur Basis, wie URI.resolve im Anschluss: „pages/viewpage.action?…“ unter dem Kontextpfad.
+            path = context + "/" + (href.startsWith("./") ? href.substring(2) : href);
         } else {
             return null;
         }
@@ -242,6 +245,12 @@ public final class ConfluenceStorageLinks implements PageLinkExtractor {
         }
         String rest = path.substring(context.length());
         return rest.isEmpty() || "/?#".indexOf(rest.charAt(0)) >= 0 ? rest : null;
+    }
+
+    /** Ob die Adresse ein Schema hat ({@code mailto:}, {@code jira:} …), also nicht relativ ist. */
+    private static boolean hasScheme(String href) {
+        int colon = href.indexOf(':');
+        return colon > 0 && firstOf(href, "/?#") > colon;
     }
 
     private static String withoutDefaultPort(String host) {

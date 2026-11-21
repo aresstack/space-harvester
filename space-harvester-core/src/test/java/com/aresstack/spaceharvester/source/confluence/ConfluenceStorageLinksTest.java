@@ -57,6 +57,15 @@ class ConfluenceStorageLinksTest {
     }
 
     @Test
+    void relativeAddressesResolveAgainstTheBaseLikeTheConnector() {
+        assertThat(ConfluenceStorageLinks.href("pages/viewpage.action?pageId=42", LOCATOR))
+                .isEqualTo(LinkTarget.page("42"));
+        assertThat(ConfluenceStorageLinks.href("display/DEV/Plan", LOCATOR)).isEqualTo(LinkTarget.titled("DEV", "Plan"));
+        assertThat(ConfluenceStorageLinks.href("#oben", LOCATOR)).isNull();
+        assertThat(ConfluenceStorageLinks.href("mailto:a@example.org", LOCATOR)).isNull();
+    }
+
+    @Test
     void aConfluenceWithoutContextPathAcceptsRootRelativeAddresses() {
         assertThat(ConfluenceStorageLinks.href("/pages/viewpage.action?pageId=5", "wiki.example.org"))
                 .isEqualTo(LinkTarget.page("5"));

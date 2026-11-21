@@ -403,7 +403,7 @@ public class PageNavigation {
             return new References(sourceId, pageId, outgoing,
                     references.incoming() == null ? null : visibleTargets(caller, source, references.incoming()));
         }
-        PageLinks.Links local = links.links(caller, new PageKey(sourceId, pageId));
+        PageLinks.Links local = links.links(caller, new PageKey(sourceId, pageId), spaceKey);
         return new References(sourceId, pageId, outgoing,
                 visible(caller, sourceId, local.incoming().stream().map(this::cachedNode).toList()), local.coverage());
     }

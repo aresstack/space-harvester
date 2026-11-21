@@ -152,6 +152,35 @@ class PageLinksTest {
     }
 
     @Test
+    void removingATargetAnnouncesThePagesThatLinkedToItById() {
+        pages.page("1", "DEV", "Start", "id:2");
+        pages.page("2", "DEV", "Ziel", "");
+        links.reconcileNow("wiki");
+        List<PageLinks.LinksChanged> events = new CopyOnWriteArrayList<>();
+        links.subscribe(events::add);
+
+        pages.remove("2");
+        links.applyNow("wiki", List.of("2"));
+
+        assertThat(links.links(CALLER, key("1")).outgoing()).isEmpty();
+        assertThat(events).singleElement().satisfies(event -> assertThat(event.pageIds()).contains("1", "2"));
+    }
+
+    @Test
+    void aPageTheCacheDoesNotKnowIsCheckedWithTheSpaceTheCallerAlreadyKnows() {
+        pages.page("1", "DEV", "Start", "id:9");
+        links.reconcileNow("wiki");
+        links.close();
+        // Nur DEV ist frei; ohne Space wäre die Seite verborgen.
+        links = links((context, scope, kind) -> scope.pageId() == null || "DEV".equals(scope.spaceKey())
+                ? AccessDecision.ALLOW : AccessDecision.DENY);
+
+        assertThat(links.links(CALLER, key("9"), "DEV").incoming()).containsExactly(key("1"));
+        assertThatThrownBy(() -> links.links(CALLER, key("9")))
+                .isInstanceOf(com.aresstack.spaceharvester.application.access.AccessDeniedException.class);
+    }
+
+    @Test
     void reconcileRemovesEntriesOfPagesTheCacheNoLongerHasAndSkipsUnchangedPayloads() {
         pages.page("1", "DEV", "Start", "id:2");
         pages.page("2", "DEV", "Ziel", "");

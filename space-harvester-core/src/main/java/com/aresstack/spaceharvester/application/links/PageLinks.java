@@ -104,12 +104,22 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
      *                                                                               {@code content} auf die Seite
      */
     public Links links(AccessContext caller, PageKey page) {
+        return links(caller, page, null);
+    }
+
+    /**
+     * Wie {@link #links(AccessContext, PageKey)} mit dem Space der Seite, den der Aufrufer schon kennt (etwa live von
+     * der Quelle); gilt, wenn der Cache die Seite nicht kennt.
+     *
+     * @param spaceKey Space der Seite oder {@code null}
+     */
+    public Links links(AccessContext caller, PageKey page, String spaceKey) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(page, "page");
         access.require(caller, ResourceScope.source(page.sourceId()), AccessKind.CONTENT);
         Optional<PageHeader> header = pages.header(page);
-        access.requireConcealed(caller, ResourceScope.page(page.sourceId(),
-                header.map(found -> found.metadata().partitionKey()).orElse(null), page.pageId()), AccessKind.CONTENT);
+        String space = header.map(found -> found.metadata().partitionKey()).orElse(spaceKey);
+        access.requireConcealed(caller, ResourceScope.page(page.sourceId(), space, page.pageId()), AccessKind.CONTENT);
         return visible(caller, compute(page, header), coverage(caller, page.sourceId()));
     }
 
@@ -401,7 +411,10 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
                 && entry.title().equals(metadata.title());
     }
 
-    /** Die Seite selbst, ihre Ziele und alle, die auf ihren Titel verweisen: Deren Kanten hängen an diesem Eintrag. */
+    /**
+     * Die Seite selbst, ihre Ziele und alle, die auf ihre ID oder ihren Titel verweisen: Deren Kanten hängen an diesem
+     * Eintrag.
+     */
     private void affected(LinkIndex.Entry entry, Set<String> changed) {
         String sourceId = entry.page().sourceId();
         changed.add(entry.page().pageId());
@@ -413,6 +426,7 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
             }
         }
         index.linkingToTitle(sourceId, entry.titleKey()).forEach(linking -> changed.add(linking.page().pageId()));
+        index.linkingToId(sourceId, entry.page().pageId()).forEach(linking -> changed.add(linking.page().pageId()));
     }
 
     private PageLinkExtractor extractor(PageMetadata metadata) {

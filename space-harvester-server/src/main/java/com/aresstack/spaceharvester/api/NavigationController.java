@@ -157,14 +157,22 @@ public class NavigationController {
         }
     }
 
-    /** Querverweise; {@code incoming} ist leer, wenn {@code incomingSupported} false ist. */
+    /**
+     * Querverweise; {@code incoming} ist leer, wenn {@code incomingSupported} false ist. {@code incomingSupported} heißt:
+     * die Quelle kennt die eingehenden Verweise vollständig. Stammen sie stattdessen aus den lokal gespeicherten Seiten,
+     * ist {@code incomingSupported} false, {@code incoming} enthält die bisher gefundenen und {@code indexedPages} von
+     * {@code knownPages} nennen den Stand (sonst {@code null}).
+     */
     public record LinksResponse(String sourceId, String pageId, List<Node> outgoing, boolean incomingSupported,
-                                List<Node> incoming) {
+                                List<Node> incoming, Integer indexedPages, Integer knownPages) {
 
         static LinksResponse of(PageNavigation.References references) {
+            boolean local = references.coverage() != null;
+            boolean shown = local && references.coverage().shown();
             return new LinksResponse(references.sourceId(), references.pageId(), Node.of(references.outgoing()),
-                    references.incoming() != null,
-                    references.incoming() == null ? List.of() : Node.of(references.incoming()));
+                    references.incoming() != null && !local,
+                    references.incoming() == null ? List.of() : Node.of(references.incoming()),
+                    shown ? references.coverage().indexed() : null, shown ? references.coverage().known() : null);
         }
     }
 }
