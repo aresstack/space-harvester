@@ -155,6 +155,8 @@ class PodcastWriterLiveTest {
         assertThat(all).as("keine Zahlenkolonnen").doesNotContain("1.204.332", "1.388.120", "3:12", "01:40");
         assertThat(all).as("das Wesentliche").contains("Spool").containsAnyOf("Monatsst", "Auswertung")
                 .containsAnyOf("Eskalation", "Stufe", "Leitung");
+        assertThat(spoken.stream().filter(text -> text.contains("Seite Nachtlauf Nordlicht")).count())
+                .as("die erklärte Seite wird nicht in jedem Thema neu genannt").isLessThanOrEqualTo(1);
     }
 
     private static StepModel ollama(String base, String name) {
