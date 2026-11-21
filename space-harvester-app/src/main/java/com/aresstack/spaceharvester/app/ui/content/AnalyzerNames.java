@@ -16,6 +16,9 @@ public final class AnalyzerNames {
     /** Kurzname für das kompakte Auswahlfeld in der Reiterzeile. */
     public static final String PARSER_SHORT = "MaltParser";
     public static final String MODEL_SHORT = "KI (Erprobung)";
+    /** Anzeige im geschlossenen Auswahlfeld der Reiterzeile (UX/P1: bei 960 px einzeilig); die Liste zeigt die Kurznamen. */
+    public static final String PARSER_COMPACT = "Parser";
+    public static final String MODEL_COMPACT = "KI";
     /** Tooltip des Ablage-Auswahlfelds. */
     public static final String STORE_TOOLTIP = "Aussagen, Graph, Stand, Begriffe und Export lesen aus dieser Ablage";
     /** Pflichttext des ?-Knopfs (Auflage des Architekten): zwei Sätze zur Güte. */
@@ -34,6 +37,11 @@ public final class AnalyzerNames {
     /** Der kurze Name für die Reiterzeile. */
     public static String shortName(AnalyzerChoice choice) {
         return choice == AnalyzerChoice.MODEL ? MODEL_SHORT : PARSER_SHORT;
+    }
+
+    /** Der Name im geschlossenen Auswahlfeld der Reiterzeile. */
+    public static String compactName(AnalyzerChoice choice) {
+        return choice == AnalyzerChoice.MODEL ? MODEL_COMPACT : PARSER_COMPACT;
     }
 
     /** Der Analysator zu einem sichtbaren Namen (lang oder kurz); Unbekanntes ist der MaltParser. */

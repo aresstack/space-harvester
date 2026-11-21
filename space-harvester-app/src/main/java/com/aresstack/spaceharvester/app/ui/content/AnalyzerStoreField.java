@@ -10,7 +10,8 @@ import java.util.function.Consumer;
 /**
  * Kompaktes Auswahlfeld der Ablage oben rechts in der Reiterzeile von Aussagen, Graph und Beziehungen (Fahrplan A3,
  * UX-Vorgabe): zeigt, aus welcher Ablage (MaltParser oder KI) alle Ansichten lesen, und ändert dieselbe Einstellung wie
- * Einstellungen › Modelle, „Aussagenanalyse“. Setzen von außen meldet nichts.
+ * Einstellungen › Modelle, „Aussagenanalyse“. Setzen von außen meldet nichts. Geschlossen zeigt es nur „Parser“ oder
+ * „KI“, damit die sieben Unterreiter bei 960 px in einer Zeile bleiben (P1); Liste und Tooltip nennen die vollen Namen.
  */
 public final class AnalyzerStoreField extends JComboBox<String> {
 
@@ -22,10 +23,14 @@ public final class AnalyzerStoreField extends JComboBox<String> {
         addItem(AnalyzerNames.MODEL_SHORT);
         setFont(Comic.regular(12f));
         ComicComboBoxUI.install(this);
-        setToolTipText(AnalyzerNames.STORE_TOOLTIP);
         getAccessibleContext().setAccessibleName("Ablage der Aussagenanalyse");
-        setPrototypeDisplayValue(AnalyzerNames.MODEL_SHORT);
+        javax.swing.ListCellRenderer<? super String> look = getRenderer();
+        setRenderer((list, value, index, selected, focus) -> look.getListCellRendererComponent(list,
+                index < 0 ? AnalyzerNames.compactName(AnalyzerNames.of(value)) : value, index, selected, focus));
+        setPrototypeDisplayValue(AnalyzerNames.PARSER_SHORT);
+        tooltip();
         addActionListener(e -> {
+            tooltip();
             if (!updating) {
                 onChange.accept(choice());
             }
@@ -45,6 +50,11 @@ public final class AnalyzerStoreField extends JComboBox<String> {
         } finally {
             updating = false;
         }
+    }
+
+    /** Der Tooltip nennt den vollen Namen der gezeigten Ablage, das geschlossene Feld nur den knappen. */
+    private void tooltip() {
+        setToolTipText(AnalyzerNames.name(choice()) + ": " + AnalyzerNames.STORE_TOOLTIP);
     }
 
     /** Die gezeigte Ablage. */
