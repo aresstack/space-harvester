@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.query.progressive.NeighborLoader
 import com.aresstack.spaceharvester.application.query.DocumentKind;
 import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.SearchExpansion;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
@@ -82,6 +83,10 @@ public final class SearchView implements View {
     static final String NEIGHBORS_UNCHECKED = "Nachbarseiten konnten nicht geprüft werden";
     /** Statuszeile, solange fehlende Nachbarn im Hintergrund laden. */
     static final String NEIGHBORS_LOADING = "weitere Nachbarseiten laden im Hintergrund";
+    /** Suchmethode „Synonyme der Fachbegriffe“ (K5a). */
+    static final String SYNONYMS = "Synonyme der Fachbegriffe einbeziehen";
+    /** Gelbe Zeile, wenn das Glossar nicht lesbar ist; die Suche läuft ohne die Synonyme, kein Fehler. */
+    static final String SYNONYMS_UNREADABLE = "Glossar nicht lesbar, ohne Synonyme der Fachbegriffe gesucht";
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
@@ -95,6 +100,14 @@ public final class SearchView implements View {
      * ({@link SearchMethods}); der Chat folgt ihr.
      */
     final JCheckBox neighbors = checkBox(NEIGHBORS, NEIGHBORS_TIP);
+    /**
+     * Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a, Angelo 21.11.2026: zuschaltbar, Standard aus, gilt für
+     * die Sitzung): Zu bestätigten Fachbegriffen des Glossars kommen ihre vorgeschlagenen Synonyme als Anfragen dazu.
+     * Im Modus „Nur Fachbegriffe“ wirkungslos, bleibt aber bedienbar. Der Chat folgt ihr ({@link SearchMethods}).
+     */
+    final JCheckBox glossarySynonyms = checkBox(SYNONYMS, SYNONYMS_TIP);
+    /** Gelber Zusatz der Statuszeile zur Synonymsuche der laufenden Anfrage (Kürzung, Glossar nicht lesbar), sonst leer. */
+    private String synonymNote = "";
     /**
      * Suchmethode „Nur Fachbegriffe“ (K5b, Angelo 21.11.2026; Standard aus, gilt für die Sitzung): statt der
      * Trefferliste die Fachbegriffe des Glossars links und ihre Synonyme rechts, je mit Bestätigen und Ablehnen
@@ -261,6 +274,11 @@ public final class SearchView implements View {
         neighbors.setSelected(SearchMethods.user().neighbors());
         neighbors.addItemListener(e -> {
             SearchMethods.user().neighbors(neighbors.isSelected());
+            mode();
+        });
+        glossarySynonyms.setSelected(SearchMethods.user().glossarySynonyms());
+        glossarySynonyms.addItemListener(e -> {
+            SearchMethods.user().glossarySynonyms(glossarySynonyms.isSelected());
             mode();
         });
         tags.setOpaque(false);
@@ -457,6 +475,7 @@ public final class SearchView implements View {
         options.add(caption("Suchmethoden"));
         options.add(menuItem(semantic));
         options.add(menuItem(neighbors));
+        options.add(menuItem(glossarySynonyms));
         options.add(menuItem(technicalTerms));
         options.add(notes);
         options.revalidate();
@@ -736,6 +755,9 @@ public final class SearchView implements View {
         neighbors.setEnabled(runtime != null);
         neighbors.setToolTipText(runtime != null ? NEIGHBORS_TIP
                 : "Gesperrt: keine Wissensquelle eingerichtet, also keine Seiten mit Nachbarn");
+        glossarySynonyms.setEnabled(runtime != null);
+        glossarySynonyms.setToolTipText(runtime != null ? SYNONYMS_TIP
+                : "Gesperrt: keine Wissensquelle eingerichtet, also kein Glossar");
         String tip = semantic.getToolTipText();
         semanticNote.setText(tip == null ? " " : "<html><div style='width:320px'>" + tip + "</div></html>");
         mode();
@@ -814,7 +836,8 @@ public final class SearchView implements View {
         boolean terms = technicalTerms.isSelected();
         modeLabel.setText(terms ? TECHNICAL_TERMS_MODE
                 : (semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
-                + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : ""));
+                + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : "")
+                + (synonymsOn() ? " + Synonyme" : ""));
         centerCards.show(center, terms ? TERMS_CARD : HITS_CARD);
         AppRuntime runtime = context.runtime();
         if (!terms || runtime == null) {
@@ -854,12 +877,55 @@ public final class SearchView implements View {
                 chosenSpaces());
     }
 
+    /** Ob die nächste Suche die Synonyme der Fachbegriffe einbezieht (K5a). */
+    private boolean synonymsOn() {
+        return glossarySynonyms.isSelected() && glossarySynonyms.isEnabled();
+    }
+
+    /**
+     * K5a: prüft neben der Suche, ob das Glossar lesbar ist und ob die Grenze {@link SearchExpansion#MAX_EXPANSIONS}
+     * Synonyme wegließ; beides steht gelb in der Statuszeile, nie als Fehler.
+     */
+    private void checkSynonyms(AppRuntime runtime, KeywordSearch.Query q, int id) {
+        synonymNote = "";
+        if (!q.glossarySynonyms()) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().glossarySynonymsWanted(q),
+                available -> {
+                    if (id == request && available > SearchExpansion.MAX_EXPANSIONS) {
+                        noteSynonyms(synonymsCut(available));
+                    }
+                }, error -> {
+                    if (id == request) {
+                        noteSynonyms(SYNONYMS_UNREADABLE);
+                    }
+                });
+    }
+
+    /** „Synonyme der Fachbegriffe: 3 von 5 gesucht (Grenze)“. */
+    static String synonymsCut(int available) {
+        return "Synonyme der Fachbegriffe: " + SearchExpansion.MAX_EXPANSIONS + " von " + available
+                + " gesucht (Grenze)";
+    }
+
+    private void noteSynonyms(String note) {
+        synonymNote = " · " + note;
+        String text = status.getText().strip();
+        status.setText((text.isEmpty() ? note : text + synonymNote));
+        status.setForeground(Comic.ORANGE);
+    }
+
     /** Tooltip der Trefferliste. */
     static final String ROW_TIP = "Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs";
 
     /** Ein Satz (UX-Manager 21.11.2026). */
     static final String NEIGHBORS_TIP = "Nimmt Eltern-, Unter- und verlinkte Seiten der besten Treffer dazu, wenn sie "
             + "die Anfrage auch treffen";
+
+    /** Ein Satz, wie bei den Nachbarseiten. */
+    static final String SYNONYMS_TIP = "Sucht zu bestätigten Fachbegriffen des Glossars auch ihre vorgeschlagenen "
+            + "Synonyme";
 
     private static JCheckBox checkBox(String text, String tooltip) {
         JCheckBox box = Comic.checkBox(text);
@@ -965,19 +1031,21 @@ public final class SearchView implements View {
             Set<String> sources = chosenSources();
             String sourceId = sources.size() == 1 ? sources.iterator().next() : null;
             q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), chosenSpaces())
-                    .ofKinds(chosenKinds());
+                    .ofKinds(chosenKinds()).withGlossarySynonyms(synonymsOn());
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
         }
         if (semantic.isSelected()) {
             progressive(runtime, q);
+            checkSynonyms(runtime, q, request);
             return;
         }
         stopLoading();
         showVariants(List.of());
         int id = ++request;
         searchId++;
+        checkSynonyms(runtime, q, id);
         neighborsFor = neighbors.isSelected() && neighbors.isEnabled() ? id : -1;
         run.setEnabled(false);
         more.setVisible(false);
@@ -1132,8 +1200,9 @@ public final class SearchView implements View {
         Hit selected = selectedHit();
         model.set(hits.stream().map(ranked -> Hit.of(ranked.hit())).toList());
         select(selected);
-        status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · semantisch, nach Nähe zur Anfrage");
-        status.setForeground(Comic.MUTED);
+        status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · semantisch, nach Nähe zur Anfrage"
+                + synonymNote);
+        status.setForeground(synonymNote.isEmpty() ? Comic.MUTED : Comic.ORANGE);
     }
 
     /** Ende der semantischen Suche: Endliste, Grund in der Fortschrittszeile, Hinweis bei keinen Treffern. */
@@ -1526,8 +1595,8 @@ public final class SearchView implements View {
         if (incomplete) {
             line.append(" · unvollständig: nicht jede Quelle oder jeder Treffer ließ sich prüfen");
         }
-        status.setText(line.toString());
-        status.setForeground(incomplete ? Comic.ORANGE : Comic.MUTED);
+        status.setText(line.append(synonymNote).toString());
+        status.setForeground(incomplete || !synonymNote.isEmpty() ? Comic.ORANGE : Comic.MUTED);
     }
 
     /** Die schmale Zeile unter dem Suchfeld: Balken und „x von y“, bis der Core meldet, dass nichts mehr lädt. */

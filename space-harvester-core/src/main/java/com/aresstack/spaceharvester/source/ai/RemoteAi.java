@@ -29,6 +29,8 @@ import com.aresstack.enterpriseai.model.api.RerankException;
 import com.aresstack.enterpriseai.model.kipitz.KipitzModelCatalogAdapter;
 import com.aresstack.enterpriseai.model.kipitz.KipitzModelCatalogConfig;
 import com.aresstack.enterpriseai.model.kipitz.KipitzRerankAdapter;
+import com.aresstack.enterpriseai.model.kipitz.KipitzSpeechAdapter;
+import com.aresstack.enterpriseai.speech.api.SpeechSynthesisPort;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiChatException;
@@ -599,6 +601,20 @@ public final class RemoteAi {
     /** Versuche für {@code GET /models}, bei nicht erreichbarem Dienst; Abstand 0,5 s, 1 s, 2 s … */
     static final int CATALOG_ATTEMPTS = 4;
     static final long CATALOG_BACKOFF_MILLIS = 500;
+
+    /**
+     * Die Sprachausgabe des Dienstes ({@code POST /audio/speech}, OpenAI-kompatibel, WAV) über den unveränderten
+     * {@code KipitzSpeechAdapter} des Enterprise AI Client, mit Route, TLS und Schlüssel wie die übrigen Aufrufe. Ollama
+     * hat keine Sprachausgabe.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder bei Ollama
+     */
+    public SpeechSynthesisPort speech() {
+        if (!settings.configured() || settings.provider() == AiProvider.OLLAMA) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "Keine Sprachausgabe eingerichtet");
+        }
+        return new KipitzSpeechAdapter(catalogConfig());
+    }
 
     /**
      * Die Modelle des Dienstes ({@code GET /models}).

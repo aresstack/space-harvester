@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.check.CheckScope;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
@@ -251,7 +252,8 @@ public final class AppSettingsLoader {
                 video(map(get(app, "video")), problems),
                 whisperModel(get(map(get(app, "whisper")), "model"), com.aresstack.spaceharvester.app.transcription.WhisperModel.KEY, problems),
                 images(map(get(root, "images")), problems),
-                whisperModel(get(map(get(app, "whisper")), "dictation-model"), com.aresstack.spaceharvester.app.transcription.WhisperModel.DICTATION_KEY, problems));
+                whisperModel(get(map(get(app, "whisper")), "dictation-model"), com.aresstack.spaceharvester.app.transcription.WhisperModel.DICTATION_KEY, problems),
+                analyzer(map(get(root, "statements")), problems));
     }
 
     /**
@@ -268,6 +270,24 @@ public final class AppSettingsLoader {
             max = ImageSettings.DEFAULT_MAX_PER_RUN;
         }
         return new ImageSettings(automatic, (int) max);
+    }
+
+    /**
+     * {@code space-harvester.statements.analyzer} und {@code analyzer-model}: Aussagenanalyse (Fahrplan A2/A3), wie
+     * beim Dienst ({@link AnalyzerSettings}). Ein unbekannter Analysator ist ein Problem und lässt den MaltParser stehen.
+     */
+    private AnalyzerSettings analyzer(Map<?, ?> statements, List<String> problems) {
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice choice =
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER;
+        Object value = get(statements, "analyzer");
+        try {
+            choice = com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.parse(
+                    value == null ? null : value.toString());
+        } catch (IllegalArgumentException e) {
+            problems.add(ROOT + "." + AnalyzerSettings.ANALYZER + ": " + e.getMessage());
+        }
+        Object model = get(statements, "analyzer-model");
+        return new AnalyzerSettings(choice, model == null ? null : model.toString());
     }
 
     /**
@@ -503,7 +523,11 @@ public final class AppSettingsLoader {
 
     /** {@code space-harvester.terms.synonyms.*}: Budget der Synonymerkennung (#336), dieselben Schlüssel wie beim Dienst. */
     private TermSettings terms(Map<?, ?> terms, Map<?, ?> glossary, List<String> problems) {
-        return terms(terms, problems).withGlossaryRules(glossaryRules(map(get(glossary, "rules")), problems));
+        // K4: terms.glossary.automatic, Standard aus, wie beim Dienst.
+        boolean glossaryAutomatic = flag(get(map(get(terms, "glossary")), "automatic"), false,
+                "space-harvester." + TermSettings.GLOSSARY_AUTOMATIC, problems);
+        return terms(terms, problems).withGlossaryRules(glossaryRules(map(get(glossary, "rules")), problems))
+                .withGlossaryAutomatic(glossaryAutomatic);
     }
 
     /**

@@ -588,9 +588,7 @@ public final class SearchOrchestrator implements AutoCloseable {
             states.set(index, Status.RUNNING);
             searches++;
             // Jede Variante sucht im selben Umfang wie das Original, auch nur auf den Seiten seiner Auswahl.
-            KeywordSearch.Query variant = index == 0 ? query : new KeywordSearch.Query(variants.get(index).text(),
-                    query.sourceId(), query.sourceIds(), query.spaceKeys(), query.excludedSpaceKeys(), query.pages(),
-                    query.kinds());
+            KeywordSearch.Query variant = index == 0 ? query : query.withText(variants.get(index).text());
             CompletableFuture<VariantSearch.Outcome> future = CompletableFuture.supplyAsync(() -> {
                 slots.acquireUninterruptibly();
                 try {
@@ -811,10 +809,14 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
         }
 
-        /** Bewertete zuerst, beste vorn; unbewertete danach in der Reihenfolge ihrer Freigabe. */
+        /**
+         * Bewertete zuerst, beste vorn; unbewertete danach in der Reihenfolge ihrer Freigabe. Treffer, deren einziger
+         * Textgrund ein Synonymvorschlag ist, stehen hinter allen übrigen (K5a).
+         */
         private List<RankedHit> ranked() {
             List<Entry> all = new ArrayList<>(entries.values());
-            all.sort(Comparator.comparing((Entry entry) -> Double.isNaN(entry.score))
+            all.sort(Comparator.comparing((Entry entry) -> HitReason.onlyProposedSynonym(entry.hit.reasons()))
+                    .thenComparing((Entry entry) -> Double.isNaN(entry.score))
                     .thenComparing(entry -> Double.isNaN(entry.score) ? 0 : -entry.score)
                     .thenComparingLong(entry -> entry.sequence));
             return all.stream().map(Entry::ranked).toList();

@@ -247,10 +247,27 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
   `Ansatzes`) fällt auf die Grundform, nur wenn diese selbst auf der Seite steht (ohne Wörterbuch wird nichts geraten). Der Begriffsindex sucht Akronyme unter der
   Suchform des EAC (`U.S.A.` und `USA` ein Eintrag `usa`). Weil Fakt-Kennungen positional sind, bleiben beim Sprung geprüfte Akronym-Fakten als veraltete Kopie
   stehen und dieselbe Aussage erscheint daneben ungeprüft unter neuer Kennung.
-- Keine KI in Index und Abfragen; das Fachglossar (Punkt 7) nutzt sie nur auf Knopfdruck.
+- Keine KI in Index und Abfragen; das Fachglossar (Punkt 7) nutzt sie auf Knopfdruck oder, nur mit
+  `terms.glossary.automatic` (K4, Standard aus), im automatischen Lauf nach der Anreicherung (Nachtrag unten).
 
 ## Folgen
 
 - Die App (#339) liest die globale Sicht über `harvester.terms()`, den Reiter je Seite über `PageTerms.read`.
 - Eine spätere Änderung des Dokumentaufbaus hebt die Version des Prozessors `terms`; alte Einträge zählen dann nicht
   mehr und werden beim nächsten Lauf ersetzt.
+
+## Nachtrag K4 (21.11.2026): Fachbegriffe automatisch nach der Anreicherung
+
+- Schlüssel `space-harvester.terms.glossary.automatic`, Standard aus, in Server und App gleich gelesen
+  (`TermSettings.GLOSSARY_AUTOMATIC`, `ConfigurationParityTest`), je Anlass gelesen, gilt ohne Neustart.
+- Ist er an, startet `GlossaryClassification.automatic(sourceId)` nach der Anreicherung einer Quelle, in derselben
+  Folgeliste wie Abkürzungsregel, Synonymlauf und Bildbeschreibung (`EnrichmentsAfterSync`). Kein Zeitgeber.
+- Nur der automatische Lauf ist ein Hintergrundauftrag (`JobType.BACKGROUND`, Gruppe „Fachbegriffe erkennen“, ein
+  Unterauftrag je Space mit analysierten Seiten, Eigentümer `Harvester.OWNER`). Der Knopf „Fachbegriffe ermitteln“
+  bleibt ein normaler Auftrag mit Vorrang über denselben Code; ein Klick wird nie nachrangig.
+- Die Automatik stößt nie Vorstufen an: Sie läuft über die vorhandenen Aussagenanalysen und nennt fehlende gelb
+  (D4.1). Die Modellphase läuft nur über Seiten mit KI-Freigabe; ohne Chat-Modell oder Freigabe bleibt es bei
+  Regelvorschlägen, die ausgelassene Phase meldet sich mit Grund, nie als Fehler.
+- Ein zweiter Anlass, während für einen Space noch ein Lauf wartet oder läuft, startet für diesen Space nichts
+  (`BackgroundJobs.running`). Nach einem Neustart setzen unterbrochene Unteraufträge nur bei eingeschalteter Automatik
+  fort.

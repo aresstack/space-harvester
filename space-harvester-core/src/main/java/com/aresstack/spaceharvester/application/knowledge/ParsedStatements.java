@@ -112,7 +112,9 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
      * @param quality        Extraktionsqualität: wie gut die Aussage maschinell abgeleitet ist, nie ob sie stimmt
      * @param qualityReasons Gründe einer Abstufung ({@code HEURISTIC_PARTICIPANT}, {@code NO_PARTICIPANT} …), leer bei
      *                       {@link Quality#PLAUSIBLE}
-     * @param review         fachliche Prüfung durch einen Menschen, unabhängig von {@code quality}
+     * @param review         fachliche Prüfung durch einen Menschen, unabhängig von {@code quality}; gespeicherte
+     *                       Analysen tragen {@code UNREVIEWED}, die Prüfung von Hand legen die Lesewege darüber
+     *                       ({@link StatementReviews})
      */
     /** Verneinung einer Aussage; {@link #UNKNOWN} bei Analysen ohne Merkmale. */
     public enum Negation {
@@ -446,6 +448,12 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
                     arguments, findings, paragraph, quality, qualityReasons, review, features, derivation, other);
         }
 
+        /** Dieselbe Aussage mit dieser fachlichen Prüfung, etwa der wirksamen aus {@link StatementReviews}. */
+        public Statement withReview(Review other) {
+            return new Statement(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core,
+                    arguments, findings, paragraph, quality, qualityReasons, other, features, derivation, check);
+        }
+
         /** Dieselbe Aussage mit dieser Herkunft. */
         public Statement withDerivation(Derivation other) {
             return new Statement(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core,
@@ -495,7 +503,13 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
         INVALID
     }
 
-    /** Fachliche Prüfung einer Aussage durch einen Menschen; bisher nur im Modell, ohne Oberfläche. */
+    /**
+     * Fachliche Prüfung einer Aussage durch einen Menschen (ADR 0032, Umsetzung W3). Gesetzt und zurückgenommen wird sie
+     * je Aussage in der Ablage der Entscheidungen ({@code StandingDecision#review()}, nur für die Ablage des Analysators,
+     * in der sie gesetzt wurde), nie in der Analyse selbst. Die Lesewege ({@link StatementReviews}) legen sie über die
+     * gespeicherte Aussage: Die Entscheidung gilt, ohne sie bleibt der gespeicherte Wert (in der Regel
+     * {@link #UNREVIEWED}).
+     */
     public enum Review {
         UNREVIEWED,
         CONFIRMED,

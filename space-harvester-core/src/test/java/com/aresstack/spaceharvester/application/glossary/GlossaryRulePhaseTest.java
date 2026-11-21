@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis;
@@ -46,6 +47,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
@@ -87,6 +89,7 @@ class GlossaryRulePhaseTest {
     private boolean released;
     private GlossaryRuleSettings settings = GlossaryRuleSettings.DEFAULT;
     private GlossaryStore store;
+    private Glossary glossary;
     private GlossaryClassification classification;
 
     private final AcronymExpansionModel model = new AcronymExpansionModel() {
@@ -149,7 +152,7 @@ class GlossaryRulePhaseTest {
     @BeforeEach
     void setUp() {
         store = new FileGlossaryStore(directory);
-        Glossary glossary = new Glossary(catalog, store, new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW),
+        glossary = new Glossary(catalog, store, new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW),
                 key -> Optional.empty(), Clock.fixed(T0, ZoneOffset.UTC));
         classification = new GlossaryClassification(catalog, new InMemoryEnrichmentStore(),
                 new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), key -> Optional.empty(),
@@ -223,6 +226,80 @@ class GlossaryRulePhaseTest {
     }
 
     @Test
+    void aSubtreeRunOnlySupplementsAndLosesNothingFromOutside() {
+        // D4.2, Auflage 1: „Antrag“ ist im Space auf fünf Seiten belegt; ein Lauf über zwei davon lässt alle fünf.
+        RelationScope foe = new RelationScope("wiki", "FOE");
+        page("4", "FOE", "Prüfstelle", "bearbeitet", "Antrag");
+        page("5", "FOE", "Sachbearbeitung", "ergänzt", "Antrag");
+        page("6", "FOE", "Poststelle", "erfasst", "Antrag");
+        classification.job(foe, null, EDITOR);
+        GlossaryEntry before = entry("Antrag", foe).orElseThrow();
+        // Die Regel belegt mit höchstens einigen Fundstellen; welche, entscheidet die Wichtigkeit.
+        assertThat(before.evidence()).isNotEmpty();
+        GlossaryEntry outside = entry("Poststelle", foe).orElseThrow();
+
+        GlossaryClassification.Outcome outcome = classification.job(foe,
+                com.aresstack.spaceharvester.application.snapshot.PageSet.of(Map.of("wiki", List.of("1", "2"))),
+                null, EDITOR);
+
+        assertThat(outcome.rules().pages()).isEqualTo(2);
+        assertThat(outcome.rules().run().withdrawn()).isZero();
+        assertThat(outcome.rules().run().stale()).isZero();
+        GlossaryEntry after = entry("Antrag", foe).orElseThrow();
+        assertThat(after.evidence()).as("Belege von außerhalb bleiben").containsAll(before.evidence());
+        assertThat(after.supportedBy()).isEqualTo(before.supportedBy());
+        assertThat(after.classification()).isEqualTo(before.classification());
+        // Nur außerhalb belegt: weder entfallen noch veraltet.
+        assertThat(entry("Poststelle", foe)).hasValueSatisfying(entry -> {
+            assertThat(entry.evidence()).isEqualTo(outside.evidence());
+            assertThat(entry.evidenceStale()).isFalse();
+        });
+    }
+
+    @Test
+    void supplementingKeepsEvidenceOnFivePagesWhenTheSubtreeCoversTwo() {
+        RelationScope foe = new RelationScope("wiki", "FOE");
+        List<RelationEvidence> five = List.of("1", "2", "4", "5", "6").stream()
+                .map(id -> new RelationEvidence("wiki", id, 0, 6, "sha256:" + "c".repeat(64))).toList();
+        glossary.propose(RelationOrigin.RULE, "regel", foe, "r1", List.of(new Glossary.Proposal("Antrag", five)),
+                Set.of());
+
+        Glossary.ProposalRun run = glossary.supplement(RelationOrigin.AI, "ki", foe, "k1",
+                List.of(new Glossary.Proposal("Antrag", List.of(
+                        new RelationEvidence("wiki", "1", 3, 9, "sha256:" + "d".repeat(64)),
+                        new RelationEvidence("wiki", "2", 0, 6, "sha256:" + "c".repeat(64))))));
+
+        GlossaryEntry antrag = entry("Antrag", foe).orElseThrow();
+        assertThat(run.updated()).isEqualTo(1);
+        assertThat(antrag.evidence()).extracting(RelationEvidence::pageId).containsExactly("1", "2", "4", "5", "6");
+        assertThat(antrag.evidence().get(0).start()).as("Seite 1 mit dem neuen Beleg").isEqualTo(3);
+        assertThat(antrag.supportedBy()).containsExactlyInAnyOrder(RelationOrigin.RULE, RelationOrigin.AI);
+    }
+
+    @Test
+    void aSubtreeStartsAsAJobWithItsStartPageAndNeedsASpace() {
+        List<com.aresstack.spaceharvester.application.snapshot.PageSet> asked = new ArrayList<>();
+        classification.subtrees((caller, sourceId, spaceKey, pageId) -> {
+            com.aresstack.spaceharvester.application.snapshot.PageSet set =
+                    com.aresstack.spaceharvester.application.snapshot.PageSet.of(Map.of("wiki", List.of("1")));
+            asked.add(set);
+            return set;
+        });
+
+        List<JobStatus> started = classification.start(EDITOR, "wiki", "FOE", "1");
+
+        assertThat(started).singleElement().satisfies(status -> {
+            assertThat(status.rootPageId()).isEqualTo("1");
+            assertThat(status.partitionKey()).isEqualTo("FOE");
+        });
+        assertThat(asked).hasSize(1);
+        assertThat(entry("Antragsdatenbank", new RelationScope("wiki", "FOE"))).isEmpty();
+        assertThat(entry("Bewilligungsstelle", new RelationScope("wiki", "FOE"))).isPresent();
+        assertThatThrownBy(() -> classification.start(EDITOR, "wiki", null, "1"))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.InvalidQueryException.class);
+    }
+
+    @Test
     void theJobStartsWithoutModelOrRelease() {
         assertThat(classification.available()).isTrue();
         assertThat(classification.modelAvailable()).isFalse();
@@ -230,6 +307,72 @@ class GlossaryRulePhaseTest {
         assertThat(classification.start(EDITOR, "wiki", null)).hasSize(1);
 
         assertThat(entry("Antrag", WIKI)).isPresent();
+    }
+
+    @Test
+    void theAutomaticRunIsOffByDefaultAndIgnoresUnknownSources() {
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        java.util.concurrent.atomic.AtomicBoolean enabled = new java.util.concurrent.atomic.AtomicBoolean();
+        assertThat(classification.automatic("wiki")).as("nicht angeschlossen").isEmpty();
+        classification.background(background, EDITOR, enabled::get);
+
+        assertThat(classification.automatic("wiki")).as("terms.glossary.automatic aus").isEmpty();
+        enabled.set(true);
+        assertThat(classification.automatic("anderswo")).as("unbekannte Quelle").isEmpty();
+        assertThat(jobs.listAll(com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND)).isEmpty();
+        assertThat(store.all()).isEmpty();
+    }
+
+    @Test
+    void theAutomaticRunIsABackgroundGroupPerSpaceWithRulesAndWithoutModelPhaseWhenUnreleased() {
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        classification.background(background, EDITOR, () -> true);
+        available = true;
+        released = false;
+
+        var group = classification.automatic("wiki").orElseThrow();
+
+        assertThat(group.title()).isEqualTo(GlossaryClassification.AUTOMATIC_TITLE);
+        assertThat(group.parts()).extracting(JobStatus::type)
+                .containsOnly(com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND);
+        assertThat(group.parts()).extracting(JobStatus::partitionKey).containsExactly("FOE", "IT");
+        assertThat(group.jobIds()).allSatisfy(id -> assertThat(classification.started(id)).isTrue());
+        assertThat(entry("Antrag", new RelationScope("wiki", "FOE"))).as("Regelphase lief").isPresent();
+        assertThat(entry("Server", new RelationScope("wiki", "IT"))).isPresent();
+        assertThat(asked).as("ohne KI-Freigabe nichts an das Modell").isEmpty();
+        assertThat(jobs.events(group.jobIds().getFirst())).extracting(JobEvent::code)
+                .contains("GLOSSARY_MODEL_SKIPPED:NOT_RELEASED");
+    }
+
+    @Test
+    void withoutChatModelTheAutomaticRunNamesTheSkippedModelPhase() {
+        classification.background(new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs,
+                "app"), EDITOR, () -> true);
+
+        var group = classification.automatic("wiki").orElseThrow();
+
+        assertThat(group.parts()).allSatisfy(part -> assertThat(jobs.events(part.id())).extracting(JobEvent::code)
+                .contains(GlossaryClassification.RULES_DONE, "GLOSSARY_MODEL_SKIPPED:NO_MODEL"));
+        assertThat(jobs.status(group.jobIds().getFirst()).state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+    }
+
+    @Test
+    void aSecondOccasionWhileASpaceIsWaitingStartsOnlyTheOtherSpaces() {
+        // Aufträge laufen hier nie an: Was gestartet ist, wartet.
+        Jobs waiting = new Jobs(new InMemoryJobStore(), task -> { }, new JobLimits(2, 10, Duration.ofHours(1)),
+                Clock.fixed(T0, ZoneOffset.UTC));
+        classification.background(new com.aresstack.spaceharvester.application.background.BackgroundJobs(waiting,
+                "app"), EDITOR, () -> true);
+
+        assertThat(classification.automatic("wiki")).isPresent();
+        assertThat(classification.automatic("wiki")).as("beide Spaces warten").isEmpty();
+        page("7", "DOC", "Redaktion", "pflegt", "Handbuch");
+        var second = classification.automatic("wiki").orElseThrow();
+
+        assertThat(second.parts()).extracting(JobStatus::partitionKey).containsExactly("DOC");
     }
 
     @Test

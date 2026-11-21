@@ -1419,6 +1419,9 @@ public final class ChatPanel extends JPanel {
         turn.releasing(releases(runtime, open));
         // R2/C1: Der Chat folgt der Suchmethode „Nachbarseiten“ der Suchoptionen, wie sie beim Senden steht.
         turn.searchingNeighbors(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
+        // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
+        turn.searchingGlossarySynonyms(
+                com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());

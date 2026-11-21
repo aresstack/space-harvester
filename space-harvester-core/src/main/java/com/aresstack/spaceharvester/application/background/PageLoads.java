@@ -21,9 +21,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -42,8 +39,6 @@ public final class PageLoads {
     /** Angabe: die Seiten-IDs des Unterauftrags, durch {@value #SEPARATOR} getrennt. */
     public static final String PAGES = "pages";
     static final String SEPARATOR = "\n";
-    /** So oft prüft der wartende Unterauftrag, ob er abgebrochen oder angehalten wurde. */
-    static final long CHECK_MILLIS = 500;
     /** So viele Abrufe hat ein Unterauftrag höchstens zugleich beim Planer. */
     static final int WINDOW = 32;
     /** Fehlercode: Seiten ließen sich nicht laden. */
@@ -205,31 +200,50 @@ public final class PageLoads {
         context.processed(keys.size() - missing.size());
         java.util.ArrayDeque<AcquisitionScheduler.Ticket> open = new java.util.ArrayDeque<>();
         long failed = 0;
+        // Ohne Takt (ADR 0027): geweckt wird nur durch das Ende eines Abrufs, eine Anforderung zum Anhalten oder
+        // Abbrechen und, solange der Planer voll ist, durch seine Standmeldung.
+        Wake wake = new Wake();
+        com.aresstack.spaceharvester.application.observe.Subscription full = null;
+        AutoCloseable stop = context.whenStopRequested(wake::ring);
         try {
             for (PageKey key : missing) {
                 // Höchstens WINDOW Abrufe zugleich, und ein voller Planer heißt warten statt scheitern.
                 while (true) {
                     context.checkpoint();
                     if (open.size() >= WINDOW) {
-                        failed += finish(context, open.pollFirst());
+                        failed += finish(context, open.pollFirst(), wake);
                         continue;
                     }
+                    long seen = wake.mark();
                     try {
                         open.addLast(scheduler.request(caller, key, priority()));
                         break;
                     } catch (java.util.concurrent.RejectedExecutionException e) {
                         if (!open.isEmpty()) {
-                            failed += finish(context, open.pollFirst());
+                            failed += finish(context, open.pollFirst(), wake);
                         } else {
-                            Thread.sleep(CHECK_MILLIS);
+                            if (full == null) {
+                                // Erst anmelden, dann noch einmal versuchen: eine Meldung dazwischen weckt sofort.
+                                full = scheduler.subscribe(status -> wake.ring());
+                                continue;
+                            }
+                            wake.awaitAfter(seen);
                         }
                     }
                 }
             }
             while (!open.isEmpty()) {
-                failed += finish(context, open.pollFirst());
+                failed += finish(context, open.pollFirst(), wake);
             }
         } finally {
+            if (full != null) {
+                full.close();
+            }
+            try {
+                stop.close();
+            } catch (Exception ignored) {
+                // nur eine Abmeldung
+            }
             // Abgebrochen oder angehalten: noch wartende Abrufe entfallen, ein laufender endet regulär.
             open.forEach(AcquisitionScheduler.Ticket::cancel);
         }
@@ -246,8 +260,9 @@ public final class PageLoads {
      * Einmalcode) oder ist die Quelle nicht erreichbar, hält sich der Unterauftrag an (gelb), statt die übrigen Seiten
      * als Fehler zu zählen; Fortsetzen lädt dann nur, was noch fehlt.
      */
-    private static long finish(JobContext context, AcquisitionScheduler.Ticket ticket) throws InterruptedException {
-        boolean loaded = await(context, ticket);
+    private static long finish(JobContext context, AcquisitionScheduler.Ticket ticket, Wake wake)
+            throws InterruptedException {
+        boolean loaded = await(context, ticket.done(), wake);
         if (!loaded) {
             PauseReason reason = ticket.failure().map(PageLoads::pauseReason).orElse(null);
             if (reason != null) {
@@ -298,16 +313,46 @@ public final class PageLoads {
                 : AcquisitionScheduler.Priority.FOREGROUND;
     }
 
-    /** Wartet auf eine Seite und prüft dabei, ob der Auftrag abgebrochen oder angehalten wurde. */
-    private static boolean await(JobContext context, AcquisitionScheduler.Ticket ticket) throws InterruptedException {
+    /**
+     * Wartet auf eine Seite ohne Takt: geweckt wird nur durch ihr Ende oder eine Anforderung zum Anhalten oder
+     * Abbrechen ({@link JobContext#whenStopRequested}, in {@code wake}); dann prüft {@link JobContext#checkpoint()}.
+     */
+    static boolean await(JobContext context, java.util.concurrent.CompletableFuture<Boolean> done, Wake wake)
+            throws InterruptedException {
+        long seen = wake.mark();
+        done.whenComplete((loaded, failure) -> wake.ring());
         while (true) {
             context.checkpoint();
-            try {
-                return Boolean.TRUE.equals(ticket.done().get(CHECK_MILLIS, TimeUnit.MILLISECONDS));
-            } catch (TimeoutException e) {
-                // weiter warten
-            } catch (ExecutionException | CancellationException e) {
-                return false;
+            if (done.isDone()) {
+                try {
+                    return Boolean.TRUE.equals(done.getNow(false));
+                } catch (java.util.concurrent.CompletionException | CancellationException e) {
+                    return false;
+                }
+            }
+            wake.awaitAfter(seen);
+            seen = wake.mark();
+        }
+    }
+
+    /** Weckt den wartenden Unterauftrag; jede Meldung zählt eins hoch, damit keine verloren geht. */
+    static final class Wake {
+
+        private long generation;
+
+        synchronized void ring() {
+            generation++;
+            notifyAll();
+        }
+
+        synchronized long mark() {
+            return generation;
+        }
+
+        /** Wartet, bis nach {@code seen} geläutet wurde; ohne Zeitgrenze. */
+        synchronized void awaitAfter(long seen) throws InterruptedException {
+            while (generation == seen) {
+                wait();
             }
         }
     }

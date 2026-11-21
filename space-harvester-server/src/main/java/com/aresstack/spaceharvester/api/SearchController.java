@@ -163,6 +163,9 @@ public class SearchController {
             @Parameter(description = "Nur mit text: ohne diese Spaces (wiederholbar, höchstens "
                     + PageSearchQuery.MAX_SPACE_KEYS + "); geht wie spaceKey als Filter in die Anfrage der Quelle")
             @RequestParam(required = false) List<String> excludeSpaceKey,
+            @Parameter(description = "Nur mit text: Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a), zu "
+                    + "bestätigten Fachbegriffen des Glossars auch ihre vorgeschlagenen Synonyme; Standard aus")
+            @RequestParam(defaultValue = "false") boolean glossarySynonyms,
             @Parameter(description = "Wörter im Titel, höchstens " + PageSearchQuery.MAX_TITLE_TERMS + " Wörter und "
                     + PageSearchQuery.MAX_TITLE_LENGTH + " Zeichen", example = "Architektur Übersicht")
             @RequestParam(required = false) String title,
@@ -191,16 +194,20 @@ public class SearchController {
             if (title != null || pageId != null || parentPageId != null || version != null || modifiedFrom != null
                     || modifiedBefore != null || sort != null || q != null) {
                 throw new InvalidQueryException("text gibt es nur mit sourceId, sourceIds, spaceKey, excludeSpaceKey, "
-                        + "cursor und limit");
+                        + "glossarySynonyms, cursor und limit");
             }
             KeywordSearch.Query query = new KeywordSearch.Query(text, sourceId,
                     Set.copyOf(sourceIds == null ? List.of() : sourceIds),
                     Set.copyOf(spaceKey == null ? List.of() : spaceKey),
-                    Set.copyOf(excludeSpaceKey == null ? List.of() : excludeSpaceKey));
+                    Set.copyOf(excludeSpaceKey == null ? List.of() : excludeSpaceKey))
+                    .withGlossarySynonyms(glossarySynonyms);
             return KeywordResponse.of(keywords.searchesTheCache(), keywords.search(caller, query, cursor, limit));
         }
         if (excludeSpaceKey != null && !excludeSpaceKey.isEmpty()) {
             throw new InvalidQueryException("excludeSpaceKey gibt es nur mit text");
+        }
+        if (glossarySynonyms) {
+            throw new InvalidQueryException("glossarySynonyms gibt es nur mit text");
         }
         if (sort == null) {
             sort = "title";
@@ -386,7 +393,7 @@ public class SearchController {
                                     String query,
                                     @Schema(nullable = true) String relationTerm,
                                     @Schema(nullable = true) String relationCounterpart,
-                                    @Schema(nullable = true, allowableValues = {"abbreviation", "synonym", "variant"})
+                                    @Schema(nullable = true, allowableValues = {"abbreviation", "synonym", "synonym-proposed", "variant"})
                                     String relationType,
                                     @Schema(nullable = true) Integer variantPriority,
                                     @Schema(nullable = true, allowableValues = {"rules", "model"})

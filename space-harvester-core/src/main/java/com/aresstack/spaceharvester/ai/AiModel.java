@@ -20,6 +20,8 @@ public record AiModel(String id, String displayName, Set<String> categories) {
     public static final String CHAT = "chat";
     /** Kategorie der Modelle mit Bildeingabe, wie {@code ModelCategory.VISION} im Enterprise AI Client (ADR 0021). */
     public static final String VISION = "vision";
+    /** Kategorie der Sprachausgabe, wie {@code ModelCategory.TTS} im Enterprise AI Client (Podcast). */
+    public static final String TTS = "tts";
 
     public AiModel {
         Objects.requireNonNull(id, "id");

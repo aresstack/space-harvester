@@ -115,6 +115,8 @@ class ConfigurationParityTest {
                   max-judged-pairs: 50
                   automatic: false
                   glossary-terms-only: true
+                glossary:
+                  automatic: true
               glossary:
                 rules:
                   max-terms: 200
@@ -142,6 +144,8 @@ class ConfigurationParityTest {
                   scope: all
                   parallel: 4
                   model: check-model
+                analyzer: model
+                analyzer-model: statement-model
               images:
                 automatic: true
                 max-per-run: 120
@@ -210,6 +214,8 @@ class ConfigurationParityTest {
         assertThat(app.terms().synonyms()).isEqualTo(budget);
         assertThat(budget.automatic()).as("SY1: automatic aus beiden Loadern").isFalse();
         assertThat(budget.glossaryTermsOnly()).as("K3: glossary-terms-only aus beiden Loadern").isTrue();
+        assertThat(app.terms().glossaryAutomatic()).isEqualTo(service2.terms().glossaryAutomatic())
+                .as("K4: terms.glossary.automatic aus beiden Loadern").isTrue();
         // ADR 0032, FL5b: Regeln der Begriffsableitung, als YAML-Liste und als Text mit Kommas.
         com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings rules =
                 com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings.DEFAULT.withMaxTerms(200)
@@ -247,6 +253,10 @@ class ConfigurationParityTest {
         // Fahrplan B1: automatische Bildbeschreibung, beim Dienst über withSyncRules.
         assertThat(app.images()).isEqualTo(service2.images())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 120));
+        // Fahrplan A2/A3: Aussagenanalyse (Analysator = gelesene Ablage, eigenes Modell).
+        assertThat(app.analyzer()).isEqualTo(service2.analyzer())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.AnalyzerSettings(
+                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, "statement-model"));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder

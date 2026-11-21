@@ -17,7 +17,7 @@ StatusQuoView view(AccessContext caller, Predicate<PageKey> pages, BooleanSuppli
 - Reine Auswertung: speichert nichts, ruft weder Parser noch KI noch die Quelle. 3000 Seiten mit 60 000 Aussagen
   brauchen im Container rund 0,1 s; trotzdem im Hintergrund rufen (`BusyOverlay`), `cancelled` beim Abbrechen setzen
   (dann `CancellationException`, nichts bleibt zurück).
-- Neu lesen, wenn sich etwas ändert: nach `StatusQuo#subscribe` (Entscheidungen) und wenn ein Auftrag „Aussagen
+- Neu lesen, wenn sich etwas ändert: nach `StatusQuo#subscribe` (Entscheidungen zu Stand und Prüfung) und wenn ein Auftrag „Aussagen
   analysieren“ endet. Kein Polling (ADR 0027).
 
 ### `StatusQuoView`
@@ -28,7 +28,8 @@ StatusQuoView view(AccessContext caller, Predicate<PageKey> pages, BooleanSuppli
 | `states` | Zustandsaussagen je Träger (`BearerStates`: Grundform, Einträge), Träger mit den meisten geltenden Zuständen zuerst |
 | `pages` | Stand je Seite bzw. Anhang (`PageStanding`) |
 | `counts` / `certainCounts` | Zahlen je Stand über alle bzw. nur über sichere Aussagen (jeder Stand ist enthalten, auch 0) |
-| `staleDecisions` | Entscheidungen zu Aussagen, die es in der aktuellen Analyse nicht mehr gibt (Text geändert, Vorstufe entzogen): anzeigen mit „neu entscheiden“ oder „löschen“ |
+| `staleDecisions` | Entscheidungen zu Aussagen, die es in der aktuellen Analyse nicht mehr gibt (Text geändert, Vorstufe entzogen): anzeigen mit „neu entscheiden“ oder „löschen“. Stand und/oder Prüfung (`standing()` kann `null` sein); nur Einträge des gelesenen Analysators |
+| `rejectedDecisions` | Entscheidungen zu Aussagen der aktuellen Analyse, die ein Mensch verworfen hat: Die Aussage fehlt in `entries` und den Zahlen, hier bleibt sie erreichbar, um die Prüfung zurückzunehmen (W3) |
 
 ### `StatusQuoEntry` (eine Zeile)
 
@@ -44,9 +45,9 @@ StatusQuoView view(AccessContext caller, Predicate<PageKey> pages, BooleanSuppli
 | `uncertain()` | unsicher gekennzeichnet anzeigen; zählt nicht für den Stand der Seite |
 | `origin()`, `stageFlag()` | Herkunft Original/Vorstufe und Kennzeichen der Vorstufe als eigenes Feld. **Weicht das Kennzeichen vom Stand ab** (etwa Kennzeichen Planung bei Stand „gilt“, weil das Original selbst „gilt“ sagt), zeigt die Anzeige das Kennzeichen sichtbar daneben |
 | `stateChange()` | Befund „Zustandswechsel“ („wird zuständig“), nur als Hinweis zeigen |
-| `decision()` | Entscheidung des Menschen mit `revision`, `decidedBy`, `decidedAt` oder `null` |
+| `decision()` | Entscheidung des Menschen mit `revision`, `decidedBy`, `decidedAt` oder `null`; trägt Stand und/oder Prüfung (`standing()` ist `null`, wenn nur geprüft), die Revision gilt für beides |
 | `analysisStale()` | Analyse der Seite ist veraltet: wie im Reiter „Aussagen“ kennzeichnen |
-| `statement()` | die gespeicherte Aussage (Beteiligte, Spanne für den Beleg im Lesetext) |
+| `statement()` | die gespeicherte Aussage (Beteiligte, Spanne für den Beleg im Lesetext) mit der wirksamen Prüfung durch Menschen (`review()`) |
 
 Der Beleg bleibt der Originalsatz: Klick auf eine Zeile springt wie im Reiter „Aussagen“ an die Stelle im Lesetext.
 
@@ -67,16 +68,24 @@ nennt, ob ein Mensch (`DECISION`), die Seite selbst (`PAGE`: `marks`) oder die M
    selbst geplant, früher oder verworfen, gewinnt der Satz.
 5. Verneinung und Verbindlichkeit ändern den Stand nie.
 6. Ungültige und vom Menschen abgelehnte Aussagen gehören nicht in die Sicht (eine Stelle:
-   `StandingRules#effectiveQuality`).
+   `StandingRules#effectiveQuality`). Abgelehnt heißt: die wirksame Prüfung aus der Ablage der Entscheidungen für den
+   gelesenen Analysator (`DecisionReviews`, W3); die Entscheidung steht in `rejectedDecisions`.
 
 ## Schreiben: Entscheidungen des Menschen
 
 ```java
 StandingDecision decide(AccessContext caller, PageKey page, String statementId, Standing standing, Long expectedRevision)
 boolean clear(AccessContext caller, PageKey page, String statementId, Long expectedRevision)
+StandingDecision review(AccessContext caller, PageKey page, String statementId, ParsedStatements.Review review,
+                        Long expectedRevision)
+boolean withdrawReview(AccessContext caller, PageKey page, String statementId, Long expectedRevision)
 List<StandingDecisionStore.AuditEntry> history(AccessContext caller, PageKey page, String statementId)
 Subscription subscribe(Runnable listener)
+Subscription subscribeReviews(Runnable listener)   // nur Prüfungen; Harvester → KnowledgeGraph#analysesChanged
 ```
+
+In der App: `Workspace#decideStanding`, `#clearStanding`, `#reviewStatement`, `#withdrawStatementReview`,
+`#standingHistory`, `#subscribeStanding`.
 
 - `statementId == null` heißt: die Seite selbst. Eine Entscheidung zur Seite bleibt über neue Fassungen gültig; eine zur
   Aussage gilt nur für genau diese Fassung (sonst erscheint sie unter `staleDecisions`).
@@ -87,8 +96,18 @@ Subscription subscribe(Runnable listener)
 - Wird eine Seite aus dem Bestand entfernt, bleiben ihre Entscheidungen wie ihre Analyse im Knowledge Graph (dort
   „veraltet: Seite fehlt“) und wie geprüfte Fakten stehen; sie gehen mit der Quelle („Daten bereinigen“, „Quelle
   entfernen“). Kommt die Seite zurück, gelten sie wieder.
-- Die Prüfung einer Aussage (bestätigt/abgelehnt, FL4) kommt später in denselben Eintrag; die Oberfläche plant dafür
-  keinen zweiten Mechanismus.
+- Prüfung einer Aussage (W3): `review` setzt `CONFIRMED` oder `REJECTED`, `withdrawReview` nimmt sie zurück; nur mit
+  `statementId`, nie für die Seite (`IllegalArgumentException`). Sie steht im selben Eintrag wie der Stand: `decide`
+  behält eine Prüfung, `review` behält den Stand; `clear` nimmt nur den Stand, `withdrawReview` nur die Prüfung; erst
+  ohne beides wird der Eintrag gelöscht. Beide teilen sich die Revision des Eintrags. Rechte, Konflikte und
+  `UnknownStandingTargetException` wie beim Stand; zurücknehmen geht auch bei einer veralteten Aussage.
+- Der Analysator gehört zum Eintrag: die Prüfung gilt nur für die Ablage (MaltParser oder „KI (Erprobung)“), in deren
+  Analyse die Aussage gefunden wurde; die Anzeige schickt ihn nicht mit.
+- Protokoll: `set`/`remove` für den Stand, `review`/`unreview` für die Prüfung (Zurücknehmen ist eine eigene Zeile), je
+  mit `standing()` und `review()`.
+- Wirksam wird die Prüfung beim Lesen an einer Stelle (`DecisionReviews`): im Knowledge Graph (Stand, Glossar, Export)
+  und im Reiter „Aussagen“ (`StatementAnalysis#read`). Die Oberfläche liest `statement().review()` und
+  verrechnet nichts selbst.
 
 ## Vorschlag für die Oberfläche (Entscheidung beim Fable-Strang und Angelo)
 
@@ -96,7 +115,8 @@ Subscription subscribe(Runnable listener)
   nur sichere) mit ✕ und die Zahlen je Stand.
 - Liste der Aussagen nach Stand gruppiert, Überholtes blass am Ende; darunter oder als Unterreiter „Zustände“ je Träger.
 - Aktionen zu einer Zeile (Stand setzen, Entscheidung löschen, Protokoll) erst im Overlay am Mausklick; Ja/Nein-Rückfrage
-  beim Löschen.
+  beim Löschen. Bestätigen/Verwerfen (✓/✕) folgt im selben Overlay ohne Rückfrage; ein Klick auf den gesetzten Knopf
+  nimmt die Prüfung zurück.
 - Wortlisten (Leerlassen = Vorgabe, „-“ allein = keine Wörter) unter Einstellungen (mehrwertig: Tabelle mit Icon-Zeilenaktionen) und auf der Abschlussseite des
   Assistenten; die App schreibt sie als YAML-Liste in die Konfigurationsdatei.
 
@@ -218,6 +238,7 @@ Was mit dem Löschen geschieht:
 - Urteile des Prüfschritts (FL4) liegen getrennt als Seiteninhalt in der Ablage der Anreicherungen, geschlüsselt nach
   Satz und Aussage. Sie bleiben beim Löschen stehen und werden beim nächsten Analysieren derselben Sätze wieder
   verwendet, ohne neuen Modellaufruf; sie fallen mit der Seite, der Quelle oder dem Entzug der KI-Freigabe weg.
-- Entscheidungen von Hand zu einzelnen Aussagen bleiben stehen und erscheinen als `staleDecisions`, bis die Aussage
+- Entscheidungen von Hand zu einzelnen Aussagen (Stand und Prüfung, je bei ihrem Analysator) bleiben stehen und
+  erscheinen als `staleDecisions`, bis die Aussage
   wieder auftaucht oder die Entscheidung gelöscht wird. Entscheidungen zu ganzen Seiten bleiben unberührt und greifen
   nach dem nächsten Analysieren wieder.

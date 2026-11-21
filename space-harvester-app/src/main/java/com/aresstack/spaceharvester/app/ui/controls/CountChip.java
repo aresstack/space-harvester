@@ -54,6 +54,19 @@ public final class CountChip extends JToggleButton {
         return chip;
     }
 
+    /**
+     * Eine stille Kennzeichnung nur mit Wort (etwa die Stufe eines Belegs „geprüft“): kein Knopf, nicht fokussierbar,
+     * nicht klickbar; {@code tip} erklärt das Wort.
+     */
+    public static CountChip tag(String word, Color tone, String tip) {
+        CountChip chip = choice(word, tone);
+        chip.setFocusable(false);
+        chip.setRolloverEnabled(false);
+        chip.setEnabled(false);
+        chip.tips(tip, tip);
+        return chip;
+    }
+
     /** Die Zahl hinter dem Wort. */
     public void count(int count) {
         this.count = count;
