@@ -404,7 +404,7 @@ final class SourceUpdatesView extends JPanel {
             // Während und nach einer Wiederholung fasst quietRefresh still zusammen, nie zusätzlich mit Ring.
             return false;
         }
-        if (mode != Mode.SUMMARY || shown == null || summary != null || running != null || !available
+        if (mode != Mode.SUMMARY || shown == null || (summary != null && !outdated(summary)) || running != null || !available
                 || sourceId == null || selected == null || !shown.update().id().equals(selected)
                 || shown.update().initial() || shown.pages().isEmpty() || !showing.getAsBoolean()) {
             return false;
@@ -419,6 +419,16 @@ final class SourceUpdatesView extends JPanel {
         }
         summarize(true);
         return running != null;
+    }
+
+    /**
+     * Eine Zusammenfassung aus der Zeit vor den Themen (update-summary-v1, Angelo 21.11.2026): Sie zählt nur Seiten.
+     * Beim Zeigen entsteht einmal von selbst die inhaltliche; bis dahin bleibt die alte stehen.
+     */
+    static boolean outdated(UpdateSummary shownSummary) {
+        String model = shownSummary.model();
+        return model != null && model.startsWith("update-summary-v1")
+                && shownSummary.statements().stream().allMatch(statement -> statement.title() == null);
     }
 
     /** Tests: ob der Reiter als sichtbar gilt (sonst {@link #isShowing()}). */
@@ -1274,6 +1284,24 @@ final class SourceUpdatesView extends JPanel {
      * Thema (etwa ohne KI-Freigabe) stehen aufklappbar am Ende. Die Modellkennung steht nur im Tooltip.
      */
     private void renderSummary(ChangeReport found, UpdateSummary summary) {
+        int before = reportBody.getComponentCount();
+        try {
+            renderTopics(found, summary);
+        } catch (RuntimeException e) {
+            // Nie eine leere Seite: was an der Darstellung scheitert, fällt auf den reinen Text zurück.
+            while (reportBody.getComponentCount() > before) {
+                reportBody.remove(reportBody.getComponentCount() - 1);
+            }
+            add(reportBody, Comic.wrapped("Zusammenfassung", Comic.INK, 14f));
+            add(reportBody, Comic.wrapped(summary.text(), Comic.TEXT, 13.5f));
+            for (SummaryStatement statement : summary.statements()) {
+                add(reportBody, Comic.wrapped((statement.title() == null ? "" : statement.title() + ": ")
+                        + statement.text(), Comic.TEXT, 13.5f));
+            }
+        }
+    }
+
+    private void renderTopics(ChangeReport found, UpdateSummary summary) {
         rendered = summary;
         JLabel title = new JLabel("Zusammenfassung");
         title.setFont(Comic.semiBold(14f));

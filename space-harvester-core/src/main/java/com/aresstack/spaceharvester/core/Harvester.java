@@ -376,6 +376,7 @@ public final class Harvester implements AutoCloseable {
     private final com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs;
     /** „Seiten nachladen“ als Hintergrundauftrag. */
     private final com.aresstack.spaceharvester.application.background.PageLoads pageLoads;
+    private final com.aresstack.spaceharvester.application.background.services.ServicePlanner servicePlanner;
     private final Assets assets;
     private final com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses transcriptAnalyses;
     private final ConnectionBudget connections;
@@ -1092,6 +1093,10 @@ public final class Harvester implements AutoCloseable {
             this.automaticImages = new com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions(
                     imageDescriptions, imageSettings, sourceId -> catalog.find(sourceId).isPresent());
             opened.add(pageReleases.subscribe(automaticImages::releasesChanged));
+            // D1 (Nachtrag ADR 0025): Dienst-Planer mit den Beschreibungen der Analysedienste; die Arten bauen B1/A2.
+            this.servicePlanner = services(backgroundJobs, () -> (this.settings != null ? this.settings.images()
+                    : startImages).automatic(), access,
+                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
             PageImageAnalysis pageImages = this.imageAnalysis;
@@ -2321,6 +2326,65 @@ public final class Harvester implements AutoCloseable {
      */
     public com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs() {
         return backgroundJobs;
+    }
+
+    /**
+     * Der Dienst-Planer (D1, Nachtrag ADR 0025): startet ein Analyseziel samt fehlender Vorstufen als eine
+     * Hintergrundgruppe, je Stufe und Space ein Unterauftrag.
+     */
+    public com.aresstack.spaceharvester.application.background.services.ServicePlanner servicePlanner() {
+        return servicePlanner;
+    }
+
+    /**
+     * Die Beschreibungen der Analysedienste (D1). Ihre Arten fehlen noch (B1/A2); die Starttypen ändern am heutigen
+     * Verhalten nichts.
+     */
+    static com.aresstack.spaceharvester.application.background.services.ServicePlanner services(
+            com.aresstack.spaceharvester.application.background.BackgroundJobs background,
+            java.util.function.BooleanSupplier imagesAutomatic, AccessGuard access,
+            java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf) {
+        var planner = new com.aresstack.spaceharvester.application.background.services.ServicePlanner(background,
+                (caller, pages) -> {
+                    Map<com.aresstack.spaceharvester.application.background.services.MissingPages.Scope,
+                            java.util.Set<String>> visible = new java.util.LinkedHashMap<>();
+                    int hidden = 0;
+                    for (Map.Entry<String, java.util.Set<String>> source : pages.asMap().entrySet()) {
+                        for (String pageId : source.getValue()) {
+                            String space = spaceOf.apply(new PageKey(source.getKey(), pageId)).orElse(null);
+                            if (access.canRead(caller, source.getKey(), space, pageId)) {
+                                visible.computeIfAbsent(new com.aresstack.spaceharvester.application.background
+                                        .services.MissingPages.Scope(source.getKey(), space),
+                                        ignored -> new java.util.TreeSet<>()).add(pageId);
+                            } else {
+                                hidden++;
+                            }
+                        }
+                    }
+                    return new com.aresstack.spaceharvester.application.background.services.MissingPages(visible,
+                            hidden);
+                });
+        var manual = (java.util.function.Supplier<
+                com.aresstack.spaceharvester.application.background.services.ServiceStart>) () ->
+                com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL;
+        var automatic = (java.util.function.Supplier<
+                com.aresstack.spaceharvester.application.background.services.ServiceStart>) () ->
+                com.aresstack.spaceharvester.application.background.services.ServiceStart.AUTOMATIC;
+        var nothing = com.aresstack.spaceharvester.application.background.services.AnalysisService.Missing.NOTHING;
+        planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
+                "index", "Indexieren", automatic, List.of(), null, nothing));
+        planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
+                "images", "Bilder beschreiben", () -> imagesAutomatic.getAsBoolean()
+                ? com.aresstack.spaceharvester.application.background.services.ServiceStart.AUTOMATIC
+                : com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL,
+                List.of("index"), null, nothing));
+        planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
+                "statements", "Aussagenanalyse", manual, List.of("index"), null, nothing));
+        planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
+                "glossary", "Glossar", automatic, List.of("index"), null, nothing));
+        planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
+                "knowledge-graph", "Wissensgraph", manual, List.of("statements", "images"), null, nothing));
+        return planner;
     }
 
     /** „Bilder beschreiben“ über das Auftragssystem (D2): Hintergrundläufe, Knopf je Seite, fehlende Beschreibungen. */

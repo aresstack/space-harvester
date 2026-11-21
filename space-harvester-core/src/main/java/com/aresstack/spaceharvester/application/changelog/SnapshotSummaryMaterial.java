@@ -27,14 +27,19 @@ public final class SnapshotSummaryMaterial implements SummaryMaterial {
     public Optional<String> text(PageKey page) {
         try {
             return snapshots.apply(page).flatMap(projector::project).map(PageText::text);
-        } catch (IllegalArgumentException e) {
-            // Payload verletzt ihr Format: kein Auszug, die Seite geht nur mit Titel ein.
+        } catch (RuntimeException e) {
+            // Payload fehlt, ist beschädigt oder verletzt ihr Format: kein Auszug, die Seite geht nur mit Titel ein.
             return Optional.empty();
         }
     }
 
     @Override
     public Optional<String> spaceName(PageKey page, String spaceKey) {
-        return snapshots.apply(page).flatMap(snapshot -> SpaceNames.of(snapshot, spaceKey));
+        try {
+            return snapshots.apply(page).flatMap(snapshot -> SpaceNames.of(snapshot, spaceKey));
+        } catch (RuntimeException e) {
+            // Nie die Anzeige der Zusammenfassung kosten (Payload fehlt im Cache o. ä.): dann der Schlüssel.
+            return Optional.empty();
+        }
     }
 }
