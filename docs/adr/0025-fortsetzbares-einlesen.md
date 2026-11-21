@@ -254,6 +254,26 @@ wird automatisch verwaltet.
 7. **Desktop-App.** Die Auftragsverwaltung zeigt Hintergrundaufträge in einem eigenen Reiter „Hintergrund“, je Gruppe
    eine Zeile mit den Unteraufträgen darunter, farblich hervorgehoben (Form mit dem UX-Manager); die Liste der
    Benutzeraufträge bleibt frei davon.
+8. **Bilder beschreiben** (`ImageDescriptionJobs`, Art `images`, `Harvester#imageDescriptions()`, D2). Ein Unterauftrag
+   je Space; Angaben `root` (Startseite), `subtree`, `trigger` (`automatic` oder `user`). Die Automatik
+   (`AutomaticImageDescriptions`) startet über die Art mit dem technischen Aufrufer und bleibt bei fehlender Freigabe
+   still. Ein Lauf des Benutzers (Space, Seite, Seite samt Unterseiten über `Holdings#resolve`) trägt dessen
+   Eigentümer (`principal`, `principal.kind`, `via`) und läuft nach einem Neustart nur mit dessen Rechten weiter; lässt
+   sich daraus kein Aufrufer bauen (Endnutzer ohne Anmeldedaten), hält er an (gelb `IMAGES_RESUME_BY_HAND`), und ▶
+   läuft mit dem Benutzer, der es drückt. Nicht freigegebene Seiten zählen bei Läufen des Benutzers gelb
+   (`IMAGES_SKIPPED:NOT_RELEASED`). `autoResume` = ein Vision-Modell ist eingestellt. Jeder Unterauftrag beschreibt bis zu
+   `ai.parallel` Bilder zugleich in eigener Spur, auch die Bilder einer Seite; die Obergrenze `images.max-per-run` gilt
+   je Gruppe über alle Spaces. Der Knopf je Seite im Reiter „Bilder“ ist kein Hintergrundauftrag, sondern ein
+   gewöhnlicher Auftrag (`ENRICHMENT`, `task=images`) über denselben Lauf; „Nur diese Seite einmalig“ bleibt ohne
+   Auftrag, weil die Einmal-Erlaubnis keinen Neustart überdauern darf.
+   Ein Lauf des Benutzers legt Teile nur für Spaces an, in denen er Seiten der Auswahl sieht, und prüft jeden Umfang
+   (Space, Seite, Teilbaum) beim Arbeiten erneut mit seinen Rechten. Die Automatik hält sich nur hinter einem wartenden
+   oder angehaltenen Teil desselben Space zurück; neben einem laufenden darf einer warten. Die Vormerkung einer Seite
+   im Gruppenbudget geht bei Pause, Abbruch, Anmeldung und Fehler zurück. Beim Knopf bekommt jedes Bild seinen
+   Versuch: Scheitert das Modell, stehen die Bilder als `FAILED` und die Seite wird gespeichert; ohne Modell oder
+   Freigabe endet er gelb. `missing()` nennt dieselben Seiten, die ein Lauf an das Modell gäbe (auch gescheiterte und
+   ohne gespeicherte Lese-Ansicht). Mit `jobs.parallel-preparations=1` läuft „Bilder beschreiben“ als
+   Hintergrundauftrag nie (`SINGLE_SLOT`, gewollt seit #1030): Hintergrundaufträge brauchen mindestens zwei Plätze.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
