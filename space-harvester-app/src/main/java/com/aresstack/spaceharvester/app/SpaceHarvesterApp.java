@@ -69,7 +69,7 @@ public final class SpaceHarvesterApp {
     }
 
     /** Version aus dem Manifest des JAR; beim Start aus der IDE {@code dev}. */
-    static String version() {
+    public static String version() {
         String version = SpaceHarvesterApp.class.getPackage().getImplementationVersion();
         return version == null ? "dev" : version;
     }

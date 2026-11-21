@@ -267,8 +267,7 @@ public final class ActivitiesView implements View {
         again.addActionListener(e -> restart());
         deleteFinished.addActionListener(e -> deleteFinished());
         openOutput.addActionListener(e -> SettingsView.open(outputShown, feedback));
-        moreJobs.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
-                moreJobsMenu(), moreJobs).show(moreJobs, 0, moreJobs.getHeight()));
+        moreJobs.addActionListener(e -> showMoreJobsMenu());
 
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
@@ -533,7 +532,6 @@ public final class ActivitiesView implements View {
             context.events().publish(overall.event(jobs, now, averages::get, parallelNow));
             updateGlobalButtons(jobs);
             deleteFinished.setEnabled(jobs.stream().anyMatch(ActivitiesView::finished));
-            moreJobs.setEnabled(!jobs.isEmpty());
             downloads.refresh(runtime.workspace().parallelDownloads());
             preparations.refresh(runtime.workspace().parallelPreparations());
             connections.refresh(runtime.workspace().downloadConnections());
@@ -1420,9 +1418,27 @@ public final class ActivitiesView implements View {
         feedback.warning("Nicht übernommen", message);
     }
 
-    /** Das Menü hinter dem Dreieck neben dem Besen. */
+    /** Klappt das Menü am Dreieck auf: rechtsbündig unter dem ▼, wie die übrigen Menüs unter ihrem Knopf. */
+    void showMoreJobsMenu() {
+        javax.swing.JPopupMenu menu = com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
+                moreJobsMenu(), moreJobs);
+        menu.show(moreJobs, moreJobs.getWidth() - menu.getPreferredSize().width, moreJobs.getHeight());
+    }
+
+    /**
+     * Das Menü hinter dem Dreieck neben dem Besen: oben „Suchqualität messen …“ (Angelo 21.11.2026, Q1b), Trenner, dann
+     * „Alle Aufträge löschen“.
+     */
     javax.swing.JPopupMenu moreJobsMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem quality = new javax.swing.JMenuItem(SearchQualityStart.MENU, Glyph.CROSSHAIR);
+        quality.setFont(Comic.regular(13f));
+        quality.setToolTipText(SearchQualityStart.MENU_TIP);
+        quality.setEnabled(context.runtime() != null);
+        quality.addActionListener(e -> SearchQualityStart.open(root, context, started -> show(started.id()),
+                feedback::problem));
+        menu.add(quality);
+        menu.addSeparator();
         javax.swing.JMenuItem all = new javax.swing.JMenuItem(DELETE_ALL, Glyph.TRASH);
         all.setFont(Comic.regular(13f));
         all.setToolTipText("Alle Aufträge samt Diagnose löschen; laufende werden vorher abgebrochen");
