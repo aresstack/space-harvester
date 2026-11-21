@@ -487,6 +487,10 @@ public final class ActivitiesView implements View {
                 .LIMIT_REACHED)) {
             return new Note(IMAGES_LABEL, message, true);
         }
+        // Ein ausgefallenes Vision-Modell ist ein Fehler, kein bewusstes Auslassen.
+        if (code.equals(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.MODEL_FAILED)) {
+            return new Note(IMAGES_LABEL, message, false);
+        }
         if (code.equals(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.DONE)) {
             return new Note(RESULT_LABEL, message, false);
         }

@@ -371,6 +371,38 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void aFailingVisionModelStopsTheRunAsAnErrorAndTheNextRunTriesAgain() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        describer.fail = true;
+        PageImageAnalysis analysis = analysis();
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis,
+                sourceId -> List.of(page("1", "Text"), page("2", "Text")).iterator(),
+                () -> new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500),
+                "wiki"::equals);
+        RecordingContext context = new RecordingContext();
+
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki",
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500), context);
+
+        assertThat(outcome.images()).isZero();
+        assertThat(outcome.failed()).isEqualTo(1);
+        assertThat(context.failed).isEqualTo(1);
+        int calls = describer.calls;
+        assertThat(calls).as("die zweite Seite geht nicht mehr an das ausgefallene Modell").isPositive();
+        assertThat(context.events).filteredOn(e -> AutomaticImageDescriptions.MODEL_FAILED.equals(e.code()))
+                .singleElement().extracting(e -> e.severity())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobEvent.Severity.ERROR);
+
+        describer.fail = false;
+        AutomaticImageDescriptions.Outcome again = automatic.run("wiki",
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500),
+                new RecordingContext());
+        assertThat(again.images()).as("der nächste Lauf holt beide Bilder nach").isEqualTo(2);
+        assertThat(again.failed()).isZero();
+    }
+
+    @Test
     void theLimitPerRunLeavesTheRestForTheNextRunAndSaysHowManyAreOpen() {
         // Drei Seiten mit je zwei Bildern; deren Liste ist schon bekannt (gespeicherte Lese-Ansicht).
         for (String pageId : List.of("1", "2", "3")) {
@@ -468,7 +500,7 @@ class PageImageAnalysisTest {
                 return "wiki".equals(sourceId) ? Optional.of(source) : Optional.empty();
             }
         };
-        Assets assets = new Assets(catalog, new FileSystemAssetStore(directory), 1000, Clock.systemUTC(), vision,
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(directory), 10_000_000, Clock.systemUTC(), vision,
                 null);
         assets.pageReleases(released::contains);
         store = new InMemoryEnrichmentStore();
@@ -496,6 +528,11 @@ class PageImageAnalysisTest {
                     + answer.toUpperCase(java.util.Locale.ROOT).contains("SPOOL") + " nachtlauf="
                     + answer.toUpperCase(java.util.Locale.ROOT).contains("NACHTLAUF") + " geheim="
                     + answer.toUpperCase(java.util.Locale.ROOT).contains("GEHEIM"));
+        }
+        for (PageSnapshot page : pages) {
+            PageImages read = analysis.read(page);
+            System.out.println("LIVE page" + page.key().pageId() + " " + read.state() + " " + read.reason() + " "
+                    + read.images().stream().map(i -> i.status() + ":" + i.reason()).toList());
         }
         System.out.println("LIVE events1=" + first.events.stream().map(e -> e.severity() + ":" + e.code()).toList()
                 + " events2=" + second.events.stream().map(e -> e.severity() + ":" + e.code()).toList()

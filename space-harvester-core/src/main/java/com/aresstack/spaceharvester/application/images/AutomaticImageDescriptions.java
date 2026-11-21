@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -51,6 +52,11 @@ public final class AutomaticImageDescriptions {
     public static final String LIMIT_REACHED = "IMAGES_LIMIT_REACHED";
     /** Ereignis: die Quelle verlangt einen Einmalcode, der Lauf ist ausgelassen (gelb). */
     public static final String SIGN_IN = "IMAGES_SKIPPED:SIGN_IN";
+    /**
+     * Ereignis: das Vision-Modell antwortete nicht (nicht erreichbar, Frist, Fehler, leere Antwort); der Lauf hört auf,
+     * statt jedes weitere Bild an ein ausgefallenes Modell zu schicken (rot, ein Fehler).
+     */
+    public static final String MODEL_FAILED = "IMAGES_MODEL_FAILED";
     /** Ereignis mit den Zahlen des Laufs. */
     public static final String DONE = "IMAGES_DONE";
     /** Komponente der Ereignisse. */
@@ -181,7 +187,23 @@ public final class AutomaticImageDescriptions {
                 int described = newlyDescribed(before, after);
                 sent += described;
                 pages++;
-                context.written(1);
+                List<String> failures = after.images().stream().filter(image -> image.status() == ImageStatus.FAILED)
+                        .map(ImagePayload.Entry::reason).toList();
+                if (failures.isEmpty()) {
+                    context.written(1);
+                } else {
+                    failed++;
+                    context.failed(1);
+                    if (failures.stream().anyMatch(PageImageAnalysis::modelFailure)) {
+                        // Ein ausgefallenes Modell bekommt keine weiteren Bilder; der nächste Lauf versucht es neu.
+                        context.record(new JobEvent.Draft(JobEvent.Severity.ERROR, JobEvent.Category.JOB, COMPONENT,
+                                MODEL_FAILED, "Das Vision-Modell antwortet nicht (" + failures.stream()
+                                .filter(PageImageAnalysis::modelFailure).findFirst().orElseThrow()
+                                + "); Lauf beendet, offene Bilder folgen beim nächsten Lauf", null, null, null));
+                        context.processed(1);
+                        break;
+                    }
+                }
             } catch (SignInRequiredException e) {
                 context.record(JobEvent.Draft.warning(JobEvent.Category.SOURCE, COMPONENT, SIGN_IN,
                         "Die Quelle verlangt einen Einmalcode; Bilder dieses Laufs bewusst ausgelassen"));
