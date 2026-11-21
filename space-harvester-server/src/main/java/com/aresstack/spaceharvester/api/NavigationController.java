@@ -105,9 +105,9 @@ public class NavigationController {
     @GetMapping("/{sourceId}/pages/{pageId}/links")
     @Operation(summary = "Querverweise einer Seite auf andere Seiten der Quelle",
             description = "outgoing: Seiten, auf die die Seite verweist, jede einmal, in Reihenfolge der Seite, ohne "
-                    + "Anhänge. incoming: Seiten, die hierher verweisen, nur wenn die Quelle sie vollständig kennt "
-                    + "(incomingSupported), bei Confluence nicht. Verlangt content auf die Seite; Ziele ohne Freigabe "
-                    + "fehlen.")
+                    + "Anhänge. incoming: Seiten, die hierher verweisen; von der Quelle, wenn sie sie vollständig "
+                    + "kennt (incomingSupported), sonst aus den lokal gespeicherten Seiten mit indexedPages von "
+                    + "knownPages (bei Confluence so). Verlangt content auf die Seite; Ziele ohne Freigabe fehlen.")
     @ApiResponse(responseCode = "200", description = "LinksResponse")
     @ApiResponse(responseCode = "404", description = "Seite unbekannt oder nicht freigegeben",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
