@@ -109,6 +109,11 @@ import java.util.function.Consumer;
  */
 public final class ChatPanel extends JPanel {
 
+    static final String FROM_HERE = "Ab hier: ";
+    static final String CHATS_HERE = "In diesem Bereich";
+    static final String CHATS_ELSEWHERE = "Übrige Chats";
+    static final String NO_CHATS = "Noch keine Chats";
+    static final String NO_CHATS_HERE = "Noch keine Chats in diesem Bereich";
     static final String NEW_CHAT = "Neuer Chat";
     static final String PLACEHOLDER = "Nachricht…";
     static final String SEND = "Senden";
@@ -176,6 +181,13 @@ public final class ChatPanel extends JPanel {
     private final ChatStore store;
     /** Der Bereich der Chats: die Auswahl links als Knoten; {@code null} ohne Auswahl. */
     private ChatNode node;
+    /**
+     * Der Ordner des offenen Chats: der Bereich, in dem er begonnen wurde. Der Chat bleibt beim Navigieren stehen
+     * (Angelo, 21.11.2026), {@link #node} wandert mit der Auswahl und gilt je Frage.
+     */
+    private Path home;
+    /** Ob die erste Auswahl nach dem Start schon ihren zuletzt geänderten Chat gezeigt hat. */
+    private boolean resumed;
     /** Der aktuelle Chat; immer gesetzt, anfangs leer und ungespeichert. */
     private ChatRecord chat = ChatRecord.fresh(System.currentTimeMillis());
     /** Der laufende Turn oder {@code null}. */
@@ -784,17 +796,27 @@ public final class ChatPanel extends JPanel {
     }
 
     /**
-     * Ein anderer Bereich: Ein laufender Turn schreibt seinen Chat noch zu Ende (er hängt am Chat, nicht am Reiter),
-     * die Ansicht zeigt den zuletzt geänderten Chat des neuen Bereichs oder einen leeren.
+     * Ein anderer Bereich (Angelo, 21.11.2026): Der offene Chat bleibt stehen, auch eine laufende Antwort; nur der
+     * Bereich der nächsten Frage wandert. Ein leerer Chat hat noch keinen Bereich und zieht mit, damit er dort
+     * gespeichert wird, wo seine erste Frage fällt. Die erste Auswahl nach dem Start zeigt den zuletzt geänderten Chat
+     * ihres Bereichs, damit man dort weitermacht, wo man aufgehört hat.
      */
     private void switchNode(ChatNode next) {
-        if (turn != null) {
-            // Die Antwort läuft weiter und wird gespeichert, sobald sie fertig ist; die Ansicht lässt sie los.
-            detachTurn();
-        }
         node = next;
-        List<ChatRecord> saved = store.list(node);
-        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0));
+        if (!chat.isEmpty() || turn != null) {
+            showChatName();
+            return;
+        }
+        home = store.folder(node);
+        if (!resumed && node != null) {
+            resumed = true;
+            List<ChatRecord> saved = store.list(node);
+            if (!saved.isEmpty()) {
+                open(saved.get(0));
+                return;
+            }
+        }
+        showChatName();
     }
 
     /** Meldet sich für Quelle und Space der Auswahl an; eine andere Auswahl oder Laufzeit meldet neu an. */
@@ -911,11 +933,20 @@ public final class ChatPanel extends JPanel {
         // Nachladen je Quelle, Space oder Seite; die globale Auswahl lädt man links je Wissensquelle.
         load.setVisible(current != null && !current.global() && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
-        send.setEnabled(current != null && settled);
+        // Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird.
+        updateSend();
         updateQuickActions();
         if (onResolved != null) {
             onResolved.accept(resolved);
         }
+    }
+
+    /**
+     * Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird (der
+     * Chat bleibt beim Navigieren stehen); Senden braucht eine aufgelöste Auswahl.
+     */
+    private void updateSend() {
+        send.setEnabled(turn != null || (selection != null && settled));
     }
 
     // ------------------------------------------------------------------ Schnellaktionen
@@ -1285,11 +1316,17 @@ public final class ChatPanel extends JPanel {
             status.setText(NO_CHAT_MODEL);
             return;
         }
+        // Nur die Seite statt der Auswahl samt Unterseiten ist ein eigener Bereich.
+        String scopeKey = scopeKey(node, scope != resolved);
+        addAreaMark(lastQuestion(chat), area, scopeKey);
         addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question);
         long now = System.currentTimeMillis();
-        chat = chat.plus(ChatRecord.Message.user(question, now), now);
+        if (home == null) {
+            home = store.folder(node);
+        }
+        chat = chat.plus(ChatRecord.Message.user(question, now, area, scopeKey), now);
         List<ChatRecord.Message> history = chat.messages().subList(0, chat.messages().size() - 1);
-        store.save(node, chat);
+        store.save(home, chat);
         showChatName();
         editor.setText("");
         attachments.clear();
@@ -1302,7 +1339,7 @@ public final class ChatPanel extends JPanel {
         release();
         answering = addAnswer("…");
         ChatRecord target = chat;
-        ChatNode targetNode = node;
+        Path targetNode = home;
         TurnListener listener = new TurnListener(target, targetNode, answering);
         listening = listener;
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
@@ -1346,14 +1383,14 @@ public final class ChatPanel extends JPanel {
     private final class TurnListener implements ChatTurn.Listener {
 
         private final ChatRecord started;
-        private final ChatNode startedNode;
+        private final Path startedNode;
         private final AssistantMarkdownBubble bubble;
         private final StringBuilder text = new StringBuilder();
         private final java.awt.event.ComponentListener follow;
         ChatTurn turn;
         boolean detached;
 
-        TurnListener(ChatRecord started, ChatNode startedNode, AssistantMarkdownBubble bubble) {
+        TurnListener(ChatRecord started, Path startedNode, AssistantMarkdownBubble bubble) {
             this.started = started;
             this.startedNode = startedNode;
             this.bubble = bubble;
@@ -1459,6 +1496,7 @@ public final class ChatPanel extends JPanel {
             status.setText(note);
             send.setText(SEND);
             send.setIcon(ComposerIcons.send());
+            updateSend();
             updateHeaderActions();
             send.setToolTipText("Senden (Enter)");
             showChatName();
@@ -1549,21 +1587,31 @@ public final class ChatPanel extends JPanel {
         if (turn != null) {
             detachTurn();
         }
-        open(ChatRecord.fresh(System.currentTimeMillis()));
+        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(node));
         editor.requestFocusInWindow();
     }
 
-    /** Zeigt einen Chat: Verlauf als Blasen, Name in der Kopfzeile. */
+    /** Zeigt einen Chat des gewählten Bereichs. */
     private void open(ChatRecord record) {
+        open(record, store.folder(node));
+    }
+
+    /** Zeigt einen Chat aus seinem Ordner: Verlauf als Blasen samt Marken beim Bereichswechsel, Name in der Kopfzeile. */
+    private void open(ChatRecord record, Path folder) {
         if (turn != null) {
+            // Die Antwort läuft weiter und wird gespeichert, sobald sie fertig ist; die Ansicht lässt sie los.
             detachTurn();
         }
         chat = record;
+        home = folder;
+        ChatRecord.Message asked = null;
         transcript.removeAll();
         transcript.add(emptyNote);
         emptyNote.setVisible(true);
         for (ChatRecord.Message message : record.messages()) {
             if (message.user()) {
+                addAreaMark(asked, message.area(), message.scope());
+                asked = message.area() == null ? asked : message;
                 addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du",
                         message.text());
             } else {
@@ -1579,14 +1627,14 @@ public final class ChatPanel extends JPanel {
 
     private void showChatName() {
         chatName.setText(chat.title());
-        chats.setEnabled(node != null);
+        chats.setEnabled(node != null || home != null);
         updateHeaderActions();
     }
 
     /** Löschen geht nur bei einem gespeicherten Chat (einer mit Nachrichten) und nicht während einer Antwort. */
     private void updateHeaderActions() {
         newChat.setEnabled(node != null);
-        deleteChat.setEnabled(node != null && !chat.isEmpty() && turn == null);
+        deleteChat.setEnabled(home != null && !chat.isEmpty() && turn == null);
         updateQuickActions();
     }
 
@@ -1605,27 +1653,185 @@ public final class ChatPanel extends JPanel {
         return headerActions;
     }
 
-    /** Der Pfeil: die Chats dieses Bereichs, zuletzt geänderte zuerst, der aktuelle mit Haken. */
+    /**
+     * Der Pfeil: zuerst die Chats des links gewählten Bereichs, darunter abgetrennt alle übrigen, je Gruppe zuletzt
+     * geänderte zuerst, der offene mit Haken (Angelo, 21.11.2026).
+     */
     private void showChatsMenu() {
         JPopupMenu menu = new JPopupMenu();
-        List<ChatRecord> saved = store.list(node);
-        if (saved.isEmpty()) {
-            JMenuItem none = new JMenuItem("Noch keine Chats in diesem Bereich");
-            none.setEnabled(false);
-            menu.add(none);
-        }
-        for (ChatRecord record : saved) {
-            boolean current = record.id().equals(chat.id());
-            JMenuItem item = new JMenuItem((current ? "✓ " : "    ") + record.title());
-            item.setToolTipText(Texts.count(record.messages().size(), "Nachricht", "Nachrichten"));
-            item.addActionListener(e -> {
-                if (!current) {
-                    open(record);
-                }
-            });
+        for (Component item : chatMenuItems()) {
             menu.add(item);
         }
         PopupHover.clearOnClose(menu, chats).show(chats, 0, chats.getHeight());
+    }
+
+    /** Die Einträge des Menüs unter ▾; für Tests ohne geöffnetes Popup. */
+    List<Component> chatMenuItems() {
+        List<Component> items = new ArrayList<>();
+        Path here = store.folder(node);
+        List<ChatStore.Entry> all = store.all();
+        List<ChatStore.Entry> local = all.stream().filter(entry -> entry.folder().equals(here)).toList();
+        List<ChatStore.Entry> others = all.stream().filter(entry -> !entry.folder().equals(here)).toList();
+        if (all.isEmpty()) {
+            JMenuItem none = new JMenuItem(NO_CHATS);
+            none.setEnabled(false);
+            items.add(none);
+            return items;
+        }
+        items.add(menuHeading(CHATS_HERE));
+        if (local.isEmpty()) {
+            JMenuItem none = new JMenuItem(NO_CHATS_HERE);
+            none.setEnabled(false);
+            items.add(none);
+        }
+        local.forEach(entry -> items.add(chatItem(entry)));
+        if (!others.isEmpty()) {
+            items.add(new JPopupMenu.Separator());
+            items.add(menuHeading(CHATS_ELSEWHERE));
+            others.forEach(entry -> items.add(chatItem(entry)));
+        }
+        return items;
+    }
+
+    private JMenuItem chatItem(ChatStore.Entry entry) {
+        ChatRecord record = entry.record();
+        boolean current = record.id().equals(chat.id());
+        JMenuItem item = new JMenuItem((current ? "✓ " : "    ") + record.title());
+        String area = lastArea(record);
+        item.setToolTipText(Texts.count(record.messages().size(), "Nachricht", "Nachrichten")
+                + (area == null ? "" : " · zuletzt: " + areaName(area)));
+        item.addActionListener(e -> {
+            if (!current) {
+                open(record, entry.folder());
+            }
+        });
+        return item;
+    }
+
+    private static JMenuItem menuHeading(String text) {
+        JMenuItem heading = new JMenuItem(text);
+        heading.setEnabled(false);
+        heading.setFont(Comic.semiBold(11f));
+        return heading;
+    }
+
+    // ------------------------------------------------------------------ Bereichswechsel im Verlauf
+
+    /** Die letzte Frage eines Chats, die ihren Bereich kennt; {@code null} ohne solche Frage. */
+    static ChatRecord.Message lastQuestion(ChatRecord record) {
+        ChatRecord.Message asked = null;
+        for (ChatRecord.Message message : record.messages()) {
+            if (message.user() && message.area() != null) {
+                asked = message;
+            }
+        }
+        return asked;
+    }
+
+    /** Der Bereich der letzten Frage eines Chats in Worten; {@code null} ohne Frage mit Bereich. */
+    static String lastArea(ChatRecord record) {
+        ChatRecord.Message asked = lastQuestion(record);
+        return asked == null ? null : asked.area();
+    }
+
+    /**
+     * Die Kennung eines Bereichs: Quelle, Space und Seite, dazu ob nur die Seite ohne Unterseiten gemeint ist. Zwei
+     * gleich benannte Spaces oder Seiten sind damit verschiedene Bereiche; {@code null} ohne Auswahl.
+     */
+    static String scopeKey(ChatNode node, boolean pageOnly) {
+        if (node == null) {
+            return null;
+        }
+        if (node.sourceId() == null) {
+            return "*";
+        }
+        return node.sourceId() + "\u0000" + (node.spaceKey() == null ? "" : node.spaceKey()) + "\u0000"
+                + (node.pageId() == null ? "" : node.pageId()) + (pageOnly ? "\u0000nur" : "");
+    }
+
+    /** Derselbe Bereich: nach der Kennung, bei Chats ohne Kennung nach dem Namen ohne Zählung. */
+    static boolean sameArea(ChatRecord.Message before, String next, String nextScope) {
+        if (before.scope() != null && nextScope != null) {
+            return before.scope().equals(nextScope);
+        }
+        return Objects.equals(areaName(before.area()), areaName(next));
+    }
+
+    /**
+     * Der Bereich ohne seine Zählung („Handbuch · alle Spaces“ statt „… · 12 Seiten · 3 davon nicht geladen“): Lädt
+     * der Bestand zwischen zwei Fragen nach, ist es noch derselbe Bereich.
+     */
+    static String areaName(String area) {
+        return area == null ? null : AREA_COUNTS.matcher(area).replaceFirst("");
+    }
+
+    private static final java.util.regex.Pattern AREA_COUNTS = java.util.regex.Pattern.compile(
+            " · (\\d+ Seiten?|" + java.util.regex.Pattern.quote(NOT_LOADED) + ")( · \\d+ davon nicht geladen)?$");
+
+    /**
+     * Vor einer Frage aus einem anderen Bereich als die vorige steht eine Marke über die ganze Breite: „Ab hier: …“.
+     * Sie entsteht erst beim Senden, nicht bei jedem Klick im Baum; ältere Antworten sehen so nie aus, als kämen sie
+     * aus dem neuen Bereich.
+     */
+    private void addAreaMark(ChatRecord.Message before, String next, String nextScope) {
+        if (before == null || next == null || sameArea(before, next, nextScope)) {
+            return;
+        }
+        AreaMark mark = new AreaMark(FROM_HERE + next);
+        mark.setAlignmentX(LEFT_ALIGNMENT);
+        transcript.add(mark);
+    }
+
+    /** Die Marke eines Bereichswechsels: gedämpfter Text zwischen zwei dünnen Linien, bricht nie die Breite. */
+    static final class AreaMark extends JPanel {
+
+        private final JLabel label;
+
+        AreaMark(String text) {
+            super(new BorderLayout(8, 0));
+            setOpaque(false);
+            setBorder(BorderFactory.createEmptyBorder(8, 14, 4, 14));
+            label = Comic.muted(text);
+            label.setFont(Comic.regular(11f));
+            label.setToolTipText(text);
+            // Der Text kürzt sich mit „…“, statt den Verlauf zu verbreitern.
+            label.setMinimumSize(new Dimension(0, label.getPreferredSize().height));
+            add(rule(), BorderLayout.WEST);
+            add(label, BorderLayout.CENTER);
+        }
+
+        String text() {
+            return label.getText();
+        }
+
+        private static JComponent rule() {
+            JPanel rule = new JPanel() {
+                @Override
+                protected void paintComponent(java.awt.Graphics g) {
+                    g.setColor(Comic.LINE);
+                    g.fillRect(0, getHeight() / 2, getWidth(), 1);
+                }
+            };
+            rule.setOpaque(false);
+            rule.setPreferredSize(new Dimension(16, 1));
+            return rule;
+        }
+
+        @Override
+        public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    }
+
+    /** Die Marken des Verlaufs in Reihenfolge; für Tests. */
+    List<String> areaMarks() {
+        List<String> marks = new ArrayList<>();
+        for (Component row : transcript.getComponents()) {
+            if (row instanceof AreaMark mark) {
+                marks.add(mark.text());
+            }
+        }
+        return marks;
     }
 
     /** Rechtsklick auf den Namen: Umbenennen an Ort und Stelle, Chat löschen mit Rückfrage. */
@@ -1660,7 +1866,7 @@ public final class ChatPanel extends JPanel {
             String title = chatNameEditor.getText().strip();
             if (!title.equals(chat.title())) {
                 chat = chat.withTitle(title.isEmpty() ? chat.id() : title, System.currentTimeMillis());
-                store.save(node, chat);
+                store.save(home, chat);
             }
         }
         nameHolder.remove(chatNameEditor);
@@ -1679,7 +1885,7 @@ public final class ChatPanel extends JPanel {
         if (!Dialogs.confirm(this, DELETE_TITLE, DELETE_QUESTION)) {
             return;
         }
-        store.delete(node, chat.id());
+        store.delete(home, chat.id());
         List<ChatRecord> saved = store.list(node);
         open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0));
     }
@@ -1699,7 +1905,13 @@ public final class ChatPanel extends JPanel {
     }
 
     int bubbles() {
-        return transcript.getComponentCount() - 1;
+        int count = 0;
+        for (Component row : transcript.getComponents()) {
+            if (row instanceof BubbleMessageRow) {
+                count++;
+            }
+        }
+        return count;
     }
 
     List<Path> attachments() {

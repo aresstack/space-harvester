@@ -38,8 +38,13 @@ class ChatPanelTest {
         }
     }
 
+    private static java.util.List<String> menuTexts(ChatPanel panel) {
+        return panel.chatMenuItems().stream()
+                .map(item -> item instanceof javax.swing.JMenuItem menu ? menu.getText() : "—").toList();
+    }
+
     @Test
-    void chatsBelongToTheSelectedNodeAndRenamingKeepsTheId() throws Exception {
+    void theOpenChatStaysWhileNavigatingAndRenamingKeepsTheId() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
         Files.writeString(files.resolve("seite.md"), "# Seite\n\nText.\n");
         Path config = home.resolve("app.yml");
@@ -61,9 +66,36 @@ class ChatPanelTest {
         String space = context.runtime().workspace().spaces("handbuch").get(0).key();
         ChatStore store = new ChatStore(() -> home.resolve("data").resolve(ChatStore.FOLDER));
         ChatNode spaceNode = new ChatNode("handbuch", space, null);
-        ChatRecord earlier = ChatRecord.fresh(1_000).plus(ChatRecord.Message.user("Frühere Frage", 1_000), 1_000)
-                .plus(ChatRecord.Message.assistant("Frühere Antwort", false, 1_500), 1_500);
+        // Ein Chat, dessen zweite Frage aus einem anderen Bereich kam; dazwischen hat der Bestand nur nachgeladen.
+        ChatRecord earlier = ChatRecord.fresh(1_000)
+                .plus(ChatRecord.Message.user("Frühere Frage", 1_000, "Space Handbuch · 1 Seite", null), 1_000)
+                .plus(ChatRecord.Message.assistant("Frühere Antwort", false, 1_500), 1_500)
+                .plus(ChatRecord.Message.user("Noch eine", 1_600, "Space Handbuch · 3 Seiten · 1 davon nicht geladen",
+                        null), 1_600)
+                .plus(ChatRecord.Message.user("Und im Ganzen?", 1_700, "Handbuch · alle Spaces · 3 Seiten", null), 1_700)
+                .plus(ChatRecord.Message.assistant("Antwort im Ganzen", false, 1_800), 1_800);
         store.save(spaceNode, earlier);
+        ChatNode sourceNode = new ChatNode("handbuch", null, null);
+        ChatRecord other = ChatRecord.fresh(500).plus(ChatRecord.Message.user("Ganz andere Frage", 500), 500);
+        store.save(sourceNode, other);
+        assertThat(store.all()).extracting(entry -> entry.record().id()).containsExactly(earlier.id(), other.id());
+        assertThat(ChatPanel.areaName("Space Handbuch · 3 Seiten · 1 davon nicht geladen")).isEqualTo("Space Handbuch");
+        // Zwei gleich benannte Spaces sind verschiedene Bereiche: es zählt die Kennung, nicht der Name.
+        ChatRecord.Message asked = ChatRecord.Message.user("Frage", 1, "Space Handbuch · 2 Seiten",
+                ChatPanel.scopeKey(new ChatNode("a", "HB", null), false));
+        assertThat(ChatPanel.sameArea(asked, "Space Handbuch · 5 Seiten",
+                ChatPanel.scopeKey(new ChatNode("a", "HB", null), false))).isTrue();
+        assertThat(ChatPanel.sameArea(asked, "Space Handbuch · 2 Seiten",
+                ChatPanel.scopeKey(new ChatNode("b", "HB", null), false))).isFalse();
+        assertThat(ChatPanel.sameArea(asked, "Space Handbuch · 2 Seiten",
+                ChatPanel.scopeKey(new ChatNode("a", "HB", "p1"), true))).isFalse();
+        // Die Adresse eines Chats ist relativ zum Chat-Ordner und gilt auch nach einem Wechsel des Datenordners;
+        // nichts außerhalb wird geschrieben.
+        assertThat(store.folder(spaceNode)).isRelative();
+        store.save(Path.of("..", "draussen"), earlier);
+        assertThat(home.resolve("data").resolve("draussen")).doesNotExist();
+        assertThat(ChatPanel.areaName("Handbuch · alle Spaces · " + ChatPanel.NOT_LOADED))
+                .isEqualTo("Handbuch · alle Spaces");
 
         ChatPanel[] panel = new ChatPanel[1];
         SwingUtilities.invokeAndWait(() -> {
@@ -74,7 +106,9 @@ class ChatPanelTest {
             panel[0].selection(new Selection("handbuch", space, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
             assertThat(panel[0].chatName()).isEqualTo(earlier.id());
-            assertThat(panel[0].bubbles()).isEqualTo(2);
+            assertThat(panel[0].bubbles()).isEqualTo(5);
+            // Bereichswechsel im Verlauf: eine Marke vor der Frage aus dem anderen Bereich, keine beim Nachladen.
+            assertThat(panel[0].areaMarks()).containsExactly(ChatPanel.FROM_HERE + "Handbuch · alle Spaces · 3 Seiten");
             // Umbenennen an Ort und Stelle: der Name wechselt, die Kennung und die Datei bleiben.
             panel[0].startRename();
             assertThat(panel[0].renamingShown()).isTrue();
@@ -83,9 +117,30 @@ class ChatPanelTest {
             assertThat(panel[0].renamingShown()).isFalse();
             assertThat(panel[0].chatName()).isEqualTo("Zugriffsrechte");
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
-            // Die ganze Quelle ist ein anderer Bereich: dort gibt es noch keinen Chat.
+            // Die ganze Quelle ist ein anderer Bereich: der offene Chat bleibt stehen (Angelo, 21.11.2026), nur der
+            // Bereich der nächsten Frage wandert.
             panel[0].selection(new Selection("handbuch", null, null, "Handbuch"));
+            assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
+            assertThat(panel[0].bubbles()).isEqualTo(5);
+            assertThat(panel[0].knowledge()).startsWith("Wissen: Handbuch · alle Spaces");
+            // Unter ▾ zuerst die Chats des gewählten Bereichs, darunter abgetrennt alle übrigen; der offene mit Haken.
+            assertThat(menuTexts(panel[0])).containsExactly(ChatPanel.CHATS_HERE, "    " + other.id(), "—",
+                    ChatPanel.CHATS_ELSEWHERE, "✓ Zugriffsrechte");
+            // Ein Chat aus der Liste öffnet sich aus seinem eigenen Bereich und bleibt dort gespeichert.
+            ((javax.swing.JMenuItem) panel[0].chatMenuItems().get(1)).doClick();
+            assertThat(panel[0].chat().id()).isEqualTo(other.id());
+            assertThat(panel[0].areaMarks()).isEmpty();
+            panel[0].selection(new Selection("handbuch", space, null, "Handbuch"));
+            assertThat(panel[0].chat().id()).isEqualTo(other.id());
+            assertThat(menuTexts(panel[0])).containsExactly(ChatPanel.CHATS_HERE, "    Zugriffsrechte", "—",
+                    ChatPanel.CHATS_ELSEWHERE, "✓ " + other.id());
+            // Ein neuer, leerer Chat gehört noch keinem Bereich: er zieht mit der Auswahl mit.
+            javax.swing.AbstractButton fresh = (javax.swing.AbstractButton)
+                    ((java.awt.Container) panel[0].headerActions()).getComponent(0);
+            fresh.doClick();
             assertThat(panel[0].chat().isEmpty()).isTrue();
+            panel[0].selection(new Selection("handbuch", null, null, "Handbuch"));
+            assertThat(panel[0].chat().isEmpty()).as("kein gespeicherter Chat springt mehr herein").isTrue();
             assertThat(panel[0].bubbles()).isZero();
             assertThat(panel[0].chatName()).isEqualTo(panel[0].chat().id());
         });

@@ -56,8 +56,15 @@ public record ChatRecord(String id, String title, long createdAt, long modifiedA
      * @param text      der Text; bei einer abgebrochenen Antwort der bis dahin empfangene
      * @param cancelled ob die Antwort abgebrochen wurde; sie bleibt sichtbar, geht aber nicht mehr an das Modell
      * @param at        Epoche in Millisekunden
+     * @param area      bei einer Frage der Bereich in Worten, für den sie gestellt wurde (die Auswahl links beim
+     *                  Senden, Angelo 21.11.2026: der Chat bleibt stehen, der Bereich wandert); {@code null} bei
+     *                  Antworten und bei Chats aus der Zeit davor
+     * @param scope     bei einer Frage die Kennung dieses Bereichs (Quelle, Space, Seite), an der ein Wechsel des
+     *                  Bereichs erkannt wird, auch wenn zwei Bereiche gleich heißen; {@code null} wie {@code area}
      */
-    public record Message(String role, String text, boolean cancelled, long at) {
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record Message(String role, String text, boolean cancelled, long at, String area, String scope) {
 
         public static final String USER = "user";
         public static final String ASSISTANT = "assistant";
@@ -65,14 +72,25 @@ public record ChatRecord(String id, String title, long createdAt, long modifiedA
         public Message {
             Objects.requireNonNull(role, "role");
             text = text == null ? "" : text;
+            area = area == null || area.isBlank() ? null : area;
+            scope = scope == null || scope.isBlank() ? null : scope;
+        }
+
+        public Message(String role, String text, boolean cancelled, long at) {
+            this(role, text, cancelled, at, null, null);
         }
 
         public static Message user(String text, long at) {
-            return new Message(USER, text, false, at);
+            return new Message(USER, text, false, at, null, null);
+        }
+
+        /** Eine Frage samt dem Bereich, für den sie gestellt wurde: in Worten und als Kennung. */
+        public static Message user(String text, long at, String area, String scope) {
+            return new Message(USER, text, false, at, area, scope);
         }
 
         public static Message assistant(String text, boolean cancelled, long at) {
-            return new Message(ASSISTANT, text, cancelled, at);
+            return new Message(ASSISTANT, text, cancelled, at, null, null);
         }
 
         public boolean user() {
