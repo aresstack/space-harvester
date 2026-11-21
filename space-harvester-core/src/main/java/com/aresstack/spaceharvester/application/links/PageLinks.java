@@ -39,8 +39,8 @@ import java.util.function.Consumer;
  * ({@link Links#outgoingKnown()} {@code false}); geraten wird nichts.
  *
  * <p><b>Zuordnung.</b> Ein Ziel über die Seiten-ID gilt, wenn der Cache die Zielseite kennt. Ein Ziel über Space und
- * Titel gilt nur, wenn genau eine erfasste Seite so heißt (für die Rückrichtung: die abgefragte Seite selbst oder keine
- * andere); sonst entsteht keine Kante. Benennt jemand eine Zielseite um, verschwindet die alte Kante mit dem nächsten
+ * Titel gilt nur, wenn genau eine bekannte Seite (mit oder ohne Payload) so heißt; sonst entsteht keine Kante. Dieselbe
+ * Regel gilt in beiden Richtungen: Zeigt B „A verweist hierher“, nennt A auch B als Ziel. Benennt jemand eine Zielseite um, verschwindet die alte Kante mit dem nächsten
  * Erfassen der Zielseite, eine neue entsteht erst, wenn eine Seite auf den neuen Titel verweist.
  *
  * <p><b>Aktualität.</b> Dieser Anwendungsfall hängt als {@link HoldingsChanges}-Empfänger am Seiten-Cache: Jeder
@@ -73,6 +73,8 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
     private final AccessGuard access;
     private final Listeners<Consumer<LinksChanged>> listeners = new Listeners<>("Verweise");
     private final Coalescer<String, String> pending;
+    /** Titel aller bekannten Seiten, auch ohne Payload: entscheidet Titelziele in beiden Richtungen gleich. */
+    private final KnownTitles titles = new KnownTitles();
     private volatile boolean closed;
 
     public PageLinks(StoredPages pages, LinkIndex index, List<PageLinkExtractor> extractors, AccessGuard access) {
@@ -164,10 +166,10 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
             incoming.add(linking.page().pageId());
         }
         if (header.isPresent()) {
+            titles.note(header.get());
             String titleKey = LinkTarget.titleKey(header.get().metadata().partitionKey(),
                     header.get().metadata().title());
-            List<LinkIndex.Entry> named = index.titled(sourceId, titleKey);
-            if (named.isEmpty() || named.size() == 1 && named.getFirst().page().equals(page)) {
+            if (titles.pages(sourceId, titleKey).equals(Set.of(page.pageId()))) {
                 for (LinkIndex.Entry linking : index.linkingToTitle(sourceId, titleKey)) {
                     incoming.add(linking.page().pageId());
                 }
@@ -185,8 +187,8 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
             PageKey key = new PageKey(sourceId, target.pageId());
             return pages.header(key).isPresent() ? key : null;
         }
-        List<LinkIndex.Entry> named = index.titled(sourceId, target.titleKey());
-        return named.size() == 1 ? named.getFirst().page() : null;
+        Set<String> named = titles.pages(sourceId, target.titleKey());
+        return named.size() == 1 ? new PageKey(sourceId, named.iterator().next()) : null;
     }
 
     private Links visible(AccessContext caller, Links links, Coverage coverage) {
@@ -291,6 +293,7 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
                 }
                 PageKey key = stored.header().key();
                 seen.add(key.pageId());
+                titles.note(stored.header());
                 Optional<LinkIndex.Entry> entry = index.entry(key);
                 if (stored.rawSha256() == null || extractor(stored.header().metadata()) == null) {
                     if (entry.isPresent()) {
@@ -314,6 +317,11 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
             return;
         }
         Set<String> removed = new HashSet<>();
+        for (String pageId : titles.pageIds(sourceId)) {
+            if (!seen.contains(pageId)) {
+                titles.forget(new PageKey(sourceId, pageId));
+            }
+        }
         for (String pageId : index.pageIds(sourceId)) {
             if (!seen.contains(pageId)) {
                 refresh(new PageKey(sourceId, pageId), removed);
@@ -334,6 +342,7 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
     private void refresh(PageKey key, Set<String> changed) {
         Optional<LinkIndex.Entry> previous = index.entry(key);
         Optional<PageHeader> header = pages.header(key);
+        header.ifPresentOrElse(titles::note, () -> titles.forget(key));
         PageLinkExtractor extractor = header.map(found -> extractor(found.metadata())).orElse(null);
         Optional<PageSnapshot> snapshot = extractor == null ? Optional.empty() : pages.snapshot(key);
         if (snapshot.isEmpty()) {
@@ -381,7 +390,7 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
             if (target.byId()) {
                 changed.add(target.pageId());
             } else {
-                index.titled(sourceId, target.titleKey()).forEach(named -> changed.add(named.page().pageId()));
+                changed.addAll(titles.pages(sourceId, target.titleKey()));
             }
         }
         index.linkingToTitle(sourceId, entry.titleKey()).forEach(linking -> changed.add(linking.page().pageId()));
@@ -505,6 +514,54 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
         public LinksChanged {
             Objects.requireNonNull(sourceId, "sourceId");
             pageIds = Set.copyOf(pageIds);
+        }
+    }
+
+    /** Titelschlüssel der bekannten Seiten je Quelle, im Speicher; der Abgleich beim Start füllt ihn. */
+    private static final class KnownTitles {
+
+        private final Map<String, Set<String>> byTitle = new java.util.HashMap<>();
+        private final Map<PageKey, String> ofPage = new java.util.HashMap<>();
+
+        synchronized void note(PageHeader header) {
+            PageKey key = header.key();
+            String titleKey = key.sourceId() + '\u0000'
+                    + LinkTarget.titleKey(header.metadata().partitionKey(), header.metadata().title());
+            String previous = ofPage.put(key, titleKey);
+            if (titleKey.equals(previous)) {
+                return;
+            }
+            drop(previous, key.pageId());
+            byTitle.computeIfAbsent(titleKey, ignored -> new HashSet<>()).add(key.pageId());
+        }
+
+        synchronized void forget(PageKey key) {
+            drop(ofPage.remove(key), key.pageId());
+        }
+
+        synchronized Set<String> pages(String sourceId, String titleKey) {
+            Set<String> found = byTitle.get(sourceId + '\u0000' + titleKey);
+            return found == null ? Set.of() : Set.copyOf(found);
+        }
+
+        synchronized List<String> pageIds(String sourceId) {
+            List<String> ids = new ArrayList<>();
+            for (PageKey key : ofPage.keySet()) {
+                if (key.sourceId().equals(sourceId)) {
+                    ids.add(key.pageId());
+                }
+            }
+            return ids;
+        }
+
+        private void drop(String titleKey, String pageId) {
+            if (titleKey == null) {
+                return;
+            }
+            Set<String> pages = byTitle.get(titleKey);
+            if (pages != null && pages.remove(pageId) && pages.isEmpty()) {
+                byTitle.remove(titleKey);
+            }
         }
     }
 }

@@ -92,6 +92,22 @@ class PageLinksTest {
     }
 
     @Test
+    void aTitleTargetResolvesTheSameInBothDirectionsAlsoForAPageWithoutPayload() {
+        pages.page("1", "DEV", "Start", "title:DEV/Nur Kopfdaten");
+        pages.headerOnly("2", "DEV", "Nur Kopfdaten");
+        links.reconcileNow("wiki");
+
+        assertThat(links.links(CALLER, key("1")).outgoing()).containsExactly(key("2"));
+        assertThat(links.links(CALLER, key("2")).incoming()).containsExactly(key("1"));
+
+        pages.headerOnly("3", "DEV", "nur kopfdaten");
+        links.applyNow("wiki", List.of("3"));
+
+        assertThat(links.links(CALLER, key("1")).outgoing()).as("nicht mehr eindeutig").isEmpty();
+        assertThat(links.links(CALLER, key("2")).incoming()).isEmpty();
+    }
+
+    @Test
     void aTargetThatIsNotKnownLocallyOrNotUniqueMakesNoEdge() {
         pages.page("1", "DEV", "Start", "id:99\ntitle:DEV/Doppelt\ntitle:DEV/Fehlt");
         pages.page("2", "DEV", "Doppelt", "");
