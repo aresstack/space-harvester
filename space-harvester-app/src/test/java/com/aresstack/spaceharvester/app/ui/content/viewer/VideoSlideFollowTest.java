@@ -88,7 +88,8 @@ final class VideoSlideFollowTest {
     }
 
     private static VideoViewerPanel viewer() {
-        return new VideoViewerPanel("Vortrag.mp4", 10, "video/mp4", (offset, length) -> new byte[0]);
+        // Ohne Größe startet der Player kein VLC, auch nicht unter einer Anzeige wie in der CI.
+        return new VideoViewerPanel("Vortrag.mp4", 0, "video/mp4", (offset, length) -> new byte[0]);
     }
 
     private static BackgroundGroup group(JobState state, JobError error) {
