@@ -241,7 +241,8 @@ public final class UpdatePodcasts {
                 }
             }
             stories.add(new PodcastWriter.Story(blank(statement.title()) ? headline(statement.text())
-                    : statement.title(), text, List.copyOf(where)));
+                    : statement.title(), text, List.copyOf(where),
+                    statement.pages().stream().map(SummaryPage::pageId).toList()));
         }
         if (stories.isEmpty()) {
             for (String paragraph : summary.text().split("\\n\\s*\\n")) {

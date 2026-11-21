@@ -414,7 +414,7 @@ public final class PodcastWriter {
         }
 
         /** Die Meldungen eines Themas, ungültige Nummern übergangen. */
-        List<Story> stories(Topic topic) {
+        public List<Story> stories(Topic topic) {
             List<Story> result = new ArrayList<>();
             for (int number : topic.stories()) {
                 if (number >= 1 && number <= stories.size()) {
@@ -431,12 +431,18 @@ public final class PodcastWriter {
      * @param title   kurzer Titel
      * @param text    der Inhalt, die ausführliche Fassung, wenn es sie gibt
      * @param places  wo es steht, etwa „auf der Seite „Eskalation“ im Space Betrieb, unter Handbuch“
+     * @param pageIds die Seiten der Meldung (für Bilder und Verweise), in der Reihenfolge der Zusammenfassung
      */
-    public record Story(String title, String text, List<String> places) {
+    public record Story(String title, String text, List<String> places, List<String> pageIds) {
         public Story {
             title = title == null || title.isBlank() ? "Neu" : title.strip();
             text = text == null ? "" : text.strip();
             places = places == null ? List.of() : List.copyOf(places);
+            pageIds = pageIds == null ? List.of() : List.copyOf(pageIds);
+        }
+
+        public Story(String title, String text, List<String> places) {
+            this(title, text, places, List.of());
         }
 
         /** Die Orte als ein Halbsatz, höchstens {@link #MAX_PLACES}. */
