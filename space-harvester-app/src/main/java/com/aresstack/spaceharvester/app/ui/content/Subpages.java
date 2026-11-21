@@ -63,6 +63,8 @@ final class Subpages {
     private boolean again;
     private Subscription watch;
     private Below announced;
+    /** Ein Beobachter meldete geänderten Bestand: Die Reiter laden neu, auch wenn die Seitenmenge gleich blieb. */
+    private boolean refresh;
 
     Subpages() {
         box.setSelected(false);
@@ -108,6 +110,7 @@ final class Subpages {
         request++;
         resolving = false;
         again = false;
+        refresh = false;
         if (workspace != null && sourceId != null && spaceKey != null && pageId != null) {
             watch(workspace, sourceId, spaceKey);
             resolve();
@@ -158,6 +161,8 @@ final class Subpages {
 
     private void holdingsChanged() {
         if (workspace != null && pageId != null) {
+            // Auch bei gleicher Seitenmenge können sich Inhalte geändert haben: danach die Reiter neu laden.
+            refresh = true;
             resolve();
         }
     }
@@ -181,6 +186,11 @@ final class Subpages {
             }
             resolving = false;
             below = new Below(source, space, page, found);
+            boolean reload = refresh && !again;
+            if (reload) {
+                refresh = false;
+                announced = null;
+            }
             changed();
             if (again) {
                 resolve();

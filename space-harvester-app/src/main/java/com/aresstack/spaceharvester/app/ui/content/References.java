@@ -175,6 +175,12 @@ final class References extends JPanel {
 
     /** Die Herkunft als Link: gekürzt mit „…“, voller Titel im Tooltip. */
     private static final class OriginRenderer extends javax.swing.table.DefaultTableCellRenderer {
+
+        OriginRenderer() {
+            // Titel kommen aus der Quelle: nie als HTML deuten (wie Comic.table).
+            putClientProperty("html.disable", Boolean.TRUE);
+        }
+
         @Override
         public java.awt.Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
                                                                 boolean focused, int row, int column) {

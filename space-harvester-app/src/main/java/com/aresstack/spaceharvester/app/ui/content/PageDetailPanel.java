@@ -1258,6 +1258,8 @@ public final class PageDetailPanel extends JPanel {
         breadcrumbs.clear();
         positionShown.accept(null);
         references.message(" ");
+        // Die Unterseiten der vorigen Seite gelten ab jetzt nicht mehr, auch wenn das Laden scheitert.
+        subpages.page(null, null, null, null);
         int current = ++request;
         update.dismiss();
         showCard(PAGE);
