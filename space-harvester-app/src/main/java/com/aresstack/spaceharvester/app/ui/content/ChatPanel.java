@@ -109,6 +109,8 @@ import java.util.function.Consumer;
  */
 public final class ChatPanel extends JPanel {
 
+    static final String EFFORT_TIP = "Denkaufwand des Modells";
+    private static final int FOOTER_GAP = 8;
     static final String FROM_HERE = "Ab hier: ";
     static final String CHATS_HERE = "In diesem Bereich";
     static final String CHATS_ELSEWHERE = "Übrige Chats";
@@ -220,7 +222,17 @@ public final class ChatPanel extends JPanel {
     private final PlaceholderTextArea editor = new PlaceholderTextArea(PLACEHOLDER, 3, 40);
     private final ComposerButton model = new ComposerButton(ComposerIcons.chevronDown(), NO_MODEL, false, MODEL_TIP);
     private final ComposerButton effort = new ComposerButton(ChatIcons.thought(), EFFORTS.get(1), false,
-            "Denkaufwand des Modells");
+            EFFORT_TIP);
+    /** Name des Chat-Modells und gewählter Denkaufwand; die Knöpfe zeigen sie nur, solange der Platz reicht. */
+    private String modelName = NO_MODEL;
+    private String effortLevel = EFFORTS.get(1);
+    /**
+     * Wie knapp die Fußzeile der Eingabe ist: 0 alles mit Text, 1 Modell nur als Symbol, 2 auch der Denkaufwand,
+     * 3 ohne die Websuche.
+     */
+    private int footerStage;
+    private JPanel footerWest;
+    private JPanel footerEast;
     private final ComposerButton web = ComposerButton.iconButton(ChatIcons.globe(), WEB);
     private final ComposerButton attach = ComposerButton.iconButton(ComposerIcons.paperclip(), ATTACH);
     private final ComposerButton mic = ComposerButton.iconButton(ComposerIcons.microphone(), DICTATE);
@@ -481,7 +493,8 @@ public final class ChatPanel extends JPanel {
         levelBar.setVisible(false);
         attach.addActionListener(e -> chooseAttachments());
         send.addActionListener(e -> send());
-        JPanel west = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        // Enger Abstand: bei 320 px Leistenbreite müssen beide Symbole neben „Senden“ passen.
+        JPanel west = new JPanel(new FlowLayout(FlowLayout.LEFT, 3, 0));
         west.setOpaque(false);
         west.add(model);
         west.add(effort);
@@ -500,10 +513,18 @@ public final class ChatPanel extends JPanel {
         east.add(mic);
         east.add(Box.createHorizontalStrut(4));
         east.add(send);
-        JPanel footer = new JPanel(new BorderLayout(8, 0));
+        JPanel footer = new JPanel(new BorderLayout(FOOTER_GAP, 0));
         footer.setOpaque(false);
         footer.add(west, BorderLayout.WEST);
         footer.add(east, BorderLayout.EAST);
+        footerWest = west;
+        footerEast = east;
+        footer.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                fitFooter();
+            }
+        });
 
         JPanel body = new JPanel(new BorderLayout(0, 4));
         body.setOpaque(false);
@@ -743,6 +764,7 @@ public final class ChatPanel extends JPanel {
                         "Spracherkennung abbrechen" : DICTATE + " (" + dictation.description() + ")");
         discardButton.setVisible(active);
         retryButton.setVisible(!active && dictation.canRetry());
+        fitFooter();
         levelBar.setVisible(active);
         if (!active) {
             levelBar.setValue(0);
@@ -1208,13 +1230,50 @@ public final class ChatPanel extends JPanel {
     private void showModel() {
         AppSettings settings = context.settings();
         String name = settings == null || settings.ai() == null ? null : settings.ai().chatModel();
-        model.setText(name == null || name.isBlank() ? NO_MODEL : name);
-        model.setToolTipText(MODEL_TIP + (name == null || name.isBlank() ? "" : ": " + name));
+        modelName = name == null || name.isBlank() ? NO_MODEL : name;
+        fitFooter();
+    }
+
+    /**
+     * Die Fußzeile der Eingabe in der schmalen Leiste (Angelo, 21.11.2026): Reicht der Platz nicht, zeigt erst die
+     * Modellwahl, dann auch der Denkaufwand nur noch das Symbol; der Name steht dann im Tooltip. Reicht auch das
+     * nicht, weicht die Websuche. „Senden“, Anhängen und Diktat bleiben immer ganz sichtbar.
+     */
+    private void fitFooter() {
+        int stage = 0;
+        showFooter(0);
+        if (footerWest != null && footerWest.getParent() != null && footerWest.getParent().getWidth() > 0) {
+            // Die Breiten hängen von der Schrift ab, darum wird gemessen statt gerechnet.
+            int width = footerWest.getParent().getWidth() - FOOTER_GAP;
+            while (stage < 3
+                    && footerWest.getPreferredSize().width + footerEast.getPreferredSize().width > width) {
+                showFooter(++stage);
+            }
+        }
+        if (stage != footerStage) {
+            footerStage = stage;
+            composer.revalidate();
+            composer.repaint();
+        }
+    }
+
+    private void showFooter(int stage) {
+        model.setText(stage >= 1 ? null : modelName);
+        model.setToolTipText(MODEL_TIP + (NO_MODEL.equals(modelName) && stage < 1 ? "" : ": " + modelName));
+        effort.setText(stage >= 2 ? null : effortLevel);
+        effort.setToolTipText(EFFORT_TIP + ": " + effortLevel);
+        // Letzte Stufe für sehr schmale Leisten oder breite Schriften: die (noch gesperrte) Websuche weicht.
+        web.setVisible(stage < 3);
+    }
+
+    /** Für Tests: wie knapp die Fußzeile gerade ist (0 bis 3). */
+    int footerStage() {
+        return footerStage;
     }
 
     private void showModelMenu() {
         JPopupMenu menu = new JPopupMenu();
-        JMenuItem current = new JMenuItem(model.getText());
+        JMenuItem current = new JMenuItem(modelName);
         current.setEnabled(false);
         menu.add(current);
         menu.addSeparator();
@@ -1227,8 +1286,11 @@ public final class ChatPanel extends JPanel {
     private void showEffortMenu() {
         JPopupMenu menu = new JPopupMenu();
         for (String level : EFFORTS) {
-            JMenuItem item = new JMenuItem((level.equals(effort.getText()) ? "✓ " : "    ") + level);
-            item.addActionListener(e -> effort.setText(level));
+            JMenuItem item = new JMenuItem((level.equals(effortLevel) ? "✓ " : "    ") + level);
+            item.addActionListener(e -> {
+                effortLevel = level;
+                fitFooter();
+            });
             menu.add(item);
         }
         PopupHover.clearOnClose(menu, effort).show(effort, 0, effort.getHeight());
@@ -1358,7 +1420,7 @@ public final class ChatPanel extends JPanel {
 
     /** {@code low}, {@code medium}, {@code high} aus der Wahl im Composer. */
     private String effortValue() {
-        return switch (EFFORTS.indexOf(effort.getText())) {
+        return switch (EFFORTS.indexOf(effortLevel)) {
             case 0 -> "low";
             case 2 -> "high";
             default -> "medium";
