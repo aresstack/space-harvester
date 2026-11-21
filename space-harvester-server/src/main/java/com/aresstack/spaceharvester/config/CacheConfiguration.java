@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneLinkIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
@@ -49,6 +50,8 @@ class CacheConfiguration {
     static final String TEXT = "text";
     /** Unterverzeichnis der Kopien der Git-Repositorys (#187). */
     static final String GIT = "git";
+    /** Verzeichnis der Verweise (Paket V1), abgeleitet und neu aufbaubar. */
+    static final String LINKS = "links";
 
     /**
      * Quellentyp {@code git} (#187); er braucht einen Ordner für die Kopien der Repositorys und gibt es deshalb nur mit
@@ -131,5 +134,11 @@ class CacheConfiguration {
     @Bean(destroyMethod = "close")
     LuceneEnrichmentStore enrichmentStore(CacheProperties properties) {
         return LuceneEnrichmentStore.open(properties.directory().resolve(ENRICHMENTS));
+    }
+
+    /** Verzeichnis der Verweise (Paket V1) in einem eigenen Index; schließt nach {@code PageLinks}. */
+    @Bean(destroyMethod = "close")
+    LuceneLinkIndex linkIndex(CacheProperties properties) {
+        return LuceneLinkIndex.open(properties.directory().resolve(LINKS));
     }
 }

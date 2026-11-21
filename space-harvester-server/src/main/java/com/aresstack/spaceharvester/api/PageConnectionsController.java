@@ -55,8 +55,8 @@ public class PageConnectionsController {
                     + "sagt je Art complete, partial oder unavailable; truncated nennt die Arten, die eine Grenze "
                     + "gekürzt hat. Die Ausgangsseite braucht metadata und content; Ziele aus Hierarchie und "
                     + "Verweisen metadata, die übrigen auch content. Was fehlt, fehlt ohne Spur, auch in Zählern. "
-                    + "Bekannte Lücke: Der Dienst hat kein Verzeichnis der Verweise, links-to und linked-from sind "
-                    + "hier immer unavailable.")
+                    + "links-to und linked-from kommen aus dem Verzeichnis der Verweise über die lokal gespeicherten "
+                    + "Seiten; ohne Cache sind sie unavailable.")
     @ApiResponse(responseCode = "200", description = "ConnectionsResponse")
     @ApiResponse(responseCode = "400", description = "Unbekannte Art oder Grenze (invalid-query)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,

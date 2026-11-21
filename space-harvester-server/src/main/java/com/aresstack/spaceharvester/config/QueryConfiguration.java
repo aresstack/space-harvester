@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentSto
 import com.aresstack.spaceharvester.application.passages.PassageSnippets;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.links.PageLinks;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.CandidateSelectionStrategy;
@@ -58,6 +59,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.structure.LinkDirectory;
+import com.aresstack.spaceharvester.application.structure.PageLinksDirectory;
 import com.aresstack.spaceharvester.application.structure.PageConnections;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
@@ -119,8 +121,8 @@ class QueryConfiguration {
     /** Live-Navigation (#177); der Cache nennt nur den Space von Verweiszielen. Titeltreffer gehen in den Katalog. */
     @Bean
     PageNavigation pageNavigation(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache, AccessGuard access,
-                                  FindingCatalog findings) {
-        return new PageNavigation(catalog, cache.getIfAvailable(), access, findings);
+                                  FindingCatalog findings, ObjectProvider<PageLinks> links) {
+        return new PageNavigation(catalog, cache.getIfAvailable(), access, findings, links.getIfAvailable());
     }
 
     /**
@@ -308,20 +310,21 @@ class QueryConfiguration {
      * berechnet (ADR 0013, Punkt 3). Mit {@code rerank-model} ordnet danach der Cross-Encoder des Dienstes um.
      */
     /**
-     * Strukturgraph (Paket G1) wie {@code Harvester.pageConnections()}. Der Dienst hat kein Verzeichnis der Verweise
-     * (Paket V1 nur in der App); Verweise gelten hier als unbekannt. Ohne Begriffsindex oder Vektoren fehlen die
-     * jeweiligen Kantenarten und sind als nicht verfügbar gekennzeichnet.
+     * Strukturgraph (Paket G1) wie {@code Harvester.pageConnections()}. Verweise kommen aus dem Verzeichnis der
+     * Verweise (Paket V1), das mit dem Cache entsteht; ohne Cache gelten sie als unbekannt. Ohne Begriffsindex oder
+     * Vektoren fehlen die jeweiligen Kantenarten und sind als nicht verfügbar gekennzeichnet.
      */
     @Bean
     PageConnections pageConnections(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access,
                                     ObjectProvider<TermQueries> terms, ObjectProvider<TermRelations> relations,
                                     ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingIndex> vectors,
-                                    ObjectProvider<EmbeddingProcessor> embedding) {
+                                    ObjectProvider<EmbeddingProcessor> embedding, ObjectProvider<PageLinks> links) {
+        PageLinks pageLinks = links.getIfAvailable();
         EnrichmentStore enrichments = store.getIfUnique();
         EmbeddingIndex vectorIndex = vectors.getIfUnique();
         EmbeddingProcessor processor = embedding.getIfUnique();
         return new PageConnections(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access,
-                LinkDirectory.NONE, terms.getIfAvailable(), relations.getIfAvailable(),
+                pageLinks == null ? LinkDirectory.NONE : PageLinksDirectory.of(pageLinks), terms.getIfAvailable(), relations.getIfAvailable(),
                 enrichments == null || vectorIndex == null || processor == null ? null
                         : new PageConnections.Vectors(enrichments, vectorIndex, processor));
     }
