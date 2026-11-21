@@ -85,8 +85,10 @@ public final class PodcastStore {
             for (JsonNode topic : node.path("topics")) {
                 List<String> points = new ArrayList<>();
                 topic.path("points").forEach(point -> points.add(point.asString()));
+                List<Integer> stories = new ArrayList<>();
+                topic.path("stories").forEach(story -> stories.add(story.asInt()));
                 topics.add(new Topic(text(topic, "title"), text(topic, "angle"), topic.path("energy").asDouble(0.5),
-                        points));
+                        points, stories));
             }
             List<String> repairs = new ArrayList<>();
             node.path("repairs").forEach(repair -> repairs.add(repair.asString()));
@@ -105,6 +107,8 @@ public final class PodcastStore {
             entry.put("energy", topic.energy());
             ArrayNode points = entry.putArray("points");
             topic.points().forEach(points::add);
+            ArrayNode stories = entry.putArray("stories");
+            topic.stories().forEach(stories::add);
         }
         ArrayNode repairs = node.putArray("repairs");
         plan.repairs().forEach(repairs::add);

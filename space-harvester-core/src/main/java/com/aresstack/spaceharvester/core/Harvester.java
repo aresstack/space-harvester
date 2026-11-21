@@ -1003,6 +1003,7 @@ public final class Harvester implements AutoCloseable {
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(
                             builder.dataDirectory.resolve("podcasts")),
                     com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled(),
+                    changeLog::ancestors,
                     () -> {
                         com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
                         return current == null ? 1 : current.parallel();

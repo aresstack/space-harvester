@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.podcast;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.changelog.SummaryPage;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
@@ -21,10 +22,12 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -62,7 +65,7 @@ public final class UpdatePodcasts {
     /** Parameter des Auftrags: das Update. */
     public static final String UPDATE_PARAMETER = "update";
     /** Kennung des Verfahrens; Teil des Schlüssels, damit eine neue Fassung neu plant. */
-    public static final String VERSION = "update-podcast-v1";
+    public static final String VERSION = "update-podcast-v2";
 
     private static final System.Logger LOG = System.getLogger(UpdatePodcasts.class.getName());
 
@@ -72,23 +75,37 @@ public final class UpdatePodcasts {
     private final PodcastStore store;
     private final PodcastVoices voices;
     private final IntSupplier parallel;
+    private final Ancestors ancestors;
     private final Listeners<Runnable> listeners = new Listeners<>("Podcast");
     private final Object starting = new Object();
     /** Wartet vor einem weiteren Versuch; in Tests ohne Pause. */
     private final java.util.function.ObjIntConsumer<JobContext> waits;
 
     /**
-     * @param model    das Chat-Modell der Planung und der Texte
-     * @param parallel so viele Anfragen schickt der Auftrag höchstens zugleich an das Chat-Modell ({@code ai.parallel})
+     * Die übergeordneten Seiten einer Seite von oben, nur solche, die der Aufrufer sehen darf und die an einen KI-Dienst
+     * dürfen (für den kurzen Verweis, wo eine Meldung steht).
+     */
+    @FunctionalInterface
+    public interface Ancestors {
+        List<String> of(AccessContext caller, String sourceId, String pageId);
+
+        Ancestors NONE = (caller, sourceId, pageId) -> List.of();
+    }
+
+    /**
+     * @param model     das Chat-Modell der Planung und der Texte
+     * @param ancestors die übergeordneten Seiten einer Seite für den Verweis, wo eine Meldung steht
+     * @param parallel  so viele Anfragen schickt der Auftrag höchstens zugleich an das Chat-Modell ({@code ai.parallel})
      */
     public UpdatePodcasts(Jobs jobs, StepModel model, PodcastSpeech speech, PodcastStore store, PodcastVoices voices,
-                          IntSupplier parallel) {
-        this(jobs, model, speech, store, voices, parallel, UpdatePodcasts::pauseBefore);
+                          Ancestors ancestors, IntSupplier parallel) {
+        this(jobs, model, speech, store, voices, ancestors, parallel, UpdatePodcasts::pauseBefore);
     }
 
     UpdatePodcasts(Jobs jobs, StepModel model, PodcastSpeech speech, PodcastStore store, PodcastVoices voices,
-                   IntSupplier parallel,
+                   Ancestors ancestors, IntSupplier parallel,
                    java.util.function.ObjIntConsumer<JobContext> waits) {
+        this.ancestors = ancestors == null ? Ancestors.NONE : ancestors;
         this.waits = Objects.requireNonNull(waits, "waits");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.model = Objects.requireNonNull(model, "model");
@@ -160,7 +177,7 @@ public final class UpdatePodcasts {
             throw new IllegalStateException("Kein Chat-Modell oder keine Sprachausgabe eingerichtet");
         }
         String key = key(summary);
-        PodcastWriter.Material material = material(summary);
+        PodcastWriter.Material material = material(summary, page -> places(caller, summary, page));
         synchronized (starting) {
             JobStatus running = open(key);
             if (running != null) {
@@ -202,19 +219,70 @@ public final class UpdatePodcasts {
         return null;
     }
 
-    static PodcastWriter.Material material(UpdateSummary summary) {
-        List<String> statements = new ArrayList<>();
+    /**
+     * Die Meldungen: je Thema der Zusammenfassung eines, mit der ausführlichen Fassung (ab {@code update-summary-v2})
+     * und dem Ort. Ältere Zusammenfassungen ohne Themen ergeben je Absatz eine Meldung.
+     *
+     * @param places wo eine Seite steht, als kurzer Halbsatz
+     */
+    static PodcastWriter.Material material(UpdateSummary summary,
+                                           java.util.function.Function<SummaryPage, String> places) {
+        List<PodcastWriter.Story> stories = new ArrayList<>();
         for (SummaryStatement statement : summary.statements()) {
-            // Ab update-summary-v2 trägt jedes Thema Titel und eine ausführliche Fassung: das beste Material.
             String text = blank(statement.details()) ? statement.text() : statement.details();
             if (blank(text)) {
                 continue;
             }
-            statements.add(blank(statement.title()) ? text.strip() : statement.title().strip() + ": " + text.strip());
+            Set<String> where = new LinkedHashSet<>();
+            for (SummaryPage page : statement.pages()) {
+                String place = places.apply(page);
+                if (!blank(place)) {
+                    where.add(place);
+                }
+            }
+            stories.add(new PodcastWriter.Story(blank(statement.title()) ? headline(statement.text())
+                    : statement.title(), text, List.copyOf(where)));
+        }
+        if (stories.isEmpty()) {
+            for (String paragraph : summary.text().split("\\n\\s*\\n")) {
+                if (!paragraph.isBlank()) {
+                    stories.add(new PodcastWriter.Story(headline(paragraph), paragraph, List.of()));
+                }
+            }
         }
         String space = summary.spaceKey() == null ? null : summary.spaceName(summary.spaceKey());
-        return new PodcastWriter.Material(summary.text(), statements,
+        return new PodcastWriter.Material(summary.text(), stories,
                 summary.spaceKey() == null ? null : "Space " + (blank(space) ? summary.spaceKey() : space));
+    }
+
+    /** „auf der Seite „Titel“ im Space Name, unter Eltern › Seite“; der Space fehlt, wenn die Ebene ein Space ist. */
+    private String places(AccessContext caller, UpdateSummary summary, SummaryPage page) {
+        if (blank(page.title())) {
+            return "";
+        }
+        StringBuilder place = new StringBuilder("auf der Seite „").append(page.title().strip()).append('“');
+        String spaceKey = page.spaceKey();
+        if (spaceKey != null && !spaceKey.equals(summary.spaceKey())) {
+            place.append(" im Space ").append(summary.spaceName(spaceKey));
+        }
+        List<String> path;
+        try {
+            path = ancestors.of(caller, summary.sourceId(), page.pageId());
+        } catch (RuntimeException e) {
+            path = List.of();
+        }
+        if (!path.isEmpty()) {
+            List<String> near = path.subList(Math.max(0, path.size() - 2), path.size());
+            place.append(", unter ").append(String.join(" › ", near));
+        }
+        return place.toString();
+    }
+
+    private static String headline(String text) {
+        String flat = text.replaceAll("\\s+", " ").strip();
+        int end = flat.indexOf(". ");
+        String first = end > 0 ? flat.substring(0, end) : flat;
+        return PodcastWriter.cut(first, 60);
     }
 
     private static boolean blank(String text) {
@@ -263,14 +331,14 @@ public final class UpdatePodcasts {
             for (int t = 0; t < topics; t++) {
                 final int topic = t;
                 scripts.add(pool.submit(() -> {
-                    List<Segment> segments = segments(writer, key, planned, topic, names, repairs);
+                    List<Segment> segments = segments(writer, key, material, planned, topic, names, repairs);
                     List<Future<List<Turn>>> texts = new ArrayList<>();
                     for (int s = 0; s < segments.size(); s++) {
                         final int segment = s;
                         Segment before = segment > 0 ? segments.get(segment - 1) : previousLast(key, topic);
                         boolean last = topic == topics - 1 && segment == segments.size() - 1;
-                        texts.add(CompletableFuture.completedFuture(script(writer, key, planned, topic, segment,
-                                segments.get(segment), before, last, names, repairs)));
+                        texts.add(CompletableFuture.completedFuture(script(writer, key, material, planned, topic,
+                                segments, segment, before, last, names, repairs)));
                     }
                     return texts;
                 }));
@@ -310,13 +378,13 @@ public final class UpdatePodcasts {
         }
     }
 
-    private List<Segment> segments(PodcastWriter writer, String key, PodcastPlan plan, int topic,
-                                   PodcastWriter.Voices names, List<String> repairs) {
+    private List<Segment> segments(PodcastWriter writer, String key, PodcastWriter.Material material,
+                                   PodcastPlan plan, int topic, PodcastWriter.Voices names, List<String> repairs) {
         Optional<List<Segment>> stored = store.segments(key, topic);
         if (stored.isPresent()) {
             return stored.get();
         }
-        List<Segment> segments = writer.segments(plan, topic, names, repairs);
+        List<Segment> segments = writer.segments(material, plan, topic, names, repairs);
         store.saveSegments(key, topic, segments);
         notify(key);
         return segments;
@@ -330,14 +398,14 @@ public final class UpdatePodcasts {
                 .orElse(new Segment("vorheriges Thema", List.of()));
     }
 
-    private List<Turn> script(PodcastWriter writer, String key, PodcastPlan plan, int topic, int segment,
-                              Segment planned, Segment before, boolean last, PodcastWriter.Voices names,
-                              List<String> repairs) {
+    private List<Turn> script(PodcastWriter writer, String key, PodcastWriter.Material material, PodcastPlan plan,
+                              int topic, List<Segment> segments, int segment, Segment before, boolean last,
+                              PodcastWriter.Voices names, List<String> repairs) {
         Optional<List<Turn>> stored = store.script(key, topic, segment);
         if (stored.isPresent()) {
             return stored.get();
         }
-        List<Turn> turns = writer.script(plan, topic, planned, before, last, names, repairs);
+        List<Turn> turns = writer.script(material, plan, topic, segments, segment, before, last, names, repairs);
         store.saveScript(key, topic, segment, turns);
         return turns;
     }

@@ -55,14 +55,20 @@ public record PodcastPlan(String title, List<Topic> topics, List<String> repairs
      * @param title  wie die Sendung das Thema nennt
      * @param angle  worum es geht, in einem Satz
      * @param energy Energie 0 (ruhig, einordnend) bis 1 (lebhaft), wie die Intensität im Audio-Studio
-     * @param points die Kernpunkte aus der Zusammenfassung, die das Thema tragen
+     * @param points  die Kernpunkte aus der Zusammenfassung, die das Thema tragen
+     * @param stories die Meldungen des Materials, die das Thema erzählt (ab 1); leer bei Einstieg und Abschluss
      */
-    public record Topic(String title, String angle, double energy, List<String> points) {
+    public record Topic(String title, String angle, double energy, List<String> points, List<Integer> stories) {
         public Topic {
             title = title == null || title.isBlank() ? "Thema" : title.strip();
             angle = angle == null ? "" : angle.strip();
             energy = Double.isFinite(energy) ? Math.max(0, Math.min(1, energy)) : 0.5;
             points = List.copyOf(points);
+            stories = stories == null ? List.of() : List.copyOf(stories);
+        }
+
+        public Topic(String title, String angle, double energy, List<String> points) {
+            this(title, angle, energy, points, List.of());
         }
     }
 
