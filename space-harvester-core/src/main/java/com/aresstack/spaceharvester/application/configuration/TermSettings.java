@@ -10,7 +10,8 @@ import com.aresstack.spaceharvester.application.terms.SynonymBudget;
  * @param synonyms          Budget eines Synonymlaufs
  * @param glossaryRules     Regeln der Begriffsableitung
  * @param glossaryAutomatic K4: Fachbegriffe nach der Anreicherung einer Quelle von selbst ermitteln, als
- *                          Hintergrundauftrag ({@value #GLOSSARY_AUTOMATIC}, Standard aus)
+ *                          Hintergrundauftrag ({@value #GLOSSARY_AUTOMATIC}, Standard aus); wirkt nur in der
+ *                          Desktop-App, der Dienst liest den Schlüssel ohne Wirkung (keine Hintergrundaufträge)
  */
 public record TermSettings(SynonymBudget synonyms, GlossaryRuleSettings glossaryRules, boolean glossaryAutomatic) {
 
