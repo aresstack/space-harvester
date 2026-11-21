@@ -142,13 +142,6 @@ public class SynonymDiscovery {
 
     private volatile String owner;
 
-    /** Angabe am Auftrag, woran die Auftragsliste den Lauf erkennt (D4.4, wie die Bildbeschreibung). */
-    public static final String TASK_PARAMETER = "task";
-    /** Wert von {@link #TASK_PARAMETER}: „Synonyme erkennen“. */
-    public static final String TASK = "synonyms";
-
-    private volatile String owner;
-
     /**
      * @param model  das Chat-Modell der wirksamen Konfiguration; {@link SynonymJudgmentModel#NONE} ohne
      * @param cache  was schon gefragt wurde; ein unveränderter Kandidat geht nicht noch einmal an das Modell
