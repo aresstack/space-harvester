@@ -461,20 +461,21 @@ public final class DiagramComposer {
         double bottom = HEIGHT - 50;
         switch (form) {
             case HUB -> {
-                double hub = 250;
-                double cx = WIDTH / 2.0;
+                // Mittelpunkt in der Mitte, die Bezüge in zwei Spalten links und rechts: nichts überdeckt sich.
                 double cy = (top + bottom) / 2;
-                slots.add(new Slot(cx - hub / 2, cy - hub * 0.55, hub, hub * 1.1));
+                slots.add(new Slot(WIDTH / 2.0 - 160, cy - 170, 320, 340));
                 int around = count - 1;
-                double rx = 420;
-                double ry = 190;
-                double card = 210;
+                int left = (around + 1) / 2;
+                double card = 290;
                 for (int i = 0; i < around; i++) {
-                    double angle = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(1, around)
-                            + (around == 2 ? Math.PI / 2 : 0);
-                    double x = cx + rx * Math.cos(angle);
-                    double y = cy + ry * Math.sin(angle);
-                    slots.add(new Slot(x - card / 2, y - card * 0.42, card, card * 0.84));
+                    boolean onLeft = i < left;
+                    int inColumn = onLeft ? left : around - left;
+                    int row = onLeft ? i : i - left;
+                    double gap = 24;
+                    double height = Math.min(220, (bottom - top - gap * (inColumn - 1)) / inColumn);
+                    double total = inColumn * height + (inColumn - 1) * gap;
+                    double y = top + (bottom - top - total) / 2 + row * (height + gap);
+                    slots.add(new Slot(onLeft ? 70 : WIDTH - 70 - card, y, card, height));
                 }
             }
             case STACK -> {
@@ -491,7 +492,7 @@ public final class DiagramComposer {
                 double width = Math.min(330, (WIDTH - 2 * margin - gap * (count - 1)) / count);
                 double total = count * width + (count - 1) * gap;
                 double x0 = (WIDTH - total) / 2;
-                double height = Math.min(470, bottom - top);
+                double height = Math.min(400, bottom - top);
                 double y0 = top + (bottom - top - height) / 2;
                 for (int i = 0; i < count; i++) {
                     slots.add(new Slot(x0 + i * (width + gap), y0, width, height));
@@ -566,8 +567,10 @@ public final class DiagramComposer {
             }
             return;
         }
-        double size = Math.min(slot.width() * 0.62, slot.height() * 0.5);
-        double iconY = slot.y() + slot.height() * 0.1;
+        // Niedrige Karten mit Zusatz geben dem Text mehr Platz, damit der Zusatz nicht wegfällt.
+        double share = slot.height() < 300 && !element.note().isEmpty() ? 0.36 : 0.5;
+        double size = Math.min(slot.width() * 0.62, slot.height() * share);
+        double iconY = slot.y() + slot.height() * (share < 0.5 ? 0.07 : 0.1);
         svg.append(icon(icon, slot.centerX() - size / 2, iconY, size, color, index));
         double labelSize = slot.width() < 230 ? 24 : 30;
         List<String> label = wrap(element.label(), slot.width() < 230 ? 14 : 17);
