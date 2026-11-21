@@ -2484,6 +2484,8 @@ public final class ActivitiesView implements View {
             super.getTableCellRendererComponent(table, waiting ? SIGN_IN : Texts.state(status), selected, focus, row,
                     column);
             setForeground(selected ? Comic.INK : waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status)));
+            // Schmale Spalte: der volle Zustand steht immer im Tooltip, auch wenn die Zelle ihn kürzt.
+            setToolTipText(waiting ? SIGN_IN : Texts.state(status));
             return this;
         }
     }
