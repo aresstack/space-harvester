@@ -9,6 +9,9 @@
     auch die KI-Ergebnisse der Seite.
   - Die Liste liegt im Core neben dem Cache, nicht in der YAML, und ist effizient („Hashmap oder sowas in der Art“).
   Alle übrigen Punkte sind Vorschlag.
+- Fortgeschrieben durch [ADR 0033](0033-wissen-des-chats-per-verweis-und-werkzeug.md), Punkt 8: Mit Werkzeugen
+  trägt der Chat nur ein, was an das Modell geht (offene Seite, gelesene Seiten, Seiten mit Suchauszug), nicht mehr
+  die ganze Auswahl beim Senden.
 - Bezüge: `/mnt/project-files/export-ansicht/architektur-bestand-und-ausgaben.md` (Abschnitt 7.6, Nachträge 19:27 bis
   19:35 MEZ), `entwurf-export-ansicht.md` (Nachträge 4 bis 6). Baut auf [ADR 0027](0027-beobachter-statt-abfragen.md)
   (Meldungen statt Abfragen) und [ADR 0029](0029-auswahl-und-ausgabe-aus-dem-bestand.md) (Auswahl) auf. Berührt

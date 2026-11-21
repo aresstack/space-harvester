@@ -2051,6 +2051,17 @@ public final class Workspace {
         return harvester.pageReleaseService().release(caller, selection);
     }
 
+    /**
+     * Trägt genau eine lokal gespeicherte Seite ein, ohne Unterseiten: so, wenn der Chat sie per Werkzeug an das Modell
+     * liefert (ADR 0033). Schreibt in die Ablage: nie auf dem EDT aufrufen.
+     *
+     * @return der neue Eintrag oder leer
+     */
+    public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePageForChat(
+            String spaceKey, com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+        return harvester.pageReleaseService().releasePage(caller, spaceKey, key);
+    }
+
     /** Wie viele Seiten der Auswahl neu auf die Liste freigegebener Seiten kämen, für den Hinweis vor dem Senden. */
     public int newPageReleases(com.aresstack.spaceharvester.application.holdings.Selection selection) {
         return harvester.pageReleaseService().newPages(caller, selection);
