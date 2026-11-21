@@ -235,14 +235,15 @@ public final class EvidencePopup extends JPopupMenu {
                     == com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review.CONFIRMED
                     ? "Ein Mensch hat diese Aussage bestätigt" : "Der Prüfschritt hat diese Aussage als stimmig bewertet";
             case EINIG -> "Parser und KI lesen diesen Satz gleich, nicht geprüft";
-            case UNGEPRUEFT -> "Nur diese Lesart liegt vor, nicht geprüft";
+            case UNGEPRUEFT -> "Nicht mit der anderen Lesart verglichen, nicht geprüft";
             case ABWEICHEND -> "Parser und KI lesen diesen Satz verschieden, nicht geprüft";
         };
     }
 
     /**
      * Die Lesart der anderen Ablage bei einem abweichenden Beleg, nur in dem, was abweicht: „Sprachmodell (KI) liest
-     * anders: Verb „senden“ · Handelnde „Kunde““; sonst {@code null}. Die Wortlaute kommen normalisiert aus dem Abgleich.
+     * anders: Verb „senden“ · Handelnde „kunde““; sonst {@code null}. Die Wortlaute kommen normalisiert aus dem Abgleich;
+     * gleiche Wörter an anderer Stelle heißen so.
      */
     static String otherText(DomainTermGraph.Evidence item) {
         com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Reading other = item.otherReading();
@@ -252,15 +253,19 @@ public final class EvidencePopup extends JPopupMenu {
         java.util.Set<com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference> differences =
                 item.comparison().differences();
         List<String> parts = new ArrayList<>();
+        com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Reading own = item.comparison().own();
         if (differences.contains(com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.VERB)) {
-            parts.add("Verb " + quoted(other.verb() == null ? java.util.Set.of() : java.util.Set.of(other.verb())));
+            parts.add(part("Verb", "kein Verb", other.verb() == null ? java.util.Set.of() : java.util.Set.of(other.verb()),
+                    own == null || own.verb() == null ? java.util.Set.of() : java.util.Set.of(own.verb())));
         }
         if (differences.contains(com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.ACTOR)) {
-            parts.add("Handelnde " + quoted(other.actors()));
+            parts.add(part("Handelnde", "keine Handelnden", other.actors(), own == null ? java.util.Set.of()
+                    : own.actors()));
         }
         if (differences.contains(
                 com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Difference.AFFECTED_OBJECT)) {
-            parts.add("Betroffene " + quoted(other.affected()));
+            parts.add(part("Betroffene", "keine Betroffenen", other.affected(), own == null ? java.util.Set.of()
+                    : own.affected()));
         }
         String name = other.analyzer() == com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL
                 ? com.aresstack.spaceharvester.app.ui.content.StatementProvenance.LANGUAGE_MODEL
@@ -268,9 +273,15 @@ public final class EvidencePopup extends JPopupMenu {
         return name + " liest anders" + (parts.isEmpty() ? "" : ": " + String.join(" · ", parts));
     }
 
-    private static String quoted(java.util.Collection<String> words) {
-        return words.isEmpty() ? "keine" : words.stream().map(word -> "„" + word + "“")
+    private static String part(String label, String none, java.util.Set<String> theirs, java.util.Set<String> mine) {
+        java.util.List<String> words = theirs.stream().filter(word -> word != null && !word.isBlank()).toList();
+        if (words.isEmpty()) {
+            return none;
+        }
+        String quoted = label + " " + words.stream().map(word -> "„" + word + "“")
                 .collect(java.util.stream.Collectors.joining(", "));
+        // Abgeglichen wird über Zeichenspannen: gleiche Wörter können an anderer Stelle stehen.
+        return new java.util.HashSet<>(words).equals(mine) ? quoted + " an anderer Stelle" : quoted;
     }
 
     /**

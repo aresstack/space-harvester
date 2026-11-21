@@ -120,7 +120,8 @@ public final class DomainTermGraph {
 
     /**
      * Port für den Vergleich der Analysatoren (K2, {@link AnalyzerComparison}); die Vergleichslogik liegt allein dort.
-     * Gefragt wird je Seite und Abruf höchstens einmal, und nur, wenn eine Aussage der Seite eine Kante trägt.
+     * Gefragt wird je Seite und Abruf höchstens einmal, und nur, wenn eine ungeprüfte Aussage der aktuellen Seite (nicht
+     * eines Anhangs) eine Kante trägt und „nur geprüft“ aus ist.
      */
     @FunctionalInterface
     public interface Comparison {
@@ -329,14 +330,9 @@ public final class DomainTermGraph {
     private final Comparison comparison;
     private final java.util.function.Supplier<AnalyzerChoice> selected;
 
+    /** Ohne Vergleich der Analysatoren ({@link Comparison#NONE}). */
     public DomainTermGraph(KnowledgeGraph graph, Vocabulary vocabulary) {
-        this(graph, vocabulary, () -> null);
-    }
-
-    /** @param selected die eingestellte Ablage, aus der {@code graph} liest; für die Statuszeile */
-    public DomainTermGraph(KnowledgeGraph graph, Vocabulary vocabulary,
-                           java.util.function.Supplier<AnalyzerChoice> selected) {
-        this(graph, vocabulary, selected, Comparison.NONE);
+        this(graph, vocabulary, () -> null, Comparison.NONE);
     }
 
     /**
@@ -449,9 +445,9 @@ public final class DomainTermGraph {
                         continue;
                     }
                     switch (argument.role()) {
-                        case ACTOR -> actors.add(new Match(key, mention.text()));
+                        case ACTOR -> actors.add(new Match(key, mention.text(), argument.role()));
                         case AFFECTED_OBJECT, RECIPIENT, PREPOSITIONAL_OBJECT ->
-                                objects.add(new Match(key, mention.text()));
+                                objects.add(new Match(key, mention.text(), argument.role()));
                         default -> {
                         }
                     }
@@ -460,7 +456,10 @@ public final class DomainTermGraph {
                     continue;
                 }
                 AnalyzerComparison.Comparison match = null;
-                if (statement.review() != ParsedStatements.Review.CONFIRMED) {
+                // Fragen nur, wo der Abgleich die Stufe ändern kann: nicht geprüft, nicht „nur geprüft“, Seite aktuell
+                // (sonst ist ohnehin nichts vergleichbar) und die Seite selbst (Anhänge vergleicht K2 nicht).
+                if (trust(statement, null) != Trust.GEPRUEFT && !options.checkedOnly()
+                        && ref.state() == PageStatements.State.CURRENT && ref.document().isPage()) {
                     if (compared == null) {
                         compared = Objects.requireNonNullElse(comparison.comparisons(caller, ref), Map.of());
                     }
@@ -485,8 +484,8 @@ public final class DomainTermGraph {
                                 withStale.computeIfAbsent("verb\u0000" + actor.key() + "\u0000" + verb + "\u0000"
                                                 + object.key(),
                                         unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb))
-                                        .add(new Evidence(ref, statement, page.analysis().analyzerId(), actor.text(),
-                                                object.text(), trust, match));
+                                        .add(evidence(ref, statement, page.analysis().analyzerId(), actor, object,
+                                                trust, match));
                             }
                         }
                     }
@@ -503,8 +502,8 @@ public final class DomainTermGraph {
                             continue;
                         }
                         String key = "verb\u0000" + actor.key() + "\u0000" + verb + "\u0000" + object.key();
-                        Evidence item = new Evidence(ref, statement, page.analysis().analyzerId(), actor.text(),
-                                object.text(), trust, match);
+                        Evidence item = evidence(ref, statement, page.analysis().analyzerId(), actor, object, trust,
+                                match);
                         edges.computeIfAbsent(key,
                                 unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb)).add(item);
                         withStale.computeIfAbsent(key,
@@ -591,7 +590,34 @@ public final class DomainTermGraph {
         return new View(Outcome.FOUND, new ArrayList<>(nodes.values()), shown, truncated, skippedStale, analyzers);
     }
 
-    private record Match(String key, String text) {
+    private record Match(String key, String text, ParsedStatements.Role role) {
+    }
+
+    /** Ein Beleg mit der Stufe, die für genau diese Kante gilt ({@link #trustFor}). */
+    private static Evidence evidence(KnowledgeGraph.PageRef ref, ParsedStatements.Statement statement,
+                                     String analyzerId, Match actor, Match object, Trust trust,
+                                     AnalyzerComparison.Comparison match) {
+        Trust edgeTrust = trustFor(trust, match, object.role());
+        return new Evidence(ref, statement, analyzerId, actor.text(), object.text(), edgeTrust,
+                edgeTrust == trust ? match : null);
+    }
+
+    /**
+     * Die Stufe eines Belegs für eine Kante, die an {@code objectRole} endet. Der Abgleich (K2) vergleicht nur Verb,
+     * Handelnde und Betroffene: Endet die Kante an einem Empfänger oder Präpositionalobjekt, sagt „einig“ über sie
+     * nichts, und eine Abweichung allein bei den Betroffenen auch nicht; beides bleibt dann ungeprüft. Ein anderes
+     * Verb oder ein anderer Handelnder trifft jede Kante der Aussage.
+     */
+    static Trust trustFor(Trust trust, AnalyzerComparison.Comparison match, ParsedStatements.Role objectRole) {
+        if (objectRole == ParsedStatements.Role.AFFECTED_OBJECT) {
+            return trust;
+        }
+        return switch (trust) {
+            case GEPRUEFT, UNGEPRUEFT -> trust;
+            case EINIG -> Trust.UNGEPRUEFT;
+            case ABWEICHEND -> match != null && (match.differences().contains(AnalyzerComparison.Difference.VERB)
+                    || match.differences().contains(AnalyzerComparison.Difference.ACTOR)) ? trust : Trust.UNGEPRUEFT;
+        };
     }
 
     private static final class EdgeBuilder {

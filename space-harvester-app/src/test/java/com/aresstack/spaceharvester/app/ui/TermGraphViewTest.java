@@ -320,7 +320,7 @@ class TermGraphViewTest {
                 plain.analyzerId(), plain.fromText(), plain.toText(), DomainTermGraph.Trust.GEPRUEFT, differs);
 
         assertThat(EvidencePopup.otherText(deviating))
-                .isEqualTo("Sprachmodell (KI) liest anders: Verb „einreichen“ · Betroffene keine");
+                .isEqualTo("Sprachmodell (KI) liest anders: Verb „einreichen“ · keine Betroffenen");
         assertThat(EvidencePopup.otherText(checked)).as("geprüft: ohne „abweichend“").isNull();
         assertThat(EvidencePopup.otherText(plain)).as("ohne Abgleich").isNull();
         List<List<String>> seen = new ArrayList<>();
@@ -330,7 +330,7 @@ class TermGraphViewTest {
             seen.add(popup.otherTexts());
         });
         assertThat(seen.getFirst()).containsExactly(
-                "Sprachmodell (KI) liest anders: Verb „einreichen“ · Betroffene keine");
+                "Sprachmodell (KI) liest anders: Verb „einreichen“ · keine Betroffenen");
     }
 
     @Test
@@ -339,7 +339,8 @@ class TermGraphViewTest {
         assertThat(TermGraphView.domainOptions(1, null, false).checkedOnly()).isFalse();
         assertThat(TermGraphView.domainOptions(2, null, true).includeStale()).as("nie veraltete Aussagen").isFalse();
         assertThat(TermGraphView.HELP).as("mit dem Vergleich Parser/KI alle vier Stufen")
-                .contains("kräftig", "geprüft", "dünn", "(einig)", "gestrichelt", "gepunktet mit „≠“", "(abweichend)");
+                .contains("kräftig", "geprüft", "dünn", "(einig)", "gestrichelt", "gepunktet mit „≠“", "(abweichend)")
+                .doesNotContain("andere Seite");
     }
 
     @Test

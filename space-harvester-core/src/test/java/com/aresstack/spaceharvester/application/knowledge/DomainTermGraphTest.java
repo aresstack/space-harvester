@@ -484,6 +484,62 @@ class DomainTermGraphTest {
     }
 
     @Test
+    void theComparisonIsNotAskedWhereItCannotChangeTheStage() {
+        term("Sachbearbeiter");
+        term("Beleg");
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg.");
+        analyse("wiki", "2", "Der Sachbearbeiter prüft den Beleg.");
+        cache.put(new PageKey("wiki", "2"), EnrichmentTestPages.text("wiki", "2", "2", "Ganz neuer Text."));
+        List<String> asked = new ArrayList<>();
+        DomainTermGraph.Comparison counting = (caller, page) -> {
+            asked.add(page.key().pageId());
+            return Map.of();
+        };
+
+        new DomainTermGraph(graph, vocabulary(), () -> null, counting).around(CALLER, "Sachbearbeiter",
+                new DomainTermGraph.Options(2, true, null), () -> false);
+        assertThat(asked).as("veraltete Seite: nichts vergleichbar").containsExactly("1");
+        asked.clear();
+        new DomainTermGraph(graph, vocabulary(), () -> null, counting).around(CALLER, "Sachbearbeiter",
+                new DomainTermGraph.Options(2, true, null, true), () -> false);
+        assertThat(asked).as("„nur geprüft“ hängt nicht am Vergleich").isEmpty();
+        DomainTermGraph checked = new DomainTermGraph(caller -> graph.analysed(caller).stream().map(page -> {
+            ParsedStatements result = page.analysis().result();
+            return new KnowledgeGraph.AnalysedPage(page.page(), page.analysis().withResult(new ParsedStatements(
+                    result.sentences(), result.mentions(), result.statements().stream().map(statement ->
+                    statement.withCheck(new ParsedStatements.Check(ParsedStatements.Verdict.STIMMT, "v1", false)))
+                    .toList(), result.attachments(), result.components(), result.conllu())));
+        }).toList(), vocabulary(), counting);
+        checked.around(CALLER, "Sachbearbeiter", DomainTermGraph.Options.DEFAULT, () -> false);
+        assertThat(asked).as("geprüft geht ohnehin vor").isEmpty();
+    }
+
+    @Test
+    void aRecipientOrPrepositionalEdgeIsNeverAgreedBecauseTheComparisonDoesNotCoverIt() {
+        AnalyzerComparison.Comparison onlyAffected = new AnalyzerComparison.Comparison("s",
+                AnalyzerComparison.Agreement.DIFFERS, null, null,
+                java.util.EnumSet.of(AnalyzerComparison.Difference.AFFECTED_OBJECT));
+        AnalyzerComparison.Comparison verb = new AnalyzerComparison.Comparison("s",
+                AnalyzerComparison.Agreement.DIFFERS, null, null,
+                java.util.EnumSet.of(AnalyzerComparison.Difference.VERB));
+        ParsedStatements.Role recipient = ParsedStatements.Role.RECIPIENT;
+
+        assertThat(DomainTermGraph.trustFor(DomainTermGraph.Trust.EINIG, null, recipient))
+                .isEqualTo(DomainTermGraph.Trust.UNGEPRUEFT);
+        assertThat(DomainTermGraph.trustFor(DomainTermGraph.Trust.EINIG, null,
+                ParsedStatements.Role.PREPOSITIONAL_OBJECT)).isEqualTo(DomainTermGraph.Trust.UNGEPRUEFT);
+        assertThat(DomainTermGraph.trustFor(DomainTermGraph.Trust.ABWEICHEND, onlyAffected, recipient))
+                .as("nur die Betroffenen weichen ab, die Kante endet am Empfänger")
+                .isEqualTo(DomainTermGraph.Trust.UNGEPRUEFT);
+        assertThat(DomainTermGraph.trustFor(DomainTermGraph.Trust.ABWEICHEND, verb, recipient))
+                .as("ein anderes Verb trifft jede Kante").isEqualTo(DomainTermGraph.Trust.ABWEICHEND);
+        assertThat(DomainTermGraph.trustFor(DomainTermGraph.Trust.EINIG, null, ParsedStatements.Role.AFFECTED_OBJECT))
+                .isEqualTo(DomainTermGraph.Trust.EINIG);
+        assertThat(DomainTermGraph.trustFor(DomainTermGraph.Trust.GEPRUEFT, verb, recipient))
+                .isEqualTo(DomainTermGraph.Trust.GEPRUEFT);
+    }
+
+    @Test
     void anEntryOnlyInTheOtherStoreWithTheSameIdIsNotThisStatement() {
         term("Sachbearbeiter");
         term("Beleg");
