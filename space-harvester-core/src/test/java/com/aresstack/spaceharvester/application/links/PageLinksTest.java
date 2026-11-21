@@ -252,6 +252,38 @@ class PageLinksTest {
     }
 
     @Test
+    void closingWaitsForTheRunningReconcileInsteadOfInterruptingIt() throws InterruptedException {
+        // Ein Interrupt mitten in Lucene schlösse Dateikanäle, auch die des gemeinsamen Seiten-Caches.
+        pages.page("1", "DEV", "Start", "");
+        CountDownLatch listing = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean interrupted = new java.util.concurrent.atomic.AtomicBoolean();
+        pages.onList = () -> {
+            listing.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                interrupted.set(true);
+            }
+            if (Thread.currentThread().isInterrupted()) {
+                interrupted.set(true);
+            }
+        };
+        links.reconcileOnStart(List.of("wiki"));
+        assertThat(listing.await(5, TimeUnit.SECONDS)).isTrue();
+
+        Thread closer = new Thread(links::close);
+        closer.start();
+        closer.join(200);
+        assertThat(closer.isAlive()).isTrue();
+        release.countDown();
+        closer.join(5_000);
+
+        assertThat(closer.isAlive()).isFalse();
+        assertThat(interrupted).isFalse();
+    }
+
+    @Test
     void changesAreAnnouncedByTheObserverWithoutPolling() throws InterruptedException {
         pages.page("1", "DEV", "Start", "");
         pages.page("2", "DEV", "Ziel", "");
@@ -304,6 +336,7 @@ class PageLinksTest {
         private final Map<String, PageHeader> headers = new TreeMap<>();
         private final Map<String, PageSnapshot> snapshots = new TreeMap<>();
         int snapshotReads;
+        volatile Runnable onList = () -> { };
 
         void page(String pageId, String spaceKey, String title, String payload) {
             PageSnapshot snapshot = PageSnapshot.of("wiki", metadata(pageId, "test:" + pageId, spaceKey, title),
@@ -348,6 +381,7 @@ class PageLinksTest {
 
         @Override
         public List<PageLinks.StoredPage> pages(String sourceId, String afterPageId, int limit) {
+            onList.run();
             List<PageLinks.StoredPage> listed = new ArrayList<>();
             for (Map.Entry<String, PageHeader> entry : headers.entrySet()) {
                 if (afterPageId != null && entry.getKey().compareTo(afterPageId) <= 0 || listed.size() == limit) {

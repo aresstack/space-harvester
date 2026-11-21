@@ -78,6 +78,11 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
     private final KnownTitles titles = new KnownTitles();
     /** Quellen, deren erster Abgleich seit dem Start beendet ist; vorher gilt keine als vollständig. */
     private final Set<String> reconciled = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * Hält eine Erfassung zusammen: {@link #close()} wartet auf sie, statt den Thread des Bündlers zu unterbrechen.
+     * Ein Interrupt mitten in Lucene schlösse Dateikanäle, auch die des gemeinsamen Seiten-Caches.
+     */
+    private final Object work = new Object();
     private volatile boolean closed;
 
     public PageLinks(StoredPages pages, LinkIndex index, List<PageLinkExtractor> extractors, AccessGuard access) {
@@ -269,6 +274,12 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
 
     /** Läuft auf dem Thread des Bündlers. */
     private void deliver(String sourceId, Set<String> pageIds) {
+        synchronized (work) {
+            deliverLocked(sourceId, pageIds);
+        }
+    }
+
+    private void deliverLocked(String sourceId, Set<String> pageIds) {
         if (closed) {
             return;
         }
@@ -447,11 +458,16 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
         listeners.deliver(sourceId, listener -> listener.accept(event));
     }
 
-    /** Beendet die Erfassung; ein laufender Abgleich hört nach der aktuellen Seite auf. */
+    /**
+     * Beendet die Erfassung; ein laufender Abgleich hört nach der aktuellen Seite auf, und erst danach endet der Thread
+     * des Bündlers, damit sein Interrupt keine Lucene-Ein-/Ausgabe trifft.
+     */
     @Override
     public void close() {
         closed = true;
-        pending.close();
+        synchronized (work) {
+            pending.close();
+        }
         index.flush();
     }
 
