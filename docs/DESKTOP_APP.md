@@ -358,8 +358,14 @@ Core selbst.
   zeigen immer den gesendeten Satz. Die feste Frage an das Modell nennt die Grundlage
   („n geänderte Seiten seit dem …“) und verbietet erfundene Unterschiede: Was sich innerhalb einer Seite geändert hat,
   weiß der Chat nicht, solange der Core keinen Vergleich liefert.
-  Chats sind keine globale Liste: Sie gehören zum Bereich, der links gewählt ist (Quelle, Space oder Seite samt
-  Unterseiten, `ChatNode`), und liegen je Bereich im Datenordner unter `chats/<Quelle>/<Space>/<Seite>/<UUID>.json`
+  Der offene Chat bleibt beim Navigieren stehen (Angelo, 21.11.2026): die Auswahl links ändert nur den Bereich der
+  nächsten Frage (Zeile „Wissen“). Kommt eine Frage aus einem anderen Bereich als die vorige, steht davor im Verlauf
+  die Marke „Ab hier: ‹Bereich›“ (gespeichert als `area` an der Frage, `ChatRecord.Message`); bloßes Nachladen des
+  Bestands erzeugt keine Marke. Unter ▾ stehen zuerst die Chats des gewählten Bereichs („In diesem Bereich“), darunter
+  abgetrennt „Übrige Chats“ (`ChatStore.all`). Die erste Auswahl nach dem Start zeigt den zuletzt geänderten Chat
+  ihres Bereichs; ein leerer Chat zieht mit der Auswahl mit.
+  Ein Chat gehört zu dem Bereich, in dem er begonnen wurde (Quelle, Space oder Seite samt
+  Unterseiten, `ChatNode`); die Chats liegen je Bereich im Datenordner unter `chats/<Quelle>/<Space>/<Seite>/<UUID>.json`
   (`ChatStore`, atomar geschrieben, leere Chats ohne Datei; Kennungen mit Sonderzeichen bekommen einen kurzen Hash).
   Der Name eines Chats ist seine UUID, bis der Benutzer ihn umbenennt; die Kennung bleibt. Ein Wechsel der Auswahl
   zeigt den zuletzt geänderten Chat des neuen Bereichs oder einen leeren; der Verlauf als Sprechblasen. Über dem

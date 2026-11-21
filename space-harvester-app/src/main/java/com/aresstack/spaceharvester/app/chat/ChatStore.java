@@ -39,11 +39,27 @@ public final class ChatStore {
         this.root = root;
     }
 
+    /**
+     * Ein gespeicherter Chat samt dem Ordner seines Bereichs. Ein Chat gehört zu dem Bereich, in dem er begonnen wurde,
+     * auch wenn er beim Navigieren offen bleibt (Angelo, 21.11.2026); der Ordner ist seine Adresse im Speicher.
+     */
+    public record Entry(Path folder, ChatRecord record) {
+    }
+
+    /** Der Ordner der Chats dieses Bereichs; {@code null} ohne Datenordner oder ohne Bereich. */
+    public Path folder(ChatNode node) {
+        Path base = root.get();
+        return base == null || node == null ? null : node.directory(base);
+    }
+
     /** Die Chats des Bereichs, zuletzt geänderte zuerst; leer ohne Ordner. */
     public synchronized List<ChatRecord> list(ChatNode node) {
+        return list(folder(node));
+    }
+
+    private List<ChatRecord> list(Path directory) {
         List<ChatRecord> records = new ArrayList<>();
-        Path directory = directory(node);
-        if (directory == null || !Files.isDirectory(directory)) {
+        if (!inside(directory) || !Files.isDirectory(directory)) {
             return records;
         }
         try (DirectoryStream<Path> files = Files.newDirectoryStream(directory, "*" + SUFFIX)) {
@@ -61,9 +77,35 @@ public final class ChatStore {
         return records;
     }
 
+    /** Alle gespeicherten Chats aller Bereiche, zuletzt geänderte zuerst; leer ohne Ordner. */
+    public synchronized List<Entry> all() {
+        List<Entry> entries = new ArrayList<>();
+        Path base = root.get();
+        if (base == null || !Files.isDirectory(base)) {
+            return entries;
+        }
+        List<Path> folders = new ArrayList<>();
+        // Bereichsordner liegen höchstens drei Ebenen tief: <Quelle>/<Space>/<Seite> oder _alle.
+        try (java.util.stream.Stream<Path> walk = Files.walk(base, 3)) {
+            walk.filter(Files::isDirectory).forEach(folders::add);
+        } catch (IOException | java.io.UncheckedIOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Chat-Ordner nicht lesbar: " + e.getClass().getSimpleName());
+        }
+        for (Path folder : folders) {
+            for (ChatRecord record : list(folder)) {
+                entries.add(new Entry(folder, record));
+            }
+        }
+        entries.sort(Comparator.comparingLong((Entry entry) -> entry.record().modifiedAt()).reversed());
+        return entries;
+    }
+
     public synchronized ChatRecord load(ChatNode node, String chatId) {
-        Path directory = directory(node);
-        if (directory == null || !ID.matcher(chatId).matches()) {
+        return load(folder(node), chatId);
+    }
+
+    public synchronized ChatRecord load(Path directory, String chatId) {
+        if (!inside(directory) || !ID.matcher(chatId).matches()) {
             return null;
         }
         Path file = directory.resolve(chatId + SUFFIX);
@@ -72,12 +114,16 @@ public final class ChatStore {
 
     /** Schreibt den Chat atomar (erst {@code .tmp}, dann umbenannt); ein leerer Chat löscht seine Datei. */
     public synchronized void save(ChatNode node, ChatRecord record) {
-        Path directory = directory(node);
-        if (directory == null || record == null || !ID.matcher(record.id()).matches()) {
+        save(folder(node), record);
+    }
+
+    /** Wie {@link #save(ChatNode, ChatRecord)}, in den Ordner des Bereichs, in dem der Chat begonnen wurde. */
+    public synchronized void save(Path directory, ChatRecord record) {
+        if (!inside(directory) || record == null || !ID.matcher(record.id()).matches()) {
             return;
         }
         if (record.isEmpty()) {
-            delete(node, record.id());
+            delete(directory, record.id());
             return;
         }
         Path target = directory.resolve(record.id() + SUFFIX);
@@ -97,8 +143,11 @@ public final class ChatStore {
     }
 
     public synchronized void delete(ChatNode node, String chatId) {
-        Path directory = directory(node);
-        if (directory == null || !ID.matcher(chatId).matches()) {
+        delete(folder(node), chatId);
+    }
+
+    public synchronized void delete(Path directory, String chatId) {
+        if (!inside(directory) || !ID.matcher(chatId).matches()) {
             return;
         }
         try {
@@ -108,9 +157,11 @@ public final class ChatStore {
         }
     }
 
-    private Path directory(ChatNode node) {
+    /** Nur Ordner unterhalb des Chat-Ordners sind Adressen: nichts außerhalb wird gelesen, geschrieben oder gelöscht. */
+    private boolean inside(Path directory) {
         Path base = root.get();
-        return base == null || node == null ? null : node.directory(base);
+        return base != null && directory != null
+                && directory.toAbsolutePath().normalize().startsWith(base.toAbsolutePath().normalize());
     }
 
     private static ChatRecord read(Path file, String chatId) {
