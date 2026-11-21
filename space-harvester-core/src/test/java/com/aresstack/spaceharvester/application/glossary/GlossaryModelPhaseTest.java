@@ -440,6 +440,28 @@ class GlossaryModelPhaseTest {
     }
 
     @Test
+    void withOnlyStaleAnalysesTheSkipSaysAnalysisMissingNotRelease() {
+        // D4: Fehlt jede aktuelle Aussagenanalyse, heißt der Grund so, nie „nicht für die KI freigegeben“.
+        pages.replaceAll(page -> new KnowledgeGraph.AnalysedPage(new KnowledgeGraph.PageRef(page.page().key(),
+                page.page().spaceKey(), page.page().title(), PageStatements.State.STALE, null), page.analysis()));
+        JobContext context = mock(JobContext.class);
+
+        GlossaryClassification.Outcome outcome = classification.job(WIKI, context, EDITOR);
+
+        assertThat(outcome.modelSkipped()).isEqualTo(GlossaryClassification.SkipReason.NO_ANALYSIS);
+        assertThat(requests).isEmpty();
+        ArgumentCaptor<JobEvent.Draft> events = ArgumentCaptor.forClass(JobEvent.Draft.class);
+        verify(context, atLeastOnce()).record(events.capture());
+        assertThat(events.getAllValues()).filteredOn(event -> event.code().equals("GLOSSARY_MODEL_SKIPPED:NO_ANALYSIS"))
+                .singleElement().satisfies(event -> assertThat(event.message())
+                        .endsWith(pages.size() + " Seiten ohne aktuelle Aussagenanalyse"));
+        assertThat(events.getAllValues()).filteredOn(event -> event.code().equals(GlossaryClassification.RULES_DONE))
+                .singleElement().satisfies(event -> assertThat(event.message())
+                        .contains(pages.size() + " Seiten mit veralteter Aussagenanalyse übersprungen"));
+        assertThat(GlossaryClassification.missingAnalysis(0)).isEqualTo("Aussagenanalyse fehlt");
+    }
+
+    @Test
     void withoutAnyReleasedPageTheModelPhaseIsSkippedAndThePagesSurviveTheStore() {
         classification.job(WIKI, null, EDITOR);
         List<PageKey> kept = entry("Zuwendung").classification().pages();

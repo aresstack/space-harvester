@@ -103,6 +103,9 @@ public final class GlossaryTab {
             + "das Modell entfällt, weil keines eingestellt ist (Einstellungen › Modelle)";
     static final String MODEL_SKIPPED_NOT_RELEASED = DETECT + ": Begriffe ohne Modell abgeleitet; die Einordnung "
             + "durch das Modell entfällt, weil die Quelle nicht für die KI freigegeben ist";
+    /** D4: im Bereich keine aktuelle Aussagenanalyse; der Grund aus dem Lauf hängt an. */
+    static final String MODEL_SKIPPED_NO_ANALYSIS = DETECT + ": Begriffe ohne Modell abgeleitet; die Einordnung "
+            + "durch das Modell entfällt, ";
     static final String EMPTY = "Noch keine Fachbegriffe zur Auswahl. „Fachbegriffe ermitteln“ leitet sie aus den "
             + "analysierten Seiten ab; „Fachbegriff hinzufügen“ legt einen von Hand an.";
     static final String NO_MATCH = "Kein Fachbegriff passt zu Suche und Filter.";
@@ -512,7 +515,7 @@ public final class GlossaryTab {
 
             @Override
             public void event(JobEvent event) {
-                String text = modelSkipped(event.code());
+                String text = modelSkipped(event.code(), event.message());
                 if (text != null) {
                     // Bewusst ausgelassen, kein Fehler: gelb in der Statuszeile wie in der Auftragsliste.
                     SwingUtilities.invokeLater(() -> notice(text, Severity.WARN));
@@ -531,8 +534,21 @@ public final class GlossaryTab {
 
     /** Die Statuszeile nach einer bewusst ausgelassenen Modellphase, in Worten; {@code null} für andere Ereignisse. */
     static String modelSkipped(String code) {
+        return modelSkipped(code, null);
+    }
+
+    /**
+     * Wie {@link #modelSkipped(String)}; bei fehlender Aussagenanalyse (D4) mit der Zahl aus dem Lauf, etwa „weil 3
+     * Seiten ohne aktuelle Aussagenanalyse sind“.
+     */
+    static String modelSkipped(String code, String message) {
         if (code == null || !code.startsWith(GlossaryClassification.MODEL_SKIPPED)) {
             return null;
+        }
+        if (code.endsWith(":NO_ANALYSIS")) {
+            String reason = message == null || !message.contains(": ") ? GlossaryClassification.missingAnalysis(0)
+                    : message.substring(message.lastIndexOf(": ") + 2);
+            return MODEL_SKIPPED_NO_ANALYSIS + "Grund: " + reason;
         }
         return code.endsWith(":NOT_RELEASED") ? MODEL_SKIPPED_NOT_RELEASED : MODEL_SKIPPED_NO_MODEL;
     }

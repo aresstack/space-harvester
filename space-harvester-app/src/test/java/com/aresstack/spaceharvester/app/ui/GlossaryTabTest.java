@@ -402,6 +402,11 @@ class GlossaryTabTest {
         assertThat(GlossaryTab.modelSkipped("GLOSSARY_MODEL_SKIPPED:NOT_RELEASED"))
                 .isEqualTo(GlossaryTab.MODEL_SKIPPED_NOT_RELEASED);
         assertThat(GlossaryTab.modelSkipped("GLOSSARY_RULES_DONE")).isNull();
+        // D4: eigener Grund „Aussagenanalyse fehlt“ mit der Zahl aus dem Lauf.
+        assertThat(GlossaryTab.modelSkipped("GLOSSARY_MODEL_SKIPPED:NO_ANALYSIS",
+                "„Fachbegriffe ermitteln“ ausgelassen: 3 Seiten ohne aktuelle Aussagenanalyse"))
+                .startsWith(GlossaryTab.MODEL_SKIPPED_NO_ANALYSIS).endsWith("3 Seiten ohne aktuelle Aussagenanalyse")
+                .doesNotContain("freigegeben");
         assertThat(GlossaryTab.importance(new GlossaryDerivation.Importance(1, 3, 0, 0, 0))).isEqualTo("1 Seite");
         assertThat(GlossaryTab.importanceTip(new GlossaryDerivation.Importance(12, 30, 4, 1, 2)))
                 .isEqualTo("Auf 12 Seiten, 30 Erwähnungen, handelnd 4×, betroffen 1×, als Träger 2×");
