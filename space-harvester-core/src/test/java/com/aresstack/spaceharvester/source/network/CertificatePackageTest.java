@@ -40,6 +40,7 @@ class CertificatePackageTest {
     static X509Certificate server;
     static X509Certificate foreignRoot;
     static X509Certificate foreignServer;
+    static X509Certificate selfSignedServer;
 
     @BeforeAll
     static void certificates() throws Exception {
@@ -56,6 +57,8 @@ class CertificatePackageTest {
         genkey(foreign, "server", "CN=wiki.beispiel.test", null);
         foreignServer = sign(foreign, "server", "root", null);
         foreignRoot = export(foreign, "root");
+        genkey(foreign, "selbst", "CN=selbst.beispiel.test", null);
+        selfSignedServer = export(foreign, "selbst");
     }
 
     @Test
@@ -134,13 +137,37 @@ class CertificatePackageTest {
     }
 
     @Test
+    void theQrArchiveHasOneReadablePngPerTrustedCertificate() throws IOException {
+        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(server), true,
+                List.of(root, intermediate), List.of(), List.of(), List.of(), NOW);
+        Path file = Files.createTempFile(dir, "qr", ".zip");
+
+        assertThat(bundle.writeQrZip(file)).isEqualTo(2);
+        List<String> names = new ArrayList<>();
+        try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(file), StandardCharsets.UTF_8)) {
+            for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                names.add(entry.getName());
+                if (entry.getName().endsWith(".png")) {
+                    java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(
+                            new java.io.ByteArrayInputStream(zip.readAllBytes()));
+                    assertThat(CertificateQrCodes.read(image)).hasSize(1).first()
+                            .isIn(root, intermediate);
+                }
+            }
+        }
+        assertThat(names).containsExactly("01 Stamm Erfundene Wurzel.png",
+                "02 Zwischen Erfundene Zwischenstelle.png", "LIESMICH.txt");
+    }
+
+    @Test
     void aDirectlyTrustedSelfSignedServerCertificateIsImportedAsRoot() throws IOException {
-        CertificatePackage bundle = CertificatePackage.of("Wiki & calc", "wiki.beispiel.test", List.of(foreignRoot),
-                true, List.of(foreignRoot), List.of(), List.of(), List.of(), NOW);
+        CertificatePackage bundle = CertificatePackage.of("Wiki & calc", "wiki.beispiel.test",
+                List.of(selfSignedServer), true, List.of(selfSignedServer), List.of(), List.of(), List.of(), NOW);
 
         assertThat(bundle.count(CertificatePackage.Role.ROOT)).isEqualTo(1);
         String script = unzip(bundle).get("importieren.cmd");
         assertThat(script).contains("addstore Root").doesNotContain("calc").doesNotContain("&");
+        assertThat(unzip(bundle).get("LIESMICH.txt")).contains("KEINE Zertifizierungsstelle");
     }
 
     @Test

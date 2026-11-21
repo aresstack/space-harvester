@@ -125,6 +125,19 @@ public final class SourceManagement {
         return certificates.export(sourceId, directory, cancelled);
     }
 
+    /** Wie {@link #exportCertificates}, aber nur die QR-Codes der vertrauten Zertifikate als Bilder (Strang ZX). */
+    public Optional<CertificateExport> exportCertificateCodes(String sourceId, java.nio.file.Path directory,
+                                                              java.util.function.BooleanSupplier cancelled)
+            throws java.io.IOException {
+        return certificates.exportQrCodes(sourceId, directory, cancelled);
+    }
+
+    /** Die vertrauten Zertifikate der Quelle als QR-Codes zur Anzeige; schreibt nichts. Blockiert (Netz). */
+    public Optional<List<com.aresstack.spaceharvester.application.sources.CertificateCode>> certificateCodes(
+            String sourceId, java.util.function.BooleanSupplier cancelled) {
+        return certificates.codes(sourceId, cancelled);
+    }
+
     /**
      * Fügt eine Quelle hinzu.
      *

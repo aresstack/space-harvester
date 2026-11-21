@@ -185,6 +185,88 @@ public final class CertificatePackage {
         }
     }
 
+    /** Die importierbaren Zertifikate: erst Stamm-, dann Zwischenzertifikate. */
+    public List<Entry> importable() {
+        List<Entry> result = new ArrayList<>();
+        entries.stream().filter(e -> e.role() == Role.ROOT).forEach(result::add);
+        entries.stream().filter(e -> e.role() == Role.INTERMEDIATE).forEach(result::add);
+        return result;
+    }
+
+    /** Anzeigename eines Eintrags im Paket: der Dateiname ohne Ordner und Endung. */
+    public static String name(Entry entry) {
+        String path = entry.path();
+        String file = path.substring(path.lastIndexOf('/') + 1);
+        return file.endsWith(".cer") ? file.substring(0, file.length() - 4) : file;
+    }
+
+    /** Rolle für Benutzer, kurz. */
+    public static String roleLabel(Role role) {
+        return switch (role) {
+            case ROOT -> "Stammzertifizierungsstelle";
+            case INTERMEDIATE -> "Zwischenzertifizierungsstelle";
+            case SERVER -> "Serverzertifikat";
+            case CLIENT -> "Client-Zertifikat";
+            case UNTRUSTED -> "nicht vertraut";
+        };
+    }
+
+    /**
+     * Schreibt nur die QR-Codes der importierbaren Zertifikate als PNG (ein Code je Zertifikat, Inhalt PEM) samt
+     * kurzer Anleitung; Zertifikate, deren PEM-Text nicht in einen Code passt, nennt die Anleitung.
+     *
+     * @return Anzahl geschriebener Codes
+     */
+    public int writeQrZip(Path file) throws IOException {
+        Path parent = file.toAbsolutePath().getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        int written = 0;
+        List<String> tooLarge = new ArrayList<>();
+        StringBuilder list = new StringBuilder();
+        try (OutputStream out = Files.newOutputStream(file, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+             ZipOutputStream zip = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
+            int index = 1;
+            for (Entry entry : importable()) {
+                java.util.Optional<byte[]> png = CertificateQrCodes.png(entry.certificate());
+                if (png.isEmpty()) {
+                    tooLarge.add(name(entry));
+                    continue;
+                }
+                String image = String.format(Locale.ROOT, "%02d %s %s.png", index++,
+                        entry.role() == Role.ROOT ? "Stamm" : "Zwischen", name(entry));
+                put(zip, image, png.get());
+                list.append("- ").append(image).append(" → ").append(entry.role() == Role.ROOT
+                        ? "„Vertrauenswürdige Stammzertifizierungsstellen“" : "„Zwischenzertifizierungsstellen“")
+                        .append(", SHA-1 ").append(colons(sha1(entry.certificate()))).append("\r\n");
+                written++;
+            }
+            StringBuilder text = new StringBuilder();
+            text.append("QR-Codes der Zertifikate von „").append(title).append("“ (").append(host).append(")\r\n")
+                    .append("Erstellt am ").append(WHEN.format(created)).append(" vom Space Harvester.\r\n")
+                    .append("Je Zertifikat ein Code; sein Inhalt ist das Zertifikat als PEM-Text (kein privater ")
+                    .append("Schlüssel). Mit dem Telefon scannen und als .crt speichern, dann unter Android ")
+                    .append("„Zertifikat installieren“ (CA-Zertifikat); im Space Harvester unter „Serverzertifikate …“ ")
+                    .append("über „Zertifikat aus QR-Bild lesen …“.\r\n\r\n");
+            text.append(list.isEmpty() ? "Keine vertrauten Zertifikate mit QR-Code.\r\n" : list);
+            if (!tooLarge.isEmpty()) {
+                text.append("\r\nPasst nicht in einen Code (bitte das Archiv nutzen): ")
+                        .append(String.join(", ", tooLarge)).append("\r\n");
+            }
+            if (!serverTrusted && serverChainKnown) {
+                text.append("\r\nACHTUNG: Die Kette des Servers endet an keinem vertrauten Stammzertifikat; ")
+                        .append("ihre Zertifikate bekommen keinen Code.\r\n");
+            }
+            for (String problem : problems) {
+                text.append("- ").append(problem).append("\r\n");
+            }
+            put(zip, "LIESMICH.txt", text.toString().getBytes(StandardCharsets.UTF_8));
+        }
+        return written;
+    }
+
     /** Das Importskript: nur Stamm- und Zwischenzertifikate, Benutzerspeicher, ohne Adminrechte. */
     String script() {
         StringBuilder script = new StringBuilder();
@@ -290,7 +372,10 @@ public final class CertificatePackage {
 
     private String roleText(Entry entry) {
         return switch (entry.role()) {
-            case ROOT -> "Stammzertifizierungsstelle (importieren: Vertrauenswürdige Stammzertifizierungsstellen)";
+            case ROOT -> entry.certificate().getBasicConstraints() < 0
+                    ? "selbstsigniertes Serverzertifikat, KEINE Zertifizierungsstelle; diesem Server wird direkt "
+                    + "vertraut (importieren: Vertrauenswürdige Stammzertifizierungsstellen)"
+                    : "Stammzertifizierungsstelle (importieren: Vertrauenswürdige Stammzertifizierungsstellen)";
             case INTERMEDIATE -> "Zwischenzertifizierungsstelle (importieren: Zwischenzertifizierungsstellen)";
             case SERVER -> "Serverzertifikat (nicht importieren)";
             case CLIENT -> "Client-Zertifikat, nur öffentlicher Teil" + (clientTrusted ? ""
@@ -406,7 +491,7 @@ public final class CertificatePackage {
     }
 
     /** Dateiname aus dem CN (sonst dem ganzen Betreff), für Windows gesäubert, ohne Endung. */
-    static String fileName(X509Certificate certificate) {
+    public static String fileName(X509Certificate certificate) {
         String dn = certificate.getSubjectX500Principal().getName();
         Matcher matcher = COMMON_NAME.matcher(dn);
         String name = matcher.find() ? matcher.group(1).replace("\\,", ",") : dn;
@@ -469,7 +554,7 @@ public final class CertificatePackage {
         return digest("SHA-256", certificate);
     }
 
-    static String sha1(X509Certificate certificate) {
+    public static String sha1(X509Certificate certificate) {
         return digest("SHA-1", certificate);
     }
 
@@ -481,7 +566,7 @@ public final class CertificatePackage {
         }
     }
 
-    private static String colons(String hex) {
+    public static String colons(String hex) {
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < hex.length(); i += 2) {
             if (i > 0) {

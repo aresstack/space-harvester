@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.spaceharvester.application.sources.CertificateCode;
 import com.aresstack.spaceharvester.application.sources.CertificateExport;
 import com.aresstack.spaceharvester.application.sources.ConnectionStep;
 import com.aresstack.spaceharvester.source.network.CertificatePackage;
+import com.aresstack.spaceharvester.source.network.CertificateQrCodes;
 import com.aresstack.spaceharvester.source.network.ChainRecordingTrustManager;
 import java.io.IOException;
 import java.net.URI;
@@ -67,15 +69,77 @@ public final class SourceCertificates {
         return Optional.of(export(found.get(), directory, cancelled, ZonedDateTime.now()));
     }
 
+    /**
+     * Wie {@link #export(String, Path, BooleanSupplier)}, aber nur die QR-Codes der vertrauten Zertifikate als
+     * Bilder in einem ZIP (Strang ZX, nicht der Standard).
+     */
+    public Optional<CertificateExport> exportQrCodes(String sourceId, Path directory, BooleanSupplier cancelled)
+            throws IOException {
+        Optional<SourceSettingsConfig> found = catalog.config(sourceId);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(write(found.get(), directory, cancelled, ZonedDateTime.now(), true));
+    }
+
+    /**
+     * Die vertrauten Zertifikate der Quelle als QR-Codes zur Anzeige; schreibt nichts. Blockiert (Netz).
+     *
+     * @return leer ohne Quelle dieser ID
+     */
+    public Optional<List<CertificateCode>> codes(String sourceId, BooleanSupplier cancelled) {
+        Optional<SourceSettingsConfig> found = catalog.config(sourceId);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        CertificatePackage bundle = collect(found.get(), ZonedDateTime.now(), new ArrayList<>());
+        if (cancelled.getAsBoolean()) {
+            throw new CancellationException("abgebrochen");
+        }
+        List<CertificateCode> codes = new ArrayList<>();
+        for (CertificatePackage.Entry entry : bundle.importable()) {
+            codes.add(new CertificateCode(CertificatePackage.name(entry), CertificatePackage.roleLabel(entry.role()),
+                    CertificatePackage.colons(CertificatePackage.sha1(entry.certificate())),
+                    CertificateQrCodes.image(entry.certificate(), 1).orElse(null)));
+        }
+        return Optional.of(codes);
+    }
+
     CertificateExport export(SourceSettingsConfig config, Path directory, BooleanSupplier cancelled,
                              ZonedDateTime now) throws IOException {
+        return write(config, directory, cancelled, now, false);
+    }
+
+    private CertificateExport write(SourceSettingsConfig config, Path directory, BooleanSupplier cancelled,
+                                    ZonedDateTime now, boolean qr) throws IOException {
+        List<String> problems = new ArrayList<>();
+        CertificatePackage bundle = collect(config, now, problems);
+        if (cancelled.getAsBoolean()) {
+            throw new CancellationException("abgebrochen");
+        }
+        Files.createDirectories(directory);
+        Path file = unique(directory, "Zertifikate " + CertificatePackage.safe(title(config)) + " "
+                + DAY.format(now) + (qr ? " QR-Codes" : ""));
+        if (qr) {
+            bundle.writeQrZip(file);
+        } else {
+            bundle.writeZip(file);
+        }
+        long missing = bundle.entries().stream()
+                .filter(e -> (e.role() == CertificatePackage.Role.ROOT
+                        || e.role() == CertificatePackage.Role.INTERMEDIATE) && !e.sentByServer())
+                .count();
+        return new CertificateExport(file, bundle.count(CertificatePackage.Role.ROOT),
+                bundle.count(CertificatePackage.Role.INTERMEDIATE), missing, bundle.serverTrusted(), problems);
+    }
+
+    /** Geht den Netzweg der Quelle und ordnet ein; {@code problems} bekommt die Gründe für Fehlendes. */
+    private CertificatePackage collect(SourceSettingsConfig config, ZonedDateTime now, List<String> problems) {
         URI base = catalog.connectionTarget(config);
         if (base == null || base.getHost() == null || !"https".equalsIgnoreCase(base.getScheme())) {
             throw new IllegalArgumentException("Nur für Quellen mit https");
         }
-        List<String> problems = new ArrayList<>();
         List<String> notes = new ArrayList<>();
-
         X509TrustManager trust = catalog.trustFor(config);
         ChainRecordingTrustManager recorder = new ChainRecordingTrustManager(trust);
         List<ConnectionStep> steps = new ArrayList<>();
@@ -89,22 +153,8 @@ public final class SourceCertificates {
         }
         List<X509Certificate> anchors = anchors(recorder, config.id(), problems);
         List<X509Certificate> client = client(config, problems, notes);
-        if (cancelled.getAsBoolean()) {
-            throw new CancellationException("abgebrochen");
-        }
-        CertificatePackage bundle = CertificatePackage.of(title(config), base.getHost(), recorder.chain(),
-                recorder.checked() && recorder.rejection() == null, anchors,
-                client, problems, notes, now);
-        Files.createDirectories(directory);
-        Path file = unique(directory, "Zertifikate " + CertificatePackage.safe(title(config)) + " "
-                + DAY.format(now));
-        bundle.writeZip(file);
-        long missing = bundle.entries().stream()
-                .filter(e -> (e.role() == CertificatePackage.Role.ROOT
-                        || e.role() == CertificatePackage.Role.INTERMEDIATE) && !e.sentByServer())
-                .count();
-        return new CertificateExport(file, bundle.count(CertificatePackage.Role.ROOT),
-                bundle.count(CertificatePackage.Role.INTERMEDIATE), missing, bundle.serverTrusted(), problems);
+        return CertificatePackage.of(title(config), base.getHost(), recorder.chain(),
+                recorder.checked() && recorder.rejection() == null, anchors, client, problems, notes, now);
     }
 
     private static List<X509Certificate> anchors(ChainRecordingTrustManager recorder, String sourceId,
