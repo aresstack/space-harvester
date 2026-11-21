@@ -211,3 +211,37 @@ zeichnet sie nur `Workspace#jobState(id).actions()` und ruft `Workspace#performJ
 - Ein Teilbaum-Export lädt nur die Seiten seines Teilbaums statt des ganzen Space.
 - Offen: Die Inventur selbst hält ihren Stand noch nicht fest und läuft sequenziell (eigener Schritt; der EAC listet
   ebenfalls sequenziell).
+
+## Nachtrag 21.11.2026: Hintergrundaufträge
+
+Angelo 21.11.2026: Was die App von sich aus anstößt (fehlende Seiten nachladen, etwa Nachbarseiten eines Suchtreffers;
+Bilder automatisch beschreiben; künftig weitere Folgeschritte nach dem Abgleich), läuft als eigene Auftragsart und
+wird automatisch verwaltet.
+
+1. **Eigene Auftragsart** `JobType.BACKGROUND` (`JobType#background()`). Welche Arbeit, sagt die Angabe
+   `background.kind`; Arten melden sich bei `BackgroundJobs#register(BackgroundKind)` an (`application.background`).
+   Eingebaut ist „Seiten nachladen“ (`PageLoads`, Art `pages`, `Harvester#pageLoads()`); die Bildbeschreibung meldet
+   sich als Art `images` an.
+2. **Gruppe statt Oberauftrag mit eigenem Platz.** Ein Start (`BackgroundJobs#start`) legt je Space einen Unterauftrag
+   an; alle tragen dieselbe `background.group` und `background.title`. Die Gruppe (`BackgroundGroup`) ist kein eigener
+   Auftrag, belegt nichts und hat ihren Zustand aus den Unteraufträgen. Jeder Unterauftrag hat einen eigenen Platz und
+   damit ein eigenes Kontingent (etwa `ai.parallel` je Unterauftrag), statt dass sich alle Spaces eines teilen.
+3. **Nachrangig.** `Jobs#next` startet einen Hintergrundauftrag nur, wenn kein anderer Auftrag auf einen Platz wartet,
+   und Hintergrund- und Folgeaufträge zusammen belegen nie alle Plätze („Vorbereitung“ minus eins, mindestens einer):
+   ein Auftrag des Benutzers startet immer sofort. Hintergrundaufträge haben einen eigenen Vorrat
+   (`Jobs.BACKGROUND_CAPACITY`) ohne Grenze je Auslöser und füllen nie die Warteschlange des Benutzers.
+4. **Fortsetzen nach Neustart.** Die Arbeit eines Unterauftrags baut seine Art allein aus Quelle, Space und Angaben
+   (`BackgroundPart`, mit `resumed()`). `BackgroundJobs#resumeInterrupted` setzt am Ende des Harvester-Starts jeden
+   Unterauftrag im selben Eintrag fort (`Jobs#rerun`), den das Beenden des Dienstes (`INTERRUPTED`) oder eine verlorene
+   Verbindung unterbrochen hat, sofern seine Art angemeldet ist und `BackgroundKind#autoResume` zustimmt (etwa nur bei
+   eingeschalteter Automatik und eingestelltem Modell). Vom Benutzer Angehaltenes oder Abgebrochenes läuft nie von
+   selbst weiter. „Fortsetzen“ in der Liste geht über `JobActions` an `BackgroundJobs#resumeJob`.
+5. **Anhalten, Fortsetzen, Abbrechen** je Unterauftrag wie jeder Auftrag, je Gruppe über `BackgroundJobs#pause`,
+   `#resume`, `#cancel`. Beobachter (`BackgroundJobs#watch`) erfahren jede Änderung einer Gruppe über die
+   Auftragsmeldungen (ADR 0027), ohne Abfragen. Gegen doppelte Anläufe: `BackgroundJobs#running`.
+6. **Rechte.** Der Hintergrund lädt nie mit der Anmeldung eines Benutzers (wie ADR 0016). `PageLoads` lädt mit dem
+   technischen Aufrufer des Start-Aufrufs, nach einem Neustart mit dem technischen Aufrufer des Dienstes; was schon im
+   Cache liegt, fällt vorher heraus, ein Fortsetzen holt also nur, was fehlt.
+7. **Desktop-App.** Die Auftragsverwaltung zeigt Hintergrundaufträge in einem eigenen Reiter „Hintergrund“, je Gruppe
+   eine Zeile mit den Unteraufträgen darunter, farblich hervorgehoben (Form mit dem UX-Manager); die Liste der
+   Benutzeraufträge bleibt frei davon.

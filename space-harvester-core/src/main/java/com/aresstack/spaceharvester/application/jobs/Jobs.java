@@ -123,6 +123,14 @@ public class Jobs implements AutoCloseable {
 
     /** Laufende Folgeaufträge ({@link JobType#followUp()}) außer Downloads. */
     private int runningFollowUps;
+    /** Laufende Hintergrundaufträge ({@link JobType#background()}). */
+    private int runningBackground;
+    /**
+     * So viele Hintergrundaufträge dürfen zugleich offen sein (eigener Vorrat, ohne Grenze je Auslöser): je Space einer,
+     * also auch für viele Spaces genug; dass dieselbe Arbeit nicht doppelt eingeplant wird, prüft
+     * {@code BackgroundJobs}.
+     */
+    static final int BACKGROUND_CAPACITY = 1000;
     /** Downloads ({@link JobType#download()}) in {@link JobStage#PREPARING}. */
     private int preparing;
     /** Downloads in {@link JobStage#DOWNLOADING}. */
@@ -400,19 +408,26 @@ public class Jobs implements AutoCloseable {
 
     /** Unter dem Sperrobjekt: ob noch ein Auftrag dieser Art für diesen Eigentümer Platz hat. */
     private void requireCapacity(JobType type, String owner) {
+        if (type.background()) {
+            // Eigener Vorrat ohne Grenze je Auslöser: der Hintergrund nimmt nie einem Benutzer den Platz.
+            if (open.values().stream().filter(other -> other.type.background()).count() >= BACKGROUND_CAPACITY) {
+                throw new JobCapacityExceededException(BACKGROUND_CAPACITY);
+            }
+            return;
+        }
         int capacity = parallelPreparations + limits.maxQueued();
         // Folgeaufträge (Anreicherung, Bilder) entstehen, während ihr Auslöser noch einen Platz belegt. Sie haben
         // daher einen eigenen Vorrat derselben Größe und eine eigene Grenze je Eigentümer: zwei je erlaubtem
         // Auslöser, sonst nähme etwa maxOpenPerOwner=1 nie einen an, und ein Client belegt den Vorrat nicht allein.
         // Wer auf seinen Vorgänger wartet (submitAwaiting), belegt nichts: höchstens zwei je angenommenem Export.
-        if (open.values().stream().filter(other -> other.awaiting == null
+        if (open.values().stream().filter(other -> other.awaiting == null && !other.type.background()
                 && other.type.followUp() == type.followUp()).count() >= capacity) {
             throw new JobCapacityExceededException(capacity);
         }
         int perOwner = type.followUp() ? 2 * limits.maxOpenPerOwner() : limits.maxOpenPerOwner();
         if (owner != null && open.values().stream()
-                .filter(other -> other.awaiting == null && other.type.followUp() == type.followUp()
-                        && owner.equals(other.owner))
+                .filter(other -> other.awaiting == null && !other.type.background()
+                        && other.type.followUp() == type.followUp() && owner.equals(other.owner))
                 .count() >= perOwner) {
             throw JobCapacityExceededException.perOwner(perOwner);
         }
@@ -1373,6 +1388,9 @@ public class Jobs implements AutoCloseable {
                     if (job.type.followUp()) {
                         runningFollowUps++;
                     }
+                    if (job.type.background()) {
+                        runningBackground++;
+                    }
                 }
                 job.state = JobState.RUNNING;
                 job.startedAt = clock.instant();
@@ -1404,20 +1422,34 @@ public class Jobs implements AutoCloseable {
     /**
      * Der nächste startbare Auftrag, aus der Warteschlange genommen: Downloads ({@link JobType#download()}) haben eigene
      * Plätze für die Vorbereitung ({@link #parallelPreparations()}); sonst Abgleiche und Exporte vor Folgeaufträgen,
-     * damit die Anreicherung nie einen Export aufhält; Folgeaufträge belegen höchstens alle Plätze bis auf einen. Unter
-     * dem Sperrobjekt.
+     * damit die Anreicherung nie einen Export aufhält; Folgeaufträge belegen höchstens alle Plätze bis auf einen.
+     * Hintergrundaufträge ({@link JobType#background()}) kommen zuletzt: nur wenn kein anderer Auftrag wartet, und
+     * zusammen mit den Folgeaufträgen höchstens alle Plätze bis auf einen. Unter dem Sperrobjekt.
      */
     private Job next() {
         // #944 (Angelo 17.11.2026): keine festen Auftragsplätze mehr. Abgleiche, Seitenexporte und Folgeaufträge
         // laufen nach derselben Einstellung „Vorbereitung“ wie die Downloads, sofort wirksam.
         boolean general = running < parallelPreparations;
-        boolean followUps = general && runningFollowUps < Math.max(1, parallelPreparations - 1);
+        int spare = Math.max(1, parallelPreparations - 1);
+        boolean followUps = general && runningFollowUps < spare;
+        // Hintergrund (Angelo 21.11.2026): zusammen mit den Folgeaufträgen nie alle Plätze, damit ein Auftrag des
+        // Benutzers immer sofort starten kann.
+        boolean background = general && runningFollowUps + runningBackground < spare;
         boolean preparations = preparing < parallelPreparations;
         Job pick = null;
+        Job backgroundPick = null;
+        boolean othersWaiting = false;
         for (Job job : queued) {
             if (job.awaiting != null || job.starting) {
                 continue;
             }
+            if (job.type.background()) {
+                if (backgroundPick == null && background) {
+                    backgroundPick = job;
+                }
+                continue;
+            }
+            othersWaiting = true;
             if (job.type.download() ? preparations : general && !job.type.followUp()) {
                 pick = job;
                 break;
@@ -1425,6 +1457,10 @@ public class Jobs implements AutoCloseable {
             if (pick == null && !job.type.download() && followUps) {
                 pick = job;
             }
+        }
+        // Nachrangig: ein Hintergrundauftrag startet nur, wenn kein anderer Auftrag auf einen Platz wartet.
+        if (pick == null && !othersWaiting) {
+            pick = backgroundPick;
         }
         if (pick != null) {
             queued.remove(pick);
@@ -1438,6 +1474,9 @@ public class Jobs implements AutoCloseable {
             running--;
             if (job.type.followUp()) {
                 runningFollowUps--;
+            }
+            if (job.type.background()) {
+                runningBackground--;
             }
             return;
         }

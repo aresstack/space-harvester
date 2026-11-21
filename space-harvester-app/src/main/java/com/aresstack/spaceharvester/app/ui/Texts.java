@@ -150,6 +150,7 @@ public final class Texts {
             case SLIDE_NOTES -> "Folienkommentare";
             case PRESENTATION_EXPORT -> "PPTX erzeugen";
             case SEARCH_QUALITY -> "Suchqualität messen";
+            case BACKGROUND -> "Hintergrund";
         };
     }
 
@@ -163,6 +164,12 @@ public final class Texts {
                 status.parameters().get(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions
                         .TASK_PARAMETER))) {
             return "Bilder beschreiben";
+        }
+        if (status.type() == JobType.BACKGROUND) {
+            // Hintergrundaufträge (ADR 0025 Nachtrag): der Titel ihrer Gruppe, etwa „Nachbarseiten laden“.
+            String title = status.parameters().get(
+                    com.aresstack.spaceharvester.application.background.BackgroundJobs.TITLE);
+            return title == null || title.isBlank() ? type(status.type()) : title;
         }
         if (status.type() == JobType.PRESENTATION_EXPORT) {
             return com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.parse(
