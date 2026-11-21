@@ -80,6 +80,8 @@ public final class BusyOverlay extends JPanel {
     private Color highlight;
     private Color veilColor;
     private Runnable action;
+    /** Kleiner Ring (16 px) für eine Leiste, etwa die Transportleiste des Players; ohne Text und ohne Esc. */
+    private boolean compact;
 
     /** Legt den Schleier über {@code content}; anfangs nicht beschäftigt. */
     public BusyOverlay(JComponent content) {
@@ -137,6 +139,22 @@ public final class BusyOverlay extends JPanel {
     public boolean isBusy() {
         return busy;
     }
+
+    /**
+     * Zeichnet den Ring klein ({@value #COMPACT_SIDE} px) statt in Normalgröße, für eine Leiste: Er passt dann in die
+     * Höhe eines Knopfs.
+     */
+    public void setCompact(boolean compact) {
+        this.compact = compact;
+        ring.revalidate();
+        veil.revalidate();
+        repaint();
+    }
+
+    /** Kantenlänge des kleinen Rings. */
+    static final int COMPACT_SIDE = 16;
+    /** Halber Durchmesser eines Punkts im kleinen Ring. */
+    private static final double COMPACT_DOT = 1.4;
 
     /** Text unter dem Ring; leer für keinen. */
     public void setText(String text) {
@@ -340,6 +358,9 @@ public final class BusyOverlay extends JPanel {
 
         @Override
         public Dimension getPreferredSize() {
+            if (compact) {
+                return new Dimension(COMPACT_SIDE, COMPACT_SIDE);
+            }
             int side = (int) Math.ceil(2 * (NORMAL_RADIUS + DOT_RADIUS)) + 4;
             return new Dimension(side, side);
         }
@@ -349,7 +370,8 @@ public final class BusyOverlay extends JPanel {
             Graphics2D g = (Graphics2D) graphics.create();
             try {
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                double radius = radius(getWidth(), getHeight());
+                double dot = compact ? COMPACT_DOT : DOT_RADIUS;
+                double radius = compact ? COMPACT_SIDE / 2.0 - dot - 0.5 : radius(getWidth(), getHeight());
                 double centerX = getWidth() / 2.0;
                 double centerY = getHeight() / 2.0;
                 Color base = highlight();
@@ -362,7 +384,7 @@ public final class BusyOverlay extends JPanel {
                     double x = centerX + radius * Math.cos(angle);
                     double y = centerY + radius * Math.sin(angle);
                     g.setColor(withAlpha(base, (int) Math.round(alpha * 255.0)));
-                    g.fill(new Ellipse2D.Double(x - DOT_RADIUS, y - DOT_RADIUS, 2 * DOT_RADIUS, 2 * DOT_RADIUS));
+                    g.fill(new Ellipse2D.Double(x - dot, y - dot, 2 * dot, 2 * dot));
                 }
             } finally {
                 g.dispose();

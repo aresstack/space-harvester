@@ -2312,8 +2312,7 @@ public final class PageDetailPanel extends JPanel {
         if (size > 0 && "video/mp4".equals(mediaType)) {
             VideoFrameSource frames = new VideoFrameSource(source, id, ranges::read, size, mediaType);
             videoFrames = frames;
-            // Die Marken des Players sind die einzige Quelle der Folien; gespeichert erscheinen sie als Anhänge.
-            originalVideoViewer.onSlides(changes -> slidesFound(frames, changes));
+            // Die gespeicherten Marken sind die einzige Quelle der Folien; ohne sie erkennt sie ein Hintergrundauftrag.
             showVideoMarks(originalVideoViewer, frames);
             // „In PPTX umwandeln“ neben „Herunterladen“ (Angelo 20.11.2026): fünf Aufträge unter „Aufträge“.
             long videoSize = size;
@@ -2599,6 +2598,7 @@ public final class PageDetailPanel extends JPanel {
         videoTranscriptShown = false;
         videoFrames = null;
         stopTranscriptWatch();
+        stopSlidesWait();
         fileContent.removeAll();
         originalCards.show(originalContent, ORIGINAL_PAGE_CARD);
         updateFootTools(tabs.selected());
@@ -3644,8 +3644,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Beim Öffnen eines Videos: gespeicherte Marken zeigt der Player sofort; sonst sucht er sie im Video
-     * ({@link #slidesFound} speichert sie dann).
+     * Beim Öffnen eines Videos: gespeicherte Marken zeigt der Player sofort; sonst erkennt sie der Hintergrundauftrag
+     * „Folienwechsel erkennen“ (Angelo 21.11.2026: alles, was die App von sich aus tut, steht in der Auftragsliste).
      */
     private void showVideoMarks(VideoViewerPanel viewer, VideoFrameSource video) {
         AppRuntime runtime = context.runtime();
@@ -3657,36 +3657,95 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             if (marks.isEmpty()) {
-                viewer.findSlides();
+                detectSlides(runtime, viewer, video);
             } else {
                 viewer.showMarks(marks);
             }
         }, error -> {
-            if (viewer == originalVideoViewer) {
-                viewer.findSlides();
-            }
+            // Ohne lesbare Marken bleibt das Video ohne Folien; der Player spielt trotzdem.
         });
     }
 
+    /** Folgt „Folienwechsel erkennen“ des gezeigten Videos im Player (Observer, ADR 0027). */
+    private com.aresstack.spaceharvester.app.ui.content.viewer.VideoSlideFollow slidesFollow;
+
     /**
-     * Der Player hat die Marken des Videos gefunden: gespeichert erscheinen sie als virtuelle Anhänge (benannt nach
-     * ihrer Position), deren Standbilder „Anhänge“ zieht. Ohne Marken gibt es keine virtuellen Anhänge.
+     * Startet „Folienwechsel erkennen“ für ein Video ohne Marken oder findet den Lauf, der schon da ist. Ein
+     * gescheiterter oder abgebrochener Lauf startet nicht still neu (Architekt 21.11.2026): der Player nennt ihn.
      */
-    private void slidesFound(VideoFrameSource video, List<Long> changes) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null || video != videoFrames || changes.isEmpty()) {
-            return;
-        }
-        // Wie viele Marken ein Video höchstens bekommt, hat die Erkennung schon begrenzt (die stärksten Wechsel).
-        List<Long> marks = changes;
-        Background.run(() -> {
-            runtime.workspace().saveVideoMarks(video.sourceId(), video.pageId(), marks);
-            return marks.size();
-        }, saved -> attachmentsChanged(video), error -> {
-            if (video == videoFrames) {
-                feedback.problem(error, Problems.Step.PAGE);
+    private void detectSlides(AppRuntime runtime, VideoViewerPanel viewer, VideoFrameSource video) {
+        Background.run(() -> runtime.workspace().detectVideoSlides(video.sourceId(), video.pageId()), group -> {
+            if (viewer != originalVideoViewer) {
+                return;
             }
+            if (group.isPresent()) {
+                stopSlidesWait();
+                slidesFollow = new com.aresstack.spaceharvester.app.ui.content.viewer.VideoSlideFollow(viewer,
+                        slidesHost(runtime, viewer, video));
+                slidesFollow.follow(group.get());
+            } else {
+                // Keine Gruppe heißt: es gibt inzwischen Marken, etwa weil ein laufender Teil sie gerade zwischen dem
+                // ersten Lesen und diesem Aufruf gespeichert hat (Architekt 21.11.2026).
+                Background.run(() -> runtime.workspace().videoMarks(video.sourceId(), video.pageId()), marks -> {
+                    if (viewer == originalVideoViewer && !marks.isEmpty()) {
+                        viewer.showMarks(marks);
+                    }
+                }, error -> {
+                    // Ohne lesbare Marken bleibt das Video ohne Folien; der Player spielt trotzdem.
+                });
+            }
+        }, error -> {
+            // Ohne Freigabe oder Quelle bleibt das Video ohne Folien; der Player spielt trotzdem.
         });
+    }
+
+    private com.aresstack.spaceharvester.app.ui.content.viewer.VideoSlideFollow.Host slidesHost(AppRuntime runtime,
+            VideoViewerPanel viewer, VideoFrameSource video) {
+        return new com.aresstack.spaceharvester.app.ui.content.viewer.VideoSlideFollow.Host() {
+            @Override
+            public com.aresstack.spaceharvester.application.observe.Subscription watch(String groupId,
+                    java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+                return runtime.workspace().watchBackground(groupId, listener);
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.observe.Subscription whenFinished(String groupId,
+                    java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+                return runtime.workspace().whenBackgroundFinished(groupId, listener);
+            }
+
+            @Override
+            public void singleSlot(java.util.function.Consumer<Boolean> answer) {
+                Background.run(() -> runtime.workspace().parallelPreparations() <= 1, answer,
+                        error -> answer.accept(false));
+            }
+
+            @Override
+            public void marks(java.util.function.Consumer<java.util.List<Long>> found) {
+                Background.run(() -> runtime.workspace().videoMarks(video.sourceId(), video.pageId()), found,
+                        error -> found.accept(java.util.List.of()));
+            }
+
+            @Override
+            public void marksStored() {
+                if (viewer == originalVideoViewer) {
+                    // Liste, Bilder und Marken im Player gelten neu.
+                    attachmentsChanged(video);
+                }
+            }
+
+            @Override
+            public void openJob(String jobId) {
+                context.navigator().showJob(jobId);
+            }
+        };
+    }
+
+    private void stopSlidesWait() {
+        if (slidesFollow != null) {
+            slidesFollow.stop();
+            slidesFollow = null;
+        }
     }
 
     /**

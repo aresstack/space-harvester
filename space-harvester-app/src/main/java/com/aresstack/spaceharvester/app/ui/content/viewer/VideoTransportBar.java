@@ -45,6 +45,18 @@ final class VideoTransportBar extends JPanel {
     private final JButton fullScreen = iconButton("Vollbild", new VideoFullScreenIcon(false));
     private final JButton audioOnly = iconButton("Nur Audio", new VideoAudioModeIcon(false));
     private final VideoSeekBar seekBar;
+    /**
+     * Der Platz der Folienknöpfe ◀ ▶: zeigt die Knöpfe oder, solange „Folienwechsel erkennen“ wartet oder läuft, den
+     * kleinen Ring; beide gleich breit, damit beim Wechsel nichts verrutscht (UX 21.11.2026).
+     */
+    private final JPanel slideSlot = new JPanel(new java.awt.CardLayout());
+    private final JPanel slideRingSpace = new JPanel();
+    private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay slideRing =
+            new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(slideRingSpace);
+    private static final String SLIDE_BUTTONS = "buttons";
+    private static final String SLIDE_RING = "ring";
+    private Runnable onSlideRing = () -> { };
+    private boolean slidesKnown;
 
     VideoTransportBar(DoubleConsumer seek) {
         super(new BorderLayout(0, 2));
@@ -62,10 +74,27 @@ final class VideoTransportBar extends JPanel {
         playback.add(stop);
         playback.add(skipBack);
         playback.add(skipForward);
-        playback.add(previousSlide);
-        playback.add(nextSlide);
-        previousSlide.setVisible(false);
-        nextSlide.setVisible(false);
+        JPanel slideButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        slideButtons.setOpaque(false);
+        slideButtons.add(previousSlide);
+        slideButtons.add(javax.swing.Box.createHorizontalStrut(5));
+        slideButtons.add(nextSlide);
+        slideRingSpace.setOpaque(false);
+        slideRingSpace.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        slideRingSpace.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent event) {
+                onSlideRing.run();
+            }
+        });
+        slideRing.setCompact(true);
+        slideRing.setVeilColor(new Color(BACKGROUND.getRGB() & 0xFFFFFF, true));
+        slideRing.setHighlight(FOREGROUND);
+        slideSlot.setOpaque(false);
+        slideSlot.add(slideButtons, SLIDE_BUTTONS);
+        slideSlot.add(slideRing, SLIDE_RING);
+        slideSlot.setVisible(false);
+        playback.add(slideSlot);
         JPanel transfers = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
         transfers.setOpaque(false);
         download.setText("Herunterladen");
@@ -118,15 +147,71 @@ final class VideoTransportBar extends JPanel {
     void slides(java.util.List<Long> changes) {
         seekBar.slides(changes);
         boolean any = changes != null && !changes.isEmpty();
-        previousSlide.setVisible(any);
-        nextSlide.setVisible(any);
+        slidesKnown = any;
         if (any) {
             String found = changes.size() + " Folienwechsel erkannt";
-            previousSlide.setToolTipText("Vorige Folie (" + found + ")");
-            nextSlide.setToolTipText("Nächste Folie (" + found + ")");
+            slideButtons("Vorige Folie (" + found + ")", "Nächste Folie (" + found + ")", true);
+        } else {
+            slideSlot.setVisible(false);
         }
         revalidate();
         repaint();
+    }
+
+    /**
+     * „Folienwechsel erkennen“ wartet oder läuft im Hintergrund: der kleine Ring an der Stelle der Folienknöpfe, mit
+     * {@code tip}; ein Klick darauf führt {@code onClick} aus (etwa zur Auftragsverwaltung).
+     */
+    void slidesDetecting(String tip, Runnable onClick) {
+        onSlideRing = onClick == null ? () -> { } : onClick;
+        slideRingSpace.setToolTipText(tip);
+        slideRing.getAccessibleContext().setAccessibleName(tip);
+        ((java.awt.CardLayout) slideSlot.getLayout()).show(slideSlot, SLIDE_RING);
+        slideSlot.setVisible(true);
+        revalidate();
+        repaint();
+    }
+
+    /** Die Erkennung kam zu keinem Ergebnis: die Folienknöpfe gesperrt, {@code reason} im Tooltip. */
+    void slidesUnavailable(String reason) {
+        if (!slidesKnown) {
+            slideButtons(reason, reason, false);
+        }
+    }
+
+    /** Weder Marken noch Erkennung: kein Platz für Folienknöpfe. */
+    void noSlides() {
+        if (!slidesKnown) {
+            slideSlot.setVisible(false);
+            revalidate();
+            repaint();
+        }
+    }
+
+    private void slideButtons(String previousTip, String nextTip, boolean enabled) {
+        previousSlide.setToolTipText(previousTip);
+        nextSlide.setToolTipText(nextTip);
+        previousSlide.setEnabled(enabled);
+        nextSlide.setEnabled(enabled);
+        ((java.awt.CardLayout) slideSlot.getLayout()).show(slideSlot, SLIDE_BUTTONS);
+        slideSlot.setVisible(true);
+        revalidate();
+        repaint();
+    }
+
+    /** Der kleine Ring der Folienerkennung, für {@code controls.BackgroundWait}. */
+    com.aresstack.spaceharvester.app.ui.controls.BusyOverlay slideRing() {
+        return slideRing;
+    }
+
+    /** Der Platz der Folienknöpfe (für Tests). */
+    JPanel slideSlot() {
+        return slideSlot;
+    }
+
+    /** Ob der Ring statt der Folienknöpfe steht (für Tests). */
+    boolean slideRingShown() {
+        return slideSlot.isVisible() && slideRing.isVisible();
     }
 
     JButton play() {

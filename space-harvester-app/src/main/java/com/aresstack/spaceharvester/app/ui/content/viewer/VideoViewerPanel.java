@@ -122,7 +122,25 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         message.setBackground(new java.awt.Color(0x171E27));
         message.setForeground(new java.awt.Color(0xE6EDF4));
         message.setBorder(BorderFactory.createEmptyBorder(9, 8, 9, 8));
-        add(message, BorderLayout.NORTH);
+        // Die Platte zur Folienerkennung steht als eigene Zeile über den Meldungen des Players; Download-Fortschritt,
+        // „Video gespeichert“ und Wiedergabefehler bleiben darunter sichtbar (Architekt 21.11.2026).
+        north.setOpaque(true);
+        north.setBackground(new java.awt.Color(0x171E27));
+        plateHolder.setOpaque(false);
+        plateHolder.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
+        plateHolder.add(slidesPlate, BorderLayout.CENTER);
+        plateHolder.setVisible(false);
+        north.add(plateHolder, BorderLayout.NORTH);
+        north.add(message, BorderLayout.CENTER);
+        slidesPlate.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentHidden(java.awt.event.ComponentEvent event) {
+                // ✕ oder Link: die Zeile verschwindet wieder.
+                plateHolder.setVisible(false);
+                north.revalidate();
+            }
+        });
+        add(north, BorderLayout.NORTH);
         add(transport, BorderLayout.SOUTH);
         display.setOpaque(true);
         display.setBackground(new Color(0x171E27));
@@ -688,46 +706,76 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         message.setText(playbackMessage());
     }
 
-    /**
-     * Find the slide changes of a screen-recorded presentation from the MP4 index when the page opens, once and in the
-     * background: their marks appear before anything is played, and whoever listens ({@link #onSlides}) gets the same
-     * marks, e.g. for one virtual attachment per slide. Other formats simply show no marks.
-     */
-    public void findSlides() {
-        boolean mp4 = "video/mp4".equalsIgnoreCase(mediaType)
-                || fileName != null && fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4");
-        if (slideDetection != null || closed || !mp4 || fileSize < 16) {
-            return;
-        }
-        slideDetection = new SwingWorker<SlideIndex, Void>() {
-            @Override
-            protected SlideIndex doInBackground() throws IOException {
-                return new SlideIndex(SlideChanges.load(reader, fileSize, settings),
-                        SlideChanges.durationMillis(reader, fileSize));
-            }
+    /** Über dem Bild: die Platte zur Folienerkennung (nur wenn sie steht) und darunter die Meldungen des Players. */
+    private final javax.swing.JPanel north = new javax.swing.JPanel(new BorderLayout());
+    private final javax.swing.JPanel plateHolder = new javax.swing.JPanel(new BorderLayout());
+    /** Hinweis, wenn „Folienwechsel erkennen“ abgebrochen, angehalten oder gescheitert ist; höchstens einer. */
+    private final com.aresstack.spaceharvester.app.ui.controls.MessagePlate slidesPlate =
+            new com.aresstack.spaceharvester.app.ui.controls.MessagePlate();
+    /** Text des Links zum Wiederholen. */
+    public static final String RETRY_IN_BACKGROUND = "im Reiter „Hintergrund“ wiederholen";
 
-            @Override
-            protected void done() {
-                if (closed || isCancelled()) {
-                    return;
-                }
-                try {
-                    SlideIndex index = get();
-                    marks(index.changes(), index.durationMillis());
-                    onSlides.accept(index.changes());
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                } catch (ExecutionException unavailable) {
-                    // Without a readable index the video simply has no slide marks.
-                }
-            }
-        };
-        slideDetection.execute();
+    /**
+     * „Folienwechsel erkennen“ wartet ({@code running == false}) oder läuft als Hintergrundauftrag (Angelo 21.11.2026):
+     * an der Stelle der Folienknöpfe dreht der kleine Ring ({@link #slideRing()}, für {@code controls.BackgroundWait});
+     * ein Klick darauf führt {@code openJobs} aus. Ein Hinweis eines früheren Laufs verschwindet.
+     */
+    public void slidesDetecting(boolean running, Runnable openJobs) {
+        slidesPlate.dismiss();
+        transport.slidesDetecting(running ? "Folienwechsel werden erkannt …"
+                : "Folienwechsel-Erkennung wartet (Auftrag im Reiter „Hintergrund“)", openJobs);
+    }
+
+    /** Der kleine Ring der Folienerkennung in der Transportleiste. */
+    public com.aresstack.spaceharvester.app.ui.controls.BusyOverlay slideRing() {
+        return transport.slideRing();
     }
 
     /**
-     * Show marks that are already known (stored when they were found) instead of {@link #findSlides}: the index is not
-     * read again, only the movie header for the length that places the marks.
+     * Die Erkennung kam zu keinem Ergebnis: oben im Player ein Hinweis mit ✕ und dem Link zum Wiederholen, gelb bei
+     * Abbruch oder Anhalten, rot nur bei einem Fehler ({@code error}); die Folienknöpfe stehen gesperrt mit dem Grund
+     * im Tooltip.
+     */
+    public void slidesUnavailable(String sentence, boolean error, Runnable retry) {
+        slidesUnavailable(sentence, error, RETRY_IN_BACKGROUND, retry);
+    }
+
+    /** Wie {@link #slidesUnavailable(String, boolean, Runnable)}, mit eigenem Linktext, etwa zur Einstellung. */
+    public void slidesUnavailable(String sentence, boolean error, String link, Runnable action) {
+        if (error) {
+            slidesPlate.showError(sentence, link, action);
+        } else {
+            slidesPlate.show(sentence, link, action);
+        }
+        plateHolder.setVisible(true);
+        north.revalidate();
+        transport.slidesUnavailable(sentence);
+    }
+
+    /** Die Meldungszeile des Players (für Tests). */
+    JLabel playerMessage() {
+        return message;
+    }
+
+    /** Die Erkennung ist fertig, das Video hat keine Folien: kein Ring, keine Knöpfe. */
+    public void noSlides() {
+        slidesPlate.dismiss();
+        transport.noSlides();
+    }
+
+    /** Der Hinweis zur Folienerkennung (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.MessagePlate slidesPlate() {
+        return slidesPlate;
+    }
+
+    /** Ob der Ring statt der Folienknöpfe steht (für Tests). */
+    boolean slideRingShown() {
+        return transport.slideRingShown();
+    }
+
+    /**
+     * Show the stored marks (found by the background job „Folienwechsel erkennen“): the index is not read again, only
+     * the movie header for the length that places the marks.
      */
     public void showMarks(java.util.List<Long> changes) {
         if (closed || changes.isEmpty() || changes.equals(shownMarks)) {
@@ -760,6 +808,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     /** The marks on the timeline; with a known length they are placed before anything is played. */
     private void marks(java.util.List<Long> changes, long durationMillis) {
         shownMarks = java.util.List.copyOf(changes);
+        slidesPlate.dismiss();
         if (durationMillis > 0) {
             indexDurationMillis = durationMillis;
         }
@@ -792,14 +841,6 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     /** Der Knopf „In PDF umwandeln“ (für Tests). */
     javax.swing.JButton convertPdfButton() {
         return transport.convertPdf();
-    }
-
-    /** Whoever wants the slide changes once they are found, e.g. for one virtual attachment per slide. */
-    private java.util.function.Consumer<java.util.List<Long>> onSlides = changes -> { };
-
-    /** {@code listener} gets the slide changes in milliseconds once, on the EDT, when they are found. */
-    public void onSlides(java.util.function.Consumer<java.util.List<Long>> listener) {
-        onSlides = java.util.Objects.requireNonNull(listener, "listener");
     }
 
     /** Jump to the next slide, or to the start of the current or previous one like a player's previous button. */

@@ -350,14 +350,26 @@ public final class BackgroundJobs {
      * @return die fortgesetzten Aufträge
      */
     public List<JobStatus> resumeInterrupted() {
+        return resumeInterrupted(null);
+    }
+
+    /**
+     * Wie {@link #resumeInterrupted()}, nur für Unteraufträge der Art {@code kind}: für eine Art, die erst nach dem Start
+     * des Dienstes arbeiten kann (etwa wenn die App ihre Videos liefert), ohne Teile anderer Arten anzustoßen, die beim
+     * Start bewusst liegen geblieben sind.
+     *
+     * @param kind die Art; {@code null} für alle
+     * @return die fortgesetzten Aufträge
+     */
+    public List<JobStatus> resumeInterrupted(String kind) {
         List<JobStatus> resumed = new ArrayList<>();
         // Älteste zuerst: Vorgänger einer Kette sind wieder offen, bevor ihre Nachfolger fortsetzen (D1).
         for (JobStatus status : all().stream().sorted(Comparator.comparing(JobStatus::createdAt)).toList()) {
-            if (!interrupted(status)) {
+            if (!interrupted(status) || kind != null && !kind.equals(status.parameter(KIND))) {
                 continue;
             }
-            BackgroundKind kind = kinds.get(status.parameter(KIND));
-            if (kind == null || !kind.autoResume().getAsBoolean()) {
+            BackgroundKind registered = kinds.get(status.parameter(KIND));
+            if (registered == null || !registered.autoResume().getAsBoolean()) {
                 continue;
             }
             try {

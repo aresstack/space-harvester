@@ -177,6 +177,27 @@ class BackgroundJobsTest {
     }
 
     @Test
+    void resumingTheInterruptedPartsOfOneKindLeavesTheOtherKindsAlone() {
+        // Architekt 21.11.2026: eine Art, die erst nach dem Start arbeiten kann, setzt nur ihre eigenen Teile fort.
+        Jobs first = jobs(new Steps());
+        BackgroundJobs before = background(first, new AtomicBoolean(true));
+        before.register(new BackgroundKind("other", part -> JobTask.blocking(context -> seen.add(part))));
+        BackgroundGroup demo = before.start("demo", "Demo", twoSpaces());
+        BackgroundGroup other = before.start("other", "Andere", List.of(new BackgroundPart.Draft("wiki", "GAMMA")));
+
+        Jobs restarted = jobs(executor);
+        BackgroundJobs after = background(restarted, new AtomicBoolean(true));
+        after.register(new BackgroundKind("other", part -> JobTask.blocking(context -> seen.add(part))));
+        List<JobStatus> resumed = after.resumeInterrupted("other");
+        executor.runAll();
+
+        assertThat(resumed).extracting(JobStatus::id).containsExactlyElementsOf(other.jobIds());
+        assertThat(restarted.status(other.jobIds().get(0)).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(demo.jobIds()).allSatisfy(id -> assertThat(restarted.status(id).state())
+                .isEqualTo(JobState.FAILED));
+    }
+
+    @Test
     void afterARestartAKindThatSaysNoStaysInterrupted() {
         Jobs first = jobs(new Steps());
         BackgroundGroup group = background(first, new AtomicBoolean(true)).start("demo", "Demo", twoSpaces());

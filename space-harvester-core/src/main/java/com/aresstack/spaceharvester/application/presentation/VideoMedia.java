@@ -39,6 +39,16 @@ public interface VideoMedia {
         return this;
     }
 
+    /**
+     * Die Folienwechsel des Videos in Millisekunden, aus seinem Index (Hintergrundart „Folienwechsel erkennen“); leer,
+     * wenn das Video keinen lesbaren Index oder keine Folien hat.
+     *
+     * @throws Exception wenn das Video nicht lesbar ist
+     */
+    default List<Long> slideChanges() throws Exception {
+        return List.of();
+    }
+
     /** Wie weit die Transkription ist, gemessen an der Zeit im Video. */
     interface Progress {
 
