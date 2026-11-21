@@ -189,7 +189,7 @@ final class SourceUpdatesView extends JPanel {
 
     private final Mode mode;
     /** Der Podcast der Zusammenfassung: Knopf oben rechts im Himmel, nur in der Leseansicht. */
-    private final PodcastControl podcast;
+    private final PodcastControl<UpdateSummary> podcast;
     private Consumer<String> onSelected = id -> { };
 
     SourceUpdatesView(Supplier<Workspace> workspace, Mode mode) {
@@ -206,7 +206,7 @@ final class SourceUpdatesView extends JPanel {
         this.actions = Objects.requireNonNull(actions, "actions");
         this.runner = Objects.requireNonNull(runner, "runner");
         this.mode = Objects.requireNonNull(mode, "mode");
-        this.podcast = new PodcastControl(() -> {
+        this.podcast = new PodcastControl<>(() -> {
             Actions current = actions.get();
             return current == null ? null : current.podcasts();
         }, runner);
@@ -278,7 +278,7 @@ final class SourceUpdatesView extends JPanel {
     }
 
     /** Der Podcast der gezeigten Zusammenfassung (für Tests). */
-    PodcastControl podcast() {
+    PodcastControl<UpdateSummary> podcast() {
         return podcast;
     }
 
@@ -1828,8 +1828,8 @@ final class SourceUpdatesView extends JPanel {
         Subscription subscribeJobs(JobListener listener);
 
         /** Der Podcast der Zusammenfassungen; ohne bleibt der Knopf aus. */
-        default PodcastControl.Source podcasts() {
-            return PodcastControl.Source.NONE;
+        default PodcastControl.Source<UpdateSummary> podcasts() {
+            return PodcastControl.Source.none();
         }
 
         static Actions of(Workspace workspace) {
@@ -1899,11 +1899,16 @@ final class SourceUpdatesView extends JPanel {
                 }
 
                 @Override
-                public PodcastControl.Source podcasts() {
-                    return new PodcastControl.Source() {
+                public PodcastControl.Source<UpdateSummary> podcasts() {
+                    return new PodcastControl.Source<>() {
                         @Override
                         public boolean available() {
                             return workspace.podcastsAvailable();
+                        }
+
+                        @Override
+                        public String key(UpdateSummary summary) {
+                            return com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.key(summary);
                         }
 
                         @Override
