@@ -25,15 +25,26 @@ import java.util.Objects;
  *                 der Seite, bei einem Anhang sein Dateiname oder der Name der enthaltenen Datei; nur bei
  *                 {@link Kind#TEXT}
  * @param inText   Wörter der Anfrage, die im Text des gefundenen Dokuments stehen; nur bei {@link Kind#TEXT}
+ * @param via      bei {@link Kind#NEIGHBOR} die Ausgangsseite und die Kante, über die der Treffer als Kandidat kam;
+ *                 sonst {@code null}
  */
 public record HitReason(Kind kind, String query, Relation relation, Variant variant, List<String> inTitle,
-                        List<String> inText) {
+                        List<String> inText, Neighbor via) {
 
     public HitReason {
         Objects.requireNonNull(kind, "kind");
         query = query == null ? "" : query;
         inTitle = inTitle == null ? List.of() : List.copyOf(inTitle);
         inText = inText == null ? List.of() : List.copyOf(inText);
+        if ((kind == Kind.NEIGHBOR) != (via != null)) {
+            throw new IllegalArgumentException("via gehört genau zur Art NEIGHBOR");
+        }
+    }
+
+    /** Ohne {@code via}: jede Art außer {@link Kind#NEIGHBOR}. */
+    public HitReason(Kind kind, String query, Relation relation, Variant variant, List<String> inTitle,
+                     List<String> inText) {
+        this(kind, query, relation, variant, inTitle, inText, null);
     }
 
     /** Ein Treffer des Volltextindex im Cache. */
@@ -51,14 +62,23 @@ public record HitReason(Kind kind, String query, Relation relation, Variant vari
         return new HitReason(Kind.SEMANTIC, query, null, null, List.of(), List.of());
     }
 
+    /**
+     * Der Treffer kam als Nachbar einer Ausgangsseite in die Suche (R2) und traf dann die Anfrage {@code query} wie
+     * jeder Treffer; die Ursachen dieses Treffers stehen daneben.
+     */
+    public static HitReason neighbor(String query, Neighbor via) {
+        return new HitReason(Kind.NEIGHBOR, query, null, null, List.of(), List.of(), Objects.requireNonNull(via,
+                "via"));
+    }
+
     /** Dieselbe Ursache als Ergebnis einer Variante der progressiven Suche; {@code null} für die ursprüngliche. */
     public HitReason fromVariant(Variant variant) {
-        return new HitReason(kind, query, relation, variant, inTitle, inText);
+        return new HitReason(kind, query, relation, variant, inTitle, inText, via);
     }
 
     /** Ob der Treffer allein über den Wortlaut der eingegebenen Anfrage kam, ohne Ausweitung und ohne Variante. */
     public boolean original() {
-        return relation == null && variant == null;
+        return relation == null && variant == null && via == null;
     }
 
     /**
@@ -83,12 +103,13 @@ public record HitReason(Kind kind, String query, Relation relation, Variant vari
     }
 
     private String identity() {
-        return kind + "\u0000" + query.toLowerCase(Locale.ROOT) + "\u0000" + relation + "\u0000" + variant;
+        return kind + "\u0000" + query.toLowerCase(Locale.ROOT) + "\u0000" + relation + "\u0000" + variant
+                + "\u0000" + via;
     }
 
     private HitReason withWordsOf(HitReason other) {
         return new HitReason(kind, query, relation, variant, words(inTitle, other.inTitle),
-                words(inText, other.inText));
+                words(inText, other.inText), via);
     }
 
     private static List<String> words(List<String> first, List<String> second) {
@@ -104,7 +125,43 @@ public record HitReason(Kind kind, String query, Relation relation, Variant vari
         /** Die Suche der Quelle; ein vorläufiger Treffer, dessen Inhalt noch nicht im Cache liegt. */
         SOURCE,
         /** Die semantische Suche: Ähnlichkeit der Vektoren im Cache zur Anfrage (ADR 0013, nur mit Haken). */
-        SEMANTIC
+        SEMANTIC,
+        /**
+         * Suchmethode „Nachbarseiten“ (R2, nur mit Haken): Die Seite ist Eltern-, Unterseite oder Verweisziel bzw.
+         * -quelle eines besseren Treffers und traf die Anfrage danach in derselben Bewertung wie jeder Treffer.
+         */
+        NEIGHBOR
+    }
+
+    /**
+     * Die Ausgangsseite eines Nachbar-Treffers (R2): ein ausgelieferter, für den Aufrufer lesbarer Treffer derselben
+     * Suche, und die Kante des Strukturgraphen von ihr zum Nachbarn.
+     *
+     * @param sourceId Quelle der Ausgangsseite
+     * @param pageId   Ausgangsseite
+     * @param title    Titel der Ausgangsseite, wie der Treffer ihn trug
+     * @param edge     Kante von der Ausgangsseite zum Nachbarn
+     */
+    public record Neighbor(String sourceId, String pageId, String title, Edge edge) {
+
+        public Neighbor {
+            Objects.requireNonNull(sourceId, "sourceId");
+            Objects.requireNonNull(pageId, "pageId");
+            Objects.requireNonNull(edge, "edge");
+            title = title == null ? "" : title;
+        }
+
+        /** Die Kante von der Ausgangsseite zum Nachbarn, wie im Strukturgraphen (G1). */
+        public enum Edge {
+            /** Der Nachbar ist die Elternseite der Ausgangsseite. */
+            PARENT,
+            /** Der Nachbar ist eine Unterseite der Ausgangsseite. */
+            CHILD,
+            /** Die Ausgangsseite verweist auf den Nachbarn. */
+            LINKS_TO,
+            /** Der Nachbar verweist auf die Ausgangsseite. */
+            LINKED_FROM
+        }
     }
 
     /**
