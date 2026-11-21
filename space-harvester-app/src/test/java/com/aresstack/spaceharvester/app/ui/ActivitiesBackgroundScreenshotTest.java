@@ -27,7 +27,7 @@ class ActivitiesBackgroundScreenshotTest {
             for (String tab : new String[] {ActivitiesView.BACKGROUND_TAB, ActivitiesView.JOBS_TAB}) {
                 for (int width : new int[] {1280, 960}) {
                     SwingUtilities.invokeAndWait(() -> {
-                        ActivitiesView view = new ActivitiesView(context);
+                        ActivitiesView view = new ActivitiesView(context, null);
                         view.tabs.select(tab);
                         view.showJobsForTest(ActivitiesBackgroundTabTest.sample());
                         view.component().setSize(width, 520);
@@ -38,7 +38,7 @@ class ActivitiesBackgroundScreenshotTest {
                 }
             }
             SwingUtilities.invokeAndWait(() -> {
-                ActivitiesView view = new ActivitiesView(context);
+                ActivitiesView view = new ActivitiesView(context, null);
                 view.tabs.select(ActivitiesView.JOBS_TAB);
             });
         } finally {

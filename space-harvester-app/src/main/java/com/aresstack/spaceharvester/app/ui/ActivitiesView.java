@@ -16,6 +16,9 @@ import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobError;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
+import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
+import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
@@ -197,17 +200,36 @@ public final class ActivitiesView implements View {
     /** Kennung der Zeile einer Hintergrundgruppe, die kein eigener Auftrag ist. */
     static final String GROUP_PREFIX = "background-group:";
     private static final String TAB_PREFERENCE = "activities.tab";
+    /** Hilfetext hinter dem ?-Knopf der Auftragsliste. */
+    static final String HELP = "Abgleiche startest du unter Wissensquellen verwalten, Downloads im Explorer links "
+            + "(Rechtsklick oder Download-Symbol). Beendete Aufträge bleiben sichtbar, bis die Aufbewahrungsfrist endet "
+            + "oder sie gelöscht werden.\n\nIm Reiter „Aufträge“ steht, was du gestartet hast. Im Reiter „Hintergrund“ "
+            + "steht, was die App von sich aus anstößt, etwa fehlende Nachbarseiten laden: je Anstoß eine Gruppe mit "
+            + "einem Unterauftrag je Space. Hintergrundaufträge haben Nachrang, laufen nach einem Neustart von selbst "
+            + "weiter und lassen sich anhalten, fortsetzen und abbrechen. Die Knöpfe „Alle …“, der Besen und „Alle "
+            + "löschen“ wirken nur auf den gewählten Reiter.";
     static final String BACKGROUND_TIP = "Hintergrundaufträge: was die App von sich aus anstößt, etwa fehlende "
             + "Seiten nachladen oder Bilder beschreiben; nachrangig, nach einem Neustart fortgesetzt";
     /** Unter dieser Breite der Liste zeigt „Angelegt“ keine Sekunden, damit der Titel Platz hat. */
     static final int COMPACT_TIME_BELOW = 1100;
     /** Alle zuletzt gelesenen Aufträge, beide Reiter. */
     private List<JobStatus> lastJobs = List.of();
+    /** Ablage des zuletzt gewählten Reiters, oder {@code null}. */
+    private final java.util.prefs.Preferences preferences;
     /** Beim nächsten Zeichnen nach oben: anderer Auftrag gewählt oder Codefeld neu erschienen. */
     private boolean toTop;
 
     public ActivitiesView(AppContext context) {
+        this(context, userPreferences());
+    }
+
+    /**
+     * @param preferences wo der zuletzt gewählte Reiter bleibt; {@code null} merkt sich nichts (Tests schreiben so nie
+     *                    in die Ablage des Benutzers)
+     */
+    ActivitiesView(AppContext context, java.util.prefs.Preferences preferences) {
         this.context = context;
+        this.preferences = preferences;
         this.signIn = new SignInSlot(context, requests -> selectedId == null
                 ? requests.pending().stream().findFirst() : requests.waiting(selectedId));
         root.setBackground(Comic.SURFACE);
@@ -243,10 +265,7 @@ public final class ActivitiesView implements View {
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
-        JLabel hint = new JLabel(ComposerIcons.info());
-        hint.setToolTipText("<html>Abgleiche startest du unter Wissensquellen verwalten, Downloads im Explorer links "
-                + "(Rechtsklick oder Download-Symbol).<br>Beendete Aufträge bleiben sichtbar, bis die Aufbewahrungsfrist "
-                + "endet oder sie gelöscht werden.</html>");
+        HelpButton hint = new HelpButton(24, "Aufträge", HELP);
         tabs.tab(JOBS_TAB, emptyCard()).tab(BACKGROUND_TAB, emptyCard());
         tabs.button(JOBS_TAB).setToolTipText("Aufträge, die du gestartet hast");
         tabs.button(BACKGROUND_TAB).setToolTipText(BACKGROUND_TIP);
@@ -549,25 +568,7 @@ public final class ActivitiesView implements View {
         }
         reading = true;
         String id = selectedId;
-        Background.run(() -> {
-            List<JobStatus> jobs = runtime.workspace().jobs();
-            Object current = null;
-            String currentPhase = null;
-            if (id != null && !id.startsWith(GROUP_PREFIX)) {
-                JobStatus status = runtime.workspace().job(id);
-                if (!status.state().terminal()) {
-                    currentPhase = runtime.workspace().events(id).stream().map(JobEvent::phase)
-                            .filter(Objects::nonNull).reduce((first, second) -> second).orElse(null);
-                }
-                current = status.type() == JobType.SYNC ? runtime.workspace().syncStatus(id) : status;
-                if (status.type() == JobType.EXPORT && status.state() == JobState.COMPLETED) {
-                    current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null));
-                }
-            }
-            // Gruppenzeilen sind kein gespeicherter Auftrag und haben keine eigenen Ereignisse.
-            return new Object[] {jobs, current, currentPhase, notes(id == null || id.startsWith(GROUP_PREFIX)
-                    ? List.of() : runtime.workspace().events(id))};
-        }, data -> {
+        Background.run(() -> read(runtime.workspace(), id), data -> {
             readDone();
             @SuppressWarnings("unchecked")
             List<JobStatus> jobs = (List<JobStatus>) data[0];
@@ -1251,13 +1252,24 @@ public final class ActivitiesView implements View {
         }
         switch (action) {
             case CANCEL -> {
-                if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(job) + " von "
+                if (groupRow(job)) {
+                    if (!Dialogs.confirm(root, "Hintergrundauftrag abbrechen?", groupName(job)
+                            + " wirklich abbrechen? Bereits Geladenes bleibt erhalten.")) {
+                        return;
+                    }
+                } else if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(job) + " von "
                         + job.partitionKey() + " wirklich abbrechen? Bereits Gelesenes bleibt unbestätigt.")) {
                     return;
                 }
             }
             case DELETE -> {
-                if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job) + " von " + job.partitionKey()
+                if (groupRow(job)) {
+                    if (!Dialogs.confirm(root, "Hintergrundauftrag löschen?", groupName(job) + " wirklich löschen?"
+                            + (job.state().terminal() ? "" : " Laufende Teilaufträge werden dafür abgebrochen.")
+                            + " Die Teilaufträge und ihre Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT)) {
+                        return;
+                    }
+                } else if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job) + " von " + job.partitionKey()
                         + " wirklich löschen?" + (job.state().terminal() ? "" : " Er wird dafür abgebrochen.")
                         + " Der Auftrag und seine Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT)) {
                     return;
@@ -1349,8 +1361,9 @@ public final class ActivitiesView implements View {
 
     /** Zahl der laufenden Hintergrundaufträge am Reiter; ohne Laufendes kein Chip. */
     private void updateBackgroundChip(List<JobStatus> jobs) {
+        // Nach Lebenszyklus: was gerade anhält oder abbricht, läuft nicht mehr.
         int running = (int) jobs.stream().filter(job -> job.type().background()
-                && job.state() == JobState.RUNNING).count();
+                && job.state() == JobState.RUNNING && !job.cancelRequested()).count();
         tabs.count(BACKGROUND_TAB, running, Comic.PETROL, Texts.count(running, "Hintergrundauftrag läuft",
                 "Hintergrundaufträge laufen"), BACKGROUND_TIP);
     }
@@ -1382,6 +1395,13 @@ public final class ActivitiesView implements View {
     /** Ob die Zeile eine Hintergrundgruppe ist, kein eigener Auftrag. */
     static boolean groupRow(JobStatus job) {
         return job.id().startsWith(GROUP_PREFIX);
+    }
+
+    /** „Nachbarseiten laden“ mit 3 Teilaufträgen: Name und Größe einer Gruppe für Rückfragen. */
+    private String groupName(JobStatus row) {
+        String groupId = row.id().substring(GROUP_PREFIX.length());
+        long parts = lastJobs.stream().filter(job -> groupId.equals(job.parameter(BackgroundJobs.GROUP))).count();
+        return "„" + Texts.type(row) + "“ mit " + Texts.count(parts, "Teilauftrag", "Teilaufträgen");
     }
 
     /** Die Gruppenzeile aus der zuletzt gelesenen Liste, oder {@code null}. */
@@ -1442,11 +1462,23 @@ public final class ActivitiesView implements View {
                 parameters.put(key, value);
             }
         }
+        // Ein echter Fehler geht vor „Unterbrochen“: der zeigt, dass Fortsetzen allein nicht reicht.
         JobError error = state == JobState.FAILED ? parts.stream().map(JobStatus::error).filter(Objects::nonNull)
-                .findFirst().orElse(null) : null;
+                .min(Comparator.comparing(e -> JobLifecycleState.INTERRUPTED.equals(e.code()))).orElse(null) : null;
+        // Angefordertes Anhalten oder Abbrechen gilt für die Gruppe, wenn es für jeden noch tätigen Teil gilt.
+        List<JobStatus> active = parts.stream().filter(part -> part.state() == JobState.RUNNING
+                || part.state() == JobState.QUEUED).toList();
+        boolean cancelRequested = !active.isEmpty() && active.stream().allMatch(JobStatus::cancelRequested);
+        boolean pauseRequested = cancelRequested && active.stream().allMatch(JobStatus::pauseRequested);
+        // Angehalten: ein Grund des Systems (Verbindung, Anmeldung) geht vor dem des Benutzers.
+        PauseReason pauseReason = state != JobState.PAUSED ? null : parts.stream()
+                .filter(part -> part.state() == JobState.PAUSED).map(JobStatus::pauseReason).filter(Objects::nonNull)
+                .min(Comparator.comparing(reason -> reason == PauseReason.USER)).orElse(PauseReason.USER);
+        boolean incomplete = parts.stream().anyMatch(part -> part.incomplete() || part.progress().failed() > 0);
         return new JobStatus(GROUP_PREFIX + group, JobType.BACKGROUND, String.join(", ", sources), null,
-                first.owner(), state, new JobProgress(discovered, processed, written, failed), error, false,
-                first.createdAt(), started, finished, null, null, parameters, false, false, null);
+                first.owner(), state, new JobProgress(discovered, processed, written, failed), error,
+                cancelRequested, first.createdAt(), started, finished, null, null, parameters, incomplete,
+                pauseRequested, pauseReason);
     }
 
     /** Mischt zwei Farben; {@code weight} ist der Anteil von {@code b}. */
@@ -1464,18 +1496,28 @@ public final class ActivitiesView implements View {
         return empty;
     }
 
-    /** Der zuletzt gewählte Reiter dieses Benutzers; ohne Ablage „Aufträge“. */
-    private static String rememberedTab() {
+    private static java.util.prefs.Preferences userPreferences() {
         try {
-            return java.util.prefs.Preferences.userNodeForPackage(ActivitiesView.class).get(TAB_PREFERENCE, JOBS_TAB);
+            return java.util.prefs.Preferences.userNodeForPackage(ActivitiesView.class);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Der zuletzt gewählte Reiter dieses Benutzers; ohne Ablage „Aufträge“. */
+    private String rememberedTab() {
+        try {
+            return preferences == null ? JOBS_TAB : preferences.get(TAB_PREFERENCE, JOBS_TAB);
         } catch (RuntimeException e) {
             return JOBS_TAB;
         }
     }
 
-    private static void rememberTab(String tab) {
+    private void rememberTab(String tab) {
         try {
-            java.util.prefs.Preferences.userNodeForPackage(ActivitiesView.class).put(TAB_PREFERENCE, tab);
+            if (preferences != null) {
+                preferences.put(TAB_PREFERENCE, tab);
+            }
         } catch (RuntimeException e) {
             // Nur eine Bequemlichkeit: ohne Ablage beginnt die Ansicht beim nächsten Start mit „Aufträge“.
         }
@@ -2096,6 +2138,32 @@ public final class ActivitiesView implements View {
         JobStatus status = current.get();
         Background.run(() -> runtime.workspace().startSync(status.sourceId(), status.partitionKey()),
                 started -> show(started.id()), feedback::problem);
+    }
+
+    /**
+     * Was ein Abruf der Liste liest: alle Aufträge, das Detail und die Ereignisse des gewählten. Eine Gruppenzeile
+     * ({@value #GROUP_PREFIX}…) ist kein gespeicherter Auftrag: ihre ID geht nie an den Core, ihr Detail entsteht aus
+     * der Liste ({@link #groupRow(String)}).
+     *
+     * @return Aufträge, Detail, aktuelle Phase, Vermerke
+     */
+    public static Object[] read(Workspace workspace, String id) {
+        List<JobStatus> jobs = workspace.jobs();
+        Object current = null;
+        String currentPhase = null;
+        boolean real = id != null && !id.startsWith(GROUP_PREFIX);
+        if (real) {
+            JobStatus status = workspace.job(id);
+            if (!status.state().terminal()) {
+                currentPhase = workspace.events(id).stream().map(JobEvent::phase)
+                        .filter(Objects::nonNull).reduce((first, second) -> second).orElse(null);
+            }
+            current = status.type() == JobType.SYNC ? workspace.syncStatus(id) : status;
+            if (status.type() == JobType.EXPORT && status.state() == JobState.COMPLETED) {
+                current = new ExportDetail(status, workspace.exportArtifact(id).orElse(null));
+            }
+        }
+        return new Object[] {jobs, current, currentPhase, notes(real ? workspace.events(id) : List.of())};
     }
 
     private record ExportDetail(JobStatus status, ExportArtifact artifact) {

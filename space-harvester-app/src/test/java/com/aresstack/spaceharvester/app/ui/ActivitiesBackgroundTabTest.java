@@ -92,7 +92,7 @@ class ActivitiesBackgroundTabTest {
                 home.resolve("app.yml"), "test");
         try {
             SwingUtilities.invokeAndWait(() -> {
-                ActivitiesView view = new ActivitiesView(context);
+                ActivitiesView view = new ActivitiesView(context, null);
                 view.tabs.select(ActivitiesView.JOBS_TAB);
                 view.showJobsForTest(sample());
                 assertThat(view.rowsForTest()).extracting(JobStatus::id).containsExactly("s1", "e1");
@@ -118,7 +118,7 @@ class ActivitiesBackgroundTabTest {
                 home.resolve("app.yml"), "test");
         try {
             SwingUtilities.invokeAndWait(() -> {
-                ActivitiesView view = new ActivitiesView(context);
+                ActivitiesView view = new ActivitiesView(context, null);
                 view.tabs.select(ActivitiesView.BACKGROUND_TAB);
                 view.showJobsForTest(sample());
                 javax.swing.JComponent root = view.component();
@@ -211,5 +211,66 @@ class ActivitiesBackgroundTabTest {
         assertThat(ActivitiesView.tabJobs(sample(), false)).extracting(JobStatus::id).containsExactly("s1", "e1");
         assertThat(ActivitiesView.visible(sample(), true)).anyMatch(ActivitiesView::groupRow);
         assertThat(background).noneMatch(ActivitiesView::groupRow);
+    }
+
+    static JobStatus part(String id, JobState state, boolean cancelRequested, boolean pauseRequested,
+                          com.aresstack.spaceharvester.application.jobs.PauseReason reason, boolean incomplete) {
+        return new JobStatus(id, JobType.BACKGROUND, "wiki", "ALPHA", "space-harvester-core", state,
+                new JobProgress(4, 4, 4, 0), null, cancelRequested, T, T, state.terminal() ? T : null, null, null,
+                group("g9", "Nachbarseiten laden"), incomplete, pauseRequested, reason);
+    }
+
+    @Test
+    void theGroupStateFollowsTheLifecycleOfItsParts() {
+        // Ein Teil hält gerade an, der andere ist schon angehalten: „Anhalten angefordert“, nicht „Läuft“.
+        JobStatus pausing = ActivitiesView.groupRows(List.of(
+                part("p1", JobState.RUNNING, true, true, null, false),
+                part("p2", JobState.PAUSED, false, false, null, false))).get(0);
+        assertThat(pausing.lifecycle().key()).isEqualTo("PAUSE_REQUESTED");
+        assertThat(Texts.state(pausing)).isEqualTo("Anhalten angefordert");
+
+        // Verbindung verloren geht vor dem Anhalten des Benutzers.
+        JobStatus lost = ActivitiesView.groupRows(List.of(
+                part("p1", JobState.PAUSED, false, false,
+                        com.aresstack.spaceharvester.application.jobs.PauseReason.USER, false),
+                part("p2", JobState.PAUSED, false, false,
+                        com.aresstack.spaceharvester.application.jobs.PauseReason.CONNECTION_LOST, false))).get(0);
+        assertThat(lost.lifecycle().key()).isEqualTo("PAUSED_CONNECTION_LOST");
+
+        // Ein unvollständiger Teil macht die Gruppe „Fertig, unvollständig“.
+        JobStatus partial = ActivitiesView.groupRows(List.of(
+                part("p1", JobState.COMPLETED, false, false, null, false),
+                part("p2", JobState.COMPLETED, false, false, null, true))).get(0);
+        assertThat(partial.lifecycle().key()).isEqualTo("COMPLETED_WITH_ERRORS");
+    }
+
+    @Test
+    void theHelpSitsBehindAQuestionMarkButton() throws Exception {
+        Path home = Files.createTempDirectory("bghelp");
+        AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home),
+                home.resolve("app.yml"), "test");
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                ActivitiesView view = new ActivitiesView(context, null);
+                List<com.aresstack.spaceharvester.app.ui.controls.HelpButton> help = new ArrayList<>();
+                collect(view.component(), help);
+                assertThat(help).hasSize(1);
+                assertThat(help.get(0).popup()).isNotNull();
+            });
+        } finally {
+            context.shutdown();
+        }
+    }
+
+    private static void collect(java.awt.Component component,
+                                List<com.aresstack.spaceharvester.app.ui.controls.HelpButton> found) {
+        if (component instanceof com.aresstack.spaceharvester.app.ui.controls.HelpButton help) {
+            found.add(help);
+        }
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                collect(child, found);
+            }
+        }
     }
 }
