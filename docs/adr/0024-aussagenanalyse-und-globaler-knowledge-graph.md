@@ -139,8 +139,9 @@ Drei Felder bleiben getrennt und werden nie vermischt:
    `PLAUSIBLE` sein. Nur die implizite Kennung ohne Subjektkante ist `HEURISTIC` und höchstens `UNCERTAIN` (Fall I).
    Berechtigungsmanagement → umsetzen → Freigaben, Marktplatz → bilden → Anwenderschnittstelle und Register →
    erweitern → Datenprodukte bleiben deshalb in Standardansicht und Export.
-3. **Fachliche Prüfung** (`ParsedStatements.Review`: `UNREVIEWED`, `CONFIRMED`, `REJECTED`): vorerst nur im Modell,
-   ohne Bedienung; jede Analyse beginnt `UNREVIEWED`.
+3. **Fachliche Prüfung** (`ParsedStatements.Review`: `UNREVIEWED`, `CONFIRMED`, `REJECTED`): von Hand je Aussage im
+   Eintrag der Entscheidungen zum Stand gesetzt und zurückgenommen, je Ablage des Analysators (ADR 0032, Umsetzung W3).
+   Jede gespeicherte Analyse bleibt `UNREVIEWED`; die Prüfung wirkt an einer Stelle beim Lesen.
 
 Nichts wird gelöscht: jede Aussage bleibt mit Stufe und Gründen gespeichert. `PageGraph.of(analysis)` und der
 JSON-LD-Export zeigen standardmäßig nur `PLAUSIBLE`; andere Stufen sind über `PageGraph.of(analysis, qualities)`

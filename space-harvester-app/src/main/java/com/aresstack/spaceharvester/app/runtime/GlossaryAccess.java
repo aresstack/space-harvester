@@ -146,7 +146,15 @@ public interface GlossaryAccess {
      * @throws AiUnavailableException ohne KI-Dienst
      * @throws NotAllowedException    wenn keine Quelle im Umfang freigegeben ist
      */
-    List<JobStatus> classify(String sourceId, String spaceKey);
+    default List<JobStatus> classify(String sourceId, String spaceKey) {
+        return classify(sourceId, spaceKey, null);
+    }
+
+    /**
+     * Wie {@link #classify(String, String)}, mit {@code pageId} nur über diese Seite samt Unterseiten (D4.2): der Lauf
+     * ergänzt nur, Einträge gelten weiter für Quelle und Space der Seite.
+     */
+    List<JobStatus> classify(String sourceId, String spaceKey, String pageId);
 
     /** Stand eines Auftrags; {@code progress} zählt gefragte und beantwortete Kandidaten und geschriebene Einträge. */
     JobStatus classification(String jobId);

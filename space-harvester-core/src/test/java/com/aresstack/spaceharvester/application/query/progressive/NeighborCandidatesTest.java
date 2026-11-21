@@ -66,12 +66,17 @@ class NeighborCandidatesTest {
 
     /** Handbuch mit Betrieb und Buchung; Betrieb hat Nachtlauf und Abschluss als Unterseiten. */
     private NeighborCandidates candidates() {
+        return candidates(LinkDirectory.NONE);
+    }
+
+    private NeighborCandidates candidates(LinkDirectory links) {
         String[][] all = {
                 {"0", "Handbuch", null},
                 {"1", "Betrieb", "0"},
                 {"2", "Buchung", "0"},
                 {"4", "Nachtlauf", "1"},
-                {"5", "Abschluss", "1"}};
+                {"5", "Abschluss", "1"},
+                {"6", "Waise", "77"}};
         for (String[] row : all) {
             PageMetadata metadata = new PageMetadata(row[0], "confluence:wiki/page/" + row[0], row[1], "DEV", row[2],
                     "1", T0, null, PageMetadata.sorted(Map.of()));
@@ -81,7 +86,7 @@ class NeighborCandidatesTest {
         index.publish("wiki", new SearchIndexState("i1", T0), pages.stream()
                 .map(page -> entry(page, confirmed("g1"))).toList());
         return new NeighborCandidates(new PageConnections(catalog, index, new AccessGuard(policy),
-                LinkDirectory.NONE, null, null));
+                links, null, null));
     }
 
     private static KeywordSearch.Hit hit(String pageId, String title) {
@@ -117,5 +122,23 @@ class NeighborCandidatesTest {
         assertThat(found).containsOnlyKeys(new PageKey("wiki", "4"), new PageKey("wiki", "5"),
                 new PageKey("wiki", "2"));
         assertThat(found.get(new PageKey("wiki", "2")).pageId()).isEqualTo("0");
+    }
+
+    @Test
+    void knownNeighborsThatAreNotLocalAreReportedForLoadingButAreNoCandidates() {
+        LinkDirectory links = (caller, page) -> page.pageId().equals("4")
+                ? Optional.of(new LinkDirectory.Links(List.of(new PageKey("wiki", "9"), new PageKey("wiki", "5")),
+                List.of(), true))
+                : Optional.empty();
+        NeighborCandidates source = candidates(links);
+
+        NeighborSource.Found found = source.find(CALLER, List.of(hit("4", "Nachtlauf"), hit("6", "Waise")));
+
+        assertThat(found.local()).containsOnlyKeys(new PageKey("wiki", "1"), new PageKey("wiki", "5"));
+        // Nachtlauf verweist auf eine fehlende Seite, die Waise hängt an einer fehlenden Elternseite.
+        assertThat(found.missing()).containsOnlyKeys(new PageKey("wiki", "9"), new PageKey("wiki", "77"));
+        assertThat(found.missing().get(new PageKey("wiki", "77")).edge()).isEqualTo(HitReason.Neighbor.Edge.PARENT);
+        assertThat(found.missing().get(new PageKey("wiki", "9"))).isEqualTo(new HitReason.Neighbor("wiki", "4",
+                "Nachtlauf", HitReason.Neighbor.Edge.LINKS_TO));
     }
 }

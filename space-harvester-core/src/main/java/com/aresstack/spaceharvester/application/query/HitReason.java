@@ -102,6 +102,43 @@ public record HitReason(Kind kind, String query, Relation relation, Variant vari
         return List.copyOf(merged.values());
     }
 
+    /** Art der Beziehung eines vorgeschlagenen Synonyms eines Fachbegriffs (K5a, „Synonym (Vorschlag)“). */
+    public static final String PROPOSED_SYNONYM = "synonym-proposed";
+
+    /**
+     * Ob der einzige Textgrund eines Treffers ein vorgeschlagenes Synonym ist (K5a): Alle Ursachen aus Volltext oder
+     * Quellensuche kamen über {@link #PROPOSED_SYNONYM}, und es gibt mindestens eine. Solche Treffer stehen hinter den
+     * übrigen; semantische und Nachbar-Ursachen zählen nicht als Textgrund.
+     */
+    public static boolean onlyProposedSynonym(List<HitReason> reasons) {
+        boolean any = false;
+        for (HitReason reason : reasons == null ? List.<HitReason>of() : reasons) {
+            if (reason.kind != Kind.TEXT && reason.kind != Kind.SOURCE) {
+                continue;
+            }
+            if (reason.relation == null || !PROPOSED_SYNONYM.equals(reason.relation.type())) {
+                return false;
+            }
+            any = true;
+        }
+        return any;
+    }
+
+    /** Die Liste stabil umsortiert: Einträge, deren einziger Textgrund ein Synonymvorschlag ist, ans Ende (K5a). */
+    public static <T> List<T> proposedSynonymsLast(List<T> items,
+                                                   java.util.function.Function<T, List<HitReason>> reasons) {
+        List<T> first = new ArrayList<>(items.size());
+        List<T> last = new ArrayList<>();
+        for (T item : items) {
+            (onlyProposedSynonym(reasons.apply(item)) ? last : first).add(item);
+        }
+        if (last.isEmpty()) {
+            return items;
+        }
+        first.addAll(last);
+        return first;
+    }
+
     private String identity() {
         return kind + "\u0000" + query.toLowerCase(Locale.ROOT) + "\u0000" + relation + "\u0000" + variant
                 + "\u0000" + via;

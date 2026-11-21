@@ -226,4 +226,90 @@ class PageLoadsTest {
             threads.shutdownNow();
         }
     }
+
+    @Test
+    void pagesThatAnOpenPartAlreadyLoadsStartNoSecondGroup() {
+        BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("1", "3")).orElseThrow();
+
+        // Dieselbe Suche noch einmal, bevor der erste Auftrag lief: nichts Neues.
+        assertThat(loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("1", "3")))
+                .isEmpty();
+        // Teilweise neu: nur die neue Seite bekommt einen Auftrag.
+        BackgroundGroup second = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("1", "2")).orElseThrow();
+        assertThat(second.parts()).singleElement().satisfies(part ->
+                assertThat(part.parameter(PageLoads.PAGES)).isEqualTo("2"));
+        assertThat(background.groups()).extracting(BackgroundGroup::groupId)
+                .containsExactlyInAnyOrder(first.groupId(), second.groupId());
+    }
+
+    @Test
+    void waitingForAPageWakesOnlyOnItsEndOrAStopRequestNeverOnATimer() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger checkpoints = new java.util.concurrent.atomic.AtomicInteger();
+        com.aresstack.spaceharvester.application.jobs.JobContext context =
+                new com.aresstack.spaceharvester.application.jobs.JobContext() {
+                    @Override
+                    public String jobId() {
+                        return "j";
+                    }
+
+                    @Override
+                    public void checkpoint() {
+                        checkpoints.incrementAndGet();
+                    }
+
+                    @Override
+                    public boolean cancelRequested() {
+                        return false;
+                    }
+
+                    @Override
+                    public void discovered(long pages) {
+                    }
+
+                    @Override
+                    public void processed(long pages) {
+                    }
+
+                    @Override
+                    public void written(long pages) {
+                    }
+
+                    @Override
+                    public void failed(long pages) {
+                    }
+                };
+        java.util.concurrent.CompletableFuture<Boolean> done = new java.util.concurrent.CompletableFuture<>();
+        PageLoads.Wake wake = new PageLoads.Wake();
+        java.util.concurrent.atomic.AtomicReference<Boolean> result = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread waiter = new Thread(() -> {
+            try {
+                result.set(PageLoads.await(context, done, wake));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        waiter.start();
+        java.time.Instant deadline = java.time.Instant.now().plusSeconds(10);
+        while (waiter.getState() != Thread.State.WAITING && java.time.Instant.now().isBefore(deadline)) {
+            Thread.sleep(5);
+        }
+
+        // Ohne Meldung: nichts weckt, auch nicht nach mehr als einer früheren Taktlänge.
+        Thread.sleep(1_200);
+        assertThat(checkpoints.get()).isEqualTo(1);
+
+        // Eine Anforderung zum Anhalten weckt einmal und prüft.
+        wake.ring();
+        while (checkpoints.get() < 2 && java.time.Instant.now().isBefore(deadline)) {
+            Thread.sleep(5);
+        }
+        assertThat(checkpoints.get()).isEqualTo(2);
+
+        done.complete(true);
+        waiter.join(10_000);
+        assertThat(result.get()).isTrue();
+        assertThat(checkpoints.get()).isEqualTo(3);
+    }
 }

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.jobs;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -137,5 +138,46 @@ class JobsBackgroundTest {
 
         assertThat(jobs.events(background.id())).filteredOn(event -> Jobs.SINGLE_SLOT.equals(event.code()))
                 .hasSize(2);
+    }
+
+    @Test
+    void aClickNeverWaitsBehindARunningBackgroundJob() {
+        Jobs jobs = jobs(2, 5);
+        JobStatus background = jobs.submit(JobType.BACKGROUND, "wiki", "ALPHA", null, null, Map.of(), idle());
+        assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.RUNNING);
+
+        // Ohne Klick-Merkmal wartet ein Folgeauftrag hinter dem Hintergrund …
+        JobStatus followUp = jobs.submit(JobType.ENRICHMENT, "wiki", "BETA", null, null, Map.of(), idle());
+        assertThat(jobs.status(followUp.id()).state()).isEqualTo(JobState.QUEUED);
+        // … ein Klick startet sofort, und der laufende Hintergrund läuft weiter.
+        JobStatus click = jobs.submitInteractive(JobType.ENRICHMENT, "wiki", "GAMMA", null, null, Map.of(), idle());
+        assertThat(jobs.status(click.id()).state()).isEqualTo(JobState.RUNNING);
+        assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.RUNNING);
+        assertThat(click.parameters()).containsEntry(Jobs.INTERACTIVE, "true");
+    }
+
+    @Test
+    void aClickTakesTheNextFreeSlotBeforeAnyWaitingBackgroundJob() {
+        Jobs jobs = jobs(3, 5);
+        JobStatus sync = jobs.submit(JobType.SYNC, "wiki", "ALPHA", null, null, Map.of(), idle());
+        JobStatus export = jobs.submit(JobType.EXPORT, "wiki", "BETA", null, null, Map.of(), idle());
+        JobStatus first = jobs.submit(JobType.SYNC, "wiki", "DELTA", null, null, Map.of(), idle());
+        JobStatus background = jobs.submit(JobType.BACKGROUND, "wiki", "GAMMA", null, null, Map.of(), idle());
+        JobStatus click = jobs.submitInteractive(JobType.GLOSSARY, "wiki", "EPSILON", null, null, Map.of(), idle());
+        assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.QUEUED);
+        assertThat(jobs.status(click.id()).state()).isEqualTo(JobState.QUEUED);
+
+        executor.runNext();
+
+        assertThat(jobs.status(click.id()).state()).isEqualTo(JobState.RUNNING);
+        assertThat(jobs.status(background.id()).state()).isEqualTo(JobState.QUEUED);
+        assertThat(List.of(sync, export, first)).isNotEmpty();
+    }
+
+    @Test
+    void aBackgroundJobIsNeverAClick() {
+        Jobs jobs = jobs(2, 5);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jobs.submitInteractive(JobType.BACKGROUND, "wiki",
+                "ALPHA", null, null, Map.of(), idle())).isInstanceOf(IllegalArgumentException.class);
     }
 }

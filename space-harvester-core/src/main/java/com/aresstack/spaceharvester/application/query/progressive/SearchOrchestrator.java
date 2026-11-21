@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -79,6 +80,7 @@ public final class SearchOrchestrator implements AutoCloseable {
     private final ExecutorService executor;
     private final SearchRunLog runs;
     private final NeighborSource neighbors;
+    private final NeighborLoader loader;
     private final Set<Run> active = ConcurrentHashMap.newKeySet();
 
     /** Eine Strategie für beide Einstellungen von {@link SearchProfile#expansion()}. */
@@ -124,7 +126,15 @@ public final class SearchOrchestrator implements AutoCloseable {
     public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
                               QueryExpansionStrategy rules, HitScorer scorer, SearchRunLog runs,
                               NeighborSource neighbors) {
+        this(search, semantic, expansion, rules, scorer, runs, neighbors, NeighborLoader.NONE);
+    }
+
+    /** @param loader lädt fehlende Nachbarn im Hintergrund nach, ohne dass die Suche darauf wartet */
+    public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
+                              QueryExpansionStrategy rules, HitScorer scorer, SearchRunLog runs,
+                              NeighborSource neighbors, NeighborLoader loader) {
         this.neighbors = Objects.requireNonNull(neighbors, "neighbors");
+        this.loader = Objects.requireNonNull(loader, "loader");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.search = Objects.requireNonNull(search, "search");
         this.semantic = semantic;
@@ -259,6 +269,8 @@ public final class SearchOrchestrator implements AutoCloseable {
         /** Abgeschlossene bzw. gescheiterte Suchanfragen der Nachbarseiten, gezählt wie Varianten (ohne Frist). */
         private int neighborQueries;
         private int failedNeighborQueries;
+        /** Nachladen fehlender Nachbarn, {@code null} ohne. */
+        private NeighborLoader.Load neighborLoad;
 
         Run(VariantSearch search, AccessContext caller, KeywordSearch.Query query, SearchProfile profile,
             SearchQualityPolicy quality, ProgressiveSearchListener listener) {
@@ -405,14 +417,14 @@ public final class SearchOrchestrator implements AutoCloseable {
             if (searches >= profile.searchBudget()) {
                 return false;
             }
-            Map<PageKey, HitReason.Neighbor> found = collect(seeds);
-            if (found == null || cancelled() || System.nanoTime() >= deadline) {
+            NeighborSource.Found neighborhood = collect(seeds);
+            if (neighborhood == null || cancelled() || System.nanoTime() >= deadline) {
                 return false;
             }
             Map<PageKey, HitReason.Neighbor> candidates = new LinkedHashMap<>();
-            found.forEach((key, via) -> {
-                // Schon gefunden: kein Kandidat. Außerhalb der Seiten der Suche: nie.
-                if (!entries.containsKey(key) && (query.pages() == null || query.pages().contains(key))) {
+            neighborhood.local().forEach((key, via) -> {
+                // Schon gefunden: kein Kandidat. Außerhalb des Umfangs der Suche (Quelle, Seiten, Spaces, Arten): nie.
+                if (!entries.containsKey(key) && NeighborScope.allows(query, key, neighborhood.places().get(key))) {
                     candidates.put(key, via);
                 }
             });
@@ -420,6 +432,7 @@ public final class SearchOrchestrator implements AutoCloseable {
                 return false;
             }
             if (candidates.isEmpty()) {
+                startLoading(Set.of(), neighborhood);
                 return true;
             }
             KeywordSearch.Query within = query.within(PageSet.ofKeys(candidates.keySet()));
@@ -483,17 +496,42 @@ public final class SearchOrchestrator implements AutoCloseable {
             newInWave = added;
             score(unscored);
             emit(() -> listener.ranked(ranked()));
+            Set<PageKey> unconfirmed = new LinkedHashSet<>(candidates.keySet());
+            results.hits().forEach(hit -> unconfirmed.remove(new PageKey(hit.sourceId(), hit.pageId())));
+            startLoading(unconfirmed, neighborhood);
             // Unvollständig (Quelle ausgefallen, Kandidaten noch im Laden): nicht alle Nachbarn sind geprüft.
             return results.complete() && (results.progress() == null || results.progress().done());
+        }
+
+        /**
+         * Beginnt das Nachladen: lokale Kandidaten ohne Treffer (vielleicht nur Kopfdaten) und bekannte Nachbarn, die
+         * lokal fehlen, innerhalb der Seiten der Suche. Die Suche wartet nicht; der Lader lässt aus, was schon mit
+         * Inhalt liegt. Sein Scheitern lässt die Treffer stehen.
+         */
+        private void startLoading(Set<PageKey> unconfirmed, NeighborSource.Found neighborhood) {
+            if (cancelled()) {
+                return;
+            }
+            Set<PageKey> pages = new LinkedHashSet<>(unconfirmed);
+            neighborhood.missing().keySet().stream().filter(key -> !entries.containsKey(key)
+                    && NeighborScope.allows(query, key, neighborhood.places().get(key))).forEach(pages::add);
+            if (pages.isEmpty()) {
+                return;
+            }
+            try {
+                neighborLoad = loader.load(caller, pages).orElse(null);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht nachgeladen ({0})", e.getClass().getName());
+            }
         }
 
         /**
          * Sammelt die Nachbarn der Treffer im Hintergrund; gewartet wird höchstens bis zur Gesamtfrist oder zum
          * Abbruch. {@code null}, wenn das nicht reichte oder das Sammeln scheiterte.
          */
-        private Map<PageKey, HitReason.Neighbor> collect(List<KeywordSearch.Hit> seeds) {
-            CompletableFuture<Map<PageKey, HitReason.Neighbor>> future =
-                    CompletableFuture.supplyAsync(() -> neighbors.neighbors(caller, seeds), executor);
+        private NeighborSource.Found collect(List<KeywordSearch.Hit> seeds) {
+            CompletableFuture<NeighborSource.Found> future =
+                    CompletableFuture.supplyAsync(() -> neighbors.find(caller, seeds), executor);
             try {
                 CompletableFuture.anyOf(future, cancelSignal).get(Math.max(0, deadline - System.nanoTime()),
                         TimeUnit.NANOSECONDS);
@@ -550,9 +588,7 @@ public final class SearchOrchestrator implements AutoCloseable {
             states.set(index, Status.RUNNING);
             searches++;
             // Jede Variante sucht im selben Umfang wie das Original, auch nur auf den Seiten seiner Auswahl.
-            KeywordSearch.Query variant = index == 0 ? query : new KeywordSearch.Query(variants.get(index).text(),
-                    query.sourceId(), query.sourceIds(), query.spaceKeys(), query.excludedSpaceKeys(), query.pages(),
-                    query.kinds());
+            KeywordSearch.Query variant = index == 0 ? query : query.withText(variants.get(index).text());
             CompletableFuture<VariantSearch.Outcome> future = CompletableFuture.supplyAsync(() -> {
                 slots.acquireUninterruptibly();
                 try {
@@ -773,10 +809,14 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
         }
 
-        /** Bewertete zuerst, beste vorn; unbewertete danach in der Reihenfolge ihrer Freigabe. */
+        /**
+         * Bewertete zuerst, beste vorn; unbewertete danach in der Reihenfolge ihrer Freigabe. Treffer, deren einziger
+         * Textgrund ein Synonymvorschlag ist, stehen hinter allen übrigen (K5a).
+         */
         private List<RankedHit> ranked() {
             List<Entry> all = new ArrayList<>(entries.values());
-            all.sort(Comparator.comparing((Entry entry) -> Double.isNaN(entry.score))
+            all.sort(Comparator.comparing((Entry entry) -> HitReason.onlyProposedSynonym(entry.hit.reasons()))
+                    .thenComparing((Entry entry) -> Double.isNaN(entry.score))
                     .thenComparing(entry -> Double.isNaN(entry.score) ? 0 : -entry.score)
                     .thenComparingLong(entry -> entry.sequence));
             return all.stream().map(Entry::ranked).toList();
@@ -856,7 +896,7 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
             ProgressiveResult done = new ProgressiveResult(ranked(), variants(), reason, loads,
                     Duration.ofNanos(System.nanoTime() - started), failure, neighborState, neighborQueries,
-                    failedNeighborQueries);
+                    failedNeighborQueries, neighborLoad);
             record(done);
             emit(() -> listener.variants(done.variants()));
             emit(() -> listener.completed(done));

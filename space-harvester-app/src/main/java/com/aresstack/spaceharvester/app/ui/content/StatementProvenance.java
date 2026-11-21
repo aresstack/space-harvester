@@ -26,7 +26,7 @@ public final class StatementProvenance {
     /** Name des Analysators {@code maltparser-de}. */
     public static final String MALTPARSER = "MaltParser";
     /** Name des KI-Analysators {@code language-model} (Fahrplan Paket A2). */
-    public static final String LANGUAGE_MODEL = "Sprachmodell (KI)";
+    public static final String LANGUAGE_MODEL = AnalyzerNames.MODEL;
 
     /** Erklärung hinter dem ?-Knopf des Reiters „Aussagen“. */
     public static final String HELP = "Jede Aussage ist eine grammatische Zuordnung des Analysators, keine geprüfte "

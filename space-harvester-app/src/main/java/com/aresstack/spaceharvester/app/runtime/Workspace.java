@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
@@ -184,6 +186,17 @@ public final class Workspace {
     public com.aresstack.spaceharvester.application.knowledge.VerbQueries.PageVerbs pageVerbs(String sourceId,
                                                                                               String pageId) {
         return harvester.verbQueries().onPage(caller,
+                new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
+    }
+
+    /**
+     * Abgleich der beiden Aussagenanalysatoren einer Seite (K2): je Aussage der eingestellten Ablage, ob die andere
+     * übereinstimmt, abweicht (mit beiden Lesarten) oder nicht vergleichbar ist; dahinter Aussagen nur der anderen.
+     * Nie auf dem EDT.
+     */
+    public java.util.Map<String, com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison.Comparison>
+            analyzerComparisons(String sourceId, String pageId) {
+        return harvester.analyzerComparison().comparisons(caller,
                 new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
     }
 
@@ -1155,7 +1168,31 @@ public final class Workspace {
      * Lädt beim ersten Aufruf das Modell (Sekunden); nur auf ausdrückliche Anforderung, nie auf dem EDT.
      */
     public PageStatements analyzeStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled) {
+        if (statementAnalyzer() == AnalyzerChoice.MODEL) {
+            return harvester.statementAnalysis().analyzeWith(caller, snapshot, cancelled, AnalyzerChoice.MODEL,
+                    costs -> {
+                    });
+        }
         return harvester.statementAnalysis().analyze(caller, snapshot, cancelled);
+    }
+
+    /**
+     * Der eingestellte Aussagenanalysator (Einstellungen › Modelle, „Aussagenanalyse“, Fahrplan A3): aus seiner Ablage
+     * lesen Aussagen, Graph, Stand, Begriffe und Export, und eine einzelne Seite rechnet er.
+     */
+    public AnalyzerChoice statementAnalyzer() {
+        return harvester.statementAnalysis().selected();
+    }
+
+    /**
+     * Warum der KI-Analysator diese Seite jetzt bewusst auslässt (kein Modell, keine KI-Freigabe); leer, wenn er sie
+     * rechnen kann oder der MaltParser eingestellt ist.
+     */
+    public java.util.Optional<AnalyzerUnavailableException.Reason> statementAnalyzerSkips(PageKey key) {
+        if (statementAnalyzer() != AnalyzerChoice.MODEL) {
+            return java.util.Optional.empty();
+        }
+        return harvester.statementAnalysis().modelUnavailable(key);
     }
 
     /**
@@ -1165,6 +1202,10 @@ public final class Workspace {
      */
     public PageStatements analyzeStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled,
             com.aresstack.spaceharvester.application.configuration.SimplificationSettings simplification) {
+        if (statementAnalyzer() == AnalyzerChoice.MODEL) {
+            // Der KI-Analysator kennt keine Vorstufe; er rechnet die Seite wie ohne sie.
+            return analyzeStatements(snapshot, cancelled);
+        }
         return harvester.statementAnalysis().analyze(caller, snapshot, cancelled,
                 com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.SimplificationRequest
                         .of(simplification), costs -> {
@@ -1436,6 +1477,16 @@ public final class Workspace {
         return harvester.keywordSearch().search(caller, query, cursor, limit, null, found);
     }
 
+    /**
+     * Suchmethode „Synonyme der Fachbegriffe“ (K5a): wie viele Synonymvorschläge die Suche {@code query} je Quelle
+     * höchstens stellen würde, vor der Grenze {@code SearchExpansion.MAX_EXPANSIONS}; derselbe Umfang und dieselbe
+     * Entdoppelung wie die Suche. Wirft, wenn das Glossar nicht lesbar ist; nie auf dem EDT.
+     */
+    public int glossarySynonymsWanted(KeywordSearch.Query query) {
+        harvester.glossarySynonyms().requireReadable(caller);
+        return harvester.keywordSearch().glossarySynonymsWanted(caller, query);
+    }
+
     /** Wie weit die Seiten eines Stapels der Schlagwortsuche geladen sind ({@code Results.progress()}). */
     public java.util.Optional<KeywordSearch.Progress> keywordSearchProgress(String id) {
         return harvester.keywordSearch().progress(id);
@@ -1483,6 +1534,15 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #neighborSearch(KeywordSearch.Query, List)}; mit {@code load} laden fehlende Nachbarn als
+     * Hintergrundauftrag nach, ohne dass die Suche wartet.
+     */
+    public com.aresstack.spaceharvester.application.query.progressive.NeighborSearch.Result neighborSearch(
+            KeywordSearch.Query query, List<KeywordSearch.Hit> shown, boolean load) {
+        return harvester.neighborSearch().search(caller, query, shown, load);
+    }
+
+    /**
      * Liest einen Testbestand der Suchqualität (Q1) zur Vorschau: gültige Fragen und Zeilenfehler. Seitenadressen löst
      * es über die Adressmuster der Quellen auf, ohne Seiten zu laden.
      */
@@ -1508,11 +1568,18 @@ public final class Workspace {
     /** Wie oben, mit bzw. ohne die Suchmethode „Nachbarseiten“ (R2), damit ihr Nutzen messbar ist. */
     public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
                                         java.nio.file.Path output, String version, boolean neighbors) {
+        return startSearchQuality(suite, previous, output, version, neighbors, false);
+    }
+
+    /** Wie oben, zusätzlich mit bzw. ohne die Suchmethode „Synonyme der Fachbegriffe“ (K5a). */
+    public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
+                                        java.nio.file.Path output, String version, boolean neighbors,
+                                        boolean synonyms) {
         JobStatus status = harvester.searchQuality().submit(caller,
                 new com.aresstack.spaceharvester.application.quality.SearchQualityRuns.Request(suite, previous, output,
                         com.aresstack.spaceharvester.app.chat.ChatKnowledge.MAX_SOURCES,
                         java.time.Duration.ofSeconds(com.aresstack.spaceharvester.app.chat.ChatTurn.SEARCH_SECONDS),
-                        version, neighbors));
+                        version, neighbors, synonyms));
         activities.remember(status.id());
         return status;
     }
@@ -2485,9 +2552,24 @@ public final class Workspace {
         return harvester.statusQuo().decide(caller, page, statementId, standing, expectedRevision);
     }
 
-    /** Löscht eine Entscheidung zum Stand; danach gelten wieder die Regeln. */
+    /** Löscht den Stand von Hand; danach gelten wieder die Regeln. Eine Prüfung im selben Eintrag bleibt. */
     public boolean clearStanding(PageKey page, String statementId, long expectedRevision) {
         return harvester.statusQuo().clear(caller, page, statementId, expectedRevision);
+    }
+
+    /**
+     * Bestätigt oder verwirft eine Aussage von Hand (ADR 0032 W3), für die Ablage des Analysators, in deren Analyse sie
+     * steht. Revision des Eintrags gemeinsam mit dem Stand.
+     */
+    public com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey page,
+            String statementId, com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review review,
+            long expectedRevision) {
+        return harvester.statusQuo().review(caller, page, statementId, review, expectedRevision);
+    }
+
+    /** Nimmt die Prüfung einer Aussage zurück (eigener Eintrag im Protokoll); ein Stand von Hand bleibt. */
+    public boolean withdrawStatementReview(PageKey page, String statementId, long expectedRevision) {
+        return harvester.statusQuo().withdrawReview(caller, page, statementId, expectedRevision);
     }
 
     /** Das Protokoll der Entscheidungen zu Aussage oder Seite, älteste zuerst. */
@@ -2505,6 +2587,30 @@ public final class Workspace {
     public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> changeSummary(
             String sourceId, String updateId, String spaceKey) {
         return harvester.changeLog().summary(caller, sourceId, updateId, spaceKey);
+    }
+
+    /** Ob der Podcast zur Update-Zusammenfassung erzeugt werden kann: Chat-Modell und Sprachausgabe (TTS) eingerichtet. */
+    public boolean podcastsAvailable() {
+        return harvester.podcasts().available();
+    }
+
+    /**
+     * Der Stand des Podcasts einer Zusammenfassung, leer, solange nichts erzeugt ist. Die Zusammenfassung kommt aus
+     * {@link #changeSummary}, ist also schon für diese App geprüft. Liest Dateien, nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.podcast.Podcast> podcast(
+            com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().podcast(summary);
+    }
+
+    /** Startet den Auftrag „Podcast erzeugen“ oder setzt ihn fort; ein offener Auftrag desselben Podcasts ist die Antwort. */
+    public JobStatus startPodcast(com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().start(caller, summary);
+    }
+
+    /** Meldet jede abgelegte Stufe eines Podcasts (Plan, Abschnitte, Audio), auf einem Thread des Core. */
+    public Subscription subscribePodcast(String key, Runnable listener) {
+        return harvester.podcasts().subscribe(key, listener);
     }
 
     /**

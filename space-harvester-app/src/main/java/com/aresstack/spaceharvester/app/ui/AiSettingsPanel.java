@@ -15,6 +15,9 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
+import com.aresstack.spaceharvester.app.ui.content.AnalyzerNames;
 import com.aresstack.spaceharvester.application.check.CheckScope;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.ImageSettings;
@@ -270,6 +273,26 @@ final class AiSettingsPanel {
             + "Abgleich. Schlüssel in der Konfigurationsdatei: space-harvester.images.automatic und "
             + "space-harvester.images.max-per-run.";
     /**
+     * Aussagenanalyse ({@code space-harvester.statements.analyzer} und {@code analyzer-model}, Fahrplan A2/A3): EINE
+     * Einstellung für den vorgewählten Analysator und die Ablage, aus der alle Ansichten lesen, dazu das Modell nur für
+     * den KI-Analysator.
+     */
+    final JComboBox<String> statementAnalyzer = Comic.combo();
+    final JTextField statementModel = Comic.field(24);
+    final ComposerButton pickStatement = Comic.button("▾",
+            "Modell für die Aussagenanalyse aus der Liste des Dienstes wählen");
+    final HelpButton statementHelp = new HelpButton(Dialogs.CLOSE_SIZE, ANALYZER_LABEL, ANALYZER_HELP);
+    static final String ANALYZER_LABEL = "Aussagenanalyse";
+    static final String ANALYZER_PARSER = AnalyzerNames.PARSER;
+    static final String ANALYZER_MODEL = AnalyzerNames.MODEL;
+    static final String ANALYZER_MODEL_LABEL = "Aussagen-Modell";
+    static final String ANALYZER_HELP = AnalyzerNames.HELP + "\n\n"
+            + "Jeder Analysator hat eine eigene Ablage; Aussagen, Graph, Stand, Begriffe und Export zeigen immer nur "
+            + "die hier gewählte. Der KI-Analysator rechnet nur Seiten mit KI-Freigabe und nur, wenn Sie ihn beim "
+            + "Start der Analyse wählen. Ohne eigenes „" + ANALYZER_MODEL_LABEL + "“ gilt das Text-Modell.\n\n"
+            + "Die Werte gelten ohne Neustart. Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.statements.analyzer und .analyzer-model.";
+    /**
      * Vorstufe „Sätze vereinfachen“ der Aussagenanalyse ({@code space-harvester.statements.simplification.*},
      * ADR 0032): Betriebsart, Abschnitte zugleich und das Modell nur für diesen Schritt.
      */
@@ -428,6 +451,11 @@ final class AiSettingsPanel {
         modelRows.add(AUTOMATIC_SYNONYMS_LABEL, Comic.row(automaticSynonyms, automaticSynonymsHelp), null);
         glossarySynonyms.setToolTipText(GLOSSARY_SYNONYMS_TIP);
         modelRows.add(GLOSSARY_SYNONYMS_LABEL, Comic.row(glossarySynonyms, glossarySynonymsHelp), null);
+        statementAnalyzer.addItem(ANALYZER_PARSER);
+        statementAnalyzer.addItem(ANALYZER_MODEL);
+        statementAnalyzer.setToolTipText(AnalyzerNames.STORE_TOOLTIP);
+        modelRows.add(ANALYZER_LABEL, Comic.row(statementAnalyzer, statementHelp), null);
+        modelRows.add(ANALYZER_MODEL_LABEL, Comic.fieldWithButton(statementModel, pickStatement), null);
         simplifyMode.addItem(SIMPLIFY_WHERE_NEEDED);
         simplifyMode.addItem(SIMPLIFY_ALWAYS);
         simplifyMode.setToolTipText("Welche Sätze die Vorstufe der Aussagenanalyse vereinfacht");
@@ -535,6 +563,7 @@ final class AiSettingsPanel {
         loadModels.addActionListener(e -> loadModels());
         pickSimplify.addActionListener(e -> pick(pickSimplify, simplifyModel, AiModel.CHAT));
         pickCheck.addActionListener(e -> pick(pickCheck, checkModel, AiModel.CHAT));
+        pickStatement.addActionListener(e -> pick(pickStatement, statementModel, AiModel.CHAT));
         pickChat.addActionListener(e -> pick(pickChat, chatModel, AiModel.CHAT));
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
@@ -610,6 +639,10 @@ final class AiSettingsPanel {
                 : SIMPLIFY_WHERE_NEEDED);
         simplifyParallel.setValue(Math.min(simplification.parallel(), MAX_SIMPLIFY_PARALLEL));
         simplifyModel.setText(simplification.model() == null ? "" : simplification.model());
+        AnalyzerSettings analyzer = savedAnalyzer(settings);
+        statementAnalyzer.setSelectedItem(analyzer.analyzer() == AnalyzerChoice.MODEL ? ANALYZER_MODEL
+                : ANALYZER_PARSER);
+        statementModel.setText(analyzer.model() == null ? "" : analyzer.model());
         CheckSettings check = savedCheck(settings);
         checkScope.setSelectedItem(check.scope() == CheckScope.ALL ? CHECK_ALL : CHECK_UNCERTAIN_AND_STAGE);
         checkParallel.setValue(Math.min(check.parallel(), MAX_CHECK_PARALLEL));
@@ -975,7 +1008,8 @@ final class AiSettingsPanel {
                 || glossarySynonyms() != savedBudget(settings).glossaryTermsOnly()
                 || !images().equals(savedImages(settings))
                 || !simplification().equals(savedSimplification(settings))
-                || !check().equals(savedCheck(settings));
+                || !check().equals(savedCheck(settings))
+                || !analyzer().equals(savedAnalyzer(settings));
     }
 
     /** Ob gerade gespeichert wird (Assistent: Übernehmen beim Schrittwechsel). */
@@ -1035,11 +1069,12 @@ final class AiSettingsPanel {
         SimplificationSettings simplification = simplification();
         CheckSettings check = check();
         ImageSettings images = images();
+        AnalyzerSettings analyzer = analyzer();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)
                 && judged == savedBudget(settings).maxJudgedPairs() && automatic == savedBudget(settings).automatic()
                 && glossaryOnly == savedBudget(settings).glossaryTermsOnly()
                 && simplification.equals(savedSimplification(settings)) && check.equals(savedCheck(settings))
-                && images.equals(savedImages(settings))) {
+                && images.equals(savedImages(settings)) && analyzer.equals(savedAnalyzer(settings))) {
             if (!quiet) {
                 feedback.info("Nichts geändert", null);
             }
@@ -1096,7 +1131,7 @@ final class AiSettingsPanel {
             if (ollama) {
                 Measured measured = measure(context, runtime, draft, new char[0], false);
                 store(context, measured.draft(), new char[0], chosen, judged, automatic, glossaryOnly, simplification, check,
-                        images);
+                        images, analyzer);
                 return measured;
             }
             if (chosen.fromKeePass()) {
@@ -1109,7 +1144,7 @@ final class AiSettingsPanel {
                     Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
                             false);
                     store(context, measured.draft(), new char[0], chosen, judged, automatic, glossaryOnly, simplification, check,
-                        images);
+                        images, analyzer);
                     return measured;
                 } finally {
                     if (resolved != null) {
@@ -1119,7 +1154,7 @@ final class AiSettingsPanel {
             }
             Measured measured = measure(context, runtime, draft, key, true);
             store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, automatic, glossaryOnly,
-                    simplification, check, images);
+                    simplification, check, images, analyzer);
             return measured;
         }, measured -> {
             if (!ollama && !chosen.fromKeePass() && !vault && key.length > 0) {
@@ -1227,13 +1262,20 @@ final class AiSettingsPanel {
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
                       Boolean automatic, SimplificationSettings simplification, CheckSettings check,
                       ImageSettings images) throws IOException {
-        store(context, draft, key, access, judgedPairs, automatic, null, simplification, check, images);
+        store(context, draft, key, access, judgedPairs, automatic, null, simplification, check, images, null);
     }
 
     /** Wie oben, dazu „Synonyme nur zu bestätigten Fachbegriffen“ (K3); {@code null} lässt den Wert stehen. */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
                       Boolean automatic, Boolean glossaryOnly, SimplificationSettings simplification,
                       CheckSettings check, ImageSettings images) throws IOException {
+        store(context, draft, key, access, judgedPairs, automatic, glossaryOnly, simplification, check, images, null);
+    }
+
+    /** Wie oben, dazu die Aussagenanalyse ({@code statements.analyzer}); {@code null} oder unverändert lässt sie. */
+    static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
+                      Boolean automatic, Boolean glossaryOnly, SimplificationSettings simplification,
+                      CheckSettings check, ImageSettings images, AnalyzerSettings analyzer) throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
@@ -1262,6 +1304,9 @@ final class AiSettingsPanel {
         }
         if (images != null && !images.equals(savedImages(context.settings()))) {
             written = editor.withImages(context.configFile(), written, images);
+        }
+        if (analyzer != null && !analyzer.equals(savedAnalyzer(context.settings()))) {
+            written = editor.withAnalyzer(context.configFile(), written, analyzer);
         }
         boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
         if (key.length == 0) {
@@ -1324,6 +1369,17 @@ final class AiSettingsPanel {
         return (simplification.mode() == SimplificationSettings.Mode.ALWAYS ? SIMPLIFY_ALWAYS : SIMPLIFY_WHERE_NEEDED)
                 + " · " + simplification.parallel() + " " + SIMPLIFY_PARALLEL_UNIT + " · "
                 + (simplification.model() == null ? "mit dem Text-Modell" : "Modell " + simplification.model());
+    }
+
+    /** Die Aussagenanalyse aus der Datei; ohne Datei die Vorgabe des Core (MaltParser). */
+    static AnalyzerSettings savedAnalyzer(AppSettings settings) {
+        return settings == null ? AnalyzerSettings.DEFAULT : settings.analyzer();
+    }
+
+    /** Die eingestellte Aussagenanalyse. */
+    AnalyzerSettings analyzer() {
+        return new AnalyzerSettings(ANALYZER_MODEL.equals(statementAnalyzer.getSelectedItem()) ? AnalyzerChoice.MODEL
+                : AnalyzerChoice.PARSER, statementModel.getText());
     }
 
     /** Der Prüfschritt aus der Datei; ohne Datei die Vorgabe des Core. */

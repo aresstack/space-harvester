@@ -19,6 +19,13 @@ public interface ResolutionCache {
     /** Ersetzt den Bestand einer Quelle durch die Fingerabdrücke ihres letzten vollständigen Laufs. */
     void replace(String sourceId, Map<String, List<String>> entries);
 
+    /**
+     * Vergisst die Ergebnisse aller Schlüssel, auf die {@code keys} zutrifft (etwa nach einem KI-Entzug, ADR 0028);
+     * ohne eigene Umsetzung nichts.
+     */
+    default void removeSources(java.util.function.Predicate<String> keys) {
+    }
+
     /** Im Speicher, etwa ohne Datenverzeichnis und für Tests. */
     static ResolutionCache inMemory() {
         Map<String, Map<String, List<String>>> bySource = new HashMap<>();
@@ -37,6 +44,11 @@ public interface ResolutionCache {
             @Override
             public synchronized void replace(String sourceId, Map<String, List<String>> entries) {
                 bySource.put(sourceId, Map.copyOf(entries));
+            }
+
+            @Override
+            public synchronized void removeSources(java.util.function.Predicate<String> keys) {
+                bySource.keySet().removeIf(keys);
             }
         };
     }

@@ -201,6 +201,28 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Angabe eines Auftrags, den ein Klick des Benutzers angestoßen hat ({@link #submitInteractive}): er zieht an jedem
+     * Hintergrundauftrag vorbei.
+     */
+    public static final String INTERACTIVE = "jobs.interactive";
+
+    /**
+     * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)} für einen Klick des Benutzers, etwa
+     * „Bilder beschreiben“ je Seite oder „Fachbegriffe ermitteln“: Ein Klick wartet nie hinter Hintergrund. Er nimmt
+     * den nächsten freien Platz vor jedem wartenden Hintergrundteil, und laufende Hintergrundteile zählen für ihn nicht
+     * gegen die Plätze der Folgeaufträge; unterbrochen wird keiner. Übersteht den Neustart ({@value #INTERACTIVE}).
+     */
+    public JobStatus submitInteractive(JobType type, String sourceId, String partitionKey, String rootPageId,
+                                       String owner, Map<String, String> parameters, JobTask task) {
+        if (type.background()) {
+            throw new IllegalArgumentException("Ein Hintergrundauftrag ist nie ein Klick");
+        }
+        Map<String, String> marked = new java.util.HashMap<>(parameters);
+        marked.put(INTERACTIVE, "true");
+        return submit(type, sourceId, partitionKey, rootPageId, owner, marked, task);
+    }
+
+    /**
      * Wie {@link #submit(JobType, String, String, String, String, JobTask)}, mit den Angaben, aus denen sich der
      * Auftrag nach einem Neustart gleichwertig neu anlegen lässt ({@link JobStatus#parameters()}).
      */
@@ -1508,6 +1530,8 @@ public class Jobs implements AutoCloseable {
         int spare = Math.max(1, parallelPreparations - 1);
         // Folge- und Hintergrundaufträge zusammen nie auf allen Plätzen, egal wer zuerst kam.
         boolean followUps = general && runningFollowUps + runningBackground < spare;
+        // Ein Klick (INTERACTIVE) wartet nie hinter Hintergrund: laufende Hintergrundteile zählen für ihn nicht.
+        boolean interactive = general && runningFollowUps < spare;
         // Hintergrund (Angelo 21.11.2026): zusammen mit den Folgeaufträgen nie alle Plätze, damit ein Auftrag des
         // Benutzers immer sofort starten kann.
         // Abnahme #1030: Obergrenze ohne Mindestplatz; bei nur einem Platz läuft kein Hintergrund (wartet gelb).
@@ -1536,7 +1560,7 @@ public class Jobs implements AutoCloseable {
                 pick = job;
                 break;
             }
-            if (pick == null && !job.type.download() && followUps) {
+            if (pick == null && !job.type.download() && (followUps || interactive && interactive(job))) {
                 pick = job;
             }
         }
@@ -1548,6 +1572,11 @@ public class Jobs implements AutoCloseable {
             queued.remove(pick);
         }
         return pick;
+    }
+
+    /** Ob ein Klick des Benutzers den Auftrag angestoßen hat ({@link #submitInteractive}). */
+    private static boolean interactive(Job job) {
+        return job.parameters != null && "true".equals(job.parameters.get(INTERACTIVE));
     }
 
     /** Unter dem Sperrobjekt: gibt den Platz eines beendeten Auftrags frei. */

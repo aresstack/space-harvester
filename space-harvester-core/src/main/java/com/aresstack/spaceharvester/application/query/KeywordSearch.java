@@ -143,6 +143,8 @@ public class KeywordSearch {
     private final SearchRunLog runs;
     private final FindingCatalog findings;
     private final SearchExpansion expansion;
+    /** Suchmethode „Synonyme der Fachbegriffe“ (K5a): nur, wenn die Anfrage sie einschaltet. */
+    private final SearchExpansion glossarySynonyms;
 
     public KeywordSearch(SourceCatalog catalog, AccessGuard access) {
         this(catalog, access, null, null);
@@ -248,7 +250,20 @@ public class KeywordSearch {
                          int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
                          SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching,
                          BeforeSearch before, SearchExpansion expansion) {
+        this(catalog, access, texts, prefetch, maxQueries, excerpts, selection, runs, findings, prefetching, before,
+                expansion, SearchExpansion.NONE);
+    }
+
+    /**
+     * @param glossarySynonyms zusätzliche Anfragen der Suchmethode „Synonyme der Fachbegriffe“ (K5a): vorgeschlagene
+     *                         Synonyme bestätigter Fachbegriffe; wirkt nur mit {@link Query#glossarySynonyms()}
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
+                         SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching,
+                         BeforeSearch before, SearchExpansion expansion, SearchExpansion glossarySynonyms) {
         this.expansion = Objects.requireNonNull(expansion, "expansion");
+        this.glossarySynonyms = Objects.requireNonNull(glossarySynonyms, "glossarySynonyms");
         this.before = Objects.requireNonNull(before, "before");
         this.prefetching = Objects.requireNonNull(prefetching, "prefetching");
         this.findings = Objects.requireNonNull(findings, "findings");
@@ -355,6 +370,65 @@ public class KeywordSearch {
     /** Ob die Treffer aus dem Cache kommen (ADR 0013); ohne Cache kommen sie aus der Suche der Quellen. */
     public boolean searchesTheCache() {
         return texts != null;
+    }
+
+    /**
+     * Die zusätzlichen Anfragen einer Quelle: die bestätigten Beziehungen (#336) und, nur mit
+     * {@link Query#glossarySynonyms()}, die Synonyme bestätigter Fachbegriffe samt Vorschlägen (K5a), höchstens
+     * {@link SearchExpansion#MAX_EXPANSIONS} dazu. Ohne die Methode bleibt alles wie zuvor.
+     */
+    private List<SearchExpansion.Expansion> expansions(AccessContext caller, Query query, String sourceId,
+                                                       String spaceKey) {
+        List<SearchExpansion.Expansion> confirmed = expansion.expansions(caller, query.text(), sourceId, spaceKey);
+        if (!query.glossarySynonyms()) {
+            return confirmed;
+        }
+        List<SearchExpansion.Expansion> proposed = proposals(caller, query, sourceId, spaceKey, confirmed);
+        List<SearchExpansion.Expansion> all = new ArrayList<>(confirmed);
+        all.addAll(proposed.subList(0, Math.min(proposed.size(), SearchExpansion.MAX_EXPANSIONS)));
+        return List.copyOf(all);
+    }
+
+    /**
+     * Die vorgeschlagenen Synonyme einer Quelle ohne die Anfragen, die die bestätigten Beziehungen schon stellen, noch
+     * ungekappt: Erst nach dem Entfernen der Dubletten gilt {@link SearchExpansion#MAX_EXPANSIONS} (K5a).
+     */
+    private List<SearchExpansion.Expansion> proposals(AccessContext caller, Query query, String sourceId,
+                                                      String spaceKey, List<SearchExpansion.Expansion> confirmed) {
+        Map<String, SearchExpansion.Expansion> all = new LinkedHashMap<>();
+        confirmed.forEach(extra -> all.put(extra.query().toLowerCase(java.util.Locale.ROOT), extra));
+        List<SearchExpansion.Expansion> proposed = new ArrayList<>();
+        for (SearchExpansion.Expansion extra : glossarySynonyms.allExpansions(caller, query.text(), sourceId,
+                spaceKey)) {
+            if (all.putIfAbsent(extra.query().toLowerCase(java.util.Locale.ROOT), extra) == null) {
+                proposed.add(extra);
+            }
+        }
+        return proposed;
+    }
+
+    /**
+     * Wie viele Synonymvorschläge die Suche mit {@link Query#glossarySynonyms()} ohne Kürzung je Quelle höchstens
+     * stellen würde (für den Hinweis auf {@link SearchExpansion#MAX_EXPANSIONS}): derselbe Umfang je Quelle und dieselbe
+     * Entdoppelung gegen die bestätigten Beziehungen wie {@link #search}. Ohne die Methode 0. Wirft, wenn das Glossar
+     * nicht lesbar ist.
+     */
+    public int glossarySynonymsWanted(AccessContext caller, Query query) {
+        Objects.requireNonNull(query, "query");
+        if (!query.glossarySynonyms() || query.text() == null || query.text().isBlank()) {
+            return 0;
+        }
+        SearchScope scope = SearchScope.authorize(access, catalog, caller, query.scope());
+        String spaceKey = query.singleSpace();
+        int wanted = 0;
+        for (String sourceId : scope.sourceIds()) {
+            if (!query.reaches(sourceId)) {
+                continue;
+            }
+            List<SearchExpansion.Expansion> confirmed = expansion.expansions(caller, query.text(), sourceId, spaceKey);
+            wanted = Math.max(wanted, proposals(caller, query, sourceId, spaceKey, confirmed).size());
+        }
+        return wanted;
     }
 
     /**
@@ -534,8 +608,8 @@ public class KeywordSearch {
         try (ExecutorService searching = Executors.newVirtualThreadPerTaskExecutor()) {
             for (LiveSearch search : searches) {
                 List<Future<List<SourceSearchMatch>>> perQuery = new ArrayList<>();
-                List<SearchExpansion.Expansion> expanded = expansion.expansions(caller, query.text(),
-                        search.source().id(), spaceKey);
+                List<SearchExpansion.Expansion> expanded = expansions(caller, query, search.source().id(),
+                        spaceKey);
                 expansions.put(search.source().id(), expanded);
                 tally.queries = Math.max(tally.queries, nativeQueries.size() + expanded.size());
                 List<SourceQuery> all = new ArrayList<>();
@@ -636,6 +710,9 @@ public class KeywordSearch {
             }
         }
 
+        // K5a: Was nur ein Synonymvorschlag fand, steht hinter allen übrigen; der Cursor zählt je Quelle weiter.
+        candidates = HitReason.proposedSynonymsLast(candidates, Candidate::reasons);
+
         catalogFindings(caller, query, pending);
 
         Map<String, Integer> next = new LinkedHashMap<>();
@@ -650,7 +727,8 @@ public class KeywordSearch {
             Checked found = check(caller, query, candidates);
             tally.discovered = OptionalInt.of(found.hits().size());
             boolean checkedAll = complete && found.complete();
-            return new Results(scope.sourceId(), found.hits(), states, next.isEmpty() ? null
+            return new Results(scope.sourceId(), HitReason.proposedSynonymsLast(found.hits(), Hit::reasons), states,
+                    next.isEmpty() ? null
                     : encode(fingerprint(query), !checkedAll, next, unavailable, Set.of(), List.of()),
                     checkedAll && next.isEmpty(), 0);
         }
@@ -718,7 +796,7 @@ public class KeywordSearch {
                 // Erweiterungen je Quelle, nur in dieser Quelle gesucht, damit Beziehungen ihres Umfangs bleiben.
                 for (String sourceId : searchable) {
                     List<SearchExpansion.Expansion> expanded = expansions.computeIfAbsent(sourceId, id ->
-                            expansion.expansions(caller, query.text(), id, spaceKey));
+                            expansions(caller, query, id, spaceKey));
                     for (SearchExpansion.Expansion extra : expanded) {
                         List<PageTextIndex.Match> byExtra = searchTexts(extra.query(), Set.of(sourceId), query,
                                 wanted);
@@ -726,6 +804,10 @@ public class KeywordSearch {
                         matches.addAll(byExtra);
                     }
                 }
+                // K5a: über alle Quellen hinter alles andere, was nur ein Synonymvorschlag fand.
+                matches = HitReason.proposedSynonymsLast(matches, match -> textReasons
+                        .getOrDefault(mark(match.sourceId(), match.pageId()), List.of()).stream()
+                        .map(DocumentReason::reason).toList());
                 Set<String> seenMatches = new HashSet<>();
                 for (PageTextIndex.Match match : matches) {
                     if (!seenMatches.add(mark(match.sourceId(), match.pageId()))) {
@@ -786,8 +868,9 @@ public class KeywordSearch {
         checked.hits().forEach(hit -> fromIndex.add(new PageKey(hit.sourceId(), hit.pageId())));
         List<Hit> provisional = finalListOnly ? List.of() : ranked.stream()
                 .filter(hit -> !fromIndex.contains(new PageKey(hit.sourceId(), hit.pageId()))).toList();
-        return new Results(scope.sourceId(), checked.hits(), states, nextCursor, checkedAll && exhausted, loading,
-                provisional, progress);
+        return new Results(scope.sourceId(), HitReason.proposedSynonymsLast(checked.hits(), Hit::reasons), states,
+                nextCursor, checkedAll && exhausted, loading, HitReason.proposedSynonymsLast(provisional, Hit::reasons),
+                progress);
     }
 
     /**
@@ -1161,6 +1244,10 @@ public class KeywordSearch {
             canonical += "\u0000k" + query.kinds().stream().map(Enum::name).sorted()
                     .collect(java.util.stream.Collectors.joining("\u0001"));
         }
+        if (query.glossarySynonyms()) {
+            // Nur mit der Suchmethode (K5a), aus demselben Grund; andere Anfragen machen den Cursor ungültig.
+            canonical += "\u0000s";
+        }
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest, 0, 12);
@@ -1340,7 +1427,8 @@ public class KeywordSearch {
      *                  Titel.
      */
     public record Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
-                        Set<String> excludedSpaceKeys, PageSet pages, Set<DocumentKind> kinds) {
+                        Set<String> excludedSpaceKeys, PageSet pages, Set<DocumentKind> kinds,
+                        boolean glossarySynonyms) {
 
         public Query {
             kinds = kinds == null || kinds.isEmpty() ? Set.of() : Set.copyOf(kinds);
@@ -1361,6 +1449,12 @@ public class KeywordSearch {
                     : excludedSpaceKeys), null, null, null, null, null, null, SearchSort.TITLE).spaceKeys();
         }
 
+        /** Ohne Suchmethode „Synonyme der Fachbegriffe“. */
+        public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
+                     Set<String> excludedSpaceKeys, PageSet pages, Set<DocumentKind> kinds) {
+            this(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, false);
+        }
+
         public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
                      Set<String> excludedSpaceKeys, PageSet pages) {
             this(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, Set.of());
@@ -1377,12 +1471,25 @@ public class KeywordSearch {
 
         /** Dieselbe Suche, begrenzt auf diese Seiten (ADR 0029); {@code null} hebt die Grenze auf. */
         public Query within(PageSet pages) {
-            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds);
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms);
         }
 
         /** Dieselbe Suche, nur Dokumente dieser Arten; leer hebt die Grenze auf. */
         public Query ofKinds(Set<DocumentKind> kinds) {
-            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds);
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms);
+        }
+
+        /**
+         * Dieselbe Suche mit der Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a): zu bestätigten
+         * Fachbegriffen des Glossars kommen auch ihre vorgeschlagenen Synonyme als Anfragen dazu.
+         */
+        public Query withGlossarySynonyms(boolean on) {
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, on);
+        }
+
+        /** Derselbe Umfang und dieselben Methoden mit anderem Wortlaut (Varianten der progressiven Suche). */
+        public Query withText(String other) {
+            return new Query(other, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms);
         }
 
         /** Ob die Seite in der Grenze der Suche liegt; ohne Grenze jede. */

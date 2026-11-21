@@ -121,6 +121,13 @@ public class SynonymDiscovery {
     /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
     private volatile Predicate<PageKey> pageReleases = key -> false;
 
+    /** Angabe am Auftrag, woran die Auftragsliste den Lauf erkennt (D4.4, wie die Bildbeschreibung). */
+    public static final String TASK_PARAMETER = "task";
+    /** Wert von {@link #TASK_PARAMETER}: „Synonyme erkennen“. */
+    public static final String TASK = "synonyms";
+
+    private volatile String owner;
+
     /**
      * @param model  das Chat-Modell der wirksamen Konfiguration; {@link SynonymJudgmentModel#NONE} ohne
      * @param cache  was schon gefragt wurde; ein unveränderter Kandidat geht nicht noch einmal an das Modell
@@ -231,7 +238,7 @@ public class SynonymDiscovery {
         }
         SynonymBudget chosen = effective;
         JobStatus status = jobs.submit(JobType.ENRICHMENT, scope.global() ? Jobs.ALL_SOURCES : scope.sourceId(),
-                scope.spaceKey(), caller.jobOwner(), JobTask.blocking(context -> {
+                scope.spaceKey(), null, caller.jobOwner(), Map.of(TASK_PARAMETER, TASK), JobTask.blocking(context -> {
                     // Je Umfang nacheinander: Ein zweiter Auftrag findet danach alles im Cache und fragt nicht erneut.
                     synchronized (lock(scope)) {
                         run(scope, chosen, context);
@@ -239,6 +246,14 @@ public class SynonymDiscovery {
                 }));
         started.add(status.id());
         return status;
+    }
+
+    /**
+     * Eigentümer der automatischen Läufe (D4.4), wie bei den übrigen Aufträgen, die der Core von sich aus startet;
+     * ohne Angabe ohne Eigentümer.
+     */
+    public void owner(String owner) {
+        this.owner = owner;
     }
 
     /**
@@ -268,7 +283,8 @@ public class SynonymDiscovery {
             }
             waiting.remove(sourceId);
             SynonymScope scope = SynonymScope.source(sourceId);
-            JobStatus status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, JobTask.blocking(context -> {
+            JobStatus status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, owner,
+                    Map.of(TASK_PARAMETER, TASK), JobTask.blocking(context -> {
                 waiting.remove(sourceId, context.jobId());
                 synchronized (lock(scope)) {
                     // Der Stand vor dem Lauf: Was sich währenddessen ändert, löst den nächsten Lauf aus.

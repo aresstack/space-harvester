@@ -101,6 +101,18 @@ public final class SearchExpansion {
 
     /** Wie {@link #expand}, je Anfrage mit der Beziehung, aus der sie entstand. */
     public List<Expansion> expansions(AccessContext caller, String text, String sourceId, String spaceKey) {
+        return expansions(caller, text, sourceId, spaceKey, MAX_EXPANSIONS);
+    }
+
+    /**
+     * Wie {@link #expansions(AccessContext, String, String, String)}, aber ohne die Grenze {@link #MAX_EXPANSIONS}:
+     * Wer mehrere Erweiterungen zusammenführt, kappt erst nach dem Entfernen der Dubletten (K5a).
+     */
+    public List<Expansion> allExpansions(AccessContext caller, String text, String sourceId, String spaceKey) {
+        return expansions(caller, text, sourceId, spaceKey, Integer.MAX_VALUE);
+    }
+
+    private List<Expansion> expansions(AccessContext caller, String text, String sourceId, String spaceKey, int max) {
         String query = text == null ? "" : text.strip();
         if (query.isEmpty() || this == NONE) {
             return List.of();
@@ -113,7 +125,7 @@ public final class SearchExpansion {
         List<String> words = SearchTerms.terms(query);
         if (words.size() > 1 && SearchTerms.isConcise(query)) {
             for (String word : words) {
-                if (queries.size() >= MAX_EXPANSIONS) {
+                if (queries.size() >= max) {
                     break;
                 }
                 for (Counterpart other : lookup(caller, word, sourceId, spaceKey)) {
@@ -123,7 +135,7 @@ public final class SearchExpansion {
             }
         }
         List<Expansion> result = new ArrayList<>(queries.values());
-        return result.size() > MAX_EXPANSIONS ? List.copyOf(result.subList(0, MAX_EXPANSIONS)) : List.copyOf(result);
+        return result.size() > max ? List.copyOf(result.subList(0, max)) : List.copyOf(result);
     }
 
     private List<Counterpart> lookup(AccessContext caller, String term, String sourceId, String spaceKey) {

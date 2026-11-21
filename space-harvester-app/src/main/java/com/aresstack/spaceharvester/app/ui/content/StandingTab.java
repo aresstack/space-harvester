@@ -1200,6 +1200,25 @@ final class StandingTab extends JPanel {
         };
     }
 
+    /**
+     * Was ein Mensch im Eintrag gesetzt hat: Stand und/oder Prüfung (ADR 0032 W3); ein Eintrag kann nur die Prüfung
+     * tragen.
+     */
+    static String decisionWord(StandingDecision decision) {
+        List<String> parts = new ArrayList<>();
+        if (decision.standing() != null) {
+            parts.add(word(decision.standing()));
+        }
+        if (decision.review() != null) {
+            parts.add(reviewWord(decision.review()));
+        }
+        return String.join(" · ", parts);
+    }
+
+    static String reviewWord(ParsedStatements.Review review) {
+        return review == ParsedStatements.Review.REJECTED ? "verworfen" : "bestätigt";
+    }
+
     static Color tone(Standing standing) {
         return switch (standing) {
             case GILT -> Comic.STANDING_CURRENT;
@@ -1268,7 +1287,8 @@ final class StandingTab extends JPanel {
         } else if (entry.uncertain()) {
             parts.add(StatementProvenance.PROPOSAL);
         }
-        if (entry.decision() != null) {
+        // Eine Prüfung von Hand zeigt schon der Marker; „von Hand“ meint den Stand.
+        if (entry.decision() != null && entry.decision().hasStanding()) {
             parts.add("von Hand");
         }
         Standing flagged = flagged(entry.stageFlag());
@@ -1377,7 +1397,7 @@ final class StandingTab extends JPanel {
         }
         StandingDecision decision = entry.decision();
         if (decision != null) {
-            lines.add("Von Hand: " + word(decision.standing()) + " · " + decided(decision));
+            lines.add("Von Hand: " + decisionWord(decision) + " · " + decided(decision));
         }
         return String.join("\n", lines);
     }
@@ -1406,7 +1426,7 @@ final class StandingTab extends JPanel {
             });
         } else if (row instanceof Stale stale) {
             StandingDecision decision = stale.decision();
-            popup.text(STALE_GROUP, "Von Hand „" + word(decision.standing()) + "“ zu einer Aussage, die es in der "
+            popup.text(STALE_GROUP, "Von Hand „" + decisionWord(decision) + "“ zu einer Aussage, die es in der "
                     + "aktuellen Analyse nicht mehr gibt (Text geändert oder Vorstufe entzogen).\nSeite: "
                     + pageName(decision.page()) + "\n" + decided(decision));
             popup.controls(staleControls(decision));
@@ -1474,7 +1494,7 @@ final class StandingTab extends JPanel {
             row.add(chip);
         }
         IconButton clear = new IconButton(Glyph.TRASH, CLEAR_TIP).compact();
-        clear.setEnabled(decision != null);
+        clear.setEnabled(decision != null && decision.hasStanding());
         clear.addActionListener(e -> clear(page, statementId, revision));
         IconButton history = new IconButton(Glyph.TABLE, HISTORY_TIP).compact();
         history.addActionListener(e -> history(page, statementId));
@@ -1488,6 +1508,8 @@ final class StandingTab extends JPanel {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         row.setOpaque(false);
         IconButton clear = new IconButton(Glyph.TRASH, CLEAR_TIP).compact();
+        // Löschen nimmt nur den Stand; eine Prüfung nimmt ihr eigener Schalter zurück.
+        clear.setEnabled(decision.hasStanding());
         clear.addActionListener(e -> clear(decision.page(), decision.statementId(), decision.revision()));
         IconButton history = new IconButton(Glyph.TABLE, HISTORY_TIP).compact();
         history.addActionListener(e -> history(decision.page(), decision.statementId()));
@@ -1561,8 +1583,15 @@ final class StandingTab extends JPanel {
         }
         List<String> lines = new ArrayList<>();
         for (StandingDecisionStore.AuditEntry entry : entries) {
-            String what = StandingDecisionStore.AuditEntry.REMOVE.equals(entry.action())
-                    ? "gelöscht (war „" + word(entry.standing()) + "“)" : "„" + word(entry.standing()) + "“ gesetzt";
+            String what = switch (entry.action()) {
+                case StandingDecisionStore.AuditEntry.REMOVE -> entry.standing() == null ? "gelöscht"
+                        : "gelöscht (war „" + word(entry.standing()) + "“)";
+                case StandingDecisionStore.AuditEntry.REVIEW -> entry.review() == null ? "Prüfung gesetzt"
+                        : "„" + reviewWord(entry.review()) + "“ gesetzt";
+                case StandingDecisionStore.AuditEntry.UNREVIEW -> entry.review() == null ? "Prüfung zurückgenommen"
+                        : "Prüfung zurückgenommen (war „" + reviewWord(entry.review()) + "“)";
+                default -> entry.standing() == null ? "gesetzt" : "„" + word(entry.standing()) + "“ gesetzt";
+            };
             lines.add(WHEN.format(entry.at()) + " · " + entry.actor() + " · " + what);
         }
         return String.join("\n", lines);
@@ -1648,9 +1677,11 @@ final class StandingTab extends JPanel {
                 metaText = "Seite " + pageName(decision.page()) + " · löschen im Overlay";
             }
             boolean stale = row instanceof Line l && l.entry().analysisStale();
-            Color tone = stale ? Comic.MUTED : tone(standing);
+            // Eine veraltete Entscheidung kann nur die Prüfung tragen (ADR 0032 W3): dann ohne Stand.
+            Color tone = stale || standing == null ? Comic.MUTED : tone(standing);
             boolean faded = stale || standing == Standing.UEBERHOLT;
-            badge.setText(stale ? STALE_WORD : word(standing));
+            badge.setText(stale ? STALE_WORD : standing == null
+                    ? reviewWord(((Stale) row).decision().review()) : word(standing));
             badge.setForeground(tone);
             badge.setBackground(Comic.SURFACE);
             badge.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),

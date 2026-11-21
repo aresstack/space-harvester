@@ -513,11 +513,21 @@ class SearchViewTest {
             assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
                     .contains("WISSENSQUELLEN", "DATEITYPEN", "SUCHMETHODEN");
             // Suchmethoden als Gruppe: Semantische Suche, darunter Nachbarseiten (R2), Standard aus.
+            // K5a: „Synonyme der Fachbegriffe einbeziehen“ direkt unter den Nachbarseiten, Standard aus.
             List<String> methods = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
                     .filter(text -> text.equals(SearchView.SEMANTIC) || text.equals(SearchView.NEIGHBORS)
-                            || text.equals(SearchView.TECHNICAL_TERMS)).toList();
-            assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS, SearchView.TECHNICAL_TERMS);
+                            || text.equals(SearchView.SYNONYMS) || text.equals(SearchView.TECHNICAL_TERMS)).toList();
+            assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS, SearchView.SYNONYMS,
+                    SearchView.TECHNICAL_TERMS);
             assertThat(view[0].technicalTerms.isSelected()).as("„Nur Fachbegriffe“ ist Standard aus").isFalse();
+            assertThat(view[0].glossarySynonyms.isSelected()).isFalse();
+            assertThat(view[0].glossarySynonyms.isEnabled()).isTrue();
+            assertThat(view[0].modeLabel.getText()).doesNotContain("Synonyme");
+            view[0].glossarySynonyms.doClick();
+            assertThat(view[0].modeLabel.getText()).endsWith(" + Synonyme");
+            assertThat(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms()).isTrue();
+            view[0].glossarySynonyms.doClick();
+            assertThat(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms()).isFalse();
             assertThat(view[0].neighbors.isEnabled()).isTrue();
             assertThat(view[0].neighbors.getToolTipText()).isEqualTo(SearchView.NEIGHBORS_TIP);
             assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
@@ -692,5 +702,47 @@ class SearchViewTest {
             }
         }
         return found;
+    }
+
+    @Test
+    void neighborsKeepTheRestOfTheStatusLineAndAddUpOverRounds() {
+        String first = SearchView.withNeighbors("12 Treffer · Wiki: nicht erreichbar · unvollständig", 12, 14, 2);
+        assertThat(first).isEqualTo("14 Treffer · 2 Nachbarseiten dazu · Wiki: nicht erreichbar · unvollständig");
+
+        String second = SearchView.withNeighbors(first, 14, 15, 1);
+        assertThat(second).isEqualTo("15 Treffer · 3 Nachbarseiten dazu · Wiki: nicht erreichbar · unvollständig");
+    }
+
+    @Test
+    void neighborsArrivingDuringLoadMoreWaitForTheBatchAndAreNeverShownTwice() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].model.set(List.of(row("a"), row("b")));
+            // „Weitere laden“ läuft: angekommene Nachbarn warten, sonst schnitte der Stapel sie ab.
+            view[0].searching = new java.util.concurrent.CompletableFuture<Void>();
+            view[0].appendNeighbors(List.of(neighbor("n1")));
+        });
+        assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b");
+
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].searching = null;
+            view[0].model.truncate(2);
+            view[0].model.add(List.of(row("c")));
+            view[0].releaseNeighbors();
+            view[0].appendNeighbors(List.of(neighbor("n1"), neighbor("n2")));
+        });
+
+        assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b", "c", "n1", "n2");
+    }
+
+    private static SearchView.Hit row(String pageId) {
+        return new SearchView.Hit("wiki", pageId, "Seite " + pageId, "DEV", "Auszug", null);
+    }
+
+    private static com.aresstack.spaceharvester.application.query.KeywordSearch.Hit neighbor(String pageId) {
+        return new com.aresstack.spaceharvester.application.query.KeywordSearch.Hit("wiki", pageId, "DEV",
+                "Seite " + pageId, "Auszug", null, "1", null, null);
     }
 }
