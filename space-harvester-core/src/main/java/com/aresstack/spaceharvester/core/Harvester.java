@@ -1117,10 +1117,11 @@ public final class Harvester implements AutoCloseable {
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
             // K2: je Ablage eine eigene Sicht mit denselben Rechten und demselben Stand je Seite, für den Abgleich.
+            // Die Sichten teilen das Gedächtnis der Eingabe-Hashes mit der Hauptsicht: Was diese vergisst (neues
+            // Transkript, Neuaufbau), vergessen sie mit, sonst gälte eine Videoseite dort weiter als AKTUELL.
             java.util.Map<AnalyzerChoice, KnowledgeGraph> byAnalyzer = new java.util.EnumMap<>(AnalyzerChoice.class);
             for (AnalyzerChoice choice : AnalyzerChoice.values()) {
-                byAnalyzer.put(choice, new KnowledgeGraph(graphStore.store(choice), access, cache::find, readerText,
-                        statementAnalysis, termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent()));
+                byAnalyzer.put(choice, this.knowledgeGraph.sharingInputs(graphStore.store(choice)));
             }
             this.analyzerComparison = new com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison(
                     access, cache::find, (who, choice, key) -> byAnalyzer.get(choice).page(who, key),

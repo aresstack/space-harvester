@@ -35,8 +35,10 @@ import java.util.function.Supplier;
  * zuerst die beste Überlappung der Prädikate, dann dasselbe Lemma; die nächste Aussage im Satz nur, wenn im
  * überlappenden Satzpaar auf beiden Seiten genau eine Aussage übrig ist. Sonst {@link Agreement#NOT_COMPARABLE}.
  *
- * <p>Abweichend ({@link Agreement#DIFFERS}) ist ein anderes Verblemma oder eine andere Menge von Handelnden oder
- * Betroffenen, alles über {@link TermText#normalize}; eine leere gegen eine nicht leere Menge weicht ab.
+ * <p>Abweichend ({@link Agreement#DIFFERS}) ist ein anderes Verblemma (über {@link TermText#normalize}) oder ein
+ * Handelnder oder Betroffener ohne Gegenstück: Beteiligte werden über ihre Zeichenspannen eins zu eins zugeordnet,
+ * nicht über Wörter; eine leere gegen eine nicht leere Menge weicht ab. Die Wortlaute der {@link Reading} dienen nur
+ * der Anzeige.
  */
 public final class AnalyzerComparison {
 
@@ -183,10 +185,11 @@ public final class AnalyzerComparison {
             if (!Objects.equals(mine.verb(), theirs.verb())) {
                 differences.add(Difference.VERB);
             }
-            if (!mine.actors().equals(theirs.actors())) {
+            if (!sameParticipants(statement, ownResult, counterpart, otherResult, ParsedStatements.Role.ACTOR)) {
                 differences.add(Difference.ACTOR);
             }
-            if (!mine.affected().equals(theirs.affected())) {
+            if (!sameParticipants(statement, ownResult, counterpart, otherResult,
+                    ParsedStatements.Role.AFFECTED_OBJECT)) {
                 differences.add(Difference.AFFECTED_OBJECT);
             }
             result.put(statement.id(), new Comparison(statement.id(), differences.isEmpty() ? Agreement.AGREES
@@ -299,6 +302,78 @@ public final class AnalyzerComparison {
         return new Reading(analyzer, statement.id(), verb(statement),
                 participants(statement, ParsedStatements.Role.ACTOR, mentions),
                 participants(statement, ParsedStatements.Role.AFFECTED_OBJECT, mentions));
+    }
+
+    /**
+     * Beteiligte einer Rolle stimmen überein, wenn sich jede Zeichenspanne eins zu eins mit einer Spanne derselben
+     * Rolle auf der anderen Seite überlappt, beste Überlappung zuerst. Nicht über Wörter: Der Parser liefert die
+     * Grundform des Kopfs, der KI-Analysator das letzte Wort der Gruppe („des Antrags“, „der Antrag des Bürgers“).
+     * {@link #comparable} sichert dieselbe Fassung, die Spannen beziehen sich also auf denselben Lesetext. Ohne
+     * auflösbare Erwähnung zählt der normalisierte Wortlaut.
+     */
+    private static boolean sameParticipants(ParsedStatements.Statement own, ParsedStatements ownResult,
+                                            ParsedStatements.Statement other, ParsedStatements otherResult,
+                                            ParsedStatements.Role role) {
+        List<Part> mine = parts(own, ownResult, role);
+        List<Part> theirs = parts(other, otherResult, role);
+        if (mine.size() != theirs.size()) {
+            return false;
+        }
+        record Candidate(int mine, int theirs, int overlap) {
+        }
+        List<Candidate> candidates = new ArrayList<>();
+        for (int i = 0; i < mine.size(); i++) {
+            for (int j = 0; j < theirs.size(); j++) {
+                int overlap = mine.get(i).overlap(theirs.get(j));
+                if (overlap > 0) {
+                    candidates.add(new Candidate(i, j, overlap));
+                }
+            }
+        }
+        candidates.sort(Comparator.comparingInt(Candidate::overlap).reversed()
+                .thenComparingInt(Candidate::mine).thenComparingInt(Candidate::theirs));
+        boolean[] mineUsed = new boolean[mine.size()];
+        boolean[] theirsUsed = new boolean[theirs.size()];
+        int matched = 0;
+        for (Candidate candidate : candidates) {
+            if (!mineUsed[candidate.mine()] && !theirsUsed[candidate.theirs()]) {
+                mineUsed[candidate.mine()] = true;
+                theirsUsed[candidate.theirs()] = true;
+                matched++;
+            }
+        }
+        return matched == mine.size();
+    }
+
+    /** Spanne eines Beteiligten; ohne Erwähnung nur sein normalisierter Wortlaut. */
+    private record Part(int start, int end, String text) {
+
+        int overlap(Part other) {
+            if (start >= 0 && other.start >= 0) {
+                return AnalyzerComparison.overlap(start, end, other.start, other.end);
+            }
+            return !text.isEmpty() && text.equals(other.text) ? 1 : 0;
+        }
+    }
+
+    private static List<Part> parts(ParsedStatements.Statement statement, ParsedStatements result,
+                                    ParsedStatements.Role role) {
+        Map<String, ParsedStatements.Mention> mentions = new HashMap<>();
+        result.mentions().forEach(mention -> mentions.put(mention.id(), mention));
+        List<Part> parts = new ArrayList<>();
+        for (ParsedStatements.Argument argument : statement.arguments()) {
+            if (argument.role() != role) {
+                continue;
+            }
+            ParsedStatements.Mention mention = mentions.get(argument.mention());
+            if (mention != null && mention.end() > mention.start()) {
+                parts.add(new Part(mention.start(), mention.end(), TermText.normalize(mention.text())));
+            } else {
+                parts.add(new Part(-1, -1, TermText.normalize(mention == null ? argument.mention()
+                        : mention.text())));
+            }
+        }
+        return parts;
     }
 
     private static String verb(ParsedStatements.Statement statement) {

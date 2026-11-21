@@ -161,7 +161,7 @@ public class KnowledgeGraph {
     /** Ob eine Quelle eingeschaltet ist; Analysen abgeschalteter Quellen bleiben liegen, sind aber unsichtbar. */
     private final Predicate<String> activeSources;
     /** Eingabe-Hash je Seite und Payload, damit nicht jede Abfrage jede Seite neu projiziert. */
-    private final Map<PageKey, InputMemo> inputs = new ConcurrentHashMap<>();
+    private final Map<PageKey, InputMemo> inputs;
     /** {@code PageText#inputSha256()} eines Anhangs oder einer enthaltenen Datei; leer, solange keiner vorliegt. */
     private final Function<DocumentKey, Optional<String>> documentInputs;
     private final com.aresstack.spaceharvester.application.observe.Listeners<Runnable> listeners =
@@ -200,6 +200,15 @@ public class KnowledgeGraph {
                           Function<PageSnapshot, Optional<PageText>> texts, StatementAnalysis statements,
                           TermExpansion expansions, Predicate<String> activeSources,
                           Function<DocumentKey, Optional<String>> documentInputs) {
+        this(store, access, snapshots, texts, statements, expansions, activeSources, documentInputs,
+                new ConcurrentHashMap<>());
+    }
+
+    private KnowledgeGraph(KnowledgeGraphStore store, AccessGuard access,
+                           Function<PageKey, Optional<PageSnapshot>> snapshots,
+                           Function<PageSnapshot, Optional<PageText>> texts, StatementAnalysis statements,
+                           TermExpansion expansions, Predicate<String> activeSources,
+                           Function<DocumentKey, Optional<String>> documentInputs, Map<PageKey, InputMemo> inputs) {
         this.documentInputs = Objects.requireNonNull(documentInputs, "documentInputs");
         this.activeSources = Objects.requireNonNull(activeSources, "activeSources");
         this.store = Objects.requireNonNull(store, "store");
@@ -208,6 +217,17 @@ public class KnowledgeGraph {
         this.texts = Objects.requireNonNull(texts, "texts");
         this.statements = Objects.requireNonNull(statements, "statements");
         this.expansions = Objects.requireNonNull(expansions, "expansions");
+        this.inputs = inputs;
+    }
+
+    /**
+     * Dieselbe Sicht auf eine andere Ablage (K2, Abgleich der Analysatoren): gleiche Rechte, gleiche Textprojektion und
+     * DASSELBE Gedächtnis der Eingabe-Hashes. {@link #forgetInput} und {@link #forgetInputs} an einer der Sichten
+     * wirken darum auf alle, etwa nach einem neuen Transkript.
+     */
+    public KnowledgeGraph sharingInputs(KnowledgeGraphStore other) {
+        return new KnowledgeGraph(other, access, snapshots, texts, statements, expansions, activeSources,
+                documentInputs, inputs);
     }
 
     /**
