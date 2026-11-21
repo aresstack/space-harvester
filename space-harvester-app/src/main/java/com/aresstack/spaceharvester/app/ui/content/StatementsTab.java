@@ -7,6 +7,8 @@ import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Glyph;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.app.ui.controls.ActionChip;
+import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.ParserModelSetup;
 import com.aresstack.spaceharvester.app.ui.Problems;
@@ -128,6 +130,8 @@ final class StatementsTab extends JPanel {
             "Syntaxdetails anzeigen", "Vollständige UD-Abhängigkeiten (CoNLL-U) zur Diagnose");
     private final List<String> lines = new ArrayList<>();
     private final List<Runnable> jumps = new ArrayList<>();
+    private final List<ActionChip> chips = new ArrayList<>();
+    private final InfoPopup popup = new InfoPopup();
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
     private Runnable onAnalysed = () -> { };
     private Consumer<String> onStatus = text -> { };
@@ -432,6 +436,7 @@ final class StatementsTab extends JPanel {
         list.removeAll();
         lines.clear();
         jumps.clear();
+        chips.clear();
         setState(" ", Comic.MUTED);
         hint.setText(message);
         analyze.setEnabled(false);
@@ -706,6 +711,7 @@ final class StatementsTab extends JPanel {
         list.removeAll();
         lines.clear();
         jumps.clear();
+        chips.clear();
         copyText.setLength(0);
         hint.setText(" ");
         list.revalidate();
@@ -722,6 +728,7 @@ final class StatementsTab extends JPanel {
         list.removeAll();
         lines.clear();
         jumps.clear();
+        chips.clear();
         copyText.setLength(0);
         syntaxPanel.setVisible(statements.analysis() != null);
         switch (statements.state()) {
@@ -745,8 +752,9 @@ final class StatementsTab extends JPanel {
                     .filter(ParsedStatements.Statement::core).toList();
             List<ParsedStatements.Statement> other = result.statements().stream()
                     .filter(statement -> !statement.core()).toList();
-            section("Kernaussagen", core, result, mentions, stale, offsets);
-            section("Weitere Aussagen", other, result, mentions, stale, offsets);
+            String analyzer = StatementProvenance.analyzer(statements.analysis().analyzerId());
+            section("Kernaussagen", core, result, mentions, stale, offsets, analyzer);
+            section("Weitere Aussagen", other, result, mentions, stale, offsets, analyzer);
             if (result.statements().isEmpty()) {
                 list.add(Comic.muted("Keine Aussagen mit Vollverb erkannt."));
             }
@@ -764,21 +772,27 @@ final class StatementsTab extends JPanel {
     }
 
     private void section(String heading, List<ParsedStatements.Statement> statements, ParsedStatements result,
-                         Map<String, ParsedStatements.Mention> mentions, boolean stale, boolean offsets) {
+                         Map<String, ParsedStatements.Mention> mentions, boolean stale, boolean offsets,
+                         String analyzer) {
         if (statements.isEmpty()) {
             return;
         }
-        JLabel label = Comic.text(heading + " (" + statements.size() + ")");
+        String title = heading + " (" + count(statements) + ")";
+        JLabel label = Comic.text(title);
         label.setFont(Comic.semiBold(13f));
         label.setAlignmentX(LEFT_ALIGNMENT);
         list.add(label);
         lines.add(heading);
-        copyText.append(heading).append(" (").append(statements.size()).append(")\n\n");
+        copyText.append(title).append("\n\n");
         for (ParsedStatements.Statement statement : statements) {
-            List<String> body = describe(statement, result, mentions, offsets ? sentence(result, statement) : null);
-            lines.add(String.join(" | ", body));
+            List<String> body = describe(statement, result, mentions, offsets ? sentence(result, statement) : null,
+                    analyzer);
+            // Kopieren liefert alles, die Zeile zeigt das Knappe; Herkunft, Urteil und Stufe stehen im Overlay (A1).
+            List<String> shown = shown(body);
+            lines.add(String.join(" | ", shown));
             copyText.append(String.join("\n", body)).append("\n\n");
-            list.add(entry(body, stale, offsets ? span(result, statement) : null));
+            String details = StatementProvenance.details(statement, analyzer, mentions);
+            list.add(entry(shown, stale, offsets ? span(result, statement) : null, details));
             list.add(Box.createVerticalStrut(4));
         }
         list.add(Box.createVerticalStrut(8));
@@ -808,6 +822,29 @@ final class StatementsTab extends JPanel {
         }
     }
 
+    /** Anzahl im Abschnittskopf, mit den gekennzeichneten: „12, davon 3 Vorschläge“ (A1). */
+    static String count(List<ParsedStatements.Statement> statements) {
+        long proposals = statements.stream()
+                .filter(s -> StatementProvenance.PROPOSAL.equals(StatementProvenance.marker(s))).count();
+        long invalid = statements.stream()
+                .filter(s -> StatementProvenance.INVALID.equals(StatementProvenance.marker(s))).count();
+        List<String> parts = new ArrayList<>();
+        if (proposals > 0) {
+            parts.add(proposals + (proposals == 1 ? " Vorschlag" : " Vorschläge"));
+        }
+        if (invalid > 0) {
+            parts.add(invalid + " " + StatementProvenance.INVALID);
+        }
+        return statements.size() + (parts.isEmpty() ? "" : ", davon " + String.join(", ", parts));
+    }
+
+    /** Die Zeilen in der Ansicht: ohne Herkunft, Urteil und Stufe, die im Overlay „Herkunft“ stehen (A1). */
+    static List<String> shown(List<String> body) {
+        return body.stream().filter(line -> !line.startsWith(CheckTexts.ORIGIN_LABEL + ": ")
+                && !line.startsWith(CheckTexts.VERDICT_LABEL + ": ")
+                && !line.startsWith(CheckTexts.QUALITY_LABEL + ": ")).toList();
+    }
+
     static String link(KnowledgeGraph.Link link) {
         String target = (link.target().title() == null ? link.target().key().pageId() : link.target().title())
                 + " (" + link.target().key().sourceId() + ")";
@@ -819,10 +856,20 @@ final class StatementsTab extends JPanel {
                 + kind + stale;
     }
 
-    /** Die Zeilen einer Aussage: Prädikat, Beteiligte je Rolle, Form, nominale Bezüge, Hinweise, Beleg. */
+    /** Wie {@link #describe(ParsedStatements.Statement, ParsedStatements, Map, String, String)} ohne Analysator. */
     static List<String> describe(ParsedStatements.Statement statement, ParsedStatements result,
                                  Map<String, ParsedStatements.Mention> mentions, String evidence) {
+        return describe(statement, result, mentions, evidence, null);
+    }
+
+    /**
+     * Die Zeilen einer Aussage: Kennzeichen, Herkunft und Prüfstatus knapp (A1), Prädikat, Beteiligte je Rolle, Form,
+     * nominale Bezüge, Hinweise, Beleg.
+     */
+    static List<String> describe(ParsedStatements.Statement statement, ParsedStatements result,
+                                 Map<String, ParsedStatements.Mention> mentions, String evidence, String analyzer) {
         List<String> body = new ArrayList<>();
+        body.add(StatementProvenance.line(statement, analyzer));
         String lemma = statement.predicateLemma();
         body.add(statement.predicateText() + (lemma == null || lemma.equals(statement.predicateText()) ? ""
                 : " (" + lemma + ")"));
@@ -1052,6 +1099,11 @@ final class StatementsTab extends JPanel {
     }
 
     private JComponent entry(List<String> body, boolean stale, List<TermsTab.Span> jump) {
+        return entry(body, stale, jump, null);
+    }
+
+    /** Ein Eintrag; mit {@code details} rechts der Chip „Herkunft“, der sie im Overlay zeigt (A1). */
+    private JComponent entry(List<String> body, boolean stale, List<TermsTab.Span> jump, String details) {
         JTextArea area = note();
         area.setText(String.join("\n", body));
         area.setForeground(stale ? Comic.MUTED : Comic.INK);
@@ -1061,6 +1113,15 @@ final class StatementsTab extends JPanel {
                 BorderFactory.createMatteBorder(0, 3, 0, 0, stale ? Comic.MUTED : Comic.PETROL),
                 BorderFactory.createEmptyBorder(4, 8, 4, 4)));
         row.add(area, BorderLayout.CENTER);
+        if (details != null) {
+            ActionChip chip = new ActionChip(StatementProvenance.CHIP, StatementProvenance.HEADING + " zeigen");
+            chip.addActionListener(e -> showDetails(chip, details));
+            JPanel side = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+            side.setOpaque(false);
+            side.add(chip);
+            row.add(side, BorderLayout.EAST);
+            chips.add(chip);
+        }
         row.setAlignmentX(LEFT_ALIGNMENT);
         if (jump != null && !jump.isEmpty()) {
             area.setToolTipText("Zum Beleg im Reiter „Text“ springen");
@@ -1075,6 +1136,23 @@ final class StatementsTab extends JPanel {
             });
         }
         return row;
+    }
+
+    private void showDetails(JComponent owner, String details) {
+        popup.clearLinks().text(StatementProvenance.HEADING, details);
+        if (owner.isShowing()) {
+            popup.showAt(owner, 0, owner.getHeight());
+        }
+    }
+
+    /** Das Overlay „Herkunft und Prüfstatus“ (Tests). */
+    InfoPopup popup() {
+        return popup;
+    }
+
+    /** Die Chips „Herkunft“ der Einträge in Reihenfolge (Tests). */
+    List<ActionChip> chips() {
+        return List.copyOf(chips);
     }
 
     private void setState(String label, Color tone) {
