@@ -387,11 +387,13 @@ public final class DomainTermGraph {
 
     /**
      * Ob eine Aussage für die Fachsicht zählt: Standardansicht ({@link PageGraph#DEFAULT_QUALITIES}), nicht vom
-     * Menschen abgelehnt ({@link CountedStatements}) und keine Zustandsaussage (ihr Prädikat ist kein Verb). Dieselbe
-     * Regel wie das Verben-Verzeichnis (K1).
+     * Menschen abgelehnt ({@link CountedStatements}), keine Zustandsaussage (ihr Prädikat ist kein Verb) und aus dem
+     * Originalsatz: Aussagen der Vorstufe und Korrekturen des Prüfschritts sind nach ADR 0032 nie Beleg, sonst zählte
+     * eine Stelle doppelt (die Korrektur legt neben dem Original eine Aussage mit demselben Verb an).
      */
     static boolean counts(ParsedStatements.Statement statement) {
-        return PageGraph.DEFAULT_QUALITIES.contains(statement.effectiveQuality())
+        return statement.derivation().origin() == ParsedStatements.Origin.ORIGINAL
+                && PageGraph.DEFAULT_QUALITIES.contains(statement.effectiveQuality())
                 && CountedStatements.plausible(statement) && !statement.state();
     }
 
