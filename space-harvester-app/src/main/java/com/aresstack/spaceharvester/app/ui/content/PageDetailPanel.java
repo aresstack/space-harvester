@@ -321,11 +321,16 @@ public final class PageDetailPanel extends JPanel {
     private boolean assetsLoaded;
     private boolean readingLoaded;
     private boolean referencesLoaded;
+    /** Zählt die Ladevorgänge der Verweise; ein überholter Vorgang zeigt sein Ergebnis nicht mehr. */
+    private long referencesGeneration;
     private boolean imagesLoaded;
     /** Anmeldung bei der Liste freigegebener Seiten (ADR 0028), damit „Bilder“ eine neue Freigabe der Seite zeigt. */
     private com.aresstack.spaceharvester.application.observe.Subscription releaseSubscription =
             com.aresstack.spaceharvester.application.observe.Subscription.NONE;
     private AppRuntime releaseRuntime;
+    private com.aresstack.spaceharvester.application.observe.Subscription linksSubscription =
+            com.aresstack.spaceharvester.application.observe.Subscription.NONE;
+    private AppRuntime linksRuntime;
     private static final String ORIGINAL_PAGE_CARD = "original-page";
     private static final String ORIGINAL_FILE_CARD = "original-file";
     private final ReadingPane readingPane = new ReadingPane();
@@ -2733,6 +2738,11 @@ public final class PageDetailPanel extends JPanel {
     @Override
     public void removeNotify() {
         java.awt.Toolkit.getDefaultToolkit().removeAWTEventListener(mouseNavigation);
+        // Das Verzeichnis der Verweise soll das Panel nicht festhalten; beim nächsten Laden meldet es sich neu an.
+        linksSubscription.close();
+        linksSubscription = com.aresstack.spaceharvester.application.observe.Subscription.NONE;
+        linksRuntime = null;
+        referencesLoaded = false;
         super.removeNotify();
     }
 
@@ -2774,17 +2784,21 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || page == null || referencesLoaded) {
             return;
         }
+        watchLinks(runtime);
         referencesLoaded = true;
-        references.message("Verweise werden geladen …");
+        if (!references.showing()) {
+            references.message("Verweise werden geladen …");
+        }
         String source = sourceId;
         String id = pageId;
         DeliveredPage shown = page;
+        long generation = ++referencesGeneration;
         Background.run(() -> runtime.workspace().references(source, id), found -> {
-            if (shown == page) {
+            if (shown == page && generation == referencesGeneration) {
                 references.show(found);
             }
         }, error -> {
-            if (shown != page) {
+            if (shown != page || generation != referencesGeneration) {
                 return;
             }
             referencesLoaded = false;
@@ -3566,6 +3580,37 @@ public final class PageDetailPanel extends JPanel {
                 feedback.problem(error, Problems.Step.PAGE);
             }
         });
+    }
+
+    /**
+     * Meldet sich je Laufzeit einmal beim Verzeichnis der Verweise an (Paket V1, ADR 0027): Ändert es sich in der Quelle
+     * der gezeigten Seite, gilt der geladene Stand nicht mehr, auch nicht der Zähler „aus N von M Seiten“; ist
+     * „Verweise“ offen, lädt er still neu, ohne die Tabelle zu leeren.
+     */
+    private void watchLinks(AppRuntime runtime) {
+        if (runtime == linksRuntime) {
+            return;
+        }
+        linksSubscription.close();
+        linksRuntime = runtime;
+        linksSubscription = runtime.workspace().subscribeLinks(change -> javax.swing.SwingUtilities.invokeLater(() -> {
+            // Nur die ganze Quelle oder die gezeigte Seite: references() fragt die ausgehenden Verweise live bei der
+            // Quelle, das soll nicht jede gebündelte Meldung eines Sync auslösen.
+            if (!affects(change, sourceId, pageId)) {
+                return;
+            }
+            referencesLoaded = false;
+            if (REFERENCES.equals(selectedTab())) {
+                loadReferences();
+            }
+        }));
+    }
+
+    /** Ob eine Änderung des Verzeichnisses die gezeigte Seite betrifft: ganze Quelle oder genau diese Seite. */
+    static boolean affects(com.aresstack.spaceharvester.application.links.PageLinks.LinksChanged change,
+                           String sourceId, String pageId) {
+        return change.sourceId().equals(sourceId)
+                && (change.pageIds().isEmpty() || pageId != null && change.pageIds().contains(pageId));
     }
 
     /**
