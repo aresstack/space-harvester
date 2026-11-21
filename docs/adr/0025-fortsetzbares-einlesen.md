@@ -54,7 +54,7 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
    Fortsetzen übernimmt fertig geprüfte Seiten mit ihren Einträgen und Zählern ohne Abruf, schon abgelegte Dateien
    kommen aus dem Speicher.
 
-10. **Selbst anhalten statt Fehler zählen** (Angelo 10.11.2026, CLUK: 5535 „Fehler“ nach abgelaufener Code-Abfrage).
+10. **Selbst anhalten statt Fehler zählen** (Angelo 10.11.2026, großer Space: 5535 „Fehler“ nach abgelaufener Code-Abfrage).
     `JobContext#pause(PauseReason)` beendet einen Auftrag als `PAUSED` mit Grund (`JobStatus#pauseReason`):
     `SIGN_IN_REQUIRED`, wenn mit Oberfläche die Anmeldung nicht rechtzeitig kommt oder abgelehnt wird (vorher
     zählten alle übrigen Dateien sofort als „Anmeldung fehlt“), `CONNECTION_LOST`, wenn Bilder die Quelle nicht
