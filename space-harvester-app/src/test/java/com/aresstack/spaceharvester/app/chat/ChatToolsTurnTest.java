@@ -313,6 +313,23 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void theFirstPageReadWithoutAnOpenPageIsReportedAsSourceOne() throws Exception {
+        PageKey read = page("nachtlauf");
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c1", ChatTools.READ,
+                        "{\"kennung\":\"" + ChatTools.ref(read) + "\"}"))),
+                (request, listener) -> listener.completed("Bei vollem Spool [1].")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum?", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(events.context.accepted()).extracting(ChatKnowledge.Excerpt::pageId)
+                .containsExactly(read.pageId());
+    }
+
+    @Test
     void aSpaceTooLargeForTheOverviewIsNamedInsteadOfListedAsEmpty() {
         ChatTools tools = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
             @Override

@@ -180,6 +180,8 @@ public final class ChatTurn {
     private PageKey openPage;
     private volatile ChatTools tools;
     private final List<ChatKnowledge.Excerpt> cited = new ArrayList<>();
+    /** Ob die Quellen schon einmal gemeldet wurden; danach meldet jede neue Quelle die Liste erneut. */
+    private boolean sourcesAnnounced;
     private final Map<PageKey, Integer> numbers = new HashMap<>();
     private Releases releases = Releases.NONE;
     private final Set<PageKey> releasedHere = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -417,6 +419,9 @@ public final class ChatTurn {
             finish(() -> listener.cancelled(""));
             return;
         }
+        synchronized (cited) {
+            sourcesAnnounced = true;
+        }
         reportSources();
         List<AiChat.Message> messages = conversation(ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef),
                 question);
@@ -561,7 +566,7 @@ public final class ChatTurn {
             }
             cited.add(excerpt);
             numbers.put(key, cited.size());
-            if (cited.size() > 1) {
+            if (sourcesAnnounced) {
                 reportSources();
             }
             return cited.size();
