@@ -158,6 +158,25 @@ class SynonymCandidatesTest {
         assertThat(collected.embeddingUsed()).isFalse();
     }
 
+    /** K3: Mit „nur bestätigte Fachbegriffe“ zählt nur ein Paar, von dem ein Begriff ein solcher Fachbegriff ist. */
+    @Test
+    void glossaryTermsOnlyKeepsPairsWithAConfirmedTechnicalTerm() {
+        cached("Die E-Mail geht an die Fachabteilung. Die Rückmeldung kommt aus der Fachabteilung.");
+        cached("Jede Email wird im Postfach archiviert. Die Rueckmeldung wird geprüft.");
+        candidates.glossaryTerms(scope -> Set.of(TermText.normalize("Rückmeldung")));
+        SynonymBudget onlyGlossary = SynonymBudget.DEFAULT.withGlossaryTermsOnly(true);
+
+        SynonymCandidates.Collected all = candidates.collect(SynonymScope.source("wiki"), SynonymBudget.DEFAULT, null);
+        SynonymCandidates.Collected technical = candidates.collect(SynonymScope.source("wiki"), onlyGlossary, null);
+
+        assertThat(find(all, "E-Mail", "Email")).isPresent();
+        assertThat(find(all, "Rückmeldung", "Rueckmeldung")).isPresent();
+        assertThat(find(technical, "E-Mail", "Email")).as("kein Fachbegriff beteiligt").isEmpty();
+        assertThat(find(technical, "Rückmeldung", "Rueckmeldung")).isPresent();
+        assertThat(candidates.state("wiki", true)).as("Fachbegriffe gehen in den Stand ein")
+                .isNotEqualTo(candidates.state("wiki", false));
+    }
+
     @Test
     void umlautSpellingsAreVariantsButInflectionsAreNot() {
         cached("Die Rückmeldung kommt aus der Fachabteilung.");

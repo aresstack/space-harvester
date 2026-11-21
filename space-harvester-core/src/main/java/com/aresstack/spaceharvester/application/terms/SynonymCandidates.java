@@ -104,6 +104,11 @@ public class SynonymCandidates {
     private final String processorVersion;
     /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
     private volatile Predicate<PageKey> pageReleases = key -> false;
+    /**
+     * Die bestätigten Fachbegriffe des Glossars (normalisiert) für einen Umfang (K3); ohne Glossar keine. Nur gefragt,
+     * wenn {@link SynonymBudget#glossaryTermsOnly()} an ist.
+     */
+    private volatile Function<SynonymScope, Set<String>> glossaryTerms = scope -> Set.of();
     /** Schon berechnete Vektoren je Modell und Eingabe (SY2); ohne Datenverzeichnis nur im Speicher. */
     private volatile SynonymVectorCache vectors = SynonymVectorCache.inMemory();
 
@@ -132,6 +137,14 @@ public class SynonymCandidates {
      */
     public void pageReleases(Predicate<PageKey> released) {
         this.pageReleases = Objects.requireNonNull(released, "released");
+    }
+
+    /**
+     * Schließt das Glossar an (K3): Mit {@link SynonymBudget#glossaryTermsOnly()} zählen nur Paare, von denen
+     * mindestens ein Begriff ein bestätigter Fachbegriff ist; diese Begriffe gehen beim Budget vor.
+     */
+    public void glossaryTerms(Function<SynonymScope, Set<String>> terms) {
+        this.glossaryTerms = Objects.requireNonNull(terms, "terms");
     }
 
     /** Schließt den dauerhaften Vektor-Cache an (SY2). */
@@ -179,6 +192,14 @@ public class SynonymCandidates {
      * Kennungen, keine Begriffe.
      */
     public String state(String sourceId) {
+        return state(sourceId, false);
+    }
+
+    /**
+     * Wie {@link #state(String)}; mit {@code glossaryTermsOnly} zählen auch die bestätigten Fachbegriffe der Quelle,
+     * damit ein neu bestätigter Fachbegriff den nächsten automatischen Lauf auslöst (K3).
+     */
+    public String state(String sourceId, boolean glossaryTermsOnly) {
         java.security.MessageDigest digest;
         try {
             digest = java.security.MessageDigest.getInstance("SHA-256");
@@ -187,6 +208,11 @@ public class SynonymCandidates {
         }
         digest.update((released.test(sourceId) + "|" + embeddingModel().orElse("-") + "|").getBytes(
                 java.nio.charset.StandardCharsets.UTF_8));
+        if (glossaryTermsOnly) {
+            digest.update(("glossary|" + String.join("\u0001", new java.util.TreeSet<>(
+                    glossaryTerms.apply(SynonymScope.source(sourceId)))) + "|").getBytes(
+                    java.nio.charset.StandardCharsets.UTF_8));
+        }
         TermIndex.Filter filter = new TermIndex.Filter(Set.of(sourceId), null, null, null, processorVersion);
         String from = null;
         while (true) {
@@ -374,6 +400,11 @@ public class SynonymCandidates {
         List<Term> select() {
             List<Term> ranked = new ArrayList<>(terms.values());
             ranked.sort(Comparator.comparingInt((Term term) -> -term.pages).thenComparing(term -> term.normalized));
+            if (budget.glossaryTermsOnly()) {
+                // K3: Fachbegriffe gehen beim Budget vor, die übrigen bleiben als mögliche Synonyme dahinter.
+                Set<String> technical = glossary();
+                ranked.sort(Comparator.comparing((Term term) -> !technical.contains(term.normalized)));
+            }
             if (ranked.size() <= budget.maxTerms()) {
                 return ranked;
             }
@@ -842,10 +873,25 @@ public class SynonymCandidates {
         }
 
         /** Regelgründe zuerst, dann Ähnlichkeit absteigend; Kandidaten ohne Fundstellen entfallen. */
+        /** Die bestätigten Fachbegriffe des Umfangs, einmal je Lauf gelesen. */
+        private Set<String> glossary;
+
+        Set<String> glossary() {
+            if (glossary == null) {
+                glossary = Set.copyOf(glossaryTerms.apply(scope));
+            }
+            return glossary;
+        }
+
         List<SynonymCandidate> merged() {
             List<SynonymCandidate> list = new ArrayList<>();
+            Set<String> technical = budget.glossaryTermsOnly() ? glossary() : null;
             for (SynonymCandidate candidate : found.values()) {
                 if (candidate.fromContext().isEmpty() || candidate.toContext().isEmpty()) {
+                    continue;
+                }
+                if (technical != null && !technical.contains(TermText.normalize(candidate.fromTerm()))
+                        && !technical.contains(TermText.normalize(candidate.toTerm()))) {
                     continue;
                 }
                 list.add(candidate);

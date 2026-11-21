@@ -39,6 +39,8 @@ final class SynonymRunForm extends JPanel {
     private final JComboBox<String> source = Comic.combo();
     private final JComboBox<String> space = Comic.combo();
     private final JSpinner pairs;
+    private final javax.swing.JCheckBox glossaryOnly = Comic.checkBox("Nur von bestätigten Fachbegriffen des Glossars "
+            + "ausgehen");
     private final WrappedText status = Comic.hint(" ");
     private final List<HarvestSource> sources;
     private final Function<String, List<Partition>> spaces;
@@ -54,6 +56,16 @@ final class SynonymRunForm extends JPanel {
      */
     SynonymRunForm(List<HarvestSource> sources, Function<String, List<Partition>> spaces,
                    Function<SynonymScope, SynonymDiscovery.Availability> availability, int maxJudgedPairs) {
+        this(sources, spaces, availability, maxJudgedPairs, false);
+    }
+
+    /**
+     * @param glossaryTermsOnly Vorbelegung „Nur von bestätigten Fachbegriffen ausgehen“ (K3, aus
+     *                          {@code terms.synonyms.glossary-terms-only})
+     */
+    SynonymRunForm(List<HarvestSource> sources, Function<String, List<Partition>> spaces,
+                   Function<SynonymScope, SynonymDiscovery.Availability> availability, int maxJudgedPairs,
+                   boolean glossaryTermsOnly) {
         super(new BorderLayout(0, 8));
         setOpaque(false);
         JPanel fields = new JPanel(new GridLayout(0, 1, 0, 4));
@@ -75,6 +87,11 @@ final class SynonymRunForm extends JPanel {
         fields.add(source);
         fields.add(Comic.caption("Space"));
         fields.add(space);
+        glossaryOnly.setSelected(glossaryTermsOnly);
+        glossaryOnly.setOpaque(false);
+        glossaryOnly.setToolTipText("Aus: alle Begriffe, die mit den meisten Seiten zuerst. An: nur Paare, von denen "
+                + "mindestens ein Begriff ein bestätigter Fachbegriff des Glossars ist");
+        fields.add(glossaryOnly);
         fields.add(Comic.caption("Zusätzlich vom Chat-Modell prüfen lassen, höchstens Paare"));
         fields.add(pairs);
         add(fields, BorderLayout.NORTH);
@@ -144,7 +161,12 @@ final class SynonymRunForm extends JPanel {
     }
 
     SynonymDiscovery.Request request() {
-        return new SynonymDiscovery.Request(scope(), (Integer) pairs.getValue());
+        return new SynonymDiscovery.Request(scope(), (Integer) pairs.getValue(), glossaryOnly.isSelected());
+    }
+
+    /** Für Tests: „Nur von bestätigten Fachbegriffen ausgehen“. */
+    javax.swing.JCheckBox glossaryOnlyBox() {
+        return glossaryOnly;
     }
 
     int maxJudgedPairs() {

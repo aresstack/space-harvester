@@ -178,9 +178,16 @@ public class SynonymDiscovery {
      * Ein Lauf, wie ihn der Bearbeiter bestellt.
      *
      * @param scope          Umfang
-     * @param maxJudgedPairs höchstens so viele Paare an das Modell, oder {@code null} für den Wert der Konfiguration
+     * @param maxJudgedPairs    höchstens so viele Paare an das Modell, oder {@code null} für den Wert der Konfiguration
+     * @param glossaryTermsOnly nur aus bestätigten Fachbegriffen des Glossars (K3), oder {@code null} für den Wert der
+     *                          Konfiguration ({@code terms.synonyms.glossary-terms-only})
      */
-    public record Request(SynonymScope scope, Integer maxJudgedPairs) {
+    public record Request(SynonymScope scope, Integer maxJudgedPairs, Boolean glossaryTermsOnly) {
+
+        /** Umfang wie in der Konfiguration (wie vor K3). */
+        public Request(SynonymScope scope, Integer maxJudgedPairs) {
+            this(scope, maxJudgedPairs, null);
+        }
 
         public Request {
             Objects.requireNonNull(scope, "scope");
@@ -219,6 +226,9 @@ public class SynonymDiscovery {
         if (request.maxJudgedPairs() != null) {
             effective = effective.withMaxJudgedPairs(request.maxJudgedPairs());
         }
+        if (request.glossaryTermsOnly() != null) {
+            effective = effective.withGlossaryTermsOnly(request.glossaryTermsOnly());
+        }
         SynonymBudget chosen = effective;
         JobStatus status = jobs.submit(JobType.ENRICHMENT, scope.global() ? Jobs.ALL_SOURCES : scope.sourceId(),
                 scope.spaceKey(), caller.jobOwner(), JobTask.blocking(context -> {
@@ -246,7 +256,7 @@ public class SynonymDiscovery {
         if (!chosen.automatic() || catalog.find(sourceId).isEmpty()) {
             return Optional.empty();
         }
-        String state = candidates.state(sourceId);
+        String state = candidates.state(sourceId, chosen.glossaryTermsOnly());
         if (state.equals(candidates.vectors().state(sourceId).orElse(null))) {
             return Optional.empty();
         }
@@ -262,7 +272,7 @@ public class SynonymDiscovery {
                 waiting.remove(sourceId, context.jobId());
                 synchronized (lock(scope)) {
                     // Der Stand vor dem Lauf: Was sich währenddessen ändert, löst den nächsten Lauf aus.
-                    String before = candidates.state(sourceId);
+                    String before = candidates.state(sourceId, chosen.glossaryTermsOnly());
                     // SY2: Der Stand gilt nur, wenn jeder Begriff einen Vektor hat; sonst holt der nächste Anlass
                     // die übrigen nach.
                     if (run(scope, chosen, context).complete()) {

@@ -209,6 +209,20 @@ final class AiSettingsPanel {
     final HelpButton automaticSynonymsHelp = new HelpButton(Dialogs.CLOSE_SIZE, AUTOMATIC_SYNONYMS_LABEL,
             AUTOMATIC_SYNONYMS_HELP);
     static final String AUTOMATIC_SYNONYMS_LABEL = "Synonyme";
+    /**
+     * Synonyme nur zu bestätigten Fachbegriffen ({@code space-harvester.terms.synonyms.glossary-terms-only}, K3,
+     * Angelo 21.11.2026): Vorgabe für den automatischen Lauf und Vorbelegung des Startdialogs. Standard aus.
+     */
+    final javax.swing.JCheckBox glossarySynonyms = Comic.checkBox("Nur zu bestätigten Fachbegriffen");
+    static final String GLOSSARY_SYNONYMS_LABEL = "Synonyme zu";
+    static final String GLOSSARY_SYNONYMS_HELP = "Mit Häkchen sucht die Synonymerkennung nur Synonyme zu Begriffen, "
+            + "die du im Fachglossar als Fachbegriff bestätigt hast; ein Paar zählt, wenn mindestens einer der beiden "
+            + "Begriffe ein solcher Fachbegriff ist. Ohne Häkchen (Standard) gehen alle Begriffe ein, die mit den "
+            + "meisten Seiten zuerst.\n\nGilt für den Lauf nach jedem Abgleich und ist die Vorbelegung im Dialog "
+            + "„Synonyme vorschlagen“, dort je Lauf änderbar. Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.terms.synonyms.glossary-terms-only.";
+    final HelpButton glossarySynonymsHelp = new HelpButton(Dialogs.CLOSE_SIZE, GLOSSARY_SYNONYMS_LABEL,
+            GLOSSARY_SYNONYMS_HELP);
     static final String AUTOMATIC_SYNONYMS_TEXT = "Nach jedem Abgleich vorschlagen";
     /** Die Zeile auf der Abschlussseite des Assistenten. */
     static final String AUTOMATIC_SYNONYMS_ON = "nach jedem Abgleich";
@@ -391,6 +405,9 @@ final class AiSettingsPanel {
         automaticSynonyms.setToolTipText("Synonymlauf für eine Quelle nach jedem Abgleich und nach neuer KI-Freigabe; "
                 + "ohne Häkchen nur auf Klick");
         modelRows.add(AUTOMATIC_SYNONYMS_LABEL, Comic.row(automaticSynonyms, automaticSynonymsHelp), null);
+        glossarySynonyms.setToolTipText("Synonyme nur zu bestätigten Fachbegriffen des Glossars vorschlagen; ohne "
+                + "Häkchen zu allen Begriffen");
+        modelRows.add(GLOSSARY_SYNONYMS_LABEL, Comic.row(glossarySynonyms, glossarySynonymsHelp), null);
         simplifyMode.addItem(SIMPLIFY_WHERE_NEEDED);
         simplifyMode.addItem(SIMPLIFY_ALWAYS);
         simplifyMode.setToolTipText("Welche Sätze die Vorstufe der Aussagenanalyse vereinfacht");
@@ -558,6 +575,7 @@ final class AiSettingsPanel {
         chatMaxTokens.setText(current.chatMaxTokens() == null ? "" : current.chatMaxTokens());
         judgedPairs.setValue(Math.min(savedBudget(settings).maxJudgedPairs(), SynonymRunForm.MAX_PAIRS));
         automaticSynonyms.setSelected(savedBudget(settings).automatic());
+        glossarySynonyms.setSelected(savedBudget(settings).glossaryTermsOnly());
         ImageSettings images = savedImages(settings);
         automaticImages.setSelected(images.automatic());
         imagesPerRun.setValue(Math.min(images.maxPerRun(), MAX_IMAGES_PER_RUN));
@@ -928,6 +946,7 @@ final class AiSettingsPanel {
                 || !accessDraft().equals(shownAccess))
                 || judgedPairs() != savedBudget(settings).maxJudgedPairs()
                 || automaticSynonyms() != savedBudget(settings).automatic()
+                || glossarySynonyms() != savedBudget(settings).glossaryTermsOnly()
                 || !images().equals(savedImages(settings))
                 || !simplification().equals(savedSimplification(settings))
                 || !check().equals(savedCheck(settings));
@@ -986,11 +1005,13 @@ final class AiSettingsPanel {
         AiAccess chosen = ollama ? shownAccess : accessDraft();
         int judged = judgedPairs();
         boolean automatic = automaticSynonyms();
+        boolean glossaryOnly = glossarySynonyms();
         SimplificationSettings simplification = simplification();
         CheckSettings check = check();
         ImageSettings images = images();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)
                 && judged == savedBudget(settings).maxJudgedPairs() && automatic == savedBudget(settings).automatic()
+                && glossaryOnly == savedBudget(settings).glossaryTermsOnly()
                 && simplification.equals(savedSimplification(settings)) && check.equals(savedCheck(settings))
                 && images.equals(savedImages(settings))) {
             if (!quiet) {
@@ -1048,7 +1069,7 @@ final class AiSettingsPanel {
         Background.run(() -> {
             if (ollama) {
                 Measured measured = measure(context, runtime, draft, new char[0], false);
-                store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check,
+                store(context, measured.draft(), new char[0], chosen, judged, automatic, glossaryOnly, simplification, check,
                         images);
                 return measured;
             }
@@ -1061,7 +1082,7 @@ final class AiSettingsPanel {
                 try {
                     Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
                             false);
-                    store(context, measured.draft(), new char[0], chosen, judged, automatic, simplification, check,
+                    store(context, measured.draft(), new char[0], chosen, judged, automatic, glossaryOnly, simplification, check,
                         images);
                     return measured;
                 } finally {
@@ -1071,8 +1092,8 @@ final class AiSettingsPanel {
                 }
             }
             Measured measured = measure(context, runtime, draft, key, true);
-            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, automatic, simplification,
-                    check, images);
+            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, automatic, glossaryOnly,
+                    simplification, check, images);
             return measured;
         }, measured -> {
             if (!ollama && !chosen.fromKeePass() && !vault && key.length > 0) {
@@ -1180,6 +1201,13 @@ final class AiSettingsPanel {
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
                       Boolean automatic, SimplificationSettings simplification, CheckSettings check,
                       ImageSettings images) throws IOException {
+        store(context, draft, key, access, judgedPairs, automatic, null, simplification, check, images);
+    }
+
+    /** Wie oben, dazu „Synonyme nur zu bestätigten Fachbegriffen“ (K3); {@code null} lässt den Wert stehen. */
+    static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
+                      Boolean automatic, Boolean glossaryOnly, SimplificationSettings simplification,
+                      CheckSettings check, ImageSettings images) throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
@@ -1193,6 +1221,9 @@ final class AiSettingsPanel {
         }
         if (automatic != null) {
             wanted = wanted.withAutomatic(automatic);
+        }
+        if (glossaryOnly != null) {
+            wanted = wanted.withGlossaryTermsOnly(glossaryOnly);
         }
         if (!wanted.equals(budget)) {
             written = editor.withSynonymBudget(context.configFile(), written, wanted);
@@ -1286,6 +1317,11 @@ final class AiSettingsPanel {
         return (check.scope() == CheckScope.ALL ? CHECK_ALL : CHECK_UNCERTAIN_AND_STAGE)
                 + " · " + check.parallel() + " " + CHECK_PARALLEL_UNIT + " · "
                 + (check.model() == null ? "mit dem Text-Modell" : "Modell " + check.model());
+    }
+
+    /** Ob Synonyme nur zu bestätigten Fachbegriffen gesucht werden (K3). */
+    boolean glossarySynonyms() {
+        return glossarySynonyms.isSelected();
     }
 
     /** Ob nach jedem Abgleich einer Quelle ein Synonymlauf startet. */

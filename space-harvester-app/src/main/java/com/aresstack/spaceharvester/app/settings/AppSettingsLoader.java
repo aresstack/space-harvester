@@ -539,8 +539,10 @@ public final class AppSettingsLoader {
                 prefix + SynonymBudget.MAX_JUDGED_PAIRS, problems);
         boolean automatic = flag(get(synonyms, SynonymBudget.AUTOMATIC), fallback.automatic(),
                 prefix + SynonymBudget.AUTOMATIC, problems);
+        boolean glossaryOnly = flag(get(synonyms, SynonymBudget.GLOSSARY_TERMS_ONLY), fallback.glossaryTermsOnly(),
+                prefix + SynonymBudget.GLOSSARY_TERMS_ONLY, problems);
         try {
-            return new TermSettings(new SynonymBudget(maxTerms, maxEmbedded, maxJudged, automatic));
+            return new TermSettings(new SynonymBudget(maxTerms, maxEmbedded, maxJudged, automatic, glossaryOnly));
         } catch (IllegalArgumentException e) {
             problems.add(prefix + "*: " + e.getMessage());
             return TermSettings.DEFAULT;
