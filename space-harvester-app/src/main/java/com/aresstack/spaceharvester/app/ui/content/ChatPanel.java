@@ -1297,6 +1297,10 @@ public final class ChatPanel extends JPanel {
         listening = listener;
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
                 listener, SwingUtilities::invokeLater);
+        // ADR 0033: Was offen ist, sieht das Modell; den Rest des Bereichs holt es sich per Werkzeug.
+        Selection open = selection;
+        turn.knowledgeByTools(open == null || open.pageId() == null ? null
+                : new com.aresstack.spaceharvester.application.snapshot.PageKey(open.sourceId(), open.pageId()));
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());
@@ -1378,6 +1382,13 @@ public final class ChatPanel extends JPanel {
             }
             if (!detached) {
                 status.setText(MODEL_LOADING);
+            }
+        }
+
+        @Override
+        public void using(String what) {
+            if (!detached) {
+                status.setText(ANSWERING + " · " + what);
             }
         }
 

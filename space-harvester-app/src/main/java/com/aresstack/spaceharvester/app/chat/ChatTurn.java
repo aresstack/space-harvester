@@ -80,6 +80,16 @@ public final class ChatTurn {
     static final int CHANGED_PAGES = ChatKnowledge.MAX_SOURCES;
     static final DateTimeFormatter CHANGE_DATE = DateTimeFormatter.ofPattern("d.M.yyyy HH:mm");
 
+    /** So viele Zeichen der offenen Seite gehen im Volltext mit; der Rest per {@code seite_lesen} (ADR 0033). */
+    static final int OPEN_PAGE_CHARS = 24_000;
+    /** Höchstens so viele Werkzeugrunden je Frage; die letzte Runde geht ohne Werkzeuge, damit eine Antwort kommt. */
+    static final int MAX_TOOL_ROUNDS = 8;
+    /**
+     * Modelle, deren Dienst eine Anfrage mit Werkzeugen abgelehnt hat: Für sie fällt der Chat bis zum Neustart still
+     * auf die Suche mit Auszügen zurück (ADR 0033, kein Schalter).
+     */
+    static final Set<String> WITHOUT_TOOLS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /** Was die Oberfläche vom Turn erfährt, immer auf dem UI-Thread. */
     public interface Listener {
 
@@ -98,6 +108,10 @@ public final class ChatTurn {
 
         /** Das Modell wird geladen; die Antwort kommt, sobald es läuft. */
         default void loading() {
+        }
+
+        /** Das Modell holt gerade etwas per Werkzeug (ADR 0033); kurzer Text ohne Argumente des Modells. */
+        default void using(String what) {
         }
     }
 
@@ -126,6 +140,12 @@ public final class ChatTurn {
     private volatile boolean closed;
     private volatile AiChat.Task task;
     private volatile ProgressiveSearch search;
+    /** Mit Werkzeugen (ADR 0033): die offene Seite oder {@code null}; ohne Werkzeuge bleibt es bei der Suche. */
+    private boolean byTools;
+    private PageKey openPage;
+    private volatile ChatTools tools;
+    private final List<ChatKnowledge.Excerpt> cited = new ArrayList<>();
+    private final Map<PageKey, Integer> numbers = new HashMap<>();
 
     public ChatTurn(Workspace workspace, AiChat port, String model, String effort,
                     List<ChatRecord.Message> history, String question, PageSelection scope, String area,
@@ -166,6 +186,18 @@ public final class ChatTurn {
         return this;
     }
 
+    /**
+     * Wissen per Werkzeug (ADR 0033): Die offene Seite geht im Volltext mit, alles andere im Bereich holt sich das
+     * Modell über die Werkzeuge. Hat der Dienst Werkzeuge für dieses Modell schon abgelehnt, bleibt es bei der Suche.
+     *
+     * @param open die Seite, die der Benutzer gerade offen hat, oder {@code null} bei Space, Quelle oder allen Quellen
+     */
+    public ChatTurn knowledgeByTools(PageKey open) {
+        this.byTools = kind == Kind.QUESTION && !WITHOUT_TOOLS.contains(model);
+        this.openPage = open;
+        return this;
+    }
+
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
     public void start() {
         Thread worker = new Thread(this::run, "chat-turn");
@@ -176,6 +208,10 @@ public final class ChatTurn {
     /** Bricht Suche oder Antwort ab; die Abbruchmeldung kommt über den Listener. */
     public void cancel() {
         cancelRequested = true;
+        ChatTools using = tools;
+        if (using != null) {
+            using.cancel();
+        }
         ProgressiveSearch running = search;
         if (running != null) {
             running.cancel();
@@ -187,6 +223,15 @@ public final class ChatTurn {
     }
 
     private void run() {
+        if (byTools) {
+            runWithTools();
+        } else {
+            runWithSearch();
+        }
+    }
+
+    /** Ohne Werkzeuge: Wissen aus Suche oder ganzen Seiten im Kontextblock (vor ADR 0033, und als Rückfall). */
+    private void runWithSearch() {
         ChatKnowledge.Context context;
         String asked = question;
         if (kind == Kind.WHATS_NEW) {
@@ -223,20 +268,7 @@ public final class ChatTurn {
         }
         ChatKnowledge.Context chosen = context;
         onUi(() -> listener.context(chosen));
-        List<AiChat.Message> messages = new ArrayList<>();
-        messages.add(AiChat.Message.system(ChatKnowledge.systemMessage(area, context)));
-        for (ChatRecord.Message message : history) {
-            if (message.text().isBlank()) {
-                continue;
-            }
-            if (message.user()) {
-                messages.add(AiChat.Message.user(message.text()));
-            } else if (message.assistant() && !message.cancelled()) {
-                // Abgebrochene Teilantworten bleiben, wie im EAC, aus dem Modellverlauf.
-                messages.add(AiChat.Message.assistant(message.text()));
-            }
-        }
-        messages.add(AiChat.Message.user(asked));
+        List<AiChat.Message> messages = conversation(ChatKnowledge.systemMessage(area, context), asked);
         task = port.stream(new AiChat.Request(messages, model, effort), new AiChat.Listener() {
             @Override
             public void delta(String text) {
@@ -274,6 +306,164 @@ public final class ChatTurn {
         if (cancelRequested) {
             task.cancel();
         }
+    }
+
+    /** Systemnachricht, Verlauf ohne abgebrochene Teilantworten (wie im EAC) und die Frage. */
+    private List<AiChat.Message> conversation(String system, String asked) {
+        List<AiChat.Message> messages = new ArrayList<>();
+        messages.add(AiChat.Message.system(system));
+        for (ChatRecord.Message message : history) {
+            if (message.text().isBlank()) {
+                continue;
+            }
+            if (message.user()) {
+                messages.add(AiChat.Message.user(message.text()));
+            } else if (message.assistant() && !message.cancelled()) {
+                messages.add(AiChat.Message.assistant(message.text()));
+            }
+        }
+        messages.add(AiChat.Message.user(asked));
+        return messages;
+    }
+
+    // ------------------------------------------------------------------ Werkzeuge (ADR 0033)
+
+    /**
+     * Mit Werkzeugen: die offene Seite als Quelle [1] im Volltext (bei sehr langen Seiten der Anfang), danach Runden aus
+     * Antwort oder Werkzeugaufrufen. Jede Runde prüft den Abbruch; die letzte Runde geht ohne Werkzeuge.
+     */
+    private void runWithTools() {
+        ChatTools running = new ChatTools(workspace, scope, Set.of(), this::cite);
+        tools = running;
+        String openRef = null;
+        ChatKnowledge.Excerpt open = null;
+        int shown = 0;
+        int total = 0;
+        if (openPage != null && running.allows(openPage)) {
+            ChatTools.Page page = running.page(openPage);
+            if (page != null && !page.text().isBlank()) {
+                total = page.text().length();
+                String head = total <= OPEN_PAGE_CHARS ? page.text() : ChatKnowledge.excerpt(page.text(),
+                        OPEN_PAGE_CHARS).replaceAll(" …$", "");
+                shown = head.length();
+                open = new ChatKnowledge.Excerpt(page.title(), openPage.sourceId(), page.location(), head);
+                openRef = ChatTools.ref(openPage);
+                cite(open, openPage);
+            }
+        }
+        if (cancelRequested) {
+            finish(() -> listener.cancelled(""));
+            return;
+        }
+        reportSources();
+        List<AiChat.Message> messages = conversation(ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef),
+                question);
+        round(messages, 0);
+    }
+
+    /** Eine Anfrage; Werkzeugaufrufe führen zur nächsten Runde, alles andere beendet den Turn. */
+    private void round(List<AiChat.Message> messages, int round) {
+        if (cancelRequested) {
+            String partial;
+            synchronized (received) {
+                partial = received.toString();
+            }
+            finish(() -> listener.cancelled(partial));
+            return;
+        }
+        List<AiChat.Tool> offered = round < MAX_TOOL_ROUNDS ? ChatTools.definitions() : List.of();
+        task = port.stream(new AiChat.Request(messages, model, effort, offered), new AiChat.Listener() {
+            @Override
+            public void delta(String text) {
+                synchronized (received) {
+                    received.append(text);
+                }
+                onUi(() -> listener.delta(text));
+            }
+
+            @Override
+            public void completed(String text) {
+                String full;
+                synchronized (received) {
+                    full = received.length() > 0 ? received.toString() : text;
+                }
+                finish(() -> listener.completed(full));
+            }
+
+            @Override
+            public void toolCalls(String text, List<AiChat.ToolCall> calls) {
+                List<AiChat.Message> next = new ArrayList<>(messages);
+                next.add(AiChat.Message.assistant(text == null ? "" : text, calls));
+                for (AiChat.ToolCall call : calls) {
+                    if (cancelRequested) {
+                        break;
+                    }
+                    String what = ChatTools.describe(call);
+                    onUi(() -> listener.using(what));
+                    next.add(AiChat.Message.tool(call.id(), tools.run(call)));
+                }
+                round(next, round + 1);
+            }
+
+            @Override
+            public void failed(AiChatException error) {
+                boolean nothingYet;
+                synchronized (received) {
+                    nothingYet = received.length() == 0;
+                }
+                if (round == 0 && nothingYet && error.kind() == AiChatException.Kind.INVALID_REQUEST) {
+                    // Der Dienst lehnt Werkzeuge ab: für dieses Modell merken und still auf die Suche zurückfallen.
+                    WITHOUT_TOOLS.add(model);
+                    runWithSearch();
+                    return;
+                }
+                String message = describe(error);
+                finish(() -> listener.failed(message));
+            }
+
+            @Override
+            public void loading() {
+                onUi(listener::loading);
+            }
+
+            @Override
+            public void cancelled() {
+                String partial;
+                synchronized (received) {
+                    partial = received.toString();
+                }
+                finish(() -> listener.cancelled(partial));
+            }
+        });
+        if (cancelRequested) {
+            task.cancel();
+        }
+    }
+
+    /** Nimmt eine gelesene Seite als Quelle auf (oder findet sie wieder) und meldet die Liste; gibt ihre Nummer. */
+    private int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+        synchronized (cited) {
+            Integer known = numbers.get(key);
+            if (known != null) {
+                return known;
+            }
+            cited.add(excerpt);
+            numbers.put(key, cited.size());
+            if (cited.size() > 1) {
+                reportSources();
+            }
+            return cited.size();
+        }
+    }
+
+    /** Meldet die bisher nummerierten Quellen als Kontext (die Reihenfolge ist die Nummer). */
+    private void reportSources() {
+        ChatKnowledge.Context context;
+        synchronized (cited) {
+            context = cited.isEmpty() ? ChatKnowledge.Context.EMPTY
+                    : new ChatKnowledge.Context("", List.copyOf(cited));
+        }
+        onUi(() -> listener.context(context));
     }
 
     // ------------------------------------------------------------------ Was ist neu?
