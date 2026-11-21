@@ -664,4 +664,13 @@ class SearchViewTest {
         }
         return found;
     }
+
+    @Test
+    void neighborsKeepTheRestOfTheStatusLineAndAddUpOverRounds() {
+        String first = SearchView.withNeighbors("12 Treffer · Wiki: nicht erreichbar · unvollständig", 12, 14, 2);
+        assertThat(first).isEqualTo("14 Treffer · 2 Nachbarseiten dazu · Wiki: nicht erreichbar · unvollständig");
+
+        String second = SearchView.withNeighbors(first, 14, 15, 1);
+        assertThat(second).isEqualTo("15 Treffer · 3 Nachbarseiten dazu · Wiki: nicht erreichbar · unvollständig");
+    }
 }

@@ -47,6 +47,11 @@ public final class NeighborCandidates implements NeighborSource {
 
     @Override
     public Map<PageKey, HitReason.Neighbor> neighbors(AccessContext caller, List<KeywordSearch.Hit> seeds) {
+        return find(caller, seeds).local();
+    }
+
+    @Override
+    public Found find(AccessContext caller, List<KeywordSearch.Hit> seeds) {
         Map<PageKey, KeywordSearch.Hit> chosen = new LinkedHashMap<>();
         for (KeywordSearch.Hit seed : seeds) {
             if (chosen.size() >= MAX_SEEDS) {
@@ -55,6 +60,7 @@ public final class NeighborCandidates implements NeighborSource {
             chosen.putIfAbsent(new PageKey(seed.sourceId(), seed.pageId()), seed);
         }
         Map<PageKey, HitReason.Neighbor> found = new LinkedHashMap<>();
+        Map<PageKey, HitReason.Neighbor> missing = new LinkedHashMap<>();
         for (Map.Entry<PageKey, KeywordSearch.Hit> entry : chosen.entrySet()) {
             if (found.size() >= MAX_CANDIDATES) {
                 break;
@@ -79,8 +85,18 @@ public final class NeighborCandidates implements NeighborSource {
                 found.put(target, new HitReason.Neighbor(seed.sourceId(), seed.pageId(), seed.title(),
                         edge(edge.kind())));
             }
+            for (Map.Entry<PageKey, ConnectionKind> gap : result.missing().entrySet()) {
+                PageKey target = gap.getKey();
+                if (missing.size() >= MAX_CANDIDATES || !KINDS.contains(gap.getValue())
+                        || chosen.containsKey(target) || found.containsKey(target)) {
+                    continue;
+                }
+                missing.putIfAbsent(target, new HitReason.Neighbor(seed.sourceId(), seed.pageId(), seed.title(),
+                        edge(gap.getValue())));
+            }
         }
-        return found;
+        missing.keySet().removeAll(found.keySet());
+        return new Found(found, missing);
     }
 
     private static HitReason.Neighbor.Edge edge(ConnectionKind kind) {

@@ -24,4 +24,24 @@ public interface NeighborSource {
      *         Ausgangsseiten; ohne die Ausgangsseiten selbst, nie mit einer Seite, die der Aufrufer nicht sehen darf
      */
     Map<PageKey, HitReason.Neighbor> neighbors(AccessContext caller, List<KeywordSearch.Hit> seeds);
+
+    /**
+     * Wie {@link #neighbors}, dazu die bekannten Nachbarn, die lokal gar nicht liegen (Elternseite, Verweisziele):
+     * Sie lassen sich laden, und ob der Aufrufer sie lesen darf, entscheidet erst das Laden.
+     */
+    default Found find(AccessContext caller, List<KeywordSearch.Hit> seeds) {
+        return new Found(neighbors(caller, seeds), Map.of());
+    }
+
+    /**
+     * @param local   Nachbarn mit lokalen Kopfdaten, für den Aufrufer sichtbar ({@link #neighbors})
+     * @param missing bekannte Nachbarn, die lokal nicht liegen; nie Kandidaten der Suche, nur zum Laden
+     */
+    record Found(Map<PageKey, HitReason.Neighbor> local, Map<PageKey, HitReason.Neighbor> missing) {
+
+        public Found {
+            local = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(local));
+            missing = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(missing));
+        }
+    }
 }

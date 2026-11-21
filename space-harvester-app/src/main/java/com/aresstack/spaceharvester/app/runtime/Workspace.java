@@ -1382,6 +1382,15 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #neighborSearch(KeywordSearch.Query, List)}; mit {@code load} laden fehlende Nachbarn als
+     * Hintergrundauftrag nach, ohne dass die Suche wartet.
+     */
+    public com.aresstack.spaceharvester.application.query.progressive.NeighborSearch.Result neighborSearch(
+            KeywordSearch.Query query, List<KeywordSearch.Hit> shown, boolean load) {
+        return harvester.neighborSearch().search(caller, query, shown, load);
+    }
+
+    /**
      * Liest einen Testbestand der Suchqualität (Q1) zur Vorschau: gültige Fragen und Zeilenfehler. Seitenadressen löst
      * es über die Adressmuster der Quellen auf, ohne Seiten zu laden.
      */

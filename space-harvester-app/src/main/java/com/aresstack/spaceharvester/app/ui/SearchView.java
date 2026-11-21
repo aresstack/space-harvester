@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.app.runtime.SearchMethods;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.MarkedTextRenderer;
 import com.aresstack.spaceharvester.application.observe.Subscription;
+import com.aresstack.spaceharvester.application.query.progressive.NeighborLoader;
 import com.aresstack.spaceharvester.application.query.DocumentKind;
 import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
@@ -74,6 +75,8 @@ public final class SearchView implements View {
     static final String NEIGHBORS = "Nachbarseiten einbeziehen";
     /** Gelbe Zeile, wenn die Nachbarseiten nicht geprüft werden konnten; kein Fehler der Suche. */
     static final String NEIGHBORS_UNCHECKED = "Nachbarseiten konnten nicht geprüft werden";
+    /** Statuszeile, solange fehlende Nachbarn im Hintergrund laden. */
+    static final String NEIGHBORS_LOADING = "weitere Nachbarseiten laden im Hintergrund";
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
@@ -89,6 +92,8 @@ public final class SearchView implements View {
     final JCheckBox neighbors = checkBox(NEIGHBORS, NEIGHBORS_TIP);
     /** Die Suche, nach deren Stapel die Nachbarseiten noch gesucht werden; -1 ohne. */
     private int neighborsFor = -1;
+    /** Beobachtet das Nachladen fehlender Nachbarn der laufenden Anfrage; {@code null} ohne. */
+    private Subscription neighborLoadWatch;
     /** Läuft die Nachbarsuche dieser Anfrage, wartet „Weitere laden“: Der nächste Stapel verwürfe sonst ihre Treffer. */
     private int neighborsPending = -1;
     /** Die Suchanfragen der semantischen Suche als Schlagwörter; die ursprüngliche steht im Suchfeld. */
@@ -170,6 +175,8 @@ public final class SearchView implements View {
     private int batchStart;
     /** Anfrage und Cursor der zuletzt angezeigten Suche, für „Weitere laden“; der Cursor gilt nur für sie. */
     private KeywordSearch.Query lastQuery;
+    /** Anfrage der laufenden semantischen Suche; für das Nachreichen geladener Nachbarn. */
+    private KeywordSearch.Query progressiveQuery;
     /** Ob ein Stapel derselben Suche unvollständig war; bleibt bis zur nächsten Suche. */
     private boolean incomplete;
     /** Zustand je Quelle aus dem ersten Stapel, ergänzt um spätere Ausfälle. */
@@ -890,6 +897,7 @@ public final class SearchView implements View {
         states.clear();
         incomplete = false;
         lastQuery = null;
+        progressiveQuery = q;
         nextCursor = null;
         model.set(List.of());
         showVariants(List.of());
@@ -954,6 +962,10 @@ public final class SearchView implements View {
         if (result.neighbors() == ProgressiveResult.Neighbors.UNCHECKED
                 && result.reason() != ProgressiveResult.Completion.CANCELLED) {
             uncheckedNeighbors();
+        }
+        if (result.neighborLoad() != null && result.reason() != ProgressiveResult.Completion.CANCELLED
+                && progressiveQuery != null) {
+            followNeighborLoad(request, progressiveQuery, result.neighborLoad());
         }
         if (result.reason() == ProgressiveResult.Completion.FAILED) {
             LOG.log(System.Logger.Level.WARNING, "Semantische Suche fehlgeschlagen: {0} Suchanfragen, keine lief",
@@ -1240,6 +1252,11 @@ public final class SearchView implements View {
 
     /** Beendet das Verfolgen ohne Meldung, etwa bei einer neuen Eingabe; der Core bricht das Laden ab. */
     private void stopLoading() {
+        // Das Nachladen läuft als Hintergrundauftrag weiter; nur die Ansicht folgt ihm nicht mehr.
+        if (neighborLoadWatch != null) {
+            neighborLoadWatch.close();
+            neighborLoadWatch = null;
+        }
         if (running != null) {
             running.cancel();
             running = null;
@@ -1362,24 +1379,14 @@ public final class SearchView implements View {
         neighborsPending = id;
         updateMore();
         int before = model.rows.size();
-        Background.run(() -> runtime.workspace().neighborSearch(q, shown), found -> {
+        Background.run(() -> runtime.workspace().neighborSearch(q, shown, true), found -> {
             if (id != request) {
                 return;
             }
             neighborsPending = -1;
             updateMore();
-            if (found.isEmpty()) {
-                return;
-            }
-            Hit selected = selectedHit();
-            model.append(found.stream().map(Hit::of).toList());
-            select(selected);
-            // Nur die Zahl wächst; Quellenzustände und „unvollständig“ samt Farbe bleiben stehen.
-            String text = status.getText();
-            String count = Texts.count(before, "Treffer", "Treffer");
-            String rest = text.startsWith(count) ? text.substring(count.length()) : "";
-            status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · "
-                    + Texts.count(found.size(), "Nachbarseite", "Nachbarseiten") + " dazu" + rest);
+            appendNeighbors(before, found.hits());
+            found.load().ifPresent(load -> followNeighborLoad(id, q, load));
         }, error -> {
             if (id == request) {
                 neighborsPending = -1;
@@ -1388,6 +1395,72 @@ public final class SearchView implements View {
                 uncheckedNeighbors();
             }
         });
+    }
+
+    /** Hängt Nachbar-Treffer hinten an; Auswahl, Position, Quellenzustände und „unvollständig“ bleiben. */
+    private void appendNeighbors(int before, List<KeywordSearch.Hit> found) {
+        if (found.isEmpty()) {
+            return;
+        }
+        Hit selected = selectedHit();
+        model.append(found.stream().map(Hit::of).toList());
+        select(selected);
+        status.setText(withNeighbors(status.getText(), before, model.rows.size(), found.size()));
+    }
+
+    /**
+     * Die Statuszeile mit neuer Trefferzahl und der Zahl der Nachbarseiten dazu; eine frühere Angabe „… dazu“ zählt
+     * mit, alles Übrige der Zeile bleibt stehen.
+     */
+    static String withNeighbors(String status, int before, int total, int added) {
+        String count = Texts.count(before, "Treffer", "Treffer");
+        String rest = status.startsWith(count) ? status.substring(count.length()) : "";
+        java.util.regex.Matcher earlier = java.util.regex.Pattern
+                .compile("^ · (\\d+) Nachbarseiten? dazu").matcher(rest);
+        int neighbors = added;
+        if (earlier.find()) {
+            neighbors += Integer.parseInt(earlier.group(1));
+            rest = rest.substring(earlier.end());
+        }
+        return Texts.count(total, "Treffer", "Treffer") + " · "
+                + Texts.count(neighbors, "Nachbarseite", "Nachbarseiten") + " dazu" + rest;
+    }
+
+    /**
+     * Fehlende Nachbarn laden als Hintergrundauftrag; die Statuszeile sagt es. Ist er fertig, sucht dieselbe Anfrage
+     * die Nachbarn erneut (ohne neues Laden) und reicht die Treffer nach, solange die Ansicht noch dieser Anfrage
+     * folgt. Observer, kein Abfragen (ADR 0027).
+     */
+    private void followNeighborLoad(int id, KeywordSearch.Query q, NeighborLoader.Load load) {
+        if (neighborLoadWatch != null) {
+            neighborLoadWatch.close();
+        }
+        String loading = " · " + NEIGHBORS_LOADING;
+        status.setText(status.getText().strip() + loading);
+        neighborLoadWatch = load.whenDone(cancelled -> SwingUtilities.invokeLater(() -> {
+            if (id != request) {
+                return;
+            }
+            if (neighborLoadWatch != null) {
+                neighborLoadWatch.close();
+                neighborLoadWatch = null;
+            }
+            status.setText(status.getText().replace(loading, ""));
+            AppRuntime runtime = context.runtime();
+            if (Boolean.TRUE.equals(cancelled) || runtime == null || model.rows.isEmpty()) {
+                return;
+            }
+            List<KeywordSearch.Hit> shown = model.rows.stream().map(row -> new KeywordSearch.Hit(row.sourceId(),
+                    row.pageId(), row.spaceKey(), row.title(), row.snippet(), null, null, row.modifiedAt(), null))
+                    .toList();
+            int before = model.rows.size();
+            Background.run(() -> runtime.workspace().neighborSearch(q, shown, false), found -> {
+                if (id == request) {
+                    appendNeighbors(before, found.hits());
+                }
+            }, error -> LOG.log(System.Logger.Level.INFO, "Geladene Nachbarseiten nicht gesucht ({0})",
+                    error.getClass().getName()));
+        }));
     }
 
     /** Ende der Zeile: „Die Suche ist abgeschlossen“ mit der Zahl der Treffer, nach einem Abbruch als solcher. */

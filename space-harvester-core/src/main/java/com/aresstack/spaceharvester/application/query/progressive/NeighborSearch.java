@@ -9,7 +9,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * Die Suchmethode „Nachbarseiten“ (R2) zur Schlagwortsuche ohne progressive Suche, als eigener Aufruf nach einem
@@ -23,10 +27,32 @@ public final class NeighborSearch {
 
     private final KeywordSearch keywords;
     private final NeighborSource neighbors;
+    private final NeighborLoader loader;
 
     public NeighborSearch(KeywordSearch keywords, NeighborSource neighbors) {
+        this(keywords, neighbors, NeighborLoader.NONE);
+    }
+
+    /** @param loader lädt fehlende Nachbarn im Hintergrund nach ({@link #search(AccessContext, KeywordSearch.Query, List, boolean)}) */
+    public NeighborSearch(KeywordSearch keywords, NeighborSource neighbors, NeighborLoader loader) {
         this.keywords = Objects.requireNonNull(keywords, "keywords");
         this.neighbors = Objects.requireNonNull(neighbors, "neighbors");
+        this.loader = Objects.requireNonNull(loader, "loader");
+    }
+
+    /**
+     * Ergebnis mit Nachladen.
+     *
+     * @param hits wie {@link #search(AccessContext, KeywordSearch.Query, List)}
+     * @param load das Nachladen fehlender Nachbarn, leer ohne; nach seinem Ende findet dieselbe Suche (ohne erneutes
+     *             Laden) die geladenen, wenn sie die Anfrage treffen
+     */
+    public record Result(List<KeywordSearch.Hit> hits, Optional<NeighborLoader.Load> load) {
+
+        public Result {
+            hits = List.copyOf(hits);
+            Objects.requireNonNull(load, "load");
+        }
     }
 
     /**
@@ -37,32 +63,68 @@ public final class NeighborSearch {
      */
     public List<KeywordSearch.Hit> search(AccessContext caller, KeywordSearch.Query query,
                                           List<KeywordSearch.Hit> shown) {
+        return search(caller, query, shown, false).hits();
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, KeywordSearch.Query, List)}; mit {@code load} beginnt dazu im Hintergrund das
+     * Laden der Nachbarn, die lokal fehlen oder nur mit Kopfdaten liegen, innerhalb des Umfangs der Anfrage. Die Suche
+     * wartet nicht darauf.
+     */
+    public Result search(AccessContext caller, KeywordSearch.Query query, List<KeywordSearch.Hit> shown,
+                         boolean load) {
         Objects.requireNonNull(query, "query");
         List<KeywordSearch.Hit> seeds = shown.stream().limit(NeighborCandidates.MAX_SEEDS).toList();
         if (seeds.isEmpty()) {
-            return List.of();
+            return new Result(List.of(), Optional.empty());
         }
+        Set<PageKey> known = new HashSet<>();
+        shown.forEach(hit -> known.add(new PageKey(hit.sourceId(), hit.pageId())));
+        NeighborSource.Found neighborhood = neighbors.find(caller, seeds);
         Map<PageKey, HitReason.Neighbor> candidates = new LinkedHashMap<>();
-        neighbors.neighbors(caller, seeds).forEach((key, via) -> {
-            boolean known = shown.stream().anyMatch(hit -> hit.sourceId().equals(key.sourceId())
-                    && hit.pageId().equals(key.pageId()));
-            if (!known && (query.pages() == null || query.pages().contains(key))) {
+        neighborhood.local().forEach((key, via) -> {
+            if (!known.contains(key) && inScope(query, key)) {
                 candidates.put(key, via);
             }
         });
-        if (candidates.isEmpty()) {
-            return List.of();
-        }
-        KeywordSearch.Results results = keywords.search(caller, query.within(PageSet.ofKeys(candidates.keySet())),
-                null, Math.min(KeywordSearch.MAX_LIMIT, NeighborCandidates.MAX_CANDIDATES));
         List<KeywordSearch.Hit> found = new ArrayList<>();
-        for (KeywordSearch.Hit hit : results.hits()) {
-            HitReason.Neighbor via = candidates.get(new PageKey(hit.sourceId(), hit.pageId()));
-            if (via != null) {
-                found.add(hit.withReasons(HitReason.union(hit.reasons(),
-                        List.of(HitReason.neighbor(query.text(), via)))));
+        if (!candidates.isEmpty()) {
+            KeywordSearch.Results results = keywords.search(caller,
+                    query.within(PageSet.ofKeys(candidates.keySet())), null,
+                    Math.min(KeywordSearch.MAX_LIMIT, NeighborCandidates.MAX_CANDIDATES));
+            for (KeywordSearch.Hit hit : results.hits()) {
+                HitReason.Neighbor via = candidates.get(new PageKey(hit.sourceId(), hit.pageId()));
+                if (via != null) {
+                    found.add(hit.withReasons(HitReason.union(hit.reasons(),
+                            List.of(HitReason.neighbor(query.text(), via)))));
+                }
             }
         }
-        return List.copyOf(found);
+        if (!load) {
+            return new Result(found, Optional.empty());
+        }
+        // Zu laden: was fehlt, und lokale Kandidaten ohne Treffer (vielleicht nur Kopfdaten); der Lader lässt aus,
+        // was schon mit Inhalt im Cache liegt.
+        Set<PageKey> confirmed = new HashSet<>();
+        found.forEach(hit -> confirmed.add(new PageKey(hit.sourceId(), hit.pageId())));
+        Set<PageKey> pages = new LinkedHashSet<>();
+        candidates.keySet().stream().filter(key -> !confirmed.contains(key)).forEach(pages::add);
+        neighborhood.missing().keySet().stream().filter(key -> !known.contains(key) && inScope(query, key))
+                .forEach(pages::add);
+        Optional<NeighborLoader.Load> loading = Optional.empty();
+        if (!pages.isEmpty()) {
+            try {
+                loading = loader.load(caller, pages);
+            } catch (RuntimeException e) {
+                // Das Nachladen ergänzt nur; die Treffer bleiben.
+                System.getLogger(NeighborSearch.class.getName()).log(System.Logger.Level.INFO,
+                        "Nachbarseiten nicht nachgeladen ({0})", e.getClass().getName());
+            }
+        }
+        return new Result(found, loading);
+    }
+
+    private static boolean inScope(KeywordSearch.Query query, PageKey key) {
+        return query.pages() == null || query.pages().contains(key);
     }
 }

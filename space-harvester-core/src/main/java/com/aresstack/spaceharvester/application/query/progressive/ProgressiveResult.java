@@ -20,17 +20,28 @@ import java.util.Objects;
  *                   meldete ({@link AiServiceException.Reason}) oder die Frist ablief; sonst und wenn unbekannt
  *                   {@code null}. Nennt nie Ursachentexte, Key oder Anfrage.
  * @param neighbors  ob die Suchmethode „Nachbarseiten“ (R2) lief und ihre Kandidaten prüfen konnte
+ * @param neighborQueries       abgeschlossene Suchanfragen der Nachbarseiten (gezählt wie Varianten)
+ * @param failedNeighborQueries davon gescheiterte
+ * @param neighborLoad          das Nachladen fehlender Nachbarn im Hintergrund oder {@code null}; nach seinem Ende
+ *                              findet {@link NeighborSearch} die geladenen, wenn sie die Anfrage treffen
  */
 public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
                                 Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors,
-                                int neighborQueries, int failedNeighborQueries) {
+                                int neighborQueries, int failedNeighborQueries, NeighborLoader.Load neighborLoad) {
+
+    /** Ohne Nachladen fehlender Nachbarn. */
+    public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
+                             Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors,
+                             int neighborQueries, int failedNeighborQueries) {
+        this(hits, variants, reason, loads, elapsed, failure, neighbors, neighborQueries, failedNeighborQueries, null);
+    }
 
     /**
      * Mit dem Stand der Nachbarseiten, ohne Zählung ihrer Suchanfrage.
      */
     public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
                              Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors) {
-        this(hits, variants, reason, loads, elapsed, failure, neighbors, 0, 0);
+        this(hits, variants, reason, loads, elapsed, failure, neighbors, 0, 0, null);
     }
 
     public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
