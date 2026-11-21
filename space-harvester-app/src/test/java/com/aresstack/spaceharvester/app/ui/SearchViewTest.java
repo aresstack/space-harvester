@@ -319,7 +319,10 @@ class SearchViewTest {
                     com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope.ALL);
             view[0].search("");
             view[0].scope(List.of(new Explorer.Scope("alpha", null)));
-            assertThat(view[0].technicalScope().sourceId()).isEqualTo("alpha");
+            assertThat(view[0].technicalScope().sourceIds()).containsExactly("alpha");
+            // Auflage AT 5: zwei gewählte Knoten weiten nicht auf alle auf.
+            view[0].scope(List.of(new Explorer.Scope("alpha", "DEV"), new Explorer.Scope("beta", null)));
+            assertThat(view[0].technicalScope().sourceIds()).containsExactlyInAnyOrder("alpha", "beta");
             view[0].technicalTerms.setSelected(false);
             assertThat(view[0].modeLabel.getText()).isEqualTo("Modus: Schlagwortsuche");
             assertThat(view[0].termsPanel.isVisible()).isFalse();

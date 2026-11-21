@@ -94,6 +94,68 @@ class TechnicalTermsPanelTest {
         await("neu gelesen", () -> panel.termTexts().contains("Bernsteinfuge"));
     }
 
+    @Test
+    void reloadingKeepsAllLoadedRowsBeyondOneCallAndTheSelectionStays() throws Exception {
+        // Auflage AT 1: mehr als 200 geladene Zeilen; ein Ablehnen weiter oben lässt die Auswahl bei Zeile 230.
+        FakeAccess access = new FakeAccess();
+        for (int i = 0; i < 260; i++) {
+            access.entries.add(entry(String.format("Begriff%03d", i), ReviewStatus.PROPOSED));
+        }
+        TechnicalTermsPanel panel = open(access, null);
+        await("erster Stapel", () -> panel.termTexts().size() == TechnicalTermsPanel.PAGE);
+        for (int loaded = TechnicalTermsPanel.PAGE; loaded < 250; loaded += TechnicalTermsPanel.PAGE) {
+            int expected = loaded + TechnicalTermsPanel.PAGE;
+            SwingUtilities.invokeAndWait(panel::loadMore);
+            await("Stapel bis " + expected, () -> panel.termTexts().size() == expected);
+        }
+        SwingUtilities.invokeAndWait(() -> panel.selectTerm("Begriff230"));
+
+        SwingUtilities.invokeAndWait(() -> panel.termRow("Begriff010").reject.doClick());
+
+        await("neu gelesen", () -> !panel.termTexts().contains("Begriff010") && panel.termTexts().size() == 250);
+        SwingUtilities.invokeAndWait(() -> assertThat(panel.selectedTerm()).isEqualTo("Begriff230"));
+    }
+
+    @Test
+    void aNewSearchClearsOldRowsAtOnceAndAClickedRowStaysLocked() throws Exception {
+        // Auflage AT 6.
+        FakeAccess access = FakeAccess.sample();
+        TechnicalTermsPanel panel = open(access, null);
+        await("Liste", () -> panel.termTexts().size() == 4);
+        SwingUtilities.invokeAndWait(() -> {
+            TechnicalTermsPanel.Row row = panel.termRow("Kieselgrund");
+            row.reject.doClick();
+            assertThat(row.reject.isEnabled()).isFalse();
+            assertThat(row.confirm.isEnabled()).isFalse();
+            panel.search("Wolke", null);
+            assertThat(panel.termTexts()).isEmpty();
+            assertThat(panel.termRow("Ankerschein")).isNull();
+        });
+        await("neue Suche", () -> panel.termTexts().equals(List.of("Wolkenpegel")));
+    }
+
+    @Test
+    void theSameWordOrAnExistingSynonymIsCaughtWithAHintInTheField() throws Exception {
+        // Auflage AT 7: kein Aufruf, keine rote Meldung (die Fehlerfunktion des Panels wirft).
+        FakeAccess access = FakeAccess.sample();
+        TechnicalTermsPanel panel = open(access, null);
+        await("Liste", () -> panel.termTexts().size() == 4);
+        SwingUtilities.invokeAndWait(() -> panel.selectTerm("Wolkenpegel"));
+        await("Synonyme", () -> panel.synonymTexts().size() == 2);
+
+        SwingUtilities.invokeAndWait(() -> {
+            panel.synonymField.setText(" wolkenpegel ");
+            panel.synonymField.postActionEvent();
+            assertThat(panel.addHint.isVisible()).isTrue();
+            assertThat(panel.addHint.getText()).isEqualTo(TechnicalTermsPanel.SAME_AS_TERM);
+            panel.synonymField.setText("Dunsthöhe");
+            assertThat(panel.addHint.isVisible()).isFalse();
+            panel.synonymField.postActionEvent();
+            assertThat(panel.addHint.getText()).isEqualTo(TechnicalTermsPanel.ALREADY_THERE);
+        });
+        assertThat(access.calls).noneMatch(call -> call.startsWith("addSynonym"));
+    }
+
     /** Bilder bei 1280 und 960 Breite für den UX-Manager; nur mit {@code SCREENSHOTS_DIR}. */
     @Test
     void renderScreenshots() throws Exception {
@@ -215,6 +277,12 @@ class TechnicalTermsPanelTest {
             String self = TermText.normalize(term.term());
             return relations.stream().filter(r -> r.status() != ReviewStatus.REJECTED && r.touches(self))
                     .sorted(java.util.Comparator.comparing(r -> TermText.normalize(r.other(self)))).toList();
+        }
+
+        @Override
+        public java.util.Optional<ReviewStatus> status(GlossaryEntry term) {
+            calls.add("status " + term.term());
+            return entries.stream().filter(e -> e.id().equals(term.id())).findFirst().map(GlossaryEntry::status);
         }
 
         @Override

@@ -122,4 +122,26 @@ class TechnicalTermsCoreTest {
 
         assertThat(seen).hasValue(1);
     }
+
+    @Test
+    void aNewSynonymIsGlobalAndAnExistingOneIsConfirmedInsteadOfDoubled() {
+        // Auflage AT 4.
+        GlossaryEntry wolke = add("Wolkenpegel", OPEN);
+        relations.propose("lauf", com.aresstack.spaceharvester.application.terms.RelationOrigin.AI, OPEN,
+                Set.of(RelationType.SYNONYM), "g1", List.of(new TermRelations.Proposal("Wolkenpegel", "Dunsthöhe",
+                        RelationType.SYNONYM, List.of())));
+
+        com.aresstack.spaceharvester.application.terms.TermRelation existing = terms.addSynonym(EDITOR, wolke,
+                "dunsthöhe");
+        com.aresstack.spaceharvester.application.terms.TermRelation created = terms.addSynonym(EDITOR, wolke,
+                "Nebelmaß");
+
+        assertThat(existing.scope()).isEqualTo(OPEN);
+        assertThat(existing.status()).isEqualTo(com.aresstack.spaceharvester.application.terms.ReviewStatus.CONFIRMED);
+        assertThat(created.scope()).isEqualTo(RelationScope.GLOBAL);
+        assertThat(terms.synonymsOf(EDITOR, wolke)).extracting(r -> r.other("wolkenpegel"))
+                .containsExactly("Dunsthöhe", "Nebelmaß");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> terms.addSynonym(EDITOR, wolke, " wolkenpegel "))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.InvalidQueryException.class);
+    }
 }

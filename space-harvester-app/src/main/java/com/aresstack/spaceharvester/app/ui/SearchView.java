@@ -818,26 +818,24 @@ public final class SearchView implements View {
         if (termsRuntime == null) {
             return;
         }
+        if (searchedSources().isEmpty()) {
+            // Wie die übrige Suche: ohne angehakte Quelle wird nicht gesucht, gelb statt still alles.
+            feedback.warning("Keine Wissensquelle angehakt", "In den Suchoptionen (Pfeil im Suchfeld) ist keine "
+                    + "der gewählten Quellen angehakt.");
+            termsPanel.clear();
+            return;
+        }
         feedback.clear();
         termsPanel.search(query.getText(), technicalScope());
     }
 
     /**
-     * Der Bereich für „Nur Fachbegriffe“ wie bei der übrigen Suche: ein gewählter Knoten (Quelle oder Space) bzw. eine
-     * einzige angehakte Quelle; sonst alle, denn das Glossar kennt keine Menge von Quellen.
+     * Der Bereich für „Nur Fachbegriffe“ wie bei der übrigen Suche ({@link #chosenSources()},
+     * {@link #chosenSpaces()}): mehrere gewählte Knoten oder abgewählte Quellen weiten nie auf alle auf.
      */
     com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope technicalScope() {
-        Set<String> searched = searchedSources();
-        List<Explorer.Scope> within = scopes.stream().filter(scope -> searched.contains(scope.sourceId())).toList();
-        if (within.size() == 1) {
-            return new com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope(
-                    within.get(0).sourceId(), within.get(0).spaceKey());
-        }
-        if (within.isEmpty() && searched.size() == 1 && searched.size() < sourceBoxes.size()) {
-            return new com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope(
-                    searched.iterator().next(), null);
-        }
-        return com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope.ALL;
+        return new com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope(chosenSources(),
+                chosenSpaces());
     }
 
     /** Tooltip der Trefferliste. */

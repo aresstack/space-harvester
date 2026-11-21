@@ -345,6 +345,27 @@ public final class Workspace {
         return harvester.technicalTerms().search(caller, q, scope, limit, cursor);
     }
 
+    /** Die nicht abgelehnten Synonyme eines Fachbegriffs, deren Bereich ihn abdeckt (K5b). */
+    public List<com.aresstack.spaceharvester.application.terms.TermRelation> technicalSynonyms(
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry term) {
+        return harvester.technicalTerms().synonymsOf(caller, term);
+    }
+
+    /** Fügt einem Fachbegriff ein Synonym global hinzu oder bestätigt ein vorhandenes gleiches (K5b). */
+    public com.aresstack.spaceharvester.application.terms.TermRelation addTechnicalSynonym(
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry term, String synonym) {
+        return harvester.technicalTerms().addSynonym(caller, term, synonym);
+    }
+
+    /** Der Prüfstatus eines Glossareintrags, leer, wenn es ihn nicht (mehr) gibt oder er verborgen ist. */
+    public Optional<com.aresstack.spaceharvester.application.terms.ReviewStatus> glossaryStatus(String id) {
+        try {
+            return Optional.of(harvester.glossary().entry(caller, id).status());
+        } catch (com.aresstack.spaceharvester.application.glossary.UnknownGlossaryEntryException e) {
+            return Optional.empty();
+        }
+    }
+
     /**
      * Meldet jede Änderung an den Begriffsbeziehungen (ADR 0027), aus beliebigem Thread; kein Abfragen in Abständen.
      *

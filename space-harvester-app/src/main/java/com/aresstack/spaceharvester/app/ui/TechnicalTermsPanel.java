@@ -8,10 +8,8 @@ import com.aresstack.spaceharvester.app.ui.controls.CountChip;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.application.glossary.GlossaryEntry;
 import com.aresstack.spaceharvester.application.glossary.TechnicalTerms;
-import com.aresstack.spaceharvester.application.terms.RelationType;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermRelation;
-import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.TermText;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -59,17 +57,22 @@ final class TechnicalTermsPanel extends JPanel {
     static final String ADD_DISABLED = "Erst links einen Fachbegriff wählen";
     static final String CONFIRMED_TIP = "bestätigt";
     static final String PROPOSED_TIP = "Vorschlag";
-    /** Zeilen je Stapel; beim Neuladen nach einer Änderung so viele wie schon gezeigt, höchstens {@link #MAX}. */
+    /** Zeilen je Stapel; beim Neuladen nach einer Änderung so viele wie schon gezeigt, über mehrere Abrufe. */
     static final int PAGE = 50;
     static final int MAX = TechnicalTerms.MAX_LIMIT;
+    static final String SAME_AS_TERM = "gleich dem Begriff";
+    static final String ALREADY_THERE = "schon vorhanden";
 
     /** Was die Ansicht vom Core braucht; im Betrieb {@link #of(Workspace)}, in Tests ein Doppel. */
     interface Access {
 
         TechnicalTerms.Page terms(String q, TechnicalTerms.Scope scope, int limit, String cursor);
 
-        /** Die nicht abgelehnten Synonyme des Begriffs. */
+        /** Die nicht abgelehnten Synonyme des Begriffs, deren Bereich ihn abdeckt. */
         List<TermRelation> synonyms(GlossaryEntry term);
+
+        /** Der Prüfstatus des Begriffs laut Core; leer, wenn es ihn nicht mehr gibt. */
+        java.util.Optional<ReviewStatus> status(GlossaryEntry term);
 
         void confirmTerm(GlossaryEntry term);
 
@@ -79,7 +82,7 @@ final class TechnicalTermsPanel extends JPanel {
 
         void rejectSynonym(TermRelation synonym);
 
-        /** Legt das Synonym manuell und bestätigt an, im Geltungsbereich des Fachbegriffs. */
+        /** Legt das Synonym global an oder bestätigt ein vorhandenes gleiches. */
         void addSynonym(GlossaryEntry term, String synonym);
 
         /** Meldet Änderungen an Glossar und Beziehungen; die Rückgabe meldet ab. */
@@ -95,7 +98,12 @@ final class TechnicalTermsPanel extends JPanel {
 
             @Override
             public List<TermRelation> synonyms(GlossaryEntry term) {
-                return workspace.termRelations(term.term(), RelationType.SYNONYM, null, null, MAX, null).relations();
+                return workspace.technicalSynonyms(term);
+            }
+
+            @Override
+            public java.util.Optional<ReviewStatus> status(GlossaryEntry term) {
+                return workspace.glossaryStatus(term.id());
             }
 
             @Override
@@ -120,8 +128,7 @@ final class TechnicalTermsPanel extends JPanel {
 
             @Override
             public void addSynonym(GlossaryEntry term, String synonym) {
-                workspace.addRelation(new TermRelations.NewRelation(term.term(), synonym, RelationType.SYNONYM,
-                        term.scope(), null, List.of()));
+                workspace.addTechnicalSynonym(term, synonym);
             }
 
             @Override
@@ -157,6 +164,8 @@ final class TechnicalTermsPanel extends JPanel {
     final JLabel synonymTitle = title(" ");
     final PlaceholderField synonymField = new PlaceholderField(16, ADD_PLACEHOLDER);
     final IconButton addButton = new IconButton(Glyph.PLUS, ADD).compact();
+    /** Hinweis im Eingabefeld, warum ein Synonym nicht angelegt wird (gleich dem Begriff, schon vorhanden). */
+    final JLabel addHint = new JLabel();
     final JSplitPane split;
 
     /** Gezeigte Treffer, ihr Cursor und welcher gewählt ist. */
@@ -196,7 +205,27 @@ final class TechnicalTermsPanel extends JPanel {
         synonymField.addActionListener(e -> addSynonym());
         addButton.addActionListener(e -> addSynonym());
         InputFrame addFrame = new InputFrame(synonymField);
+        addHint.setFont(Comic.regular(11.5f));
+        addHint.setForeground(Comic.ORANGE);
+        addHint.setVisible(false);
+        addFrame.addButton(addHint);
         addFrame.addButton(addButton);
+        synonymField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                hint(null);
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                hint(null);
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                hint(null);
+            }
+        });
         JPanel right = new JPanel(new BorderLayout(0, 6));
         right.setOpaque(false);
         right.add(header(synonymTitle, synonymCount), BorderLayout.NORTH);
@@ -229,13 +258,25 @@ final class TechnicalTermsPanel extends JPanel {
     void search(String q, TechnicalTerms.Scope within) {
         query = q == null || q.isBlank() ? null : q.strip();
         scope = within == null ? TechnicalTerms.Scope.ALL : within;
+        clear();
+        reread(PAGE, false);
+    }
+
+    /** Leert beide Seiten sofort; laufende Antworten älterer Abfragen verfallen. */
+    void clear() {
+        termRequest++;
+        termsBusy.setBusy(false);
         selectedId = null;
         selected = null;
         hits.clear();
         nextCursor = null;
+        total = 0;
+        synonyms.clear();
+        synonymRequest++;
+        // Alte Zeilen sofort weg: ihre Knöpfe zeigten sonst auf Einträge einer anderen Suche.
+        showTerms();
         termScroll.getVerticalScrollBar().setValue(0);
         showSynonymSide();
-        reread(PAGE, false);
     }
 
     /** Meldet ab, etwa wenn die Suche die Methode verlässt. */
@@ -272,26 +313,48 @@ final class TechnicalTermsPanel extends JPanel {
         Access current = access;
         String q = query;
         TechnicalTerms.Scope within = scope;
-        int count = Math.min(Math.max(limit, 1), MAX);
+        int count = Math.max(limit, 1);
         int selectedIndex = indexOf(selectedId);
+        GlossaryEntry chosen = selected;
         termsBusy.setBusy(true);
-        Background.run(() -> current.terms(q, within, count, null), page -> {
+        Background.run(() -> {
+            // Alle schon geladenen Zeilen neu, über den Cursor in Stapeln: nichts jenseits der Grenze eines Abrufs
+            // gilt fälschlich als abgelehnt.
+            List<TechnicalTerms.Hit> loaded = new ArrayList<>();
+            TechnicalTerms.Page page = null;
+            String cursor = null;
+            do {
+                page = current.terms(q, within, Math.min(MAX, count - loaded.size()), cursor);
+                loaded.addAll(page.hits());
+                cursor = page.nextCursor();
+            } while (cursor != null && loaded.size() < count);
+            // „Abgelehnt“ nur, wenn der Core es sagt; sonst bleibt der gewählte gewählt.
+            boolean present = chosen == null
+                    || loaded.stream().anyMatch(hit -> hit.entry().id().equals(chosen.id()));
+            boolean gone = !present && current.status(chosen).map(status -> status == ReviewStatus.REJECTED)
+                    .orElse(true);
+            return new Reread(loaded, cursor, page.total(), gone);
+        }, result -> {
             if (request != termRequest) {
                 return;
             }
             termsBusy.setBusy(false);
             Point view = termScroll.getViewport().getViewPosition();
             hits.clear();
-            hits.addAll(page.hits());
-            nextCursor = page.nextCursor();
-            total = page.total();
-            if (keep && selectedId != null && indexOf(selectedId) < 0) {
-                // Der gewählte ist weg (abgelehnt): der nächste an derselben Stelle.
+            hits.addAll(result.hits());
+            nextCursor = result.nextCursor();
+            total = result.total();
+            int index = indexOf(selectedId);
+            if (selectedId != null && index >= 0) {
+                selected = hits.get(index).entry();
+            } else if (keep && selectedId != null && result.gone()) {
+                // Der gewählte ist abgelehnt oder weg: der nächste an derselben Stelle.
                 selectedId = hits.isEmpty() ? null
                         : hits.get(Math.min(Math.max(selectedIndex, 0), hits.size() - 1)).entry().id();
                 selectedChanged();
-            } else if (selectedId != null) {
-                selected = hits.get(indexOf(selectedId)).entry();
+            } else if (!keep) {
+                selectedId = null;
+                selected = null;
             }
             showTerms();
             if (keep) {
@@ -300,9 +363,14 @@ final class TechnicalTermsPanel extends JPanel {
         }, failure -> {
             if (request == termRequest) {
                 termsBusy.setBusy(false);
+                showTerms();
                 onError.accept(failure);
             }
         });
+    }
+
+    /** Ergebnis eines Neuladens. */
+    private record Reread(List<TechnicalTerms.Hit> hits, String nextCursor, int total, boolean gone) {
     }
 
     /** Am Ende der Liste der nächste Stapel. */
@@ -312,6 +380,14 @@ final class TechnicalTermsPanel extends JPanel {
         }
         javax.swing.JScrollBar bar = termScroll.getVerticalScrollBar();
         if (bar.getValue() + bar.getVisibleAmount() < bar.getMaximum() - 4) {
+            return;
+        }
+        loadMore();
+    }
+
+    /** Der nächste Stapel hinter den gezeigten. */
+    void loadMore() {
+        if (access == null || nextCursor == null || loadingMore) {
             return;
         }
         loadingMore = true;
@@ -432,6 +508,17 @@ final class TechnicalTermsPanel extends JPanel {
         if (term == null || text.isEmpty() || current == null) {
             return;
         }
+        // Vorher abfangen, mit Hinweis im Feld statt roter Meldung.
+        String normalized = TermText.normalize(text);
+        if (normalized.equals(term.normalized())) {
+            hint(SAME_AS_TERM);
+            return;
+        }
+        if (synonyms.stream().anyMatch(relation -> TermText.normalize(relation.other(term.normalized()))
+                .equals(normalized))) {
+            hint(ALREADY_THERE);
+            return;
+        }
         Background.run(() -> {
             current.addSynonym(term, text);
             return text;
@@ -442,6 +529,13 @@ final class TechnicalTermsPanel extends JPanel {
         }, onError::accept);
     }
 
+    /** Der Hinweis im Eingabefeld; {@code null} blendet ihn aus. */
+    private void hint(String text) {
+        addHint.setText(text == null ? "" : text);
+        addHint.setVisible(text != null);
+        synonymField.revalidate();
+    }
+
     // ------------------------------------------------------------------ Darstellung
 
     private void showTerms() {
@@ -449,10 +543,18 @@ final class TechnicalTermsPanel extends JPanel {
         for (TechnicalTerms.Hit hit : hits) {
             GlossaryEntry entry = hit.entry();
             String note = hit.viaSynonym() == null ? null : "über „" + hit.viaSynonym() + "“";
-            Row row = new Row(entry.term(), note, entry.status() == ReviewStatus.CONFIRMED,
+            Row[] row = new Row[1];
+            // Bis zum Neuladen gesperrt: ein zweiter Klick träfe sonst den schon abgelehnten Eintrag.
+            row[0] = new Row(entry.term(), note, entry.status() == ReviewStatus.CONFIRMED,
                     entry.id().equals(selectedId), () -> select(entry.id()),
-                    () -> review(entry, true), () -> review(entry, false));
-            termRows.add(row);
+                    () -> {
+                        row[0].lock();
+                        review(entry, true);
+                    }, () -> {
+                        row[0].lock();
+                        review(entry, false);
+                    });
+            termRows.add(row[0]);
         }
         termCount.count(total);
         termRows.revalidate();
@@ -477,8 +579,16 @@ final class TechnicalTermsPanel extends JPanel {
             String self = TermText.normalize(selected.term());
             for (TermRelation relation : synonyms) {
                 String other = relation.other(self);
-                synonymRows.add(new Row(other, null, relation.status() == ReviewStatus.CONFIRMED, false, () -> { },
-                        () -> review(relation, true), () -> review(relation, false)));
+                Row[] row = new Row[1];
+                row[0] = new Row(other, null, relation.status() == ReviewStatus.CONFIRMED, false, () -> { },
+                        () -> {
+                            row[0].lock();
+                            review(relation, true);
+                        }, () -> {
+                            row[0].lock();
+                            review(relation, false);
+                        });
+                synonymRows.add(row[0]);
             }
         }
         synonymCount.count(synonyms.size());
@@ -655,6 +765,12 @@ final class TechnicalTermsPanel extends JPanel {
             middle.addMouseListener(click);
             text.addMouseListener(click);
             getAccessibleContext().setAccessibleName(term + (confirmed ? ", bestätigt" : ", Vorschlag"));
+        }
+
+        /** Sperrt beide Knöpfe bis zum Neuladen der Liste. */
+        void lock() {
+            confirm.setEnabled(false);
+            reject.setEnabled(false);
         }
 
         @Override
