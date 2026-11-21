@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.knowledge.ModelStatementAnalyzer;
 import com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis;
@@ -56,13 +59,17 @@ class HarvesterAnalysesChangedTest {
         PageKey page = new PageKey("wiki", "100");
         new FileKnowledgeGraphStore(data.resolve("knowledge-graph-model")).replace(analysis(page,
                 ModelStatementAnalyzer.ID, "Die Stelle prüft den Antrag."));
-        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).build()) {
+        ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
+        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).configuration(manager)
+                .build()) {
             Semaphore reported = new Semaphore(0);
             Subscription subscription = harvester.knowledgeGraph().subscribe(reported::release);
             try {
                 assertThat(harvester.statementAnalysis().selected()).isEqualTo(AnalyzerChoice.PARSER);
 
-                harvester.statementAnalyzerChoice(AnalyzerChoice.MODEL);
+                // Die Wahl kommt aus statements.analyzer (#1025) und gilt ohne Neustart.
+                assertThat(manager.apply(manager.current().configuration().withAnalyzer(
+                        new AnalyzerSettings(AnalyzerChoice.MODEL, null))).activated()).isTrue();
                 assertThat(harvester.statementAnalysis().selected())
                         .as("die Ablagewahl bleibt hinter der Meldung erkennbar").isEqualTo(AnalyzerChoice.MODEL);
                 assertThat(reported.tryAcquire(10, TimeUnit.SECONDS)).as("Umstellen meldet sich").isTrue();

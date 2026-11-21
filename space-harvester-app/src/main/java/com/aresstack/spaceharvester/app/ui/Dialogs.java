@@ -114,6 +114,75 @@ public final class Dialogs {
     }
 
     /**
+     * Antwort von {@link #confirm(Component, String, String, String, List, Object, List)}.
+     *
+     * @param choice  der Wert des Auswahlfelds
+     * @param checked je Ankreuzfeld, ob es angekreuzt war
+     */
+    public record Choice(Object choice, boolean[] checked) {
+    }
+
+    /**
+     * Ja/Nein-Rückfrage mit einer Auswahlzeile {@code label} oben (vorbelegt mit {@code selected}) und Ankreuzfeldern
+     * darunter (anfangs leer). Die Frage im Text enthält „wirklich“.
+     *
+     * @return {@code null} bei „Nein“, sonst Auswahl und Häkchen
+     */
+    public static Choice confirm(Component parent, String title, String text, String label, List<?> choices,
+                                 Object selected, List<String> options) {
+        return confirm(parent, title, choice -> text, label, choices, selected, options);
+    }
+
+    /** Wie oben; der Text folgt der Auswahl ({@code text} je Wert des Auswahlfelds) und wechselt beim Umschalten. */
+    public static Choice confirm(Component parent, String title, java.util.function.Function<Object, String> text,
+                                 String label, List<?> choices, Object selected, List<String> options) {
+        Choice[] result = {null};
+        JDialog dialog = dialog(parent, title);
+        javax.swing.JComboBox<Object> combo = Comic.combo();
+        choices.forEach(combo::addItem);
+        combo.setSelectedItem(selected);
+        combo.getAccessibleContext().setAccessibleName(label);
+        List<javax.swing.JCheckBox> boxes = options.stream().map(Comic::checkBox).toList();
+        ComposerButton yes = Comic.primary("Ja", null);
+        ComposerButton no = Comic.button("Nein", null);
+        yes.addActionListener(e -> {
+            boolean[] chosen = new boolean[boxes.size()];
+            for (int i = 0; i < chosen.length; i++) {
+                chosen[i] = boxes.get(i).isSelected();
+            }
+            result[0] = new Choice(combo.getSelectedItem(), chosen);
+            dialog.dispose();
+        });
+        no.addActionListener(e -> dialog.dispose());
+        JPanel column = new JPanel();
+        column.setOpaque(false);
+        column.setLayout(new javax.swing.BoxLayout(column, javax.swing.BoxLayout.Y_AXIS));
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        row.add(Comic.text(label), BorderLayout.WEST);
+        row.add(combo, BorderLayout.CENTER);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+        column.add(row);
+        column.add(javax.swing.Box.createVerticalStrut(6));
+        for (javax.swing.JCheckBox box : boxes) {
+            box.setAlignmentX(Component.LEFT_ALIGNMENT);
+            column.add(box);
+        }
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        body.setOpaque(false);
+        javax.swing.JTextArea note = Comic.note(text.apply(selected));
+        combo.addActionListener(e -> {
+            note.setText(text.apply(combo.getSelectedItem()));
+            dialog.pack();
+        });
+        body.add(note, BorderLayout.CENTER);
+        body.add(column, BorderLayout.SOUTH);
+        show(dialog, title, body, no, yes);
+        return result[0];
+    }
+
+    /**
      * Vor jedem Übernehmen, das die Quellen neu startet: Laufen Aufträge, sagt der Dialog, welche abbrechen würden, und
      * übernimmt nur nach Bestätigung. Ohne laufende Aufträge {@code true} ohne Rückfrage.
      */

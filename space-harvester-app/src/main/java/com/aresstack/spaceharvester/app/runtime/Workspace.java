@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
@@ -1163,7 +1165,31 @@ public final class Workspace {
      * Lädt beim ersten Aufruf das Modell (Sekunden); nur auf ausdrückliche Anforderung, nie auf dem EDT.
      */
     public PageStatements analyzeStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled) {
+        if (statementAnalyzer() == AnalyzerChoice.MODEL) {
+            return harvester.statementAnalysis().analyzeWith(caller, snapshot, cancelled, AnalyzerChoice.MODEL,
+                    costs -> {
+                    });
+        }
         return harvester.statementAnalysis().analyze(caller, snapshot, cancelled);
+    }
+
+    /**
+     * Der eingestellte Aussagenanalysator (Einstellungen › Modelle, „Aussagenanalyse“, Fahrplan A3): aus seiner Ablage
+     * lesen Aussagen, Graph, Stand, Begriffe und Export, und eine einzelne Seite rechnet er.
+     */
+    public AnalyzerChoice statementAnalyzer() {
+        return harvester.statementAnalysis().selected();
+    }
+
+    /**
+     * Warum der KI-Analysator diese Seite jetzt bewusst auslässt (kein Modell, keine KI-Freigabe); leer, wenn er sie
+     * rechnen kann oder der MaltParser eingestellt ist.
+     */
+    public java.util.Optional<AnalyzerUnavailableException.Reason> statementAnalyzerSkips(PageKey key) {
+        if (statementAnalyzer() != AnalyzerChoice.MODEL) {
+            return java.util.Optional.empty();
+        }
+        return harvester.statementAnalysis().modelUnavailable(key);
     }
 
     /**
@@ -1173,6 +1199,10 @@ public final class Workspace {
      */
     public PageStatements analyzeStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled,
             com.aresstack.spaceharvester.application.configuration.SimplificationSettings simplification) {
+        if (statementAnalyzer() == AnalyzerChoice.MODEL) {
+            // Der KI-Analysator kennt keine Vorstufe; er rechnet die Seite wie ohne sie.
+            return analyzeStatements(snapshot, cancelled);
+        }
         return harvester.statementAnalysis().analyze(caller, snapshot, cancelled,
                 com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.SimplificationRequest
                         .of(simplification), costs -> {
