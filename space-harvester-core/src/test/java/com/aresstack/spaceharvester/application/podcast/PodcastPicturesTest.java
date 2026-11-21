@@ -111,6 +111,46 @@ class PodcastPicturesTest {
     }
 
     @Test
+    void anImageFromAnotherFormatIsStoredAsRealPng() throws Exception {
+        ByteArrayOutputStream bmp = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(640, 360, BufferedImage.TYPE_INT_RGB), "bmp", bmp);
+        PodcastPictures.Normalized normalized = PodcastPictures.normalize(bmp.toByteArray()).orElseThrow();
+        assertThat(normalized.extension()).isEqualTo("png");
+        assertThat(normalized.bytes()[1]).isEqualTo((byte) 'P');
+        assertThat(PodcastPictures.normalize(png(64, 64))).isEmpty();
+    }
+
+    @Test
+    void afterARestartAStoredPageImageStillCountsAsUsed() throws Exception {
+        PodcastPictures pictures = pictures(answering("{\"choice\":2}", new AtomicInteger()),
+                answering(DiagramComposerTest.PLAN, new AtomicInteger()), source(png(640, 360)));
+        PodcastPictures.Brief brief = new PodcastPictures.Brief(1, "t", "m", List.of("p2"));
+        pictures.make(KEY, "s", brief, new HashSet<>(), new ArrayList<>());
+        Set<String> fresh = new HashSet<>();
+        assertThat(pictures.make(KEY, "s", brief, fresh, new ArrayList<>()).sha256()).isEqualTo("bb");
+        assertThat(fresh).containsExactly("bb");
+    }
+
+    @Test
+    void aBrokenImageStoreStillLeadsToADiagram() {
+        PodcastPictures.PageImageSource broken = new PodcastPictures.PageImageSource() {
+            @Override
+            public List<Candidate> candidates(String sourceId, List<String> pageIds) {
+                throw new IllegalStateException("Ablage gestört");
+            }
+
+            @Override
+            public Optional<byte[]> content(String sourceId, Candidate candidate) {
+                return Optional.empty();
+            }
+        };
+        PodcastPictures pictures = pictures(answering("{\"choice\":1}", new AtomicInteger()),
+                answering(DiagramComposerTest.PLAN, new AtomicInteger()), broken);
+        assertThat(pictures.make(KEY, "s", new PodcastPictures.Brief(5, "t", "m", List.of("p1")), new HashSet<>(),
+                new ArrayList<>()).kind()).isEqualTo(PodcastPictures.Kind.DIAGRAM);
+    }
+
+    @Test
     void failingModelsMeanNoPictureAndTheDecisionIsKept() {
         StepModel broken = new StepModel() {
             @Override

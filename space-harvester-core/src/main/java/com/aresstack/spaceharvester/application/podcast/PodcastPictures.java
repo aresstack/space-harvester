@@ -71,15 +71,17 @@ public final class PodcastPictures {
      * @param caption   Bildunterschrift: Titel des Seitenbilds oder des Schaubilds
      * @param pageId    die Seite des Bildes, nur bei {@link Kind#PAGE}
      * @param reason    bei {@link Kind#NONE} der Grund, ohne Inhalte
+     * @param sha256    Fingerabdruck des Seitenbilds, nur bei {@link Kind#PAGE}
      */
-    public record Picture(Kind kind, Path file, String mediaType, String caption, String pageId, String reason) {
+    public record Picture(Kind kind, Path file, String mediaType, String caption, String pageId, String reason,
+                          String sha256) {
         public Picture {
             Objects.requireNonNull(kind, "kind");
             caption = caption == null ? "" : caption;
         }
 
         static Picture none(String reason) {
-            return new Picture(Kind.NONE, null, null, "", null, reason);
+            return new Picture(Kind.NONE, null, null, "", null, reason, null);
         }
     }
 
@@ -171,7 +173,8 @@ public final class PodcastPictures {
                 return Optional.empty(); // Bild fehlt: neu entscheiden
             }
             return Optional.of(new Picture(kind, path, text(node, "mediaType"), text(node, "caption"),
-                    node.path("pageId").isString() ? node.path("pageId").asString() : null, null));
+                    node.path("pageId").isString() ? node.path("pageId").asString() : null, null,
+                    node.path("sha256").isString() ? node.path("sha256").asString() : null));
         } catch (IOException | JacksonException | IllegalArgumentException e) {
             return Optional.empty();
         }
@@ -186,12 +189,25 @@ public final class PodcastPictures {
     public Picture make(String key, String sourceId, Brief brief, Set<String> used, List<String> repairs) {
         Optional<Picture> stored = picture(key, brief.topic());
         if (stored.isPresent()) {
+            if (stored.get().sha256() != null) {
+                synchronized (used) {
+                    used.add(stored.get().sha256()); // nach Neustart: dieses Bild zeigt schon ein Thema
+                }
+            }
             return stored.get();
         }
         Picture picture;
         try {
-            picture = pagePicture(key, sourceId, brief, used, repairs)
-                    .or(() -> diagram(key, brief, repairs))
+            Optional<Picture> page;
+            try {
+                page = pagePicture(key, sourceId, brief, used, repairs);
+            } catch (RuntimeException e) {
+                // Ablage der Seitenbilder gestört: das Schaubild bleibt möglich
+                repairs.add("Bild " + (brief.topic() + 1) + ": Seitenbilder nicht lesbar (" + e.getClass()
+                        .getSimpleName() + ")");
+                page = Optional.empty();
+            }
+            picture = page.or(() -> diagram(key, brief, repairs))
                     .orElseGet(() -> Picture.none("kein passendes Bild"));
         } catch (RuntimeException e) {
             repairs.add("Bild " + (brief.topic() + 1) + " gescheitert (" + e.getClass().getSimpleName() + ")");
@@ -229,9 +245,8 @@ public final class PodcastPictures {
             return Optional.empty();
         }
         PageImageSource.Candidate chosen = candidates.get(choice);
-        Optional<byte[]> bytes = images.content(sourceId, chosen);
-        String extension = bytes.map(PodcastPictures::extension).orElse(null);
-        if (extension == null) {
+        Optional<Normalized> image = images.content(sourceId, chosen).flatMap(PodcastPictures::normalize);
+        if (image.isEmpty()) {
             repairs.add("Bild " + (brief.topic() + 1) + ": gewähltes Seitenbild nicht lesbar oder zu klein");
             return Optional.empty();
         }
@@ -240,11 +255,12 @@ public final class PodcastPictures {
                 return Optional.empty(); // ein paralleles Thema war schneller
             }
         }
+        String extension = image.get().extension();
         Path file = store.folder(key).resolve(name(brief.topic(), extension));
-        writeBytes(file, bytes.get());
+        writeBytes(file, image.get().bytes());
         String caption = chosen.title() == null || chosen.title().isBlank() ? "" : chosen.title().strip();
         return Optional.of(new Picture(Kind.PAGE, file, "image/" + (extension.equals("jpg") ? "jpeg" : extension),
-                caption, chosen.pageId(), null));
+                caption, chosen.pageId(), null, chosen.sha256()));
     }
 
     /** Index des gewählten Bildes oder {@code -1}, wenn keins passt oder das Modell nicht antwortet. */
@@ -281,23 +297,42 @@ public final class PodcastPictures {
         return -1;
     }
 
-    /** Die Dateiendung eines lesbaren, ausreichend großen Bildes; {@code null} sonst. */
-    static String extension(byte[] bytes) {
+    /** Ein Bild in einem Format, das jede Oberfläche zeigt: PNG, JPEG oder GIF, mit passender Endung. */
+    record Normalized(byte[] bytes, String extension) {
+    }
+
+    /**
+     * Ein lesbares, ausreichend großes Bild als PNG, JPEG oder GIF; andere Formate (etwa BMP, TIFF) werden als PNG neu
+     * geschrieben, damit Endung, Medientyp und Inhalt übereinstimmen. Leer, wenn es nicht lesbar oder zu klein ist.
+     */
+    static Optional<Normalized> normalize(byte[] bytes) {
+        BufferedImage image;
         try {
-            BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
-            if (image == null || image.getWidth() < MIN_WIDTH || image.getHeight() < MIN_HEIGHT) {
-                return null;
-            }
+            image = ImageIO.read(new ByteArrayInputStream(bytes));
         } catch (IOException | RuntimeException e) {
-            return null;
+            return Optional.empty();
+        }
+        if (image == null || image.getWidth() < MIN_WIDTH || image.getHeight() < MIN_HEIGHT) {
+            return Optional.empty();
+        }
+        if (bytes.length > 8 && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G') {
+            return Optional.of(new Normalized(bytes, "png"));
         }
         if (bytes.length > 3 && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8) {
-            return "jpg";
+            return Optional.of(new Normalized(bytes, "jpg"));
         }
         if (bytes.length > 3 && bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F') {
-            return "gif";
+            return Optional.of(new Normalized(bytes, "gif"));
         }
-        return "png";
+        try {
+            java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
+            if (!ImageIO.write(image, "png", png)) {
+                return Optional.empty();
+            }
+            return Optional.of(new Normalized(png.toByteArray(), "png"));
+        } catch (IOException | RuntimeException e) {
+            return Optional.empty();
+        }
     }
 
     // --- Stufe 2: Schaubild -------------------------------------------------------------------------------------
@@ -334,7 +369,7 @@ public final class PodcastPictures {
         Path file = folder.resolve(name(brief.topic(), "svg"));
         writeBytes(file, diagram.get().svg().getBytes(StandardCharsets.UTF_8));
         String caption = diagram.get().plan().title().isBlank() ? brief.title() : diagram.get().plan().title();
-        return Optional.of(new Picture(Kind.DIAGRAM, file, "image/svg+xml", caption, null, null));
+        return Optional.of(new Picture(Kind.DIAGRAM, file, "image/svg+xml", caption, null, null, null));
     }
 
     // --- Ablage -------------------------------------------------------------------------------------------------
@@ -352,6 +387,9 @@ public final class PodcastPictures {
         }
         if (picture.reason() != null) {
             node.put("reason", picture.reason());
+        }
+        if (picture.sha256() != null) {
+            node.put("sha256", picture.sha256());
         }
         writeBytes(store.folder(key).resolve(name(topic, "json")),
                 JSON.writeValueAsString(node).getBytes(StandardCharsets.UTF_8));

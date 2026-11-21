@@ -123,6 +123,30 @@ class DiagramComposerTest {
     }
 
     @Test
+    void aBackgroundRectangleIsRemovedFromTheMarkupThatIsUsed() throws Exception {
+        String svg = DiagramComposer.clean("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\">"
+                + "<rect width=\"100%\" height=\"100%\" fill=\"#f00\"/><circle cx=\"50\" cy=\"50\" r=\"30\"/></svg>");
+        assertThat(svg).doesNotContain("<rect").contains("<circle");
+        assertThat(DiagramComposer.iconProblem(svg)).isNull();
+    }
+
+    @Test
+    void hubCardsNeverOverlap() {
+        for (int count = 2; count <= DiagramComposer.MAX_ELEMENTS; count++) {
+            List<DiagramComposer.Slot> slots = DiagramComposer.layout(DiagramComposer.Form.HUB, count);
+            for (int a = 0; a < slots.size(); a++) {
+                for (int b = a + 1; b < slots.size(); b++) {
+                    DiagramComposer.Slot one = slots.get(a);
+                    DiagramComposer.Slot two = slots.get(b);
+                    boolean apart = one.x() + one.width() <= two.x() || two.x() + two.width() <= one.x()
+                            || one.y() + one.height() <= two.y() || two.y() + two.height() <= one.y();
+                    assertThat(apart).as("Karten %d und %d bei %d Elementen", a, b, count).isTrue();
+                }
+            }
+        }
+    }
+
+    @Test
     void everyFormAndSizeIsDrawable() throws Exception {
         for (DiagramComposer.Form form : DiagramComposer.Form.values()) {
             for (int count = 2; count <= DiagramComposer.MAX_ELEMENTS; count++) {

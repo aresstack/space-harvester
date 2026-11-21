@@ -182,7 +182,8 @@ public final class DiagramComposer {
      * @return leer, wenn kein brauchbarer Plan zustande kommt (dann zeigt der Podcast kein Bild)
      */
     public Optional<Diagram> compose(String topic, String material, Memory memory) {
-        List<String> repairs = new ArrayList<>();
+        // Die Symbole entstehen parallel und melden ihre Reparaturen zugleich.
+        List<String> repairs = java.util.Collections.synchronizedList(new ArrayList<>());
         Plan plan = Optional.ofNullable(memory.load("plan.json")).map(stored -> readPlan(stored, new ArrayList<>()))
                 .orElse(null);
         if (plan == null) {
@@ -370,6 +371,7 @@ public final class DiagramComposer {
         if (!top.hasAttribute("viewBox")) {
             top.setAttribute("viewBox", "0 0 100 100");
         }
+        removeBackground(top);
         top.removeAttribute("width");
         top.removeAttribute("height");
         try {
@@ -380,6 +382,58 @@ public final class DiagramComposer {
             return out.toString();
         } catch (Exception e) {
             throw new Unusable("it could not be serialised");
+        }
+    }
+
+    /**
+     * Entfernt eine flächenfüllende Rechteck-Fläche direkt unter der Wurzel. Geprüft und eingesetzt wird danach dasselbe
+     * Markup; {@link SvgDrawing} würde den Hintergrund sonst nur beim Prüfen still entfernen.
+     */
+    static void removeBackground(org.w3c.dom.Element top) {
+        double[] box = viewBox(top.getAttribute("viewBox"));
+        NodeList children = top.getChildNodes();
+        for (int i = children.getLength() - 1; i >= 0; i--) {
+            Node child = children.item(i);
+            if (child.getNodeType() != Node.ELEMENT_NODE || !"rect".equals(child.getLocalName())) {
+                continue;
+            }
+            org.w3c.dom.Element rect = (org.w3c.dom.Element) child;
+            double x = number(rect.getAttribute("x"), 0, box[2]);
+            double y = number(rect.getAttribute("y"), 0, box[3]);
+            double width = number(rect.getAttribute("width"), 0, box[2]);
+            double height = number(rect.getAttribute("height"), 0, box[3]);
+            if (x <= box[0] + box[2] * 0.02 && y <= box[1] + box[3] * 0.02 && width >= box[2] * 0.95
+                    && height >= box[3] * 0.95) {
+                top.removeChild(rect);
+            }
+        }
+    }
+
+    private static double[] viewBox(String value) {
+        String[] parts = value == null ? new String[0] : value.trim().split("[\\s,]+");
+        if (parts.length == 4) {
+            try {
+                return new double[]{Double.parseDouble(parts[0]), Double.parseDouble(parts[1]),
+                        Double.parseDouble(parts[2]), Double.parseDouble(parts[3])};
+            } catch (NumberFormatException e) {
+                // Vorgabe unten
+            }
+        }
+        return new double[]{0, 0, 100, 100};
+    }
+
+    private static double number(String value, double fallback, double whole) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String text = value.trim();
+        try {
+            if (text.endsWith("%")) {
+                return Double.parseDouble(text.substring(0, text.length() - 1)) / 100 * whole;
+            }
+            return Double.parseDouble(text.replaceAll("px$", ""));
+        } catch (NumberFormatException e) {
+            return fallback;
         }
     }
 
