@@ -206,6 +206,9 @@ public class PageConnections {
         private final Map<PageKey, Optional<PageHeader>> metadataOnly = new HashMap<>();
         private final Map<PageKey, Optional<PageHeader>> withContent = new HashMap<>();
         private final Set<PageKey> considered = new LinkedHashSet<>();
+        /** Bekannte Ziele, die lokal gar nicht liegen (nicht: verborgen), mit der Art der ersten Kante. */
+        private final Map<PageKey, ConnectionKind> missing = new LinkedHashMap<>();
+        private final Map<PageKey, Optional<PageHeader>> stored = new HashMap<>();
         private int termLookups;
 
         Run(AccessContext caller, String sourceId, SearchIndexState state, Query query) {
@@ -221,8 +224,12 @@ public class PageConnections {
                 coverage.put(ConnectionKind.PARENT, Coverage.COMPLETE);
                 return;
             }
-            Optional<PageHeader> parent = lookup(new PageKey(seed.key().sourceId(), parentId), false);
+            PageKey parentKey = new PageKey(seed.key().sourceId(), parentId);
+            Optional<PageHeader> parent = lookup(parentKey, false);
             coverage.put(ConnectionKind.PARENT, parent.isPresent() ? Coverage.COMPLETE : Coverage.PARTIAL);
+            if (parent.isEmpty()) {
+                noteMissing(parentKey, ConnectionKind.PARENT);
+            }
             parent.ifPresent(found -> add(seed, ConnectionKind.PARENT, found, new Provenance.Hierarchy()));
         }
 
@@ -286,6 +293,7 @@ public class PageConnections {
                 Optional<PageHeader> header = lookup(target, false);
                 if (header.isEmpty()) {
                     allLocal = false;
+                    noteMissing(target, kind);
                     continue;
                 }
                 add(seed, kind, header.get(), new Provenance.Link());
@@ -477,7 +485,14 @@ public class PageConnections {
          */
         Optional<PageHeader> lookup(PageKey key, boolean content) {
             Map<PageKey, Optional<PageHeader>> cache = content ? withContent : metadataOnly;
-            return cache.computeIfAbsent(key, page -> {
+            return cache.computeIfAbsent(key, page -> stored(page)
+                    .filter(header -> permits(header, AccessKind.METADATA)
+                            && (!content || permits(header, AccessKind.CONTENT))));
+        }
+
+        /** Die Kopfdaten im lokalen Index, ohne Rechteprüfung; leer, wenn die Seite dort nicht liegt. */
+        private Optional<PageHeader> stored(PageKey key) {
+            return stored.computeIfAbsent(key, page -> {
                 if (catalog.find(page.sourceId()).isEmpty()) {
                     return Optional.empty();
                 }
@@ -485,10 +500,19 @@ public class PageConnections {
                         : index.state(page.sourceId());
                 return sourceState.flatMap(read -> index.search(byId(page), Set.of(page.sourceId()),
                                 read.generation(), null, 1).stream().findFirst())
-                        .map(hit -> hit.page().header())
-                        .filter(header -> permits(header, AccessKind.METADATA)
-                                && (!content || permits(header, AccessKind.CONTENT)));
+                        .map(hit -> hit.page().header());
             });
+        }
+
+        /**
+         * Merkt ein bekanntes Ziel, das lokal nicht liegt. Eine Seite, die liegt, aber verborgen ist, bleibt draußen:
+         * Sie zu nennen verriete sie. Ohne eingetragene Quelle ist das Ziel nicht ladbar und fehlt ebenfalls.
+         */
+        private void noteMissing(PageKey key, ConnectionKind kind) {
+            if (missing.size() < query.maxEdges() && catalog.find(key.sourceId()).isPresent()
+                    && stored(key).isEmpty()) {
+                missing.putIfAbsent(key, kind);
+            }
         }
 
         private boolean permits(PageHeader header, AccessKind kind) {
@@ -517,7 +541,7 @@ public class PageConnections {
                 }
                 edges.addAll(ofKind);
             }
-            return new Connections(seed, edges, coverage, truncated, considered.size());
+            return new Connections(seed, edges, coverage, truncated, considered.size(), missing);
         }
 
         /** Dieselbe Art, dasselbe Ziel, dieselbe Herkunft nur einmal. */
@@ -608,11 +632,21 @@ public class PageConnections {
      * @param truncated       Arten, von denen wegen einer Grenze etwas weggelassen wurde
      * @param pagesConsidered Zahl der verschiedenen lokal gespeicherten, für den Aufrufer sichtbaren Seiten, die für die
      *                        Antwort gelesen wurden, die Ausgangsseite eingeschlossen
+     * @param missing         bekannte Ziele (Elternseite, Verweisziele), die lokal gar nicht liegen, mit der Art der
+     *                        ersten Kante; ob der Aufrufer sie lesen darf, entscheidet erst ihr Laden. Sie sind der
+     *                        Grund für {@link Coverage#PARTIAL} und keine Kanten.
      */
     public record Connections(PageRef seed, List<Connection> edges, Map<ConnectionKind, Coverage> coverage,
-                              Set<ConnectionKind> truncated, int pagesConsidered) {
+                              Set<ConnectionKind> truncated, int pagesConsidered, Map<PageKey, ConnectionKind> missing) {
+
+        public Connections(PageRef seed, List<Connection> edges, Map<ConnectionKind, Coverage> coverage,
+                           Set<ConnectionKind> truncated, int pagesConsidered) {
+            this(seed, edges, coverage, truncated, pagesConsidered, Map.of());
+        }
 
         public Connections {
+            missing = missing == null || missing.isEmpty() ? Map.of()
+                    : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(missing));
             Objects.requireNonNull(seed, "seed");
             edges = List.copyOf(edges);
             coverage = coverage.isEmpty() ? Map.of() : Map.copyOf(new EnumMap<>(coverage));

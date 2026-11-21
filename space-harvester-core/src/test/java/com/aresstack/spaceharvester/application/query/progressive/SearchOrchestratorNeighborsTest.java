@@ -224,4 +224,55 @@ class SearchOrchestratorNeighborsTest {
         assertThat(queries).hasSize(1);
         assertThat(result.neighbors()).isEqualTo(ProgressiveResult.Neighbors.UNCHECKED);
     }
+
+    @Test
+    void missingNeighborsAndCandidatesWithoutAHitAreLoadedWithoutWaiting() throws Exception {
+        List<java.util.Collection<PageKey>> loaded = Collections.synchronizedList(new ArrayList<>());
+        NeighborLoader.Load load = new NeighborLoader.Load() {
+            @Override
+            public String id() {
+                return "bg-1";
+            }
+
+            @Override
+            public int pages() {
+                return 2;
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.observe.Subscription whenDone(
+                    java.util.function.Consumer<Boolean> done) {
+                return com.aresstack.spaceharvester.application.observe.Subscription.NONE;
+            }
+
+            @Override
+            public void cancel() {
+            }
+        };
+        NeighborSource withGaps = new NeighborSource() {
+            @Override
+            public Map<PageKey, HitReason.Neighbor> neighbors(AccessContext caller, List<KeywordSearch.Hit> seeds) {
+                return SearchOrchestratorNeighborsTest.this.neighbors.neighbors(caller, seeds);
+            }
+
+            @Override
+            public Found find(AccessContext caller, List<KeywordSearch.Hit> seeds) {
+                return new Found(neighbors(caller, seeds), Map.of(new PageKey("wiki", "fehlt"), VIA_LINK));
+            }
+        };
+        orchestrator = new SearchOrchestrator(search, null, (original, max) -> List.of(),
+                (original, max) -> List.of(), HitScorer.none(), com.aresstack.spaceharvester.application.searchrun
+                .SearchRunLog.NONE, withGaps, (caller, pages) -> {
+                    loaded.add(List.copyOf(pages));
+                    return java.util.Optional.of(load);
+                });
+
+        ProgressiveResult result = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                profile().withNeighbors(true)).result().get(10, TimeUnit.SECONDS);
+
+        assertThat(ids(result)).containsExactly("o", "a", "n1");
+        // n2 liegt lokal, traf aber nicht (vielleicht nur Kopfdaten); „fehlt“ liegt gar nicht lokal.
+        assertThat(loaded).containsExactly(List.of(new PageKey("wiki", "n2"), new PageKey("wiki", "fehlt")));
+        assertThat(result.neighborLoad()).isSameAs(load);
+    }
 }
