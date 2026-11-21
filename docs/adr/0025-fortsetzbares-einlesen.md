@@ -326,6 +326,16 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    oder gar nicht, zurückgenommen wird vom letzten Teil her.
 5. **Neustart.** Die Vorgänger stehen in den Angaben; `resumeInterrupted` setzt die ältesten Teile zuerst fort, darum
    läuft eine unterbrochene Kette in derselben Reihenfolge weiter.
-6. **Erste Dienste** (`Harvester#servicePlanner`) nur als Beschreibung: Indexieren (AUTOMATIC), Bilder beschreiben
+6. **Erste Dienste** (`Harvester#servicePlanner`): Indexieren (AUTOMATIC), Bilder beschreiben
    (wie `images.automatic`), Aussagenanalyse (MANUAL), Glossar (AUTOMATIC), Wissensgraph (MANUAL, nach Aussagenanalyse
-   und Bildbeschreibung). Ihre Arten bauen die Stränge B1 (D2) und A2 (D3).
+   und Bildbeschreibung). Die Aussagenanalyse arbeitet über ihre Art `statements` (D3): `missing` aus
+   `StatementAnalysisJobs#missing`, je Quelle und Space nach dem gespeicherten Kopf gruppiert; die übrigen Arten baut
+   B1 (D2), bis dahin bleiben sie Beschreibung.
+7. **Angaben der Teile.** Jeder Teil trägt seine Seiten (`AnalysisService.PAGES`). Ein Dienst kann weitere Angaben
+   beisteuern (`AnalysisService#parameters`), einmal je Start und für alle Spaces gleich; `pages` setzt immer der
+   Planer. Die Aussagenanalyse legt so Eigentümer, Startzeit und den beim Start eingestellten Analysator fest
+   (`StatementAnalysisJobs#plannerParameters`), dazu eine Kennung des Start-Aufrufers in diesem Prozess (`caller`).
+   Ein Teil mit `pages` analysiert genau diese Seiten seines Space ohne Navigation, jede nur mit Leserecht; der erste
+   Lauf rechnet mit den Rechten des Start-Aufrufers, nach einem Neustart gilt die Eigentümer-Regel aus Punkt 6 oben
+   (gleicher Eigentümer läuft weiter, sonst gelb „von Hand fortsetzen“). Ohne „erneut analysieren“ und ohne Grenze;
+   aktuelle Seiten überspringt der Teil.

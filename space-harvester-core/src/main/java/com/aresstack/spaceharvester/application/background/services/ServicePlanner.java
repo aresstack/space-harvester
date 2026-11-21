@@ -113,6 +113,8 @@ public final class ServicePlanner {
                 continue;
             }
             MissingPages missing = isGoal ? scope.of(caller, pages) : service.missing().of(caller, pages);
+            Map<String, String> given = new LinkedHashMap<>(service.parameters().of(caller));
+            given.remove(AnalysisService.PAGES);
             inaccessible = Math.max(inaccessible, missing.inaccessible());
             for (Map.Entry<MissingPages.Scope, Set<String>> entry : missing.pages().entrySet()) {
                 MissingPages.Scope area = entry.getKey();
@@ -137,7 +139,7 @@ public final class ServicePlanner {
                 own.put(area, refs);
                 steps.add(new BackgroundJobs.Step(service.kind(), service.title(),
                         new BackgroundPart.Draft(area.sourceId(), area.spaceKey(),
-                                Map.of(AnalysisService.PAGES, String.join("\n", rest))),
+                                withPages(given, rest)),
                         after.stream().filter(ref -> ref.jobId() != null).map(Ref::jobId).toList(),
                         after.stream().filter(ref -> ref.jobId() == null).map(Ref::step).toList(),
                         after.stream().map(Ref::title).toList()));
@@ -151,6 +153,13 @@ public final class ServicePlanner {
         }
         BackgroundGroup group = background.startSteps(BackgroundJobs.newGroupId(), goal.kind(), goal.title(), steps);
         return new ServicePlan(Optional.of(group), notes, inaccessible);
+    }
+
+    /** Die Angaben eines Teils: die des Dienstes und seine Seiten. */
+    private static Map<String, String> withPages(Map<String, String> given, Set<String> pages) {
+        Map<String, String> parameters = new LinkedHashMap<>(given);
+        parameters.put(AnalysisService.PAGES, String.join("\n", pages));
+        return parameters;
     }
 
     /** Die Seiten eines laufenden Teils ({@link AnalysisService#PAGES}). */

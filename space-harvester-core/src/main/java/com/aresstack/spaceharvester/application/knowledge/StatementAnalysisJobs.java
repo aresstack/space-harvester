@@ -131,6 +131,11 @@ public class StatementAnalysisJobs {
     public static final String OWNER = "owner";
     /** Angabe der Teile einer Quelle mit Grenze: alle ihre Spaces, durch Zeilenumbruch getrennt. */
     public static final String LIMIT_SPACES = "limit-spaces";
+    /**
+     * Angabe eines Teils aus dem Dienst-Planer (D1): Kennung des Start-Aufrufers in diesem Prozess, damit der erste Lauf
+     * mit seinen Rechten rechnet; nach einem Neustart gilt die Regel für {@value #OWNER}.
+     */
+    public static final String CALLER = "caller";
     static final String SCOPE_PAGE = "page";
     static final String SCOPE_SUBTREE = "subtree";
     static final String SCOPE_SPACE = "space";
@@ -313,7 +318,7 @@ public class StatementAnalysisJobs {
                 return group.start(groupId, KIND, title(analyzer), parts).parts().get(0);
             }
         }
-        JobTask task = JobTask.blocking(context -> run(caller, scope, fixed, null, List.of(), pages, context));
+        JobTask task = JobTask.blocking(context -> run(caller, scope, fixed, null, List.of(), null, pages, context));
         if (scope instanceof Scope.SinglePage) {
             // Ein Klick auf eine Seite wartet nie hinter Hintergrund (AT, #1055).
             return jobs.submitInteractive(JobType.STATEMENT_ANALYSIS, scope.sourceId(), scope.spaceKey(),
@@ -391,12 +396,18 @@ public class StatementAnalysisJobs {
      * Die Arbeit eines Unterauftrags, allein aus seinen Angaben: Umfang, festgelegter Analysator, Vorstufe. Beim
      * Fortsetzen überspringt der Lauf Seiten, die der Analysator schon aktuell hat (mit „erneut analysieren“: seit
      * {@value #SINCE}). Setzt {@link BackgroundJobs#resumeInterrupted()} ihn fort und der Eigentümer ist ein anderer
-     * als der wiederhergestellte Aufrufer, hält er gelb an ({@value #RESUME_BY_HAND}).
+     * als der wiederhergestellte Aufrufer, hält er gelb an ({@value #RESUME_BY_HAND}). Ein Teil des Dienst-Planers
+     * (D1) analysiert genau seine Seiten ({@link
+     * com.aresstack.spaceharvester.application.background.services.AnalysisService#PAGES}), zuerst mit den Rechten
+     * des Start-Aufrufers ({@value #CALLER}).
      */
     private JobTask work(BackgroundPart part) {
         String scopeName = part.parameter(SCOPE);
         String root = part.parameter(ROOT);
-        Scope scope = SCOPE_PAGE.equals(scopeName) && root != null
+        List<String> listed = listed(part);
+        Scope scope = listed != null ? (part.partitionKey() != null ? new Scope.Space(part.sourceId(),
+                part.partitionKey()) : new Scope.Source(part.sourceId()))
+                : SCOPE_PAGE.equals(scopeName) && root != null
                 ? new Scope.SinglePage(part.sourceId(), part.partitionKey(), root)
                 : SCOPE_SUBTREE.equals(scopeName) && root != null
                 ? new Scope.Subtree(part.sourceId(), part.partitionKey(), root)
@@ -404,11 +415,15 @@ public class StatementAnalysisJobs {
         Options options = options(part);
         Instant since = part.resumed() ? instant(part.parameter(SINCE)) : null;
         AccessContext known = callers.get(part.groupId());
+        if (known == null && part.parameter(CALLER) != null) {
+            known = callers.get(part.parameter(CALLER));
+        }
         AccessContext fallback = restored;
+        AccessContext starter = known;
         return JobTask.blocking(context -> {
             // Nie mit fremden Rechten: ohne bekannten Aufrufer nur, wenn der wiederhergestellte der Eigentümer ist.
             // Von Hand mit eigenen Rechten fortsetzen geht über resume(caller, groupId).
-            if (known == null && (fallback == null || !fallback.jobOwner().equals(part.parameter(OWNER)))) {
+            if (starter == null && (fallback == null || !fallback.jobOwner().equals(part.parameter(OWNER)))) {
                 context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, RESUME_BY_HAND,
                         part.automatic() ? "Nach dem Neustart nicht von selbst fortgesetzt, weil ein anderer Aufrufer "
                                 + "ihn gestartet hat; bitte von Hand fortsetzen"
@@ -416,7 +431,7 @@ public class StatementAnalysisJobs {
                 context.pause(PauseReason.RESUME_BY_HAND);
                 return;
             }
-            AccessContext caller = known != null ? known : fallback;
+            AccessContext caller = starter != null ? starter : fallback;
             if (caller == null) {
                 throw new IllegalStateException("Kein Aufrufer für den Hintergrund angeschlossen");
             }
@@ -425,8 +440,19 @@ public class StatementAnalysisJobs {
                         ? "In dieser Laufzeit ist kein KI-Analysator eingerichtet"
                         : "In dieser Laufzeit ist kein Satzanalysator eingerichtet");
             }
-            run(caller, scope, options, since, limitSpaces(part), fetch, context);
+            run(caller, scope, options, since, limitSpaces(part), listed, fetch, context);
         });
+    }
+
+    /**
+     * Die Seiten eines Teils aus dem Dienst-Planer ({@link
+     * com.aresstack.spaceharvester.application.background.services.AnalysisService#PAGES}) oder {@code null} ohne.
+     */
+    private static List<String> listed(BackgroundPart part) {
+        String value = part.parameter(
+                com.aresstack.spaceharvester.application.background.services.AnalysisService.PAGES);
+        return value == null ? null
+                : java.util.Arrays.stream(value.split("\n")).filter(id -> !id.isBlank()).distinct().toList();
     }
 
     /** Die Spaces, über die eine Quelle mit Grenze zählt ({@value #LIMIT_SPACES}); leer ohne. */
@@ -463,6 +489,27 @@ public class StatementAnalysisJobs {
         } catch (DateTimeParseException e) {
             return null;
         }
+    }
+
+    /**
+     * Die Angaben der Teile, die der Dienst-Planer (D1) für diese Art anlegt ({@link
+     * com.aresstack.spaceharvester.application.background.services.AnalysisService#parameters()}): der eingestellte
+     * Analysator, festgelegt für den ganzen Lauf, Eigentümer und Startzeit wie bei {@link #start}; ohne „erneut
+     * analysieren“ und ohne Grenze, denn die Seiten zählt der Planer. Die Seiten selbst stehen in
+     * {@link com.aresstack.spaceharvester.application.background.services.AnalysisService#PAGES}.
+     */
+    public Map<String, String> plannerParameters(AccessContext caller) {
+        Objects.requireNonNull(caller, "caller");
+        String token = java.util.UUID.randomUUID().toString();
+        callers.put(token, caller);
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put(ANALYZER, analysis.selected().value());
+        parameters.put(REANALYZE, Boolean.toString(false));
+        parameters.put(MAX_PAGES, Integer.toString(0));
+        parameters.put(SINCE, analysis.now().toString());
+        parameters.put(OWNER, caller.jobOwner());
+        parameters.put(CALLER, token);
+        return parameters;
     }
 
     /**
@@ -563,15 +610,21 @@ public class StatementAnalysisJobs {
     /**
      * @param limitSpaces bei einem Space-Teil einer Quelle mit Grenze alle Spaces der Quelle: Die Grenze gilt für ihre
      *                    Summe wie beim früheren einzelnen Auftrag; jeder Teil zählt sie vor der ersten Analyse
+     * @param listed      genau diese Seiten des Space (Teil des Dienst-Planers) statt des Umfangs, oder {@code null};
+     *                    jede einzeln mit den Rechten des Aufrufers geprüft
      * @param pages       woher die Seiten kommen; für die gezeigte Seite ihre Fassung ({@link #startShown})
      */
     private void run(AccessContext caller, Scope scope, Options options, Instant since, List<String> limitSpaces,
-                     PageFetch pages, JobContext context) {
+                     List<String> listed, PageFetch pages, JobContext context) {
         context.phase(COMPONENT, PHASE_DISCOVERY);
         Walk walk = new Walk(caller, scope, options.maxPages() == 0 ? Integer.MAX_VALUE : bound(options.maxPages()),
                 context::checkpoint);
         walk.onPage = () -> context.discovered(1);
-        walk.run();
+        if (listed != null) {
+            walk.listed(listed);
+        } else {
+            walk.run();
+        }
         long total = walk.pages.size();
         if (options.maxPages() > 0 && scope instanceof Scope.Space own) {
             for (String other : limitSpaces) {
@@ -1033,6 +1086,17 @@ public class StatementAnalysisJobs {
 
         private boolean full() {
             return pages.size() >= bound;
+        }
+
+        /** Genau diese Seiten im Space des Umfangs, ohne Navigation; jede nur mit Leserecht des Aufrufers. */
+        void listed(List<String> pageIds) {
+            for (String pageId : pageIds) {
+                if (full()) {
+                    return;
+                }
+                checkpoint.run();
+                add(scope.sourceId(), scope.spaceKey(), pageId);
+            }
         }
     }
 

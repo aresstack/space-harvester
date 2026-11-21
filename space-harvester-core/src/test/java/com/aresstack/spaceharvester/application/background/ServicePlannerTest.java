@@ -495,4 +495,24 @@ class ServicePlannerTest {
 
         assertThat(ran).containsExactly("sync");
     }
+
+    @Test
+    void theServiceFixesItsParametersOnceForAllPartsAndThePagesStayThePlanners() {
+        Jobs jobs = jobs();
+        BackgroundJobs background = background(jobs);
+        ServicePlanner planner = planner(background);
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        planner.register(new AnalysisService("goal", "Ziel", start("goal"), List.of("pre"), "goal",
+                (caller, pages) -> MissingPages.NONE, caller -> Map.of("owner", caller.jobOwner(),
+                "run", Integer.toString(asked.incrementAndGet()), AnalysisService.PAGES, "fremd")));
+
+        BackgroundGroup group = planner.start(CALLER, "goal", PAGES).group().orElseThrow();
+
+        assertThat(group.parts()).hasSize(2).allSatisfy(status -> {
+            assertThat(status.parameter("owner")).isEqualTo(CALLER.jobOwner());
+            assertThat(status.parameter("run")).as("einmal je Start, für alle Spaces gleich").isEqualTo("1");
+        });
+        assertThat(part(group, "goal", "ALPHA").parameter(AnalysisService.PAGES)).isEqualTo("a1\na2");
+        assertThat(part(group, "goal", "BETA").parameter(AnalysisService.PAGES)).isEqualTo("b1");
+    }
 }

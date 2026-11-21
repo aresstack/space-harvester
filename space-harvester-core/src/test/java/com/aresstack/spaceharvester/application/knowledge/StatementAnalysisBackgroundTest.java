@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
+import com.aresstack.spaceharvester.application.background.BackgroundGroup;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages;
 import com.aresstack.spaceharvester.application.holdings.HoldingState;
 import com.aresstack.spaceharvester.application.holdings.Holdings;
@@ -245,6 +246,70 @@ class StatementAnalysisBackgroundTest {
 
         assertThat(part.parameter(StatementAnalysisJobs.ANALYZER)).as("eigene Wahl vor der Einstellung")
                 .isEqualTo("parser");
+    }
+
+    /** Der Dienst-Planer (D1) mit der Aussagenanalyse als Ziel; Space der Seiten aus dem Baum, ohne Rechte. */
+    private com.aresstack.spaceharvester.application.background.services.ServicePlanner planner(Service service) {
+        var planner = new com.aresstack.spaceharvester.application.background.services.ServicePlanner(
+                service.background(), (caller, set) -> {
+                    Map<com.aresstack.spaceharvester.application.background.services.MissingPages.Scope, Set<String>>
+                            grouped = new LinkedHashMap<>();
+                    set.asMap().forEach((sourceId, ids) -> ids.forEach(id -> grouped.computeIfAbsent(
+                            new com.aresstack.spaceharvester.application.background.services.MissingPages.Scope(
+                                    sourceId, tree.spaceOf.get(id)), key -> new java.util.TreeSet<>()).add(id)));
+                    return new com.aresstack.spaceharvester.application.background.services.MissingPages(grouped, 0);
+                });
+        planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
+                "statements", "Aussagenanalyse",
+                () -> com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL, List.of(),
+                StatementAnalysisJobs.KIND,
+                com.aresstack.spaceharvester.application.background.services.AnalysisService.Missing.NOTHING,
+                service.analyses()::plannerParameters));
+        return planner;
+    }
+
+    @Test
+    void aPlannerPartAnalysesExactlyItsPagesWithTheRightsOfTheStarter() {
+        tree.space("DEV", "1", "2", "3");
+        AccessContext starter = AccessContext.technicalClient("pruefer");
+        deniedFor.put(starter.jobOwner(), Set.of("2"));
+        Service service = service(Runnable::run);
+
+        BackgroundGroup group = planner(service).start(starter, "statements",
+                PageSet.of(Map.of("wiki", Set.of("1", "2")))).group().orElseThrow();
+
+        JobStatus part = service.jobs().status(group.parts().get(0).id());
+        assertThat(group.kind()).isEqualTo(StatementAnalysisJobs.KIND);
+        assertThat(part.state()).as("kein „von Hand fortsetzen“ beim ersten Lauf").isEqualTo(JobState.COMPLETED);
+        assertThat(part.parameter(StatementAnalysisJobs.OWNER)).isEqualTo(starter.jobOwner());
+        assertThat(part.parameter(StatementAnalysisJobs.ANALYZER)).isEqualTo("parser");
+        assertThat(part.progress()).as("Seite 2 darf der Starter nicht lesen, Seite 3 war nicht bestellt")
+                .isEqualTo(new JobProgress(1, 1, 1, 0));
+        assertThat(parserStore.find(new PageKey("wiki", "1"))).isPresent();
+        assertThat(parserStore.find(new PageKey("wiki", "3"))).isEmpty();
+        assertThat(fetched).hasValue(1);
+    }
+
+    @Test
+    void afterARestartAPlannerPartKeepsItsAnalyzerAndTheOwnerRule() {
+        tree.space("DEV", "1", "2");
+        tree.space("OPS", "3");
+        Service before = service(new Steps());
+        BackgroundGroup own = planner(before).start(APP, "statements", PageSet.of(Map.of("wiki", Set.of("1", "2"))))
+                .group().orElseThrow();
+        BackgroundGroup foreign = planner(before).start(AccessContext.technicalClient("andere-anwendung"),
+                "statements", PageSet.of(Map.of("wiki", Set.of("3")))).group().orElseThrow();
+
+        setting.set(AnalyzerChoice.MODEL);
+        Service after = service(Runnable::run);
+        after.background().resumeInterrupted();
+
+        assertThat(after.jobs().status(own.parts().get(0).id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(parserStore.all()).as("Analysator vom Start, nie die geänderte Einstellung").hasSize(2);
+        assertThat(modelStore.all()).isEmpty();
+        JobStatus paused = after.jobs().status(foreign.parts().get(0).id());
+        assertThat(paused.state()).isEqualTo(JobState.PAUSED);
+        assertThat(paused.pauseReason()).isEqualTo(PauseReason.RESUME_BY_HAND);
     }
 
     /** „Analysieren“ im Reiter rechnet die gezeigte Fassung als Klick, ohne die Seite erneut abzurufen. */
