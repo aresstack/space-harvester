@@ -409,9 +409,10 @@ class DocumentEnrichmentsTest {
     }
 
     @Test
-    void whilePausedNeitherThePartNorTheEnrichmentAfterASyncAsksTheModel() {
-        // Ein Platz: der Teil wartet und lässt sich anhalten, bevor er läuft; die Anreicherung läuft trotzdem.
-        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)),
+    void whilePausedNeitherThePartNorTheEnrichmentAfterASyncAsksTheModel() throws InterruptedException {
+        // Abnahme #1052, Punkt 1, über den echten Auftrag nach dem Abgleich; mit Plätzen, auf denen ein Teil liefe.
+        Queue<Runnable> held = new ConcurrentLinkedQueue<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(4, 5, Duration.ofHours(1)),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         BackgroundJobs background = new BackgroundJobs(jobs, "app");
         DocumentEnrichments documents = hosted(true, jobs, background);
@@ -419,14 +420,64 @@ class DocumentEnrichmentsTest {
         documents.indexed(list(), asset, extractions);
         BackgroundGroup group = background.groups().getFirst();
         background.pause(group.groupId());
+        runAll(held);
+        assertThat(background.group(group.groupId()).orElseThrow().paused()).isTrue();
+        CountDownLatch enriched = new CountDownLatch(1);
+        jobs.subscribeAll(new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+                if (status.type() == JobType.ENRICHMENT && status.state() == JobState.COMPLETED) {
+                    enriched.countDown();
+                }
+            }
+        });
+        EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(new Enrichments(snapshot -> Optional.empty(),
+                List.of(new OutlineProcessor()), new InMemoryEnrichmentStore(), Clock.fixed(NOW, ZoneOffset.UTC)),
+                new NoSnapshots(), jobs, null, List.of(), documents);
 
-        JobStatus enrichment = jobs.submit(JobType.ENRICHMENT, "wiki", "DEV", null, null,
-                Map.of(EnrichmentsAfterSync.TASK_PARAMETER, EnrichmentsAfterSync.TASK), JobTask.blocking(context ->
-                        documents.afterSync("wiki", "DEV", List.of(PAGE.pageId()), context)));
+        afterSync.committed(syncOf("101"), "app");
+        runAll(held);
 
-        assertThat(jobs.status(enrichment.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(enriched.await(10, TimeUnit.SECONDS)).isTrue();
+        runAll(held);
         assertThat(recording.inputs).as("Anhalten hält, auch über den nächsten Abgleich").isEmpty();
         assertThat(background.groups()).singleElement().satisfies(paused -> assertThat(paused.paused()).isTrue());
+    }
+
+    @Test
+    void aRunningPartThatIsDeletedDoesNotComeBack() throws InterruptedException {
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        DocumentEnrichments documents = hosted(true, jobs, background);
+        Asset first = inStock(stored("a1", "eins.zip", Map.of("eins.txt", "Erster Teil.")));
+        Asset second = inStock(stored("a2", "zwei.zip", Map.of("zwei.txt", "Zweiter Teil.")));
+        CountDownLatch removed = new CountDownLatch(1);
+        jobs.subscribeAll(new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+            }
+
+            @Override
+            public void removed(JobStatus last) {
+                if (last.type() == JobType.BACKGROUND) {
+                    removed.countDown();
+                }
+            }
+        });
+        AtomicBoolean once = new AtomicBoolean();
+        recording.onInput = () -> {
+            if (once.compareAndSet(false, true)) {
+                documents.indexed(list(), second, extractions);
+                jobs.delete(background.groups().getFirst().parts().getFirst().id(), "app");
+            }
+        };
+
+        documents.indexed(list(), first, extractions);
+
+        assertThat(removed.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("Löschen startet nicht neu").isEmpty();
+        assertThat(recording.inputs).containsExactly("Erster Teil.");
     }
 
     @Test
@@ -512,13 +563,13 @@ class DocumentEnrichmentsTest {
         BackgroundJobs background = new BackgroundJobs(jobs, "app");
         DocumentEnrichments documents = hosted(true, jobs, background);
         Asset first = inStock(stored("a1", "eins.zip", Map.of("eins.txt", "Erster Teil.")));
-        Asset second = stored("a2", "zwei.zip", Map.of("zwei.txt", "Zweiter Teil."));
+        Asset second = inStock(stored("a2", "zwei.zip", Map.of("zwei.txt", "Zweiter Teil.")));
         CountDownLatch delivered = cancelledDelivered(jobs);
         AtomicBoolean once = new AtomicBoolean();
         recording.onInput = () -> {
             if (once.compareAndSet(false, true)) {
-                // Während der Teil rechnet, kommt ein weiterer Anhang; dann bricht der Benutzer ab.
-                inStock(second);
+                // Mitten in der Runde (der zweite Anhang steht noch aus) kommt eine Meldung; dann bricht der Benutzer
+                // ab. Der Vermerk steht beim Abbruch also noch.
                 documents.indexed(list(), second, extractions);
                 background.cancel(background.groups().getFirst().groupId());
             }
@@ -724,6 +775,49 @@ class DocumentEnrichmentsTest {
         return new ExtractionLimits(d.maxFileBytes(), maxChars, d.unpackRatio(), d.unpackRatioFromBytes(),
                 d.textRatio(), d.textRatioFromChars(), d.maxDepth(), d.maxEmbeddedFiles(), d.idleTimeout(),
                 d.totalTimeout(), d.tempSpaceReserve(), d.parallel(), d.memoryLimits());
+    }
+
+    /** Ein bestätigter Abgleich von wiki/DEV, in dem diese Seiten unverändert blieben. */
+    private static com.aresstack.spaceharvester.application.sync.SpaceSync.SyncRun syncOf(String... pageIds) {
+        List<com.aresstack.spaceharvester.application.sync.PageChange> changes = new ArrayList<>();
+        for (String pageId : pageIds) {
+            changes.add(new com.aresstack.spaceharvester.application.sync.PageChange(pageId,
+                    com.aresstack.spaceharvester.application.sync.PageChange.Kind.UNCHANGED, null, null));
+        }
+        com.aresstack.spaceharvester.application.sync.Inventory inventory =
+                new com.aresstack.spaceharvester.application.sync.Inventory("wiki", "DEV",
+                        com.aresstack.spaceharvester.application.sync.Inventory.Status.COMPLETE, null, List.of(), NOW,
+                        NOW);
+        return new com.aresstack.spaceharvester.application.sync.SpaceSync.SyncRun(
+                new com.aresstack.spaceharvester.application.sync.SyncPlan(inventory, null, changes, Map.of()),
+                Set.of(), null, null);
+    }
+
+    /** Ein Cache ohne Seiten: die Anreicherung der Seiten selbst rechnet nichts. */
+    private static final class NoSnapshots implements com.aresstack.spaceharvester.application.snapshot
+            .SnapshotRepository {
+        @Override
+        public Optional<com.aresstack.spaceharvester.application.snapshot.PageSnapshot> find(PageKey key) {
+            return Optional.empty();
+        }
+
+        @Override
+        public void save(com.aresstack.spaceharvester.application.snapshot.PageSnapshot snapshot) {
+        }
+
+        @Override
+        public void saveHeader(com.aresstack.spaceharvester.application.snapshot.PageHeader header) {
+        }
+
+        @Override
+        public Optional<com.aresstack.spaceharvester.application.snapshot.PageHeader> findHeader(PageKey key) {
+            return Optional.empty();
+        }
+
+        @Override
+        public boolean remove(PageKey key) {
+            return false;
+        }
     }
 
     /** Mit Hintergrundaufträgen; Meldungen ohne Bündelung, die Seiten des Space sind die eine Testseite. */

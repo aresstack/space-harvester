@@ -134,6 +134,13 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
     private final Map<String, Partition> active = new HashMap<>();
     /** Partitionen mit Arbeit, deren Start auf das Ende eines Abgleichs wartet; bewacht von {@code this}. */
     private final Set<Partition> deferred = new HashSet<>();
+    /**
+     * Abgebrochene Teile, deren Vermerke schon verworfen sind; bewacht von {@code this}. Die Auftragsverwaltung meldet
+     * einen beendeten Auftrag erneut, etwa nach {@link Jobs#STOP_GRACE} oder bei jedem Zähler einer abgekoppelten
+     * Arbeit: Verworfen wird nur beim ersten Mal, sonst gingen Vermerke neuer Anlässe verloren. Ein Fortsetzen oder
+     * Löschen trägt den Teil wieder aus.
+     */
+    private final Set<String> discarded = new HashSet<>();
 
     /** Quelle und Space eines Hintergrundteils; der Space kann fehlen. */
     private record Partition(String sourceId, String spaceKey) {
@@ -211,9 +218,13 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 public void changed(JobStatus status) {
                     if (INDEXING.contains(status.type()) && !busy(status)) {
                         wake(status.sourceId(), status.partitionKey());
-                    } else if (status.type() == JobType.BACKGROUND && status.state().terminal()
-                            && BACKGROUND_KIND.equals(status.parameter(BackgroundJobs.KIND))) {
-                        ended(new Partition(status.sourceId(), status.partitionKey()), status.state());
+                    } else if (ownPart(status)) {
+                        if (status.state().terminal()) {
+                            ended(status.id(), new Partition(status.sourceId(), status.partitionKey()),
+                                    status.state());
+                        } else {
+                            reopened(status.id());
+                        }
                     }
                 }
 
@@ -221,6 +232,15 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 public void removed(JobStatus last) {
                     if (INDEXING.contains(last.type())) {
                         wake(last.sourceId(), last.partitionKey());
+                    } else if (ownPart(last)) {
+                        // Ein gelöschter, noch nicht fertiger Teil ist abgebrochen; seine Abbruchmeldung kommt nie.
+                        if (last.state() == JobState.CANCELLED || !last.state().terminal()) {
+                            ended(last.id(), new Partition(last.sourceId(), last.partitionKey()),
+                                    JobState.CANCELLED);
+                        }
+                        synchronized (DocumentEnrichments.this) {
+                            discarded.remove(last.id());
+                        }
                     }
                 }
             });
@@ -358,10 +378,13 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * nicht); erst ein neuer Anlass startet wieder. Ein angehaltener hält sie, bis er fortgesetzt wird, ein
      * gescheiterter lässt sie für den nächsten Anlass liegen.
      */
-    private void ended(Partition partition, JobState state) {
+    private void ended(String jobId, Partition partition, JobState state) {
         boolean due;
         synchronized (this) {
             if (state == JobState.CANCELLED) {
+                if (!discarded.add(jobId)) {
+                    return;
+                }
                 noted.remove(partition);
                 deferred.remove(partition);
                 return;
@@ -371,6 +394,16 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         if (due) {
             schedule(partition);
         }
+    }
+
+    /** Ein Teil dieser Art (Auftragsmeldung). */
+    private static boolean ownPart(JobStatus status) {
+        return status.type() == JobType.BACKGROUND && BACKGROUND_KIND.equals(status.parameter(BackgroundJobs.KIND));
+    }
+
+    /** Ein Teil läuft wieder (fortgesetzt): ein späteres Abbrechen verwirft wieder. */
+    private synchronized void reopened(String jobId) {
+        discarded.remove(jobId);
     }
 
     /** Ob ein Teil der Partition gerade rechnet; unter {@code this}. */
@@ -472,8 +505,21 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Blick auf den Analysestand.
      */
     private void analyse(String jobId, Partition partition, JobContext context) {
+        boolean elsewhere;
         synchronized (this) {
-            active.put(jobId, partition);
+            // Rechnet noch die abgekoppelte Arbeit eines anderen Teils (Jobs#STOP_GRACE), etwa nach dem Fortsetzen
+            // eines älteren Eintrags: nicht doppelt rechnen; deren Ende plant den nächsten Teil.
+            elsewhere = computing(partition);
+            if (elsewhere) {
+                noted.add(partition);
+            } else {
+                active.put(jobId, partition);
+            }
+        }
+        if (elsewhere) {
+            context.record(JobEvent.Draft.info(COMPONENT, "Ein anderer Teil des Space rechnet noch; danach geht es "
+                    + "mit einem neuen Teil weiter"));
+            return;
         }
         try {
             while (true) {
@@ -499,9 +545,16 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 }
             }
         } finally {
-            boolean due;
             synchronized (this) {
                 active.remove(jobId);
+            }
+            // Abgekoppelt abgebrochen oder gelöscht: Die Meldung darüber kann noch ausstehen, verworfen wird jetzt
+            // (einmal, ended); sonst plante dieser Teil gleich wieder für Vermerke aus seiner eigenen Laufzeit.
+            if (cancelledOrGone(jobId)) {
+                ended(jobId, partition, JobState.CANCELLED);
+            }
+            boolean due;
+            synchronized (this) {
                 due = noted.contains(partition) && !computing(partition);
             }
             // Abgekoppelt nach Jobs#STOP_GRACE ist der Eintrag schon beendet, wenn die Arbeit hier ankommt: Vermerke
@@ -512,6 +565,18 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                     && hosted.running(BACKGROUND_KIND, partition.sourceId(), partition.spaceKey()).isEmpty()) {
                 schedule(partition);
             }
+        }
+    }
+
+    /** Ob der eigene Eintrag schon abgebrochen oder gelöscht ist (abgekoppelte Arbeit, Jobs#STOP_GRACE). */
+    private boolean cancelledOrGone(String jobId) {
+        if (jobs == null) {
+            return false;
+        }
+        try {
+            return jobs.status(jobId).state() == JobState.CANCELLED;
+        } catch (UnknownJobException e) {
+            return true;
         }
     }
 

@@ -298,8 +298,10 @@ wird automatisch verwaltet.
      ebenso kein Auftrag, der auf seinen Vorgänger wartet (`AWAITING`, etwa die Anhänge eines Exports bis zu dessen
      Text). Das Ende solcher Aufträge kommt als Auftragsmeldung (ADR 0027, kein Abfragen). Außerhalb davon bündelt
      ein `Coalescer` die Meldungen zehn Sekunden lang. So geben die Anhänge eines Abgleichs eine einzige Gruppe. Nur
-     ein fertiger Teil plant für Vermerke aus seiner Laufzeit einen neuen; ein abgebrochener verwirft sie, erst ein
-     neuer Anlass startet wieder. Endet die Arbeit eines nach `STOP_GRACE` abgekoppelten Teils, plant sie selbst,
+     ein fertiger Teil plant für Vermerke aus seiner Laufzeit einen neuen; ein abgebrochener (auch ein laufend
+     gelöschter) verwirft sie einmal, erst ein neuer Anlass startet wieder. Wiederholte Meldungen desselben beendeten
+     Teils verwerfen nichts mehr. Rechnet beim Start eines Teils noch die abgekoppelte Arbeit eines anderen desselben
+     Space, endet er sofort und vermerkt; deren Ende plant. Endet die Arbeit eines nach `STOP_GRACE` abgekoppelten Teils, plant sie selbst,
      falls seither etwas vermerkt ist und kein Teil des Space mehr offen ist.
 
    Höchstens ein offener Teil je Quelle und Space (`BackgroundKind#exclusive`, Abnahme #1052): `resumeJob` lehnt
