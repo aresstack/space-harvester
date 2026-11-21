@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
+import com.aresstack.spaceharvester.app.ui.controls.MarkedTextRenderer;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.query.DocumentKind;
 import com.aresstack.spaceharvester.application.query.HitReason;
@@ -115,6 +116,9 @@ public final class SearchView implements View {
     private final JTable table = Comic.table(new JTable(model));
     /** Einzelheiten des Treffergrunds (R1). */
     private final InfoPopup reasons = new InfoPopup();
+    /** Auszug mit der Marke des Treffergrunds vorn. */
+    private final MarkedTextRenderer excerpts = new MarkedTextRenderer(row -> row < model.rows.size()
+            ? model.rows.get(row).mark() : null);
     /**
      * Drehender Ring über der Trefferliste, solange eine Suche läuft, mit roter Stopp-Fläche „Abbrechen“ in der Mitte
      * (Klick oder Esc). Die Treffer, die schon da sind, bleiben stehen und bedienbar, der Schleier lässt die Maus durch.
@@ -209,6 +213,9 @@ public final class SearchView implements View {
                 if (e.getClickCount() == 1 && showReasons(e)) {
                     return;
                 }
+                if (e.getClickCount() == 2) {
+                    reasons.setVisible(false);
+                }
                 int row = table.getSelectedRow();
                 if (e.getClickCount() == 2 && row >= 0) {
                     Hit hit = model.rows.get(table.convertRowIndexToModel(row));
@@ -222,6 +229,14 @@ public final class SearchView implements View {
             }
         });
         table.setToolTipText("Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs");
+        table.getColumnModel().getColumn(HitsModel.EXCERPT).setCellRenderer(excerpts);
+        table.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                table.setCursor(onMark(e) ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                        : java.awt.Cursor.getDefaultCursor());
+            }
+        });
 
         buildSearchBar();
         JPanel head = new JPanel(new BorderLayout(0, 8));
@@ -267,26 +282,22 @@ public final class SearchView implements View {
      * @return ob der Klick die Marke traf
      */
     private boolean showReasons(MouseEvent e) {
+        if (!onMark(e)) {
+            return false;
+        }
+        Hit hit = model.rows.get(table.convertRowIndexToModel(table.rowAtPoint(e.getPoint())));
+        reasons.text(HitReasons.HEADING, HitReasons.details(hit.reasons())).showAt(table, e.getX(), e.getY());
+        return true;
+    }
+
+    /** Ob die Maus auf der Marke des Treffergrunds steht; dasselbe Maß wie beim Zeichnen. */
+    private boolean onMark(MouseEvent e) {
         int row = table.rowAtPoint(e.getPoint());
         int column = table.columnAtPoint(e.getPoint());
         if (row < 0 || column < 0 || table.convertColumnIndexToModel(column) != HitsModel.EXCERPT) {
             return false;
         }
-        Hit hit = model.rows.get(table.convertRowIndexToModel(row));
-        String mark = hit.mark();
-        if (mark.isEmpty()) {
-            return false;
-        }
-        java.awt.Component cell = table.prepareRenderer(table.getCellRenderer(row, column), row, column);
-        java.awt.Insets insets = cell instanceof JComponent component ? component.getInsets() : new java.awt.Insets(0,
-                0, 0, 0);
-        int end = table.getCellRect(row, column, false).x + insets.left
-                + cell.getFontMetrics(cell.getFont()).stringWidth(mark);
-        if (e.getX() > end) {
-            return false;
-        }
-        reasons.text(HitReasons.HEADING, HitReasons.details(hit.reasons())).showAt(table, e.getX(), e.getY());
-        return true;
+        return excerpts.markBounds(table, row, column).contains(e.getPoint());
     }
 
     /** Hinweise zur Suche, früher im Tooltip des Infosymbols, jetzt lesbar im Popup. */
@@ -1398,22 +1409,18 @@ public final class SearchView implements View {
             this(sourceId, pageId, title, spaceKey, snippet, modifiedAt, attachment, null);
         }
 
-        /**
-         * Der Auszug in einer Zeile; vorn die Marke des Treffergrunds ({@link #mark()}), bei einem Anhangstreffer
-         * „Treffer im Anhang „Name““.
-         */
+        /** Der Auszug in einer Zeile; bei einem Anhangstreffer vorn „Treffer im Anhang „Name““. */
         String excerpt() {
             String text = snippet == null ? "" : snippet.replaceAll("\\s+", " ").strip();
-            if (attachment != null) {
-                String where = "Treffer im Anhang „" + attachment + "“";
-                text = text.isEmpty() ? where : where + " · " + text;
+            if (attachment == null) {
+                return text;
             }
-            String mark = mark();
-            return mark.isEmpty() ? text : text.isEmpty() ? mark : mark + " · " + text;
+            String where = "Treffer im Anhang „" + attachment + "“";
+            return text.isEmpty() ? where : where + " · " + text;
         }
 
-        /** Die Marke des Treffergrunds, leer, wenn die eingegebene Anfrage selbst ihn fand (R1). */
-        String mark() {
+        /** Die Marke des Treffergrunds vor dem Auszug oder {@code null} (R1). */
+        MarkedTextRenderer.Mark mark() {
             return HitReasons.mark(reasons);
         }
 

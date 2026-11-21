@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.MarkedTextRenderer;
 import com.aresstack.spaceharvester.application.query.HitReason;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,18 +19,29 @@ final class HitReasons {
     }
 
     /**
-     * Die Marke am Treffer, leer, wenn die eingegebene Anfrage selbst ihn lieferte oder nichts gemeldet ist; sonst die
-     * erste Ursache über eine Begriffsbeziehung oder Variante, etwa „Abkürzung „Rückmeldeschlüssel““.
+     * Die Marke am Treffer oder {@code null}: keine, wenn die eingegebene Anfrage ihn im Volltext lieferte oder nichts
+     * gemeldet ist; über eine Begriffsbeziehung oder Variante deren Art („Abkürzung „Rückmeldeschlüssel““, kurz
+     * „Abkürzung“); ohne Volltexttreffer „ähnlich im Inhalt“ (semantisch) oder „von der Quelle gemeldet“.
      */
-    static String mark(List<HitReason> reasons) {
-        if (reasons == null || reasons.isEmpty() || reasons.stream().anyMatch(HitReason::original)) {
-            return "";
+    static MarkedTextRenderer.Mark mark(List<HitReason> reasons) {
+        if (reasons == null || reasons.isEmpty()) {
+            return null;
         }
-        HitReason first = reasons.getFirst();
+        List<HitReason> text = reasons.stream().filter(reason -> reason.kind() == HitReason.Kind.TEXT).toList();
+        if (text.isEmpty()) {
+            boolean similar = reasons.stream().anyMatch(reason -> reason.kind() == HitReason.Kind.SEMANTIC);
+            return new MarkedTextRenderer.Mark(similar ? "ähnlich im Inhalt" : "von der Quelle gemeldet",
+                    similar ? "ähnlich" : "Quelle");
+        }
+        if (text.stream().anyMatch(HitReason::original)) {
+            return null;
+        }
+        HitReason first = text.getFirst();
         if (first.relation() != null) {
-            return relationName(first.relation().type()) + " „" + first.relation().counterpart() + "“";
+            String kind = relationName(first.relation().type());
+            return new MarkedTextRenderer.Mark(kind + " „" + first.relation().counterpart() + "“", kind);
         }
-        return "Variante „" + first.query() + "“";
+        return new MarkedTextRenderer.Mark("Variante „" + first.query() + "“", "Variante");
     }
 
     /** Die Einzelheiten aller Ursachen, je Ursache ein Absatz. */
@@ -68,7 +80,7 @@ final class HitReasons {
             text.append("\nVariante ").append(variant.priority()).append(" der Suche")
                     .append(variant.origin() == null ? ""
                             : variant.origin() == HitReason.Variant.Origin.MODEL ? ", vom KI-Modell"
-                            : ", nach Regeln");
+                            : ", nach Regeln").append('.');
         }
         return text.toString();
     }
