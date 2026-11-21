@@ -305,7 +305,8 @@ public final class Explorer {
     private Analyses analyses = new WorkspaceAnalyses();
     /** Bestätigung großer Analyseumfänge; Tests antworten ohne Dialog. */
     private AnalysisConfirmation confirmation = (parent, title, text, action) -> {
-        Dialogs.Choice chosen = Dialogs.confirm(parent, title, text, ANALYZER,
+        Dialogs.Choice chosen = Dialogs.confirm(parent, title, choice -> analysisText(text,
+                        AnalyzerNames.of(choice)), ANALYZER,
                 java.util.List.of(AnalyzerNames.PARSER, AnalyzerNames.MODEL),
                 AnalyzerNames.name(analyzerSetting()), java.util.List.of(REANALYZE, SIMPLIFY));
         return chosen == null ? null : new AnalysisChoice(chosen.checked()[0], chosen.checked()[1],
@@ -2345,6 +2346,19 @@ public final class Explorer {
     }
 
     /** Text des Bestätigungsdialogs: exakte Zahl, „mehr als“ über der Grenze oder Schätzung bei Lücken. */
+    /** Letzter Absatz des Dialogs „Analysieren“ mit dem MaltParser. */
+    static final String PARSER_NOTE = "Fehlende Inhalte werden dafür heruntergeladen. Die Analyse läuft lokal und "
+            + "braucht Speicher und Rechenzeit; Fortschritt und Abbruch unter Aufträge.";
+    /** Derselbe Absatz mit dem KI-Analysator (Fahrplan A3): nichts läuft lokal, nur Seiten mit KI-Freigabe. */
+    static final String MODEL_NOTE = "Fehlende Inhalte werden dafür heruntergeladen. Die Sätze gehen an den "
+            + "eingestellten KI-Dienst. Analysiert werden nur Seiten mit KI-Freigabe, die übrigen werden ausgelassen. "
+            + "Fortschritt und Abbruch unter Aufträge.";
+
+    /** Der Text des Dialogs passend zum gewählten Analysator; er wechselt beim Umschalten des Auswahlfelds. */
+    static String analysisText(String question, AnalyzerChoice analyzer) {
+        return analyzer == AnalyzerChoice.MODEL ? question.replace(PARSER_NOTE, MODEL_NOTE) : question;
+    }
+
     static String analysisQuestion(StatementAnalysisJobs.Estimate estimate, String where) {
         String pages = Texts.count(estimate.pages(), "Seite", "Seiten");
         StringBuilder text = new StringBuilder();
@@ -2363,8 +2377,7 @@ public final class Explorer {
         } else if (estimate.incomplete()) {
             text.append("\n\nDer Umfang ließ sich nicht vollständig ermitteln; der Auftrag meldet fehlende Teile.");
         }
-        text.append("\n\nFehlende Inhalte werden dafür heruntergeladen. Die Analyse läuft lokal und braucht Speicher "
-                + "und Rechenzeit; Fortschritt und Abbruch unter Aufträge.");
+        text.append("\n\n").append(PARSER_NOTE);
         return text.toString();
     }
 

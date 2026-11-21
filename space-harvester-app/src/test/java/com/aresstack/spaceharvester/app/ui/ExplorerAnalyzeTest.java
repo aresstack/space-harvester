@@ -257,6 +257,20 @@ class ExplorerAnalyzeTest {
                                 .SimplificationSettings.Mode.WHERE_NEEDED, 2))));
     }
 
+    /** Fahrplan A3: Mit dem KI-Analysator sagt der Dialog, dass die Sätze an den KI-Dienst gehen. */
+    @Test
+    void theDialogTextFollowsTheChosenAnalyzer() {
+        String question = Explorer.analysisQuestion(new StatementAnalysisJobs.Estimate(new Scope.Space("wiki", "OPS"),
+                12, false, false), "X");
+        assertThat(Explorer.analysisText(question,
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER))
+                .contains("läuft lokal").doesNotContain("KI-Dienst");
+        assertThat(Explorer.analysisText(question,
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL))
+                .startsWith("12 Seiten wirklich analysieren?").contains("eingestellten KI-Dienst",
+                        "nur Seiten mit KI-Freigabe", "ausgelassen").doesNotContain("läuft lokal");
+    }
+
     @Test
     void theAnalyzerChosenInTheDialogStartsTheJob() throws Exception {
         useFakes();

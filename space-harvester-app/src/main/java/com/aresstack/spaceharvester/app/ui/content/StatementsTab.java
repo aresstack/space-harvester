@@ -49,7 +49,7 @@ import java.util.function.Supplier;
 
 /**
  * Der Unterreiter „Analysen → Aussagen“ (#499): experimentelle Aussagenanalyse der geöffneten Seite mit MaltParser.
- * Zeigt eine gespeicherte Analyse ohne neu zu rechnen; nur „Mit MaltParser analysieren“ startet den Parser, im
+ * Zeigt eine gespeicherte Analyse ohne neu zu rechnen; nur „Analysieren“ startet den eingestellten Analysator, im
  * Hintergrund und abbrechbar. Kernaussagen zuerst, dann die übrigen; je Aussage Beteiligte mit Rolle, Aktiv/Passiv,
  * Satzart, Beleg und Hinweise. Ein Klick auf eine Aussage springt zum Beleg im Reiter „Text“. Darunter die belegten
  * Verbindungen zu anderen manuell analysierten Seiten (lexikalische Kandidaten, keine Identität) und die
@@ -59,9 +59,12 @@ import java.util.function.Supplier;
  */
 final class StatementsTab extends JPanel {
 
-    static final String ANALYZE = "Mit MaltParser analysieren";
-    /** „Analysieren“, wenn unter Einstellungen › Modelle der KI-Analysator eingestellt ist (Fahrplan A3). */
-    static final String ANALYZE_MODEL = "Mit KI analysieren (Erprobung)";
+    /** Genau eine Aktion zum Analysieren; sie rechnet mit dem im Ablage-Feld gewählten Analysator (Fahrplan A3). */
+    static final String ANALYZE = "Analysieren";
+    static final String ANALYZE_TIP_PARSER = "Analysiert nur diese Seite lokal mit MaltParser und übernimmt die "
+            + "Aussagen in den Wissensgraphen";
+    static final String ANALYZE_TIP_MODEL = "Analysiert nur diese Seite mit dem KI-Analysator (Erprobung): Die Sätze "
+            + "gehen an den eingestellten KI-Dienst, nur mit KI-Freigabe der Seite";
     /** Gelbe Pille: der KI-Analysator hat die Seite bewusst ausgelassen. */
     static final String SKIPPED = "Ausgelassen";
     static final String DELETE_TIP = "Aussagen-Analyse dieser Seite löschen";
@@ -111,7 +114,7 @@ final class StatementsTab extends JPanel {
     private final JTextArea syntax = Comic.code();
     private final JPanel syntaxPanel = new JPanel(new BorderLayout(0, 4));
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton analyze = Comic.button(ANALYZE,
-            "Analysiert nur diese Seite lokal mit MaltParser und übernimmt die Aussagen in den Wissensgraphen");
+            ANALYZE_TIP_PARSER);
     /** „Aussagen prüfen“ (ADR 0032, FL4) für die offene Seite; nur mit aktueller Analyse. */
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton check = Comic.button(CheckTexts.JOB,
             "Lässt das Chat-Modell die Aussagen dieser Seite beurteilen; nur für Seiten mit KI-Freigabe");
@@ -127,7 +130,7 @@ final class StatementsTab extends JPanel {
     private boolean stored;
     /** Ob die angezeigte Analyse aktuell ist: nur dann lässt sie sich prüfen. */
     private boolean current;
-    /** „mit Vorstufe“ (ADR 0032, FL3): gilt für den nächsten Klick auf „Mit MaltParser analysieren“. */
+    /** „mit Vorstufe“ (ADR 0032, FL3): gilt für den nächsten Klick auf „Analysieren“. */
     private final javax.swing.JCheckBox simplify = Comic.checkBox(WITH_STAGE);
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton cancel = Comic.button(CANCEL,
             "Bricht den laufenden Vorgang ab; die bisherige Analyse bleibt");
@@ -213,7 +216,7 @@ final class StatementsTab extends JPanel {
         body.add(syntaxPanel, BorderLayout.SOUTH);
         // Die Option steht in einer eigenen Zeile rechts unter dem Knopf, zu dem sie gehört: In der Kopfzeile selbst
         // überdeckt sie bei schmalem Fenster das Abzeichen neben dem Titel.
-        // „Aussagen prüfen“ steht in derselben Zeile links: Neben „Mit MaltParser analysieren“ in der Kopfzeile ist bei
+        // „Aussagen prüfen“ steht in derselben Zeile links: Neben „Analysieren“ in der Kopfzeile ist bei
         // schmalem Fenster kein Platz, und rechts neben dem Ankreuzfeld läse es sich, als gälte das Feld für die Prüfung.
         JPanel options = new JPanel(new BorderLayout(8, 0));
         options.setOpaque(false);
@@ -1173,9 +1176,9 @@ final class StatementsTab extends JPanel {
         head.status(label.isBlank() ? null : label, tone);
     }
 
-    /** Beschriftung von „Analysieren“ nach dem eingestellten Analysator (Fahrplan A3). */
+    /** Tooltip von „Analysieren“ nach dem eingestellten Analysator; der Name bleibt neutral (Fahrplan A3). */
     private void analyzer(AnalyzerChoice choice) {
-        analyze.setText(choice == AnalyzerChoice.MODEL ? ANALYZE_MODEL : ANALYZE);
+        analyze.setToolTipText(choice == AnalyzerChoice.MODEL ? ANALYZE_TIP_MODEL : ANALYZE_TIP_PARSER);
     }
 
     /**
@@ -1399,6 +1402,10 @@ final class StatementsTab extends JPanel {
 
     String analyzeLabel() {
         return analyze.getText();
+    }
+
+    String analyzeTooltip() {
+        return analyze.getToolTipText();
     }
 
     boolean analyzeOffered() {

@@ -59,7 +59,8 @@ class StatementsTabTest {
         assertThat(tab.stateTooltip()).contains("nicht für den KI-Dienst freigegeben");
         assertThat(tab.hintText()).isBlank();
         assertThat(tab.lines()).isEmpty();
-        assertThat(tab.analyzeLabel()).isEqualTo(StatementsTab.ANALYZE_MODEL);
+        assertThat(tab.analyzeLabel()).as("ein neutraler Knopf").isEqualTo(StatementsTab.ANALYZE);
+        assertThat(tab.analyzeTooltip()).isEqualTo(StatementsTab.ANALYZE_TIP_MODEL);
     }
 
     @Test
@@ -67,6 +68,7 @@ class StatementsTabTest {
         tab.page(page("1"), text());
         runner.runAll();
         assertThat(tab.analyzeLabel()).isEqualTo(StatementsTab.ANALYZE);
+        assertThat(tab.analyzeTooltip()).isEqualTo(StatementsTab.ANALYZE_TIP_PARSER);
     }
 
     @Test

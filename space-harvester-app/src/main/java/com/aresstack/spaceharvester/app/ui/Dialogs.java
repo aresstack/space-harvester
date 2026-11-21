@@ -130,6 +130,12 @@ public final class Dialogs {
      */
     public static Choice confirm(Component parent, String title, String text, String label, List<?> choices,
                                  Object selected, List<String> options) {
+        return confirm(parent, title, choice -> text, label, choices, selected, options);
+    }
+
+    /** Wie oben; der Text folgt der Auswahl ({@code text} je Wert des Auswahlfelds) und wechselt beim Umschalten. */
+    public static Choice confirm(Component parent, String title, java.util.function.Function<Object, String> text,
+                                 String label, List<?> choices, Object selected, List<String> options) {
         Choice[] result = {null};
         JDialog dialog = dialog(parent, title);
         javax.swing.JComboBox<Object> combo = Comic.combo();
@@ -165,7 +171,12 @@ public final class Dialogs {
         }
         JPanel body = new JPanel(new BorderLayout(0, 10));
         body.setOpaque(false);
-        body.add(Comic.note(text), BorderLayout.CENTER);
+        javax.swing.JTextArea note = Comic.note(text.apply(selected));
+        combo.addActionListener(e -> {
+            note.setText(text.apply(combo.getSelectedItem()));
+            dialog.pack();
+        });
+        body.add(note, BorderLayout.CENTER);
         body.add(column, BorderLayout.SOUTH);
         show(dialog, title, body, no, yes);
         return result[0];

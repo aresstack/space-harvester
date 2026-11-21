@@ -95,7 +95,7 @@ import java.util.function.Supplier;
 final class KnowledgeGraphTab extends JPanel {
 
     static final String NOT_ANALYSED = "Diese Seite ist noch nicht analysiert. Unter „Aussagen“ startet "
-            + "„Mit MaltParser analysieren“ die Analyse; der Graph enthält nur manuell analysierte Seiten.";
+            + "„Analysieren“ die Analyse; der Graph enthält nur manuell analysierte Seiten.";
     static final String EMPTY_TERM = "Keine Erwähnung auf analysierten, für dich sichtbaren Seiten.";
     static final String FILTERED = "Die Seite ist analysiert, aber die gewählten Filter blenden alles aus "
             + "(z. B. „Veraltete zeigen“ oder die Knotenarten).";
