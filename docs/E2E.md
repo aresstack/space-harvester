@@ -726,6 +726,11 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 }
 ```
 
+Jira Data Center (Typ `jira`) läuft über dieselben Routen: Projekte erscheinen als Spaces, Vorgänge als Seiten. Die
+Demo-Konfiguration enthält keine Jira-Quelle, weil sie einen erreichbaren Jira-Server braucht; Konfiguration und
+Einschränkungen stehen in [SOURCE_ADAPTERS.md](SOURCE_ADAPTERS.md#jira-data-center-jira), der automatische Durchlauf
+gegen einen lokalen HTTP-Server ist `HarvesterJiraSourceTest`.
+
 ## 14. Seite über ihre URL, Prüfung gegen die Quelle
 
 Seiten lassen sich auch über ihre Confluence-URL abrufen (`pageId=…`, `/spaces/KEY/pages/ID` oder Kurzlink `/x/…`);
