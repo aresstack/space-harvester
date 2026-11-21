@@ -382,6 +382,7 @@ public final class Harvester implements AutoCloseable {
     private final PageImageAnalysis imageAnalysis;
     /** Bilder automatisch beschreiben (Fahrplan B1); entsteht nach der Anreicherung, die sie als Folgeschritt ruft. */
     private volatile com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions automaticImages;
+    private volatile com.aresstack.spaceharvester.application.images.ImageDescriptionJobs imageDescriptions;
     private final com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations;
     private final com.aresstack.spaceharvester.application.quality.SearchQualityRuns searchQuality;
     private final Simplifications simplifications;
@@ -1072,10 +1073,16 @@ public final class Harvester implements AutoCloseable {
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // B1: Bilder automatisch beschreiben nach dem Abgleich und nach neuer KI-Freigabe, nur mit images.automatic.
             com.aresstack.spaceharvester.application.configuration.ImageSettings startImages = builder.images;
+            // D2: jeder Lauf „Bilder beschreiben“ über das Auftragssystem, im Hintergrund ein Unterauftrag je Space.
+            java.util.function.Supplier<com.aresstack.spaceharvester.application.configuration.ImageSettings>
+                    imageSettings = () -> this.settings != null ? this.settings.images() : startImages;
+            this.imageDescriptions = new com.aresstack.spaceharvester.application.images.ImageDescriptionJobs(
+                    backgroundJobs, jobs, OWNER, imageAnalysis, cache::snapshots, cache::find,
+                    (caller, root) -> holdings.resolve(caller,
+                            new com.aresstack.spaceharvester.application.holdings.Selection(List.of(root))).pages(),
+                    imageSettings, AccessContext.technicalClient(OWNER));
             this.automaticImages = new com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions(
-                    jobs, imageAnalysis, cache::snapshots,
-                    () -> this.settings != null ? this.settings.images() : startImages,
-                    sourceId -> catalog.find(sourceId).isPresent(), OWNER);
+                    imageDescriptions, imageSettings, sourceId -> catalog.find(sourceId).isPresent());
             opened.add(pageReleases.subscribe(automaticImages::releasesChanged));
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
@@ -2306,6 +2313,11 @@ public final class Harvester implements AutoCloseable {
      */
     public com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs() {
         return backgroundJobs;
+    }
+
+    /** „Bilder beschreiben“ über das Auftragssystem (D2): Hintergrundläufe, Knopf je Seite, fehlende Beschreibungen. */
+    public com.aresstack.spaceharvester.application.images.ImageDescriptionJobs imageDescriptions() {
+        return imageDescriptions;
     }
 
     /** „Seiten nachladen“ als Hintergrundauftrag, etwa fehlende Nachbarseiten eines Suchtreffers. */
