@@ -784,21 +784,28 @@ public final class MainWindow implements AppContext.Navigator {
     /** Kreispfeile hinter gescheiterten Abgleichen eines Updates: wie die Kreispfeile im Baum für diese Spaces. */
     @Override
     public void retrySyncs(String sourceId, List<String> spaceKeys) {
-        catchUp(sourceId, spaceKeys);
+        catchUp(sourceId, spaceKeys, jobs -> { });
+    }
+
+    @Override
+    public void retrySyncs(String sourceId, List<String> spaceKeys,
+                           java.util.function.Consumer<List<String>> started) {
+        catchUp(sourceId, spaceKeys, started);
     }
 
     /** Kreispfeile im Baum: Quelle oder Space holen nach wie die Quellenkarte, eine Seite liest ihren Teilbaum neu. */
     @Override
     public void refresh(String sourceId, String spaceKey, String pageId) {
         if (pageId == null) {
-            catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey));
+            catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey), jobs -> { });
             return;
         }
         refreshPage(sourceId, spaceKey, pageId);
     }
 
     /** Holt die Spaces nach (ohne {@code spaceKeys} jeden der Quelle); der Ausgang kommt in die Statuszeile. */
-    private void catchUp(String sourceId, List<String> spaceKeys) {
+    private void catchUp(String sourceId, List<String> spaceKeys,
+                         java.util.function.Consumer<List<String>> startedJobs) {
         // Die Meldezeile der Quellen-Ansicht sieht man vom Baum aus nicht: der Ausgang kommt in die Statuszeile.
         if (sources.catchUp(sourceId, spaceKeys,
                 new SourcesView.CatchUpReport() {
@@ -809,6 +816,7 @@ public final class MainWindow implements AppContext.Navigator {
                         if (!jobs.isEmpty()) {
                             showJob(jobs.get(0));
                         }
+                        startedJobs.accept(List.copyOf(jobs));
                     }
 
                     @Override

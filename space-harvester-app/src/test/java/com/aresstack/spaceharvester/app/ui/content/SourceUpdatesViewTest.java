@@ -501,6 +501,98 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void afterTheRetryTheOpenReadingViewSummarizesAgainQuietlyAndKeepsThePreviousSummaryUntilThen()
+            throws Exception {
+        UpdateSummary before = new UpdateSummary("wiki", actions.second().id(), "Bisher: eine Seite geändert.",
+                List.of(new SummaryStatement("Bisher: eine Seite geändert.", List.of())), "gpt-test", SECOND, 0,
+                false);
+        actions.stored = before;
+        summary.source("wiki", "Confluence HaVdB");
+        assertThat(actions.summarizeCalls).isZero();
+        actions.retryJobs.put("sync-1", JobState.RUNNING);
+        actions.retryJobs.put("sync-2", JobState.RUNNING);
+        summary.followRetry("wiki", List.of("sync-1", "sync-2"));
+
+        // Während der Wiederholung verliert das Update seine Zusammenfassung (neue Spanne): keine sichtbare Neuerstellung.
+        actions.stored = null;
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(actions.summarizeCalls).as("nicht mitten in der Wiederholung").isZero();
+        assertThat(summary.reportTexts()).contains("Bisher: eine Seite geändert.");
+
+        actions.finishRetry("sync-1");
+        assertThat(actions.summarizeCalls).as("erst wenn alle Aufträge durch sind").isZero();
+        actions.finishRetry("sync-2");
+
+        assertThat(actions.summarizeCalls).as("still neu zusammengefasst").isEqualTo(1);
+        assertThat(summary.busy()).as("kein Ring: die Seite hat schon Inhalt").isFalse();
+        assertThat(summary.reportTexts()).as("die bisherige bleibt bis dahin stehen")
+                .contains("Bisher: eine Seite geändert.").doesNotContain(SourceUpdatesView.SUMMARIZING);
+
+        actions.finish(JobState.COMPLETED);
+        assertThat(summary.reportTexts()).contains("Das Betriebshandbuch wurde überarbeitet.")
+                .doesNotContain("Bisher: eine Seite geändert.");
+        assertThat(status).last().isEqualTo("Zusammenfassung aktualisiert");
+        assertThat(actions.summarizeCalls).isEqualTo(1);
+    }
+
+    @Test
+    void whenTheDailyUpdateChangesItsIdTheQuietRunCoversTheNewIdWithoutARing() throws Exception {
+        actions.stored = new UpdateSummary("wiki", actions.second().id(), "Bisher: eine Seite geändert.",
+                List.of(), "gpt-test", SECOND, 0, false);
+        summary.source("wiki", "Confluence HaVdB");
+        actions.retryJobs.put("sync-1", JobState.RUNNING);
+        summary.followRetry("wiki", List.of("sync-1"));
+
+        actions.secondShift = 60_000;
+        actions.stored = null;
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(summary.selectedUpdate()).isEqualTo(actions.second().id());
+        assertThat(actions.summarizeCalls).as("keine sichtbare Neuerstellung für die neue Kennung").isZero();
+        assertThat(summary.busy()).isFalse();
+        assertThat(summary.reportTexts()).contains("Bisher: eine Seite geändert.");
+
+        actions.finishRetry("sync-1");
+        assertThat(actions.summarizeCalls).isEqualTo(1);
+        assertThat(summary.busy()).isFalse();
+        assertThat(summary.reportTexts()).contains("Bisher: eine Seite geändert.");
+        actions.finish(JobState.COMPLETED);
+        assertThat(summary.reportTexts()).contains("Das Betriebshandbuch wurde überarbeitet.");
+    }
+
+    @Test
+    void aRetryThatChangedNothingStartsNoModelRun() throws Exception {
+        actions.stored = new UpdateSummary("wiki", actions.second().id(), "Unverändert.", List.of(), "gpt-test",
+                SECOND, 0, false);
+        summary.source("wiki", "Confluence HaVdB");
+        actions.retryJobs.put("sync-1", JobState.RUNNING);
+        summary.followRetry("wiki", List.of("sync-1"));
+        actions.finishRetry("sync-1");
+        assertThat(actions.summarizeCalls).isZero();
+        assertThat(summary.reportTexts()).contains("Unverändert.");
+    }
+
+    @Test
+    void aHiddenReadingViewSummarizesQuietlyOnlyWhenShownAgain() throws Exception {
+        actions.stored = new UpdateSummary("wiki", actions.second().id(), "Bisher.", List.of(), "gpt-test", SECOND,
+                0, true);
+        summary.source("wiki", "Confluence HaVdB");
+        actions.retryJobs.put("sync-1", JobState.RUNNING);
+        summary.followRetry("wiki", List.of("sync-1"));
+        visible = false;
+        actions.finishRetry("sync-1");
+        assertThat(actions.summarizeCalls).isZero();
+
+        visible = true;
+        summary.becameVisible();
+        assertThat(actions.summarizeCalls).isEqualTo(1);
+        assertThat(summary.busy()).isFalse();
+        assertThat(summary.reportTexts()).as("still: kein Hinweis „veraltet“ während der Neuerstellung")
+                .doesNotContain("Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht alles.");
+    }
+
+    @Test
     void aStoredSummaryIsReadBackWithStaleAndUnreadableNotes() {
         actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, "Eine neue Seite.", List.of(
                 new SummaryStatement("Eine neue Seite.", List.of(new SummaryPage("20", "Neue Seite")))), "gpt-test",
@@ -695,8 +787,13 @@ class SourceUpdatesViewTest {
         int mostActive;
         /** Wie der Core (#842): liefert den schon wartenden Auftrag eines anderen Fensters. */
         String reuseJob;
-        JobListener jobs;
+        /** Alle Abos der Auftragsmeldungen: das des Zusammenfassens und das einer verfolgten Wiederholung. */
+        final List<JobListener> jobs = new java.util.concurrent.CopyOnWriteArrayList<>();
+        /** Zustand der Wiederholungsaufträge, wie {@link #job} ihn meldet. */
+        final Map<String, JobState> retryJobs = new HashMap<>();
         UpdateSummary stored;
+        /** Wie das Verlängern des Tages-Updates (DailyUpdateMarks): seine Kennung wechselt auf die der letzten Runde. */
+        long secondShift;
 
         static JobStatus job(JobState state) {
             return job("job-1", state);
@@ -718,7 +815,14 @@ class SourceUpdatesViewTest {
             if (state == JobState.COMPLETED) {
                 stored = summaryOf();
             }
-            jobs.changed(job(state));
+            jobs.forEach(listener -> listener.changed(job(state)));
+        }
+
+        /** Ein Wiederholungsauftrag endet: Ablage, Meldung (Zustell-Thread), dann EDT. */
+        void finishRetry(String jobId) throws Exception {
+            retryJobs.put(jobId, JobState.COMPLETED);
+            jobs.forEach(listener -> listener.changed(job(jobId, JobState.COMPLETED)));
+            javax.swing.SwingUtilities.invokeAndWait(() -> { });
         }
 
         private UpdateSummary summaryOf() {
@@ -742,7 +846,7 @@ class SourceUpdatesViewTest {
             kinds.put(ChangeKind.CONTENT_CHANGED, 1);
             kinds.put(ChangeKind.RENAMED, 1);
             kinds.put(ChangeKind.REMOVED, 1);
-            return new ChangeUpdate(String.valueOf(SECOND.toEpochMilli()), "wiki", FIRST, SECOND,
+            return new ChangeUpdate(String.valueOf(SECOND.toEpochMilli() + secondShift), "wiki", FIRST, SECOND,
                     new UpdateMark("wiki", SECOND, "angelo", List.of("BAU"), failed, false, failedSpaces), false, kinds,
                     Map.of("BAU", 3), 3, 4, 1, false);
         }
@@ -863,6 +967,9 @@ class SourceUpdatesViewTest {
 
         @Override
         public JobStatus job(String jobId) {
+            if (retryJobs.containsKey(jobId)) {
+                return job(jobId, retryJobs.get(jobId));
+            }
             return job(jobId, jobNow);
         }
 
@@ -876,8 +983,8 @@ class SourceUpdatesViewTest {
 
         @Override
         public Subscription subscribeJobs(JobListener listener) {
-            jobs = listener;
-            return () -> jobs = null;
+            jobs.add(listener);
+            return () -> jobs.remove(listener);
         }
 
         @Override

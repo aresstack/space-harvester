@@ -139,6 +139,22 @@ final class SourceUpdatesView extends JPanel {
     /** Alle Auftragskennungen, die „Zusammenfassen“ dieser Ansicht schon geliefert hat. */
     private final java.util.Set<String> seenJobs = new java.util.HashSet<>();
     private Subscription jobWatch = Subscription.NONE;
+    /** Abo der laufenden Wiederholung gescheiterter Abgleiche ({@link #followRetry}). */
+    private Subscription retryWatch = Subscription.NONE;
+    /** Erhöht bei jeder Wiederholung und jedem Ebenenwechsel; ein späteres Ende einer älteren zählt nicht. */
+    private int retryGeneration;
+    /**
+     * Die Wiederholung ist durch und die Leseansicht soll still neu zusammenfassen, sobald sie sichtbar ist (Angelo,
+     * 21.11.2026). Solange startet {@link #autoSummarize} nichts mit Ring.
+     */
+    private boolean quietPending;
+    /** Die Wiederholung läuft noch: Meldungen lesen neu, aber nichts fasst mit Ring zusammen. */
+    private boolean retrying;
+    /**
+     * Die bisherige Zusammenfassung, die während des stillen Laufs stehen bleibt; das Tages-Update wechselt beim
+     * Verlängern seine Kennung, für die neue gibt es noch keine.
+     */
+    private UpdateSummary carried;
     /** Ob ein Chat-Modell eingestellt ist. */
     private boolean available = true;
     private int generation;
@@ -268,6 +284,12 @@ final class SourceUpdatesView extends JPanel {
         messagePending = false;
         sourceId = id;
         spaceKey = id == null || space == null || space.isBlank() ? null : space;
+        retryWatch.close();
+        retryWatch = Subscription.NONE;
+        retryGeneration++;
+        quietPending = false;
+        retrying = false;
+        carried = null;
         updates = List.of();
         selected = null;
         windows.clear();
@@ -323,6 +345,9 @@ final class SourceUpdatesView extends JPanel {
         if (messagePending && !messageRunning) {
             changed();
         }
+        if (quietPending) {
+            quietRefresh();
+        }
         if (autoSummarize() && shown != null) {
             renderReport(shown);
         }
@@ -334,6 +359,10 @@ final class SourceUpdatesView extends JPanel {
      * Chat-Modell. Die Erstbefüllung und Updates ohne Änderung bekommen keine. {@code true}, wenn gestartet.
      */
     private boolean autoSummarize() {
+        if (quietPending || retrying) {
+            // Während und nach einer Wiederholung fasst quietRefresh still zusammen, nie zusätzlich mit Ring.
+            return false;
+        }
         if (mode != Mode.SUMMARY || shown == null || summary != null || running != null || !available
                 || sourceId == null || selected == null || !shown.update().id().equals(selected)
                 || shown.update().initial() || shown.pages().isEmpty() || !showing.getAsBoolean()) {
@@ -426,6 +455,9 @@ final class SourceUpdatesView extends JPanel {
 
     /** Wählt ein Update und lädt seinen Bericht. */
     void select(String updateId) {
+        if (!Objects.equals(updateId, selected)) {
+            carried = null;
+        }
         select(updateId, false, () -> { });
     }
 
@@ -565,7 +597,8 @@ final class SourceUpdatesView extends JPanel {
     }
 
     /** Ein gestarteter Auftrag „Zusammenfassen“; {@code jobId} ist {@code null}, solange der Start unterwegs ist. */
-    private record Run(String jobId, String sourceId, String spaceKey, String updateId, boolean auto) {
+    /** {@code quiet}: still nach einer Wiederholung, ohne Ring; die bisherige Zusammenfassung bleibt stehen. */
+    private record Run(String jobId, String sourceId, String spaceKey, String updateId, boolean auto, boolean quiet) {
     }
 
     private static ChangeUpdate entry(List<ChangeUpdate> in, String id) {
@@ -587,7 +620,8 @@ final class SourceUpdatesView extends JPanel {
         summarize.setToolTipText(tip);
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SUMMARIZE : RESUMMARIZE);
         summarizeEntry.setVisible(summary == null && summarize.isEnabled());
-        boolean mine = runningHere();
+        // Ein stiller Lauf nach einer Wiederholung zeigt keinen Ring: die Seite hat schon Inhalt (Angelo, 21.11.2026).
+        boolean mine = runningHere() && !running.quiet();
         if (mine != busy.isBusy()) {
             busy.setText(SUMMARIZING);
             busy.setBusy(mine);
@@ -605,6 +639,10 @@ final class SourceUpdatesView extends JPanel {
 
     /** {@code auto}: von der Leseansicht selbst angestoßen; solange er wartet, bricht ein Wechsel ihn ab. */
     private void summarize(boolean auto) {
+        summarize(auto, false);
+    }
+
+    private void summarize(boolean auto, boolean quiet) {
         Actions current = actions.get();
         String id = sourceId;
         String space = spaceKey;
@@ -612,11 +650,13 @@ final class SourceUpdatesView extends JPanel {
         if (current == null || id == null || updateId == null || running != null) {
             return;
         }
-        Run starting = new Run(null, id, space, updateId, auto);
+        Run starting = new Run(null, id, space, updateId, auto, quiet);
         running = starting;
         runState = JobState.QUEUED;
         offerSummary();
-        onStatus.accept(SUMMARIZING);
+        if (!quiet) {
+            onStatus.accept(SUMMARIZING);
+        }
         runner.run(() -> current.summarize(id, updateId, space), status -> {
             if (running != starting) {
                 return;
@@ -624,7 +664,7 @@ final class SourceUpdatesView extends JPanel {
             // Der Core liefert für dasselbe Update und dieselbe Ebene den schon wartenden oder laufenden Auftrag (#842),
             // etwa aus einem anderen Fenster. Als eigener Selbst-Auftrag (abbrechbar) gilt nur eine neue Kennung.
             boolean fresh = seenJobs.add(status.id());
-            Run run = new Run(status.id(), id, space, updateId, auto && fresh);
+            Run run = new Run(status.id(), id, space, updateId, auto && fresh, quiet);
             running = run;
             runState = status.state();
             watch(current, run);
@@ -678,8 +718,12 @@ final class SourceUpdatesView extends JPanel {
         running = null;
         jobWatch.close();
         jobWatch = Subscription.NONE;
+        if (run.quiet()) {
+            // Ab jetzt gilt, was der Core liefert: die neue Zusammenfassung, sonst der Einstieg.
+            carried = null;
+        }
         onStatus.accept(switch (status.state()) {
-            case COMPLETED -> "Zusammenfassung erstellt";
+            case COMPLETED -> run.quiet() ? "Zusammenfassung aktualisiert" : "Zusammenfassung erstellt";
             case CANCELLED -> "Abgebrochen; die bisherige Zusammenfassung bleibt.";
             case PAUSED -> "Zusammenfassung angehalten; fortsetzen unter Aufträge.";
             default -> "Zusammenfassung fehlgeschlagen"
@@ -935,11 +979,127 @@ final class SourceUpdatesView extends JPanel {
         onRetry = Objects.requireNonNull(listener, "listener");
     }
 
+    /**
+     * Verfolgt die Wiederholung gescheiterter Abgleiche (Angelo, 21.11.2026): sind alle {@code jobIds} beendet und
+     * zeigt die Ansicht noch dieselbe Quelle, liest sie die Updates neu; die Leseansicht fasst dann still neu zusammen,
+     * ohne Ring, die bisherige Zusammenfassung bleibt bis dahin stehen. Kein Abfragen: das Ende kommt per
+     * Auftragsmeldung (ADR 0027). Aufruf auf dem EDT.
+     */
+    void followRetry(String source, List<String> jobIds) {
+        Actions current = actions.get();
+        if (current == null || source == null || !source.equals(sourceId) || jobIds == null || jobIds.isEmpty()) {
+            return;
+        }
+        retryWatch.close();
+        int mine = ++retryGeneration;
+        retrying = true;
+        if (mode == Mode.SUMMARY && carried == null) {
+            // Das Tages-Update wechselt beim Verlängern seine Kennung: die bisherige Zusammenfassung festhalten.
+            carried = summary;
+        }
+        java.util.Set<String> open = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        open.addAll(jobIds);
+        java.util.function.Consumer<JobStatus> seen = status -> {
+            if (status.state().terminal() && open.remove(status.id()) && open.isEmpty()) {
+                SwingUtilities.invokeLater(() -> retryFinished(mine, source));
+            }
+        };
+        // Erst anmelden, dann den Stand lesen: so geht kein Ende verloren.
+        try {
+            retryWatch = current.subscribeJobs(new JobListener() {
+                @Override
+                public void changed(JobStatus status) {
+                    seen.accept(status);
+                }
+
+                @Override
+                public void removed(JobStatus last) {
+                    if (open.remove(last.id()) && open.isEmpty()) {
+                        SwingUtilities.invokeLater(() -> retryFinished(mine, source));
+                    }
+                }
+            });
+        } catch (RuntimeException e) {
+            retryWatch = Subscription.NONE;
+        }
+        for (String jobId : jobIds) {
+            runner.run(() -> current.job(jobId), seen, failure -> {
+                if (open.remove(jobId) && open.isEmpty()) {
+                    retryFinished(mine, source);
+                }
+            });
+        }
+    }
+
+    /** Ob die Ansicht gerade still aktualisiert: Wiederholung läuft, wartet auf Sichtbarkeit oder fasst still zusammen. */
+    private boolean quietPhase() {
+        return retrying || quietPending || runningHere() && running.quiet();
+    }
+
+    private void retryFinished(int generation, String source) {
+        if (generation != retryGeneration || !Objects.equals(source, sourceId)) {
+            return;
+        }
+        retryWatch.close();
+        retryWatch = Subscription.NONE;
+        retrying = false;
+        if (mode != Mode.SUMMARY) {
+            reload();
+            return;
+        }
+        quietPending = true;
+        // Liste neu, dann das gezeigte Update samt Zusammenfassung neu lesen: ein abgeschlossenes Update liest die
+        // Liste sonst nur bei geändertem Eintrag neu, die Zusammenfassung kann aber inzwischen veraltet sein.
+        reload(() -> {
+            if (selected != null && Objects.equals(source, sourceId)) {
+                select(selected, true, this::quietRefresh);
+            } else {
+                quietRefresh();
+            }
+        });
+    }
+
+    /**
+     * Nach der Wiederholung: fehlt die Zusammenfassung des gezeigten Updates oder ist sie veraltet, entsteht sie still
+     * neu. Ist der Reiter verdeckt, wartet das bis {@link #becameVisible}.
+     */
+    private void quietRefresh() {
+        if (!quietPending || !showing.getAsBoolean()) {
+            return;
+        }
+        quietPending = false;
+        boolean outdated = summary == null || summary.stale();
+        boolean possible = shown != null && selected != null && shown.update().id().equals(selected)
+                && !shown.update().initial() && !shown.pages().isEmpty() && available && sourceId != null;
+        ChangeUpdate level = entry(updates, selected);
+        if (level != null && (level.initial() || level.pages() == 0)) {
+            possible = false;
+        }
+        if (!outdated || !possible || running != null) {
+            carried = null;
+            if (shown != null) {
+                renderReport(shown);
+            }
+            offerSummary();
+            return;
+        }
+        // Zählt als selbst angestoßen für dieses Update: autoSummarize startet danach keinen zweiten.
+        autoStarted.add(autoKey(sourceId, spaceKey, selected));
+        summarize(true, true);
+        if (running == null) {
+            carried = null;
+        }
+        renderReport(shown);
+    }
+
     /** „Leseansicht“: die Zusammenfassung, sonst der Einstieg „Zusammenfassen“; die Änderungen stehen unter „Text“. */
     private void renderSummaryPage(ChangeReport found) {
         ChangeUpdate update = found.update();
         if (summary != null) {
-            renderSummary(found);
+            renderSummary(found, summary);
+        } else if (carried != null && quietPhase()) {
+            // Still neu zusammenfassen: bis die neue da ist, bleibt die bisherige stehen.
+            renderSummary(found, carried);
         } else if (update.initial()) {
             add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
                     + "Zusammenfassung gibt es ab dem ersten Update mit Änderungen.", Comic.TEXT, 13.5f));
@@ -959,13 +1119,14 @@ final class SourceUpdatesView extends JPanel {
     }
 
     /** Die Zusammenfassung; jede Aussage verweist auf ihre Seiten. */
-    private void renderSummary(ChangeReport found) {
+    private void renderSummary(ChangeReport found, UpdateSummary summary) {
         JLabel title = new JLabel("Zusammenfassung");
         title.setFont(Comic.semiBold(14f));
         title.setForeground(Comic.INK);
         add(reportBody, title);
         add(reportBody, Comic.wrapped(summaryMeta(summary), Comic.MUTED, 12f));
-        if (summary.stale()) {
+        // Während des stillen Neu-Zusammenfassens kein Hinweis „veraltet“: die neue kommt gleich.
+        if (summary.stale() && !quietPhase()) {
             add(reportBody, Comic.wrapped("Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht "
                     + "alles.", Comic.ORANGE, 12.5f));
         }

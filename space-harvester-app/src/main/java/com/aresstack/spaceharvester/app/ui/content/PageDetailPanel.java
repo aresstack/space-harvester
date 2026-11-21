@@ -452,7 +452,11 @@ public final class PageDetailPanel extends JPanel {
         for (SourceUpdatesView view : List.of(sourceView, sourceChanges)) {
             view.onRetry((retrySource, spaces) -> {
                 if (context.navigator() != null) {
-                    context.navigator().retrySyncs(retrySource, spaces);
+                    // Beide Reiter verfolgen die Wiederholung: ist sie durch, aktualisiert sich die offene Ansicht.
+                    context.navigator().retrySyncs(retrySource, spaces, jobs -> {
+                        sourceView.followRetry(retrySource, jobs);
+                        sourceChanges.followRetry(retrySource, jobs);
+                    });
                 }
             });
         }
