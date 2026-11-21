@@ -50,6 +50,19 @@ class UpdateSummaryTest {
     private final Set<String> contentHiddenFromReader = new HashSet<>();
     private final Set<String> contentHiddenFromCaller = new HashSet<>();
     private final List<ContentChange> diffs = new ArrayList<>();
+    private final Map<String, String> texts = new HashMap<>();
+    private final Map<String, String> names = new HashMap<>();
+    private final SummaryMaterial material = new SummaryMaterial() {
+        @Override
+        public Optional<String> text(PageKey page) {
+            return Optional.ofNullable(texts.get(page.pageId()));
+        }
+
+        @Override
+        public Optional<String> spaceName(PageKey page, String spaceKey) {
+            return Optional.ofNullable(names.get(spaceKey));
+        }
+    };
     private boolean modelAvailable = true;
     private Consumer<String> recorded = ignored -> {
     };
@@ -154,7 +167,7 @@ class UpdateSummaryTest {
             Clock.fixed(T0.plusSeconds(3600), ZoneOffset.UTC));
     private final ChangeLog log = new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)),
             () -> List.of("wiki"), new ChangeLog.Summaries(jobs, model,
-            key -> released.contains(key.pageId()), Clock.fixed(T0.plusSeconds(7200), ZoneOffset.UTC)));
+            key -> released.contains(key.pageId()), Clock.fixed(T0.plusSeconds(7200), ZoneOffset.UTC), material));
 
     @AfterEach
     void close() {
@@ -296,7 +309,7 @@ class UpdateSummaryTest {
         assertThat(summary.text()).isEqualTo("Die Startseite wurde überarbeitet.");
         assertThat(summary.statements()).singleElement().satisfies(statement -> {
             assertThat(statement.text()).isEqualTo("Startseite neu gefasst");
-            assertThat(statement.pages()).containsExactly(new SummaryPage("100", "Startseite"));
+            assertThat(statement.pages()).containsExactly(new SummaryPage("100", "Startseite", "DEV"));
         });
         assertThat(summary.unreadableChanges()).isEqualTo(1);
         assertThat(summary.model()).isEqualTo("test-summary:1");
@@ -462,7 +475,7 @@ class UpdateSummaryTest {
     @Test
     void theAnswerKeepsOnlyKnownPagesAndCapsStatements() {
         StringBuilder many = new StringBuilder("{\"aussagen\": [");
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 40; i++) {
             many.append(i == 0 ? "" : ",").append("{\"text\": \"A").append(i).append("\", \"seiten\": [\"1\", 2, \"x\"]}");
         }
         many.append(", {\"text\": \"  \"}]}");
@@ -584,8 +597,99 @@ class UpdateSummaryTest {
                 .isLessThanOrEqualTo(UpdateSummarizer.MAX_REQUEST_CHARS));
         assertThat(inputs).filteredOn(input -> input.contains("\"aenderungen\"")).allSatisfy(input ->
                 assertThat(input).contains("\"gekuerzt\":true"));
-        assertThat(summaries.get(key("wiki", ChangeUpdate.OPEN, null)).statements().getFirst().pageIds())
-                .hasSize(UpdateSummarizer.MAX_STATEMENT_PAGES);
+        // Das Zusammenführen ordnete nichts zu (alte Antwortform): Die Themen der Teile bleiben, keine Seite geht verloren.
+        assertThat(summaries.get(key("wiki", ChangeUpdate.OPEN, null)).statements())
+                .hasSizeLessThanOrEqualTo(UpdateSummarizer.MAX_TOPICS)
+                .allSatisfy(statement -> assertThat(statement.pageIds()).isNotEmpty());
+    }
+
+    @Test
+    void newPagesGoInWithAnExcerptOfTheirTextAndSpaceNamesInsteadOfKeys() {
+        row(1, "100", "DEV", ChangeKind.NEW, "Start");
+        mark(10, true);
+        row(12, "200", "DEV", ChangeKind.NEW, "Protokoll Projekttreffen 3");
+        row(13, "201", "OPS", ChangeKind.NEW, "Protokoll Projekttreffen 4");
+        row(14, "202", "OPS", ChangeKind.NEW, "Ohne Freigabe");
+        mark(30, false);
+        header("200", "DEV", "Protokoll Projekttreffen 3");
+        header("201", "OPS", "Protokoll Projekttreffen 4");
+        released.addAll(List.of("200", "201"));
+        texts.put("200", "Beschlossen:   die Umstellung des Archivs auf das neue Format.\n\n\nTermin im März. "
+                + "x".repeat(3000));
+        texts.put("201", "Offene Punkte zur Schnittstelle Beispielamt.");
+        texts.put("202", "Darf nie zur KI.");
+        names.put("DEV", "Entwicklung Beispiel");
+        names.put("OPS", "Betrieb Beispiel");
+        answer = """
+                {"zusammenfassung": "Zwei Protokolle der Projekttreffen.",
+                 "themen": [{"titel": "Projekttreffen", "text": "Archivumstellung beschlossen.",
+                             "details": "Das Archiv wird umgestellt, Termin im März; offen ist die Schnittstelle.",
+                             "seiten": ["200", "201", "999"]}]}""";
+        String id = log.updates(CALLER, "wiki").getFirst().id();
+
+        run(log.summarize(CALLER, "wiki", id));
+
+        assertThat(inputs.getFirst()).contains("Beschlossen: die Umstellung", "Offene Punkte zur Schnittstelle")
+                .contains("\"space\":\"Entwicklung Beispiel\"", "\"space\":\"Betrieb Beispiel\"")
+                .doesNotContain("Darf nie zur KI").doesNotContain("x".repeat(UpdateSummarizer.MAX_EXCERPT_CHARS));
+        assertThat(instructions.getFirst()).contains("Bündle nach Thema", "\"details\"");
+        assertThat(summaries.get(key("wiki", id, null)).inputPages()).containsExactly(
+                new StoredSummary.InputPage("DEV", "200", true), new StoredSummary.InputPage("OPS", "201", true));
+        UpdateSummary summary = log.summary(CALLER, "wiki", id).orElseThrow();
+        assertThat(summary.statements()).singleElement().satisfies(topic -> {
+            assertThat(topic.title()).isEqualTo("Projekttreffen");
+            assertThat(topic.details()).contains("Termin im März");
+            assertThat(topic.pages()).containsExactly(new SummaryPage("200", "Protokoll Projekttreffen 3", "DEV"),
+                    new SummaryPage("201", "Protokoll Projekttreffen 4", "OPS"));
+        });
+        assertThat(summary.spaceName("DEV")).isEqualTo("Entwicklung Beispiel");
+        assertThat(summary.spaceName("XYZ")).isEqualTo("XYZ");
+    }
+
+    @Test
+    void anExcerptNeedsTheContentRight() {
+        row(1, "100", "DEV", ChangeKind.NEW, "Start");
+        mark(10, true);
+        row(12, "200", "DEV", ChangeKind.NEW, "Neu ohne Inhaltsrecht");
+        mark(30, false);
+        released.add("200");
+        contentHiddenFromCaller.add("200");
+        texts.put("200", "Vertraulicher Inhalt");
+        String id = log.updates(CALLER, "wiki").getFirst().id();
+
+        run(log.summarize(CALLER, "wiki", id));
+
+        assertThat(inputs.getFirst()).contains("Neu ohne Inhaltsrecht").doesNotContain("Vertraulicher Inhalt");
+        assertThat(summaries.get(key("wiki", id, null)).inputPages())
+                .containsExactly(new StoredSummary.InputPage("DEV", "200", false));
+    }
+
+    @Test
+    void combiningMergesTopicsByIdUnitesTheirPagesAndDetailsAndKeepsUnassignedTopics() {
+        List<StoredSummary.Statement> topics = List.of(
+                new StoredSummary.Statement("A", List.of("1", "2"), "Protokolle Teil 1", "Details eins"),
+                new StoredSummary.Statement("B", List.of("3"), "Protokolle Teil 2", "Details zwei"),
+                new StoredSummary.Statement("C", List.of("4"), "Anderes", "Details drei"));
+        List<UpdateSummarizer.Answer> members = List.of(new UpdateSummarizer.Answer("Teil eins.", topics.subList(0, 1)),
+                new UpdateSummarizer.Answer("Teil zwei.", topics.subList(1, 3)));
+
+        UpdateSummarizer.Answer merged = UpdateSummarizer.merge("""
+                {"zusammenfassung": "Überblick.", "themen": [{"titel": "Protokolle", "text": "Beide Teile.",
+                 "aus": ["t0", "t1", "t9"]}]}""", topics, members);
+
+        assertThat(merged.text()).isEqualTo("Überblick.");
+        assertThat(merged.statements()).hasSize(2);
+        assertThat(merged.statements().getFirst()).satisfies(topic -> {
+            assertThat(topic.title()).isEqualTo("Protokolle");
+            assertThat(topic.text()).isEqualTo("Beide Teile.");
+            assertThat(topic.pageIds()).containsExactly("1", "2", "3");
+            assertThat(topic.details()).contains("Protokolle Teil 1: Details eins", "Protokolle Teil 2: Details zwei");
+        });
+        assertThat(merged.statements().getLast()).isEqualTo(topics.get(2));
+
+        UpdateSummarizer.Answer broken = UpdateSummarizer.merge("kein JSON", topics, members);
+        assertThat(broken.statements()).containsExactlyElementsOf(topics);
+        assertThat(broken.text()).isEqualTo("Teil eins. Teil zwei.");
     }
 
     @Test

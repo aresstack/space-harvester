@@ -449,6 +449,12 @@ public final class PageDetailPanel extends JPanel {
                 }
             });
         }
+        // Spaces in der Zusammenfassung sind anklickbar: links im Baum wählen.
+        sourceView.onOpenSpace((spaceSource, spaceKey) -> {
+            if (context.navigator() != null) {
+                context.navigator().openSpace(spaceSource, spaceKey);
+            }
+        });
         for (SourceUpdatesView view : List.of(sourceView, sourceChanges)) {
             view.onRetry((retrySource, spaces) -> {
                 if (context.navigator() != null) {
