@@ -1,0 +1,8 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "speichern", "handelnder": "Lagersystem", "betroffenes": "Bestände", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "bereitstellen", "handelnder": "Bestelldienst", "betroffenes": "Schnittstelle", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "übertragen", "handelnder": "Scanner", "betroffenes": "Artikelnummer", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "erzeugen", "handelnder": "Druckserver", "betroffenes": "Lieferscheine", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "verteilen", "handelnder": "Message Broker", "betroffenes": "Nachrichten", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "erfolgen", "handelnder": "-", "betroffenes": "Anmeldung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 7, "aussagen": [{"verb": "aufrufen", "handelnder": "Bestellportal", "betroffenes": "Bestelldienst", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

@@ -233,6 +233,8 @@ import com.aresstack.spaceharvester.application.images.ImageProcessor;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerStores;
+import com.aresstack.spaceharvester.application.knowledge.ModelStatementAnalyzer;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
 import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
@@ -319,6 +321,9 @@ public final class Harvester implements AutoCloseable {
     private final PageQueries pages;
     private final Holdings holdings;
     private final AiRelease aiRelease;
+    /** Aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2); Vorgabe MaltParser. */
+    private volatile com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice statementAnalyzerChoice =
+            com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER;
     private final PageReleaseService pageReleaseService;
     private final ExportAssetCollection assetCollection;
     private final PageAddresses addresses;
@@ -1034,6 +1039,8 @@ public final class Harvester implements AutoCloseable {
                     graph.withdrawStage(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                     // ADR 0032, FL4: Urteile und Korrekturen fallen weg, die Aussagen stehen wie vor dem Prüflauf
                     graph.withdrawChecks(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                    // Fahrplan Paket A2: Analysen des KI-Analysators sind Modellergebnisse der Seite und fallen ganz
+                    graph.withdrawModel(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 }
                 documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
                 // ADR 0032, FL5c: KI-Einordnungen mit Belegen von entzogenen Seiten fallen auf den Regelstand zurück
@@ -1045,9 +1052,18 @@ public final class Harvester implements AutoCloseable {
             });
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.
-            KnowledgeGraphStore graphStore = new FileKnowledgeGraphStore(
-                    builder.dataDirectory.resolve("knowledge-graph"));
+            // Fahrplan Paket A2: die Analysen des KI-Analysators liegen in einer eigenen Ablage und überschreiben die des
+            // MaltParsers nie; Graph, Stand, Begriffe und Export lesen aus genau einer, der eingestellten (Vorgabe
+            // MaltParser).
+            KnowledgeGraphStore graphStore = new AnalyzerStores(new FileKnowledgeGraphStore(
+                    builder.dataDirectory.resolve("knowledge-graph")), new FileKnowledgeGraphStore(
+                    builder.dataDirectory.resolve("knowledge-graph-model")), () -> statementAnalyzerChoice);
             StatementAnalyzer statementAnalyzer = builder.statementAnalyzer;
+            // Fahrplan Paket A2: zweiter Analysator über den eingestellten KI-Dienst, derselbe Modellweg wie Vorstufe
+            // und Prüfschritt (Temperatur 0, Denken aus); nur auf Auftrag, an den Dienst nur Seiten mit KI-Freigabe.
+            StatementAnalyzer modelAnalyzer = new ModelStatementAnalyzer(new ChatStepModel(ModelStatementAnalyzer.STEP,
+                    () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog, trustBundles,
+                    builder.userAgent), sentences);
             java.util.function.Function<PageSnapshot, Optional<PageText>> readerText = snapshot -> {
                 try {
                     return projector.project(snapshot);
@@ -1056,7 +1072,7 @@ public final class Harvester implements AutoCloseable {
                 }
             };
             this.statementAnalysis = new StatementAnalysis(readerText, graphStore, access, () -> statementAnalyzer,
-                    clock, simplified, checked);
+                    clock, simplified, checked, () -> modelAnalyzer, withdrawn::mayProcess);
             graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
@@ -1624,6 +1640,16 @@ public final class Harvester implements AutoCloseable {
      * Die Freigabeprüfung für den KI-Dienst mit der Liste der freigegebenen Seiten (ADR 0028): Quelle in
      * {@code ai.external-processing-sources} oder Seite auf der Liste.
      */
+    /** Aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2). */
+    public com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice statementAnalyzerChoice() {
+        return statementAnalyzerChoice;
+    }
+
+    /** Stellt ein, aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2). */
+    public void statementAnalyzerChoice(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice choice) {
+        this.statementAnalyzerChoice = java.util.Objects.requireNonNull(choice, "choice");
+    }
+
     public AiRelease aiRelease() {
         return aiRelease;
     }

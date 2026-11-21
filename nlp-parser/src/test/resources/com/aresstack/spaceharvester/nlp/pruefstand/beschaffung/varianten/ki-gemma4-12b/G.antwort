@@ -1,0 +1,9 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "prüfen", "handelnder": "Lagerist", "betroffenes": "Lieferung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 2, "aussagen": [{"verb": "bezahlen", "handelnder": "Buchhaltung", "betroffenes": "Rechnung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "bestellen", "handelnder": "Einkäufer", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 4, "aussagen": [{"verb": "ungültig", "handelnder": "Bestellung", "betroffenes": "-", "empfaenger": "-", "verneint": true, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "liefern", "handelnder": "Lieferant", "betroffenes": "Ware", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "erweitern", "handelnder": "-", "betroffenes": "Lager", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 7, "aussagen": [{"verb": "verschieben", "handelnder": "Lagerleiter", "betroffenes": "Inventur", "empfaenger": "-", "verneint": false, "verbindlichkeit": "KANN", "zeitbezug": "GILT"}]}
+{"satz": 8, "aussagen": [{"verb": "vergeben", "handelnder": "Einkaufsabteilung", "betroffenes": "Auftrag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}

@@ -1,0 +1,13 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "zuständig", "handelnder": "Bewilligungsstelle", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "unvollständig", "handelnder": "Antrag", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "Ansprechpartner", "handelnder": "Sachbearbeiter", "betroffenes": "-", "empfaenger": "Antragsteller", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "rückzahlbar", "handelnder": "Zuschuss", "betroffenes": "-", "empfaenger": "-", "verneint": true, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "vollständig", "handelnder": "Unterlagen", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "MUSS", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "fehlerhaft", "handelnder": "Bescheid", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 7, "aussagen": [{"verb": "freigeben", "handelnder": "-", "betroffenes": "Schnittstelle", "empfaenger": "-", "verneint": true, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 8, "aussagen": [{"verb": "gültig", "handelnder": "Zusage", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 9, "aussagen": [{"verb": "bestandskräftig", "handelnder": "Bescheid", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 10, "aussagen": [{"verb": "Förderung", "handelnder": "Zuschuss", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 11, "aussagen": [{"verb": "einwandfrei", "handelnder": "Abrechnung", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 12, "aussagen": [{"verb": "einziehen", "handelnder": "-", "betroffenes": "Rate", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

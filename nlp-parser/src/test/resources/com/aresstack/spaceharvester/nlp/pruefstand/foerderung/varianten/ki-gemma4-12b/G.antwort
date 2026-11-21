@@ -1,0 +1,10 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "prüfen", "handelnder": "Bewilligungsstelle", "betroffenes": "Antrag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 2, "aussagen": [{"verb": "versenden", "handelnder": "Sachbearbeiter", "betroffenes": "Bescheid", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "auszahlen", "handelnder": "Kasse", "betroffenes": "Zuschuss", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 4, "aussagen": [{"verb": "zurückgeben", "handelnder": "Antragsteller", "betroffenes": "Unterlagen", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 5, "aussagen": [{"verb": "vollständig", "handelnder": "Antrag", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "ändern", "handelnder": "-", "betroffenes": "Richtlinie", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 7, "aussagen": [{"verb": "ablehnen", "handelnder": "Bewilligungsstelle", "betroffenes": "Antrag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "KANN", "zeitbezug": "GILT"}]}
+{"satz": 8, "aussagen": [{"verb": "abrufen", "handelnder": "Zuwendungsempfänger", "betroffenes": "Mittel", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 9, "aussagen": [{"verb": "nachfordern", "handelnder": "Stelle", "betroffenes": "Antrag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "KANN", "zeitbezug": "GILT"}]}
