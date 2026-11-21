@@ -321,6 +321,8 @@ public final class PageDetailPanel extends JPanel {
     private boolean assetsLoaded;
     private boolean readingLoaded;
     private boolean referencesLoaded;
+    /** Zählt die Ladevorgänge der Verweise; ein überholter Vorgang zeigt sein Ergebnis nicht mehr. */
+    private long referencesGeneration;
     private boolean imagesLoaded;
     /** Anmeldung bei der Liste freigegebener Seiten (ADR 0028), damit „Bilder“ eine neue Freigabe der Seite zeigt. */
     private com.aresstack.spaceharvester.application.observe.Subscription releaseSubscription =
@@ -2790,12 +2792,13 @@ public final class PageDetailPanel extends JPanel {
         String source = sourceId;
         String id = pageId;
         DeliveredPage shown = page;
+        long generation = ++referencesGeneration;
         Background.run(() -> runtime.workspace().references(source, id), found -> {
-            if (shown == page) {
+            if (shown == page && generation == referencesGeneration) {
                 references.show(found);
             }
         }, error -> {
-            if (shown != page) {
+            if (shown != page || generation != referencesGeneration) {
                 return;
             }
             referencesLoaded = false;
