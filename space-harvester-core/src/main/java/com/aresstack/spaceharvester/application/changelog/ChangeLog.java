@@ -494,8 +494,14 @@ public final class ChangeLog implements AutoCloseable {
         });
         bySpace.forEach((spaceKey, pageIds) -> {
             for (String pageId : pageIds.subList(0, Math.min(3, pageIds.size()))) {
-                Optional<String> name = summaries.material().spaceName(new PageKey(sourceId, pageId), spaceKey)
-                        .filter(found -> !found.isBlank());
+                Optional<String> name;
+                try {
+                    name = summaries.material().spaceName(new PageKey(sourceId, pageId), spaceKey)
+                            .filter(found -> !found.isBlank());
+                } catch (RuntimeException e) {
+                    // Ein fehlender Name darf nie die Zusammenfassung verbergen.
+                    name = Optional.empty();
+                }
                 if (name.isPresent()) {
                     names.put(spaceKey, name.get());
                     break;
@@ -579,9 +585,17 @@ public final class ChangeLog implements AutoCloseable {
                     ChangeReport report = report(caller, sourceId, update, spaceKey, true);
                     Visibility visible = new Visibility(caller);
                     // Lesetext nur, wo der Auftraggeber den Inhalt lesen darf; die KI-Freigabe prüft der Summarizer.
-                    Function<ReportedPage, Optional<String>> text = page -> access.permits(caller,
-                            ResourceScope.page(page.sourceId(), page.spaceKey(), page.pageId()), AccessKind.CONTENT)
-                            ? runtime.material().text(new PageKey(page.sourceId(), page.pageId())) : Optional.empty();
+                    Function<ReportedPage, Optional<String>> text = page -> {
+                        if (!access.permits(caller, ResourceScope.page(page.sourceId(), page.spaceKey(),
+                                page.pageId()), AccessKind.CONTENT)) {
+                            return Optional.empty();
+                        }
+                        try {
+                            return runtime.material().text(new PageKey(page.sourceId(), page.pageId()));
+                        } catch (RuntimeException e) {
+                            return Optional.empty();
+                        }
+                    };
                     Map<String, String> reportSpaces = new LinkedHashMap<>();
                     report.pages().forEach(page -> reportSpaces.put(page.pageId(), page.spaceKey()));
                     Map<String, String> names = spaceNames(sourceId, reportSpaces);
