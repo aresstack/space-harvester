@@ -123,9 +123,9 @@ final class SelectionTerms implements TermsTab.Selection {
                 TermsTab.STEP, null, null).within(within));
         int relations = workspace.termRelationCounts(within).values().stream().mapToInt(Integer::intValue).sum();
         VerbQueries.VerbList verbs = workspace.verbs(within, null, 1, null);
-        int unanalysed = Math.max(0, holdings.counts().stored() - verbs.analysedPages() - verbs.stalePages());
         return new TermsTab.Totals(terms.of(TermKind.ACRONYM), terms.of(TermKind.NOUN) + terms.of(TermKind.IDENTIFIER),
-                relations, holdings.counts().stored(), holdings.size(), verbs.total(), unanalysed);
+                relations, holdings.counts().stored(), holdings.size(), verbs.total(), verbs.unanalysed(),
+                verbs.stalePages());
     }
 
     @Override

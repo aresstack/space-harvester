@@ -490,6 +490,129 @@ class TermsTabTest {
         });
     }
 
+    @Test
+    void verbsBelowFollowThePageCountTextFormsAndAStaleAnalysisShowsADash() throws Exception {
+        com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb pruefen =
+                new com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb("prüfen", 3, 2, false);
+        com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb verschickt =
+                new com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb("verschickt", 1, 1, true);
+        com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb buchen =
+                new com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb("buchen", 1, 1, false);
+        TermsTab.Selection subpageVerbs = new TermsTab.Selection() {
+            @Override
+            public String title() {
+                return "den Unterseiten";
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary> acronyms(String q) {
+                return pager(List.of());
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary> identifiers(String q) {
+                return pager(List.of());
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<com.aresstack.spaceharvester.app.ui.Relation> relations(
+                    String q) {
+                return pager(List.of());
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb> verbs(String q) {
+                return pager(List.of(buchen, pruefen, verschickt));
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.terms.TermQueries.OccurrenceList occurrences(
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary term) {
+                return null;
+            }
+        };
+        TermsTab.Below below = new TermsTab.Below() {
+            @Override
+            public TermsTab.Selection terms() {
+                return subpageVerbs;
+            }
+
+            @Override
+            public java.util.Map<com.aresstack.spaceharvester.application.terms.TermQueries.TermRef, Integer>
+                    pageCounts() {
+                return java.util.Map.of();
+            }
+
+            @Override
+            public int pages() {
+                return 2;
+            }
+
+            @Override
+            public java.util.Map<TermsTab.VerbRef, Integer> verbPageCounts() {
+                return java.util.Map.of(TermsTab.VerbRef.of(pruefen), 2, TermsTab.VerbRef.of(verschickt), 1,
+                        TermsTab.VerbRef.of(buchen), 1);
+            }
+        };
+        TermsTab[] tab = new TermsTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new TermsTab();
+            tab[0].runner(new TermsTab.Runner() {
+                @Override
+                public <T> void run(java.util.concurrent.Callable<T> work, java.util.function.Consumer<T> onSuccess,
+                                    java.util.function.Consumer<Throwable> onFailure) {
+                    try {
+                        onSuccess.accept(work.call());
+                    } catch (Exception e) {
+                        onFailure.accept(e);
+                    }
+                }
+            });
+            tab[0].show(null);
+            tab[0].below(below);
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsTab terms = tab[0];
+            assertThat(terms.belowChips()).extracting(chip -> chip.getText())
+                    .containsExactly("buchen", "prüfen", "verschickt");
+            assertThat(terms.belowCount()).as("ohne Grundform zählt im Kopf wie in der Liste").isEqualTo(3);
+            // Ohne Grundform erkennbar an der Pille selbst: kursiv.
+            assertThat(terms.belowChips().get(2).getFont().isItalic()).isTrue();
+            assertThat(terms.belowChips().get(1).getFont().isItalic()).isFalse();
+
+            terms.showVerbs(List.of(new TermsTab.PageVerb(pruefen, List.of(new TermsTab.Span(3, 9)))));
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsTab terms = tab[0];
+            assertThat(terms.belowChips()).as("was oben steht, steht unten nicht noch einmal")
+                    .extracting(chip -> chip.getText()).containsExactly("buchen", "verschickt");
+            assertThat(terms.belowCount()).isEqualTo(2);
+            assertThat(terms.alsoBelowTexts()).containsExactly("+2");
+
+            terms.showVerbs(List.of(), true);
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsTab terms = tab[0];
+            assertThat(terms.verbCountText()).isEqualTo(TermsTab.STALE_COUNT);
+            assertThat(terms.verbChips()).isEmpty();
+            assertThat(terms.belowChips()).extracting(chip -> chip.getText())
+                    .containsExactly("buchen", "prüfen", "verschickt");
+        });
+        assertThat(TermsTab.verbOccurrenceLine(3, TermsTab.VERB_OCCURRENCES))
+                .isEqualTo("Mindestens 3 Seiten (die ersten 200 Aussagen); ein Klick öffnet die Seite.");
+        assertThat(TermsTab.verbOccurrenceLine(1, 4)).isEqualTo("1 Seite; ein Klick öffnet die Seite.");
+        assertThat(TermsTab.coverage(new TermsTab.Totals(0, 0, 0, 5, 5, 2, 0, 2)))
+                .isEqualTo("Begriffe aus 5 Seiten · 2 Seiten mit veralteter Aussagenanalyse, ihre Verben zählen nicht");
+        assertThat(PageDetailPanel.belowUnanalysed(1)).isEqualTo(" · 1 Unterseite ohne Aussagenanalyse, ihre Verben "
+                + "fehlen");
+    }
+
     private static com.aresstack.spaceharvester.application.knowledge.VerbQueries.Occurrence verbAt(String id,
                                                                                                   String title) {
         PageKey key = new PageKey("wiki", id);

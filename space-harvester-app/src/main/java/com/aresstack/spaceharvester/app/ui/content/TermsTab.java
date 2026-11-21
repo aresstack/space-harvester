@@ -98,14 +98,19 @@ final class TermsTab extends JPanel {
      * Die Gesamtzahlen einer Auswahl: Akronyme, Bezeichner (Nomen und Kennungen), Beziehungen; dazu aus dem Bestand,
      * wie viele ihrer Seiten lokal gespeichert sind ({@code stored}) von allen ({@code pages}), {@code -1} unbekannt.
      */
-    record Totals(int acronyms, int identifiers, int relations, int stored, int pages, int verbs, int unanalysed) {
+    record Totals(int acronyms, int identifiers, int relations, int stored, int pages, int verbs, int unanalysed,
+                  int stale) {
 
         Totals(int acronyms, int identifiers, int relations) {
             this(acronyms, identifiers, relations, -1, -1);
         }
 
         Totals(int acronyms, int identifiers, int relations, int stored, int pages) {
-            this(acronyms, identifiers, relations, stored, pages, -1, 0);
+            this(acronyms, identifiers, relations, stored, pages, -1, 0, 0);
+        }
+
+        Totals(int acronyms, int identifiers, int relations, int stored, int pages, int verbs, int unanalysed) {
+            this(acronyms, identifiers, relations, stored, pages, verbs, unanalysed, 0);
         }
     }
 
@@ -122,9 +127,17 @@ final class TermsTab extends JPanel {
         String line = totals.stored() >= totals.pages() ? "Begriffe aus " + number.format(totals.pages()) + pages
                 : "Begriffe aus " + number.format(totals.stored()) + " von " + number.format(totals.pages()) + pages
                 + " · übrige nicht lokal gespeichert";
-        return totals.unanalysed() <= 0 ? line : line + " · " + number.format(totals.unanalysed())
-                + (totals.unanalysed() == 1 ? " Seite ohne Aussagenanalyse" : " Seiten ohne Aussagenanalyse")
-                + ", ihre Verben fehlen";
+        if (totals.unanalysed() > 0) {
+            line += " · " + number.format(totals.unanalysed())
+                    + (totals.unanalysed() == 1 ? " Seite ohne Aussagenanalyse" : " Seiten ohne Aussagenanalyse")
+                    + ", ihre Verben fehlen";
+        }
+        if (totals.stale() > 0) {
+            line += " · " + number.format(totals.stale()) + (totals.stale() == 1
+                    ? " Seite mit veralteter Aussagenanalyse" : " Seiten mit veralteter Aussagenanalyse")
+                    + ", ihre Verben zählen nicht";
+        }
+        return line;
     }
 
     /** Ein Verb einer einzelnen Seite mit den Stellen seiner Aussagen im Lesetext (K1). */
@@ -196,9 +209,20 @@ final class TermsTab extends JPanel {
         /** Zahl der Unterseiten. */
         int pages();
 
-        /** Je Verb (Grundform, K1) die Zahl der Unterseiten mit einer seiner Aussagen. */
-        default java.util.Map<String, Integer> verbPageCounts() throws Exception {
+        /**
+         * Je Verb (K1) die Zahl der Unterseiten mit einer seiner Aussagen, vollständig; Verben ohne ermittelte
+         * Grundform stehen mit {@link VerbRef#fromText()} getrennt.
+         */
+        default java.util.Map<VerbRef, Integer> verbPageCounts() throws Exception {
             return java.util.Map.of();
+        }
+    }
+
+    /** Ein Verb als Schlüssel: Grundform bzw. Textform, wenn der Analysator keine Grundform lieferte. */
+    record VerbRef(String lemma, boolean fromText) {
+
+        static VerbRef of(VerbQueries.Verb verb) {
+            return new VerbRef(verb.lemma(), verb.fromText());
         }
     }
 
@@ -213,7 +237,7 @@ final class TermsTab extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay belowBusy;
     private Below below;
     private java.util.Map<TermQueries.TermRef, Integer> belowCounts = java.util.Map.of();
-    private java.util.Map<String, Integer> belowVerbCounts = java.util.Map.of();
+    private java.util.Map<VerbRef, Integer> belowVerbCounts = java.util.Map.of();
     private final List<Section<?>> belowSections = new ArrayList<>();
     private int belowRequest;
     private boolean belowLoading;
@@ -615,7 +639,7 @@ final class TermsTab extends JPanel {
 
     /** Ein Verb der Auswahl: Pille mit der Grundform, Klick zeigt die Seiten mit seinen Aussagen. */
     private FindablePill verbChip(VerbQueries.Verb verb) {
-        FindablePill chip = chip(verb.lemma(), verbTooltip(verb, false), List.of());
+        FindablePill chip = textForm(chip(verb.lemma(), verbTooltip(verb, false), List.of()), verb);
         chip.setEnabled(true);
         for (java.awt.event.ActionListener listener : chip.getActionListeners()) {
             chip.removeActionListener(listener);
@@ -623,6 +647,18 @@ final class TermsTab extends JPanel {
         Selection current = selection;
         int mine = request;
         chip.addActionListener(e -> verbOccurrences(current, verb, chip, () -> mine == request));
+        return chip;
+    }
+
+    /**
+     * Ohne ermittelte Grundform ist die Pille selbst erkennbar (UX-Manager 21.11.2026): Text kursiv und gedämpft,
+     * keine Farbe und kein Zusatz; sie bleibt klickbar wie die anderen.
+     */
+    static FindablePill textForm(FindablePill chip, VerbQueries.Verb verb) {
+        if (verb.fromText()) {
+            chip.setFont(Comic.semiBold(12f).deriveFont(java.awt.Font.ITALIC));
+            chip.setForegrounds(Comic.MUTED, Color.WHITE, Color.WHITE);
+        }
         return chip;
     }
 
@@ -657,8 +693,7 @@ final class TermsTab extends JPanel {
                 byPage.computeIfAbsent(occurrence.page().key().sourceId() + "/" + occurrence.page().key().pageId(),
                         key -> new ArrayList<>()).add(occurrence);
             }
-            popup.text("Aussagen mit „" + verb.lemma() + "“", byPage.isEmpty() ? "Keine sichtbare Aussage."
-                    : Texts.count(byPage.size(), "Seite", "Seiten") + "; ein Klick öffnet die Seite.");
+            popup.text("Aussagen mit „" + verb.lemma() + "“", verbOccurrenceLine(byPage.size(), found.size()));
             for (List<VerbQueries.Occurrence> hits : byPage.values()) {
                 VerbQueries.Occurrence first = hits.get(0);
                 TermQueries.Occurrence target = new TermQueries.Occurrence(first.page().key().sourceId(),
@@ -677,19 +712,51 @@ final class TermsTab extends JPanel {
         });
     }
 
+    /** So viele Aussagen holt das Overlay eines Verbs höchstens ({@code SelectionTerms#verbOccurrences}). */
+    static final int VERB_OCCURRENCES = TermQueries.MAX_LIMIT;
+    /** Zahl der Verben, wenn die Aussagenanalyse der Seite nicht mehr zum Text passt. */
+    static final String STALE_COUNT = "\u2013";
+    static final String STALE_TIP = "Aussagenanalyse veraltet";
+
     /**
-     * Die Verben der gezeigten Seite aus ihrer Aussagenanalyse (K1); {@code null}: keine aktuelle Analyse. Ein Klick
-     * auf ein Verb springt zur nächsten seiner Aussagen im Lesetext.
+     * „3 Seiten; ein Klick öffnet die Seite.“; ist die Grenze erreicht, „Mindestens 3 Seiten (die ersten 200
+     * Aussagen); …“, denn weitere Seiten können fehlen.
      */
+    static String verbOccurrenceLine(int pages, int statements) {
+        if (pages == 0) {
+            return "Keine sichtbare Aussage.";
+        }
+        if (statements >= VERB_OCCURRENCES) {
+            return "Mindestens " + Texts.count(pages, "Seite", "Seiten") + " (die ersten "
+                    + VERB_OCCURRENCES + " Aussagen); ein Klick öffnet die Seite.";
+        }
+        return Texts.count(pages, "Seite", "Seiten") + "; ein Klick öffnet die Seite.";
+    }
+
+    /** Wie {@link #showVerbs(List, boolean)} mit aktueller Analyse. */
     void showVerbs(List<PageVerb> verbs) {
+        showVerbs(verbs, false);
+    }
+
+    /**
+     * Die Verben der gezeigten Seite aus ihrer Aussagenanalyse (K1); {@code null}: keine Analyse, {@code stale}:
+     * die Analyse passt nicht mehr zum Text („–“, nicht „0“). Ein Klick auf ein Verb springt zur nächsten seiner
+     * Aussagen im Lesetext. Auch der Abschnitt „Aus Unterseiten“ folgt: was oben steht, steht unten nicht noch einmal.
+     */
+    void showVerbs(List<PageVerb> verbs, boolean stale) {
         if (selection != null) {
             return;
         }
-        shownVerbs = verbs == null ? null : List.copyOf(verbs);
-        verbCount.setText(verbs == null ? NOT_YET : String.valueOf(verbs.size()));
-        verbCount.setToolTipText(verbs == null ? "Für diese Seite liegt keine aktuelle Aussagenanalyse vor"
+        shownVerbs = verbs == null || stale ? null : List.copyOf(verbs);
+        verbCount.setText(stale ? STALE_COUNT : verbs == null ? NOT_YET : String.valueOf(verbs.size()));
+        verbCount.setToolTipText(stale ? STALE_TIP : verbs == null
+                ? "Für diese Seite liegt keine aktuelle Aussagenanalyse vor"
                 : "Verben (Grundform) aus den Aussagen des eingestellten Analysators");
         fill();
+        if (below != null) {
+            belowCount.count(belowEntries());
+            queryBelow();
+        }
     }
 
     /** Für Tests: die Pillen der Verben. */
@@ -835,7 +902,8 @@ final class TermsTab extends JPanel {
             if (!query.isEmpty() && !verb.verb().lemma().contains(query)) {
                 continue;
             }
-            addVerbPill(chip(verb.verb().lemma(), verbTooltip(verb.verb(), true), verb.spans()), verb.verb());
+            addVerbPill(textForm(chip(verb.verb().lemma(), verbTooltip(verb.verb(), true), verb.spans()),
+                    verb.verb()), verb.verb());
             verbs++;
         }
         acronymTitle.setVisible(!visible.isEmpty());
@@ -1116,6 +1184,16 @@ final class TermsTab extends JPanel {
      * Zeigt unter den eigenen Begriffen der Seite abgetrennt die ihrer Unterseiten ({@code null}: Abschnitt weg). Die
      * eigenen Einträge bleiben stehen; ein Begriff, der oben schon steht, bekommt dort „+N“ statt einer zweiten Pille.
      */
+    /** Liest den Abschnitt „Aus Unterseiten“ neu, etwa nach einer neuen Aussagenanalyse; ohne Abschnitt nichts. */
+    void reloadBelow() {
+        Below current = below;
+        if (current == null) {
+            return;
+        }
+        below = null;
+        below(current);
+    }
+
     void below(Below chosen) {
         if (chosen == below) {
             return;
@@ -1158,7 +1236,8 @@ final class TermsTab extends JPanel {
     }
 
     /** Die Zahlen der Unterseiten: je Begriff und je Verb. */
-    private record BelowCounts(java.util.Map<TermQueries.TermRef, Integer> terms, java.util.Map<String, Integer> verbs) {
+    private record BelowCounts(java.util.Map<TermQueries.TermRef, Integer> terms,
+                               java.util.Map<VerbRef, Integer> verbs) {
     }
 
     /** Ob der Abschnitt „Aus Unterseiten“ gerade zu sehen ist. */
@@ -1247,7 +1326,7 @@ final class TermsTab extends JPanel {
     /** „+N“ an einem eigenen Verb, wenn es auch auf N Unterseiten vorkommt; Klick zeigt diese Unterseiten. */
     private void addVerbPill(FindablePill pill, VerbQueries.Verb verb) {
         Below current = below;
-        Integer count = current == null || verb.fromText() ? null : belowVerbCounts.get(verb.lemma());
+        Integer count = current == null || verb.fromText() ? null : belowVerbCounts.get(VerbRef.of(verb));
         if (count == null || count == 0) {
             verbChips.add(pill);
             return;
@@ -1283,8 +1362,9 @@ final class TermsTab extends JPanel {
             }
         }
         java.util.Set<String> ownVerbs = ownVerbs();
-        for (String lemma : belowVerbCounts.keySet()) {
-            if (!ownVerbs.contains(lemma)) {
+        for (VerbRef verb : belowVerbCounts.keySet()) {
+            // Wie die Liste: ohne Grundform immer, sonst nur, was oben nicht schon steht.
+            if (verb.fromText() || !ownVerbs.contains(verb.lemma())) {
                 count++;
             }
         }
@@ -1366,7 +1446,7 @@ final class TermsTab extends JPanel {
             belowSections.add(new Section<>(belowVerbs, found -> {
                 for (VerbQueries.Verb verb : found) {
                     if (verb.fromText() || !ownVerbs.contains(verb.lemma())) {
-                        FindablePill chip = chip(verb.lemma(), belowVerbTooltip(verb), List.of());
+                        FindablePill chip = textForm(chip(verb.lemma(), belowVerbTooltip(verb), List.of()), verb);
                         chip.setEnabled(true);
                         for (java.awt.event.ActionListener listener : chip.getActionListeners()) {
                             chip.removeActionListener(listener);

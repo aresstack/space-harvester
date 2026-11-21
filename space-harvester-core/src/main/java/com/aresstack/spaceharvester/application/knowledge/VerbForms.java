@@ -27,11 +27,18 @@ public final class VerbForms {
     }
 
     /**
-     * Ob die Aussage als Verb zählt: keine Zustandsaussage (ihr Prädikat ist kein Verb), zählt nach
-     * {@link CountedStatements}, und das Prädikat ist nicht leer.
+     * Ob die Aussage als Verb zählt: Herkunft {@link ParsedStatements.Origin#ORIGINAL} (eine Aussage der Vorstufe
+     * oder eine Korrektur des Prüfschritts steht neben ihrem Original und zählte es sonst doppelt, ADR 0032), keine
+     * Zustandsaussage (ihr Prädikat ist kein Verb), zählt nach {@link CountedStatements}, und das Prädikat ist nicht
+     * leer.
      */
     public static boolean counts(ParsedStatements.Statement statement) {
-        return !statement.state() && CountedStatements.level(statement).isPresent()
+        return original(statement) && !statement.state() && CountedStatements.level(statement).isPresent()
                 && !lemma(statement).isEmpty();
+    }
+
+    private static boolean original(ParsedStatements.Statement statement) {
+        return statement.derivation() == null
+                || statement.derivation().origin() == ParsedStatements.Origin.ORIGINAL;
     }
 }

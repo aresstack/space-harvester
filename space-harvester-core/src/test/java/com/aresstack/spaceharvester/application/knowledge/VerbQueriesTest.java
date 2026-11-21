@@ -105,12 +105,15 @@ class VerbQueriesTest {
 
     @Test
     void onPageListsOwnVerbsWithTheirStatementsAndNothingWithoutAnalysis() {
-        List<VerbQueries.PageVerb> verbs = queries.onPage(null, new PageKey("wiki", "1"));
+        List<VerbQueries.PageVerb> verbs = queries.onPage(null, new PageKey("wiki", "1")).verbs();
         assertThat(verbs).extracting(v -> v.verb().lemma(), v -> v.verb().statements(), v -> v.occurrences().size())
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("prüfen", 2, 2),
                         org.assertj.core.groups.Tuple.tuple("buchen", 1, 1),
                         org.assertj.core.groups.Tuple.tuple("verschickt", 1, 1));
-        assertThat(queries.onPage(null, new PageKey("wiki", "3"))).as("veraltet").isEmpty();
+        VerbQueries.PageVerbs stale = queries.onPage(null, new PageKey("wiki", "3"));
+        assertThat(stale.stale()).as("veraltet ist nicht dasselbe wie keine Verben").isTrue();
+        assertThat(stale.verbs()).isEmpty();
+        assertThat(queries.onPage(null, new PageKey("wiki", "1")).stale()).isFalse();
         assertThat(queries.onPage(null, new PageKey("wiki", "4"))).as("ohne Analyse").isNull();
     }
 
@@ -119,5 +122,23 @@ class VerbQueriesTest {
         VerbQueries.VerbList all = queries.verbs(null, null, "prüf", 10, null);
         assertThat(all.verbs()).extracting(VerbQueries.Verb::statements).containsExactly(4);
         assertThat(all.unanalysed()).isZero();
+    }
+
+    @Test
+    void onlyOriginalStatementsCountNotTheirStageOrModelCopies() {
+        ParsedStatements.Statement original = verb("prüft", "prüfen");
+        ParsedStatements.Statement model = verb("prüft", "prüfen").withDerivation(new ParsedStatements.Derivation(
+                ParsedStatements.Origin.MODELL, ParsedStatements.StageFlag.NONE, "Das Amt prüft den Antrag.",
+                ParsedStatements.Origin.MODELL, original.id()));
+        ParsedStatements.Statement stage = verb("prüft", "prüfen").withDerivation(ParsedStatements.Derivation
+                .vorstufe(ParsedStatements.StageFlag.FACT, "Das Amt prüft."));
+        VerbQueries corrected = new VerbQueries(caller -> List.of(page("5", PageStatements.State.CURRENT, original,
+                model, stage)));
+
+        assertThat(corrected.verbs(null, null, null, 10, null).verbs()).singleElement()
+                .satisfies(verb -> assertThat(verb.statements()).isEqualTo(1));
+        assertThat(corrected.occurrences(null, null, "prüfen", false, 10)).hasSize(1);
+        assertThat(corrected.onPage(null, new PageKey("wiki", "5")).verbs()).singleElement()
+                .satisfies(verb -> assertThat(verb.occurrences()).hasSize(1));
     }
 }

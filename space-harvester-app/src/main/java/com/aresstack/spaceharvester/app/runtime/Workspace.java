@@ -178,11 +178,11 @@ public final class Workspace {
     }
 
     /**
-     * Die Verben einer Seite mit ihren Aussagen ({@code VerbQueries.onPage}, Paket K1); {@code null} ohne Analyse.
-     * Nie auf dem EDT.
+     * Die Verben einer Seite mit ihren Aussagen ({@code VerbQueries.onPage}, Paket K1); {@code null} ohne Analyse,
+     * {@code stale} bei veralteter. Nie auf dem EDT.
      */
-    public List<com.aresstack.spaceharvester.application.knowledge.VerbQueries.PageVerb> pageVerbs(String sourceId,
-                                                                                                    String pageId) {
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries.PageVerbs pageVerbs(String sourceId,
+                                                                                              String pageId) {
         return harvester.verbQueries().onPage(caller,
                 new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
     }

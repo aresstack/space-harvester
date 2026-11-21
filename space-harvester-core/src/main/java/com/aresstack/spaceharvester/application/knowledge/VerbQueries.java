@@ -194,10 +194,23 @@ public final class VerbQueries {
     }
 
     /**
-     * Die Verben der Seite selbst (ohne Anhänge), aus ihrer aktuellen Analyse, nach Zahl der Aussagen; leer ohne
-     * aktuelle Analyse oder ohne Leserecht (nicht unterscheidbar), {@code null} ohne jede Analyse.
+     * Die Verben einer Seite.
+     *
+     * @param verbs die Verben nach Zahl der Aussagen; leer, wenn die Analyse veraltet ist
+     * @param stale ob die Analyse nicht mehr zum Text passt; dann zählt die Seite nichts, ihre Zahl ist unbekannt
      */
-    public List<PageVerb> onPage(AccessContext caller, PageKey key) {
+    public record PageVerbs(List<PageVerb> verbs, boolean stale) {
+
+        public PageVerbs {
+            verbs = List.copyOf(verbs);
+        }
+    }
+
+    /**
+     * Die Verben der Seite selbst (ohne Anhänge), aus ihrer aktuellen Analyse, nach Zahl der Aussagen;
+     * {@link PageVerbs#stale()} bei veralteter Analyse, {@code null} ohne jede sichtbare Analyse.
+     */
+    public PageVerbs onPage(AccessContext caller, PageKey key) {
         Objects.requireNonNull(key, "key");
         java.util.Optional<KnowledgeGraph.AnalysedPage> found = page.apply(caller, key);
         if (found.isEmpty()) {
@@ -205,7 +218,7 @@ public final class VerbQueries {
         }
         KnowledgeGraph.AnalysedPage analysed = found.get();
         if (analysed.page().state() != PageStatements.State.CURRENT) {
-            return List.of();
+            return new PageVerbs(List.of(), true);
         }
         Map<Key, List<Occurrence>> byVerb = new java.util.LinkedHashMap<>();
         for (ParsedStatements.Statement statement : analysed.analysis().result().statements()) {
@@ -222,7 +235,7 @@ public final class VerbQueries {
         });
         verbs.sort(Comparator.comparing((PageVerb v) -> v.verb().statements()).reversed()
                 .thenComparing(v -> v.verb().lemma()));
-        return verbs;
+        return new PageVerbs(verbs, false);
     }
 
     private static int offset(String cursor) {
