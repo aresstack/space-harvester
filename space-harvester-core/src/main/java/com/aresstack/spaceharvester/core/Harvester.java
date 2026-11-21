@@ -950,14 +950,10 @@ public final class Harvester implements AutoCloseable {
                     new ChatStepModel(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.VERSION,
                             podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
                     new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
-                            builder.userAgent),
+                            builder.userAgent, sentences),
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(
                             builder.dataDirectory.resolve("podcasts")),
                     com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled(),
-                    new com.aresstack.enterpriseai.astu.acropolis.speech.TextAnalysisService(
-                            () -> com.aresstack.spaceharvester.application.podcast.SentenceAnalysis.engine(sentences),
-                            com.aresstack.enterpriseai.astu.acropolis.speech.TextAnalysisService
-                                    .DEFAULT_STOP_GRACE_MILLIS),
                     () -> {
                         com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
                         return current == null ? 1 : current.parallel();

@@ -1,8 +1,5 @@
 package com.aresstack.spaceharvester.application.podcast;
 
-import com.aresstack.enterpriseai.speech.api.SpeechSynthesisException;
-import com.aresstack.enterpriseai.speech.api.SpeechSynthesisPort;
-import com.aresstack.enterpriseai.speech.api.SynthesizedSpeech;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
@@ -169,7 +166,7 @@ class UpdatePodcastsTest {
 
     private UpdatePodcasts podcasts(StepModel model, PodcastSpeech speech) {
         return new UpdatePodcasts(jobs, model, speech, new PodcastStore(root.resolve("podcasts")),
-                PodcastVoices.bundled(), null, () -> 2, (context, attempt) -> { });
+                PodcastVoices.bundled(), () -> 2, (context, attempt) -> { });
     }
 
     private UpdateSummary summary(String text) {
@@ -238,24 +235,13 @@ class UpdatePodcastsTest {
         }
 
         @Override
-        public SpeechSynthesisPort port() {
-            return new SpeechSynthesisPort() {
-                @Override
-                public String catalogId() {
-                    return "test";
-                }
-
-                @Override
-                public SynthesizedSpeech synthesize(String modelId, String voice, String text)
-                        throws SpeechSynthesisException {
-                    calls.incrementAndGet();
-                    if (failing.test(voice)) {
-                        throw new SpeechSynthesisException("HTTP 503");
-                    }
-                    voices.add(voice);
-                    return new SynthesizedSpeech(silence());
-                }
-            };
+        public List<byte[]> speak(String model, String voice, String text, boolean sentences) throws IOException {
+            calls.incrementAndGet();
+            if (failing.test(voice)) {
+                throw new IOException("HTTP 503");
+            }
+            voices.add(voice);
+            return List.of(silence());
         }
 
         private static byte[] silence() {
