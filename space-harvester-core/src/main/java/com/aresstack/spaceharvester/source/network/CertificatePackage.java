@@ -485,7 +485,7 @@ public final class CertificatePackage {
     }
 
     /** Dateiname aus dem CN (sonst dem ganzen Betreff), für Windows gesäubert, ohne Endung. */
-    static String fileName(X509Certificate certificate) {
+    public static String fileName(X509Certificate certificate) {
         String dn = certificate.getSubjectX500Principal().getName();
         Matcher matcher = COMMON_NAME.matcher(dn);
         String name = matcher.find() ? matcher.group(1).replace("\\,", ",") : dn;

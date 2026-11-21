@@ -583,8 +583,19 @@ final class SettingDialogs {
         Rows rows = new Rows();
         rows.add("Vertrauen", switches, "Ein Zertifikat gilt, sobald eine eingeschaltete Quelle es akzeptiert. "
                 + "Die Windows-Speicher gibt es nur unter Windows.");
-        rows.add("CA-Datei", row(file, browse(file)), "PEM oder DER, z. B. die CA eines TLS-prüfenden Firmen-Proxys; "
-                + "leer ohne");
+        // Zertifikat aus einem QR-Bild des Zertifikatsexports (Strang ZX): landet als PEM im Datenordner und im Feld.
+        ComposerButton qr = Comic.button("QR-Bild …", CertificateQrImport.TOOLTIP);
+        qr.setEnabled(context.settings() != null);
+        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+        buttons.setOpaque(false);
+        buttons.add(browse(file));
+        buttons.add(qr);
+        JPanel fileRow = new JPanel(new BorderLayout(6, 0));
+        fileRow.setOpaque(false);
+        fileRow.add(file, BorderLayout.CENTER);
+        fileRow.add(buttons, BorderLayout.EAST);
+        rows.add("CA-Datei", fileRow, "PEM oder DER, z. B. die CA eines TLS-prüfenden Firmen-Proxys; "
+                + "leer ohne. „QR-Bild …“ liest Zertifikate aus den QR-Codes des Zertifikatsexports");
         Supplier<TrustSettings> draft = () -> new TrustSettings(jvm.isSelected(), root.isSelected(),
                 stores.isSelected(), file.getText().isBlank() ? null : java.nio.file.Path.of(file.getText().strip()));
         JPanel body = new JPanel(new BorderLayout(0, 10));
@@ -593,6 +604,9 @@ final class SettingDialogs {
                 + "KI-Dienst (space-harvester.network.tls)."), BorderLayout.NORTH);
         body.add(rows, BorderLayout.CENTER);
         Shell shell = new Shell(parent, TLS_TITLE, body);
+        qr.addActionListener(e -> CertificateQrImport.choose(qr, file,
+                context.settings().storage().dataDirectory(), shell.feedback::problem,
+                message -> shell.feedback.info(message, null)));
         shell.onSaveFile(() -> {
             try {
                 return TrustPolicy.problems(draft.get());

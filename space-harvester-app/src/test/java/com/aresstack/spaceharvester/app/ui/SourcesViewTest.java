@@ -347,6 +347,13 @@ class SourcesViewTest {
         // Dateiquellen haben kein https: gesperrt, nicht ausgeblendet, mit Grund.
         assertThat(export.isEnabled()).isFalse();
         assertThat(export.getToolTipText()).isEqualTo("Nur für Quellen mit https");
+        javax.swing.JMenu codes = find(popup[0], javax.swing.JMenu.class).get(0);
+        assertThat(popup[0].getComponentIndex(codes)).isEqualTo(popup[0].getComponentIndex(export) + 1);
+        assertThat(codes.getText()).isEqualTo("Zertifikate als QR-Code");
+        assertThat(codes.isEnabled()).isFalse();
+        assertThat(codes.getToolTipText()).isEqualTo("Nur für Quellen mit https");
+        assertThat(java.util.Arrays.stream(codes.getMenuComponents()).map(c -> ((javax.swing.JMenuItem) c).getText()))
+                .containsExactly("Anzeigen …", "Als Bilder speichern");
     }
 
     private static Container all(SourcesView view) {

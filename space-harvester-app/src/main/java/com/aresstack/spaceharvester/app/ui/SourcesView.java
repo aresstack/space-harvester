@@ -813,7 +813,7 @@ public final class SourcesView implements View {
      * Zertifikatsexport der Quelle (Strang ZX): im Hintergrund über den Core, Schleier über der Karte mit Esc,
      * Ergebnis in der Statuszeile, Fehler in der Meldungsplatte. Datei in den Ausgabeordner, ohne Speichern-Dialog.
      */
-    private void exportCertificates(SourceCard card) {
+    private void exportCertificates(SourceCard card, boolean qr) {
         AppSettings.SourceEntry entry = card.entry;
         AppRuntime runtime = context.runtime();
         if (runtime == null || context.settings() == null) {
@@ -827,7 +827,8 @@ public final class SourcesView implements View {
             cancelled.set(true);
             card.busy(null, null);
         });
-        Background.run(() -> runtime.workspace().exportCertificates(entry.id(), directory, cancelled::get), found -> {
+        Background.run(() -> qr ? runtime.workspace().exportCertificateCodes(entry.id(), directory, cancelled::get)
+                : runtime.workspace().exportCertificates(entry.id(), directory, cancelled::get), found -> {
             card.busy(null, null);
             if (cancelled.get()) {
                 return;
@@ -837,7 +838,7 @@ public final class SourcesView implements View {
                 return;
             }
             com.aresstack.spaceharvester.application.sources.CertificateExport result = found.get();
-            String summary = "Zertifikate von " + name + " gespeichert: " + result.file().getFileName()
+            String summary = (qr ? "QR-Codes der Zertifikate von " : "Zertifikate von ") + name + " gespeichert: " + result.file().getFileName()
                     + " im Ausgabeordner (" + Texts.count((int) result.roots(), "Stammzertifikat", "Stammzertifikate")
                     + ", " + Texts.count((int) result.intermediates(), "Zwischenzertifikat", "Zwischenzertifikate")
                     + (result.missing() > 0 ? ", davon " + result.missing() + " nicht vom Server gesendet" : "") + ")";
@@ -849,6 +850,43 @@ public final class SourcesView implements View {
                                 ? List.of("Die Kette des Servers endet an keinem vertrauten Stammzertifikat; "
                                 + "Einzelheiten in LIESMICH.txt im ZIP.") : result.problems()));
             }
+        }, error -> {
+            card.busy(null, null);
+            if (!(error instanceof java.util.concurrent.CancellationException) && !cancelled.get()) {
+                feedback.problem(error);
+            }
+        });
+    }
+
+    /** Die QR-Codes der vertrauten Zertifikate am Bildschirm (Strang ZX); sammelt im Hintergrund mit Schleier. */
+    private void showCertificateCodes(SourceCard card) {
+        AppSettings.SourceEntry entry = card.entry;
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        String name = entry.config().title() == null || entry.config().title().isBlank() ? entry.id()
+                : entry.config().title();
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        card.busy("Zertifikate werden gesammelt …", () -> {
+            cancelled.set(true);
+            card.busy(null, null);
+        });
+        Background.run(() -> runtime.workspace().certificateCodes(entry.id(), cancelled::get), found -> {
+            card.busy(null, null);
+            if (cancelled.get()) {
+                return;
+            }
+            if (found.isEmpty()) {
+                feedback.warning("Nicht verfügbar", "Die Quelle " + name + " ist dem Programm nicht bekannt.");
+                return;
+            }
+            if (found.get().isEmpty()) {
+                feedback.warning("Keine vertrauten Zertifikate", "Für " + name + " gibt es kein Zertifikat, dem "
+                        + "dieser Rechner vertraut; Einzelheiten zeigt das Archiv unter „Zertifikate exportieren …“.");
+                return;
+            }
+            CertificateCodesView.open(root, name, found.get());
         }, error -> {
             card.busy(null, null);
             if (!(error instanceof java.util.concurrent.CancellationException) && !cancelled.get()) {
@@ -1773,8 +1811,23 @@ public final class SourcesView implements View {
                     : "Serverkette samt fehlender Zertifizierungsstellen und das Client-Zertifikat (öffentlicher "
                     + "Teil) als ZIP mit Anleitung in den Ausgabeordner, zum Import auf einem anderen Rechner");
             certificates.setEnabled(https && context.runtime() != null && !busy.isBusy());
-            certificates.addActionListener(e -> SourcesView.this.exportCertificates(this));
+            certificates.addActionListener(e -> SourcesView.this.exportCertificates(this, false));
             menu.add(certificates);
+            // Eigener Eintrag mit Untermenü (ein Elterneintrag mit ▸ löst beim Klick nichts aus; UX-Manager).
+            javax.swing.JMenu codes = new javax.swing.JMenu("Zertifikate als QR-Code");
+            String codesTip = !https ? "Nur für Quellen mit https"
+                    : "Ein QR-Code je vertrautem Zertifikat (Inhalt PEM), zum Abscannen mit dem Telefon";
+            codes.setToolTipText(codesTip);
+            codes.setEnabled(certificates.isEnabled());
+            JMenuItem showCodes = new JMenuItem("Anzeigen …");
+            showCodes.setToolTipText("Die QR-Codes groß am Bildschirm zeigen, einen nach dem anderen");
+            showCodes.addActionListener(e -> SourcesView.this.showCertificateCodes(this));
+            codes.add(showCodes);
+            JMenuItem saveCodes = new JMenuItem("Als Bilder speichern");
+            saveCodes.setToolTipText("Je Zertifikat ein PNG als ZIP in den Ausgabeordner");
+            saveCodes.addActionListener(e -> SourcesView.this.exportCertificates(this, true));
+            codes.add(saveCodes);
+            menu.add(codes);
             JMenuItem export = new JMenuItem("Herunterladen");
             export.setToolTipText("Je Space dieser Quelle sofort einen Download starten");
             export.setEnabled(running);

@@ -29,6 +29,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Iterator;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.ImageIO;
 
 /**
@@ -113,6 +118,40 @@ public final class CertificateQrCodes {
                     certificate));
         }
         return List.copyOf(found.values());
+    }
+
+    /** Größte Bilddatei, die {@link #read(Path)} annimmt. */
+    static final long MAX_FILE_BYTES = 30L * 1024 * 1024;
+    /** Größte Pixelzahl, die {@link #read(Path)} dekodiert (etwa ein 40-Megapixel-Foto). */
+    static final long MAX_PIXELS = 40_000_000L;
+
+    /**
+     * Wie {@link #read(BufferedImage)} für eine Bilddatei (PNG, JPEG, GIF, BMP); Datei und Bild sind in der Größe
+     * begrenzt, damit ein übergroßes Bild den Speicher nicht sprengt.
+     *
+     * @throws IOException mit Grund, wenn die Datei zu groß, kein lesbares Bild oder nicht lesbar ist
+     */
+    public static List<X509Certificate> read(Path file) throws IOException {
+        if (Files.size(file) > MAX_FILE_BYTES) {
+            throw new IOException("Bild zu groß (höchstens " + MAX_FILE_BYTES / (1024 * 1024) + " MB)");
+        }
+        try (ImageInputStream in = ImageIO.createImageInputStream(file.toFile())) {
+            Iterator<ImageReader> readers = in == null ? null : ImageIO.getImageReaders(in);
+            if (readers == null || !readers.hasNext()) {
+                throw new IOException("Kein lesbares Bild (PNG, JPEG, GIF oder BMP)");
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(in, true, true);
+                long pixels = (long) reader.getWidth(0) * reader.getHeight(0);
+                if (pixels > MAX_PIXELS) {
+                    throw new IOException("Bild zu groß (höchstens " + MAX_PIXELS / 1_000_000 + " Megapixel)");
+                }
+                return read(reader.read(0));
+            } finally {
+                reader.dispose();
+            }
+        }
     }
 
     /** Ein Zertifikat aus PEM-Text; leer bei allem anderen (auch privaten Schlüsseln oder mehreren Blöcken). */

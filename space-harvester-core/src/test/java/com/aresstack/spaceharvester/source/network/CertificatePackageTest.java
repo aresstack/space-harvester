@@ -134,6 +134,29 @@ class CertificatePackageTest {
     }
 
     @Test
+    void theQrArchiveHasOneReadablePngPerTrustedCertificate() throws IOException {
+        CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(server), true,
+                List.of(root, intermediate), List.of(), List.of(), List.of(), NOW);
+        Path file = Files.createTempFile(dir, "qr", ".zip");
+
+        assertThat(bundle.writeQrZip(file)).isEqualTo(2);
+        List<String> names = new ArrayList<>();
+        try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(file), StandardCharsets.UTF_8)) {
+            for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                names.add(entry.getName());
+                if (entry.getName().endsWith(".png")) {
+                    java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(
+                            new java.io.ByteArrayInputStream(zip.readAllBytes()));
+                    assertThat(CertificateQrCodes.read(image)).hasSize(1).first()
+                            .isIn(root, intermediate);
+                }
+            }
+        }
+        assertThat(names).containsExactly("01 Stamm Erfundene Wurzel.png",
+                "02 Zwischen Erfundene Zwischenstelle.png", "LIESMICH.txt");
+    }
+
+    @Test
     void withoutHandshakeThePackageStillHasTheClientChainAndTheReason() throws IOException {
         CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(), false,
                 List.of(root, intermediate), List.of(server, intermediate), List.of("Keine Kette vom Server: TCP"),
