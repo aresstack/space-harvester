@@ -68,6 +68,12 @@ public class StatementAnalysisJobs {
     public static final String STAGE_NOT_RELEASED = "STAGE_NOT_RELEASED";
     /** Code des Info-Ereignisses „so viele Seiten ohne Vorstufe, weil kein Modell eingestellt ist“. */
     public static final String STAGE_NO_MODEL = "STAGE_NO_MODEL";
+    /** Code des Info-Ereignisses „so viele Seiten ohne KI-Freigabe nicht vom Sprachmodell analysiert“ (A2). */
+    public static final String MODEL_NOT_RELEASED = "MODEL_NOT_RELEASED";
+    /** Code des Info-Ereignisses „so viele Seiten nicht vom Sprachmodell analysiert, kein Modell eingestellt“. */
+    public static final String MODEL_NO_MODEL = "MODEL_NO_MODEL";
+    /** Code des Info-Ereignisses mit den Zahlen des KI-Analysators (Fahrplan Paket A2). */
+    public static final String MODEL_COSTS = "MODEL_COSTS";
     /** Phase, in der der Prüfauftrag Seiten prüft (ADR 0032, FL4). */
     public static final String PHASE_CHECK = "Aussagen prüfen";
     /** Fehlercode des Prüfauftrags ohne eingestelltes Chat-Modell. */
@@ -129,9 +135,10 @@ public class StatementAnalysisJobs {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(options, "options");
-        if (!analysis.available()) {
+        if (!analysis.available(options.analyzer())) {
             throw new AnalyzerUnavailableException(AnalyzerUnavailableException.Reason.NOT_CONFIGURED,
-                    "In dieser Laufzeit ist kein Satzanalysator eingerichtet (nur in der Desktop-App)", null);
+                    options.analyzer() == AnalyzerChoice.MODEL ? "In dieser Laufzeit ist kein KI-Analysator eingerichtet"
+                            : "In dieser Laufzeit ist kein Satzanalysator eingerichtet (nur in der Desktop-App)", null);
         }
         return jobs.submit(JobType.STATEMENT_ANALYSIS, scope.sourceId(), scope.spaceKey(), scope.rootPageId(), owner,
                 JobTask.blocking(context -> run(caller, scope, options, context)));
@@ -148,6 +155,10 @@ public class StatementAnalysisJobs {
                     + " Seiten; es wurde nichts analysiert. Bitte ausdrücklich mit höherer Grenze bestätigen.");
         }
         context.phase(COMPONENT, PHASE_ANALYSIS);
+        if (options.analyzer() == AnalyzerChoice.MODEL) {
+            runModel(caller, walk, options, context);
+            return;
+        }
         long current = 0;
         long withoutText = 0;
         StatementAnalysis.SimplificationRequest vorstufe = options.simplification();
@@ -221,6 +232,93 @@ public class StatementAnalysisJobs {
                         STAGE_NO_MODEL, costs[9] + " Seiten ohne Vorstufe analysiert, weil kein Modell eingestellt "
                         + "ist", null, null, null));
             }
+        }
+        if (walk.incomplete) {
+            throw new JobFailedException(INCOMPLETE, "Der Umfang konnte nicht vollständig ermittelt werden; die "
+                    + "gefundenen Seiten wurden verarbeitet, weitere fehlen.");
+        }
+    }
+
+    /**
+     * Der Lauf mit dem KI-Analysator (Fahrplan Paket A2): nur Seiten mit KI-Freigabe gehen an den KI-Dienst. Ohne
+     * Freigabe oder ohne eingestelltes Modell wird die Seite bewusst ausgelassen und gezählt (gelb), nie als Fehler;
+     * ein Fehler des Dienstes zählt die Seite als gescheitert (rot), die übrigen laufen weiter.
+     */
+    private void runModel(AccessContext caller, Walk walk, Options options, JobContext context) {
+        long current = 0;
+        long withoutText = 0;
+        long notReleased = 0;
+        long noModel = 0;
+        // Seiten, Sätze, Modellaufrufe, verworfene Antwortzeilen, verworfene Aussagen, Sätze ohne Aussage
+        long[] costs = new long[6];
+        for (Target target : walk.pages.values()) {
+            context.checkpoint();
+            try {
+                PageSnapshot snapshot = fetch.page(caller, target.sourceId(), target.pageId());
+                if (!options.reanalyze() && analysis.currentWith(caller, snapshot, AnalyzerChoice.MODEL)) {
+                    current++;
+                    context.processed(1);
+                    continue;
+                }
+                java.util.Optional<AnalyzerUnavailableException.Reason> unavailable =
+                        analysis.modelUnavailable(snapshot.key());
+                if (unavailable.isPresent()) {
+                    if (unavailable.get() == AnalyzerUnavailableException.Reason.NOT_RELEASED) {
+                        notReleased++;
+                    } else {
+                        noModel++;
+                    }
+                    context.processed(1);
+                    continue;
+                }
+                if (analysis.analyzeWith(caller, snapshot, context::cancelRequested, AnalyzerChoice.MODEL, run -> {
+                    costs[0]++;
+                    costs[1] += run.sentences();
+                    costs[2] += run.modelCalls();
+                    costs[3] += run.rejectedLines();
+                    costs[4] += run.rejectedStatements();
+                    costs[5] += run.noStatement();
+                }).analysis() == null) {
+                    withoutText++;
+                } else {
+                    context.written(1);
+                }
+            } catch (CancellationException e) {
+                context.checkpoint();
+                throw e;
+            } catch (AnalyzerUnavailableException e) {
+                // bewusst ausgelassen: Freigabe während des Laufs entzogen oder Modell inzwischen entfernt
+                if (e.reason() == AnalyzerUnavailableException.Reason.NOT_RELEASED) {
+                    notReleased++;
+                } else {
+                    noModel++;
+                }
+            } catch (RuntimeException e) {
+                if (context.cancelRequested()) {
+                    context.checkpoint();
+                }
+                context.failed(1);
+                context.record(JobEvent.Draft.warning(e instanceof AccessDeniedException ? JobEvent.Category.ACCESS
+                        : JobEvent.Category.SOURCE, COMPONENT, "PAGE_FAILED",
+                        "Eine Seite wurde nicht analysiert (" + e.getClass().getSimpleName() + ")"));
+            }
+            context.processed(1);
+        }
+        context.record(JobEvent.Draft.info(COMPONENT, walk.pages.size() + " Seiten ermittelt, " + current
+                + " aktuell übersprungen, " + withoutText + " ohne Lesetext"));
+        context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, MODEL_COSTS,
+                "Sprachmodell: " + costs[0] + " Seiten, " + costs[1] + " Sätze, " + costs[2] + " Modellaufrufe, "
+                        + costs[3] + " Zeilen verworfen, " + costs[4] + " Aussagen im Wortabgleich verworfen, "
+                        + costs[5] + " Sätze ohne eindeutige Aussage", null, null, null));
+        if (notReleased > 0) {
+            context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                    MODEL_NOT_RELEASED, notReleased + " Seiten ohne KI-Freigabe bewusst ausgelassen", null, null,
+                    null));
+        }
+        if (noModel > 0) {
+            context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                    MODEL_NO_MODEL, noModel + " Seiten bewusst ausgelassen, weil kein Chat-Modell eingestellt ist",
+                    null, null, null));
         }
         if (walk.incomplete) {
             throw new JobFailedException(INCOMPLETE, "Der Umfang konnte nicht vollständig ermittelt werden; die "
@@ -560,21 +658,31 @@ public class StatementAnalysisJobs {
      * @param maxPages  ausdrücklich bestätigte Sicherheitsgrenze; {@code 0} ohne Grenze. Wird sie überschritten,
      *                  scheitert der Auftrag vor der ersten Analyse mit {@link #SCOPE_TOO_LARGE} – nie still gekürzt.
      * @param simplification Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3) oder {@code null} ohne sie; nur Seiten mit
-     *                  KI-Freigabe gehen an das Modell, die übrigen werden ohne Vorstufe analysiert
+     *                  KI-Freigabe gehen an das Modell, die übrigen werden ohne Vorstufe analysiert; nur mit dem MaltParser
+     * @param analyzer  welcher Analysator rechnet (Fahrplan Paket A2), {@code null} = MaltParser. Mit
+     *                  {@link AnalyzerChoice#MODEL} gehen nur Seiten mit KI-Freigabe an den KI-Dienst; Seiten ohne
+     *                  Freigabe und ohne eingestelltes Modell werden bewusst ausgelassen und gezählt, nie als Fehler
      */
-    public record Options(boolean reanalyze, int maxPages, StatementAnalysis.SimplificationRequest simplification) {
+    public record Options(boolean reanalyze, int maxPages, StatementAnalysis.SimplificationRequest simplification,
+                          AnalyzerChoice analyzer) {
 
         public static final Options DEFAULT = new Options(false, 0);
 
-        /** Ohne Vorstufe. */
+        /** Ohne Vorstufe, mit dem MaltParser. */
         public Options(boolean reanalyze, int maxPages) {
             this(reanalyze, maxPages, null);
+        }
+
+        /** Mit dem MaltParser. */
+        public Options(boolean reanalyze, int maxPages, StatementAnalysis.SimplificationRequest simplification) {
+            this(reanalyze, maxPages, simplification, AnalyzerChoice.PARSER);
         }
 
         public Options {
             if (maxPages < 0) {
                 throw new IllegalArgumentException("maxPages darf nicht negativ sein");
             }
+            analyzer = analyzer == null ? AnalyzerChoice.PARSER : analyzer;
         }
     }
 

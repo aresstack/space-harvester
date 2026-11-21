@@ -60,6 +60,8 @@ public class StatementAnalysis {
     private final Clock clock;
     private final Simplifications simplifications;
     private final StatementChecks checks;
+    private final Supplier<StatementAnalyzer> model;
+    private final java.util.function.Predicate<PageKey> released;
 
     /**
      * @param texts    dieselbe Textprojektion wie der Leser ({@code Enrichments#text})
@@ -85,8 +87,21 @@ public class StatementAnalysis {
     public StatementAnalysis(Function<PageSnapshot, Optional<PageText>> texts, KnowledgeGraphStore store,
                              AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock,
                              Simplifications simplifications, StatementChecks checks) {
+        this(texts, store, access, analyzer, clock, simplifications, checks, () -> null, page -> false);
+    }
+
+    /**
+     * @param model    der KI-Analysator (Fahrplan Paket A2), Ergebnis {@code null} ohne ihn
+     * @param released ob eine Seite jetzt an den KI-Dienst darf, etwa {@code AiRelease::mayProcess} (ADR 0028)
+     */
+    public StatementAnalysis(Function<PageSnapshot, Optional<PageText>> texts, KnowledgeGraphStore store,
+                             AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock,
+                             Simplifications simplifications, StatementChecks checks,
+                             Supplier<StatementAnalyzer> model, java.util.function.Predicate<PageKey> released) {
         this.simplifications = simplifications;
         this.checks = checks;
+        this.model = Objects.requireNonNull(model, "model");
+        this.released = Objects.requireNonNull(released, "released");
         this.texts = Objects.requireNonNull(texts, "texts");
         this.store = Objects.requireNonNull(store, "store");
         this.access = Objects.requireNonNull(access, "access");
@@ -153,7 +168,7 @@ public class StatementAnalysis {
      * lässt eine Analyse mit Vorstufe als aktuell stehen.
      */
     public boolean current(AccessContext caller, PageSnapshot snapshot, SimplificationRequest request) {
-        PageStatements read = read(caller, snapshot);
+        PageStatements read = read(caller, snapshot, AnalyzerChoice.PARSER);
         if (read.state() != PageStatements.State.CURRENT) {
             return false;
         }
@@ -249,6 +264,143 @@ public class StatementAnalysis {
         store.replace(analysis);
         return new PageStatements(PageStatements.State.CURRENT, null,
                 analysis.withResult(result.withoutConllu()));
+    }
+
+    /** Der Analysator der Wahl oder {@code null}, wenn er in dieser Laufzeit fehlt; lädt kein Modell. */
+    StatementAnalyzer analyzer(AnalyzerChoice choice) {
+        return choice == AnalyzerChoice.MODEL ? model.get() : analyzer.get();
+    }
+
+    /** Ob der Analysator der Wahl in dieser Laufzeit eingerichtet ist (Fahrplan Paket A2); lädt kein Modell. */
+    public boolean available(AnalyzerChoice choice) {
+        return analyzer(choice) != null;
+    }
+
+    /** Aus welcher Ablage Graph, Stand, Begriffe und Export lesen (Fahrplan Paket A2). */
+    public AnalyzerChoice selected() {
+        return store instanceof AnalyzerStores stores ? stores.selected() : AnalyzerChoice.PARSER;
+    }
+
+    /** Die Ablage eines Analysators; ohne getrennte Ablagen (Tests) die eine. */
+    private KnowledgeGraphStore store(AnalyzerChoice choice) {
+        return store instanceof AnalyzerStores stores ? stores.store(choice) : store;
+    }
+
+    /** Alle Ablagen, jede einmal. */
+    private List<KnowledgeGraphStore> stores() {
+        return store instanceof AnalyzerStores stores
+                ? List.of(stores.store(AnalyzerChoice.PARSER), stores.store(AnalyzerChoice.MODEL)) : List.of(store);
+    }
+
+    /**
+     * Warum der KI-Analysator (Fahrplan Paket A2) diese Seite jetzt nicht rechnen kann: nicht eingerichtet oder kein
+     * Chat-Modell eingestellt ({@link AnalyzerUnavailableException.Reason#NO_AI_MODEL}), Seite ohne KI-Freigabe
+     * ({@link AnalyzerUnavailableException.Reason#NOT_RELEASED}); leer, wenn er kann. Beides ist „bewusst ausgelassen“,
+     * kein Fehler.
+     */
+    public Optional<AnalyzerUnavailableException.Reason> modelUnavailable(PageKey key) {
+        StatementAnalyzer analyzer = model.get();
+        if (analyzer == null || !analyzer.ready()) {
+            return Optional.of(AnalyzerUnavailableException.Reason.NO_AI_MODEL);
+        }
+        if (!released.test(key)) {
+            return Optional.of(AnalyzerUnavailableException.Reason.NOT_RELEASED);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Die gespeicherte Analyse der Seite aus der Ablage des gewählten Analysators (Fahrplan Paket A2), mit ihrem Stand;
+     * rechnet nie und lädt kein Modell.
+     */
+    public PageStatements read(AccessContext caller, PageSnapshot snapshot, AnalyzerChoice choice) {
+        require(caller, snapshot);
+        Optional<PageStatementAnalysis> stored = store(choice).find(snapshot.key())
+                .filter(analysis -> AnalyzerChoice.of(analysis.analyzerId()) == choice);
+        if (stored.isEmpty()) {
+            return PageStatements.missing(texts.apply(snapshot).isEmpty() ? PageStatements.NO_TEXT
+                    : PageStatements.NOT_ANALYSED);
+        }
+        String reason = reason(stored.get(), texts.apply(snapshot).map(PageText::inputSha256));
+        return new PageStatements(reason == null ? PageStatements.State.CURRENT : PageStatements.State.STALE, reason,
+                stored.get());
+    }
+
+    /** Ob die Analyse des gewählten Analysators aktuell ist, so dass ein Auftrag die Seite überspringen kann. */
+    public boolean currentWith(AccessContext caller, PageSnapshot snapshot, AnalyzerChoice choice) {
+        return read(caller, snapshot, choice).state() == PageStatements.State.CURRENT;
+    }
+
+    /**
+     * Analysiert die Seite jetzt mit dem gewählten Analysator, im aufrufenden Thread, und ersetzt nur dessen gespeicherte
+     * Analyse (Fahrplan Paket A2); die des anderen bleibt. {@link AnalyzerChoice#PARSER} wie
+     * {@link #analyze(AccessContext, PageSnapshot, BooleanSupplier)}. {@link AnalyzerChoice#MODEL} schickt den Text nur
+     * mit KI-Freigabe an den KI-Dienst und fragt die Freigabe vor und nach dem Aufruf; Fehler, Abbruch oder Entzug
+     * schreiben nichts.
+     *
+     * @param costs bekommt die Zahlen des KI-Analysators; nie Inhalte
+     * @throws AnalyzerUnavailableException ohne Analysator, ohne Chat-Modell oder ohne KI-Freigabe der Seite
+     * @throws CancellationException        nach einem Abbruch; die alte Analyse bleibt
+     */
+    public PageStatements analyzeWith(AccessContext caller, PageSnapshot snapshot, BooleanSupplier cancelled,
+                                      AnalyzerChoice choice, Consumer<StatementAnalyzer.Costs> costs) {
+        Objects.requireNonNull(choice, "choice");
+        Objects.requireNonNull(costs, "costs");
+        if (choice == AnalyzerChoice.PARSER) {
+            return analyze(caller, snapshot, cancelled);
+        }
+        require(caller, snapshot);
+        PageKey key = snapshot.key();
+        Optional<AnalyzerUnavailableException.Reason> unavailable = modelUnavailable(key);
+        if (unavailable.isPresent()) {
+            throw new AnalyzerUnavailableException(unavailable.get(), unavailable.get()
+                    == AnalyzerUnavailableException.Reason.NOT_RELEASED ? "Seite nicht für den KI-Dienst freigegeben"
+                    : "Kein Chat-Modell eingestellt (Einstellungen › Modelle)", null);
+        }
+        StatementAnalyzer analyzer = model.get();
+        Optional<PageText> text = texts.apply(snapshot);
+        if (text.isEmpty()) {
+            return PageStatements.missing(PageStatements.NO_TEXT);
+        }
+        String input = text.get().inputSha256();
+        String version = analyzer.version();
+        ParsedStatements result = analyzer.analyze(PageStatementAnalysis.documentId(key, input),
+                analyzerText(text.get()), cancelled, costs);
+        if (cancelled.getAsBoolean()) {
+            throw new CancellationException("Analyse abgebrochen");
+        }
+        if (!released.test(key)) {
+            // ADR 0028: Freigabe während des Laufs entzogen, kein Modellergebnis der Seite in die Ablage
+            throw new AnalyzerUnavailableException(AnalyzerUnavailableException.Reason.NOT_RELEASED,
+                    "Seite nicht für den KI-Dienst freigegeben", null);
+        }
+        check(result, text.get().text().length());
+        PageStatementAnalysis analysis = new PageStatementAnalysis(key, snapshot.spaceKey(), snapshot.metadata().title(),
+                snapshot.revision(), input, analyzer.id(), version, clock.instant(), result, null, null);
+        store(AnalyzerChoice.MODEL).replace(analysis);
+        return new PageStatements(PageStatements.State.CURRENT, null, analysis.withResult(result.withoutConllu()));
+    }
+
+    /**
+     * Nimmt nach dem Entzug der KI-Freigabe (ADR 0028) die Analysen des KI-Analysators (Fahrplan Paket A2) der Seiten
+     * ohne Freigabe zurück; die des MaltParsers bleiben.
+     *
+     * @return Zahl der entfernten Analysen
+     */
+    public int withdrawModel(java.util.Collection<PageKey> pages, java.util.function.Predicate<PageKey> released) {
+        KnowledgeGraphStore modelStore = store(AnalyzerChoice.MODEL);
+        int removed = 0;
+        for (PageKey page : pages) {
+            if (released.test(page)) {
+                continue;
+            }
+            Optional<PageStatementAnalysis> stored = modelStore.find(page);
+            if (stored.isPresent() && AnalyzerChoice.of(stored.get().analyzerId()) == AnalyzerChoice.MODEL) {
+                modelStore.remove(page);
+                removed++;
+            }
+        }
+        return removed;
     }
 
     /** Ob der Prüfschritt eingerichtet ist und ein Chat-Modell eingestellt ist; ruft kein Modell. */
@@ -416,18 +568,20 @@ public class StatementAnalysis {
      */
     public int withdrawChecks(java.util.Collection<PageKey> pages, java.util.function.Predicate<PageKey> released) {
         int changed = 0;
-        for (PageKey page : pages) {
-            if (released.test(page)) {
-                continue;
-            }
-            Optional<PageStatementAnalysis> stored = store.find(page);
-            if (stored.isEmpty()) {
-                continue;
-            }
-            ParsedStatements unchecked = withoutChecks(stored.get().result());
-            if (unchecked != stored.get().result()) {
-                store.replace(stored.get().withResult(withConllu(page, unchecked)));
-                changed++;
+        for (KnowledgeGraphStore each : stores()) {
+            for (PageKey page : pages) {
+                if (released.test(page)) {
+                    continue;
+                }
+                Optional<PageStatementAnalysis> stored = each.find(page);
+                if (stored.isEmpty()) {
+                    continue;
+                }
+                ParsedStatements unchecked = withoutChecks(stored.get().result());
+                if (unchecked != stored.get().result()) {
+                    each.replace(stored.get().withResult(withConllu(each, page, unchecked)));
+                    changed++;
+                }
             }
         }
         return changed;
@@ -452,7 +606,11 @@ public class StatementAnalysis {
 
     /** Die Analyse mit der gespeicherten CoNLL-U der Seite, damit ein Ersetzen die Syntaxdetails behält. */
     private ParsedStatements withConllu(PageKey page, ParsedStatements result) {
-        return result.conllu() != null ? result : result.withConllu(store.conllu(page).orElse(null));
+        return withConllu(store, page, result);
+    }
+
+    private static ParsedStatements withConllu(KnowledgeGraphStore from, PageKey page, ParsedStatements result) {
+        return result.conllu() != null ? result : result.withConllu(from.conllu(page).orElse(null));
     }
 
     /** Der größere von zwei Abschnitten desselben Satzes (sie sind gleich, solange eine Analyse sie setzte). */
@@ -485,7 +643,7 @@ public class StatementAnalysis {
         if (!stored.inputSha256().equals(input.get())) {
             return PageStatements.TEXT_CHANGED;
         }
-        StatementAnalyzer parser = analyzer.get();
+        StatementAnalyzer parser = analyzer(AnalyzerChoice.of(stored.analyzerId()));
         if (parser != null && !(parser.id().equals(stored.analyzerId())
                 && parser.version().equals(stored.analyzerVersion()))) {
             return PageStatements.ANALYZER_CHANGED;
@@ -627,30 +785,32 @@ public class StatementAnalysis {
      */
     public int withdrawStage(java.util.Collection<PageKey> pages, java.util.function.Predicate<PageKey> released) {
         int changed = 0;
-        for (PageKey page : pages) {
-            if (released.test(page)) {
-                continue;
-            }
-            Optional<PageStatementAnalysis> stored = store.find(page);
-            if (stored.isEmpty()) {
-                continue;
-            }
-            ParsedStatements result = stored.get().result();
-            // ADR 0032, FL4: Urteile und Korrekturen des Prüfschritts fallen mit der Freigabe, ohne die Analyse
-            // veralten zu lassen; die Aussagen stehen danach genau wie vor dem Prüflauf da
-            ParsedStatements unchecked = withoutChecks(result);
-            ParsedStatements stripped = withoutStage(unchecked);
-            if (stripped != unchecked) {
-                // Die ersetzten Original-Aussagen fehlen jetzt: veraltet, der nächste Lauf rechnet ohne Vorstufe
-                store.replace(stored.get().withResult(withConllu(page, stripped))
-                        .withStage(PageStatementAnalysis.STAGE_WITHDRAWN));
-                changed++;
-            } else if (unchecked != result || stored.get().stage() != null
-                    && !PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.get().stage())) {
-                String stage = PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.get().stage())
-                        ? stored.get().stage() : null; // keine Aussage der Vorstufe übrig, nichts fehlt
-                store.replace(stored.get().withResult(withConllu(page, unchecked)).withStage(stage));
-                changed++;
+        for (KnowledgeGraphStore each : stores()) {
+            for (PageKey page : pages) {
+                if (released.test(page)) {
+                    continue;
+                }
+                Optional<PageStatementAnalysis> stored = each.find(page);
+                if (stored.isEmpty()) {
+                    continue;
+                }
+                ParsedStatements result = stored.get().result();
+                // ADR 0032, FL4: Urteile und Korrekturen des Prüfschritts fallen mit der Freigabe, ohne die Analyse
+                // veralten zu lassen; die Aussagen stehen danach genau wie vor dem Prüflauf da
+                ParsedStatements unchecked = withoutChecks(result);
+                ParsedStatements stripped = withoutStage(unchecked);
+                if (stripped != unchecked) {
+                    // Die ersetzten Original-Aussagen fehlen jetzt: veraltet, der nächste Lauf rechnet ohne Vorstufe
+                    each.replace(stored.get().withResult(withConllu(each, page, stripped))
+                            .withStage(PageStatementAnalysis.STAGE_WITHDRAWN));
+                    changed++;
+                } else if (unchecked != result || stored.get().stage() != null
+                        && !PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.get().stage())) {
+                    String stage = PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.get().stage())
+                            ? stored.get().stage() : null; // keine Aussage der Vorstufe übrig, nichts fehlt
+                    each.replace(stored.get().withResult(withConllu(each, page, unchecked)).withStage(stage));
+                    changed++;
+                }
             }
         }
         return changed;

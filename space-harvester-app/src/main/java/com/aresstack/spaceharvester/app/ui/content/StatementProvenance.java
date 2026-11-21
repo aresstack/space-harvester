@@ -25,6 +25,8 @@ public final class StatementProvenance {
     public static final String CHIP = "Herkunft";
     /** Name des Analysators {@code maltparser-de}. */
     public static final String MALTPARSER = "MaltParser";
+    /** Name des KI-Analysators {@code language-model} (Fahrplan Paket A2). */
+    public static final String LANGUAGE_MODEL = "Sprachmodell (KI)";
 
     /** Erklärung hinter dem ?-Knopf des Reiters „Aussagen“. */
     public static final String HELP = "Jede Aussage ist eine grammatische Zuordnung des Analysators, keine geprüfte "
@@ -35,7 +37,7 @@ public final class StatementProvenance {
             + "„" + INVALID + "“: erkannte Fehlkonstruktion ohne verwendbare Beziehung; ebenfalls sichtbar.\n"
             + "Ohne Kennzeichen: aus sicheren Parserkanten abgeleitet, fachlich trotzdem nicht geprüft.\n\n"
             + "Herkunft: Originalsatz, Vorstufe „Sätze vereinfachen“ (KI) oder Korrektur des Prüfschritts (KI), dazu "
-            + "der Analysator (heute MaltParser).\n"
+            + "der Analysator (MaltParser oder Sprachmodell).\n"
             + "Prüfstatus: „" + UNCHECKED + "“, oder das Urteil des Schritts „" + CheckTexts.JOB + "“; ein Urteil "
             + "von Hand geht vor.\n\n"
             + "„" + CHIP + "“ am Eintrag zeigt Gründe, Urteile und worauf jede Rolle beruht. Ein Klick auf den Text "
@@ -49,7 +51,11 @@ public final class StatementProvenance {
         if (analyzerId == null || analyzerId.isBlank()) {
             return null;
         }
-        return analyzerId.startsWith("maltparser") ? MALTPARSER : analyzerId;
+        if (analyzerId.startsWith("maltparser")) {
+            return MALTPARSER;
+        }
+        return com.aresstack.spaceharvester.application.knowledge.ModelStatementAnalyzer.ID.equals(analyzerId)
+                ? LANGUAGE_MODEL : analyzerId;
     }
 
     /**
@@ -161,6 +167,7 @@ public final class StatementProvenance {
             case CASE_HEURISTIC -> "aus dem Kasus geschlossen";
             case LEXICON -> "Wortliste";
             case HEURISTIC -> "Heuristik gegen eine fehlerhafte Parserkante";
+            case MODEL -> "vom Sprachmodell zugeordnet (KI), Wortlaut im Satz geprüft";
         };
         return basis + (argument.certain() ? ", sicher" : ", unsicher");
     }
