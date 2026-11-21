@@ -400,18 +400,22 @@ public class SynonymCandidates {
         List<Term> select() {
             List<Term> ranked = new ArrayList<>(terms.values());
             ranked.sort(Comparator.comparingInt((Term term) -> -term.pages).thenComparing(term -> term.normalized));
-            if (budget.glossaryTermsOnly()) {
-                // K3: Fachbegriffe gehen beim Budget vor, die übrigen bleiben als mögliche Synonyme dahinter.
-                Set<String> technical = glossary();
-                ranked.sort(Comparator.comparing((Term term) -> !technical.contains(term.normalized)));
-            }
             if (ranked.size() <= budget.maxTerms()) {
                 return ranked;
             }
-            List<Term> selected = new ArrayList<>(ranked.subList(0, budget.maxTerms()));
+            List<Term> chosen = new ArrayList<>(ranked);
+            if (budget.glossaryTermsOnly()) {
+                // K3: Fachbegriffe gehen beim Budget vor, die übrigen bleiben als mögliche Synonyme dahinter.
+                Set<String> technical = glossary();
+                chosen.sort(Comparator.comparing((Term term) -> !technical.contains(term.normalized)));
+            }
             Set<String> keep = new HashSet<>();
-            selected.forEach(term -> keep.add(term.normalized));
+            chosen.subList(0, budget.maxTerms()).forEach(term -> keep.add(term.normalized));
             terms.keySet().retainAll(keep);
+            // Die Reihenfolge bleibt die nach Seiten: Sie legt die Ausrichtung jedes Paars fest und damit den
+            // Fingerabdruck des Urteils-Cache; das Häkchen „nur Fachbegriffe“ darf sie nicht drehen.
+            List<Term> selected = new ArrayList<>(ranked);
+            selected.removeIf(term -> !keep.contains(term.normalized));
             return selected;
         }
 

@@ -213,7 +213,10 @@ final class AiSettingsPanel {
      * Synonyme nur zu bestätigten Fachbegriffen ({@code space-harvester.terms.synonyms.glossary-terms-only}, K3,
      * Angelo 21.11.2026): Vorgabe für den automatischen Lauf und Vorbelegung des Startdialogs. Standard aus.
      */
-    final javax.swing.JCheckBox glossarySynonyms = Comic.checkBox("Nur zu bestätigten Fachbegriffen");
+    static final String GLOSSARY_SYNONYMS_TEXT = "Nur zu bestätigten Fachbegriffen";
+    static final String GLOSSARY_SYNONYMS_TIP = "Synonyme nur zu bestätigten Fachbegriffen des Glossars vorschlagen; "
+            + "ohne Häkchen zu allen Begriffen";
+    final javax.swing.JCheckBox glossarySynonyms = Comic.checkBox(GLOSSARY_SYNONYMS_TEXT);
     static final String GLOSSARY_SYNONYMS_LABEL = "Synonyme zu";
     static final String GLOSSARY_SYNONYMS_HELP = "Mit Häkchen sucht die Synonymerkennung nur Synonyme zu Begriffen, "
             + "die du im Fachglossar als Fachbegriff bestätigt hast; ein Paar zählt, wenn mindestens einer der beiden "
@@ -405,8 +408,7 @@ final class AiSettingsPanel {
         automaticSynonyms.setToolTipText("Synonymlauf für eine Quelle nach jedem Abgleich und nach neuer KI-Freigabe; "
                 + "ohne Häkchen nur auf Klick");
         modelRows.add(AUTOMATIC_SYNONYMS_LABEL, Comic.row(automaticSynonyms, automaticSynonymsHelp), null);
-        glossarySynonyms.setToolTipText("Synonyme nur zu bestätigten Fachbegriffen des Glossars vorschlagen; ohne "
-                + "Häkchen zu allen Begriffen");
+        glossarySynonyms.setToolTipText(GLOSSARY_SYNONYMS_TIP);
         modelRows.add(GLOSSARY_SYNONYMS_LABEL, Comic.row(glossarySynonyms, glossarySynonymsHelp), null);
         simplifyMode.addItem(SIMPLIFY_WHERE_NEEDED);
         simplifyMode.addItem(SIMPLIFY_ALWAYS);
