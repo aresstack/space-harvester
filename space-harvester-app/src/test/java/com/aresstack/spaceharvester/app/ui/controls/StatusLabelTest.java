@@ -31,6 +31,25 @@ class StatusLabelTest {
     }
 
     @Test
+    void theLinkIsReachableByKeyboardAndNamedForScreenReaders() throws Exception {
+        AtomicInteger opened = new AtomicInteger();
+        SwingUtilities.invokeAndWait(() -> {
+            StatusLabel label = new StatusLabel();
+            assertThat(label.isFocusable()).as("ohne Link kein Tab-Halt").isFalse();
+            label.show(new StatusNote("Einzelheiten unter Aufträge.", StatusNote.Tone.PLAIN, "Aufträge",
+                    opened::incrementAndGet));
+            assertThat(label.isFocusable()).isTrue();
+            assertThat(label.getAccessibleContext().getAccessibleName()).isEqualTo("Einzelheiten unter Aufträge.");
+            assertThat(label.getAccessibleContext().getAccessibleDescription()).contains("Aufträge");
+            label.getActionMap().get(label.getInputMap(javax.swing.JComponent.WHEN_FOCUSED)
+                    .get(javax.swing.KeyStroke.getKeyStroke("ENTER"))).actionPerformed(null);
+            assertThat(opened).hasValue(1);
+            label.show(StatusNote.plain("fertig"));
+            assertThat(label.isFocusable()).isFalse();
+        });
+    }
+
+    @Test
     void toneSetsTheColourAndPlainTextStaysPlain() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             StatusLabel label = new StatusLabel();
