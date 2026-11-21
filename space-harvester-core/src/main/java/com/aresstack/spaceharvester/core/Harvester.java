@@ -164,7 +164,6 @@ import com.aresstack.spaceharvester.persistence.files.FileSynonymVectorCache;
 import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.terms.AcronymResolution;
-import com.aresstack.spaceharvester.application.terms.ResolutionCache;
 import com.aresstack.spaceharvester.application.terms.SynonymCandidates;
 import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
@@ -747,9 +746,12 @@ public final class Harvester implements AutoCloseable {
             // glossary.rules.* der wirksamen Konfiguration.
             TermSettings glossaryTerms = builder.terms;
             Harvester self = this; // der Wissensgraph entsteht weiter unten, gefragt wird erst im Auftrag
+            // D4: Modellantworten des Glossars dauerhaft im Datei-Cache wie bei den Synonymen.
+            FileResolutionCache glossaryCache = new FileResolutionCache(builder.dataDirectory.resolve("glossary")
+                    .resolve(GlossaryClassification.CACHE_DIRECTORY));
             this.glossaryClassification = new GlossaryClassification(catalog, enrichmentStore, access,
                     cache::findHeader, key -> cache.find(key).flatMap(projector::project), glossary, chatModel,
-                    ResolutionCache.inMemory(), jobs, termProcessor.version(), GlossaryClassification.Budget.DEFAULT,
+                    glossaryCache, jobs, termProcessor.version(), GlossaryClassification.Budget.DEFAULT,
                     who -> self.knowledgeGraph.analysed(who),
                     () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(),
                     this.aiRelease::mayProcess, clock);
@@ -1093,6 +1095,8 @@ public final class Harvester implements AutoCloseable {
                 documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
                 // ADR 0032, FL5c: KI-Einordnungen mit Belegen von entzogenen Seiten fallen auf den Regelstand zurück
                 this.glossary.withdrawAi(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                // D4.3: die Modellantworten des Glossars zu Quellen mit entzogenen Seiten.
+                this.glossaryClassification.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // SY2: Vektoren der Synonymerkennung aus diesen Seiten und der Stand ihrer Quellen.
@@ -1292,6 +1296,7 @@ public final class Harvester implements AutoCloseable {
                     .synonymCache(synonymCache)
                     .synonymVectors(synonymVectors)
                     .glossary(glossary)
+                    .glossaryCache(glossaryCache)
                     .factEdits(factEditStore, clock)
                     .knowledgeGraph(graphStore, graph::forgetInputs)
                     .standing(statusQuo)

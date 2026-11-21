@@ -118,6 +118,21 @@ public class GlossaryClassification {
     /** Kennung des Ereignisses „Modellphase je Seite fertig“ (ADR 0032, FL5c), nur Anzahlen. */
     public static final String MODEL_DONE = "GLOSSARY_MODEL_DONE";
 
+    /** Unterordner des Glossars für den Ergebnis-Cache der Modellantworten (D4: dauerhaft wie bei den Synonymen). */
+    public static final String CACHE_DIRECTORY = "model-cache";
+
+    /**
+     * Die Schlüssel des Ergebnis-Caches, an denen eine Quelle beteiligt ist („Daten bereinigen“): ihre Läufe je Quelle
+     * und Space und die globalen, sonst gälten ihre Antworten nach erneutem Laden als schon gegeben.
+     */
+    public static java.util.function.Predicate<String> cacheKeysOf(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        return key -> {
+            String rest = key.startsWith("classify\u0000") ? key.substring("classify\u0000".length()) : key;
+            return rest.startsWith(sourceId + '\u0000') || rest.startsWith("null\u0000");
+        };
+    }
+
     /** Warum die Phase mit Modell ausfiel. */
     public enum SkipReason {
         /** Kein Chat-Modell eingestellt. */
@@ -357,6 +372,21 @@ public class GlossaryClassification {
             throw e;
         }
         return submitted;
+    }
+
+    /**
+     * KI-Freigabe entzogen (ADR 0028, „Entfernen löscht KI-Ergebnisse“): vergisst die Modellantworten aller Quellen
+     * dieser Seiten im Ergebnis-Cache ({@link #cacheKeysOf}); andere Quellen bleiben.
+     */
+    public void withdrawn(Collection<PageKey> pages) {
+        pages.stream().map(PageKey::sourceId).distinct().forEach(sourceId -> {
+            try {
+                cache.removeSources(cacheKeysOf(sourceId));
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Glossar-Cache von {0} nicht geleert ({1})", sourceId,
+                        e.getClass().getName());
+            }
+        });
     }
 
     /** Ob der Auftrag von {@link #start} stammt. */
