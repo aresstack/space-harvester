@@ -188,6 +188,15 @@ public final class AppContext {
          * ohne {@code spaceKeys} jeden Space der Quelle.
          */
         default void retrySyncs(String sourceId, java.util.List<String> spaceKeys) {
+            retrySyncs(sourceId, spaceKeys, jobs -> { });
+        }
+
+        /**
+         * Wie {@link #retrySyncs(String, java.util.List)}; {@code started} erfährt die Kennungen der gestarteten
+         * Aufträge, damit eine offene Ansicht ihr Ende abonnieren kann (Angelo, 21.11.2026).
+         */
+        default void retrySyncs(String sourceId, java.util.List<String> spaceKeys,
+                                java.util.function.Consumer<java.util.List<String>> started) {
         }
 
         void search(String text);

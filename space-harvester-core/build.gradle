@@ -96,11 +96,14 @@ tasks.named('test') {
     // Wie ein Programm, das beim Start ProxyAuthenticator.allowBasicTunneling() ruft: Das JDK liest die Property nur
     // einmal, beim ersten HttpURLConnection-Aufbau, und der kann in einem früheren Test liegen.
     systemProperty 'jdk.http.auth.tunneling.disabledSchemes', ''
-    // Echttest des Podcast-Planers gegen einen Ollama-Server, nur auf Anfrage:
-    // -PpodcastLiveOllama=http://127.0.0.1:11434 [-PpodcastLiveModel=gemma4:12b]
-    ['podcastLiveOllama', 'podcastLiveModel'].each { name ->
+    // Echttests gegen einen Ollama-Server (nur HTTP-API), nur auf Anfrage:
+    // -PsummaryLiveOllama=http://127.0.0.1:11434 [-PsummaryLiveModel=gemma4:12b] (Update-Zusammenfassung)
+    // -PpodcastLiveOllama=http://127.0.0.1:11434 [-PpodcastLiveModel=gemma4:12b] (Podcast-Planer)
+    ['summaryLiveOllama', 'summaryLiveModel', 'podcastLiveOllama', 'podcastLiveModel'].each { name ->
         if (project.hasProperty(name)) {
-            systemProperty "podcast.live.${name.substring('podcastLive'.length()).uncapitalize()}", project.property(name)
+            String prefix = name.startsWith('summary') ? 'summary' : 'podcast'
+            String rest = name.substring((prefix + 'Live').length()).uncapitalize()
+            systemProperty "${prefix}.live.${rest}", project.property(name)
         }
     }
 }

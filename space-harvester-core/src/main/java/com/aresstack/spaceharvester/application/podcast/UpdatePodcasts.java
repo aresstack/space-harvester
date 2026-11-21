@@ -205,12 +205,20 @@ public final class UpdatePodcasts {
     static PodcastWriter.Material material(UpdateSummary summary) {
         List<String> statements = new ArrayList<>();
         for (SummaryStatement statement : summary.statements()) {
-            if (statement.text() != null && !statement.text().isBlank()) {
-                statements.add(statement.text().strip());
+            // Ab update-summary-v2 trägt jedes Thema Titel und eine ausführliche Fassung: das beste Material.
+            String text = blank(statement.details()) ? statement.text() : statement.details();
+            if (blank(text)) {
+                continue;
             }
+            statements.add(blank(statement.title()) ? text.strip() : statement.title().strip() + ": " + text.strip());
         }
+        String space = summary.spaceKey() == null ? null : summary.spaceName(summary.spaceKey());
         return new PodcastWriter.Material(summary.text(), statements,
-                summary.spaceKey() == null ? null : "Space " + summary.spaceKey());
+                summary.spaceKey() == null ? null : "Space " + (blank(space) ? summary.spaceKey() : space));
+    }
+
+    private static boolean blank(String text) {
+        return text == null || text.isBlank();
     }
 
     // --- Auftrag ------------------------------------------------------------------------------------------------
