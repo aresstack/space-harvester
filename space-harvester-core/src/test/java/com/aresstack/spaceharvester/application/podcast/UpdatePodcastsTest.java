@@ -164,6 +164,22 @@ class UpdatePodcastsTest {
         assertThat(podcasts.podcast(summary)).isEmpty();
     }
 
+    @Test
+    void takesTitleAndDetailsOfEachTopicAsMaterial() {
+        UpdateSummary summary = new UpdateSummary("wiki", "u-1", "DEMO", "Kurzer Überblick.", List.of(
+                new SummaryStatement("Neue Startseite", List.of(), "Startseite",
+                        "Die Startseite zeigt jetzt die Ansprechstellen je Team und ein Glossar."),
+                new SummaryStatement("Altes Format ohne Details", List.of())),
+                "test", Instant.parse("2026-11-21T17:00:00Z"), 0, false);
+
+        PodcastWriter.Material material = UpdatePodcasts.material(summary);
+
+        assertThat(material.statements()).containsExactly(
+                "Startseite: Die Startseite zeigt jetzt die Ansprechstellen je Team und ein Glossar.",
+                "Altes Format ohne Details");
+        assertThat(material.scope()).isEqualTo("Space DEMO");
+    }
+
     private UpdatePodcasts podcasts(StepModel model, PodcastSpeech speech) {
         return new UpdatePodcasts(jobs, model, speech, new PodcastStore(root.resolve("podcasts")),
                 PodcastVoices.bundled(), () -> 2, (context, attempt) -> { });

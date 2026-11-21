@@ -168,6 +168,32 @@ public final class Workspace {
         return harvester.navigation().references(caller, sourceId, pageId);
     }
 
+    /**
+     * Ein Stapel des Verzeichnisses der Verben in {@code within} ({@code VerbQueries.verbs}, Paket K1): aus den
+     * Aussagen des Vorgabe-Analysators, mit den Rechten des Aufrufers. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries.VerbList verbs(
+            com.aresstack.spaceharvester.application.snapshot.PageSet within, String q, int limit, String cursor) {
+        return harvester.verbQueries().verbs(caller, within, q, limit, cursor);
+    }
+
+    /**
+     * Die Verben einer Seite mit ihren Aussagen ({@code VerbQueries.onPage}, Paket K1); {@code null} ohne Analyse,
+     * {@code stale} bei veralteter. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.VerbQueries.PageVerbs pageVerbs(String sourceId,
+                                                                                              String pageId) {
+        return harvester.verbQueries().onPage(caller,
+                new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
+    }
+
+    /** Die Fundstellen eines Verbs in {@code within} ({@code VerbQueries.occurrences}, Paket K1). Nie auf dem EDT. */
+    public List<com.aresstack.spaceharvester.application.knowledge.VerbQueries.Occurrence> verbOccurrences(
+            com.aresstack.spaceharvester.application.snapshot.PageSet within,
+            com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb verb, int limit) {
+        return harvester.verbQueries().occurrences(caller, within, verb.lemma(), verb.fromText(), limit);
+    }
+
     /** Fundstellen eines Begriffs auf sichtbaren Seiten ({@code TermQueries.occurrences}, #119). */
     public TermQueries.OccurrenceList occurrences(TermQueries.OccurrenceSearch search) {
         return harvester.terms().occurrences(caller, search);
@@ -334,6 +360,45 @@ public final class Workspace {
      */
     public Optional<GlossaryAccess> glossary() {
         return Optional.of(glossary);
+    }
+
+    /**
+     * Suchmethode „Nur Fachbegriffe“ (K5b, {@code GET /api/v1/glossary/technical-terms}): vorgeschlagene und bestätigte
+     * Fachbegriffe ohne Einordnung technisch, deren Begriff oder eines ihrer Synonyme zum Suchtext passt.
+     */
+    public com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Page technicalTerms(String q,
+            com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope scope, int limit, String cursor) {
+        return harvester.technicalTerms().search(caller, q, scope, limit, cursor);
+    }
+
+    /** Die nicht abgelehnten Synonyme eines Fachbegriffs, deren Bereich ihn abdeckt (K5b). */
+    public List<com.aresstack.spaceharvester.application.terms.TermRelation> technicalSynonyms(
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry term) {
+        return harvester.technicalTerms().synonymsOf(caller, term);
+    }
+
+    /** Fügt einem Fachbegriff ein Synonym global hinzu oder bestätigt ein vorhandenes gleiches (K5b). */
+    public com.aresstack.spaceharvester.application.terms.TermRelation addTechnicalSynonym(
+            com.aresstack.spaceharvester.application.glossary.GlossaryEntry term, String synonym) {
+        return harvester.technicalTerms().addSynonym(caller, term, synonym);
+    }
+
+    /** Der Prüfstatus eines Glossareintrags, leer, wenn es ihn nicht (mehr) gibt oder er verborgen ist. */
+    public Optional<com.aresstack.spaceharvester.application.terms.ReviewStatus> glossaryStatus(String id) {
+        try {
+            return Optional.of(harvester.glossary().entry(caller, id).status());
+        } catch (com.aresstack.spaceharvester.application.glossary.UnknownGlossaryEntryException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Meldet jede Änderung an den Begriffsbeziehungen (ADR 0027), aus beliebigem Thread; kein Abfragen in Abständen.
+     *
+     * @return meldet den Beobachter wieder ab
+     */
+    public Runnable subscribeTermRelations(Runnable onChange) {
+        return harvester.termRelations().subscribe(Objects.requireNonNull(onChange, "onChange"));
     }
 
     /** Bestätigen ({@code POST …/{id}/confirm?revision=}); wirft bei fremdem Stand {@code RelationConflictException}. */
@@ -2358,6 +2423,14 @@ public final class Workspace {
     /** Meldet jede abgelegte Stufe eines Podcasts (Plan, Abschnitte, Audio), auf einem Thread des Core. */
     public Subscription subscribePodcast(String key, Runnable listener) {
         return harvester.podcasts().subscribe(key, listener);
+    }
+
+    /**
+     * Ob die abgelegte Zusammenfassung eines Updates noch gilt (Rechte, KI-Freigabe), ohne Inhalt; einmal beim Wechsel
+     * der Update-Kennung (Abnahme #1037). Nie auf dem EDT.
+     */
+    public boolean changeSummaryStillValid(String sourceId, String updateId, String spaceKey) {
+        return harvester.changeLog().summaryStillValid(caller, sourceId, updateId, spaceKey);
     }
 
     /** Startet „Zusammenfassen“ für ein Update in einer Ebene (ADR 0031); {@code spaceKey == null} die ganze Quelle. */
