@@ -118,6 +118,8 @@ public final class MainWindow implements AppContext.Navigator {
     private ProxyNotice proxyNotice;
     /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
     private final FindBar findBar;
+    /** Platz der Zeitleiste über der Suchleiste ({@code TimelineEvent}). */
+    private final JPanel timelineSlot = new JPanel(new BorderLayout());
     private AppContext.Section current = AppContext.Section.SEARCH;
     /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
     private AppContext.Section beforeSettings = AppContext.Section.SEARCH;
@@ -185,6 +187,7 @@ public final class MainWindow implements AppContext.Navigator {
         findBar = new FindBar(() -> views.get(current).component());
         statusClear.setRepeats(false);
         context.events().subscribe(StatusMessageEvent.class, this::showStatus);
+        context.events().subscribe(com.aresstack.spaceharvester.app.event.TimelineEvent.class, this::timeline);
         context.onChange(ignored -> updateStatus());
         updateStatus();
         // „Nach dem Update Änderungen anzeigen“ (ADR 0030): eine neue Marke öffnet die Updates ihrer Quelle.
@@ -315,7 +318,14 @@ public final class MainWindow implements AppContext.Navigator {
         JPanel workFoot = new JPanel(new BorderLayout());
         workFoot.setOpaque(false);
         workFoot.add(actionDeck, BorderLayout.CENTER);
-        workFoot.add(findBar, BorderLayout.SOUTH);
+        // Zeitleiste des Podcasts an der Stelle des Trenners über der Suchleiste (TimelineEvent).
+        JPanel findFoot = new JPanel(new BorderLayout());
+        findFoot.setOpaque(false);
+        timelineSlot.setOpaque(false);
+        timelineSlot.setVisible(false);
+        findFoot.add(timelineSlot, BorderLayout.NORTH);
+        findFoot.add(findBar, BorderLayout.CENTER);
+        workFoot.add(findFoot, BorderLayout.SOUTH);
         work.add(deck, BorderLayout.CENTER);
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
@@ -868,6 +878,38 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /** Zeigt eine Statusmeldung vom Bus und blendet sie nach ihrer Dauer aus (wie die Statusleiste in MainframeMate). */
+    /** Zeigt die Zeitleiste einer Ansicht über der Suchleiste, ohne den Trenner, oder nimmt sie wieder weg. */
+    private void timeline(com.aresstack.spaceharvester.app.event.TimelineEvent event) {
+        Runnable apply = () -> {
+            javax.swing.JComponent timeline = event.getPayload().timeline();
+            boolean current = timelineSlot.getComponentCount() == 1 && timelineSlot.getComponent(0) == timeline;
+            if (event.getPayload().show()) {
+                timelineSlot.removeAll();
+                timeline.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE));
+                timelineSlot.add(timeline, BorderLayout.CENTER);
+                timelineSlot.setVisible(true);
+                findBar.line(false);
+            } else if (current) {
+                timelineSlot.removeAll();
+                timelineSlot.setVisible(false);
+                findBar.line(true);
+            }
+            timelineSlot.revalidate();
+            timelineSlot.repaint();
+        };
+        if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+            apply.run();
+        } else {
+            javax.swing.SwingUtilities.invokeLater(apply);
+        }
+    }
+
+    /** Die Zeitleiste über der Suchleiste, falls eine steht (für Tests). */
+    javax.swing.JComponent timelineShown() {
+        return timelineSlot.isVisible() && timelineSlot.getComponentCount() == 1
+                ? (javax.swing.JComponent) timelineSlot.getComponent(0) : null;
+    }
+
     private void showStatus(StatusMessageEvent event) {
         Runnable apply = () -> {
             StatusMessageEvent.Payload message = event.getPayload();

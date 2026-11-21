@@ -2336,6 +2336,30 @@ public final class Workspace {
         return harvester.changeLog().summary(caller, sourceId, updateId, spaceKey);
     }
 
+    /** Ob der Podcast zur Update-Zusammenfassung erzeugt werden kann: Chat-Modell und Sprachausgabe (TTS) eingerichtet. */
+    public boolean podcastsAvailable() {
+        return harvester.podcasts().available();
+    }
+
+    /**
+     * Der Stand des Podcasts einer Zusammenfassung, leer, solange nichts erzeugt ist. Die Zusammenfassung kommt aus
+     * {@link #changeSummary}, ist also schon für diese App geprüft. Liest Dateien, nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.podcast.Podcast> podcast(
+            com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().podcast(summary);
+    }
+
+    /** Startet den Auftrag „Podcast erzeugen“ oder setzt ihn fort; ein offener Auftrag desselben Podcasts ist die Antwort. */
+    public JobStatus startPodcast(com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().start(caller, summary);
+    }
+
+    /** Meldet jede abgelegte Stufe eines Podcasts (Plan, Abschnitte, Audio), auf einem Thread des Core. */
+    public Subscription subscribePodcast(String key, Runnable listener) {
+        return harvester.podcasts().subscribe(key, listener);
+    }
+
     /** Startet „Zusammenfassen“ für ein Update in einer Ebene (ADR 0031); {@code spaceKey == null} die ganze Quelle. */
     public JobStatus summarizeUpdate(String sourceId, String updateId, String spaceKey) {
         return harvester.changeLog().summarize(caller, sourceId, updateId, spaceKey);

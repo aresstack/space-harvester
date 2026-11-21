@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
+import com.aresstack.spaceharvester.app.ui.controls.PodcastOrb;
 import com.aresstack.spaceharvester.app.ui.controls.ScrollColumn;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 import com.aresstack.spaceharvester.application.changelog.ChangeKind;
@@ -158,6 +159,8 @@ final class SourceUpdatesView extends JPanel {
     enum Mode { SUMMARY, CHANGES }
 
     private final Mode mode;
+    /** Der Podcast der Zusammenfassung: Knopf oben rechts im Himmel, nur in der Leseansicht. */
+    private final PodcastControl podcast;
     private Consumer<String> onSelected = id -> { };
 
     SourceUpdatesView(Supplier<Workspace> workspace, Mode mode) {
@@ -174,6 +177,10 @@ final class SourceUpdatesView extends JPanel {
         this.actions = Objects.requireNonNull(actions, "actions");
         this.runner = Objects.requireNonNull(runner, "runner");
         this.mode = Objects.requireNonNull(mode, "mode");
+        this.podcast = new PodcastControl(() -> {
+            Actions current = actions.get();
+            return current == null ? null : current.podcasts();
+        }, runner);
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         // Keine Hinweistexte in der Ansicht: die Erklärung steht hinter dem ?-Knopf oben rechts.
@@ -217,7 +224,11 @@ final class SourceUpdatesView extends JPanel {
         reportScroll = Comic.scroll(report);
         busy = new BusyOverlay(reportScroll);
         busy.onCancel(this::cancelSummary);
-        add(new SkyLayer(busy, sky, report), BorderLayout.CENTER);
+        if (mode == Mode.SUMMARY) {
+            sky.setTrailingInset(PodcastOrb.SIZE + 2 * SkyLayer.ORB_INSET);
+        }
+        add(new SkyLayer(busy, sky, report, mode == Mode.SUMMARY ? podcast.orb() : null, reportScroll),
+                BorderLayout.CENTER);
         // Beim Sichtbarwerden einmal nachholen, was verdeckt gemeldet wurde.
         addHierarchyListener(event -> {
             if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
@@ -230,6 +241,16 @@ final class SourceUpdatesView extends JPanel {
     /** {@code listener} erfährt, welches Update der Benutzer gewählt hat (die andere Ansicht folgt). */
     void onSelected(Consumer<String> listener) {
         onSelected = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Wohin die Zeitleiste des Podcasts gemeldet wird (das Hauptfenster stellt sie über die Suchleiste). */
+    void podcastEvents(Consumer<com.aresstack.spaceharvester.app.event.ApplicationEvent<?>> events) {
+        podcast.events(events);
+    }
+
+    /** Der Podcast der gezeigten Zusammenfassung (für Tests). */
+    PodcastControl podcast() {
+        return podcast;
     }
 
     /** Die Werkzeuge für die gemeinsame Kopfzeile. */
@@ -273,6 +294,7 @@ final class SourceUpdatesView extends JPanel {
         windows.clear();
         shown = null;
         summary = null;
+        podcast.summary(null);
         abandonAutoRun();
         offerSummary();
         renderList();
@@ -386,6 +408,7 @@ final class SourceUpdatesView extends JPanel {
                 selected = null;
                 shown = null;
                 summary = null;
+                podcast.summary(null);
                 offerSummary();
                 renderList();
                 message(NO_UPDATES);
@@ -442,6 +465,7 @@ final class SourceUpdatesView extends JPanel {
         }
         if (!updateId.equals(selected)) {
             summary = null;
+            podcast.summary(null);
         }
         if (!keepPosition) {
             textGeneration++;
@@ -493,6 +517,7 @@ final class SourceUpdatesView extends JPanel {
             windows.addAll(found.texts());
             shown = found.report();
             summary = found.summary();
+            podcast.summary(summary);
             available = found.available();
             autoSummarize();
             renderReport(shown);
@@ -784,15 +809,33 @@ final class SourceUpdatesView extends JPanel {
      */
     private static final class SkyLayer extends javax.swing.JLayeredPane {
 
+        /** Abstand des Podcast-Knopfs zum Rand, wie der Vorlese-Orb im Enterprise AI Client. */
+        static final int ORB_INSET = 10;
+
         private final JComponent content;
         private final DocumentNavigationSky sky;
+        private final JComponent orb;
+        private final JComponent scroll;
 
-        SkyLayer(JComponent content, DocumentNavigationSky sky, JComponent padded) {
+        SkyLayer(JComponent content, DocumentNavigationSky sky, JComponent padded, JComponent orb,
+                 JComponent scroll) {
             this.content = content;
             this.sky = sky;
+            this.orb = orb;
+            this.scroll = scroll;
             setLayout(null);
             add(content, javax.swing.JLayeredPane.DEFAULT_LAYER);
             add(sky, javax.swing.JLayeredPane.PALETTE_LAYER);
+            if (orb != null && scroll instanceof javax.swing.JScrollPane pane) {
+                add(orb, javax.swing.JLayeredPane.MODAL_LAYER);
+                // Bildlaufleiste erscheint oder verschwindet: der Knopf bleibt links daneben.
+                pane.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+                    @Override
+                    public void componentResized(java.awt.event.ComponentEvent event) {
+                        doLayout();
+                    }
+                });
+            }
             sky.addPropertyChangeListener(DocumentNavigationSky.TOP_INSET_PROPERTY, event -> {
                 Object value = sky.getClientProperty(DocumentNavigationSky.TOP_INSET_PROPERTY);
                 int inset = value instanceof Integer pixels ? Math.max(0, pixels) : 0;
@@ -805,6 +848,14 @@ final class SourceUpdatesView extends JPanel {
         public void doLayout() {
             content.setBounds(0, 0, getWidth(), getHeight());
             sky.setBounds(0, 0, getWidth(), getHeight());
+            if (orb != null && scroll instanceof javax.swing.JScrollPane pane) {
+                int bar = pane.getVerticalScrollBar().isVisible() ? pane.getVerticalScrollBar().getWidth() : 0;
+                int top = com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics.SKY_PADDING_TOP
+                        + (com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics.CLOUD_CHIP_HEIGHT
+                        - PodcastOrb.SIZE) / 2;
+                orb.setBounds(getWidth() - bar - ORB_INSET - PodcastOrb.SIZE, Math.max(2, top), PodcastOrb.SIZE,
+                        PodcastOrb.SIZE);
+            }
         }
 
         @Override
@@ -1302,6 +1353,11 @@ final class SourceUpdatesView extends JPanel {
 
         Subscription subscribeJobs(JobListener listener);
 
+        /** Der Podcast der Zusammenfassungen; ohne bleibt der Knopf aus. */
+        default PodcastControl.Source podcasts() {
+            return PodcastControl.Source.NONE;
+        }
+
         static Actions of(Workspace workspace) {
             if (workspace == null) {
                 return null;
@@ -1356,6 +1412,37 @@ final class SourceUpdatesView extends JPanel {
                 @Override
                 public Subscription subscribeJobs(JobListener listener) {
                     return workspace.subscribeJobs(listener);
+                }
+
+                @Override
+                public PodcastControl.Source podcasts() {
+                    return new PodcastControl.Source() {
+                        @Override
+                        public boolean available() {
+                            return workspace.podcastsAvailable();
+                        }
+
+                        @Override
+                        public java.util.Optional<com.aresstack.spaceharvester.application.podcast.Podcast> podcast(
+                                UpdateSummary summary) {
+                            return workspace.podcast(summary);
+                        }
+
+                        @Override
+                        public JobStatus start(UpdateSummary summary) {
+                            return workspace.startPodcast(summary);
+                        }
+
+                        @Override
+                        public Subscription subscribe(String key, Runnable listener) {
+                            return workspace.subscribePodcast(key, listener);
+                        }
+
+                        @Override
+                        public Subscription subscribeJobs(JobListener listener) {
+                            return workspace.subscribeJobs(listener);
+                        }
+                    };
                 }
             };
         }
