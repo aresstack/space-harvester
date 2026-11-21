@@ -186,7 +186,8 @@ class VideoSlideDetectionTest {
         Steps executor = new Steps();
         Jobs restarted = jobs(executor);
         VideoPresentations after = presentations(restarted);
-        after.background(new BackgroundJobs(restarted, OWNER));
+        BackgroundJobs background = new BackgroundJobs(restarted, OWNER);
+        after.background(background);
         readers.clear();
         after.mediaSource((sourceId, pageId) -> media(List.of(1_000L)));
         executor.runAll();
@@ -194,6 +195,24 @@ class VideoSlideDetectionTest {
         assertThat(restarted.status(jobId).state()).isEqualTo(JobState.PAUSED);
         assertThat(readers).isEmpty();
         assertThat(marks).isEmpty();
+
+        // Ein anderer Benutzer öffnet das Video: er übernimmt den Teil nicht, ▶ hält wieder an.
+        AccessContext bert = AccessContext.endUser("bert", "space-harvester-app",
+                new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "anders"));
+        after.detectSlides(bert, "wiki", "42");
+        background.resumeJob(jobId);
+        executor.runAll();
+        assertThat(restarted.status(jobId).state()).isEqualTo(JobState.PAUSED);
+        assertThat(marks).isEmpty();
+
+        // Anna öffnet das Video wieder: mit ihrer frischen Anmeldung setzt ▶ im Reiter „Hintergrund“ fort.
+        readers.clear();
+        after.detectSlides(ANNA, "wiki", "42");
+        background.resumeJob(jobId);
+        executor.runAll();
+        assertThat(restarted.status(jobId).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(marks).containsEntry("42@r1", List.of(1_000L));
+        assertThat(readers).as("nur Anna liest").allMatch(ANNA::equals);
     }
 
     @Test

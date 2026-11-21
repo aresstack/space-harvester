@@ -3696,6 +3696,7 @@ public final class PageDetailPanel extends JPanel {
         };
         if (group.finished()) {
             slidesEnded(runtime, viewer, video, group, openJobs);
+            watchSlidesRetry(runtime, viewer, video, group);
             return;
         }
         viewer.slidesDetecting(slidesRunning(group), openJobs);
@@ -3709,6 +3710,24 @@ public final class PageDetailPanel extends JPanel {
         slidesWait.follow(group.groupId(), "", done -> {
             closeSlidesWatch();
             slidesEnded(runtime, viewer, video, done, openJobs);
+            watchSlidesRetry(runtime, viewer, video, done);
+        });
+    }
+
+    /**
+     * Ein Lauf ohne Ergebnis wird im Reiter „Hintergrund“ wiederholt: Setzt ihn dort jemand fort, zeigt der offene
+     * Player wieder den Ring und nach dem Ende die Folienknöpfe, ohne das Video neu zu öffnen (Observer, ADR 0027).
+     */
+    private void watchSlidesRetry(AppRuntime runtime, VideoViewerPanel viewer, VideoFrameSource video,
+                                  com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+        if (group.completed() || viewer != originalVideoViewer) {
+            return;
+        }
+        closeSlidesWatch();
+        slidesWatch = runtime.workspace().watchBackground(group.groupId(), changed -> {
+            if (viewer == originalVideoViewer && !changed.finished()) {
+                followSlides(runtime, viewer, video, changed);
+            }
         });
     }
 

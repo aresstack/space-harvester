@@ -468,6 +468,11 @@ public final class VideoPresentations {
         String groupId = slidesGroup(sourceId, pageId, version);
         Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> existing = jobs.group(groupId);
         if (existing.isPresent()) {
+            // Öffnet derselbe Eigentümer das Video wieder, gilt seine frische Anmeldung für ▶ im Reiter „Hintergrund“;
+            // ein anderer übernimmt nie den Teil.
+            if (existing.get().parts().stream().allMatch(part -> ownedBy(part, caller))) {
+                slideCallers.put(groupId, caller);
+            }
             return existing;
         }
         Map<String, String> parameters = new HashMap<>();
@@ -501,6 +506,13 @@ public final class VideoPresentations {
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /** Ob {@code part} von {@code caller} gestartet wurde: gleiche Kennung, Art und durchreichender Client. */
+    private static boolean ownedBy(com.aresstack.spaceharvester.application.jobs.JobStatus part, AccessContext caller) {
+        return caller.principal().equals(part.parameter(PRINCIPAL_PARAMETER))
+                && caller.kind().name().equals(part.parameter(PRINCIPAL_KIND_PARAMETER))
+                && Objects.equals(caller.via(), part.parameter(VIA_PARAMETER));
     }
 
     /** Die Gruppe der Folienerkennung eines Videos in einer Fassung. */
