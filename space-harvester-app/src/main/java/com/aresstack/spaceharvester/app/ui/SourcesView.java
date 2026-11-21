@@ -798,9 +798,14 @@ public final class SourcesView implements View {
         }, feedback::problem);
     }
 
-    private static boolean https(AppSettings.SourceEntry entry) {
+    /** Ob die Quelle über https spricht; BSCW-Quellen alter Form nennen die Adresse in {@code options.rootUrl}. */
+    static boolean https(AppSettings.SourceEntry entry) {
         java.net.URI base = entry.config().baseUrl();
-        return base != null && "https".equalsIgnoreCase(base.getScheme());
+        if (base != null) {
+            return "https".equalsIgnoreCase(base.getScheme());
+        }
+        String legacy = entry.config().options() == null ? null : entry.config().options().get("rootUrl");
+        return legacy != null && legacy.strip().toLowerCase(Locale.ROOT).startsWith("https://");
     }
 
     private static JPanel transparent() {

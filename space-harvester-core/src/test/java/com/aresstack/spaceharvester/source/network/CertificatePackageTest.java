@@ -134,6 +134,16 @@ class CertificatePackageTest {
     }
 
     @Test
+    void aDirectlyTrustedSelfSignedServerCertificateIsImportedAsRoot() throws IOException {
+        CertificatePackage bundle = CertificatePackage.of("Wiki & calc", "wiki.beispiel.test", List.of(foreignRoot),
+                true, List.of(foreignRoot), List.of(), List.of(), List.of(), NOW);
+
+        assertThat(bundle.count(CertificatePackage.Role.ROOT)).isEqualTo(1);
+        String script = unzip(bundle).get("importieren.cmd");
+        assertThat(script).contains("addstore Root").doesNotContain("calc").doesNotContain("&");
+    }
+
+    @Test
     void withoutHandshakeThePackageStillHasTheClientChainAndTheReason() throws IOException {
         CertificatePackage bundle = CertificatePackage.of("Wiki", "wiki.beispiel.test", List.of(), false,
                 List.of(root, intermediate), List.of(server, intermediate), List.of("Keine Kette vom Server: TCP"),

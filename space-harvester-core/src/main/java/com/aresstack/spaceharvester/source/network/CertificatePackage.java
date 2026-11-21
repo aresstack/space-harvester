@@ -116,8 +116,10 @@ public final class CertificatePackage {
 
         if (!presented.isEmpty()) {
             List<X509Certificate> path = path(presented.get(0), presented, anchors);
-            add(byKey, names, path.get(0), Role.SERVER, sentKeys, anchorKeys);
             List<Role> roles = roles(path, anchorKeys);
+            // Ein selbstsigniertes Serverzertifikat, das selbst Anker ist, wird wie ein Stammzertifikat importiert.
+            add(byKey, names, path.get(0), roles.get(0) == Role.ROOT ? Role.ROOT : Role.SERVER, sentKeys,
+                    anchorKeys);
             for (int i = 1; i < path.size(); i++) {
                 add(byKey, names, path.get(i), roles.get(i), sentKeys, anchorKeys);
             }
@@ -187,7 +189,8 @@ public final class CertificatePackage {
     String script() {
         StringBuilder script = new StringBuilder();
         script.append("@echo off\r\n")
-                .append("rem Zertifikate fuer ").append(ascii(title)).append(" in den Windows-Speicher des ")
+                // Kein Titel im Skript: Zeichen wie & würden in cmd auch in einer rem-Zeile Befehle trennen.
+                .append("rem Zertifikate einer Quelle des Space Harvesters in den Windows-Speicher des ")
                 .append("angemeldeten Benutzers.\r\n")
                 .append("rem Ohne Adminrechte. Windows fragt beim Stammzertifikat einmal nach; mit Ja bestaetigen.\r\n")
                 .append("rem Das Skript bitte vorher lesen. Die App fuehrt es nie selbst aus.\r\n")
