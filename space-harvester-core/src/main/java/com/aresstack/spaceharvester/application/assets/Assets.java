@@ -2967,9 +2967,10 @@ public class Assets implements DocumentInventory {
      * das Bild ein Anhang dieser Seite ist, der dort schon steht (B2): wie beim Ablegen der Anhänge
      * ({@link #indexStored}) als Text des Bildanhangs, nur sofort statt beim nächsten Ablegen. Nur Beschreibungen mit
      * dem Standard-Prompt des eingestellten Modells; Bilder, die kein Anhang sind, und eigene Prompts (Marken eines
-     * Videos) bleiben draußen. Fragt weder Quelle noch Modell; Fehler bleiben hier.
+     * Videos) bleiben draußen, ebenso Seiten ohne KI-Freigabe (ADR 0028). Fragt weder Quelle noch Modell; Fehler
+     * bleiben hier.
      *
-     * @return ob der Index geändert wurde
+     * @return ob die Beschreibung jetzt im Index steht und vorher nicht
      */
     public boolean indexDescription(PageKey page, String spaceKey, DescribedImage described) {
         Objects.requireNonNull(page, "page");
@@ -2990,12 +2991,26 @@ public class Assets implements DocumentInventory {
                     page.sourceId(), e.getClass().getName());
             return false;
         }
+        // ADR 0028: unmittelbar vor dem Schreiben geprüft und danach noch einmal. Fällt die Freigabe dazwischen weg,
+        // hat die Rücknahme den Index womöglich schon bereinigt; dann nimmt dieser Aufruf seinen Text selbst zurück.
+        if (!mayIndexDescription(page)) {
+            return false;
+        }
         boolean changed = indexText(page, spaceKey, asset, described.description().text(),
                 "describer:" + described.description().describer() + ":" + described.description().modelVersion());
+        if (changed && !mayIndexDescription(page)) {
+            indexText(page, spaceKey, asset, "", "");
+            flushIndex();
+            return false;
+        }
         if (changed) {
             flushIndex();
         }
         return changed;
+    }
+
+    private boolean mayIndexDescription(PageKey page) {
+        return describer.mayDescribe(page.sourceId()) || pageReleases.test(page);
     }
 
     /** Die Beschreibung kommt wie der Text eines Dokuments in den Volltextindex (#183). */

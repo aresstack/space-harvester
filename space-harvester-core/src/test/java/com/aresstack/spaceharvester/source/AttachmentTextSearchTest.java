@@ -333,6 +333,7 @@ class AttachmentTextSearchTest {
         // Beschreibung steht sofort im Volltextindex, nicht erst beim nächsten Ablegen der Anhänge.
         byte[] png = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 7, 8, 9};
         files.put("att7", png);
+        java.util.concurrent.atomic.AtomicBoolean released = new java.util.concurrent.atomic.AtomicBoolean(true);
         ImageDescriber vision = new ImageDescriber() {
             @Override
             public String id() {
@@ -347,6 +348,11 @@ class AttachmentTextSearchTest {
             @Override
             public String describe(byte[] image, String mediaType) {
                 return "Glasfaser zwischen zwei Rechenzentren";
+            }
+
+            @Override
+            public boolean mayDescribe(String sourceId) {
+                return released.get();
             }
         };
         PageAttachmentList list = list("101", attachment("att7", "Netzplan Foto.png", "image/png"));
@@ -376,10 +382,62 @@ class AttachmentTextSearchTest {
         assertThat(assets.indexDescription(new PageKey("wiki", "102"), "DEV", described)).isFalse();
 
         // ADR 0028: Die Seite verliert die Freigabe; nur noch der Dateiname steht im Index.
+        released.set(false);
         assets.withdrawDescriptions(Map.of(page, "DEV"), Set.of(), key -> false);
         assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
         assertThat(search.search(APP, KeywordSearch.Query.of("Netzplan"), null, 10).hits())
                 .extracting(KeywordSearch.Hit::matchedIn).containsExactly(KeywordSearch.MatchedIn.ATTACHMENT);
+
+        // Die Freigabe fiel zwischen Beschreiben und Indexieren weg: Die Rücknahme ist schon gelaufen, der späte
+        // Aufruf schreibt nichts zurück; im Index steht nur der Dateiname.
+        assertThat(assets.indexDescription(page, "DEV", described)).isFalse();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Netzplan"), null, 10).hits()).hasSize(1);
+    }
+
+    @Test
+    void aReleaseWithdrawnWhileTheDescriptionIsWrittenLeavesOnlyTheFileName() {
+        // B2, ADR 0028: Die Seite steht auf der Liste freigegebener Seiten, verliert sie aber, während der Text in
+        // den Index geschrieben wird; die Nachprüfung nimmt ihn zurück.
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 3, 1, 4};
+        files.put("att9", png);
+        ImageDescriber vision = new ImageDescriber() {
+            @Override
+            public String id() {
+                return "vision";
+            }
+
+            @Override
+            public String modelVersion() {
+                return "v1";
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType) {
+                return "Glasfaser zwischen zwei Rechenzentren";
+            }
+
+            @Override
+            public boolean mayDescribe(String sourceId) {
+                return false;
+            }
+        };
+        PageAttachmentList list = list("101", attachment("att9", "Netzplan Foto.png", "image/png"));
+        Assets assets = assets(vision);
+        PageKey page = new PageKey("wiki", "101");
+        java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
+        // Freigegeben beim Beschreiben und bei der Prüfung vor dem Schreiben, danach nicht mehr.
+        assets.harvest(list);
+        assets.pageReleases(key -> checks.incrementAndGet() <= 2);
+        Assets.DescribedImage described = assets.describeViewImage("wiki", "101", "1", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/Netzplan%20Foto.png", "Netzplan Foto.png", "att9",
+                "image/png", "1"));
+
+        assertThat(assets.indexDescription(page, "DEV", described)).isFalse();
+
+        KeywordSearch search = search(allow());
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Netzplan"), null, 10).hits()).hasSize(1);
     }
 
     @Test
