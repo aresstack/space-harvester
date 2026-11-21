@@ -106,4 +106,58 @@ class NeighborSearchTest {
         assertThat(result.load()).isEmpty();
         assertThat(loaded).isEmpty();
     }
+
+    @Test
+    void neighborsOutsideTheSourceOrSpaceOfTheSearchAreNeitherCandidatesNorLoaded() {
+        PageKey ops = key("ops");
+        PageKey elsewhere = new PageKey("akten", "z");
+        NeighborSource mixed = new NeighborSource() {
+            @Override
+            public Map<PageKey, HitReason.Neighbor> neighbors(AccessContext caller, List<KeywordSearch.Hit> seeds) {
+                return find(caller, seeds).local();
+            }
+
+            @Override
+            public Found find(AccessContext caller, List<KeywordSearch.Hit> seeds) {
+                return new Found(Map.of(key("a"), VIA, ops, VIA),
+                        Map.of(key("x"), VIA, elsewhere, VIA, key("parent"), VIA),
+                        Map.of(key("a"), new com.aresstack.spaceharvester.application.structure.PageRef(key("a"),
+                                        "Seite a", "DEV"),
+                                ops, new com.aresstack.spaceharvester.application.structure.PageRef(ops, "Seite ops",
+                                        "OPS"),
+                                key("parent"), new com.aresstack.spaceharvester.application.structure.PageRef(
+                                        key("parent"), null, "DEV")));
+            }
+        };
+        List<KeywordSearch.Query> asked = new ArrayList<>();
+        when(keywords.search(any(), any(), isNull(), anyInt())).thenAnswer(call -> {
+            asked.add(call.getArgument(1));
+            return new KeywordSearch.Results("wiki", List.of(), List.of(), null, true, 0);
+        });
+        KeywordSearch.Query query = new KeywordSearch.Query("Nachtlauf", "wiki", Set.of(), Set.of("DEV"), Set.of(),
+                null, Set.of());
+
+        new NeighborSearch(keywords, mixed, loader).search(APP, query, List.of(hit("o")), true);
+
+        // Nur a ist Kandidat; geladen werden a (kein Treffer) und die Elternseite im selben Space. Der Verweis x hat
+        // keinen bekannten Space, ops liegt in einem anderen Space, z in einer anderen Quelle.
+        assertThat(asked).singleElement().satisfies(within ->
+                assertThat(within.pages().asMap()).isEqualTo(Map.of("wiki", Set.of("a"))));
+        assertThat(loaded).containsExactly(List.of(key("a"), key("parent")));
+    }
+
+    @Test
+    void alreadyAppendedNeighborsAreNoSeedsSoTheMethodStaysOneStep() {
+        List<List<String>> seedsSeen = new ArrayList<>();
+        NeighborSource recording = (caller, seeds) -> {
+            seedsSeen.add(seeds.stream().map(KeywordSearch.Hit::pageId).toList());
+            return Map.of();
+        };
+        KeywordSearch.Hit appended = hit("n").withReasons(List.of(HitReason.neighbor("Nachtlauf", VIA)));
+
+        new NeighborSearch(keywords, recording, loader).search(APP, KeywordSearch.Query.of("Nachtlauf"),
+                List.of(hit("o"), appended, hit("p")), false);
+
+        assertThat(seedsSeen).containsExactly(List.of("o", "p"));
+    }
 }

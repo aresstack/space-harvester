@@ -423,8 +423,8 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
             Map<PageKey, HitReason.Neighbor> candidates = new LinkedHashMap<>();
             neighborhood.local().forEach((key, via) -> {
-                // Schon gefunden: kein Kandidat. Außerhalb der Seiten der Suche: nie.
-                if (!entries.containsKey(key) && (query.pages() == null || query.pages().contains(key))) {
+                // Schon gefunden: kein Kandidat. Außerhalb des Umfangs der Suche (Quelle, Seiten, Spaces, Arten): nie.
+                if (!entries.containsKey(key) && NeighborScope.allows(query, key, neighborhood.places().get(key))) {
                     candidates.put(key, via);
                 }
             });
@@ -514,7 +514,7 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
             Set<PageKey> pages = new LinkedHashSet<>(unconfirmed);
             neighborhood.missing().keySet().stream().filter(key -> !entries.containsKey(key)
-                    && (query.pages() == null || query.pages().contains(key))).forEach(pages::add);
+                    && NeighborScope.allows(query, key, neighborhood.places().get(key))).forEach(pages::add);
             if (pages.isEmpty()) {
                 return;
             }

@@ -112,6 +112,13 @@ public final class SearchView implements View {
     private int neighborsFor = -1;
     /** Beobachtet das Nachladen fehlender Nachbarn der laufenden Anfrage; {@code null} ohne. */
     private Subscription neighborLoadWatch;
+    /**
+     * Zählt Anfragen, nicht Stapel: „Weitere laden“ bleibt dieselbe Anfrage, nachgeladene Nachbarn gehören weiter
+     * dazu (Auflage AT). {@link #request} zählt dagegen jeden Stapel.
+     */
+    private int searchId;
+    /** Nachbar-Treffer, die ankamen, während ein Stapel lud; sie folgen nach dem Stapel, sonst schnitte er sie ab. */
+    private final List<KeywordSearch.Hit> heldNeighbors = new ArrayList<>();
     /** Läuft die Nachbarsuche dieser Anfrage, wartet „Weitere laden“: Der nächste Stapel verwürfe sonst ihre Treffer. */
     private int neighborsPending = -1;
     /** Die Suchanfragen der semantischen Suche als Schlagwörter; die ursprüngliche steht im Suchfeld. */
@@ -150,7 +157,8 @@ public final class SearchView implements View {
     private Runnable onSubmit = () -> { };
     private final ComposerButton run = Comic.primary("Suchen", "Im gewählten Umfang suchen (Titel und Inhalt)");
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
-    private final HitsModel model = new HitsModel();
+    /** Paketweit für Tests. */
+    final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
     /** Einzelheiten des Treffergrunds (R1). */
     private final InfoPopup reasons = new InfoPopup();
@@ -163,7 +171,8 @@ public final class SearchView implements View {
      */
     final BusyOverlay overlay = new BusyOverlay(Comic.scroll(table));
     /** Die laufende Schlagwortsuche bzw. das Laden des nächsten Stapels im Hintergrund; {@code null} ohne. */
-    private Future<?> searching;
+    /** Der laufende Stapel; paketweit für Tests. */
+    Future<?> searching;
     final JLabel status = Comic.muted(" ");
     /** Wie viel des Bereichs lokal liegt (K6), aus dem Bestand; nach Meldungen des Bestands neu gezählt. */
     final JLabel localShare = Comic.muted(" ");
@@ -871,6 +880,7 @@ public final class SearchView implements View {
      */
     private void open(AppRuntime runtime, String address) {
         int id = ++request;
+        searchId++;
         // Das Laden der vorigen Suche endet; ihr Nachfragen darf die Adressauflösung nicht überholen.
         stopLoading();
         run.setEnabled(false);
@@ -967,6 +977,7 @@ public final class SearchView implements View {
         stopLoading();
         showVariants(List.of());
         int id = ++request;
+        searchId++;
         neighborsFor = neighbors.isSelected() && neighbors.isEnabled() ? id : -1;
         run.setEnabled(false);
         more.setVisible(false);
@@ -1072,6 +1083,7 @@ public final class SearchView implements View {
     private void progressive(AppRuntime runtime, KeywordSearch.Query q) {
         stopLoading();
         int id = ++request;
+        searchId++;
         states.clear();
         incomplete = false;
         lastQuery = null;
@@ -1143,7 +1155,7 @@ public final class SearchView implements View {
         }
         if (result.neighborLoad() != null && result.reason() != ProgressiveResult.Completion.CANCELLED
                 && progressiveQuery != null) {
-            followNeighborLoad(request, progressiveQuery, result.neighborLoad());
+            followNeighborLoad(searchId, progressiveQuery, result.neighborLoad());
         }
         if (result.reason() == ProgressiveResult.Completion.FAILED) {
             LOG.log(System.Logger.Level.WARNING, "Semantische Suche fehlgeschlagen: {0} Suchanfragen, keine lief",
@@ -1261,6 +1273,7 @@ public final class SearchView implements View {
             model.add(hits(results));
             show(q, results);
             track(results.progress());
+            releaseNeighbors();
             if (model.rows.isEmpty() && results.nextCursor() != null) {
                 feedback.info("Noch keine Treffer", "Auch dieser Stapel war leer; „Weitere laden“ sucht weiter.");
             } else if (model.rows.isEmpty()) {
@@ -1273,6 +1286,7 @@ public final class SearchView implements View {
                 return;
             }
             searching = null;
+            releaseNeighbors();
             overlay.setBusy(false);
             // Die bisherigen Treffer bleiben stehen; eine neue Suche beginnt von vorn.
             run.setEnabled(true);
@@ -1435,6 +1449,7 @@ public final class SearchView implements View {
             neighborLoadWatch.close();
             neighborLoadWatch = null;
         }
+        heldNeighbors.clear();
         if (running != null) {
             running.cancel();
             running = null;
@@ -1551,20 +1566,18 @@ public final class SearchView implements View {
             return;
         }
         neighborsFor = -1;
-        List<KeywordSearch.Hit> shown = model.rows.stream().map(row -> new KeywordSearch.Hit(row.sourceId(),
-                row.pageId(), row.spaceKey(), row.title(), row.snippet(), null, null, row.modifiedAt(), null))
-                .toList();
+        List<KeywordSearch.Hit> shown = shownHits();
         neighborsPending = id;
         updateMore();
-        int before = model.rows.size();
+        int sid = searchId;
         Background.run(() -> runtime.workspace().neighborSearch(q, shown, true), found -> {
             if (id != request) {
                 return;
             }
             neighborsPending = -1;
             updateMore();
-            appendNeighbors(before, found.hits());
-            found.load().ifPresent(load -> followNeighborLoad(id, q, load));
+            appendNeighbors(found.hits());
+            found.load().ifPresent(load -> followNeighborLoad(sid, q, load));
         }, error -> {
             if (id == request) {
                 neighborsPending = -1;
@@ -1575,15 +1588,52 @@ public final class SearchView implements View {
         });
     }
 
-    /** Hängt Nachbar-Treffer hinten an; Auswahl, Position, Quellenzustände und „unvollständig“ bleiben. */
-    private void appendNeighbors(int before, List<KeywordSearch.Hit> found) {
-        if (found.isEmpty()) {
+    /**
+     * Die angezeigten Treffer für die Nachbarsuche, mit ihren Ursachen: Ausgangsseiten sind nur die eigentlichen
+     * Treffer, nie schon angehängte Nachbarn (ein Schritt, Auflage AT); bekannt sind alle.
+     */
+    private List<KeywordSearch.Hit> shownHits() {
+        return model.rows.stream().map(row -> new KeywordSearch.Hit(row.sourceId(), row.pageId(), row.spaceKey(),
+                row.title(), row.snippet(), null, null, row.modifiedAt(), null).withReasons(row.reasons()))
+                .toList();
+    }
+
+    /**
+     * Hängt Nachbar-Treffer hinten an, ohne schon gezeigte; Auswahl, Position, Quellenzustände und „unvollständig“
+     * bleiben. Lädt gerade ein Stapel, warten sie auf ihn.
+     */
+    void appendNeighbors(List<KeywordSearch.Hit> found) {
+        if (searching != null) {
+            heldNeighbors.addAll(found);
             return;
         }
+        java.util.Set<List<String>> shown = new java.util.HashSet<>();
+        model.rows.forEach(row -> shown.add(java.util.Arrays.asList(row.sourceId(), row.pageId(), row.attachment())));
+        List<Hit> fresh = new ArrayList<>();
+        for (KeywordSearch.Hit hit : found) {
+            Hit row = Hit.of(hit);
+            if (shown.add(java.util.Arrays.asList(row.sourceId(), row.pageId(), row.attachment()))) {
+                fresh.add(row);
+            }
+        }
+        if (fresh.isEmpty()) {
+            return;
+        }
+        int before = model.rows.size();
         Hit selected = selectedHit();
-        model.append(found.stream().map(Hit::of).toList());
+        model.append(fresh);
         select(selected);
-        status.setText(withNeighbors(status.getText(), before, model.rows.size(), found.size()));
+        status.setText(withNeighbors(status.getText(), before, model.rows.size(), fresh.size()));
+    }
+
+    /** Nach einem Stapel: die zurückgehaltenen Nachbar-Treffer. */
+    void releaseNeighbors() {
+        if (heldNeighbors.isEmpty()) {
+            return;
+        }
+        List<KeywordSearch.Hit> held = List.copyOf(heldNeighbors);
+        heldNeighbors.clear();
+        appendNeighbors(held);
     }
 
     /**
@@ -1609,14 +1659,15 @@ public final class SearchView implements View {
      * die Nachbarn erneut (ohne neues Laden) und reicht die Treffer nach, solange die Ansicht noch dieser Anfrage
      * folgt. Observer, kein Abfragen (ADR 0027).
      */
-    private void followNeighborLoad(int id, KeywordSearch.Query q, NeighborLoader.Load load) {
+    private void followNeighborLoad(int sid, KeywordSearch.Query q, NeighborLoader.Load load) {
         if (neighborLoadWatch != null) {
             neighborLoadWatch.close();
+            neighborLoadWatch = null;
         }
         String loading = " · " + NEIGHBORS_LOADING;
         status.setText(status.getText().strip() + loading);
-        neighborLoadWatch = load.whenDone(cancelled -> SwingUtilities.invokeLater(() -> {
-            if (id != request) {
+        java.util.function.Consumer<Boolean> done = cancelled -> SwingUtilities.invokeLater(() -> {
+            if (sid != searchId) {
                 return;
             }
             if (neighborLoadWatch != null) {
@@ -1628,17 +1679,23 @@ public final class SearchView implements View {
             if (Boolean.TRUE.equals(cancelled) || runtime == null || model.rows.isEmpty()) {
                 return;
             }
-            List<KeywordSearch.Hit> shown = model.rows.stream().map(row -> new KeywordSearch.Hit(row.sourceId(),
-                    row.pageId(), row.spaceKey(), row.title(), row.snippet(), null, null, row.modifiedAt(), null))
-                    .toList();
-            int before = model.rows.size();
+            List<KeywordSearch.Hit> shown = shownHits();
             Background.run(() -> runtime.workspace().neighborSearch(q, shown, false), found -> {
-                if (id == request) {
-                    appendNeighbors(before, found.hits());
+                if (sid == searchId) {
+                    appendNeighbors(found.hits());
                 }
             }, error -> LOG.log(System.Logger.Level.INFO, "Geladene Nachbarseiten nicht gesucht ({0})",
                     error.getClass().getName()));
-        }));
+        });
+        // Die Anmeldung liest den Auftragsspeicher: nicht auf dem EDT (Auflage AT).
+        Background.run(() -> load.whenDone(done), subscription -> {
+            if (sid == searchId) {
+                neighborLoadWatch = subscription;
+            } else {
+                subscription.close();
+            }
+        }, error -> LOG.log(System.Logger.Level.INFO, "Nachladen der Nachbarseiten nicht verfolgt ({0})",
+                error.getClass().getName()));
     }
 
     /** Ende der Zeile: „Die Suche ist abgeschlossen“ mit der Zahl der Treffer, nach einem Abbruch als solcher. */

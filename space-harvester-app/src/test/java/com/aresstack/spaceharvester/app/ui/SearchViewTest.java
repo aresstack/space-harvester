@@ -702,4 +702,37 @@ class SearchViewTest {
         String second = SearchView.withNeighbors(first, 14, 15, 1);
         assertThat(second).isEqualTo("15 Treffer · 3 Nachbarseiten dazu · Wiki: nicht erreichbar · unvollständig");
     }
+
+    @Test
+    void neighborsArrivingDuringLoadMoreWaitForTheBatchAndAreNeverShownTwice() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].model.set(List.of(row("a"), row("b")));
+            // „Weitere laden“ läuft: angekommene Nachbarn warten, sonst schnitte der Stapel sie ab.
+            view[0].searching = new java.util.concurrent.CompletableFuture<Void>();
+            view[0].appendNeighbors(List.of(neighbor("n1")));
+        });
+        assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b");
+
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].searching = null;
+            view[0].model.truncate(2);
+            view[0].model.add(List.of(row("c")));
+            view[0].releaseNeighbors();
+            view[0].appendNeighbors(List.of(neighbor("n1"), neighbor("n2")));
+        });
+
+        assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b", "c", "n1", "n2");
+    }
+
+    private static SearchView.Hit row(String pageId) {
+        return new SearchView.Hit("wiki", pageId, "Seite " + pageId, "DEV", "Auszug", null);
+    }
+
+    private static com.aresstack.spaceharvester.application.query.KeywordSearch.Hit neighbor(String pageId) {
+        return new com.aresstack.spaceharvester.application.query.KeywordSearch.Hit("wiki", pageId, "DEV",
+                "Seite " + pageId, "Auszug", null, "1", null, null);
+    }
 }

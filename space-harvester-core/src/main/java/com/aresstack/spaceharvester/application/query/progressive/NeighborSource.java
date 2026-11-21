@@ -36,12 +36,20 @@ public interface NeighborSource {
     /**
      * @param local   Nachbarn mit lokalen Kopfdaten, für den Aufrufer sichtbar ({@link #neighbors})
      * @param missing bekannte Nachbarn, die lokal nicht liegen; nie Kandidaten der Suche, nur zum Laden
+     * @param places  Space und Titel der Nachbarn, soweit bekannt (lokale immer, fehlende Elternseiten mit dem Space
+     *                ihrer Unterseite, fehlende Verweisziele nicht); daran misst die Suche ihren Umfang
      */
-    record Found(Map<PageKey, HitReason.Neighbor> local, Map<PageKey, HitReason.Neighbor> missing) {
+    record Found(Map<PageKey, HitReason.Neighbor> local, Map<PageKey, HitReason.Neighbor> missing,
+                 Map<PageKey, com.aresstack.spaceharvester.application.structure.PageRef> places) {
+
+        public Found(Map<PageKey, HitReason.Neighbor> local, Map<PageKey, HitReason.Neighbor> missing) {
+            this(local, missing, Map.of());
+        }
 
         public Found {
             local = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(local));
             missing = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(missing));
+            places = Map.copyOf(places);
         }
     }
 }

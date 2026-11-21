@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.structure.Connection;
 import com.aresstack.spaceharvester.application.structure.ConnectionKind;
 import com.aresstack.spaceharvester.application.structure.PageConnections;
+import com.aresstack.spaceharvester.application.structure.PageRef;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -61,6 +62,7 @@ public final class NeighborCandidates implements NeighborSource {
         }
         Map<PageKey, HitReason.Neighbor> found = new LinkedHashMap<>();
         Map<PageKey, HitReason.Neighbor> missing = new LinkedHashMap<>();
+        Map<PageKey, PageRef> places = new LinkedHashMap<>();
         for (Map.Entry<PageKey, KeywordSearch.Hit> entry : chosen.entrySet()) {
             if (found.size() >= MAX_CANDIDATES) {
                 break;
@@ -84,6 +86,7 @@ public final class NeighborCandidates implements NeighborSource {
                 }
                 found.put(target, new HitReason.Neighbor(seed.sourceId(), seed.pageId(), seed.title(),
                         edge(edge.kind())));
+                places.put(target, edge.target());
             }
             for (Map.Entry<PageKey, ConnectionKind> gap : result.missing().entrySet()) {
                 PageKey target = gap.getKey();
@@ -91,12 +94,15 @@ public final class NeighborCandidates implements NeighborSource {
                         || chosen.containsKey(target) || found.containsKey(target)) {
                     continue;
                 }
-                missing.putIfAbsent(target, new HitReason.Neighbor(seed.sourceId(), seed.pageId(), seed.title(),
-                        edge(gap.getValue())));
+                if (missing.putIfAbsent(target, new HitReason.Neighbor(seed.sourceId(), seed.pageId(), seed.title(),
+                        edge(gap.getValue()))) == null && gap.getValue() == ConnectionKind.PARENT) {
+                    // Eine Elternseite liegt im Space ihrer Unterseite; ein Verweisziel kann überall liegen.
+                    places.put(target, new PageRef(target, null, seed.spaceKey()));
+                }
             }
         }
         missing.keySet().removeAll(found.keySet());
-        return new Found(found, missing);
+        return new Found(found, missing, places);
     }
 
     private static HitReason.Neighbor.Edge edge(ConnectionKind kind) {

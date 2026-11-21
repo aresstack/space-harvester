@@ -83,21 +83,24 @@ public final class PageLoads {
     }
 
     /**
-     * Lädt die Seiten im Hintergrund, je Quelle und Space ein Unterauftrag; schon gespeicherte fallen vorher heraus.
+     * Lädt die Seiten im Hintergrund, je Quelle und Space ein Unterauftrag; schon gespeicherte fallen vorher heraus,
+     * ebenso Seiten, die schon ein wartender oder laufender Unterauftrag dieser Art lädt (keine doppelten Gruppen, etwa
+     * wenn dieselbe Suche zweimal läuft).
      *
      * @param caller technischer Aufrufer (ohne Benutzeranmeldung), dessen Rechte gelten
      * @param title  Titel der Gruppe in der Auftragsliste, etwa „Nachbarseiten laden“
      * @return die Gruppe, oder leer, wenn nichts fehlt
      * @throws IllegalArgumentException wenn der Aufrufer eine Benutzeranmeldung durchreicht
      */
-    public Optional<BackgroundGroup> load(AccessContext caller, String title, Collection<PageKey> keys) {
+    public synchronized Optional<BackgroundGroup> load(AccessContext caller, String title, Collection<PageKey> keys) {
         Objects.requireNonNull(caller, "caller");
         if (caller.credential() != null) {
             throw new IllegalArgumentException("Der Hintergrund lädt nie mit der Anmeldung eines Benutzers");
         }
+        Set<PageKey> queued = queued();
         Map<List<String>, Set<String>> bySpace = new LinkedHashMap<>();
         for (PageKey key : keys) {
-            if (cached.test(key)) {
+            if (queued.contains(key) || cached.test(key)) {
                 continue;
             }
             String spaceKey = space.apply(key).orElse(null);
@@ -114,6 +117,28 @@ public final class PageLoads {
         String groupId = BackgroundJobs.newGroupId();
         callers.put(groupId, caller);
         return Optional.of(background.start(groupId, KIND, title, parts));
+    }
+
+    /** Seiten, die ein wartender oder laufender Unterauftrag dieser Art schon lädt. */
+    private Set<PageKey> queued() {
+        Set<PageKey> queued = new java.util.HashSet<>();
+        for (BackgroundGroup group : background.groups()) {
+            if (!KIND.equals(group.kind())) {
+                continue;
+            }
+            for (com.aresstack.spaceharvester.application.jobs.JobStatus part : group.parts()) {
+                String pages = part.parameter(PAGES);
+                if (part.state().terminal() || pages == null || part.sourceId() == null) {
+                    continue;
+                }
+                for (String pageId : pages.split(SEPARATOR)) {
+                    if (!pageId.isBlank()) {
+                        queued.add(new PageKey(part.sourceId(), pageId));
+                    }
+                }
+            }
+        }
+        return queued;
     }
 
     private JobTask work(BackgroundPart part) {

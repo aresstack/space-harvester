@@ -58,7 +58,7 @@ public final class NeighborSearch {
     /**
      * @param query die Anfrage des Stapels
      * @param shown die schon angezeigten Treffer, beste zuerst; die ersten {@link NeighborCandidates#MAX_SEEDS}
-     *              bestätigten sind Ausgangsseiten, keiner von ihnen kommt erneut
+     *              ohne Ursache {@link HitReason.Kind#NEIGHBOR} sind Ausgangsseiten, keiner von allen kommt erneut
      * @return bestätigte Nachbar-Treffer, die die Anfrage treffen, höchstens {@link NeighborCandidates#MAX_CANDIDATES}
      */
     public List<KeywordSearch.Hit> search(AccessContext caller, KeywordSearch.Query query,
@@ -74,7 +74,10 @@ public final class NeighborSearch {
     public Result search(AccessContext caller, KeywordSearch.Query query, List<KeywordSearch.Hit> shown,
                          boolean load) {
         Objects.requireNonNull(query, "query");
-        List<KeywordSearch.Hit> seeds = shown.stream().limit(NeighborCandidates.MAX_SEEDS).toList();
+        // Ein Schritt: Ausgangsseiten sind nur eigentliche Treffer, keine schon angehängten Nachbarn.
+        List<KeywordSearch.Hit> seeds = shown.stream().filter(hit -> hit.reasons().stream()
+                .noneMatch(reason -> reason.kind() == HitReason.Kind.NEIGHBOR))
+                .limit(NeighborCandidates.MAX_SEEDS).toList();
         if (seeds.isEmpty()) {
             return new Result(List.of(), Optional.empty());
         }
@@ -83,7 +86,7 @@ public final class NeighborSearch {
         NeighborSource.Found neighborhood = neighbors.find(caller, seeds);
         Map<PageKey, HitReason.Neighbor> candidates = new LinkedHashMap<>();
         neighborhood.local().forEach((key, via) -> {
-            if (!known.contains(key) && inScope(query, key)) {
+            if (!known.contains(key) && NeighborScope.allows(query, key, neighborhood.places().get(key))) {
                 candidates.put(key, via);
             }
         });
@@ -109,8 +112,8 @@ public final class NeighborSearch {
         found.forEach(hit -> confirmed.add(new PageKey(hit.sourceId(), hit.pageId())));
         Set<PageKey> pages = new LinkedHashSet<>();
         candidates.keySet().stream().filter(key -> !confirmed.contains(key)).forEach(pages::add);
-        neighborhood.missing().keySet().stream().filter(key -> !known.contains(key) && inScope(query, key))
-                .forEach(pages::add);
+        neighborhood.missing().keySet().stream().filter(key -> !known.contains(key)
+                && NeighborScope.allows(query, key, neighborhood.places().get(key))).forEach(pages::add);
         Optional<NeighborLoader.Load> loading = Optional.empty();
         if (!pages.isEmpty()) {
             try {
@@ -122,9 +125,5 @@ public final class NeighborSearch {
             }
         }
         return new Result(found, loading);
-    }
-
-    private static boolean inScope(KeywordSearch.Query query, PageKey key) {
-        return query.pages() == null || query.pages().contains(key);
     }
 }

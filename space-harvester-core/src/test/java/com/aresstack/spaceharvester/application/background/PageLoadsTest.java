@@ -226,4 +226,21 @@ class PageLoadsTest {
             threads.shutdownNow();
         }
     }
+
+    @Test
+    void pagesThatAnOpenPartAlreadyLoadsStartNoSecondGroup() {
+        BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("1", "3")).orElseThrow();
+
+        // Dieselbe Suche noch einmal, bevor der erste Auftrag lief: nichts Neues.
+        assertThat(loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("1", "3")))
+                .isEmpty();
+        // Teilweise neu: nur die neue Seite bekommt einen Auftrag.
+        BackgroundGroup second = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("1", "2")).orElseThrow();
+        assertThat(second.parts()).singleElement().satisfies(part ->
+                assertThat(part.parameter(PageLoads.PAGES)).isEqualTo("2"));
+        assertThat(background.groups()).extracting(BackgroundGroup::groupId)
+                .containsExactlyInAnyOrder(first.groupId(), second.groupId());
+    }
 }
