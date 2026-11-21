@@ -68,4 +68,44 @@ class BackgroundNeighborLoaderTest {
         assertThat(loader.load(APP, List.of(new PageKey("wiki", "da")))).isEmpty();
         assertThat(background.groups()).isEmpty();
     }
+
+    @Test
+    void aSecondEqualSearchStartsNoGroupButHearsTheEndOfTheFirst() throws Exception {
+        List<PageKey> missing = List.of(new PageKey("wiki", "fehlt"));
+        NeighborLoader.Load first = loader.load(APP, missing).orElseThrow();
+
+        NeighborLoader.Load second = loader.load(APP, missing).orElseThrow();
+        assertThat(background.groups()).singleElement().satisfies(group ->
+                assertThat(group.groupId()).isEqualTo(first.id()));
+        assertThat(second.id()).isEqualTo(first.id());
+        List<Boolean> ends = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.concurrent.CountDownLatch ended = new java.util.concurrent.CountDownLatch(1);
+        second.whenDone(cancelled -> {
+            ends.add(cancelled);
+            ended.countDown();
+        });
+        assertThat(ends).isEmpty();
+
+        executor.runAll();
+
+        assertThat(ended.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(300);
+        assertThat(ends).containsExactly(false);
+        assertThat(cache).containsAll(missing);
+    }
+
+    @Test
+    void aPausedGroupStillCountsAsLoadingAndTheEndWaitsForIt() throws Exception {
+        List<PageKey> missing = List.of(new PageKey("wiki", "fehlt"));
+        NeighborLoader.Load first = loader.load(APP, missing).orElseThrow();
+        background.pause(first.id());
+        executor.runAll();
+
+        NeighborLoader.Load second = loader.load(APP, missing).orElseThrow();
+        List<Boolean> ends = new java.util.concurrent.CopyOnWriteArrayList<>();
+        second.whenDone(ends::add);
+        Thread.sleep(300);
+        assertThat(background.groups()).hasSize(1);
+        assertThat(ends).isEmpty();
+    }
 }

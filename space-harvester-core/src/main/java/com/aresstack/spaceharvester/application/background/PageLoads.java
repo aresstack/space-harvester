@@ -92,15 +92,29 @@ public final class PageLoads {
      * @return die Gruppe, oder leer, wenn nichts fehlt
      * @throws IllegalArgumentException wenn der Aufrufer eine Benutzeranmeldung durchreicht
      */
-    public synchronized Optional<BackgroundGroup> load(AccessContext caller, String title, Collection<PageKey> keys) {
+    public Optional<BackgroundGroup> load(AccessContext caller, String title, Collection<PageKey> keys) {
+        return join(caller, title, keys).started();
+    }
+
+    /**
+     * Wie {@link #load}, nennt dazu die Gruppen, die übersprungene Seiten schon laden: Wer auf die Seiten wartet,
+     * wartet auf alle beteiligten Gruppen.
+     */
+    public synchronized Joined join(AccessContext caller, String title, Collection<PageKey> keys) {
         Objects.requireNonNull(caller, "caller");
         if (caller.credential() != null) {
             throw new IllegalArgumentException("Der Hintergrund lädt nie mit der Anmeldung eines Benutzers");
         }
-        Set<PageKey> queued = queued();
+        Map<PageKey, String> queued = queued();
+        Set<String> joined = new LinkedHashSet<>();
         Map<List<String>, Set<String>> bySpace = new LinkedHashMap<>();
         for (PageKey key : keys) {
-            if (queued.contains(key) || cached.test(key)) {
+            String loading = queued.get(key);
+            if (loading != null) {
+                joined.add(loading);
+                continue;
+            }
+            if (cached.test(key)) {
                 continue;
             }
             String spaceKey = space.apply(key).orElse(null);
@@ -108,7 +122,7 @@ public final class PageLoads {
                     .add(key.pageId());
         }
         if (bySpace.isEmpty()) {
-            return Optional.empty();
+            return new Joined(Optional.empty(), joined);
         }
         List<BackgroundPart.Draft> parts = new ArrayList<>();
         bySpace.forEach((where, pageIds) -> parts.add(new BackgroundPart.Draft(where.get(0), where.get(1),
@@ -116,29 +130,59 @@ public final class PageLoads {
         // Den Aufrufer vor dem Start ablegen: ein Unterauftrag kann schon während start() laufen.
         String groupId = BackgroundJobs.newGroupId();
         callers.put(groupId, caller);
-        return Optional.of(background.start(groupId, KIND, title, parts));
+        return new Joined(Optional.of(background.start(groupId, KIND, title, parts)), joined);
     }
 
-    /** Seiten, die ein wartender oder laufender Unterauftrag dieser Art schon lädt. */
-    private Set<PageKey> queued() {
-        Set<PageKey> queued = new java.util.HashSet<>();
+    /**
+     * Ausgang von {@link #join}.
+     *
+     * @param started die neue Gruppe für Seiten, die noch niemand lädt, oder leer
+     * @param joined  Gruppen, die übersprungene Seiten schon laden (auch angehaltene)
+     */
+    public record Joined(Optional<BackgroundGroup> started, Set<String> joined) {
+
+        public Joined {
+            Objects.requireNonNull(started, "started");
+            joined = java.util.Collections.unmodifiableSet(new LinkedHashSet<>(joined));
+        }
+
+        /** Alle Gruppen, auf die zu warten ist, die neue zuerst. */
+        public Set<String> groups() {
+            Set<String> all = new LinkedHashSet<>();
+            started.ifPresent(group -> all.add(group.groupId()));
+            all.addAll(joined);
+            return java.util.Collections.unmodifiableSet(all);
+        }
+    }
+
+    /**
+     * Seiten, die ein wartender, laufender oder angehaltener Unterauftrag dieser Art schon lädt, mit seiner Gruppe.
+     * Angehalten zählt mit: Er lädt weiter, sobald er fortgesetzt wird.
+     */
+    private Map<PageKey, String> queued() {
+        Map<PageKey, String> queued = new java.util.HashMap<>();
         for (BackgroundGroup group : background.groups()) {
             if (!KIND.equals(group.kind())) {
                 continue;
             }
             for (com.aresstack.spaceharvester.application.jobs.JobStatus part : group.parts()) {
                 String pages = part.parameter(PAGES);
-                if (part.state().terminal() || pages == null || part.sourceId() == null) {
+                if (!loading(part.state()) || pages == null || part.sourceId() == null) {
                     continue;
                 }
                 for (String pageId : pages.split(SEPARATOR)) {
                     if (!pageId.isBlank()) {
-                        queued.add(new PageKey(part.sourceId(), pageId));
+                        queued.putIfAbsent(new PageKey(part.sourceId(), pageId), group.groupId());
                     }
                 }
             }
         }
         return queued;
+    }
+
+    /** Ob ein Unterauftrag in diesem Zustand noch lädt oder weiterladen wird (angehalten). */
+    public static boolean loading(com.aresstack.spaceharvester.application.jobs.JobState state) {
+        return !state.terminal() || state == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED;
     }
 
     private JobTask work(BackgroundPart part) {
