@@ -53,7 +53,7 @@ public final class ChatTurn {
     /** Bis so viele Seiten gehen die Seiten ganz mit, statt zu suchen. */
     static final int WHOLE_PAGES = 3;
     /** Längstens so lange wartet der Turn auf die Suche; danach zählen die bis dahin bewerteten Treffer. */
-    static final long SEARCH_SECONDS = 90;
+    public static final long SEARCH_SECONDS = 90;
     /** Die Suche nimmt höchstens so viele Zeichen Frage an ({@code KeywordSearch.MAX_TEXT_LENGTH}). */
     static final int MAX_QUERY_CHARS = 500;
 

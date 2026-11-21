@@ -71,6 +71,14 @@ public class JobActions {
         this.sourceQueryExports = sourceQueryExports;
     }
 
+    /** „Suchqualität messen“ oder {@code null}; bindet der Harvester nach dem Bau an. */
+    private volatile com.aresstack.spaceharvester.application.quality.SearchQualityRuns searchQuality;
+
+    /** Bindet „Suchqualität messen“ an: Fortsetzen misst dann nur die fehlenden Fragen, auch nach einem Neustart. */
+    public void searchQuality(com.aresstack.spaceharvester.application.quality.SearchQualityRuns searchQuality) {
+        this.searchQuality = searchQuality;
+    }
+
     /** Bindet „In PPTX umwandeln“ an: Fortsetzen und „Nur Fehler“ laufen dann auch nach dem Ende im selben Eintrag. */
     public void presentations(com.aresstack.spaceharvester.application.presentation.VideoPresentations presentations) {
         this.presentations = presentations;
@@ -200,6 +208,10 @@ public class JobActions {
             // „In PPTX umwandeln“: derselbe Auftrag läuft im selben Eintrag neu und fragt nur, was fehlt.
             case VIDEO_TRANSCRIPT, VIDEO_SLIDES, TRANSCRIPT_CORRECTION, SLIDE_NOTES, PRESENTATION_EXPORT -> {
                 com.aresstack.spaceharvester.application.presentation.VideoPresentations bound = presentations;
+                yield bound != null ? bound.resume(current.id(), owner) : jobs.resume(current.id(), owner);
+            }
+            case SEARCH_QUALITY -> {
+                com.aresstack.spaceharvester.application.quality.SearchQualityRuns bound = searchQuality;
                 yield bound != null ? bound.resume(current.id(), owner) : jobs.resume(current.id(), owner);
             }
             default -> throw new JobNotResumableException(current.id(), "diese Auftragsart lässt sich nicht fortsetzen");
