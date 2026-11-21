@@ -256,9 +256,8 @@ public final class PageDetailPanel extends JPanel {
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
     /**
-     * Ablage der Aussagenanalyse oben rechts in Aussagen und Graph (Fahrplan A3). Nicht bei „Beziehungen“: dort stehen
-     * die beiden Icon-Knöpfe, und die sieben Unterreiter müssen bei 960 px einzeilig bleiben (P1), auch mit der
-     * breiteren Schrift ohne Inter.
+     * Ablage der Aussagenanalyse oben rechts in Aussagen und Graph (Fahrplan A3), also überall, wo der Inhalt von
+     * der Ablage abhängt (UX). „Beziehungen“ liest nur Glossar-Beziehungen und Analyseschritte, nicht die Ablage.
      */
     private final AnalyzerStoreField storeField = new AnalyzerStoreField();
     /** Liegt beim Umschalten der Ablage über den Unterreitern von „Analysen“. */
@@ -1077,7 +1076,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private void showRelations() {
         String sub = analysisTabs.selected();
-        storeField.setVisible(STATEMENTS.equals(sub) || GRAPH.equals(sub)); // nicht bei „Beziehungen“, siehe Feld
+        storeField.setVisible(STATEMENTS.equals(sub) || GRAPH.equals(sub));
         boolean selected = RELATIONS.equals(analysisTabs.selected());
         analysisView.proposeIcon().setVisible(selected);
         analysisView.createIcon().setVisible(selected);
@@ -1142,7 +1141,7 @@ public final class PageDetailPanel extends JPanel {
         if (switched) {
             statementsView.storeChanged();
             graphView.reload();
-            analysisView.reload();
+            // „Beziehungen“ (Glossar und Analyseschritte) liest nicht aus der Aussagen-Ablage: kein Neuladen nötig.
         }
     }
 
