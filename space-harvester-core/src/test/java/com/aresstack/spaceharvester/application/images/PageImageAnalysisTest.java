@@ -1340,6 +1340,48 @@ class PageImageAnalysisTest {
         }
     }
 
+    @Test
+    void theButtonStartsAtOnceWhileABackgroundPartRuns() throws Exception {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null), page("2", "OPS", null));
+        java.util.concurrent.ExecutorService threads = java.util.concurrent.Executors.newCachedThreadPool();
+        java.util.concurrent.CountDownLatch running = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        describer.parallel = 2;
+        // Nur der erste Aufruf (der Hintergrundteil an Seite 1) hängt, bis der Knopf fertig ist.
+        describer.during = () -> {
+            if (first.getAndSet(false)) {
+                running.countDown();
+                try {
+                    release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        try {
+            com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                    .Jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), threads,
+                    new com.aresstack.spaceharvester.application.jobs.JobLimits(2, 10, java.time.Duration.ofHours(1)),
+                    Clock.fixed(NOW, ZoneOffset.UTC));
+            ImageDescriptionJobs images = images(jobs, analysis(), List.of(pages.get(0)), ON, null);
+            images.startAutomatic("wiki").orElseThrow();
+            assertThat(running.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            java.util.concurrent.Future<PageImages> button = threads.submit(() ->
+                    images.describePage("nutzer", pages.get(1), entry -> { }));
+
+            assertThat(button.get(10, java.util.concurrent.TimeUnit.SECONDS).describedCount())
+                    .as("der Klick wartet nicht hinter dem laufenden Hintergrundteil").isEqualTo(1);
+        } finally {
+            release.countDown();
+            threads.shutdown();
+            threads.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
     private static com.aresstack.spaceharvester.application.jobs.Jobs jobs() {
         return new com.aresstack.spaceharvester.application.jobs.Jobs(
                 new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,

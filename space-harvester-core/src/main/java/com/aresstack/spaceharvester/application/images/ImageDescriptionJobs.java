@@ -268,9 +268,10 @@ public final class ImageDescriptionJobs {
                                    java.util.function.Consumer<ImagePayload.Entry> progress) {
         Objects.requireNonNull(snapshot, "snapshot");
         CompletableFuture<PageImages> done = new CompletableFuture<>();
-        JobStatus status = jobs.submit(JobType.ENRICHMENT, snapshot.key().sourceId(), snapshot.spaceKey(), null,
-                caller, Map.of(AutomaticImageDescriptions.TASK_PARAMETER, AutomaticImageDescriptions.TASK,
-                        ROOT, snapshot.key().pageId()),
+        // Ein Klick wartet nie hinter Hintergrund (Abnahme #1054, Jobs#submitInteractive aus #1055).
+        JobStatus status = jobs.submitInteractive(JobType.ENRICHMENT, snapshot.key().sourceId(),
+                snapshot.spaceKey(), null, caller, Map.of(AutomaticImageDescriptions.TASK_PARAMETER,
+                        AutomaticImageDescriptions.TASK, ROOT, snapshot.key().pageId()),
                 JobTask.blocking(context -> {
                     int parallel = Math.max(1, analysis.parallel());
                     // Der Pool lebt so lange wie die Seite, nicht bis zum letzten gerade laufenden Bild: Ein schnell
