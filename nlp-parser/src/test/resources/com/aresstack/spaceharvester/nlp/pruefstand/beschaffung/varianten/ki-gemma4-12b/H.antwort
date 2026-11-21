@@ -1,0 +1,9 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "Vertrag", "handelnder": "Rahmenvereinbarung", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "Vertreter", "handelnder": "Lagerleiter", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "Vergabestelle", "handelnder": "Einkaufsabteilung", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "Bestellung", "handelnder": "Angebot", "betroffenes": "-", "empfaenger": "-", "verneint": true, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "Vertragspartner", "handelnder": "Lieferanten", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "Kennzahl", "handelnder": "Mindestbestand", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}, {"verb": "überwachen", "handelnder": "Lagersystem", "betroffenes": "Kennzahl", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 7, "aussagen": [{"verb": "Werkstatt", "handelnder": "Außenlager", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 8, "aussagen": [{"verb": "Leiter", "handelnder": "Einkäufer", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

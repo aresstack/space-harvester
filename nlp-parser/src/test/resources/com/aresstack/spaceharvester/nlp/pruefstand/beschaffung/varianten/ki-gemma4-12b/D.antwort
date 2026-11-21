@@ -1,0 +1,13 @@
+### Aufruf
+{"satz": 1, "aussagen": []}
+{"satz": 2, "aussagen": [{"verb": "prüfen", "handelnder": "Lagerist", "betroffenes": "Lieferung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": []}
+{"satz": 4, "aussagen": [{"verb": "abgleichen", "handelnder": "-", "betroffenes": "Lieferschein", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "prüfen", "handelnder": "-", "betroffenes": "Ware", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "buchen", "handelnder": "-", "betroffenes": "Wareneingang", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}, {"verb": "zuweisen", "handelnder": "-", "betroffenes": "Lagerplatz", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 7, "aussagen": [{"verb": "vergeben", "handelnder": "§vergeben", "betroffenes": "Lagerplätze", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 8, "aussagen": [{"verb": "aufgeben", "handelnder": "-", "betroffenes": "Plan", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 9, "aussagen": [{"verb": "vergeben", "handelnder": "Lagerleiter", "betroffenes": "Lagerplätze", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 10, "aussagen": [{"verb": "erfassen", "handelnder": "Scanner", "betroffenes": "Lieferscheine", "empfaenger": "-", "verneint": false, "verbindlichkeit": "SOLL", "zeitbezug": "GEPLANT"}]}
+{"satz": 11, "aussagen": []}
+{"satz": 12, "aussagen": [{"verb": "geklärt", "handelnder": "-", "betroffenes": "Anbindung", "empfaenger": "-", "verneint": true, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

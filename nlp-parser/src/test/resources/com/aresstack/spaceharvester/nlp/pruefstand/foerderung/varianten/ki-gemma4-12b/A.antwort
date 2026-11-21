@@ -1,0 +1,13 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "einreichen", "handelnder": "Antragsteller", "betroffenes": "Förderantrag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "prüfen", "handelnder": "Bewilligungsstelle", "betroffenes": "Antrag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "anfordern", "handelnder": "Sachbearbeiter", "betroffenes": "Unterlagen", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "erlassen", "handelnder": "Bewilligungsstelle", "betroffenes": "Zuwendungsbescheid", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "festlegen", "handelnder": "Zuwendungsbescheid", "betroffenes": "Fördersumme", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "abrufen", "handelnder": "Zuwendungsempfänger", "betroffenes": "Mittel", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 7, "aussagen": [{"verb": "auszahlen", "handelnder": "Kasse", "betroffenes": "Mittel", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 8, "aussagen": [{"verb": "vorlegen", "handelnder": "Zuwendungsempfänger", "betroffenes": "Verwendungsnachweis", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 9, "aussagen": [{"verb": "kontrollieren", "handelnder": "Prüfer", "betroffenes": "Verwendungsnachweis", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 10, "aussagen": [{"verb": "zurückfordern", "handelnder": "Bewilligungsstelle", "betroffenes": "Mittel", "empfaenger": "-", "verneint": true, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 11, "aussagen": [{"verb": "umfassen", "handelnder": "Förderprogramm", "betroffenes": "Fördermaßnahmen", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 12, "aussagen": [{"verb": "gehören", "handelnder": "Antrag", "betroffenes": "Förderprogramm", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
