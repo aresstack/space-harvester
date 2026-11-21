@@ -133,6 +133,38 @@ class SearchQualityRunsTest {
     }
 
     @Test
+    void twoStartsInTheSameMinuteMeasureIntoTwoFilesInsteadOfReusingTheFirst() throws Exception {
+        SearchQualityRuns runs = runs(search);
+        Path suite = suite();
+        JobStatus first = runs.submit(CALLER, request(suite));
+        asked.set(0);
+
+        JobStatus second = runs.submit(CALLER, request(suite));
+
+        Path one = Path.of(jobs.status(first.id(), CALLER.jobOwner()).parameter(SearchQualityRuns.RESULT_PARAMETER));
+        Path two = Path.of(jobs.status(second.id(), CALLER.jobOwner()).parameter(
+                SearchQualityRuns.RESULT_PARAMETER));
+        assertThat(two).isNotEqualTo(one).exists();
+        assertThat(two.getFileName().toString()).endsWith(" (2).tsv");
+        assertThat(asked.get()).isEqualTo(3);
+    }
+
+    @Test
+    void cancellingDuringTheLastQuestionStillCancelsTheJob() throws Exception {
+        QualitySearch cancelling = (question, interim) -> {
+            if (question.id().equals("F3")) {
+                jobs.listAll(JobType.SEARCH_QUALITY).forEach(job -> jobs.cancel(job.id()));
+            }
+            return search.search(question, interim);
+        };
+        JobStatus status = runs(cancelling).submit(CALLER, request(suite()));
+
+        JobStatus done = jobs.status(status.id(), CALLER.jobOwner());
+        assertThat(done.state()).isEqualTo(JobState.CANCELLED);
+        assertThat(Path.of(done.parameter(SearchQualityRuns.RESULT_PARAMETER))).exists();
+    }
+
+    @Test
     void theProfileShowsInTheResultHead() {
         assertThat(SearchQualityRuns.describe(SearchProfile.defaults()))
                 .contains("Varianten KI", "Ranking Schlagwort", "Ziel 5 Treffer ab 0.5");

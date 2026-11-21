@@ -25,6 +25,7 @@ import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -168,8 +169,8 @@ public final class SearchQualityRuns {
         Objects.requireNonNull(caller, "caller");
         Path suite = request.suite().toAbsolutePath();
         Path output = request.output().toAbsolutePath().resolve(FOLDER);
-        Path result = output.resolve(baseName(suite) + " – "
-                + STAMP.format(clock.instant().atZone(ZoneId.systemDefault())) + ".tsv");
+        Path result = reserve(output, baseName(suite) + " – "
+                + STAMP.format(clock.instant().atZone(ZoneId.systemDefault())));
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put(SUITE_PARAMETER, suite.toString());
         parameters.put(RESULT_PARAMETER, result.toString());
@@ -181,6 +182,27 @@ public final class SearchQualityRuns {
         parameters.put(VERSION_PARAMETER, request.version() == null ? "" : request.version());
         return jobs.submit(JobType.SEARCH_QUALITY, Jobs.ALL_SOURCES, null, null, caller.jobOwner(), parameters,
                 task(caller, parameters));
+    }
+
+    /**
+     * Legt für einen neuen Lauf eine eigene, leere Ergebnisdatei an. Zwei Starts in derselben Minute bekommen so nie
+     * dieselbe Datei; nur Fortsetzen arbeitet in einer schon gefüllten weiter.
+     */
+    private static Path reserve(Path folder, String base) {
+        try {
+            Files.createDirectories(folder);
+            for (int n = 1; ; n++) {
+                Path candidate = folder.resolve(n == 1 ? base + ".tsv" : base + " (" + n + ").tsv");
+                try {
+                    return Files.createFile(candidate);
+                } catch (FileAlreadyExistsException taken) {
+                    // nächste Nummer
+                }
+            }
+        } catch (IOException failed) {
+            throw new JobFailedException("RESULT_UNWRITABLE", "Ergebnisordner nicht schreibbar ("
+                    + failed.getClass().getSimpleName() + ")", failed);
+        }
     }
 
     /**
@@ -245,7 +267,8 @@ public final class SearchQualityRuns {
         Map<String, CaseResult> done = new HashMap<>();
         Instant started = clock.instant();
         SearchProfile settings = profile.get();
-        if (Files.exists(resultPath)) {
+        // Eine leere Datei ist die beim Start reservierte: noch nichts gemessen.
+        if (Files.exists(resultPath) && Files.size(resultPath) > 0) {
             QualityResults.Stored earlier = QualityResults.read(Files.readString(resultPath, StandardCharsets.UTF_8));
             // Ein Ergebnis misst genau einen Stand: geändertes Profil oder anderer Chat-Kontext mischt sonst zwei.
             if (!earlier.info().profile().equals(describe(settings)) || earlier.info().contextSize() != contextSize) {
@@ -294,9 +317,8 @@ public final class SearchQualityRuns {
             comparison = QualityComparison.of(previous, outcome.results(), contextSize);
         }
         write(report(resultPath), QualityReport.markdown(info, outcome.results(), suite.errors(), comparison));
-        if (outcome.cancelled()) {
-            context.checkpoint();
-        }
+        // Auch ein Abbruch oder eine Pause während der letzten Frage gilt; Ergebnis und Bericht stehen schon.
+        context.checkpoint();
         if (!suite.errors().isEmpty() || outcome.results().stream().anyMatch(CaseResult::failed)) {
             context.incomplete();
         }
@@ -418,6 +440,10 @@ public final class SearchQualityRuns {
                     failedQueries++;
                 }
             }
+            if (result.reason() == ProgressiveResult.Completion.FAILED) {
+                // Alle Suchanfragen gescheitert: eine gescheiterte Messung, kein „zu Recht leer“.
+                throw new SearchFailedException();
+            }
             return new QualitySearch.Answer(pages(result.hits()), result.reason().name(), queries, failedQueries);
         };
     }
@@ -498,6 +524,14 @@ public final class SearchQualityRuns {
     }
 
     /** Der Bereich einer Frage enthält keine sichtbare Seite. */
+    /** Die Suche ist mit „gescheitert“ abgeschlossen (keine Suchanfrage lief durch). */
+    public static final class SearchFailedException extends RuntimeException {
+
+        SearchFailedException() {
+            super("alle Suchanfragen gescheitert", null, false, false);
+        }
+    }
+
     public static final class EmptyScopeException extends RuntimeException {
 
         EmptyScopeException() {
