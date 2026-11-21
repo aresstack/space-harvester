@@ -97,6 +97,23 @@ class SearchQualityStartTest {
     }
 
     @Test
+    void choosingTheSameFileAgainReadsItAgainAfterItWasFixed() throws Exception {
+        Path file = suite("F1\tFrage eins\tq\tunlesbar\t");
+        SearchQualityStart[] start = new SearchQualityStart[1];
+        SwingUtilities.invokeAndWait(() -> {
+            start[0] = overlay();
+            choose(start[0].suite, file);
+            assertThat(start[0].start.isEnabled()).isFalse();
+        });
+        suite("F1\tFrage eins\tq\tq:1\t");
+        SwingUtilities.invokeAndWait(() -> {
+            choose(start[0].suite, file);
+            assertThat(start[0].statusText()).isEqualTo("1 Frage gültig");
+            assertThat(start[0].start.isEnabled()).isTrue();
+        });
+    }
+
+    @Test
     void measuringStartsWithTheOptionalComparisonAndClosesTheOverlay() throws Exception {
         Path file = suite("F1\tFrage eins\tq\tq:1\t");
         Path earlier = Files.writeString(folder.resolve("fragen – 2026-11-20 16-05.tsv"), "# version=1\n");

@@ -17,7 +17,7 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 /**
  * Ein Dateifeld wie {@link FolderField}: der Pfad als Text, „Durchsuchen …“ im Feld, wahlweise ein ✕ zum Leeren
  * ({@link #clearable}). Enter übernimmt einen getippten Pfad, wenn es die Datei gibt; der Dialog einen gewählten.
- * Beides und das Leeren meldet {@link #onChange} ({@code null} = leer). Wer das Feld verlässt, ohne zu übernehmen, sieht
+ * Beides und das Leeren meldet {@link #onChange} ({@code null} = leer), auch wenn dieselbe Datei erneut gewählt wird. Wer das Feld verlässt, ohne zu übernehmen, sieht
  * wieder die geltende Datei.
  */
 public final class FileField extends InputFrame {
@@ -138,7 +138,8 @@ public final class FileField extends InputFrame {
     }
 
     private void commit(Path path) {
-        if (Objects.equals(path, current)) {
+        // Dieselbe Datei erneut gewählt oder bestätigt meldet trotzdem: Sie kann sich inzwischen geändert haben.
+        if (path == null && current == null) {
             show(current);
             return;
         }
