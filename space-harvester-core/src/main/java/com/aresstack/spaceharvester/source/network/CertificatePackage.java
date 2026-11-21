@@ -372,7 +372,10 @@ public final class CertificatePackage {
 
     private String roleText(Entry entry) {
         return switch (entry.role()) {
-            case ROOT -> "Stammzertifizierungsstelle (importieren: Vertrauenswürdige Stammzertifizierungsstellen)";
+            case ROOT -> entry.certificate().getBasicConstraints() < 0
+                    ? "selbstsigniertes Serverzertifikat, KEINE Zertifizierungsstelle; diesem Server wird direkt "
+                    + "vertraut (importieren: Vertrauenswürdige Stammzertifizierungsstellen)"
+                    : "Stammzertifizierungsstelle (importieren: Vertrauenswürdige Stammzertifizierungsstellen)";
             case INTERMEDIATE -> "Zwischenzertifizierungsstelle (importieren: Zwischenzertifizierungsstellen)";
             case SERVER -> "Serverzertifikat (nicht importieren)";
             case CLIENT -> "Client-Zertifikat, nur öffentlicher Teil" + (clientTrusted ? ""

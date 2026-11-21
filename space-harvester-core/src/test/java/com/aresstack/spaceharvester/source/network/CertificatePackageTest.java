@@ -40,6 +40,7 @@ class CertificatePackageTest {
     static X509Certificate server;
     static X509Certificate foreignRoot;
     static X509Certificate foreignServer;
+    static X509Certificate selfSignedServer;
 
     @BeforeAll
     static void certificates() throws Exception {
@@ -56,6 +57,8 @@ class CertificatePackageTest {
         genkey(foreign, "server", "CN=wiki.beispiel.test", null);
         foreignServer = sign(foreign, "server", "root", null);
         foreignRoot = export(foreign, "root");
+        genkey(foreign, "selbst", "CN=selbst.beispiel.test", null);
+        selfSignedServer = export(foreign, "selbst");
     }
 
     @Test
@@ -158,12 +161,13 @@ class CertificatePackageTest {
 
     @Test
     void aDirectlyTrustedSelfSignedServerCertificateIsImportedAsRoot() throws IOException {
-        CertificatePackage bundle = CertificatePackage.of("Wiki & calc", "wiki.beispiel.test", List.of(foreignRoot),
-                true, List.of(foreignRoot), List.of(), List.of(), List.of(), NOW);
+        CertificatePackage bundle = CertificatePackage.of("Wiki & calc", "wiki.beispiel.test",
+                List.of(selfSignedServer), true, List.of(selfSignedServer), List.of(), List.of(), List.of(), NOW);
 
         assertThat(bundle.count(CertificatePackage.Role.ROOT)).isEqualTo(1);
         String script = unzip(bundle).get("importieren.cmd");
         assertThat(script).contains("addstore Root").doesNotContain("calc").doesNotContain("&");
+        assertThat(unzip(bundle).get("LIESMICH.txt")).contains("KEINE Zertifizierungsstelle");
     }
 
     @Test
