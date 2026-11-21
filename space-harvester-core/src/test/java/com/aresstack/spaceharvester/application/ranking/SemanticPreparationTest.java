@@ -70,6 +70,22 @@ class SemanticPreparationTest {
                 anyInt(), isNull());
     }
 
+    @Test
+    void theGlossarySynonymsMethodGoesIntoTheKeywordSearchOfThePreparation() {
+        found(new KeywordSearch.Results(null, List.of(), List.of(searched()), null, true, 0));
+
+        preparation().prepare(APP, query, "Wolkenpegel", Set.of(), null, true);
+        verify(keywords).search(any(), argThat(KeywordSearch.Query::glossarySynonyms), isNull(), anyInt(), isNull());
+    }
+
+    @Test
+    void withoutTheMethodThePreparationSearchesWithoutSynonyms() {
+        found(new KeywordSearch.Results(null, List.of(), List.of(searched()), null, true, 0));
+
+        preparation().prepare(APP, query, "Wolkenpegel");
+        verify(keywords).search(any(), argThat(q -> !q.glossarySynonyms()), isNull(), anyInt(), isNull());
+    }
+
     private void found(KeywordSearch.Results results) {
         when(keywords.search(any(), any(), isNull(), anyInt(), any())).thenReturn(results);
     }

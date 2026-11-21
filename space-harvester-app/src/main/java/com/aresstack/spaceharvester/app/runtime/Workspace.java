@@ -1366,15 +1366,13 @@ public final class Workspace {
     }
 
     /**
-     * Suchmethode „Synonyme der Fachbegriffe“ (K5a): wie viele zusätzliche Anfragen sie zu {@code text} im Umfang
-     * brächte, vor der Grenze {@code SearchExpansion.MAX_EXPANSIONS}. Wirft, wenn Glossar oder Beziehungen nicht
-     * lesbar sind; nie auf dem EDT.
-     *
-     * @param sourceId Quelle der Suche oder {@code null} für alle
-     * @param spaceKey Space der Suche oder {@code null}
+     * Suchmethode „Synonyme der Fachbegriffe“ (K5a): wie viele Synonymvorschläge die Suche {@code query} je Quelle
+     * höchstens stellen würde, vor der Grenze {@code SearchExpansion.MAX_EXPANSIONS}; derselbe Umfang und dieselbe
+     * Entdoppelung wie die Suche. Wirft, wenn das Glossar nicht lesbar ist; nie auf dem EDT.
      */
-    public int glossarySynonymsAvailable(String text, String sourceId, String spaceKey) {
-        return harvester.glossarySynonyms().available(caller, text, sourceId, spaceKey);
+    public int glossarySynonymsWanted(KeywordSearch.Query query) {
+        harvester.glossarySynonyms().requireReadable(caller);
+        return harvester.keywordSearch().glossarySynonymsWanted(caller, query);
     }
 
     /** Wie weit die Seiten eines Stapels der Schlagwortsuche geladen sind ({@code Results.progress()}). */

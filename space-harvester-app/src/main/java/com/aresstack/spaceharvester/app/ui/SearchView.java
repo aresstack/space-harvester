@@ -798,8 +798,7 @@ public final class SearchView implements View {
         if (!q.glossarySynonyms()) {
             return;
         }
-        String spaceKey = q.spaceKeys().size() == 1 ? q.spaceKeys().iterator().next() : null;
-        Background.run(() -> runtime.workspace().glossarySynonymsAvailable(q.text(), q.sourceId(), spaceKey),
+        Background.run(() -> runtime.workspace().glossarySynonymsWanted(q),
                 available -> {
                     if (id == request && available > SearchExpansion.MAX_EXPANSIONS) {
                         noteSynonyms(synonymsCut(available));

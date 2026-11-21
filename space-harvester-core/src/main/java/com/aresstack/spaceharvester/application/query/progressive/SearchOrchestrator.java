@@ -771,10 +771,14 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
         }
 
-        /** Bewertete zuerst, beste vorn; unbewertete danach in der Reihenfolge ihrer Freigabe. */
+        /**
+         * Bewertete zuerst, beste vorn; unbewertete danach in der Reihenfolge ihrer Freigabe. Treffer, deren einziger
+         * Textgrund ein Synonymvorschlag ist, stehen hinter allen übrigen (K5a).
+         */
         private List<RankedHit> ranked() {
             List<Entry> all = new ArrayList<>(entries.values());
-            all.sort(Comparator.comparing((Entry entry) -> Double.isNaN(entry.score))
+            all.sort(Comparator.comparing((Entry entry) -> HitReason.onlyProposedSynonym(entry.hit.reasons()))
+                    .thenComparing((Entry entry) -> Double.isNaN(entry.score))
                     .thenComparing(entry -> Double.isNaN(entry.score) ? 0 : -entry.score)
                     .thenComparingLong(entry -> entry.sequence));
             return all.stream().map(Entry::ranked).toList();

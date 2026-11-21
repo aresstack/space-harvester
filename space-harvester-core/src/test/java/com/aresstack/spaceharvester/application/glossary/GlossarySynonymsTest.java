@@ -130,11 +130,24 @@ class GlossarySynonymsTest {
     }
 
     @Test
-    void availableCountsAllProposalsBeforeTheLimit() {
+    void allProposalsComeBeforeTheLimitWhichTheSearchAppliesAfterDeduplication() {
         term("Wolkenpegel", OPEN);
         propose(OPEN, "Wolkenpegel", "Dunsthöhe", "Nebelmaß", "Schleierlinie", "Taugrenze", "Hauchmarke");
 
-        assertThat(synonyms.available(EDITOR, "Wolkenpegel", "wiki-a", null)).isEqualTo(5);
+        synonyms.requireReadable(EDITOR);
+        assertThat(synonyms.expansion().allExpansions(EDITOR, "Wolkenpegel", "wiki-a", null)).hasSize(5);
         assertThat(found("Wolkenpegel")).hasSize(SearchExpansion.MAX_EXPANSIONS);
+    }
+
+    @Test
+    void visibleInScopeAndConfirmedMustBeTheSameEntry() {
+        // Auflage 3: im Bereich wiki-b nur ein Eintrag der gesperrten Quelle; sichtbar ist nur der in wiki-a, außerhalb.
+        term("Wolkenpegel", LOCKED);
+        term("Wolkenpegel", OPEN);
+        metadataDenied.add("wiki-b");
+
+        assertThat(glossary.confirmedTerms(LOCKED)).as("ohne Rechteprüfung").contains("wolkenpegel");
+        assertThat(glossary.confirmedTerms(EDITOR, LOCKED)).isEmpty();
+        assertThat(glossary.confirmedTerms(EDITOR, OPEN)).containsExactly("wolkenpegel");
     }
 }

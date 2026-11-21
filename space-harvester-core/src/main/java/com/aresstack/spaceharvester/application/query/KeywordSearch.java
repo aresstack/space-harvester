@@ -383,16 +383,52 @@ public class KeywordSearch {
         if (!query.glossarySynonyms()) {
             return confirmed;
         }
+        List<SearchExpansion.Expansion> proposed = proposals(caller, query, sourceId, spaceKey, confirmed);
+        List<SearchExpansion.Expansion> all = new ArrayList<>(confirmed);
+        all.addAll(proposed.subList(0, Math.min(proposed.size(), SearchExpansion.MAX_EXPANSIONS)));
+        return List.copyOf(all);
+    }
+
+    /**
+     * Die vorgeschlagenen Synonyme einer Quelle ohne die Anfragen, die die bestätigten Beziehungen schon stellen, noch
+     * ungekappt: Erst nach dem Entfernen der Dubletten gilt {@link SearchExpansion#MAX_EXPANSIONS} (K5a).
+     */
+    private List<SearchExpansion.Expansion> proposals(AccessContext caller, Query query, String sourceId,
+                                                      String spaceKey, List<SearchExpansion.Expansion> confirmed) {
         Map<String, SearchExpansion.Expansion> all = new LinkedHashMap<>();
         confirmed.forEach(extra -> all.put(extra.query().toLowerCase(java.util.Locale.ROOT), extra));
-        int added = 0;
-        for (SearchExpansion.Expansion extra : glossarySynonyms.expansions(caller, query.text(), sourceId, spaceKey)) {
-            if (added < SearchExpansion.MAX_EXPANSIONS
-                    && all.putIfAbsent(extra.query().toLowerCase(java.util.Locale.ROOT), extra) == null) {
-                added++;
+        List<SearchExpansion.Expansion> proposed = new ArrayList<>();
+        for (SearchExpansion.Expansion extra : glossarySynonyms.allExpansions(caller, query.text(), sourceId,
+                spaceKey)) {
+            if (all.putIfAbsent(extra.query().toLowerCase(java.util.Locale.ROOT), extra) == null) {
+                proposed.add(extra);
             }
         }
-        return List.copyOf(all.values());
+        return proposed;
+    }
+
+    /**
+     * Wie viele Synonymvorschläge die Suche mit {@link Query#glossarySynonyms()} ohne Kürzung je Quelle höchstens
+     * stellen würde (für den Hinweis auf {@link SearchExpansion#MAX_EXPANSIONS}): derselbe Umfang je Quelle und dieselbe
+     * Entdoppelung gegen die bestätigten Beziehungen wie {@link #search}. Ohne die Methode 0. Wirft, wenn das Glossar
+     * nicht lesbar ist.
+     */
+    public int glossarySynonymsWanted(AccessContext caller, Query query) {
+        Objects.requireNonNull(query, "query");
+        if (!query.glossarySynonyms() || query.text() == null || query.text().isBlank()) {
+            return 0;
+        }
+        SearchScope scope = SearchScope.authorize(access, catalog, caller, query.scope());
+        String spaceKey = query.singleSpace();
+        int wanted = 0;
+        for (String sourceId : scope.sourceIds()) {
+            if (!query.reaches(sourceId)) {
+                continue;
+            }
+            List<SearchExpansion.Expansion> confirmed = expansion.expansions(caller, query.text(), sourceId, spaceKey);
+            wanted = Math.max(wanted, proposals(caller, query, sourceId, spaceKey, confirmed).size());
+        }
+        return wanted;
     }
 
     /**
@@ -674,6 +710,9 @@ public class KeywordSearch {
             }
         }
 
+        // K5a: Was nur ein Synonymvorschlag fand, steht hinter allen übrigen; der Cursor zählt je Quelle weiter.
+        candidates = HitReason.proposedSynonymsLast(candidates, Candidate::reasons);
+
         catalogFindings(caller, query, pending);
 
         Map<String, Integer> next = new LinkedHashMap<>();
@@ -688,7 +727,8 @@ public class KeywordSearch {
             Checked found = check(caller, query, candidates);
             tally.discovered = OptionalInt.of(found.hits().size());
             boolean checkedAll = complete && found.complete();
-            return new Results(scope.sourceId(), found.hits(), states, next.isEmpty() ? null
+            return new Results(scope.sourceId(), HitReason.proposedSynonymsLast(found.hits(), Hit::reasons), states,
+                    next.isEmpty() ? null
                     : encode(fingerprint(query), !checkedAll, next, unavailable, Set.of(), List.of()),
                     checkedAll && next.isEmpty(), 0);
         }
@@ -764,6 +804,10 @@ public class KeywordSearch {
                         matches.addAll(byExtra);
                     }
                 }
+                // K5a: über alle Quellen hinter alles andere, was nur ein Synonymvorschlag fand.
+                matches = HitReason.proposedSynonymsLast(matches, match -> textReasons
+                        .getOrDefault(mark(match.sourceId(), match.pageId()), List.of()).stream()
+                        .map(DocumentReason::reason).toList());
                 Set<String> seenMatches = new HashSet<>();
                 for (PageTextIndex.Match match : matches) {
                     if (!seenMatches.add(mark(match.sourceId(), match.pageId()))) {
@@ -824,8 +868,9 @@ public class KeywordSearch {
         checked.hits().forEach(hit -> fromIndex.add(new PageKey(hit.sourceId(), hit.pageId())));
         List<Hit> provisional = finalListOnly ? List.of() : ranked.stream()
                 .filter(hit -> !fromIndex.contains(new PageKey(hit.sourceId(), hit.pageId()))).toList();
-        return new Results(scope.sourceId(), checked.hits(), states, nextCursor, checkedAll && exhausted, loading,
-                provisional, progress);
+        return new Results(scope.sourceId(), HitReason.proposedSynonymsLast(checked.hits(), Hit::reasons), states,
+                nextCursor, checkedAll && exhausted, loading, HitReason.proposedSynonymsLast(provisional, Hit::reasons),
+                progress);
     }
 
     /**
@@ -1198,6 +1243,10 @@ public class KeywordSearch {
             // Nur mit Arten, aus demselben Grund; andere Arten machen den Cursor ungültig.
             canonical += "\u0000k" + query.kinds().stream().map(Enum::name).sorted()
                     .collect(java.util.stream.Collectors.joining("\u0001"));
+        }
+        if (query.glossarySynonyms()) {
+            // Nur mit der Suchmethode (K5a), aus demselben Grund; andere Anfragen machen den Cursor ungültig.
+            canonical += "\u0000s";
         }
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));

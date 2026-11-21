@@ -194,7 +194,7 @@ public class SearchController {
             if (title != null || pageId != null || parentPageId != null || version != null || modifiedFrom != null
                     || modifiedBefore != null || sort != null || q != null) {
                 throw new InvalidQueryException("text gibt es nur mit sourceId, sourceIds, spaceKey, excludeSpaceKey, "
-                        + "cursor und limit");
+                        + "glossarySynonyms, cursor und limit");
             }
             KeywordSearch.Query query = new KeywordSearch.Query(text, sourceId,
                     Set.copyOf(sourceIds == null ? List.of() : sourceIds),
@@ -205,6 +205,9 @@ public class SearchController {
         }
         if (excludeSpaceKey != null && !excludeSpaceKey.isEmpty()) {
             throw new InvalidQueryException("excludeSpaceKey gibt es nur mit text");
+        }
+        if (glossarySynonyms) {
+            throw new InvalidQueryException("glossarySynonyms gibt es nur mit text");
         }
         if (sort == null) {
             sort = "title";

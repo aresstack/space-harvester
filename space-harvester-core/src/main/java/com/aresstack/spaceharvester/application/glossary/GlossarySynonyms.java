@@ -1,12 +1,11 @@
 package com.aresstack.spaceharvester.application.glossary;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.SearchExpansion;
-import com.aresstack.spaceharvester.application.query.SearchTerms;
 import com.aresstack.spaceharvester.application.terms.RelationScope;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.TermText;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -22,7 +21,7 @@ import java.util.function.BiFunction;
 public final class GlossarySynonyms implements SearchExpansion.Counterparts {
 
     /** Art der Beziehung am Treffer: vorgeschlagenes Synonym eines Fachbegriffs. */
-    public static final String PROPOSED = "synonym-proposed";
+    public static final String PROPOSED = HitReason.PROPOSED_SYNONYM;
 
     private final BiFunction<AccessContext, RelationScope, Set<String>> technicalTerms;
     private final Proposed proposed;
@@ -67,33 +66,11 @@ public final class GlossarySynonyms implements SearchExpansion.Counterparts {
     }
 
     /**
-     * Wie viele zusätzliche Anfragen die Methode zu {@code text} ohne Kürzung brächte (für den Hinweis auf die Grenze
-     * {@link SearchExpansion#MAX_EXPANSIONS} in der Statuszeile). Wirft, wenn das Glossar nicht lesbar ist.
+     * Prüft, ob das Glossar für den Aufrufer lesbar ist (für den gelben Hinweis der Suche); wie viele Vorschläge die
+     * Suche stellen würde, sagt {@code KeywordSearch#glossarySynonymsWanted}. Wirft, wenn es nicht lesbar ist.
      */
-    public int available(AccessContext caller, String text, String sourceId, String spaceKey) {
-        String query = text == null ? "" : text.strip();
-        if (query.isEmpty()) {
-            return 0;
-        }
-        Set<String> queries = new LinkedHashSet<>();
-        String own = TermText.normalize(query);
-        add(queries, own, counterparts(caller, query, sourceId, spaceKey));
-        List<String> words = SearchTerms.terms(query);
-        if (words.size() > 1 && SearchTerms.isConcise(query)) {
-            for (String word : words) {
-                add(queries, own, counterparts(caller, word, sourceId, spaceKey));
-            }
-        }
-        return queries.size();
-    }
-
-    private static void add(Set<String> queries, String own, List<SearchExpansion.Counterpart> found) {
-        for (SearchExpansion.Counterpart other : found) {
-            String key = TermText.normalize(other.text());
-            if (!key.isEmpty() && !key.equals(own)) {
-                queries.add(key);
-            }
-        }
+    public void requireReadable(AccessContext caller) {
+        technicalTerms.apply(caller, RelationScope.GLOBAL);
     }
 
     private static RelationScope scope(String sourceId, String spaceKey) {
