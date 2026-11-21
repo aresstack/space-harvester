@@ -164,6 +164,12 @@ public final class Texts {
                         .TASK_PARAMETER))) {
             return "Bilder beschreiben";
         }
+        if (status.type() == JobType.ENRICHMENT
+                && com.aresstack.spaceharvester.application.terms.SynonymDiscovery.TASK.equals(
+                status.parameters().get(com.aresstack.spaceharvester.application.terms.SynonymDiscovery
+                        .TASK_PARAMETER))) {
+            return "Synonyme erkennen";
+        }
         if (status.type() == JobType.PRESENTATION_EXPORT) {
             return com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.parse(
                     status.parameters().get(com.aresstack.spaceharvester.application.presentation.VideoPresentations
