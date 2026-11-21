@@ -1554,7 +1554,7 @@ public final class PageDetailPanel extends JPanel {
             if (generation == belowRelationsGeneration) {
                 section.rows(rows, true);
                 tabStatus(RELATIONS, subpagesStatus(RELATIONS, below.size())
-                        + (rows.size() >= BELOW_RELATIONS_LIMIT ? " · unten die ersten " + BELOW_RELATIONS_LIMIT : ""));
+                        + (rows.size() >= BELOW_RELATIONS_LIMIT ? " · unten die ersten 1.000 von mehr" : ""));
             }
         }, error -> {
             if (generation == belowRelationsGeneration) {
