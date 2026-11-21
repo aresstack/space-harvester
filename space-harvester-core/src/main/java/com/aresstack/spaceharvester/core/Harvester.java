@@ -1095,14 +1095,16 @@ public final class Harvester implements AutoCloseable {
             // ihre Ablage zählt als Seiteninhalt und fällt mit der Seite, der Quelle und der Freigabe.
             this.simplifications = new Simplifications(new ChatStepModel(ChatStepModel.SIMPLIFICATION,
                     () -> liveAi ? this.settings.ai() : startAi,
-                    () -> this.settings.simplification().model(), catalog, trustBundles, builder.userAgent),
+                    () -> this.settings.simplification().model(), () -> this.settings.simplification().maxTokens(),
+                    catalog, trustBundles, builder.userAgent),
                     new SimplificationStore(enrichmentStore, clock), withdrawn::mayProcess);
             Simplifications simplified = this.simplifications;
             // ADR 0032, FL4: Prüfschritt nur auf Auftrag, gleicher Modellweg wie die Vorstufe (Temperatur 0, abgeschnitten
             // = Fehler), an das Modell nur Seiten mit KI-Freigabe; seine Ablage zählt als Seiteninhalt.
             this.statementChecks = new StatementChecks(new ChatStepModel(ChatStepModel.CHECK,
                     () -> liveAi ? this.settings.ai() : startAi,
-                    () -> this.settings.check().model(), catalog, trustBundles, builder.userAgent),
+                    () -> this.settings.check().model(), () -> this.settings.check().maxTokens(), catalog,
+                    trustBundles, builder.userAgent),
                     new StatementCheckStore(enrichmentStore, clock), withdrawn::mayProcess,
                     StatementChecks.pageAccess(access, page -> cache.find(page).map(PageSnapshot::spaceKey)));
             StatementChecks checked = this.statementChecks;
@@ -1181,7 +1183,8 @@ public final class Harvester implements AutoCloseable {
             // und Prüfschritt (Temperatur 0, Denken aus); nur auf Auftrag, an den Dienst nur Seiten mit KI-Freigabe.
             StatementAnalyzer modelAnalyzer = new ModelStatementAnalyzer(new ChatStepModel(ModelStatementAnalyzer.STEP,
                     () -> liveAi ? this.settings.ai() : startAi,
-                    () -> this.settings == null ? null : this.settings.analyzer().model(), catalog, trustBundles,
+                    () -> this.settings == null ? null : this.settings.analyzer().model(),
+                    () -> this.settings == null ? null : this.settings.analyzer().maxTokens(), catalog, trustBundles,
                     builder.userAgent), sentences);
             java.util.function.Function<PageSnapshot, Optional<PageText>> readerText = snapshot -> {
                 try {

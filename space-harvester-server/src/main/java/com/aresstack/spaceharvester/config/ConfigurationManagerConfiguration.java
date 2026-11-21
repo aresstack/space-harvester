@@ -140,7 +140,8 @@ class ConfigurationManagerConfiguration {
                 ChangeLogSettings.SHOW_AFTER_UPDATE, SimplificationSettings.MODE, SimplificationSettings.PARALLEL,
                 SimplificationSettings.MODEL, CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL,
                 GlossaryRuleSettings.MAX_TERMS, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN,
-                AnalyzerSettings.ANALYZER, AnalyzerSettings.MODEL)) {
+                AnalyzerSettings.ANALYZER, AnalyzerSettings.MODEL, SimplificationSettings.MAX_TOKENS,
+                CheckSettings.MAX_TOKENS, AnalyzerSettings.MAX_TOKENS)) {
             binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
                     .ifBound(value -> properties.setProperty(key, value));
         }

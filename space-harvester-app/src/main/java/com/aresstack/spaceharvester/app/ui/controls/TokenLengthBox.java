@@ -15,6 +15,8 @@ import java.util.List;
 public final class TokenLengthBox extends JComboBox<String> {
 
     private final int standard;
+    /** Sonderwert vor den Zahlen, etwa „wie Text-Modell“; {@code null} für keinen. */
+    private final String inherit;
     /** Ob die Anzeige den Standard zeigt, weil in der Datei nichts steht. */
     private boolean implicit;
 
@@ -23,10 +25,22 @@ public final class TokenLengthBox extends JComboBox<String> {
      * @param standard der Standard des Core, wenn in der Datei nichts steht
      */
     public TokenLengthBox(List<Integer> choices, int standard) {
+        this(choices, standard, null);
+    }
+
+    /**
+     * Mit einem Sonderwert vor den Zahlen, etwa „wie Text-Modell“: Ist er gewählt (oder steht nichts in der Datei),
+     * liefert {@link #text()} leer, und es gilt die Tokenlänge, auf die er verweist.
+     */
+    public TokenLengthBox(List<Integer> choices, int standard, String inherit) {
         this.standard = standard;
+        this.inherit = inherit;
         setFont(Comic.regular(13f));
         ComicComboBoxUI.install(this);
         setEditable(true);
+        if (inherit != null) {
+            addItem(inherit);
+        }
         choices.forEach(value -> addItem(String.valueOf(value)));
         setToolTipText("Tokenlänge: so viele Tokens darf eine Antwort höchstens lang werden; Auswahl oder eigene "
                 + "Zahl, Standard " + standard);
@@ -36,14 +50,14 @@ public final class TokenLengthBox extends JComboBox<String> {
     /** Zeigt den Wert aus der Datei; {@code null} oder leer zeigt den Standard. */
     public void showStored(String stored) {
         implicit = stored == null || stored.isBlank();
-        setSelectedItem(implicit ? String.valueOf(standard) : stored.strip());
+        setSelectedItem(implicit ? (inherit != null ? inherit : String.valueOf(standard)) : stored.strip());
     }
 
     /** Der eingetragene Wert als Text; leer, solange der Standard ungeändert angezeigt wird. */
     public String text() {
         Object editing = getEditor() == null ? null : getEditor().getItem();
         String value = editing == null ? "" : editing.toString().strip();
-        if (implicit && value.equals(String.valueOf(standard))) {
+        if (inherit != null && value.equals(inherit) || implicit && value.equals(String.valueOf(standard))) {
             return "";
         }
         return value;

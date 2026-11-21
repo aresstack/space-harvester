@@ -478,6 +478,12 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             problems.add(new ConfigurationProblem(e.getMessage().startsWith("Erwartet") ? SimplificationSettings.MODE
                     : SimplificationSettings.PARALLEL, e.getMessage()));
         }
+        try {
+            simplification = simplification.withMaxTokens(
+                    optionalInteger(read.value(SimplificationSettings.MAX_TOKENS)));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(SimplificationSettings.MAX_TOKENS, e.getMessage()));
+        }
         StandingSettings standing = StandingSettings.DEFAULT;
         try {
             standing = new StandingSettings(words(read, StandingSettings.OUTDATED_WORDS,
@@ -500,12 +506,22 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             problems.add(new ConfigurationProblem(e.getMessage().startsWith("Erwartet") ? CheckSettings.SCOPE
                     : CheckSettings.PARALLEL, e.getMessage()));
         }
+        try {
+            check = check.withMaxTokens(optionalInteger(read.value(CheckSettings.MAX_TOKENS)));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(CheckSettings.MAX_TOKENS, e.getMessage()));
+        }
         AnalyzerSettings analyzer = AnalyzerSettings.DEFAULT;
         try {
             analyzer = new AnalyzerSettings(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.parse(
                     read.value(AnalyzerSettings.ANALYZER)), read.value(AnalyzerSettings.MODEL));
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(AnalyzerSettings.ANALYZER, e.getMessage()));
+        }
+        try {
+            analyzer = analyzer.withMaxTokens(optionalInteger(read.value(AnalyzerSettings.MAX_TOKENS)));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(AnalyzerSettings.MAX_TOKENS, e.getMessage()));
         }
         ImageSettings images = ImageSettings.DEFAULT;
         try {
@@ -809,6 +825,18 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 case "h" -> Duration.ofHours(amount);
                 default -> Duration.ofDays(amount);
             };
+        }
+    }
+
+    /** Eine Zahl oder {@code null}, wenn leer. */
+    private static Integer optionalInteger(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(value.strip());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Erwartet eine ganze Zahl");
         }
     }
 }

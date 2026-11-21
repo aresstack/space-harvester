@@ -287,7 +287,9 @@ public final class AppSettingsLoader {
             problems.add(ROOT + "." + AnalyzerSettings.ANALYZER + ": " + e.getMessage());
         }
         Object model = get(statements, "analyzer-model");
-        return new AnalyzerSettings(choice, model == null ? null : model.toString());
+        return new AnalyzerSettings(choice, model == null ? null : model.toString(),
+                tokenLength(get(statements, "analyzer-max-tokens"), ROOT + "." + AnalyzerSettings.MAX_TOKENS,
+                        problems));
     }
 
     /**
@@ -421,7 +423,28 @@ public final class AppSettingsLoader {
             parallel = SimplificationSettings.DEFAULT_PARALLEL;
         }
         Object model = get(simplification, "model");
-        return new SimplificationSettings(mode, (int) parallel, model == null ? null : model.toString());
+        return new SimplificationSettings(mode, (int) parallel, model == null ? null : model.toString(),
+                tokenLength(get(simplification, "max-tokens"), ROOT + "." + SimplificationSettings.MAX_TOKENS,
+                        problems));
+    }
+
+    /**
+     * Die Tokenlänge eines Schritts ({@code max-tokens}, 1 bis 1000000) oder {@code null}, wenn leer; ein unlesbarer
+     * Wert ist ein Problem und lässt {@code ai.chat-max-tokens} gelten.
+     */
+    private static Integer tokenLength(Object value, String key, List<String> problems) {
+        if (value == null || value.toString().isBlank()) {
+            return null;
+        }
+        String text = value.toString().strip();
+        if (text.matches("\\d{1,7}")) {
+            int tokens = Integer.parseInt(text);
+            if (tokens >= 1 && tokens <= AiDraft.MAX_CHAT_MAX_TOKENS) {
+                return tokens;
+            }
+        }
+        problems.add(key + ": Tokenlänge ist eine ganze Zahl von 1 bis " + AiDraft.MAX_CHAT_MAX_TOKENS);
+        return null;
     }
 
     /**
@@ -443,7 +466,8 @@ public final class AppSettingsLoader {
             parallel = CheckSettings.DEFAULT_PARALLEL;
         }
         Object model = get(check, "model");
-        return new CheckSettings(scope, (int) parallel, model == null ? null : model.toString());
+        return new CheckSettings(scope, (int) parallel, model == null ? null : model.toString(),
+                tokenLength(get(check, "max-tokens"), ROOT + "." + CheckSettings.MAX_TOKENS, problems));
     }
 
     /**

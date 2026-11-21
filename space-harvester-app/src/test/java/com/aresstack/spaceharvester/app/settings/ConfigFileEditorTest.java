@@ -642,6 +642,41 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theTokenLengthOfEachStepGoesNextToItsModel() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");
+        var simplification = new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
+                com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 2,
+                "einfach", 4096);
+        var check = new com.aresstack.spaceharvester.application.configuration.CheckSettings(
+                com.aresstack.spaceharvester.application.check.CheckScope.ALL, 2, null, 32768);
+        var analyzer = new com.aresstack.spaceharvester.application.configuration.AnalyzerSettings(
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, "aussagen", 16384);
+        editor.save(file, editor.withSimplification(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                simplification));
+        editor.save(file, editor.withCheck(file, new ConfigFileEditor.Draft(Files.readString(file), null), check));
+        editor.save(file, editor.withAnalyzer(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                analyzer));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("      max-tokens: 4096\n", "      max-tokens: 32768\n",
+                "    analyzer-max-tokens: 16384\n");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.simplification()).isEqualTo(simplification);
+        assertThat(settings.check()).isEqualTo(check);
+        assertThat(settings.analyzer()).isEqualTo(analyzer);
+
+        editor.save(file, editor.withAnalyzer(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                analyzer.withMaxTokens(null)));
+        assertThat(Files.readString(file)).as("ohne eigene Tokenlänge kein Schlüssel")
+                .doesNotContain("analyzer-max-tokens");
+        Files.writeString(file, "space-harvester:\n  statements:\n    check:\n      max-tokens: viel\n");
+        assertThat(loader.load(file).problems()).anyMatch(p -> p.contains("statements.check.max-tokens"));
+        assertThat(loader.load(file).check().maxTokens()).isNull();
+    }
+
+    @Test
     void theAutomaticImageDescriptionGoesUnderImagesAndKeepsTheOtherKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");

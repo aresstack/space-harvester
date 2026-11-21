@@ -139,6 +139,7 @@ class ConfigurationParityTest {
                   mode: always
                   parallel: 3
                   model: step-model
+                  max-tokens: 4096
                 standing:
                   outdated-words:
                     - Archiv
@@ -148,8 +149,10 @@ class ConfigurationParityTest {
                   scope: all
                   parallel: 4
                   model: check-model
+                  max-tokens: 32768
                 analyzer: model
                 analyzer-model: statement-model
+                analyzer-max-tokens: 16384
               images:
                 automatic: true
                 max-per-run: 120
@@ -248,7 +251,7 @@ class ConfigurationParityTest {
         assertThat(app.simplification()).isEqualTo(service2.simplification())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
                         com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 3,
-                        "step-model"));
+                        "step-model", 4096));
 
         // ADR 0032, FL6: Wörter des Stands, als YAML-Liste und als Text mit Kommas.
         assertThat(app.standing()).isEqualTo(service2.standing())
@@ -257,14 +260,14 @@ class ConfigurationParityTest {
         // ADR 0032, FL4: Prüfschritt, beim Dienst über withSyncRules.
         assertThat(app.check()).isEqualTo(service2.check())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.CheckSettings(
-                        com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "check-model"));
+                        com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "check-model", 32768));
         // Fahrplan B1: automatische Bildbeschreibung, beim Dienst über withSyncRules.
         assertThat(app.images()).isEqualTo(service2.images())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 120));
         // Fahrplan A2/A3: Aussagenanalyse (Analysator = gelesene Ablage, eigenes Modell).
         assertThat(app.analyzer()).isEqualTo(service2.analyzer())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.AnalyzerSettings(
-                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, "statement-model"));
+                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, "statement-model", 16384));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder

@@ -177,6 +177,14 @@ final class AiSettingsPanel {
     final JTextField imageModel = Comic.field(24);
     final TokenLengthBox imageMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
             AiServiceSettings.DEFAULT_IMAGE_MAX_TOKENS);
+    /** Tokenlänge der Schritte mit eigenem Modell; „wie Text-Modell“ folgt {@code ai.chat-max-tokens}. */
+    static final String TOKENS_LIKE_CHAT = "wie Text-Modell";
+    final TokenLengthBox statementMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS, TOKENS_LIKE_CHAT);
+    final TokenLengthBox simplifyMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS, TOKENS_LIKE_CHAT);
+    final TokenLengthBox checkMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS, TOKENS_LIKE_CHAT);
     final ComposerButton pickImage = Comic.button("▾", "Modell der Bildgenerierung aus der Liste des Dienstes wählen");
     final JTextField chunkOverlap = Comic.field(6);
     final SettingDialogs.Rows rows = new SettingDialogs.Rows();
@@ -466,21 +474,25 @@ final class AiSettingsPanel {
         statementAnalyzer.addItem(ANALYZER_MODEL);
         statementAnalyzer.setToolTipText(AnalyzerNames.STORE_TOOLTIP);
         modelRows.add(ANALYZER_LABEL, Comic.row(statementAnalyzer, statementHelp), null);
-        modelRows.add(ANALYZER_MODEL_LABEL, Comic.fieldWithButton(statementModel, pickStatement), null);
+        modelRows.add(ANALYZER_MODEL_LABEL, modelRow(Comic.fieldWithButton(statementModel, pickStatement),
+                statementMaxTokens, ANALYZER_MODEL_LABEL, stepTokensHelp("den KI-Analysator der Aussagenanalyse",
+                        "space-harvester.statements.analyzer-model und .analyzer-max-tokens")), null);
         simplifyMode.addItem(SIMPLIFY_WHERE_NEEDED);
         simplifyMode.addItem(SIMPLIFY_ALWAYS);
         simplifyMode.setToolTipText("Welche Sätze die Vorstufe der Aussagenanalyse vereinfacht");
         simplifyParallel.setToolTipText("Höchstens so viele Abschnitte einer Seite sind gleichzeitig beim Modell");
         modelRows.add(SIMPLIFY_LABEL, Comic.row(simplifyMode, simplifyHelp), null);
-        modelRows.add(SIMPLIFY_MODEL_LABEL, Comic.fieldWithButton(simplifyModel, pickSimplify),
-                "Nur für „" + SIMPLIFY_LABEL + "“; leer: das Text-Modell");
+        modelRows.add(SIMPLIFY_MODEL_LABEL, modelRow(Comic.fieldWithButton(simplifyModel, pickSimplify),
+                simplifyMaxTokens, SIMPLIFY_MODEL_LABEL, stepTokensHelp("„" + SIMPLIFY_LABEL + "“",
+                        "space-harvester.statements.simplification.model und .max-tokens")), null);
         checkScope.addItem(CHECK_UNCERTAIN_AND_STAGE);
         checkScope.addItem(CHECK_ALL);
         checkScope.setToolTipText("Welche Aussagen der Auftrag „" + CHECK_JOB + "“ dem Modell zeigt");
         checkParallel.setToolTipText("Höchstens so viele Sätze einer Seite sind gleichzeitig beim Modell");
         modelRows.add(CHECK_SCOPE_LABEL, Comic.row(checkScope, checkHelp), null);
-        modelRows.add(CHECK_MODEL_LABEL, Comic.fieldWithButton(checkModel, pickCheck),
-                "Nur für „" + CHECK_JOB + "“; leer: das Text-Modell");
+        modelRows.add(CHECK_MODEL_LABEL, modelRow(Comic.fieldWithButton(checkModel, pickCheck), checkMaxTokens,
+                CHECK_MODEL_LABEL, stepTokensHelp("„" + CHECK_JOB + "“",
+                        "space-harvester.statements.check.model und .max-tokens")), null);
         modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Vision-Modell", modelRow(Comic.fieldWithButton(visionModel, pickVision), visionMaxTokens,
@@ -657,14 +669,18 @@ final class AiSettingsPanel {
                 : SIMPLIFY_WHERE_NEEDED);
         simplifyParallel.setValue(Math.min(simplification.parallel(), MAX_SIMPLIFY_PARALLEL));
         simplifyModel.setText(simplification.model() == null ? "" : simplification.model());
+        simplifyMaxTokens.showStored(simplification.maxTokens() == null ? null
+                : String.valueOf(simplification.maxTokens()));
         AnalyzerSettings analyzer = savedAnalyzer(settings);
         statementAnalyzer.setSelectedItem(analyzer.analyzer() == AnalyzerChoice.MODEL ? ANALYZER_MODEL
                 : ANALYZER_PARSER);
         statementModel.setText(analyzer.model() == null ? "" : analyzer.model());
+        statementMaxTokens.showStored(analyzer.maxTokens() == null ? null : String.valueOf(analyzer.maxTokens()));
         CheckSettings check = savedCheck(settings);
         checkScope.setSelectedItem(check.scope() == CheckScope.ALL ? CHECK_ALL : CHECK_UNCERTAIN_AND_STAGE);
         checkParallel.setValue(Math.min(check.parallel(), MAX_CHECK_PARALLEL));
         checkModel.setText(check.model() == null ? "" : check.model());
+        checkMaxTokens.showStored(check.maxTokens() == null ? null : String.valueOf(check.maxTokens()));
         chunkTokens.setText(current.chunkTokens() == null ? "" : current.chunkTokens());
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null
@@ -1400,7 +1416,8 @@ final class AiSettingsPanel {
     SimplificationSettings simplification() {
         return new SimplificationSettings(SIMPLIFY_ALWAYS.equals(simplifyMode.getSelectedItem())
                 ? SimplificationSettings.Mode.ALWAYS : SimplificationSettings.Mode.WHERE_NEEDED,
-                ((Number) simplifyParallel.getValue()).intValue(), simplifyModel.getText());
+                ((Number) simplifyParallel.getValue()).intValue(), simplifyModel.getText(),
+                stepTokens(simplifyMaxTokens));
     }
 
     /** Die Vorstufe in einer Zeile, für Abschlussseite und Übersichten. */
@@ -1418,7 +1435,7 @@ final class AiSettingsPanel {
     /** Die eingestellte Aussagenanalyse. */
     AnalyzerSettings analyzer() {
         return new AnalyzerSettings(ANALYZER_MODEL.equals(statementAnalyzer.getSelectedItem()) ? AnalyzerChoice.MODEL
-                : AnalyzerChoice.PARSER, statementModel.getText());
+                : AnalyzerChoice.PARSER, statementModel.getText(), stepTokens(statementMaxTokens));
     }
 
     /** Der Prüfschritt aus der Datei; ohne Datei die Vorgabe des Core. */
@@ -1430,7 +1447,28 @@ final class AiSettingsPanel {
     CheckSettings check() {
         return new CheckSettings(CHECK_ALL.equals(checkScope.getSelectedItem()) ? CheckScope.ALL
                 : CheckScope.UNCERTAIN_AND_STAGE, ((Number) checkParallel.getValue()).intValue(),
-                checkModel.getText());
+                checkModel.getText(), stepTokens(checkMaxTokens));
+    }
+
+    /**
+     * Die Tokenlänge eines Schritts als Zahl; leer oder „wie Text-Modell“ heißt {@code null}. Eine ungültige Eingabe
+     * gilt als nicht gesetzt (die Auswahl bietet nur gültige Werte, eine getippte Zahl außerhalb 1 bis 1000000 bleibt
+     * ohne Wirkung).
+     */
+    static Integer stepTokens(TokenLengthBox box) {
+        String text = box.text();
+        if (!text.matches("\\d{1,7}")) {
+            return null;
+        }
+        int value = Integer.parseInt(text);
+        return value >= 1 && value <= AiDraft.MAX_CHAT_MAX_TOKENS ? value : null;
+    }
+
+    /** Hilfetext der Zeile eines Schritts mit eigenem Modell und eigener Tokenlänge. */
+    private static String stepTokensHelp(String step, String keys) {
+        return "Eigenes Modell nur für " + step + "; leer: das Text-Modell.\n\n" + TOKENS_HELP_TAIL + " „"
+                + TOKENS_LIKE_CHAT + "“ übernimmt die Tokenlänge des Text-Modells.\n\nGilt ohne Neustart beim "
+                + "nächsten Lauf. Schlüssel in der Konfigurationsdatei: " + keys + ".";
     }
 
     /** Der Prüfschritt in einer Zeile, für Abschlussseite und Übersichten. */

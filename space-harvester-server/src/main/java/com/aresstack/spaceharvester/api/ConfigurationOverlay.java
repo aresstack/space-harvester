@@ -60,7 +60,8 @@ public final class ConfigurationOverlay {
             SimplificationSettings.MODE, SimplificationSettings.PARALLEL, SimplificationSettings.MODEL,
             StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS, CheckSettings.SCOPE, CheckSettings.PARALLEL,
             CheckSettings.MODEL, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN, AnalyzerSettings.ANALYZER,
-            AnalyzerSettings.MODEL));
+            AnalyzerSettings.MODEL, SimplificationSettings.MAX_TOKENS, CheckSettings.MAX_TOKENS,
+            AnalyzerSettings.MAX_TOKENS));
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
     private static final Set<String> LISTS = withGlossaryRules(false, Set.of(
@@ -172,6 +173,9 @@ public final class ConfigurationOverlay {
         put(properties, ImageSettings.MAX_PER_RUN, configuration.images().maxPerRun());
         put(properties, AnalyzerSettings.ANALYZER, configuration.analyzer().analyzer().value());
         put(properties, AnalyzerSettings.MODEL, configuration.analyzer().model());
+        put(properties, SimplificationSettings.MAX_TOKENS, configuration.simplification().maxTokens());
+        put(properties, CheckSettings.MAX_TOKENS, configuration.check().maxTokens());
+        put(properties, AnalyzerSettings.MAX_TOKENS, configuration.analyzer().maxTokens());
         GlossaryRuleSettings rules = configuration.terms().glossaryRules();
         put(properties, GlossaryRuleSettings.MAX_TERMS, rules.maxTerms());
         for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
