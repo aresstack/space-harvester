@@ -273,7 +273,7 @@ class ExplorerTest {
         List<String> opened = new java.util.ArrayList<>();
         context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
                 getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("openPage")) {
+                    if (method.getName().equals("openFromTree")) {
                         opened.add((String) args[1]);
                     }
                     return null;

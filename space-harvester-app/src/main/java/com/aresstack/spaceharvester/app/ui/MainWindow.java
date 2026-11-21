@@ -120,9 +120,9 @@ public final class MainWindow implements AppContext.Navigator {
     private final FindBar findBar;
     /** Platz der Zeitleiste über der Suchleiste ({@code TimelineEvent}). */
     private final JPanel timelineSlot = new JPanel(new BorderLayout());
-    private AppContext.Section current = AppContext.Section.SEARCH;
+    private AppContext.Section current = AppContext.Section.CONTENT;
     /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
-    private AppContext.Section beforeSettings = AppContext.Section.SEARCH;
+    private AppContext.Section beforeSettings = AppContext.Section.CONTENT;
     private final JPanel top = new JPanel(new HeaderLayout(12));
     private final StatusView statusView;
     private final SourcesView sources;
@@ -219,7 +219,8 @@ public final class MainWindow implements AppContext.Navigator {
             }
         });
         frame.setVisible(true);
-        show(AppContext.Section.SEARCH);
+        // Die App startet in der Leseansicht; zur Suche geht es erst mit einer Eingabe oben (Angelo, 21.11.2026).
+        show(AppContext.Section.CONTENT);
         return frame;
     }
 
@@ -693,6 +694,15 @@ public final class MainWindow implements AppContext.Navigator {
         showSection(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
         explorer.reveal(sourceId, spaceKey);
+    }
+
+    @Override
+    public void openFromTree(String sourceId, String pageId) {
+        // In der Suche filtert die Auswahl links nur; die Suchansicht bleibt (Angelo, 21.11.2026).
+        if (current == AppContext.Section.SEARCH) {
+            return;
+        }
+        openPage(sourceId, pageId);
     }
 
     @Override

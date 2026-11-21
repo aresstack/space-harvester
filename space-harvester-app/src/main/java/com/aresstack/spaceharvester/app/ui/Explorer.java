@@ -1279,14 +1279,15 @@ public final class Explorer {
 
     /**
      * Ein Klick oder Enter: Seite öffnen bzw. den nächsten Stapel holen. Quelle und Space zeigt schon die Auswahl in
-     * der Mitte (die Quellenseite mit den Updates), ein Klick wechselt dort keinen Reiter.
+     * der Mitte (die Quellenseite mit den Updates), ein Klick wechselt dort keinen Reiter. In der Suche wechselt kein
+     * Klick die Ansicht, die Auswahl ist dort der Filter (Angelo, 21.11.2026).
      */
     private void activate(TreePath path) {
         if (!(path.getLastPathComponent() instanceof Node node)) {
             return;
         }
         switch (node.item()) {
-            case PageItem page -> context.navigator().openPage(page.sourceId(), page.pageId());
+            case PageItem page -> context.navigator().openFromTree(page.sourceId(), page.pageId());
             case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
