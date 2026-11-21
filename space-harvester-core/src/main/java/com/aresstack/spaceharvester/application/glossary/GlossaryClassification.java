@@ -328,7 +328,7 @@ public class GlossaryClassification {
                     started.add(part.jobId());
                     RelationScope scope = new RelationScope(part.sourceId(), part.partitionKey());
                     return JobTask.blocking(context -> {
-                        synchronized (locks.computeIfAbsent(part.sourceId(), ignored -> new Object())) {
+                        synchronized (lock(scope)) {
                             job(scope, context, caller);
                         }
                     });
@@ -468,7 +468,7 @@ public class GlossaryClassification {
                 // Ein Klick wartet nie hinter Hintergrund (#1055), auch nicht hinter der eigenen Automatik.
                 JobStatus status = jobs.submitInteractive(JobType.GLOSSARY, id, space, root, caller.jobOwner(),
                         Map.of(), JobTask.blocking(context -> {
-                            synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
+                            synchronized (lock(scope)) {
                                 if (root == null) {
                                     job(scope, context, caller);
                                 } else {
@@ -502,6 +502,15 @@ public class GlossaryClassification {
                         e.getClass().getName());
             }
         });
+    }
+
+    /**
+     * Sperre je Geltungsbereich (Quelle und Space): Läufe über denselben Bereich gleichen dieselben Einträge ab und
+     * laufen nacheinander; ein Klick für einen Space wartet so nie auf den Hintergrundteil eines anderen Space.
+     */
+    private Object lock(RelationScope scope) {
+        return locks.computeIfAbsent(scope.sourceId() + "\u0000" + (scope.spaceKey() == null ? "" : scope.spaceKey()),
+                ignored -> new Object());
     }
 
     /** Ob der Auftrag von {@link #start} stammt. */
