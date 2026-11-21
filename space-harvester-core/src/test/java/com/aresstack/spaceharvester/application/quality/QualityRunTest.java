@@ -126,6 +126,41 @@ class QualityRunTest {
     }
 
     @Test
+    void anInterruptedSearchEndsTheRunAndLeavesTheQuestionUnmeasured() {
+        QualitySearch interrupted = (question, interim) -> {
+            if (question.id().equals("B")) {
+                throw new InterruptedException();
+            }
+            return new QualitySearch.Answer(List.of(hit("1", 0.9)), "QUALITY_REACHED", 1, 0);
+        };
+        try {
+            QualityRun.Result result = new QualityRun(interrupted, page -> false, new QualityRun.Settings(8, 0.5),
+                    clock::get).run(cases, Map.of(), () -> false, QualityRun.Listener.NONE);
+
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(result.cancelled()).isTrue();
+            assertThat(result.results()).extracting(CaseResult::id).containsExactly("A");
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    void aFailedNoAnswerSearchCountsAsFailed() {
+        QualitySearch broken = (question, interim) -> {
+            throw new IllegalStateException("Ausfall");
+        };
+        List<CaseResult> results = new QualityRun(broken, page -> false, new QualityRun.Settings(8, 0.5), clock::get)
+                .run(List.of(question("C", List.of(), CaseKind.KEINE)), Map.of(), () -> false,
+                        QualityRun.Listener.NONE).results();
+
+        QualitySummary summary = QualitySummary.of(results, 8);
+
+        assertThat(summary.failed()).isEqualTo(1);
+        assertThat(summary.noAnswerCorrect()).isZero();
+    }
+
+    @Test
     void theResultFileRoundTripsAndTheComparisonFindsChanges() {
         List<CaseResult> before = run.run(cases, Map.of(), () -> false, QualityRun.Listener.NONE).results();
         RunInfo info = new RunInfo("1.0", "Varianten KI, Schlagwort", Instant.parse("2026-11-21T10:00:00Z"),

@@ -99,6 +99,10 @@ public final class QualityRun {
                 return new Result(results, cases.size(), true);
             }
             CaseResult result = measure(question);
+            if (Thread.currentThread().isInterrupted()) {
+                // Unterbrochen: die Frage gilt als nicht gemessen, damit Fortsetzen sie neu stellt.
+                return new Result(results, cases.size(), true);
+            }
             results.add(result);
             measured++;
             listener.measured(measured, cases.size(), result);

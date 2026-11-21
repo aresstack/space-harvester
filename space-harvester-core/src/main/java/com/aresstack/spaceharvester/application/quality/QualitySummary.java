@@ -10,7 +10,7 @@ import java.util.function.Predicate;
  * gescheiterte Suche zählt dabei als nicht gefunden. Fragen der Art {@link CaseKind#KEINE} zählen getrennt.
  *
  * @param questions         Fragen mit Antwort (ohne {@link CaseKind#KEINE})
- * @param failed            davon gescheitert
+ * @param failed            gescheiterte Suchen über alle Fragen, auch {@link CaseKind#KEINE}
  * @param top5              Fragen mit einer erwarteten Fundstelle unter den ersten 5
  * @param topContext        … unter den ersten {@code contextSize} (was der Chat ins Modell gibt)
  * @param top10             … unter den ersten 10
@@ -48,6 +48,9 @@ public record QualitySummary(int questions, int failed, int top5, int topContext
                 continue;
             }
             durations.add(result.durationMillis());
+            if (result.failed()) {
+                failed++;
+            }
             if (result.noAnswer()) {
                 noAnswer++;
                 if (result.noAnswerCorrect()) {
@@ -56,9 +59,6 @@ public record QualitySummary(int questions, int failed, int top5, int topContext
                 continue;
             }
             questions++;
-            if (result.failed()) {
-                failed++;
-            }
             top5 += result.inTop(5) ? 1 : 0;
             topContext += result.inTop(contextSize) ? 1 : 0;
             top10 += result.inTop(10) ? 1 : 0;
