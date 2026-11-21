@@ -183,7 +183,10 @@ class TermGraphViewTest {
         SwingUtilities.invokeAndWait(() -> {
             TermGraphView view = new TermGraphView(null, relations, domain);
             view.onOpen(opened::add);
-            view.domainChoice().setSelected(true);
+            assertThat(view.optionsButton().marked()).isFalse();
+            view.domainChoice().doClick();
+            assertThat(view.optionsButton().marked()).as("Punkt, sobald eine Option abweicht").isTrue();
+            assertThat(view.optionsButton().getToolTipText()).isEqualTo("Optionen – aktiv: Nur Fachbegriffe");
             try {
                 view.show(domain.around("Antragsteller", 2, false));
             } catch (Exception e) {
@@ -200,6 +203,13 @@ class TermGraphViewTest {
             seen.add(popup.headingText());
             seen.add(popup.countValue());
             seen.add(popup.linkTexts());
+            List<java.awt.geom.Rectangle2D> tags = canvas.segments(canvas.layout(900, 560)).stream()
+                    .map(TermGraphView.Canvas.Segment::tag).filter(java.util.Objects::nonNull).toList();
+            for (int i = 0; i < tags.size(); i++) {
+                for (int j = i + 1; j < tags.size(); j++) {
+                    assertThat(tags.get(i).intersects(tags.get(j))).as("Beschriftungen berühren sich").isFalse();
+                }
+            }
             popup.clickLink(1);
             BufferedImage image = new BufferedImage(900, 560, BufferedImage.TYPE_INT_RGB);
             canvas.paint(image.getGraphics());

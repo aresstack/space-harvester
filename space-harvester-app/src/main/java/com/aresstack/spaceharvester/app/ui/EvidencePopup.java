@@ -35,7 +35,7 @@ import java.util.function.Consumer;
 
 /**
  * Overlay „Belege“ einer Verb-Kante der Fachsicht (Paket W1): Kopf „Antragsteller stellt Antrag“ mit Zahl, je Beleg der
- * Satz und darunter gedämpft der Seitentitel als Link, der die Seite an der Stelle öffnet und das Overlay schließt.
+ * Satz und darunter der Seitentitel als Link, der die Seite an der Stelle öffnet und das Overlay schließt.
  * Keine Standardknöpfe; Schließen mit dem Kreis „Esc“, der Esc-Taste oder einem Klick daneben. Nur auf dem EDT.
  */
 public final class EvidencePopup extends JPopupMenu {
@@ -53,7 +53,8 @@ public final class EvidencePopup extends JPopupMenu {
 
     private final JLabel heading = new JLabel(" ");
     private final CountChip count = new CountChip("Belege", Comic.MUTED);
-    private final JPanel rows = new JPanel();
+    private final com.aresstack.spaceharvester.app.ui.controls.ScrollColumn rows =
+            new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(null);
     private final JScrollPane scroll = Comic.scroll(rows);
     private final List<JLabel> links = new ArrayList<>();
     private Consumer<Target> onOpen = target -> { };
@@ -78,7 +79,6 @@ public final class EvidencePopup extends JPopupMenu {
         title.add(count);
         head.add(title, BorderLayout.CENTER);
         head.add(new EscCircle(() -> setVisible(false), "Schließen (Esc)"), BorderLayout.EAST);
-        rows.setOpaque(false);
         rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
         scroll.setOpaque(false);
         scroll.getViewport().setOpaque(false);
@@ -106,8 +106,8 @@ public final class EvidencePopup extends JPopupMenu {
      * Füllt das Overlay.
      *
      * @param title     Kopf, etwa „Antragsteller stellt Antrag“
-     * @param total     Zahl aller Belege der Kante
-     * @param evidence  die mitgelieferten Belege
+     * @param total     Zahl der Belege der Kante
+     * @param evidence  alle Belege; die Liste scrollt bei mehr als {@link #MAX_HEIGHT}
      * @param sentences Wortlaut je Aussage-ID ({@link SentenceText}); fehlt einer, steht das Prädikat da
      */
     EvidencePopup fill(String title, int total, List<DomainTermGraph.Evidence> evidence,
@@ -119,11 +119,6 @@ public final class EvidencePopup extends JPopupMenu {
         for (DomainTermGraph.Evidence item : evidence) {
             rows.add(row(item, sentences.get(item.statement().id())));
             rows.add(Box.createVerticalStrut(10));
-        }
-        if (total > evidence.size()) {
-            JLabel more = Comic.muted("… und " + (total - evidence.size()) + " weitere");
-            more.setAlignmentX(LEFT_ALIGNMENT);
-            rows.add(more);
         }
         rows.revalidate();
         int height = Math.min(MAX_HEIGHT, rows.getPreferredSize().height + 64);
@@ -204,7 +199,7 @@ public final class EvidencePopup extends JPopupMenu {
         link.putClientProperty("html.disable", Boolean.TRUE);
         Font base = Comic.regular(12f);
         link.setFont(base.deriveFont(Map.of(TextAttribute.UNDERLINE, TextAttribute.UNDERLINE_ON)));
-        link.setForeground(Comic.MUTED);
+        link.setForeground(Comic.BLUE);
         link.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         link.setFocusable(true);
         link.setToolTipText("Seite an dieser Stelle öffnen");
@@ -216,7 +211,7 @@ public final class EvidencePopup extends JPopupMenu {
 
             @Override
             public void focusLost(FocusEvent e) {
-                link.setForeground(Comic.MUTED);
+                link.setForeground(Comic.BLUE);
             }
         });
         return link;

@@ -169,8 +169,14 @@ public final class TermGraphView {
         start.addActionListener(e -> showTerm(start.getText()));
         showButton.addActionListener(e -> showTerm(start.getText()));
         depth.addActionListener(e -> reload());
-        proposals.addActionListener(e -> reload());
-        domain.addActionListener(e -> reload());
+        proposals.addActionListener(e -> {
+            markOptions();
+            reload();
+        });
+        domain.addActionListener(e -> {
+            markOptions();
+            reload();
+        });
         evidence.onOpen(target -> onOpen.accept(target));
         start.getDocument().addDocumentListener(new DocumentListener() {
             @Override
@@ -264,6 +270,23 @@ public final class TermGraphView {
     /** {@code listener} öffnet die Seite eines Belegs an der Stelle (Overlay „Belege“ der Fachsicht). */
     public void onOpen(java.util.function.Consumer<EvidencePopup.Target> listener) {
         onOpen = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Punkt am Filter-Symbol und Tooltip mit den aktiven Optionen, sobald eine vom Standard abweicht. */
+    void markOptions() {
+        List<String> active = new ArrayList<>();
+        if (proposals.isSelected()) {
+            active.add(proposals.getText());
+        }
+        if (domain.isSelected()) {
+            active.add(domain.getText());
+        }
+        options.marked(!active.isEmpty());
+        options.setToolTipText(active.isEmpty() ? OPTIONS_TIP : "Optionen – aktiv: " + String.join(", ", active));
+    }
+
+    IconButton optionsButton() {
+        return options;
     }
 
     /** Ob die Fachsicht gezeigt wird. */
@@ -492,6 +515,20 @@ public final class TermGraphView {
                         b.getX(), b.getY());
             }
 
+            /** Ob die Linie das Rechteck schneidet. */
+            boolean crosses(Rectangle2D area) {
+                Point2D last = a;
+                int steps = control == null ? 1 : 16;
+                for (int i = 1; i <= steps; i++) {
+                    Point2D next = at(i / (double) steps);
+                    if (area.intersectsLine(last.getX(), last.getY(), next.getX(), next.getY())) {
+                        return true;
+                    }
+                    last = next;
+                }
+                return false;
+            }
+
             /** Abstand eines Punkts von der Linie. */
             double distance(Point point) {
                 if (control == null) {
@@ -526,7 +563,6 @@ public final class TermGraphView {
                 pairs.merge(pairKey(edge), 1, Integer::sum);
             }
             Map<String, Integer> seen = new java.util.HashMap<>();
-            List<Rectangle2D> placed = new ArrayList<>();
             for (GraphSource.Edge edge : graph.edges()) {
                 Rectangle2D from = boxes.get(edge.from());
                 Rectangle2D to = boxes.get(edge.to());
@@ -572,34 +608,66 @@ public final class TermGraphView {
                     double bend = Math.max(45, length * 0.22);
                     control = new Point2D.Double(mx + nx * bend * 2, my + ny * bend * 2);
                 }
-                Rectangle2D tag = null;
-                String label = labelOf(edge);
-                if (label != null) {
-                    FontMetrics metrics = getFontMetrics(Comic.regular(11f));
-                    double w = metrics.stringWidth(label) + 10;
-                    double h = metrics.getHeight() + 2;
-                    Segment line = new Segment(edge, a, b, null, control);
-                    // Beschriftung entlang der Kante verschieben, bis sie weder Knoten noch andere Beschriftungen
-                    // überdeckt; sonst bleibt sie in der Mitte.
-                    for (double t : new double[] {0.5, 0.38, 0.62, 0.3, 0.7}) {
-                        Point2D middle = line.at(t);
-                        Rectangle2D candidate = new Rectangle2D.Double(middle.getX() - w / 2, middle.getY() - h / 2,
-                                w, h);
-                        if (tag == null) {
-                            tag = candidate;
-                        }
-                        if (placed.stream().noneMatch(candidate::intersects)
-                                && boxes.values().stream().noneMatch(candidate::intersects)) {
-                            tag = candidate;
-                            break;
+                segments.add(new Segment(edge, a, b, null, control));
+            }
+            return placeLabels(segments, boxes);
+        }
+
+        /** Abstand einer Beschriftung zu Knoten, anderen Beschriftungen und fremden Kanten. */
+        private static final double LABEL_GAP = 4;
+        private static final double[] LABEL_POSITIONS = {0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.2, 0.8};
+
+        /**
+         * Setzt jede Beschriftung auf ihre eigene Kante, so weit von der Mitte verschoben, bis sie mit
+         * {@link #LABEL_GAP} Abstand weder Knoten noch andere Beschriftungen berührt und keine fremde Kante sie kreuzt;
+         * findet sich keine freie Stelle, die mit den wenigsten Berührungen.
+         */
+        private List<Segment> placeLabels(List<Segment> segments, Map<String, Rectangle2D> boxes) {
+            FontMetrics metrics = getFontMetrics(Comic.regular(11f));
+            List<Rectangle2D> placed = new ArrayList<>();
+            List<Segment> result = new ArrayList<>();
+            for (Segment segment : segments) {
+                String label = labelOf(segment.edge());
+                if (label == null) {
+                    result.add(segment);
+                    continue;
+                }
+                double w = metrics.stringWidth(label) + 10;
+                double h = metrics.getHeight() + 2;
+                Rectangle2D best = null;
+                int bestHits = Integer.MAX_VALUE;
+                for (double t : LABEL_POSITIONS) {
+                    Point2D middle = segment.at(t);
+                    Rectangle2D candidate = new Rectangle2D.Double(middle.getX() - w / 2, middle.getY() - h / 2, w,
+                            h);
+                    Rectangle2D padded = new Rectangle2D.Double(candidate.getX() - LABEL_GAP,
+                            candidate.getY() - LABEL_GAP, w + 2 * LABEL_GAP, h + 2 * LABEL_GAP);
+                    int hits = 0;
+                    for (Rectangle2D other : placed) {
+                        hits += other.intersects(padded) ? 1 : 0;
+                    }
+                    for (Rectangle2D box : boxes.values()) {
+                        hits += box.intersects(padded) ? 1 : 0;
+                    }
+                    for (Segment other : segments) {
+                        if (other != segment && other.crosses(padded)) {
+                            hits++;
                         }
                     }
-                    placed.add(tag);
+                    if (hits < bestHits) {
+                        best = candidate;
+                        bestHits = hits;
+                    }
+                    if (hits == 0) {
+                        break;
+                    }
                 }
-                segments.add(new Segment(edge, a, b, tag, control));
+                placed.add(best);
+                result.add(new Segment(segment.edge(), segment.a(), segment.b(), best, segment.control()));
             }
-            return segments;
+            return result;
         }
+
 
         private int depthOf(String key) {
             return graph.nodes().stream().filter(node -> node.key().equals(key)).mapToInt(GraphSource.Node::depth)

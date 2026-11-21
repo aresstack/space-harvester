@@ -35,8 +35,6 @@ public final class DomainTermGraph {
 
     /** Höchstens so viele Knoten zeigt eine Fachsicht; mehr meldet {@link View#truncated()}. */
     public static final int MAX_NODES = 40;
-    /** Höchstens so viele Belege trägt eine Kante; gezählt werden alle ({@link Edge#count()}). */
-    public static final int MAX_EVIDENCE = 50;
 
     /** Ein bestätigter Fachbegriff des Glossars. */
     public record Term(String term, RelationScope scope) {
@@ -120,8 +118,8 @@ public final class DomainTermGraph {
      * Eine Kante.
      *
      * @param verb     Grundform des Verbs bei {@link EdgeKind#VERB}, sonst {@code null}
-     * @param count    Zahl aller Belege
-     * @param evidence höchstens {@link #MAX_EVIDENCE} Belege, nach Quelle, Seite und Satz
+     * @param count    Zahl der Belege
+     * @param evidence alle Belege, nach Quelle, Seite und Satz
      */
     public record Edge(String from, String to, EdgeKind kind, String verb, int count, List<Evidence> evidence) {
 
@@ -365,9 +363,7 @@ public final class DomainTermGraph {
 
         private void add(Evidence item) {
             count++;
-            if (evidence.size() < MAX_EVIDENCE) {
-                evidence.add(item);
-            }
+            evidence.add(item);
         }
 
         private Edge build() {
