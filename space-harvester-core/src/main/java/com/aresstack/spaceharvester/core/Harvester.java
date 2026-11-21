@@ -762,6 +762,9 @@ public final class Harvester implements AutoCloseable {
             FileSynonymVectorCache synonymVectors = new FileSynonymVectorCache(
                     builder.dataDirectory.resolve("term-relations").resolve("synonyms"));
             synonymCandidates.vectors(synonymVectors);
+            // K3: Synonyme wahlweise nur aus bestätigten Fachbegriffen des Glossars.
+            Glossary synonymGlossary = this.glossary;
+            synonymCandidates.glossaryTerms(scope -> synonymGlossary.confirmedTerms(scope.relationScope()));
             this.synonymVectors = synonymVectors;
             this.synonymDiscovery = new SynonymDiscovery(catalog, synonymCandidates, access, termRelations, judge,
                     synonymCache, jobs,
@@ -1009,7 +1012,7 @@ public final class Harvester implements AutoCloseable {
             this.automaticImages = new com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions(
                     jobs, imageAnalysis, cache::snapshots,
                     () -> this.settings != null ? this.settings.images() : startImages,
-                    sourceId -> catalog.find(sourceId).isPresent());
+                    sourceId -> catalog.find(sourceId).isPresent(), OWNER);
             opened.add(pageReleases.subscribe(automaticImages::releasesChanged));
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.

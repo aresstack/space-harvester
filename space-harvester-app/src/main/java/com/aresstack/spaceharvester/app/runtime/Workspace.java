@@ -279,8 +279,12 @@ public final class Workspace {
      * @param maxJudgedPairs höchstens so viele Paare an das Chat-Modell, {@code null} für den Wert der Konfiguration
      */
     public JobStatus startSynonymDiscovery(SynonymScope scope, Integer maxJudgedPairs) {
-        JobStatus status = harvester.synonymDiscovery().start(caller,
-                new SynonymDiscovery.Request(scope, maxJudgedPairs));
+        return startSynonymDiscovery(new SynonymDiscovery.Request(scope, maxJudgedPairs));
+    }
+
+    /** Wie {@link #startSynonymDiscovery(SynonymScope, Integer)} mit allen Angaben des Formulars (K3). */
+    public JobStatus startSynonymDiscovery(SynonymDiscovery.Request request) {
+        JobStatus status = harvester.synonymDiscovery().start(caller, request);
         activities.remember(status.id());
         return status;
     }
