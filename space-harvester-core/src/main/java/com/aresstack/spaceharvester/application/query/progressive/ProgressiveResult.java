@@ -22,7 +22,16 @@ import java.util.Objects;
  * @param neighbors  ob die Suchmethode „Nachbarseiten“ (R2) lief und ihre Kandidaten prüfen konnte
  */
 public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
-                                Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors) {
+                                Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors,
+                                int neighborQueries, int failedNeighborQueries) {
+
+    /**
+     * Mit dem Stand der Nachbarseiten, ohne Zählung ihrer Suchanfrage.
+     */
+    public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
+                             Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors) {
+        this(hits, variants, reason, loads, elapsed, failure, neighbors, 0, 0);
+    }
 
     public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
                              Duration elapsed) {
@@ -49,6 +58,9 @@ public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Co
 
     public ProgressiveResult {
         neighbors = neighbors == null ? Neighbors.OFF : neighbors;
+        if (neighborQueries < 0 || failedNeighborQueries < 0 || failedNeighborQueries > neighborQueries) {
+            throw new IllegalArgumentException("Zählung der Nachbarsuche ungültig");
+        }
         if (reason != Completion.FAILED) {
             failure = null;
         }

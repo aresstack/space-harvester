@@ -466,6 +466,9 @@ public final class SearchQualityRuns {
                     failedQueries++;
                 }
             }
+            // Die Suchanfrage der Nachbarseiten zählt mit, sonst wirkt ein Lauf mit ihnen sparsamer als er ist.
+            queries += result.neighborQueries();
+            failedQueries += result.failedNeighborQueries();
             if (result.reason() == ProgressiveResult.Completion.FAILED) {
                 // Alle Suchanfragen gescheitert: eine gescheiterte Messung, kein „zu Recht leer“.
                 throw new SearchFailedException();

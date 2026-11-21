@@ -256,6 +256,9 @@ public final class SearchOrchestrator implements AutoCloseable {
         private HitReason.Variant.Origin variantOrigin;
         /** Stand der Suchmethode „Nachbarseiten“; zugeschaltet, bis sie fertig ist, ungeprüft. */
         private ProgressiveResult.Neighbors neighborState;
+        /** Abgeschlossene bzw. gescheiterte Suchanfragen der Nachbarseiten, gezählt wie Varianten (ohne Frist). */
+        private int neighborQueries;
+        private int failedNeighborQueries;
 
         Run(VariantSearch search, AccessContext caller, KeywordSearch.Query query, SearchProfile profile,
             SearchQualityPolicy quality, ProgressiveSearchListener listener) {
@@ -451,12 +454,15 @@ public final class SearchOrchestrator implements AutoCloseable {
             } catch (ExecutionException | CompletionException e) {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
                 LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesucht ({0})", cause.getClass().getName());
+                neighborQueries++;
+                failedNeighborQueries++;
                 return false;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 cancelSignal.complete(null);
                 return false;
             }
+            neighborQueries++;
             KeywordSearch.Results results = outcome.results();
             if (results.progress() != null && !results.progress().done()) {
                 loads.add(results.progress().id());
@@ -849,7 +855,8 @@ public final class SearchOrchestrator implements AutoCloseable {
                 loads.forEach(this::cancelLoading);
             }
             ProgressiveResult done = new ProgressiveResult(ranked(), variants(), reason, loads,
-                    Duration.ofNanos(System.nanoTime() - started), failure, neighborState);
+                    Duration.ofNanos(System.nanoTime() - started), failure, neighborState, neighborQueries,
+                    failedNeighborQueries);
             record(done);
             emit(() -> listener.variants(done.variants()));
             emit(() -> listener.completed(done));
