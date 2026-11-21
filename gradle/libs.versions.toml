@@ -59,8 +59,12 @@ mermaidJava = "0.2.0-beta.2"
 poi = "5.5.1"
 # Desktop-App (#103): YAML-Konfiguration ohne Spring, dieselbe Fassung wie über Spring Boot 4.1
 snakeyaml = "2.4"
+# QR-Codes für den Zertifikatsexport einer Quelle (Strang ZX): nur zxing core (Apache-2.0, reines Java, ohne
+# weitere Abhängigkeiten); Bild-Anbindung selbst, damit zxing javase (jcommander, jai-imageio) entfällt
+zxing = "3.5.3"
 
 [libraries]
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
 jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
 spring-webflux = { module = "org.springframework:spring-webflux", version.ref = "springFramework" }

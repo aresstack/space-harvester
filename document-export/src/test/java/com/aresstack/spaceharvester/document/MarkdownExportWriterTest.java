@@ -12,13 +12,13 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Abbildungen, deren Ziel Leerzeichen oder Klammern enthält: der Konverter schreibt sie in spitzen Klammern
- * ({@code ![Plan](<attachment:Entwicklung MoeVe .JPG>)}); die Writer müssen sie trotzdem als Bild erkennen.
+ * ({@code ![Plan](<attachment:Entwicklung Nachtlauf .JPG>)}); die Writer müssen sie trotzdem als Bild erkennen.
  */
 class MarkdownExportWriterTest {
 
     private static final String TEXT = "Vorher\n\n"
-            + "![Entwicklung](<attachment:Entwicklungumgebung MoeVe .JPG>)\n\n"
-            + "![Diagramm (draw.io) „Stakeholder MoeVe“](<drawio:Stakeholder MoeVe>)\n\n"
+            + "![Entwicklung](<attachment:Entwicklungumgebung Nachtlauf .JPG>)\n\n"
+            + "![Diagramm (draw.io) „Stakeholder Nachtlauf“](<drawio:Stakeholder Nachtlauf>)\n\n"
             + "![Klammer](<attachment:Plan (alt) Ü.png>)\n\n"
             + "![Fehlt](<attachment:Nicht da.png>)\n\n"
             + "Siehe [Datei](<attachment:Bericht 2024.pdf>).";
@@ -31,8 +31,8 @@ class MarkdownExportWriterTest {
 
     private static List<ExportImage> images() throws Exception {
         byte[] png = png();
-        return List.of(ExportImage.loaded("attachment:Entwicklungumgebung MoeVe .JPG", "Entwicklung", png),
-                ExportImage.loaded("drawio:Stakeholder MoeVe", "Stakeholder MoeVe", png),
+        return List.of(ExportImage.loaded("attachment:Entwicklungumgebung Nachtlauf .JPG", "Entwicklung", png),
+                ExportImage.loaded("drawio:Stakeholder Nachtlauf", "Stakeholder Nachtlauf", png),
                 ExportImage.loaded("attachment:Plan (alt) Ü.png", "Klammer", png));
     }
 
@@ -45,7 +45,7 @@ class MarkdownExportWriterTest {
         String markdown = writer.chapter("Seite", null, TEXT, images(), 1);
 
         assertThat(markdown).contains("![Entwicklung](assets/Entwicklung.png)",
-                        "![Diagramm (draw.io) „Stakeholder MoeVe“](assets/DiagrammdrawioStakeholderMoeVe.png)",
+                        "![Diagramm (draw.io) „Stakeholder Nachtlauf“](assets/DiagrammdrawioStakeholderNachtlauf.png)",
                         "![Klammer](assets/Klammer.png)", "*[Abbildung nicht verfügbar: Fehlt]*",
                         "[Datei](<attachment:Bericht 2024.pdf>)")
                 .doesNotContain("](<attachment:Entwicklung", "](<drawio:", "](<attachment:Plan", "](<attachment:Nicht");

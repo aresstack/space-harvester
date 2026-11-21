@@ -105,6 +105,9 @@ class ManualSyncRoundsTest {
 
         assertThat(written).singleElement().satisfies(mark -> {
             assertThat(mark.failedSyncs()).isEqualTo(3);
+            // Für „Abgleich wiederholen“ (Angelo, 21.11.2026): welche Spaces gescheitert sind.
+            assertThat(mark.failedSpaces()).containsExactly("DEV", "OPS", "QA");
+            assertThat(mark.retrySpaces()).containsExactly("DEV", "OPS", "QA");
             assertThat(mark.at()).isEqualTo(CLOCK.instant());
         });
     }

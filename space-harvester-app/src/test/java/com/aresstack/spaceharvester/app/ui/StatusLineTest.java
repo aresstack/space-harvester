@@ -53,7 +53,7 @@ class StatusLineTest {
     @Test
     void twoAlertsShareTheWidthInsteadOfWrapping() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
-            JLabel signIn = new JLabel("Confluence HaVdB, confluence.swlm.zd.in.bund.de verlangen einen Einmalcode");
+            JLabel signIn = new JLabel("Confluence HaVdB, confluence.example.org verlangen einen Einmalcode");
             JLabel proxy = new JLabel("Proxy-Skript seit 16.11.2026 17:03:12 nicht erneuert");
             JLabel hidden = new JLabel("unsichtbar");
             hidden.setVisible(false);

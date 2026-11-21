@@ -62,8 +62,9 @@ final class SourceUpdatesView extends JPanel {
     static final String NO_SUMMARY = "Noch keine Zusammenfassung.";
     static final String NO_PAGES = "In diesem Update gibt es keine Änderung, die du sehen darfst.";
     static final String NOT_RUNNING = "Die Updates erscheinen, sobald der Dienst läuft.";
-    static final String HELP = "Ein Update entsteht mit jeder manuellen Synchronisierung und umfasst alles, was sich in "
-            + "der Quelle seit der vorigen geändert hat, auch was im Hintergrund geholt wurde. Die Updates stehen als Wolken "
+    static final String HELP = "Ein Update fasst alle manuellen Synchronisierungen eines Tages zusammen und umfasst "
+            + "alles, was sich in der Quelle seit dem vorigen Update geändert hat, auch was im Hintergrund geholt wurde; "
+            + "die Kreispfeile hinter gescheiterten Abgleichen wiederholen sie. Die Updates stehen als Wolken "
             + "oben, das jüngste ganz rechts und vorgewählt; „Seit dem letzten Update“ ist, was danach dazugekommen ist, "
             + "es zählt zum nächsten. Ein Klick auf eine Seite öffnet "
             + "sie.\n\n"
@@ -73,6 +74,8 @@ final class SourceUpdatesView extends JPanel {
             + "Änderung bekommen keine.";
     /** Vor den Zahlen von „Seit dem letzten Update“: kein hängender Auftrag, sondern was seither dazukam. */
     static final String OPEN_COUNTS = "Änderungen seit dem letzten manuellen Update: ";
+    static final String RETRY_TIP = "Abgleich wiederholen";
+    static final String RETRYING = "Gescheiterte Abgleiche werden wiederholt …";
     static final String SUMMARIZE = "Zusammenfassen";
     static final String RESUMMARIZE = "Neu zusammenfassen";
     static final String SUMMARIZING = "Zusammenfassung wird erstellt …";
@@ -111,6 +114,7 @@ final class SourceUpdatesView extends JPanel {
             JLabel.LEFT);
     private Consumer<String> onStatus = text -> { };
     private Consumer<ReportedPage> onOpen = page -> { };
+    private java.util.function.BiConsumer<String, List<String>> onRetry;
     private ZoneId zone = ZoneId.systemDefault();
 
     private String sourceId;
@@ -823,8 +827,7 @@ final class SourceUpdatesView extends JPanel {
         // Was früher in der Liste unter dem Datum stand; die Wolke oben trägt nur Datum und Benutzer.
         add(reportBody, Comic.wrapped(counts(update), Comic.MUTED, 12.5f));
         if (update.mark() != null && update.mark().failedSyncs() > 0) {
-            add(reportBody, Comic.wrapped(update.mark().failedSyncs() == 1 ? "Ein Abgleich ist dabei gescheitert."
-                    : update.mark().failedSyncs() + " Abgleiche sind dabei gescheitert.", Comic.RED, 12.5f));
+            add(reportBody, failedRow(update));
         }
         reportBody.add(Box.createVerticalStrut(10));
         if (mode == Mode.SUMMARY) {
@@ -874,6 +877,62 @@ final class SourceUpdatesView extends JPanel {
         }
         reportBody.revalidate();
         reportBody.repaint();
+    }
+
+    /**
+     * Die rote Zeile der gescheiterten Abgleiche, dahinter die Kreispfeile „Abgleich wiederholen“ (Angelo, 21.11.2026):
+     * nur am jüngsten Update, denn das Wiederholen gehört zum heutigen Update; was heute schon ein Update hat, wird
+     * darin zusammengelegt (ein Update je Tag), sonst entsteht das von heute.
+     */
+    private JComponent failedRow(ChangeUpdate update) {
+        int failed = update.mark().failedSyncs();
+        JLabel text = new JLabel(failed == 1 ? "Ein Abgleich ist dabei gescheitert."
+                : failed + " Abgleiche sind dabei gescheitert.");
+        text.setFont(Comic.regular(12.5f));
+        text.setForeground(Comic.RED);
+        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+        row.setOpaque(false);
+        row.add(text);
+        if (onRetry != null && update.id().equals(latestClosed())) {
+            List<String> spaces = update.mark().retrySpaces();
+            com.aresstack.spaceharvester.app.ui.IconButton retry = new com.aresstack.spaceharvester.app.ui.IconButton(
+                    com.aresstack.spaceharvester.app.ui.Glyph.SYNC, retryTip(spaces.size())).compact();
+            retry.setName("updates.retry");
+            retry.setForeground(Comic.INK);
+            retry.addActionListener(e -> {
+                // Einmal je Anzeige: das neue Ergebnis legt der Core als Marke ab, die Ansicht liest es per Meldung.
+                retry.setEnabled(false);
+                onStatus.accept(RETRYING);
+                onRetry.accept(sourceId, spaces);
+            });
+            row.add(Box.createHorizontalStrut(4));
+            row.add(retry);
+        }
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+        return row;
+    }
+
+    static String retryTip(int spaces) {
+        return spaces == 0 ? RETRY_TIP + " (alle Spaces der Quelle)"
+                : RETRY_TIP + " (" + (spaces == 1 ? "ein Space" : spaces + " Spaces") + ")";
+    }
+
+    /** Kennung des jüngsten abgeschlossenen Updates, {@code null} ohne. */
+    private String latestClosed() {
+        for (ChangeUpdate candidate : updates) {
+            if (!candidate.open()) {
+                return candidate.id();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@code listener} wiederholt die gescheiterten Abgleiche: Quelle und Spaces, leer für alle Spaces der Quelle. Ohne
+     * ihn steht hinter der roten Zeile kein Knopf.
+     */
+    void onRetry(java.util.function.BiConsumer<String, List<String>> listener) {
+        onRetry = Objects.requireNonNull(listener, "listener");
     }
 
     /** „Leseansicht“: die Zusammenfassung, sonst der Einstieg „Zusammenfassen“; die Änderungen stehen unter „Text“. */

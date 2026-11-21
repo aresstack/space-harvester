@@ -410,6 +410,61 @@ public class TermQueries {
     }
 
     /**
+     * Ein Begriff ohne Schreibweise: Suchwert und Art, wie {@link TermSummary#normalized()} und
+     * {@link TermSummary#kind()}.
+     */
+    public record TermRef(String normalized, TermKind kind) {
+
+        public TermRef {
+            Objects.requireNonNull(normalized, "normalized");
+            Objects.requireNonNull(kind, "kind");
+        }
+
+        public static TermRef of(TermSummary term) {
+            return new TermRef(term.normalized(), term.kind());
+        }
+    }
+
+    /**
+     * Auf wie vielen sichtbaren Seiten einer Seitenmenge jeder Begriff vorkommt (Fahrplan P1, „mit Unterseiten“): für
+     * den Zusatz „auch auf N Unterseiten“ an den eigenen Begriffen einer Seite, in einer Abfrage statt einer je
+     * Begriff. Ein Durchgang über die Einträge der Menge mit denselben Rechten und derselben Sichtbarkeit wie
+     * {@link #terms}; Fundstellen in Anhängen zählen nicht. Begriffe ohne Fundstelle in der Menge fehlen.
+     *
+     * @param pages die Seitenmenge, etwa die Nachfahren einer Seite; leer ergibt eine leere Antwort
+     */
+    public Map<TermRef, Integer> pageCounts(AccessContext caller, PageSet pages) {
+        Objects.requireNonNull(pages, "pages");
+        if (pages.size() == 0) {
+            return Map.of();
+        }
+        Set<String> sourceIds = within(scope(caller, null, null), pages);
+        TermIndex.Filter filter = new TermIndex.Filter(sourceIds, null, null, null, processorVersion, null,
+                TermOrigin.PAGES, pages);
+        Visibility visibility = new Visibility(caller, null);
+        // Je Begriff die verschiedenen Seiten: mehrere Schreibweisen desselben Suchwerts auf einer Seite sind
+        // getrennte Einträge, die Seite zählt trotzdem einmal.
+        Map<TermRef, Set<PageKey>> seen = new java.util.HashMap<>();
+        String from = null;
+        while (true) {
+            List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
+            for (TermPosting posting : batch) {
+                if (!posting.ofDocument() && visibility.current(posting).isPresent()) {
+                    seen.computeIfAbsent(new TermRef(posting.normalized(), posting.kind()),
+                            ref -> new java.util.HashSet<>()).add(posting.page());
+                }
+            }
+            if (batch.size() < TermIndex.MAX_BATCH) {
+                break;
+            }
+            from = batch.get(batch.size() - 1).sortKey();
+        }
+        Map<TermRef, Integer> counts = new java.util.HashMap<>();
+        seen.forEach((ref, pageKeys) -> counts.put(ref, pageKeys.size()));
+        return Map.copyOf(counts);
+    }
+
+    /**
      * Fundstellen eines Begriffs.
      *
      * @throws UnknownSourceException bei unbekannter {@code sourceId}
