@@ -219,10 +219,13 @@ Tag der Änderungen) bilden ein Update, das alles seit dem vorigen Tag mit Abgle
 sieht die drei Wochen in einem Update. Die Marken bleiben einzeln abgelegt; `ChangeLog.perDay(zone)` legt sie beim
 Lesen über `DailyUpdateMarks` zusammen, so gilt das auch für die schon vorhandenen. Die Erstbefüllung bleibt für sich.
 Das zusammengelegte Update trägt Zeitpunkt und Kennung der letzten Runde des Tages; frühere Zusammenfassungen einzelner
-Runden laufen mit der Aufbewahrung aus, für das Tages-Update entsteht beim Öffnen der Leseansicht eine neue.
+Runden laufen mit der Aufbewahrung aus, für das Tages-Update entsteht beim Öffnen der Leseansicht eine neue. Eine
+abgelegte Zusammenfassung trägt den Beginn ihrer Spanne (`StoredSummary.from`) und gilt nur für dieselbe Spanne;
+Einträge von vorher ohne Beginn gelten für zusammengelegte Tage als nicht vorhanden (Auflage Architekt).
 
 Die Marke führt die Spaces der gescheiterten Aufträge (`failedSpaces`). Hinter der roten Zeile „N Abgleiche sind dabei
 gescheitert.“ stehen am jüngsten Update die Kreispfeile „Abgleich wiederholen“: Sie holen diese Spaces nach wie die
 Kreispfeile im Baum (manuell, also eine neue Runde, die ins Update von heute fällt). Was am selben Tag erneut
 abgeglichen wurde, zählt nicht mehr als gescheitert. Ältere Marken ohne `failedSpaces` wiederholen alle Spaces ihrer
-Runde.
+Runde. Läuft für einen Space schon ein Abgleich, startet der Core keinen zweiten (`SyncAlreadyRunningException`);
+der Knopf ist nach dem Klick gesperrt.

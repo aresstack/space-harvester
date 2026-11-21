@@ -439,6 +439,9 @@ final class ChangeLogSchema {
         json.put("at", summary.at().toString());
         json.put("unreadableChanges", summary.unreadableChanges());
         json.put("reportSha256", summary.reportSha256());
+        if (summary.from() != null) {
+            json.put("from", summary.from().toString());
+        }
         ArrayNode inputs = json.putArray("inputPages");
         for (StoredSummary.InputPage page : summary.inputPages()) {
             inputs.addObject().put("spaceKey", page.spaceKey()).put("pageId", page.pageId())
@@ -473,7 +476,8 @@ final class ChangeLogSchema {
                 json.path("text").asString(),
                 statements, json.path("model").asString(), Instant.parse(json.path("createdAt").asString()),
                 Instant.parse(json.path("at").asString()), json.path("unreadableChanges").asInt(),
-                json.path("reportSha256").asString(), inputs);
+                json.path("reportSha256").asString(), inputs,
+                json.hasNonNull("from") ? Instant.parse(json.path("from").asString()) : null);
     }
 
     private static void stored(Document doc, String field, String value) {
