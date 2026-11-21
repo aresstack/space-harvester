@@ -107,6 +107,37 @@ public final class ChatSidebar extends JPanel {
         return ChatIcons.chat();
     }
 
+    /** Das Symbol des Umschalters mit Punkt oben rechts: eine Antwort ist da, die Leiste ist zu. */
+    public static Icon unreadIcon() {
+        Icon chat = ChatIcons.chat();
+        return new Icon() {
+            @Override
+            public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
+                chat.paintIcon(c, g, x, y);
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                int size = 7;
+                int left = x + getIconWidth() - size + 2;
+                g2.setColor(Comic.SURFACE);
+                g2.fillOval(left - 1, y - 3, size + 2, size + 2);
+                g2.setColor(Comic.BLUE);
+                g2.fillOval(left, y - 2, size, size);
+                g2.dispose();
+            }
+
+            @Override
+            public int getIconWidth() {
+                return chat.getIconWidth();
+            }
+
+            @Override
+            public int getIconHeight() {
+                return chat.getIconHeight();
+            }
+        };
+    }
+
     /** Einklappen: zwei Winkel nach rechts, wohin die Leiste verschwindet. */
     private static Icon collapseIcon() {
         return new StrokeIcon() {

@@ -196,6 +196,12 @@ public final class ChatPanel extends JPanel {
     private ChatTurn turn;
     /** Der Empfänger des laufenden Turns; beim Loslassen wird er abgemeldet, damit er nur noch speichert. */
     private TurnListener listening;
+    /** Wer erfährt, dass eine Antwort fertig ist (der Punkt am Chat-Knopf, wenn die Leiste zu ist; ADR 0027). */
+    private Runnable answerObserver = () -> { };
+    /** Wer erfährt, dass ein Quellen-Link eine Seite geöffnet hat (die große Ansicht gibt die Arbeitsfläche frei). */
+    private Runnable sourceObserver = () -> { };
+    /** Die Quellenzeile unter der zuletzt angelegten Antwortblase. */
+    private SourceLinks answeringSources;
     /** Ob die Auswahl links im Core aufgelöst ist; bis dahin sendet der Chat nicht (sonst gälten alte Seiten). */
     private boolean settled;
     /** Ergebnisse der verfolgten Aufträge, gemeldet erst, wenn alle geendet haben. */
@@ -1401,7 +1407,7 @@ public final class ChatPanel extends JPanel {
         answering = addAnswer("…");
         ChatRecord target = chat;
         Path targetNode = home;
-        TurnListener listener = new TurnListener(target, targetNode, answering);
+        TurnListener listener = new TurnListener(target, targetNode, answering, answeringSources);
         listening = listener;
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
                 listener, SwingUtilities::invokeLater);
@@ -1451,6 +1457,7 @@ public final class ChatPanel extends JPanel {
         private final ChatRecord started;
         private final Path startedNode;
         private final AssistantMarkdownBubble bubble;
+        private final SourceLinks links;
         private final StringBuilder text = new StringBuilder();
         /** Die nummerierten Quellen dieser Antwort, wie zuletzt gemeldet; gehen mit der Antwort in den Verlauf. */
         private List<ChatRecord.Source> sources = List.of();
@@ -1458,10 +1465,11 @@ public final class ChatPanel extends JPanel {
         ChatTurn turn;
         boolean detached;
 
-        TurnListener(ChatRecord started, Path startedNode, AssistantMarkdownBubble bubble) {
+        TurnListener(ChatRecord started, Path startedNode, AssistantMarkdownBubble bubble, SourceLinks links) {
             this.started = started;
             this.startedNode = startedNode;
             this.bubble = bubble;
+            this.links = links;
             // Die Markdown-Ansicht rendert gedrosselt: erst wenn die Blase dadurch wächst, nach unten rollen (Codex-
             // Befund zu #966), auch nach dem letzten Delta und beim Abschluss.
             follow = new java.awt.event.ComponentAdapter() {
@@ -1521,6 +1529,8 @@ public final class ChatPanel extends JPanel {
         @Override
         public void context(ChatKnowledge.Context context) {
             sources = context.accepted().stream().map(ChatRecord.Source::of).toList();
+            // Die Quellen stehen schon während der Antwort unter der Blase und wachsen mit jeder neuen.
+            links.show(sources);
             if (!detached) {
                 status.setText(context.isEmpty() ? ANSWERING + " · ohne Auszüge aus dem Bestand"
                         : ANSWERING + " · " + Texts.count(context.accepted().size(), "Auszug", "Auszüge")
@@ -1549,7 +1559,11 @@ public final class ChatPanel extends JPanel {
             if (!detached) {
                 scrollDown();
             }
+            boolean shown = !detached;
             finish(ChatRecord.Message.assistant(full, false, System.currentTimeMillis(), sources), " ");
+            if (shown) {
+                answerObserver.run();
+            }
         }
 
         @Override
@@ -1557,7 +1571,11 @@ public final class ChatPanel extends JPanel {
             show(message);
             bubble.setHeaderColor(Comic.RED);
             // Eine gescheiterte Antwort wird nicht gespeichert (wie im EAC); die Frage bleibt im Chat.
+            boolean shown = !detached;
             finish(null, message.lines().findFirst().orElse(" "));
+            if (shown) {
+                answerObserver.run();
+            }
         }
 
         @Override
@@ -1613,6 +1631,14 @@ public final class ChatPanel extends JPanel {
         };
     }
 
+    /**
+     * Meldet, sobald eine Antwort des angezeigten Chats fertig oder gescheitert ist (Observer, kein Polling). Ein
+     * Abbruch meldet nichts: den löst der Benutzer selbst aus.
+     */
+    public void onAnswer(Runnable observer) {
+        answerObserver = observer == null ? () -> { } : observer;
+    }
+
     /** Löst die Ansicht vom laufenden Turn: er schreibt seinen Chat zu Ende, zeigt hier aber nichts mehr. */
     private void detachTurn() {
         if (listening != null) {
@@ -1654,6 +1680,9 @@ public final class ChatPanel extends JPanel {
         row.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
         transcript.add(row);
+        answeringSources = new SourceLinks(this::openSource);
+        answeringSources.setAlignmentX(LEFT_ALIGNMENT);
+        transcript.add(answeringSources);
         transcript.revalidate();
         transcript.repaint();
         scrollDown();
@@ -1703,6 +1732,7 @@ public final class ChatPanel extends JPanel {
                         message.text());
             } else {
                 addAnswer(message.cancelled() ? message.text() + "\n\n" + CANCELLED : message.text());
+                answeringSources.show(message.sources());
             }
         }
         transcript.revalidate();
@@ -1908,6 +1938,103 @@ public final class ChatPanel extends JPanel {
         public Dimension getMaximumSize() {
             return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
         }
+    }
+
+    /**
+     * Meldet, wenn ein Quellen-Link eine Seite links geöffnet hat; die Leiste bleibt offen, die große Ansicht macht
+     * der Arbeitsfläche Platz.
+     */
+    public void onSourceOpened(Runnable observer) {
+        sourceObserver = observer == null ? () -> { } : observer;
+    }
+
+    /** Ein Klick auf eine Quelle öffnet ihre Seite links in der Leseansicht und zeigt sie im Baum. */
+    private void openSource(ChatRecord.Source source) {
+        context.navigator().openPage(source.sourceId(), source.pageId());
+        sourceObserver.run();
+    }
+
+    /**
+     * Die Quellen einer Antwort als Zeile unter ihrer Blase (Entwurf Chat-Seitenleiste, Punkt 8): je Quelle ein Link
+     * „[n] Titel“ in der Nummer, die die Antwort nennt. Ohne Quellen ist die Zeile nicht da; die Links brechen in
+     * der schmalen Leiste um. Eine Quelle ohne Seite (ein Dateianhang) steht als Text da.
+     */
+    static final class SourceLinks extends JPanel {
+
+        static final int TITLE_LENGTH = 48;
+
+        private final java.util.function.Consumer<ChatRecord.Source> open;
+        private List<ChatRecord.Source> shown = List.of();
+
+        SourceLinks(java.util.function.Consumer<ChatRecord.Source> open) {
+            super(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 10, 2));
+            this.open = open;
+            setOpaque(false);
+            setBorder(BorderFactory.createEmptyBorder(0, 14, 6, 14));
+            setVisible(false);
+        }
+
+        void show(List<ChatRecord.Source> sources) {
+            if (shown.equals(sources)) {
+                return;
+            }
+            shown = List.copyOf(sources);
+            removeAll();
+            for (int index = 0; index < shown.size(); index++) {
+                add(entry(index + 1, shown.get(index)));
+            }
+            setVisible(!shown.isEmpty());
+            revalidate();
+            repaint();
+        }
+
+        private JComponent entry(int number, ChatRecord.Source source) {
+            String title = source.title() == null || source.title().isBlank() ? "ohne Titel" : source.title().strip();
+            String text = "[" + number + "] "
+                    + (title.length() > TITLE_LENGTH ? title.substring(0, TITLE_LENGTH - 1) + "…" : title);
+            if (source.pageId() == null) {
+                JLabel plain = Comic.muted(text);
+                plain.setFont(Comic.regular(11f));
+                plain.setToolTipText(title);
+                return plain;
+            }
+            javax.swing.JButton link = new javax.swing.JButton(text);
+            link.setFont(Comic.regular(11f));
+            link.setForeground(Comic.BLUE);
+            link.setBorder(BorderFactory.createEmptyBorder());
+            link.setContentAreaFilled(false);
+            link.setFocusPainted(false);
+            link.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+            link.setToolTipText(title + " öffnen");
+            link.addActionListener(e -> open.accept(source));
+            return link;
+        }
+
+        /** Die gezeigten Einträge als Text; für Tests. */
+        List<String> texts() {
+            List<String> texts = new ArrayList<>();
+            for (Component entry : getComponents()) {
+                texts.add(entry instanceof javax.swing.AbstractButton button ? button.getText()
+                        : ((JLabel) entry).getText());
+            }
+            return texts;
+        }
+
+        @Override
+        public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    }
+
+    /** Die Quellenzeilen des Verlaufs in Reihenfolge, auch die leeren; für Tests. */
+    List<SourceLinks> sourceLinks() {
+        List<SourceLinks> rows = new ArrayList<>();
+        for (Component row : transcript.getComponents()) {
+            if (row instanceof SourceLinks links) {
+                rows.add(links);
+            }
+        }
+        return rows;
     }
 
     /** Die Marken des Verlaufs in Reihenfolge; für Tests. */
