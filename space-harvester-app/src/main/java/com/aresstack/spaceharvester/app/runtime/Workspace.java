@@ -2513,13 +2513,21 @@ public final class Workspace {
      * abgebrochen. @return Anzahl
      */
     public int deleteAllJobs() {
+        return deleteAllJobs(jobs().stream().map(JobStatus::id).toList());
+    }
+
+    /**
+     * Wie {@link #deleteAllJobs()}, nur für die genannten Aufträge, etwa die eines Reiters der Auftragsliste: laufende
+     * und wartende werden vorher abgebrochen. @return Anzahl
+     */
+    public int deleteAllJobs(java.util.Collection<String> jobIds) {
         int deleted = 0;
-        for (JobStatus status : jobs()) {
+        for (String id : jobIds) {
             try {
-                deleteJob(status.id());
+                deleteJob(id);
                 deleted++;
             } catch (UnknownJobException e) {
-                activities.forget(status.id());
+                activities.forget(id);
             }
         }
         return deleted;

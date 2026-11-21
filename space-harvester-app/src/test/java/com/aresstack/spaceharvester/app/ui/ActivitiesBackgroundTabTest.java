@@ -178,4 +178,38 @@ class ActivitiesBackgroundTabTest {
             assertThat(done).hasSize(1);
         });
     }
+
+    @Test
+    void aReplacedWaitForTheSameGroupIgnoresTheOldQueuedCompletion() throws Exception {
+        List<Consumer<BackgroundGroup>> listeners = new ArrayList<>();
+        List<String> done = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            BusyOverlay overlay = new BusyOverlay(new JPanel());
+            BackgroundWait wait = new BackgroundWait(overlay, (groupId, listener) -> {
+                listeners.add(listener);
+                return Subscription.NONE;
+            });
+            BackgroundGroup finished = new BackgroundGroup("g1", "pages", "Nachbarseiten laden", List.of());
+            wait.follow("g1", "erstes Warten", group -> done.add("alt"));
+            wait.follow("g1", "zweites Warten", group -> done.add("neu"));
+
+            // Die schon eingereihte Meldung des ersetzten Wartens kommt noch an: sie löst nichts aus.
+            listeners.get(0).accept(finished);
+            assertThat(done).isEmpty();
+            assertThat(overlay.isBusy()).isTrue();
+
+            listeners.get(1).accept(finished);
+            assertThat(done).containsExactly("neu");
+            assertThat(overlay.isBusy()).isFalse();
+        });
+    }
+
+    @Test
+    void tabJobsHoldOnlyRealJobsOfTheirTabNeverGroupRows() {
+        List<JobStatus> background = ActivitiesView.tabJobs(sample(), true);
+        assertThat(background).extracting(JobStatus::id).containsExactly("b1", "b2", "b3");
+        assertThat(ActivitiesView.tabJobs(sample(), false)).extracting(JobStatus::id).containsExactly("s1", "e1");
+        assertThat(ActivitiesView.visible(sample(), true)).anyMatch(ActivitiesView::groupRow);
+        assertThat(background).noneMatch(ActivitiesView::groupRow);
+    }
 }

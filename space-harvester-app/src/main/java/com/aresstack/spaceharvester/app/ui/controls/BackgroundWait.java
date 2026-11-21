@@ -21,6 +21,8 @@ public final class BackgroundWait {
     private final BiFunction<String, Consumer<BackgroundGroup>, Subscription> subscribe;
     private Subscription current = Subscription.NONE;
     private String followed;
+    /** Zählt jedes {@link #follow}; eine eingereihte Meldung eines ersetzten Wartens erkennt sich daran. */
+    private long generation;
 
     /**
      * @param subscribe meldet einmal das Ende einer Gruppe auf dem EDT, etwa {@code workspace::whenBackgroundFinished}
@@ -38,11 +40,12 @@ public final class BackgroundWait {
         Objects.requireNonNull(groupId, "groupId");
         Objects.requireNonNull(done, "done");
         stop();
+        long mine = ++generation;
         followed = groupId;
         overlay.setText(text);
         overlay.setBusy(true);
         current = subscribe.apply(groupId, group -> {
-            if (!groupId.equals(followed)) {
+            if (mine != generation || followed == null) {
                 return;
             }
             followed = null;
@@ -55,6 +58,7 @@ public final class BackgroundWait {
     public void stop() {
         current.close();
         current = Subscription.NONE;
+        generation++;
         followed = null;
         overlay.setBusy(false);
     }

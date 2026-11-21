@@ -564,8 +564,9 @@ public final class ActivitiesView implements View {
                     current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null));
                 }
             }
-            return new Object[] {jobs, current, currentPhase, notes(id == null ? List.of()
-                    : runtime.workspace().events(id))};
+            // Gruppenzeilen sind kein gespeicherter Auftrag und haben keine eigenen Ereignisse.
+            return new Object[] {jobs, current, currentPhase, notes(id == null || id.startsWith(GROUP_PREFIX)
+                    ? List.of() : runtime.workspace().events(id))};
         }, data -> {
             readDone();
             @SuppressWarnings("unchecked")
@@ -584,7 +585,7 @@ public final class ActivitiesView implements View {
             updateBackgroundChip(jobs);
             context.events().publish(overall.event(jobs, now, averages::get, parallelNow));
             updateGlobalButtons(tabJobs(jobs, backgroundTab()));
-            deleteFinished.setEnabled(jobs.stream().anyMatch(ActivitiesView::finished));
+            deleteFinished.setEnabled(tabJobs(jobs, backgroundTab()).stream().anyMatch(ActivitiesView::finished));
             downloads.refresh(runtime.workspace().parallelDownloads());
             preparations.refresh(runtime.workspace().parallelPreparations());
             connections.refresh(runtime.workspace().downloadConnections());
@@ -1698,7 +1699,7 @@ public final class ActivitiesView implements View {
         javax.swing.JMenuItem all = new javax.swing.JMenuItem(DELETE_ALL, Glyph.TRASH);
         all.setDisabledIcon(Glyph.TRASH);
         all.setFont(Comic.regular(13f));
-        all.setToolTipText("Alle Aufträge samt Diagnose löschen; laufende werden vorher abgebrochen");
+        all.setToolTipText(forTab("Alle Aufträge samt Diagnose löschen; laufende werden vorher abgebrochen"));
         all.setEnabled(!model.rows.isEmpty());
         all.addActionListener(e -> deleteAll());
         menu.add(all);
@@ -1717,11 +1718,13 @@ public final class ActivitiesView implements View {
      */
     void deleteFinished() {
         AppRuntime runtime = context.runtime();
-        List<String> confirmed = model.rows.stream().filter(ActivitiesView::finished).map(JobStatus::id).toList();
+        // Nur echte Aufträge des Reiters: Gruppenzeilen sind bloß Darstellung und zählen nicht mit.
+        List<JobStatus> own = tabJobs(lastJobs, backgroundTab());
+        List<String> confirmed = own.stream().filter(ActivitiesView::finished).map(JobStatus::id).toList();
         if (runtime == null || confirmed.isEmpty()) {
             return;
         }
-        long kept = model.rows.size() - confirmed.size();
+        long kept = own.size() - confirmed.size();
         if (!Dialogs.confirm(root, "Abgeschlossene Aufträge löschen?", Texts.count(confirmed.size(),
                 "abgeschlossenen Auftrag", "abgeschlossene Aufträge") + " wirklich löschen? Sie (fertig, gescheitert, "
                 + "abgebrochen) und ihre Diagnoseereignisse werden dauerhaft gelöscht."
@@ -1729,7 +1732,8 @@ public final class ActivitiesView implements View {
                 + " " + KEPT)) {
             return;
         }
-        boolean selectedGone = selectedId != null && confirmed.contains(selectedId);
+        boolean selectedGone = selectedId != null && (confirmed.contains(selectedId)
+                || selectedId.startsWith(GROUP_PREFIX));
         Background.run(() -> runtime.workspace().deleteJobs(confirmed), deleted -> {
             if (selectedGone) {
                 selectedId = null;
@@ -1749,11 +1753,14 @@ public final class ActivitiesView implements View {
      */
     void deleteAll() {
         AppRuntime runtime = context.runtime();
-        int count = model.rows.size();
+        // Genau die echten Aufträge des Reiters, die der Dialog zählt, werden gelöscht; der andere Reiter bleibt.
+        List<JobStatus> own = tabJobs(lastJobs, backgroundTab());
+        List<String> ids = own.stream().map(JobStatus::id).toList();
+        int count = own.size();
         if (runtime == null || count == 0) {
             return;
         }
-        long running = model.rows.stream().filter(job -> !job.state().terminal()).count();
+        long running = own.stream().filter(job -> !job.state().terminal()).count();
         String question = running == 0
                 ? "Wirklich alle Aufträge löschen? " + Texts.count(count, "Auftrag", "Aufträge")
                         + " samt Diagnoseereignissen werden dauerhaft gelöscht. " + KEPT
@@ -1765,7 +1772,7 @@ public final class ActivitiesView implements View {
                 question)) {
             return;
         }
-        Background.run(() -> runtime.workspace().deleteAllJobs(), deleted -> {
+        Background.run(() -> runtime.workspace().deleteAllJobs(ids), deleted -> {
             selectedId = null;
             detail = null;
             table.clearSelection();
