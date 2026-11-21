@@ -62,6 +62,7 @@ public class StatementAnalysis {
     private final StatementChecks checks;
     private final Supplier<StatementAnalyzer> model;
     private final java.util.function.Predicate<PageKey> released;
+    private final StatementReviews reviews;
 
     /**
      * @param texts    dieselbe Textprojektion wie der Leser ({@code Enrichments#text})
@@ -98,6 +99,19 @@ public class StatementAnalysis {
                              AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock,
                              Simplifications simplifications, StatementChecks checks,
                              Supplier<StatementAnalyzer> model, java.util.function.Predicate<PageKey> released) {
+        this(texts, store, access, analyzer, clock, simplifications, checks, model, released, StatementReviews.NONE);
+    }
+
+    /**
+     * @param reviews die Prüfung durch Menschen (ADR 0032, Umsetzung W3), die Lesewege über die gespeicherte Analyse
+     *                legen; auch {@link KnowledgeGraph} nimmt sie von hier, damit es genau eine Stelle gibt
+     */
+    public StatementAnalysis(Function<PageSnapshot, Optional<PageText>> texts, KnowledgeGraphStore store,
+                             AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock,
+                             Simplifications simplifications, StatementChecks checks,
+                             Supplier<StatementAnalyzer> model, java.util.function.Predicate<PageKey> released,
+                             StatementReviews reviews) {
+        this.reviews = Objects.requireNonNull(reviews, "reviews");
         this.simplifications = simplifications;
         this.checks = checks;
         this.model = Objects.requireNonNull(model, "model");
@@ -114,8 +128,19 @@ public class StatementAnalysis {
         return analyzer.get() != null;
     }
 
+    /** Die Prüfung durch Menschen für die Lesewege ({@link KnowledgeGraph}); nie vor einem Zurückschreiben. */
+    StatementReviews reviews() {
+        return reviews;
+    }
+
+    /** Die Analyse mit der wirksamen Prüfung durch Menschen; nur für Rückgaben, nie für die Ablage. */
+    private PageStatementAnalysis reviewed(PageStatementAnalysis analysis) {
+        return reviews.snapshot().apply(analysis);
+    }
+
     /**
-     * Die gespeicherte Analyse der Seite mit ihrem Stand; rechnet nie und lädt kein Modell.
+     * Die gespeicherte Analyse der Seite mit ihrem Stand und der wirksamen Prüfung durch Menschen
+     * ({@link StatementReviews}); rechnet nie und lädt kein Modell.
      *
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne Leserecht auf die Seite
      */
@@ -128,7 +153,7 @@ public class StatementAnalysis {
         }
         String reason = reason(stored.get(), texts.apply(snapshot).map(PageText::inputSha256));
         return new PageStatements(reason == null ? PageStatements.State.CURRENT : PageStatements.State.STALE, reason,
-                stored.get());
+                reviewed(stored.get()));
     }
 
     /**
@@ -263,7 +288,7 @@ public class StatementAnalysis {
                 snapshot.revision(), input, parser.id(), version, clock.instant(), result, null, stage);
         store.replace(analysis);
         return new PageStatements(PageStatements.State.CURRENT, null,
-                analysis.withResult(result.withoutConllu()));
+                reviewed(analysis.withResult(result.withoutConllu())));
     }
 
     /** Der Analysator der Wahl oder {@code null}, wenn er in dieser Laufzeit fehlt; lädt kein Modell. */
@@ -310,8 +335,8 @@ public class StatementAnalysis {
     }
 
     /**
-     * Die gespeicherte Analyse der Seite aus der Ablage des gewählten Analysators (Fahrplan Paket A2), mit ihrem Stand;
-     * rechnet nie und lädt kein Modell.
+     * Die gespeicherte Analyse der Seite aus der Ablage des gewählten Analysators (Fahrplan Paket A2), mit ihrem Stand
+     * und der wirksamen Prüfung durch Menschen für genau diese Ablage; rechnet nie und lädt kein Modell.
      */
     public PageStatements read(AccessContext caller, PageSnapshot snapshot, AnalyzerChoice choice) {
         require(caller, snapshot);
@@ -323,7 +348,7 @@ public class StatementAnalysis {
         }
         String reason = reason(stored.get(), texts.apply(snapshot).map(PageText::inputSha256));
         return new PageStatements(reason == null ? PageStatements.State.CURRENT : PageStatements.State.STALE, reason,
-                stored.get());
+                reviewed(stored.get()));
     }
 
     /** Ob die Analyse des gewählten Analysators aktuell ist, so dass ein Auftrag die Seite überspringen kann. */
@@ -379,7 +404,8 @@ public class StatementAnalysis {
         PageStatementAnalysis analysis = new PageStatementAnalysis(key, snapshot.spaceKey(), snapshot.metadata().title(),
                 snapshot.revision(), input, analyzer.id(), version, clock.instant(), result, null, null);
         store(AnalyzerChoice.MODEL).replace(analysis);
-        return new PageStatements(PageStatements.State.CURRENT, null, analysis.withResult(result.withoutConllu()));
+        return new PageStatements(PageStatements.State.CURRENT, null,
+                reviewed(analysis.withResult(result.withoutConllu())));
     }
 
     /**
@@ -556,7 +582,7 @@ public class StatementAnalysis {
         store.replace(analysis.withResult(withConllu(key, checked)));
         int rejectedCorrections = unparsed + merged.rejected().values().stream().mapToInt(Integer::intValue).sum();
         costs.accept(new CheckCosts(run, merged.corrected().size(), rejectedCorrections, withoutSection));
-        return new PageStatements(PageStatements.State.CURRENT, null, analysis.withResult(checked));
+        return new PageStatements(PageStatements.State.CURRENT, null, reviewed(analysis.withResult(checked)));
     }
 
     /**

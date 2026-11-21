@@ -9,7 +9,8 @@ import java.util.Objects;
  * kehrte die Sicht den Sinn um.
  *
  * @param page          Seite bzw. Dokument der Aussage mit Stand der Analyse
- * @param statement     die gespeicherte Aussage (Beteiligte, Merkmale, Herkunft, Befunde)
+ * @param statement     die gespeicherte Aussage (Beteiligte, Merkmale, Herkunft, Befunde) mit der wirksamen Prüfung
+ *                      durch Menschen
  * @param kind          Handlung oder Zustand
  * @param subject       Wortlaut des Handelnden bzw. Trägers oder {@code null}
  * @param subjectKey    dessen Grundform ({@code Mention#key()}) oder {@code null}
@@ -17,7 +18,8 @@ import java.util.Objects;
  *                      fehlt, offen ist (Pronomen) oder ein Teilsatz ist
  * @param quality       wirksame Stufe ({@link StandingRules#effectiveQuality}); nur PLAUSIBLE zählt als sicher
  * @param standing      Stand mit Herkunft und Grund
- * @param decision      Entscheidung eines Menschen zu dieser Aussage oder {@code null}
+ * @param decision      Entscheidung eines Menschen zu dieser Aussage oder {@code null}; trägt Stand und/oder Prüfung
+ *                      ({@link StandingDecision#hasStanding()}), ihre Revision gilt für beides
  * @param analysisStale ob die Analyse der Seite veraltet ist ({@link KnowledgeGraph.PageRef#state()})
  */
 public record StatusQuoEntry(KnowledgeGraph.PageRef page, ParsedStatements.Statement statement, StatementKind kind,
