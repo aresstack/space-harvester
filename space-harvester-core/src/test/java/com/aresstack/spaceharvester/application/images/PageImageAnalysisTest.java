@@ -816,6 +816,37 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void parallelPagesReserveTheLimitBeforeTheyStartSoTheRunDoesNotOvershoot() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        source.image("3", "att3", "karte.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 9});
+        describer.parallel = 3;
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(3);
+        describer.during = () -> {
+            started.countDown();
+            try {
+                // Hielte der Lauf die Grenze nicht vorab, liefen hier alle drei Seiten zugleich los.
+                started.await(1, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        com.aresstack.spaceharvester.application.configuration.ImageSettings two =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 2);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text"), page("2", "Text"), page("3", "Text")).iterator(), () -> two,
+                "wiki"::equals);
+        RecordingContext context = new RecordingContext();
+
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki", two, context);
+
+        assertThat(outcome.images()).isEqualTo(2);
+        assertThat(outcome.open()).isEqualTo(1);
+        assertThat(describer.calls).isEqualTo(2);
+        assertThat(context.incomplete).isTrue();
+    }
+
+    @Test
     void aRunHasItsOwnContingentAndDoesNotCrowdOutTheUser() throws Exception {
         source.image("1", "att1", "ablauf.png", PNG);
         source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
