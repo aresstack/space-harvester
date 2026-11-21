@@ -369,6 +369,7 @@ final class SetupWizard {
         // Lauf nach jedem Abgleich (SY1/SY3), einstellbar im Schritt „Modelle“ und unter Einstellungen › Modelle.
         summary.add(AiSettingsPanel.AUTOMATIC_SYNONYMS_LABEL,
                 AiSettingsPanel.automaticSynonymsSummary(settings.terms().synonyms()));
+        summary.add(AiSettingsPanel.AUTOMATIC_IMAGES_LABEL, AiSettingsPanel.automaticImagesSummary(settings.images()));
         // Vorstufe der Aussagenanalyse (ADR 0032), einstellbar im Schritt „Modelle“.
         summary.add(AiSettingsPanel.SIMPLIFY_LABEL, AiSettingsPanel.simplificationSummary(settings.simplification()));
         // Einstellbar unter Einstellungen › Modelle › Wörter für den Stand (ADR 0032).

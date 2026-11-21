@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.configuration.HarvesterConfigura
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
+import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
@@ -54,7 +55,7 @@ public final class ConfigurationOverlay {
             TermSettings.SYNONYMS_AUTOMATIC, EnrichmentSettings.DOCUMENTS_ENABLED, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
             SimplificationSettings.MODE, SimplificationSettings.PARALLEL, SimplificationSettings.MODEL,
             StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS, CheckSettings.SCOPE, CheckSettings.PARALLEL,
-            CheckSettings.MODEL));
+            CheckSettings.MODEL, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN));
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
     private static final Set<String> LISTS = withGlossaryRules(false, Set.of(
@@ -156,6 +157,8 @@ public final class ConfigurationOverlay {
         put(properties, CheckSettings.SCOPE, configuration.check().scope().value());
         put(properties, CheckSettings.PARALLEL, configuration.check().parallel());
         put(properties, CheckSettings.MODEL, configuration.check().model());
+        put(properties, ImageSettings.AUTOMATIC, configuration.images().automatic());
+        put(properties, ImageSettings.MAX_PER_RUN, configuration.images().maxPerRun());
         GlossaryRuleSettings rules = configuration.terms().glossaryRules();
         put(properties, GlossaryRuleSettings.MAX_TERMS, rules.maxTerms());
         for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {

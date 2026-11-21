@@ -431,6 +431,8 @@ public final class ActivitiesView implements View {
     static final String RESULT_LABEL = "Ergebnis";
     /** Bezeichnung einer bewusst ausgelassenen Phase; gelb, nie rot. */
     static final String SKIPPED_LABEL = "Bewusst ausgelassen";
+    /** Angabe am Auftrag „Bilder beschreiben“ (Fahrplan B1): bewusst ausgelassen oder Obergrenze erreicht, gelb. */
+    static final String IMAGES_LABEL = "Bilder";
 
     /** Eine Angabe am Auftrag aus einem Ereignis mit Code; {@code skipped} zeigt sie gelb. */
     record Note(String label, String text, boolean skipped) {
@@ -478,6 +480,19 @@ public final class ActivitiesView implements View {
         if (code.startsWith(com.aresstack.spaceharvester.application.glossary.GlossaryClassification.MODEL_SKIPPED
                 + ":")) {
             return new Note(SKIPPED_LABEL, message, true);
+        }
+        // Fahrplan B1: ohne Vision-Modell, mit Einmalcode oder an der Obergrenze bewusst ausgelassen (gelb).
+        if (code.startsWith("IMAGES_SKIPPED:")
+                || code.equals(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions
+                .LIMIT_REACHED)) {
+            return new Note(IMAGES_LABEL, message, true);
+        }
+        // Ein ausgefallenes Vision-Modell ist ein Fehler, kein bewusstes Auslassen.
+        if (code.equals(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.MODEL_FAILED)) {
+            return new Note(IMAGES_LABEL, message, false);
+        }
+        if (code.equals(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.DONE)) {
+            return new Note(RESULT_LABEL, message, false);
         }
         if (code.equals(com.aresstack.spaceharvester.application.glossary.GlossaryClassification.RULES_DONE)) {
             return new Note(RESULT_LABEL, message, false);

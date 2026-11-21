@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.check.CheckScope;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
+import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
@@ -248,7 +249,24 @@ public final class AppSettingsLoader {
                 check(map(get(map(get(root, "statements")), "check")), problems),
                 viewerBackground(get(map(get(app, "viewer")), "background"), problems),
                 video(map(get(app, "video")), problems),
-                whisperModel(get(map(get(app, "whisper")), "model"), problems));
+                whisperModel(get(map(get(app, "whisper")), "model"), problems),
+                images(map(get(root, "images")), problems));
+    }
+
+    /**
+     * {@code space-harvester.images.*}: automatische Bildbeschreibung nach dem Abgleich (Fahrplan B1), wie beim Dienst
+     * ({@link ImageSettings}). Ein unlesbarer Wert ist ein Problem und lässt die Vorgabe stehen.
+     */
+    private ImageSettings images(Map<?, ?> images, List<String> problems) {
+        boolean automatic = flag(get(images, "automatic"), ImageSettings.DEFAULT.automatic(),
+                ROOT + "." + ImageSettings.AUTOMATIC, problems);
+        String maxKey = ROOT + "." + ImageSettings.MAX_PER_RUN;
+        long max = longNumber(get(images, "max-per-run"), ImageSettings.DEFAULT_MAX_PER_RUN, maxKey, problems);
+        if (max < 0 || max > Integer.MAX_VALUE) {
+            problems.add(maxKey + ": Erwartet 0 (unbegrenzt) oder eine positive ganze Zahl");
+            max = ImageSettings.DEFAULT_MAX_PER_RUN;
+        }
+        return new ImageSettings(automatic, (int) max);
     }
 
     /** {@code space-harvester-app.whisper.model}: ein unbekannter Wert ist ein Problem und lässt Tiny stehen. */

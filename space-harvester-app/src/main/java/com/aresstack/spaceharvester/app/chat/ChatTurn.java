@@ -237,6 +237,17 @@ public final class ChatTurn {
         return this;
     }
 
+    /**
+     * Suchmethode „Nachbarseiten“ (R2, C1): die Stellung der Suchoptionen beim Senden; die Suche im Bereich nimmt dann
+     * Nachbarn der besten Treffer dazu, die die Frage auch treffen, nie von außerhalb des Bereichs.
+     */
+    public ChatTurn searchingNeighbors(boolean on) {
+        this.neighbors = on;
+        return this;
+    }
+
+    private boolean neighbors;
+
     /** Die KI-Freigabe dieses Turns; ohne Aufruf trägt er nichts ein. */
     public ChatTurn releasing(Releases releases) {
         this.releases = Objects.requireNonNull(releases, "releases");
@@ -389,7 +400,7 @@ public final class ChatTurn {
             public void delivered(String spaceKey, PageKey key) {
                 releasePage(spaceKey, key);
             }
-        });
+        }).neighbors(neighbors);
         tools = running;
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
@@ -781,7 +792,7 @@ public final class ChatTurn {
             public void ranked(List<ProgressiveResult.RankedHit> hits) {
                 latest.set(hits);
             }
-        });
+        }, neighbors);
         search = running;
         List<ProgressiveResult.RankedHit> hits;
         try {

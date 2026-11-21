@@ -22,6 +22,7 @@ import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import javax.swing.BorderFactory;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
@@ -70,6 +71,12 @@ final class SearchQualityStart {
     final FileField suite = new FileField(Comic.field(36));
     final FileField previous = new FileField(Comic.field(36));
     final JLabel status = new JLabel(" ");
+    /**
+     * Mit der Suchmethode „Nachbarseiten“ (R2) messen; vorbelegt wie in den Suchoptionen. Ein Lauf mit und einer ohne
+     * liegen nebeneinander im Ordner, der Lauf mit trägt „mit Nachbarseiten“ im Namen.
+     */
+    final JCheckBox neighbors = Comic.checkBox(NEIGHBORS);
+    static final String NEIGHBORS = "Mit Nachbarseiten messen";
     final ComposerButton start = Comic.primary(START, "Fragen stellen; Ergebnis und Bericht im Ausgabeordner unter "
             + "„" + SearchQualityRuns.FOLDER + "“");
     /** Mindestens {@link #WIDTH} breit, so hoch wie der Inhalt (das Band darf wachsen, „Messen“ bleibt sichtbar). */
@@ -104,6 +111,10 @@ final class SearchQualityStart {
         previous.dialogTitle("Früheres Ergebnis wählen");
         previous.extensions("Ergebnis (*.tsv)", "tsv");
         previous.clearable("Kein Vergleich");
+        neighbors.setOpaque(false);
+        neighbors.setSelected(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
+        neighbors.setToolTipText("Wie die Suchmethode „Nachbarseiten“ der Suche: Eltern-, Unter- und verlinkte "
+                + "Seiten der besten Treffer kommen dazu, wenn sie die Frage auch treffen");
         start.setEnabled(false);
         start.addActionListener(e -> start());
         status.setOpaque(true);
@@ -127,9 +138,12 @@ final class SearchQualityStart {
                 Background.run(work, onSuccess, onFailure);
             }
         };
+        SearchQualityStart[] holder = new SearchQualityStart[1];
         SearchQualityStart start = new SearchQualityStart(output, path -> runtime.workspace().readQualitySuite(path),
-                (suite, previous) -> runtime.workspace().startSearchQuality(suite, previous, output, version),
+                (suite, previous) -> runtime.workspace().startSearchQuality(suite, previous, output, version,
+                        holder[0].neighbors.isSelected()),
                 background, started);
+        holder[0] = start;
         JDialog dialog = Dialogs.dialog(parent, TITLE);
         start.close = dialog::dispose;
         Dialogs.escFrame(dialog, TITLE, start.component(), dialog::dispose);
@@ -170,6 +184,8 @@ final class SearchQualityStart {
         body.add(Comic.caption(PREVIOUS), c);
         c.insets = new Insets(0, 0, 0, 0);
         body.add(previous, c);
+        c.insets = new Insets(10, 0, 0, 0);
+        body.add(neighbors, c);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         actions.setOpaque(false);
         actions.add(start);

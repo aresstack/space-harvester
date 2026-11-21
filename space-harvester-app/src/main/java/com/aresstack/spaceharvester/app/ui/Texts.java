@@ -158,6 +158,12 @@ public final class Texts {
      * ({@code VideoPresentations.FORMAT_PARAMETER}), heißt er „PDF erzeugen“.
      */
     public static String type(JobStatus status) {
+        if (status.type() == JobType.ENRICHMENT
+                && com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.TASK.equals(
+                status.parameters().get(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions
+                        .TASK_PARAMETER))) {
+            return "Bilder beschreiben";
+        }
         if (status.type() == JobType.PRESENTATION_EXPORT) {
             return com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.parse(
                     status.parameters().get(com.aresstack.spaceharvester.application.presentation.VideoPresentations

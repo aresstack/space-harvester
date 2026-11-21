@@ -615,6 +615,35 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theAutomaticImageDescriptionGoesUnderImagesAndKeepsTheOtherKeys() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-queued: 3\n");
+        assertThat(loader.load(file).images()).as("Standard aus").isEqualTo(
+                com.aresstack.spaceharvester.application.configuration.ImageSettings.DEFAULT);
+        var on = new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 120);
+
+        editor.save(file, editor.withImages(file, new ConfigFileEditor.Draft(Files.readString(file), null), on));
+        editor.save(file, editor.withImages(file, new ConfigFileEditor.Draft(Files.readString(file), null), on));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("automatic: true", "max-per-run: 120", "max-queued: 3");
+        assertThat(text.indexOf("images:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("images:"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.images()).isEqualTo(on);
+        assertThat(settings.jobLimits().maxQueued()).isEqualTo(3);
+
+        var unlimited = new com.aresstack.spaceharvester.application.configuration.ImageSettings(false, 0);
+        editor.save(file, editor.withImages(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                unlimited));
+        assertThat(loader.load(file).images()).isEqualTo(unlimited);
+
+        Files.writeString(file, "space-harvester:\n  images:\n    max-per-run: -1\n");
+        assertThat(loader.load(file).problems()).anySatisfy(problem ->
+                assertThat(problem).contains("space-harvester.images.max-per-run"));
+    }
+
+    @Test
     void theSimplificationStageGoesUnderStatementsSimplificationAndKeepsTheOtherKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: where-needed\n"

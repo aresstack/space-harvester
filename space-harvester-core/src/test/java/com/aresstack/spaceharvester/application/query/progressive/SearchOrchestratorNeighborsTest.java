@@ -130,6 +130,8 @@ class SearchOrchestratorNeighborsTest {
         assertThat(ids(result)).containsExactly("o", "a");
         assertThat(result.reason()).isEqualTo(ProgressiveResult.Completion.ALL_VARIANTS_DONE);
         assertThat(result.neighbors()).isEqualTo(ProgressiveResult.Neighbors.UNCHECKED);
+        assertThat(result.neighborQueries()).isEqualTo(1);
+        assertThat(result.failedNeighborQueries()).isEqualTo(1);
     }
 
     @Test
@@ -150,6 +152,8 @@ class SearchOrchestratorNeighborsTest {
         assertThat(within.text()).isEqualTo(ORIGINAL);
         assertThat(within.pages().asMap()).isEqualTo(Map.of("wiki", Set.of("n1", "n2")));
         assertThat(result.neighbors()).isEqualTo(ProgressiveResult.Neighbors.CHECKED);
+        assertThat(result.neighborQueries()).isEqualTo(1);
+        assertThat(result.failedNeighborQueries()).isZero();
     }
 
     @Test
