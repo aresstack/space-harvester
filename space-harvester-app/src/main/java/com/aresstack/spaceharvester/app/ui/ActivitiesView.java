@@ -15,8 +15,10 @@ import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.signin.SignInRequest;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -181,6 +183,25 @@ public final class ActivitiesView implements View {
     private List<Note> stageNotes = List.of();
     /** Bildlauf des Detailbereichs unter der Liste. */
     final javax.swing.JScrollPane detailScroll;
+    /**
+     * Reiter über der Liste (Angelo 21.11.2026, Form vom UX-Manager): „Aufträge“ zeigt die Aufträge des Benutzers,
+     * „Hintergrund“ die Hintergrundaufträge ({@link JobType#background()}); jeder Auftrag steht in genau einem.
+     */
+    final PillTabs tabs = new PillTabs();
+    static final String JOBS_TAB = "Aufträge";
+    static final String BACKGROUND_TAB = "Hintergrund";
+    /** Am Reiter „Hintergrund“: wie viele Hintergrundaufträge laufen; ohne Laufendes unsichtbar. */
+    final com.aresstack.spaceharvester.app.ui.controls.CountChip backgroundRunning =
+            new com.aresstack.spaceharvester.app.ui.controls.CountChip("laufend", Comic.PETROL);
+    /** Sehr heller Petrol-Ton hinter der Zeile einer Hintergrundgruppe. */
+    static final java.awt.Color BACKGROUND_TONE = mix(Comic.PETROL, java.awt.Color.WHITE, 0.88);
+    /** Breite des Petrol-Streifens am linken Rand jeder Hintergrundzeile. */
+    static final int BACKGROUND_STRIPE = 4;
+    /** Kennung der Zeile einer Hintergrundgruppe, die kein eigener Auftrag ist. */
+    static final String GROUP_PREFIX = "background-group:";
+    private static final String TAB_PREFERENCE = "activities.tab";
+    /** Alle zuletzt gelesenen Aufträge, beide Reiter. */
+    private List<JobStatus> lastJobs = List.of();
     /** Beim nächsten Zeichnen nach oben: anderer Auftrag gewählt oder Codefeld neu erschienen. */
     private boolean toTop;
 
@@ -221,7 +242,21 @@ public final class ActivitiesView implements View {
         hint.setToolTipText("<html>Abgleiche startest du unter Wissensquellen verwalten, Downloads im Explorer links "
                 + "(Rechtsklick oder Download-Symbol).<br>Beendete Aufträge bleiben sichtbar, bis die Aufbewahrungsfrist "
                 + "endet oder sie gelöscht werden.</html>");
-        JPanel listTitle = Comic.row(Comic.caption("Aufträge dieser App"), hint);
+        tabs.tab(JOBS_TAB, emptyCard()).tab(BACKGROUND_TAB, emptyCard());
+        tabs.button(JOBS_TAB).setToolTipText("Aufträge, die du gestartet hast");
+        tabs.button(BACKGROUND_TAB).setToolTipText("Hintergrundaufträge: was die App von sich aus anstößt, etwa "
+                + "fehlende Seiten nachladen oder Bilder beschreiben; nachrangig, nach einem Neustart fortgesetzt");
+        String remembered = rememberedTab();
+        if (BACKGROUND_TAB.equals(remembered)) {
+            tabs.select(BACKGROUND_TAB);
+        }
+        tabs.onSelect(this::tabChanged);
+        backgroundRunning.setVisible(false);
+        backgroundRunning.addActionListener(e -> {
+            backgroundRunning.setSelected(false);
+            tabs.select(BACKGROUND_TAB);
+        });
+        JPanel listTitle = Comic.row(tabs, backgroundRunning, hint);
         JLabel downloadsLabel = new JLabel("Downloads");
         downloadsLabel.setToolTipText(downloads.box().getToolTipText());
         JLabel preparationsLabel = new JLabel("Vorbereitung");
@@ -518,7 +553,7 @@ public final class ActivitiesView implements View {
             List<JobStatus> jobs = runtime.workspace().jobs();
             Object current = null;
             String currentPhase = null;
-            if (id != null) {
+            if (id != null && !id.startsWith(GROUP_PREFIX)) {
                 JobStatus status = runtime.workspace().job(id);
                 if (!status.state().terminal()) {
                     currentPhase = runtime.workspace().events(id).stream().map(JobEvent::phase)
@@ -543,9 +578,12 @@ public final class ActivitiesView implements View {
             Instant now = Instant.now();
             overall.observe(jobs, now, averages::get);
             groupEstimates = groupEstimates(jobs, now);
-            model.set(jobs);
+            lastJobs = List.copyOf(jobs);
+            followSelectedTab(id);
+            model.set(visible(jobs, backgroundTab()));
+            updateBackgroundChip(jobs);
             context.events().publish(overall.event(jobs, now, averages::get, parallelNow));
-            updateGlobalButtons(jobs);
+            updateGlobalButtons(tabJobs(jobs, backgroundTab()));
             deleteFinished.setEnabled(jobs.stream().anyMatch(ActivitiesView::finished));
             downloads.refresh(runtime.workspace().parallelDownloads());
             preparations.refresh(runtime.workspace().parallelPreparations());
@@ -554,7 +592,7 @@ public final class ActivitiesView implements View {
             // Markieren der Zeile fest, damit deren Auswahlmeldung keinen weiteren Abruf auslöst.
             boolean shown = java.util.Objects.equals(id, selectedId);
             if (shown) {
-                detail = id == null ? null : data[1];
+                detail = id == null ? null : id.startsWith(GROUP_PREFIX) ? groupRow(id) : data[1];
                 phase = (String) data[2];
                 @SuppressWarnings("unchecked")
                 List<Note> notes = (List<Note>) data[3];
@@ -993,9 +1031,11 @@ public final class ActivitiesView implements View {
         actions.addAll(progressSlots(job, remaining(job, averages.get(job.type()), parallelNow)));
         actions.add(RowActions.EMPTY);
         boolean failed = job.state() == JobState.FAILED;
-        actions.add(new RowActions.Action(DIAGNOSIS, failed ? "Fehler diagnostizieren" : "Diagnose ansehen", true,
+        boolean group = groupRow(job);
+        actions.add(new RowActions.Action(DIAGNOSIS, group ? "Diagnose je Unterauftrag (aufklappen)"
+                : failed ? "Fehler diagnostizieren" : "Diagnose ansehen", !group,
                 () -> context.navigator().showDiagnosis(job.id())));
-        boolean space = job.sourceId() != null && job.partitionKey() != null;
+        boolean space = !group && job.sourceId() != null && job.partitionKey() != null;
         // Öffnet Inhalte › Export für den Space bzw. die Startseite des Auftrags (Angelo, 13.11.2026).
         actions.add(new RowActions.Action(CONTENT, space ? "Inhalte öffnen · Stand und Ausgabe unter Export"
                 : "Inhalte öffnen · kein Space", space,
@@ -1224,6 +1264,24 @@ public final class ActivitiesView implements View {
             }
             default -> { }
         }
+        if (groupRow(job)) {
+            String groupId = job.id().substring(GROUP_PREFIX.length());
+            Background.run(() -> runtime.workspace().performBackgroundGroupAction(groupId, action), outcome -> {
+                if (action == JobAction.DELETE && job.id().equals(selectedId)) {
+                    selectedId = null;
+                    detail = null;
+                    table.clearSelection();
+                    render();
+                }
+                if (outcome.failed() > 0) {
+                    feedback.warning(Texts.count(outcome.changed(), "Unterauftrag", "Unteraufträge") + " erreicht, "
+                            + outcome.failed() + " nicht", outcome.problem() == null ? null
+                            : outcome.problem().getMessage());
+                }
+                poll();
+            }, feedback::problem);
+            return;
+        }
         Background.run(() -> runtime.workspace().performJobAction(job.id(), action), after -> {
             if (action == JobAction.DELETE) {
                 if (job.id().equals(selectedId)) {
@@ -1239,6 +1297,189 @@ public final class ActivitiesView implements View {
             }
             poll();
         }, feedback::problem);
+    }
+
+    /** Für Tests und Bilder: zeigt diese Aufträge, als kämen sie vom Core. */
+    void showJobsForTest(List<JobStatus> jobs) {
+        lastJobs = List.copyOf(jobs);
+        model.set(visible(lastJobs, backgroundTab()));
+        updateBackgroundChip(lastJobs);
+        updateGlobalButtons(tabJobs(lastJobs, backgroundTab()));
+        reselect();
+    }
+
+    /** Für Tests: die sichtbaren Zeilen der Liste. */
+    List<JobStatus> rowsForTest() {
+        return model.visible();
+    }
+
+    /** Ob der Reiter „Hintergrund“ gewählt ist. */
+    boolean backgroundTab() {
+        return BACKGROUND_TAB.equals(tabs.selected());
+    }
+
+    /** Reiterwechsel: die Liste zeigt die Aufträge des Reiters, die Auswahl gilt nur, wenn sie dort steht. */
+    private void tabChanged(String tab) {
+        rememberTab(tab);
+        boolean background = BACKGROUND_TAB.equals(tab);
+        model.set(visible(lastJobs, background));
+        updateGlobalButtons(tabJobs(lastJobs, background));
+        if (selectedId != null && model.rows.stream().noneMatch(row -> row.id().equals(selectedId))) {
+            selectedId = null;
+            detail = null;
+            table.clearSelection();
+            render();
+        }
+        reselect();
+    }
+
+    /** Steht der gewählte Auftrag (etwa nach {@link #show}) im anderen Reiter, wechselt die Ansicht dorthin. */
+    private void followSelectedTab(String id) {
+        if (id == null || !Objects.equals(id, selectedId)) {
+            return;
+        }
+        boolean background = id.startsWith(GROUP_PREFIX) || lastJobs.stream()
+                .anyMatch(job -> job.id().equals(id) && job.type().background());
+        boolean known = background || lastJobs.stream().anyMatch(job -> job.id().equals(id));
+        if (known && background != backgroundTab()) {
+            tabs.select(background ? BACKGROUND_TAB : JOBS_TAB);
+        }
+    }
+
+    /** Zahl der laufenden Hintergrundaufträge am Reiter; ohne Laufendes kein Chip. */
+    private void updateBackgroundChip(List<JobStatus> jobs) {
+        int running = (int) jobs.stream().filter(job -> job.type().background()
+                && job.state() == JobState.RUNNING).count();
+        backgroundRunning.count(running);
+        backgroundRunning.setVisible(running > 0);
+        backgroundRunning.setToolTipText(running > 0 ? Texts.count(running, "Hintergrundauftrag läuft",
+                "Hintergrundaufträge laufen") + " · zeigen" : null);
+    }
+
+    /** Ein Hinweistext der Kopfknöpfe, im Reiter „Hintergrund“ auf Hintergrundaufträge bezogen. */
+    private String forTab(String tip) {
+        return backgroundTab() ? tip.replaceFirst("Aufträge", "Hintergrundaufträge") : tip;
+    }
+
+    /** Die Aufträge eines Reiters ohne Gruppenzeilen. */
+    static List<JobStatus> tabJobs(List<JobStatus> jobs, boolean background) {
+        return jobs.stream().filter(job -> job.type().background() == background).toList();
+    }
+
+    /**
+     * Was ein Reiter zeigt: „Aufträge“ alle übrigen, „Hintergrund“ je Gruppe eine Zeile ({@link #groupRows}) mit ihren
+     * Unteraufträgen darunter.
+     */
+    static List<JobStatus> visible(List<JobStatus> jobs, boolean background) {
+        List<JobStatus> own = tabJobs(jobs, background);
+        if (!background) {
+            return own;
+        }
+        List<JobStatus> result = new ArrayList<>(groupRows(own));
+        result.addAll(own);
+        return result;
+    }
+
+    /** Ob die Zeile eine Hintergrundgruppe ist, kein eigener Auftrag. */
+    static boolean groupRow(JobStatus job) {
+        return job.id().startsWith(GROUP_PREFIX);
+    }
+
+    /** Die Gruppenzeile aus der zuletzt gelesenen Liste, oder {@code null}. */
+    private JobStatus groupRow(String id) {
+        return groupRows(tabJobs(lastJobs, true)).stream().filter(row -> row.id().equals(id)).findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * Je Hintergrundgruppe eine Zeile (ADR 0025 Nachtrag): die Gruppe ist kein Auftrag, ihr Zustand folgt aus den
+     * Unteraufträgen (läuft, wenn einer läuft; wartet, wenn einer wartet; sonst angehalten, gescheitert, abgebrochen,
+     * fertig), die Zähler sind ihre Summe. Neueste Gruppe zuerst.
+     */
+    static List<JobStatus> groupRows(List<JobStatus> background) {
+        Map<String, List<JobStatus>> byGroup = new java.util.LinkedHashMap<>();
+        for (JobStatus job : background) {
+            String group = job.parameter(BackgroundJobs.GROUP);
+            if (group != null) {
+                byGroup.computeIfAbsent(group, key -> new ArrayList<>()).add(job);
+            }
+        }
+        List<JobStatus> rows = new ArrayList<>();
+        byGroup.forEach((group, parts) -> rows.add(groupStatus(group, parts)));
+        rows.sort(Comparator.comparing(JobStatus::createdAt).reversed());
+        return rows;
+    }
+
+    private static JobStatus groupStatus(String group, List<JobStatus> parts) {
+        JobState state = JobState.COMPLETED;
+        for (JobState candidate : new JobState[] {JobState.RUNNING, JobState.QUEUED, JobState.PAUSED,
+                JobState.FAILED, JobState.CANCELLED}) {
+            if (parts.stream().anyMatch(part -> part.state() == candidate)) {
+                state = candidate;
+                break;
+            }
+        }
+        long discovered = 0;
+        long processed = 0;
+        long written = 0;
+        long failed = 0;
+        for (JobStatus part : parts) {
+            discovered += part.progress().discovered();
+            processed += part.progress().processed();
+            written += part.progress().written();
+            failed += part.progress().failed();
+        }
+        JobStatus first = parts.stream().min(Comparator.comparing(JobStatus::createdAt)).orElseThrow();
+        java.util.Set<String> sources = new java.util.TreeSet<>();
+        parts.forEach(part -> sources.add(part.sourceId()));
+        Instant started = parts.stream().map(JobStatus::startedAt).filter(Objects::nonNull)
+                .min(Comparator.naturalOrder()).orElse(null);
+        Instant finished = state.terminal() ? parts.stream().map(JobStatus::finishedAt).filter(Objects::nonNull)
+                .max(Comparator.naturalOrder()).orElse(null) : null;
+        Map<String, String> parameters = new HashMap<>();
+        for (String key : new String[] {BackgroundJobs.GROUP, BackgroundJobs.TITLE, BackgroundJobs.KIND}) {
+            String value = first.parameter(key);
+            if (value != null) {
+                parameters.put(key, value);
+            }
+        }
+        JobError error = state == JobState.FAILED ? parts.stream().map(JobStatus::error).filter(Objects::nonNull)
+                .findFirst().orElse(null) : null;
+        return new JobStatus(GROUP_PREFIX + group, JobType.BACKGROUND, String.join(", ", sources), null,
+                first.owner(), state, new JobProgress(discovered, processed, written, failed), error, false,
+                first.createdAt(), started, finished, null, null, parameters, false, false, null);
+    }
+
+    /** Mischt zwei Farben; {@code weight} ist der Anteil von {@code b}. */
+    static java.awt.Color mix(java.awt.Color a, java.awt.Color b, double weight) {
+        return new java.awt.Color((int) Math.round(a.getRed() * (1 - weight) + b.getRed() * weight),
+                (int) Math.round(a.getGreen() * (1 - weight) + b.getGreen() * weight),
+                (int) Math.round(a.getBlue() * (1 - weight) + b.getBlue() * weight));
+    }
+
+    /** Ein leerer Inhalt für die Reiter: die Liste darunter ist für beide dieselbe. */
+    private static JComponent emptyCard() {
+        JPanel empty = new JPanel();
+        empty.setOpaque(false);
+        empty.setPreferredSize(new java.awt.Dimension(0, 0));
+        return empty;
+    }
+
+    /** Der zuletzt gewählte Reiter dieses Benutzers; ohne Ablage „Aufträge“. */
+    private static String rememberedTab() {
+        try {
+            return java.util.prefs.Preferences.userNodeForPackage(ActivitiesView.class).get(TAB_PREFERENCE, JOBS_TAB);
+        } catch (RuntimeException e) {
+            return JOBS_TAB;
+        }
+    }
+
+    private static void rememberTab(String tab) {
+        try {
+            java.util.prefs.Preferences.userNodeForPackage(ActivitiesView.class).put(TAB_PREFERENCE, tab);
+        } catch (RuntimeException e) {
+            // Nur eine Bequemlichkeit: ohne Ablage beginnt die Ansicht beim nächsten Start mit „Aufträge“.
+        }
     }
 
     /** Für Tests. */
@@ -1558,11 +1799,13 @@ public final class ActivitiesView implements View {
         globalPause = GlobalPause.of(jobs);
         boolean resume = globalPause == GlobalPause.RESUME;
         labelGlobalButtons();
-        pauseAll.setToolTipText(resume ? RESUME_ALL_TIP : globalPause == GlobalPause.PAUSE ? PAUSE_ALL_TIP
-                : PAUSE_ALL_TIP + " · gerade wartet oder läuft nichts, das sich anhalten lässt");
+        String pauseTip = forTab(PAUSE_ALL_TIP);
+        pauseAll.setToolTipText(resume ? forTab(RESUME_ALL_TIP) : globalPause == GlobalPause.PAUSE ? pauseTip
+                : pauseTip + " · gerade wartet oder läuft nichts, das sich anhalten lässt");
         pauseAll.setEnabled(globalPause != GlobalPause.NONE && !busyAll);
         boolean cancellable = !AllJobs.toCancel(jobs).isEmpty();
-        cancelAll.setToolTipText(cancellable ? CANCEL_ALL_TIP : CANCEL_ALL_TIP + " · gerade wartet und läuft nichts");
+        String cancelTip = forTab(CANCEL_ALL_TIP);
+        cancelAll.setToolTipText(cancellable ? cancelTip : cancelTip + " · gerade wartet und läuft nichts");
         cancelAll.setEnabled(cancellable && !busyAll);
     }
 
@@ -1709,8 +1952,9 @@ public final class ActivitiesView implements View {
             return;
         }
         boolean resume = mode == GlobalPause.RESUME;
-        runAll(() -> resume ? runtime.workspace().resumeAllJobs() : runtime.workspace().pauseAllJobs(),
-                resume ? "fortgesetzt" : "angehalten");
+        boolean background = backgroundTab();
+        runAll(() -> resume ? runtime.workspace().resumeAllJobs(background)
+                : runtime.workspace().pauseAllJobs(background), resume ? "fortgesetzt" : "angehalten");
     }
 
     /**
@@ -1722,13 +1966,15 @@ public final class ActivitiesView implements View {
         if (runtime == null || busyAll) {
             return;
         }
-        int count = AllJobs.toCancel(model.all).size();
-        if (count == 0 || !Dialogs.confirm(root, "Alle Aufträge abbrechen?", "Wirklich alle wartenden und laufenden "
-                + "Aufträge abbrechen? Das betrifft " + Texts.count(count, "Auftrag", "Aufträge") + "; bereits "
-                + "Gelesenes bleibt unbestätigt. Angehaltene und beendete Aufträge bleiben, wie sie sind.")) {
+        boolean background = backgroundTab();
+        int count = AllJobs.toCancel(tabJobs(lastJobs, background)).size();
+        String which = background ? "Hintergrundaufträge" : "Aufträge";
+        if (count == 0 || !Dialogs.confirm(root, "Alle " + which + " abbrechen?", "Wirklich alle wartenden und "
+                + "laufenden " + which + " abbrechen? Das betrifft " + Texts.count(count, "Auftrag", "Aufträge")
+                + "; bereits Gelesenes bleibt unbestätigt. Angehaltene und beendete Aufträge bleiben, wie sie sind.")) {
             return;
         }
-        runAll(() -> runtime.workspace().cancelAllJobs(), "abgebrochen");
+        runAll(() -> runtime.workspace().cancelAllJobs(background), "abgebrochen");
     }
 
     /** Führt eine Aktion für alle im Hintergrund aus; solange warten beide Knöpfe. */
@@ -1901,6 +2147,9 @@ public final class ActivitiesView implements View {
 
     /** Unter welchem Schlüssel ein Oberschritt seine Unterzeilen sammelt; {@code null}, wenn er keiner ist. */
     private static String groupKey(JobStatus job) {
+        if (groupRow(job)) {
+            return "background:" + job.id().substring(GROUP_PREFIX.length());
+        }
         if (job.type() == JobType.EXPORT) {
             return "export:" + job.id();
         }
@@ -1911,6 +2160,10 @@ public final class ActivitiesView implements View {
 
     /** Zu welchem Oberschritt ein Auftrag gehört; {@code null}, wenn er eigenständig ist. */
     private static String memberKey(JobStatus job) {
+        if (job.type() == JobType.BACKGROUND && !groupRow(job)) {
+            String group = job.parameter(BackgroundJobs.GROUP);
+            return group == null ? null : "background:" + group;
+        }
         if (showsProgress(job)) {
             String exportId = job.parameter(ExportAssetCollection.EXPORT_ID);
             return exportId == null ? null : "export:" + exportId;
@@ -2049,7 +2302,7 @@ public final class ActivitiesView implements View {
             Component cell = super.prepareRenderer(renderer, row, column);
             if (cell instanceof JComponent component) {
                 // Derselbe Renderer zeichnet alle Zeilen: für jede Zelle neu festlegen.
-                component.setOpaque(bands == null || bandAt(row) == null);
+                component.setOpaque((bands == null || bandAt(row) == null) && !toned(row));
             }
             return cell;
         }
@@ -2060,6 +2313,7 @@ public final class ActivitiesView implements View {
             try {
                 g.setColor(getBackground());
                 g.fillRect(0, 0, getWidth(), getHeight());
+                paintTones(g);
                 paintBands(g);
             } finally {
                 g.dispose();
@@ -2071,6 +2325,40 @@ public final class ActivitiesView implements View {
             } finally {
                 cells.dispose();
             }
+            Graphics2D stripes = (Graphics2D) graphics.create();
+            try {
+                paintStripes(stripes);
+            } finally {
+                stripes.dispose();
+            }
+        }
+
+        /** Heller Petrol-Ton hinter jeder Gruppenzeile im Reiter „Hintergrund“, gewählt die Auswahlfarbe. */
+        private void paintTones(Graphics2D g) {
+            for (int row = 0; row < getRowCount(); row++) {
+                if (toned(row)) {
+                    Rectangle cell = getCellRect(row, 0, true);
+                    g.setColor(isRowSelected(row) ? getSelectionBackground() : BACKGROUND_TONE);
+                    g.fillRect(0, cell.y, getWidth(), cell.height);
+                }
+            }
+        }
+
+        /** Schmaler Petrol-Streifen am linken Rand jeder Hintergrundzeile (UX 21.11.2026). */
+        private void paintStripes(Graphics2D g) {
+            g.setColor(Comic.PETROL);
+            for (int row = 0; row < getRowCount() && row < model.rows.size(); row++) {
+                if (model.rows.get(row).type().background()) {
+                    Rectangle cell = getCellRect(row, 0, true);
+                    g.fillRect(0, cell.y, BACKGROUND_STRIPE, cell.height);
+                }
+            }
+        }
+
+        /** Ob die Zeile eine Hintergrundgruppe ist, deren Ton die Tabelle selbst zeichnet. */
+        private boolean toned(int row) {
+            return row >= 0 && row < model.rows.size() && groupRow(model.rows.get(row))
+                    && (bands == null || bandAt(row) == null);
         }
 
         private void paintBands(Graphics2D g) {
@@ -2117,8 +2405,10 @@ public final class ActivitiesView implements View {
             setIcon(job == null ? null : groupIcon(model.group(job), model.collapsed(job), model.child(job)));
             setIconTextGap(4);
             setBorder(BorderFactory.createEmptyBorder(0, job != null && model.child(job) ? 18 : 4, 0, 4));
-            setToolTipText(job != null && model.group(job)
-                    ? (model.collapsed(job) ? "Bilder und Anhänge zeigen" : "Bilder und Anhänge ausblenden") : null);
+            boolean background = job != null && groupRow(job);
+            setToolTipText(job != null && model.group(job) ? (model.collapsed(job)
+                    ? (background ? "Unteraufträge je Space zeigen" : "Bilder und Anhänge zeigen")
+                    : (background ? "Unteraufträge ausblenden" : "Bilder und Anhänge ausblenden")) : null);
             return this;
         }
     }

@@ -1896,6 +1896,63 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #pauseAllJobs()}, aber nur für einen Reiter der Auftragsverwaltung: {@code background} nur
+     * Hintergrundaufträge, sonst nur die übrigen (UX 21.11.2026).
+     */
+    public AllJobs.Outcome pauseAllJobs(boolean background) {
+        return AllJobs.apply(AllJobs.toPause(jobs(background)), job -> pauseJob(job.id()));
+    }
+
+    /** Wie {@link #resumeAllJobs()}, nur für einen Reiter ({@link #pauseAllJobs(boolean)}). */
+    public AllJobs.Outcome resumeAllJobs(boolean background) {
+        return AllJobs.apply(AllJobs.toResume(jobs(background)),
+                job -> performJobAction(job.id(), JobAction.RESUME));
+    }
+
+    /** Wie {@link #cancelAllJobs()}, nur für einen Reiter ({@link #pauseAllJobs(boolean)}). */
+    public AllJobs.Outcome cancelAllJobs(boolean background) {
+        return AllJobs.apply(AllJobs.toCancel(jobs(background)),
+                job -> performJobAction(job.id(), JobAction.CANCEL));
+    }
+
+    /**
+     * Abonniert das Ende einer Hintergrundgruppe (Angelo 21.11.2026): {@code listener} läuft einmal auf dem Event
+     * Dispatch Thread, sobald kein Unterauftrag mehr wartet oder läuft, sofort, wenn sie schon fertig ist. Bis dahin
+     * zeigt die abonnierende Stelle etwa den drehenden Ring ({@code controls.BackgroundWait}).
+     */
+    public com.aresstack.spaceharvester.application.observe.Subscription whenBackgroundFinished(String groupId,
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+        java.util.Objects.requireNonNull(listener, "listener");
+        return harvester.backgroundJobs().whenFinished(groupId,
+                group -> javax.swing.SwingUtilities.invokeLater(() -> listener.accept(group)));
+    }
+
+    /** Die Aufträge eines Reiters: nur Hintergrundaufträge oder nur die übrigen. */
+    private List<JobStatus> jobs(boolean background) {
+        return jobs().stream().filter(job -> job.type().background() == background).toList();
+    }
+
+    /**
+     * Eine Aktion für alle Unteraufträge einer Hintergrundgruppe (ADR 0025 Nachtrag), die Zeile der Gruppe im Reiter
+     * „Hintergrund“: Anhalten, Fortsetzen, Abbrechen, Jetzt starten und Löschen wirken auf jeden Unterauftrag, für den
+     * es jetzt geht.
+     */
+    public AllJobs.Outcome performBackgroundGroupAction(String groupId, JobAction action) {
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background = harvester.backgroundJobs();
+        List<JobStatus> parts = background.group(groupId)
+                .map(com.aresstack.spaceharvester.application.background.BackgroundGroup::parts).orElse(List.of());
+        return switch (action) {
+            case PAUSE -> AllJobs.apply(AllJobs.toPause(parts), job -> pauseJob(job.id()));
+            case RESUME -> AllJobs.apply(parts.stream().filter(job -> job.lifecycle().allows(JobAction.RESUME))
+                    .toList(), job -> performJobAction(job.id(), JobAction.RESUME));
+            case CANCEL -> AllJobs.apply(AllJobs.toCancel(parts), job -> performJobAction(job.id(), JobAction.CANCEL));
+            case START_NOW, DELETE -> AllJobs.apply(parts.stream().filter(job -> job.lifecycle().allows(action))
+                    .toList(), job -> performJobAction(job.id(), action));
+            default -> new AllJobs.Outcome(0, 0, null);
+        };
+    }
+
+    /**
      * „Alle fortsetzen“: setzt alle angehaltenen Aufträge im selben Eintrag fort ({@link AllJobs#toResume}), älteste
      * zuerst; fertige, gescheiterte und abgebrochene bleiben, wie sie sind.
      */
@@ -2011,6 +2068,8 @@ public final class Workspace {
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
         // Auch die Dateien („Datei erzeugen“) gehören zu ihrem Export und gehen nie verloren.
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.CONVERSION));
+        // Hintergrundaufträge (ADR 0025 Nachtrag) stößt der Core selbst an; sie stehen im Reiter „Hintergrund“.
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.BACKGROUND));
         // Aufträge des Aufrufers der App (Zusammenfassen, Synonymlauf, Aussagenanalyse) sind ebenso global sichtbar.
         for (String owner : jobOwners()) {
             if (!owner.equals(Harvester.OWNER)) {
