@@ -793,6 +793,8 @@ public final class Harvester implements AutoCloseable {
                     synonymCache, jobs,
                     () -> (this.settings != null ? this.settings.terms() : startTerms).synonyms(), clock);
             synonymDiscovery.pageReleases(pageReleases::contains);
+            // D4.4: Der automatische Lauf gehört wie die übrigen Hintergrundaufträge dem Core.
+            synonymDiscovery.owner(OWNER);
             // SY1: Neue KI-Freigaben von Seiten lösen den automatischen Lauf ihrer Quelle aus.
             opened.add(pageReleases.subscribe(synonymDiscovery::releasesChanged));
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr

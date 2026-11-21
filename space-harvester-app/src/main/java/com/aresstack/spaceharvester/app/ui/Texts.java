@@ -172,6 +172,12 @@ public final class Texts {
                         .TASK_PARAMETER))) {
             return "Bilder beschreiben";
         }
+        if (status.type() == JobType.ENRICHMENT
+                && com.aresstack.spaceharvester.application.terms.SynonymDiscovery.TASK.equals(
+                status.parameters().get(com.aresstack.spaceharvester.application.terms.SynonymDiscovery
+                        .TASK_PARAMETER))) {
+            return "Synonyme erkennen";
+        }
         if (status.type() == JobType.BACKGROUND) {
             // Hintergrundaufträge (ADR 0025 Nachtrag): der Titel ihrer Gruppe, etwa „Nachbarseiten laden“.
             String title = status.parameters().get(
