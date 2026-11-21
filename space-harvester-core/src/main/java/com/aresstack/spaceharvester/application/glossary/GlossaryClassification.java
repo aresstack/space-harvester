@@ -465,8 +465,9 @@ public class GlossaryClassification {
         try {
             for (String id : sources) {
                 RelationScope scope = new RelationScope(id, space);
-                JobStatus status = jobs.submit(JobType.GLOSSARY, id, space, root, caller.jobOwner(),
-                        JobTask.blocking(context -> {
+                // Ein Klick wartet nie hinter Hintergrund (#1055), auch nicht hinter der eigenen Automatik.
+                JobStatus status = jobs.submitInteractive(JobType.GLOSSARY, id, space, root, caller.jobOwner(),
+                        Map.of(), JobTask.blocking(context -> {
                             synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
                                 if (root == null) {
                                     job(scope, context, caller);

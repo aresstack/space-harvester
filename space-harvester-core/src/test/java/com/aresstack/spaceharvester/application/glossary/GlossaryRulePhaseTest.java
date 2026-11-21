@@ -376,6 +376,30 @@ class GlossaryRulePhaseTest {
     }
 
     @Test
+    void aClickStartsAtOnceWhileTheAutomaticRunHoldsABackgroundSlot() {
+        // Aufträge laufen hier nie zu Ende: Was einen Platz hat, bleibt RUNNING.
+        Jobs parked = new Jobs(new InMemoryJobStore(), task -> { }, new JobLimits(2, 10, Duration.ofHours(1)),
+                Clock.fixed(T0, ZoneOffset.UTC));
+        GlossaryClassification clicked = new GlossaryClassification(catalog, new InMemoryEnrichmentStore(),
+                new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), key -> Optional.empty(),
+                key -> Optional.<PageText>empty(), glossary, model, ResolutionCache.inMemory(), parked,
+                new TermProcessor().version(), GlossaryClassification.Budget.DEFAULT, caller -> List.copyOf(pages),
+                () -> settings, Clock.fixed(T0, ZoneOffset.UTC));
+        clicked.background(new com.aresstack.spaceharvester.application.background.BackgroundJobs(parked, "app"),
+                EDITOR, () -> true);
+        var automatic = clicked.automatic("wiki").orElseThrow();
+        assertThat(automatic.parts()).extracting(part -> parked.status(part.id()).state())
+                .contains(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING);
+
+        JobStatus click = clicked.start(EDITOR, "wiki", "FOE").getFirst();
+
+        assertThat(parked.status(click.id()).state()).as("ein Klick wartet nie hinter Hintergrund")
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING);
+        assertThat(click.type()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.GLOSSARY);
+        assertThat(click.parameters()).containsEntry(Jobs.INTERACTIVE, "true");
+    }
+
+    @Test
     void wordListsFromTheSettingsChangeTheClassification() {
         settings = settings.with(GlossaryRuleSettings.Kind.TECHNICAL_HEADS, List.of(), List.of("datenbank"))
                 .with(GlossaryRuleSettings.Kind.ROLE_HEADS, List.of("bewilligungsstelle"), List.of());
