@@ -1754,11 +1754,13 @@ public final class PageDetailPanel extends JPanel {
                 return PageImages.NO_TEXT.equals(found.reason()) ? List.of() : null;
             }
             List<SubpageSection.Row> rows = new java.util.ArrayList<>();
+            // Veraltete Beschreibungen kenntlich machen wie im Reiter selbst.
+            String stale = found.state() == PageImages.State.CURRENT ? "" : " (veraltet)";
             for (ImagePayload.Entry entry : found.images()) {
                 ImagesTab.Image image = imageOf(entry);
                 String description = image.description() == null || image.description().isBlank()
                         ? "noch nicht beschrieben" : image.description().strip().replaceAll("\\s+", " ");
-                rows.add(new SubpageSection.Row(List.of(image.name(), description), node));
+                rows.add(new SubpageSection.Row(List.of(image.name() + stale, description), node));
             }
             return rows;
         }
@@ -1771,10 +1773,15 @@ public final class PageDetailPanel extends JPanel {
         java.util.Map<String, String> mentions = new java.util.HashMap<>();
         result.mentions().forEach(mention -> mentions.put(mention.id(), mention.text()));
         List<SubpageSection.Row> rows = new java.util.ArrayList<>();
+        String stale = found.state() == com.aresstack.spaceharvester.application.knowledge.PageStatements.State.CURRENT
+                ? "" : " (veraltet)";
         for (var statement : result.statements()) {
             List<String> parts = statement.arguments().stream().map(argument -> mentions.get(argument.mention()))
                     .filter(java.util.Objects::nonNull).distinct().toList();
-            rows.add(new SubpageSection.Row(List.of(statement.predicateText(), String.join(", ", parts)), node));
+            // Verneinung, Modalität und Zeit gehören zur Aussage (wie StatementsTab.describe).
+            String features = StatementsTab.features(statement.features());
+            String predicate = statement.predicateText() + (features.isEmpty() ? "" : " (" + features + ")") + stale;
+            rows.add(new SubpageSection.Row(List.of(predicate, String.join(", ", parts)), node));
         }
         return rows;
     }
