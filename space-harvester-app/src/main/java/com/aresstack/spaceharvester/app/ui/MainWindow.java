@@ -321,6 +321,12 @@ public final class MainWindow implements AppContext.Navigator {
         chatSidebar = content.chatSidebar();
         chatSidebar.collapseButton().addActionListener(e -> chatOpen(false));
         chatSidebar.chat().onAnswer(this::chatAnswered);
+        // Ein Quellen-Link soll die Seite zeigen: die große Ansicht wird wieder zur Leiste.
+        chatSidebar.chat().onSourceOpened(() -> {
+            if (chatLarge) {
+                chatLarge(false);
+            }
+        });
         chatSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
         chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, work, chatSidebar);
         chatSplit.setBorder(null);

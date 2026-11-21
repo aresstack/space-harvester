@@ -82,7 +82,11 @@ class ChatPanelTest {
                 .plus(ChatRecord.Message.user("Noch eine", 1_600, "Space Handbuch · 3 Seiten · 1 davon nicht geladen",
                         null), 1_600)
                 .plus(ChatRecord.Message.user("Und im Ganzen?", 1_700, "Handbuch · alle Spaces · 3 Seiten", null), 1_700)
-                .plus(ChatRecord.Message.assistant("Antwort im Ganzen", false, 1_800), 1_800);
+                .plus(ChatRecord.Message.assistant("Antwort im Ganzen [1]", false, 1_800, java.util.List.of(
+                        new ChatRecord.Source("Seite", "handbuch", "seite.md", null),
+                        new ChatRecord.Source("notiz.txt", "handbuch", null, null),
+                        new ChatRecord.Source("Ein sehr langer Titel, der in der schmalen Leiste nicht in eine Zeile "
+                                + "passt", "handbuch", "lang.md", null))), 1_800);
         store.save(spaceNode, earlier);
         ChatNode sourceNode = new ChatNode("handbuch", null, null);
         ChatRecord other = ChatRecord.fresh(500).plus(ChatRecord.Message.user("Ganz andere Frage", 500), 500);
@@ -118,6 +122,29 @@ class ChatPanelTest {
             assertThat(panel[0].bubbles()).isEqualTo(5);
             // Bereichswechsel im Verlauf: eine Marke vor der Frage aus dem anderen Bereich, keine beim Nachladen.
             assertThat(panel[0].areaMarks()).containsExactly(ChatPanel.FROM_HERE + "Handbuch · alle Spaces · 3 Seiten");
+            // Quellen stehen als Links unter ihrer Antwort, in der Nummer der Antwort; ohne Quellen keine Zeile. Ein
+            // Klick öffnet die Seite links, ein Anhang ohne Seite ist nur Text, lange Titel kürzt „…“.
+            java.util.List<String> opened = new java.util.ArrayList<>();
+            Runnable[] revealed = {() -> opened.add("gezeigt")};
+            context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
+                        if (method.getName().equals("openPage")) {
+                            opened.add(args[0] + "/" + args[1]);
+                        }
+                        return null;
+                    }));
+            panel[0].onSourceOpened(() -> revealed[0].run());
+            java.util.List<ChatPanel.SourceLinks> links = panel[0].sourceLinks();
+            assertThat(links).hasSize(2);
+            assertThat(links.get(0).isVisible()).isFalse();
+            assertThat(links.get(1).isVisible()).isTrue();
+            assertThat(links.get(1).texts()).containsExactly("[1] Seite", "[2] notiz.txt",
+                    "[3] Ein sehr langer Titel, der in der schmalen Leis…");
+            assertThat(links.get(1).getComponent(1)).isInstanceOf(javax.swing.JLabel.class);
+            javax.swing.JButton first = (javax.swing.JButton) links.get(1).getComponent(0);
+            assertThat(first.getToolTipText()).isEqualTo("Seite öffnen");
+            first.doClick();
+            assertThat(opened).containsExactly("handbuch/seite.md", "gezeigt");
             // Umbenennen an Ort und Stelle: der Name wechselt, die Kennung und die Datei bleiben.
             panel[0].startRename();
             assertThat(panel[0].renamingShown()).isTrue();
