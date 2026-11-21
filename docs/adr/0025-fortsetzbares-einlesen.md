@@ -231,7 +231,8 @@ wird automatisch verwaltet.
    `metadata` auf den Space statt `sync`). Eine Quelle mit Grenze: Die Grenze gilt für die Summe aller Spaces. Jeder
    Teil zählt nach seiner eigenen Ermittlung die schon ermittelten Seiten der übrigen Teile aus dem Auftragsspeicher
    dazu, ohne fremde Spaces abzugehen; wer die Grenze damit überschreitet, scheitert vor seiner ersten Analyse
-   (`SCOPE_TOO_LARGE`), fertige Teile behalten ihre Analysen.
+   (`SCOPE_TOO_LARGE`), fertige Teile behalten ihre Analysen. Die ermittelte Zahl steht zusätzlich als Ereignis
+   `SCOPE_COUNTED` am Teil, denn Fortsetzen leert seine Zähler; Geschwister zählen das Größere von beidem.
 2. **Gruppe statt Oberauftrag mit eigenem Platz.** Ein Start (`BackgroundJobs#start`) legt je Space einen Unterauftrag
    an; alle tragen dieselbe `background.group` und `background.title`. Die Gruppe (`BackgroundGroup`) ist kein eigener
    Auftrag, belegt nichts und hat ihren Zustand aus den Unteraufträgen. Jeder Unterauftrag hat einen eigenen Platz und

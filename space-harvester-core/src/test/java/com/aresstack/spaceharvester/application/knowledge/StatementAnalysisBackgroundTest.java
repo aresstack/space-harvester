@@ -74,6 +74,8 @@ class StatementAnalysisBackgroundTest {
             new AnalyzerStores(parserStore, modelStore, setting::get), access, () -> parser, clock);
     private final Tree tree = new Tree();
     private final Map<String, String> texts = new HashMap<>();
+    /** Läuft bei jedem Abruf einer Seite, etwa um einen Teil mitten im Lauf anzuhalten. */
+    private java.util.function.Consumer<String> onFetch = pageId -> { };
     /** Wie oft der Auftrag eine Seite abgerufen hat. */
     private final java.util.concurrent.atomic.AtomicInteger fetched = new java.util.concurrent.atomic.AtomicInteger();
 
@@ -87,6 +89,7 @@ class StatementAnalysisBackgroundTest {
         StatementAnalysisJobs analyses = new StatementAnalysisJobs(jobs, tree,
                 (caller, sourceId, pageId) -> {
                     fetched.incrementAndGet();
+                    onFetch.accept(pageId);
                     return page(sourceId, pageId);
                 }, analysis, access, OWNER);
         analyses.background(background, APP);
@@ -351,6 +354,39 @@ class StatementAnalysisBackgroundTest {
                 .containsExactlyInAnyOrderEntriesOf(Map.of("DEV", 1, "OPS", 1));
     }
 
+    /** Review zu #1059: Fortsetzen leert die Zähler eines Teils; seine ermittelte Zahl zählt für die Geschwister weiter. */
+    @Test
+    void aPartResumedAfterAPauseStillCountsForTheLimitOfItsSiblings() {
+        tree.space("DEV", "1", "2");
+        tree.space("OPS", "3", "4");
+        Steps steps = new Steps();
+        Service service = service(steps);
+        JobStatus first = service.analyses().start(APP, new StatementAnalysisJobs.Scope.Source("wiki"),
+                new StatementAnalysisJobs.Options(false, 3));
+        List<JobStatus> parts = service.background().group(StatementAnalysisJobs.groupOf(first).orElseThrow())
+                .orElseThrow().parts();
+        String dev = parts.get(0).id();
+        String ops = parts.get(1).id();
+        onFetch = pageId -> {
+            if (pageId.equals("1")) {
+                service.jobs().pause(dev, OWNER); // mitten im Lauf von DEV angehalten
+            }
+        };
+
+        steps.runNext(); // DEV: 2 Seiten ≤ 3, analysiert Seite 1, hält an
+        assertThat(service.jobs().status(dev).state()).isEqualTo(JobState.PAUSED);
+        onFetch = pageId -> { };
+        service.background().resumeJob(dev);
+        assertThat(service.jobs().status(dev).progress().discovered()).as("Fortsetzen leert die Zähler").isZero();
+        steps.runNext(); // OPS vor dem fortgesetzten DEV
+
+        JobStatus refused = service.jobs().status(ops);
+        assertThat(refused.state()).isEqualTo(JobState.FAILED);
+        assertThat(refused.error().code()).as("2 + 2 Seiten über der Grenze 3, auch nach dem Fortsetzen von DEV")
+                .isEqualTo(StatementAnalysisJobs.SCOPE_TOO_LARGE);
+        assertThat(parserStore.find(new PageKey("wiki", "3"))).isEmpty();
+    }
+
     @Test
     void underTheLimitEverySpaceIsAnalysedAndListedOnce() {
         tree.space("DEV", "1", "2");
@@ -521,6 +557,17 @@ class StatementAnalysisBackgroundTest {
         @Override
         public synchronized void execute(Runnable command) {
             pending.addLast(command);
+        }
+
+        /** Führt die älteste wartende Arbeit aus. */
+        void runNext() {
+            Runnable next;
+            synchronized (this) {
+                next = pending.pollFirst();
+            }
+            if (next != null) {
+                next.run();
+            }
         }
     }
 

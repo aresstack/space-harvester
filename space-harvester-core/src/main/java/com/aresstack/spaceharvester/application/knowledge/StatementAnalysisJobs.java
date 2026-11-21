@@ -80,6 +80,11 @@ public class StatementAnalysisJobs {
     public static final String PHASE_ANALYSIS = "Seiten analysieren";
     /** Fehlercode, wenn der Umfang die bestätigte Sicherheitsgrenze überschreitet. */
     public static final String SCOPE_TOO_LARGE = "SCOPE_TOO_LARGE";
+    /**
+     * Ereignis eines Teils mit Grenze: so viele Seiten hat er in seinem Space ermittelt (Zahl vorn). Es bleibt beim
+     * Fortsetzen erhalten, die Zähler nicht; so zählen Geschwister ihn auch, wenn er nach Anhalten neu wartet.
+     */
+    public static final String SCOPE_COUNTED = "SCOPE_COUNTED";
     /** Fehlercode, wenn Teile des Umfangs nicht ermittelt werden konnten; analysierte Seiten bleiben. */
     public static final String INCOMPLETE = "INCOMPLETE";
     /** Fehlercode ohne eingerichteten oder mit fehlendem bzw. defektem Analysator. */
@@ -462,7 +467,25 @@ public class StatementAnalysisJobs {
         }
         return group.group(part.groupId()).map(found -> found.parts().stream()
                 .filter(status -> !status.id().equals(part.jobId()))
-                .mapToLong(status -> status.progress().discovered()).sum()).orElse(0L);
+                .mapToLong(status -> Math.max(status.progress().discovered(), counted(status.id()))).sum())
+                .orElse(0L);
+    }
+
+    /** Die zuletzt gemeldete Zahl {@value #SCOPE_COUNTED} eines Teils; 0 ohne oder wenn er gelöscht ist. */
+    private long counted(String jobId) {
+        List<JobEvent> events;
+        try {
+            events = jobs.events(jobId);
+        } catch (com.aresstack.spaceharvester.application.jobs.UnknownJobException e) {
+            return 0;
+        }
+        long last = 0;
+        for (JobEvent event : events) {
+            if (SCOPE_COUNTED.equals(event.code())) {
+                last = leadingNumber(event.message());
+            }
+        }
+        return last;
     }
 
     /** Die Optionen aus den Angaben; ein fehlender Analysator ist der MaltParser, nie die aktuelle Einstellung. */
@@ -631,8 +654,12 @@ public class StatementAnalysisJobs {
             walk.run();
         }
         long total = walk.pages.size();
-        if (options.maxPages() > 0 && total <= options.maxPages()) {
-            total += siblings.getAsLong();
+        if (options.maxPages() > 0) {
+            context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, SCOPE_COUNTED,
+                    total + " Seiten im Umfang ermittelt", null, null, null));
+            if (total <= options.maxPages()) {
+                total += siblings.getAsLong();
+            }
         }
         if (options.maxPages() > 0 && total > options.maxPages()) {
             throw new JobFailedException(SCOPE_TOO_LARGE, "Der Umfang hat mehr als " + options.maxPages()

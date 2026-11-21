@@ -1402,11 +1402,20 @@ public final class Workspace {
 
     /** Das Ende des Prüfauftrags einer Seite als Ergebnis wie früher beim Prüfen im Reiter. */
     private PageStatements checkResult(PageSnapshot snapshot, JobStatus done) {
+        return checkResult(done, done.state().terminal() ? ownEvents(done.id()) : List.of(),
+                () -> statements(snapshot));
+    }
+
+    /**
+     * Wie {@link #checkResult(PageSnapshot, JobStatus)} aus Stand und Ereignissen; {@code statements} liest die
+     * Seite (und wirft ohne Leserecht den Zugriffsfehler des Core).
+     */
+    static PageStatements checkResult(JobStatus done, List<JobEvent> known,
+            java.util.function.Supplier<PageStatements> statements) {
         if (done.state() == com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED
                 || done.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED) {
             throw new java.util.concurrent.CancellationException("Abgebrochen");
         }
-        List<JobEvent> known = ownEvents(done.id());
         if (done.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED) {
             if (done.error() != null && StatementAnalysisJobs.CHECK_UNAVAILABLE.equals(done.error().code())) {
                 throw new com.aresstack.spaceharvester.application.check.CheckUnavailableException(
@@ -1419,7 +1428,7 @@ public final class Workspace {
             JobEvent failed = known.stream().filter(event -> "PAGE_FAILED".equals(event.code())).findFirst()
                     .orElse(null);
             if (failed != null && failed.category() == JobEvent.Category.ACCESS) {
-                statements(snapshot); // wirft ohne Leserecht die AccessDeniedException des Core
+                statements.get(); // wirft ohne Leserecht die AccessDeniedException des Core
             }
             throw new IllegalStateException(failed == null || failed.message() == null
                     ? "Die Seite wurde nicht geprüft" : failed.message());
@@ -1434,7 +1443,7 @@ public final class Workspace {
                         com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason.NOT_CURRENT);
             }
         }
-        return statements(snapshot);
+        return statements.get();
     }
 
     /** Die Zahl vorn in der Meldung des Ereignisses mit diesem Code; 0 ohne. */
@@ -2331,10 +2340,22 @@ public final class Workspace {
             java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
         java.util.Objects.requireNonNull(listener, "listener");
         com.aresstack.spaceharvester.application.background.BackgroundJobs background = harvester.backgroundJobs();
-        Subscription watch = background.watch(groupId,
-                group -> javax.swing.SwingUtilities.invokeLater(() -> listener.accept(group)));
-        background.group(groupId).ifPresent(group -> javax.swing.SwingUtilities.invokeLater(
-                () -> listener.accept(group)));
+        java.util.concurrent.atomic.AtomicBoolean pushed = new java.util.concurrent.atomic.AtomicBoolean();
+        Subscription watch = background.watch(groupId, group -> {
+            pushed.set(true);
+            javax.swing.SwingUtilities.invokeLater(() -> listener.accept(group));
+        });
+        // Den jetzigen Stand liest ein eigener Thread aus dem Auftragsspeicher, nie der EDT; eine schon gemeldete
+        // Änderung ist neuer und gilt.
+        Thread.ofVirtual().name("watch-background").start(() -> background.group(groupId).ifPresent(group -> {
+            if (!pushed.get()) {
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (!pushed.get()) {
+                        listener.accept(group);
+                    }
+                });
+            }
+        }));
         return watch;
     }
 

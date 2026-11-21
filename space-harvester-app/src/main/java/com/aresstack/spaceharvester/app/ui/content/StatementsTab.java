@@ -347,7 +347,7 @@ final class StatementsTab extends JPanel {
         if (status.state() == ParserModelSetup.State.INSTALLED && NOT_AVAILABLE_MODEL.equals(hint.getText())) {
             hint.setText(status.message() == null ? " " : status.message());
         }
-        analyze.setEnabled(running == null && snapshot != null && !show);
+        analyze.setEnabled(running == null && snapshot != null && !show && !belowBlocks());
         modelBanner.revalidate();
         modelBanner.repaint();
     }
@@ -469,6 +469,7 @@ final class StatementsTab extends JPanel {
             }
             render(PageStatements.missing(PageStatements.NOT_ANALYSED), List.of());
             hint.setText("Aussagen nicht geladen: " + Problems.describe(error).title());
+            showBelow();
         });
     }
 
@@ -526,6 +527,9 @@ final class StatementsTab extends JPanel {
         delete.setEnabled(false);
         list.revalidate();
         list.repaint();
+        // Fortschritt und „Abbrechen“ der Gruppe gehören zu ihrer Seite: ohne gezeigte Seite verborgen, die
+        // Beobachtung bleibt (dieselbe Seite erneut zeigt sie wieder).
+        showBelow();
     }
 
     private void analyze() {
@@ -858,6 +862,11 @@ final class StatementsTab extends JPanel {
         return belowKey != null && snapshot != null && snapshot.key().equals(belowKey);
     }
 
+    /** Ob die laufende Gruppe der gezeigten Seite „Analysieren“ und „Prüfen“ sperrt: nie zwei Läufe zugleich. */
+    private boolean belowBlocks() {
+        return belowRunning() && showingBelow();
+    }
+
     /** Ob die Gruppe von „mit Unterseiten“ noch wartet oder läuft. */
     private boolean belowRunning() {
         return belowLast != null && !belowLast.finished() && !belowEnded;
@@ -888,8 +897,8 @@ final class StatementsTab extends JPanel {
     private void cancelBelow() {
         Actions actions = workspace.get();
         String groupId = belowGroupId;
-        if (actions == null || groupId == null || !belowRunning()) {
-            return;
+        if (actions == null || groupId == null || !belowRunning() || !showingBelow()) {
+            return; // nie die Gruppe einer anderen als der gezeigten Seite
         }
         cancel.setVisible(false);
         progress.setText("Wird abgebrochen …");
@@ -997,11 +1006,12 @@ final class StatementsTab extends JPanel {
         if (running == run) {
             running = null;
             runningCancellation = null;
-            analyze.setEnabled(snapshot != null && !modelMissing());
-            check.setEnabled(snapshot != null && current);
+            analyze.setEnabled(snapshot != null && !modelMissing() && !belowBlocks());
+            check.setEnabled(snapshot != null && current && !belowBlocks());
             delete.setEnabled(snapshot != null && stored);
             cancel.setVisible(false);
             progress.setText(" ");
+            showBelow(); // eine noch laufende Gruppe zeigt wieder ihren Fortschritt
         }
     }
 
@@ -1087,10 +1097,10 @@ final class StatementsTab extends JPanel {
 
     /** Zeigt Stand, Aussagen und Verbindungen; veraltete Aussagen bleiben lesbar, aber ausgegraut. */
     void render(PageStatements statements, List<KnowledgeGraph.Link> links) {
-        analyze.setEnabled(running == null && snapshot != null && !modelMissing());
+        analyze.setEnabled(running == null && snapshot != null && !modelMissing() && !belowBlocks());
         current = statements.state() == PageStatements.State.CURRENT && statements.analysis() != null;
         stored = statements.analysis() != null;
-        check.setEnabled(running == null && snapshot != null && current);
+        check.setEnabled(running == null && snapshot != null && current && !belowBlocks());
         delete.setEnabled(running == null && snapshot != null && stored);
         list.removeAll();
         lines.clear();

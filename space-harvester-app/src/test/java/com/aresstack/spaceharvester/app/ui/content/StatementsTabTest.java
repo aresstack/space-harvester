@@ -617,6 +617,37 @@ class StatementsTabTest {
         assertThat(tab.analyzeOffered()).isTrue();
     }
 
+    /** Review zu #1059: ohne gezeigte Seite kein „Abbrechen“, das die Gruppe einer anderen Seite träfe. */
+    @Test
+    void whileAnotherPageLoadsTheGroupOffersNoCancelAndItsPageGetsItBack() {
+        tab.withSubpages(() -> true);
+        tab.confirmBelowWith(question -> true);
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.clickAnalyze();
+        runner.runAll();
+        actions.belowWatch.accept(group(part(com.aresstack.spaceharvester.application.jobs.JobState.QUEUED,
+                com.aresstack.spaceharvester.application.jobs.JobProgress.NONE)));
+        assertThat(tab.cancelOffered()).isTrue();
+
+        tab.pending(new PageKey("wiki", "2"));
+        assertThat(tab.cancelOffered()).isFalse();
+        assertThat(tab.progressText()).isEqualTo(" ");
+        tab.clickCancel();
+        tab.unavailable();
+        assertThat(tab.cancelOffered()).isFalse();
+        runner.runAll();
+        assertThat(actions.cancelledGroups).isEmpty();
+
+        tab.page(page("1"), text());
+        runner.runAll();
+        assertThat(tab.cancelOffered()).as("dieselbe Seite zeigt die wartende Gruppe wieder").isTrue();
+        assertThat(tab.analyzeOffered()).isFalse();
+        tab.reload();
+        runner.runAll();
+        assertThat(tab.analyzeOffered()).as("Neuladen gibt „Analysieren“ neben der Gruppe nicht frei").isFalse();
+    }
+
     private static com.aresstack.spaceharvester.application.background.BackgroundGroup group(
             com.aresstack.spaceharvester.application.jobs.JobStatus... parts) {
         return new com.aresstack.spaceharvester.application.background.BackgroundGroup("g-1",

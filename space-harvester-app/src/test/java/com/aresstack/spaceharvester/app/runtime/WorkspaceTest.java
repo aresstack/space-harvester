@@ -942,14 +942,14 @@ class WorkspaceTest {
     void theOutcomeOfAStatementGroupIsReadWithoutTheRightToSync() throws Exception {
         AppRuntime started = start();
         var harvester = started.harvester();
-        String space = started.workspace().spaces("handbuch").get(0).key();
+        String space = "DEV";
         var background = harvester.backgroundJobs();
         var group = background.start(com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId(),
                 com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.KIND, "Aussagen analysieren",
-                List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("handbuch", space,
+                List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", space,
                         Map.of(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.SCOPE, "space",
                                 com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.ANALYZER,
-                                "parser",
+                                "model", // ohne KI-Freigabe lässt er jede Seite bewusst aus
                                 com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.OWNER,
                                 com.aresstack.spaceharvester.application.access.AccessContext.technicalClient(
                                         com.aresstack.spaceharvester.core.Harvester.OWNER).jobOwner()))));
@@ -969,8 +969,49 @@ class WorkspaceTest {
 
         assertThatThrownBy(() -> readOnly.events(partId)).as("so las der Reiter vorher")
                 .isInstanceOf(com.aresstack.spaceharvester.application.jobs.UnknownJobException.class);
-        assertThat(readOnly.statementGroupOmitted(finished)).isZero();
+        long omitted = com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.omitted(
+                harvester.jobs().events(partId));
+        assertThat(omitted).as("ausgelassene Seiten stehen in den Ereignissen").isPositive();
+        assertThat(readOnly.statementGroupOmitted(finished)).as("ohne sync gelesen").isEqualTo(omitted);
+        Workspace blind = new Workspace(harvester,
+                new com.aresstack.spaceharvester.application.access.AccessGuard((context, scope, kind) ->
+                        kind == com.aresstack.spaceharvester.application.access.AccessKind.METADATA
+                                ? com.aresstack.spaceharvester.application.access.AccessDecision.DENY
+                                : com.aresstack.spaceharvester.application.access.AccessDecision.ALLOW),
+                new ActivityLog(home.resolve("blind.txt")));
+        assertThat(blind.statementGroupOmitted(finished)).as("ohne metadata nichts").isZero();
         readOnly.cancelStatementGroup(group.groupId()); // fertig: nichts zu tun, kein Fehler
+
+        // Ein wartender Teil (hinter einem blockierten Vorgänger) lässt sich ohne sync abbrechen.
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        background.register(new com.aresstack.spaceharvester.application.background.BackgroundKind("probe",
+                part -> com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+                    try {
+                        release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                })));
+        var probe = background.start(com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId(),
+                "probe", "Probe", List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart
+                        .Draft("wiki", space)));
+        var held = background.startSteps(com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId(),
+                com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.KIND, "Aussagen analysieren",
+                List.of(new com.aresstack.spaceharvester.application.background.BackgroundJobs.Step(
+                        com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.KIND, "Aussagen",
+                        new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", space,
+                                Map.of(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.SCOPE,
+                                        "space")),
+                        List.of(probe.parts().get(0).id()), List.of(), List.of("Probe"))));
+        String heldId = held.parts().get(0).id();
+        assertThat(harvester.jobs().status(heldId).state().terminal()).isFalse();
+        readOnly.cancelStatementGroup(held.groupId());
+        release.countDown();
+        Instant cancelled = Instant.now().plus(Duration.ofSeconds(30));
+        while (!harvester.jobs().status(heldId).state().terminal() && Instant.now().isBefore(cancelled)) {
+            Thread.sleep(50);
+        }
+        assertThat(harvester.jobs().status(heldId).state()).isEqualTo(JobState.CANCELLED);
         java.util.concurrent.CompletableFuture<Boolean> onEdt = new java.util.concurrent.CompletableFuture<>();
         try (var watch = readOnly.watchBackground(group.groupId(),
                 seen -> onEdt.complete(javax.swing.SwingUtilities.isEventDispatchThread() && seen.finished()))) {
