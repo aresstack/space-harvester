@@ -391,6 +391,11 @@ public class PageImageAnalysis {
      * Die Bilder der Seite ohne Beschreibung, ohne die Quelle zu fragen: die Marken ihres Videos, sonst die Bilder der
      * zuletzt gespeicherten Lese-Ansicht; mit Hash, wenn ihre Bytes schon abliegen (dann hat der Reiter eine Vorschau).
      */
+    /** Ob die Lese-Ansicht der Seite gespeichert ist; dann ist eine leere Bildliste wirklich leer. Fragt die Quelle nicht. */
+    boolean readingViewStored(PageKey key) {
+        return new ReadingViewStore(enrichments.store()).find(key).isPresent();
+    }
+
     private List<ImagePayload.Entry> listed(PageSnapshot snapshot) {
         PageKey key = snapshot.key();
         List<ImagePayload.Entry> entries = new ArrayList<>();

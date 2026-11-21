@@ -266,3 +266,11 @@ wird automatisch verwaltet.
    je Gruppe über alle Spaces. Der Knopf je Seite im Reiter „Bilder“ ist kein Hintergrundauftrag, sondern ein
    gewöhnlicher Auftrag (`ENRICHMENT`, `task=images`) über denselben Lauf; „Nur diese Seite einmalig“ bleibt ohne
    Auftrag, weil die Einmal-Erlaubnis keinen Neustart überdauern darf.
+   Ein Lauf des Benutzers legt Teile nur für Spaces an, in denen er Seiten der Auswahl sieht, und prüft jeden Umfang
+   (Space, Seite, Teilbaum) beim Arbeiten erneut mit seinen Rechten. Die Automatik hält sich nur hinter einem wartenden
+   oder angehaltenen Teil desselben Space zurück; neben einem laufenden darf einer warten. Die Vormerkung einer Seite
+   im Gruppenbudget geht bei Pause, Abbruch, Anmeldung und Fehler zurück. Beim Knopf bekommt jedes Bild seinen
+   Versuch: Scheitert das Modell, stehen die Bilder als `FAILED` und die Seite wird gespeichert; ohne Modell oder
+   Freigabe endet er gelb. `missing()` nennt dieselben Seiten, die ein Lauf an das Modell gäbe (auch gescheiterte und
+   ohne gespeicherte Lese-Ansicht). Mit `jobs.parallel-preparations=1` läuft „Bilder beschreiben“ als
+   Hintergrundauftrag nie (`SINGLE_SLOT`, gewollt seit #1030): Hintergrundaufträge brauchen mindestens zwei Plätze.

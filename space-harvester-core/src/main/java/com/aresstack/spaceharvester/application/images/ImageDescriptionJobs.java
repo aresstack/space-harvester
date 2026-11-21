@@ -173,7 +173,9 @@ public final class ImageDescriptionJobs {
         }
         List<BackgroundPart.Draft> parts = new ArrayList<>();
         for (String space : spaces) {
-            if (open(sourceId, space, null, false).isEmpty()) {
+            // Nur ein wartender oder angehaltener Teil nimmt den neuen Anlass mit; neben einem laufenden, der seine
+            // Seiten schon gewählt hat, darf einer warten (wie früher der Folgeauftrag).
+            if (open(sourceId, space, null, false, true).isEmpty()) {
                 parts.add(new BackgroundPart.Draft(sourceId, space, Map.of(TRIGGER, AUTOMATIC)));
             }
         }
@@ -197,19 +199,24 @@ public final class ImageDescriptionJobs {
                                            boolean subtree) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(sourceId, "sourceId");
-        if (scope != null) {
-            // Rechte vor dem Start prüfen; der Lauf löst dieselbe Auswahl beim Arbeiten erneut auf.
-            scope.resolve(caller, root(sourceId, spaceKey, pageId, subtree));
-        }
+        // Rechte vor dem Start: Teile nur für Spaces, in denen der Aufrufer Seiten der Auswahl sieht. Der Lauf löst
+        // dieselbe Auswahl beim Arbeiten erneut mit ihm auf.
+        PageSet visible = scope == null ? null : scope.resolve(caller, root(sourceId, spaceKey, pageId, subtree));
         Set<String> spaces = new LinkedHashSet<>();
-        if (spaceKey != null) {
+        if (visible == null && spaceKey != null) {
             spaces.add(spaceKey);
         } else {
-            snapshots.apply(sourceId).forEachRemaining(snapshot -> spaces.add(snapshot.spaceKey()));
+            snapshots.apply(sourceId).forEachRemaining(snapshot -> {
+                if ((spaceKey == null || spaceKey.equals(snapshot.spaceKey()))
+                        && (visible == null || visible.contains(snapshot.key()))
+                        && (pageId == null || subtree || pageId.equals(snapshot.key().pageId()))) {
+                    spaces.add(snapshot.spaceKey());
+                }
+            });
         }
         List<BackgroundPart.Draft> parts = new ArrayList<>();
         for (String space : spaces) {
-            if (open(sourceId, space, pageId, subtree).isPresent()) {
+            if (open(sourceId, space, pageId, subtree, false).isPresent()) {
                 continue;
             }
             Map<String, String> parameters = new HashMap<>();
@@ -265,13 +272,20 @@ public final class ImageDescriptionJobs {
                 caller, Map.of(AutomaticImageDescriptions.TASK_PARAMETER, AutomaticImageDescriptions.TASK,
                         ROOT, snapshot.key().pageId()),
                 JobTask.blocking(context -> {
+                    int parallel = Math.max(1, analysis.parallel());
+                    // Der Pool lebt so lange wie die Seite, nicht bis zum letzten gerade laufenden Bild: Ein schnell
+                    // übersprungenes erstes Bild darf ihn nicht vor der Abgabe des zweiten schließen.
+                    ExecutorService pool = pool(parallel, "bilder-modell");
                     try (ModelPriority.Interactive ignored = analysis.priority().interactive()) {
                         context.phase(COMPONENT, "Bilder beschreiben");
                         context.discovered(1);
+                        // Wie der Knopf bisher: Scheitert das Modell an einem Bild, bekommt jedes Bild seinen
+                        // Eintrag (FAILED) und die Seite wird gespeichert; kein Halt wie im Hintergrund.
                         PageImages images = analysis.describeInBackground(snapshot, entry -> {
                             context.checkpoint();
                             progress.accept(entry);
-                        }, runner(context, true, new java.util.concurrent.atomic.AtomicBoolean(), "images:" + context.jobId()));
+                        }, runner(context, true, new java.util.concurrent.atomic.AtomicBoolean(),
+                                "images:" + context.jobId(), pool, parallel));
                         context.processed(1);
                         if (images.images().stream().anyMatch(image -> image.status() == ImageStatus.FAILED)) {
                             context.failed(1);
@@ -279,9 +293,24 @@ public final class ImageDescriptionJobs {
                             context.written(1);
                         }
                         done.complete(images);
+                    } catch (ImageDescriptionException e) {
+                        done.completeExceptionally(e);
+                        if (e.reason() == ImageDescriptionException.Reason.NOT_CONFIGURED) {
+                            // Bewusst ausgelassen, gelb statt rot; der Aufrufer erfährt den Grund.
+                            context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT,
+                                    AutomaticImageDescriptions.NO_MODEL,
+                                    "Kein Vision-Modell eingestellt; Bilder bewusst nicht beschrieben"));
+                        } else if (e.reason() == ImageDescriptionException.Reason.NOT_RELEASED) {
+                            context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, NOT_RELEASED,
+                                    "Seite ohne KI-Freigabe; Bilder bewusst nicht beschrieben"));
+                        } else {
+                            throw e;
+                        }
                     } catch (RuntimeException e) {
                         done.completeExceptionally(e);
                         throw e;
+                    } finally {
+                        pool.shutdown();
                     }
                 }));
         // Abgebrochen, bevor er anlief: die Arbeit läuft nie, der Wartende erfährt es über die Auftragsmeldungen.
@@ -311,8 +340,9 @@ public final class ImageDescriptionJobs {
     }
 
     /**
-     * Freigegebene Seiten der Menge mit Bildern ohne aktuelle Beschreibung des eingestellten Modells, für den Planer
-     * (D1). Ohne Modell leer. Fragt weder Quelle noch Modell.
+     * Freigegebene Seiten der Menge, die ein Lauf an das Modell gäbe, für den Planer (D1): Bilder ohne aktuelle
+     * Beschreibung des eingestellten Modells, gescheiterte Ergebnisse und Seiten ohne gespeicherte Lese-Ansicht. Ohne
+     * Modell leer. Fragt weder Quelle noch Modell.
      */
     public PageSet missing(AccessContext caller, PageSet pages) {
         return select(pages, true);
@@ -337,7 +367,8 @@ public final class ImageDescriptionJobs {
                 }
                 try {
                     PageImages images = analysis.read(snapshot.get());
-                    if (!images.images().isEmpty() && (!released || work(images) != Work.NONE)) {
+                    // Wie der Lauf: auch gescheiterte Ergebnisse und Seiten ohne gespeicherte Lese-Ansicht.
+                    if (released ? work(images, key) != Work.NONE : !images.images().isEmpty()) {
                         found.add(key);
                     }
                 } catch (RuntimeException e) {
@@ -349,10 +380,15 @@ public final class ImageDescriptionJobs {
         return PageSet.ofKeys(found);
     }
 
-    /** Ein wartender oder laufender Unterauftrag mit derselben Auswahl, gegen doppelte Anläufe. */
-    private Optional<JobStatus> open(String sourceId, String space, String root, boolean subtree) {
+    /**
+     * Ein offener Unterauftrag mit derselben Auswahl, gegen doppelte Anläufe; mit {@code waiting} nur ein wartender
+     * oder angehaltener, nicht ein laufender.
+     */
+    private Optional<JobStatus> open(String sourceId, String space, String root, boolean subtree, boolean waiting) {
         return background.groups().stream().flatMap(group -> group.parts().stream())
-                .filter(status -> !status.state().terminal() && KIND.equals(status.parameter(BackgroundJobs.KIND))
+                .filter(status -> !status.state().terminal()
+                        && (!waiting || status.state() != com.aresstack.spaceharvester.application.jobs.JobState.RUNNING)
+                        && KIND.equals(status.parameter(BackgroundJobs.KIND))
                         && sourceId.equals(status.sourceId()) && Objects.equals(space, status.partitionKey())
                         && Objects.equals(root, status.parameter(ROOT))
                         && (root == null || Boolean.toString(subtree).equals(status.parameter(SUBTREE))))
@@ -361,6 +397,7 @@ public final class ImageDescriptionJobs {
 
     private static Selection.Root root(String sourceId, String spaceKey, String pageId, boolean subtree) {
         if (pageId != null) {
+            // Auch eine einzelne Seite: Der Teilbaum enthält sie, der Lauf nimmt dann nur sie.
             return Selection.Root.subtree(sourceId, spaceKey, pageId);
         }
         return spaceKey != null ? Selection.Root.space(sourceId, spaceKey) : Selection.Root.source(sourceId);
@@ -386,7 +423,7 @@ public final class ImageDescriptionJobs {
             context.pause(PauseReason.USER);
             return;
         }
-        Predicate<PageSnapshot> inScope = scope(part, caller);
+        Predicate<PageSnapshot> inScope = scope(part, caller, !automatic);
         String root = part.parameter(ROOT);
         Iterator<PageSnapshot> pages = root != null && !"true".equals(part.parameter(SUBTREE))
                 ? find.apply(new PageKey(part.sourceId(), root)).stream().iterator()
@@ -417,19 +454,24 @@ public final class ImageDescriptionJobs {
         }
     }
 
-    private Predicate<PageSnapshot> scope(BackgroundPart part, AccessContext caller) {
+    /**
+     * Welche Seiten ein Unterauftrag beschreibt. Ein Lauf des Benutzers prüft jeden Umfang (Space, Seite, Teilbaum)
+     * mit dessen Rechten; die Automatik läuft technisch über die freigegebenen Seiten.
+     */
+    private Predicate<PageSnapshot> scope(BackgroundPart part, AccessContext caller, boolean user) {
         String space = part.partitionKey();
         String root = part.parameter(ROOT);
+        boolean subtree = "true".equals(part.parameter(SUBTREE));
         Predicate<PageSnapshot> inSpace = snapshot -> space == null || space.equals(snapshot.spaceKey());
-        if (root == null) {
-            return inSpace;
+        Predicate<PageSnapshot> range = root == null ? inSpace
+                : subtree ? null : snapshot -> snapshot.key().pageId().equals(root);
+        if (scope != null && (user || root != null && subtree)) {
+            PageSet set = scope.resolve(caller, root(part.sourceId(), space, root, subtree));
+            return range == null ? snapshot -> set.contains(snapshot.key())
+                    : snapshot -> range.test(snapshot) && set.contains(snapshot.key());
         }
-        if (!"true".equals(part.parameter(SUBTREE))) {
-            return snapshot -> snapshot.key().pageId().equals(root);
-        }
-        if (scope != null) {
-            PageSet set = scope.resolve(caller, Selection.Root.subtree(part.sourceId(), space, root));
-            return snapshot -> set.contains(snapshot.key());
+        if (range != null) {
+            return range;
         }
         // Ohne Bestand: über die Elternseiten der gespeicherten Seiten.
         Map<String, List<String>> children = new HashMap<>();
@@ -496,7 +538,8 @@ public final class ImageDescriptionJobs {
                     continue;
                 }
                 if (!analysis.released(snapshot.key())) {
-                    if (user) {
+                    if (user && hasImages(snapshot)) {
+                        // Wie missingNotReleased: nur Seiten, an denen tatsächlich Bilder liegen.
                         tally.notReleased.incrementAndGet();
                     }
                     continue;
@@ -508,7 +551,7 @@ public final class ImageDescriptionJobs {
                     tally.failed.incrementAndGet();
                     continue;
                 }
-                Work work = work(before);
+                Work work = work(before, snapshot.key());
                 if (work == Work.NONE) {
                     continue;
                 }
@@ -611,6 +654,14 @@ public final class ImageDescriptionJobs {
         return new AutomaticImageDescriptions.Outcome(pages, sent, open, failed);
     }
 
+    private boolean hasImages(PageSnapshot snapshot) {
+        try {
+            return !analysis.read(snapshot).images().isEmpty();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private static ExecutorService pool(int size, String name) {
         return Executors.newFixedThreadPool(size, work -> {
             Thread thread = new Thread(work, name);
@@ -619,28 +670,12 @@ public final class ImageDescriptionJobs {
         });
     }
 
-    /** Läufer für den Knopf je Seite: ein eigener Pool, der mit dem Auftrag endet. */
-    private PageImageAnalysis.ImageRunner runner(JobContext context, boolean interactive,
-                                                 java.util.concurrent.atomic.AtomicBoolean halt, String lane) {
-        int parallel = Math.max(1, analysis.parallel());
-        ExecutorService images = pool(parallel, "bilder-modell");
-        PageImageAnalysis.ImageRunner inner = runner(context, interactive, halt, lane, images, parallel);
-        AtomicInteger open = new AtomicInteger();
-        return image -> {
-            open.incrementAndGet();
-            return inner.run(image).whenComplete((entry, failure) -> {
-                if (open.decrementAndGet() == 0) {
-                    images.shutdown();
-                }
-            });
-        };
-    }
-
     /**
      * Jedes Bild als eigene Aufgabe: im Hintergrund erst nach den Beschreibungen des Benutzers ({@link ModelPriority}),
      * dann mit einem der {@code parallel} Plätze der Spur. Ist der Lauf abgebrochen, angehalten oder gestoppt
-     * ({@code halt}), beginnt kein Bild mehr; scheitert das Modell an einem Bild auch nach den Wiederholungen, beginnt
-     * ab da keines mehr, wie früher der Reihe nach.
+     * ({@code halt}), beginnt kein Bild mehr; scheitert das Modell im Hintergrund an einem Bild auch nach den
+     * Wiederholungen, beginnt ab da keines mehr, wie früher der Reihe nach. Interaktiv (Knopf) bekommt jedes Bild
+     * seinen Versuch.
      */
     private PageImageAnalysis.ImageRunner runner(JobContext context, boolean interactive,
                                                  java.util.concurrent.atomic.AtomicBoolean halt, String lane,
@@ -659,7 +694,7 @@ public final class ImageDescriptionJobs {
             } finally {
                 models.release();
             }
-            if (entry != null && entry.status() == ImageStatus.FAILED
+            if (!interactive && entry != null && entry.status() == ImageStatus.FAILED
                     && PageImageAnalysis.modelFailure(entry.reason())) {
                 halt.set(true);
             }
@@ -691,8 +726,10 @@ public final class ImageDescriptionJobs {
     private void page(PageSnapshot snapshot, PageImages before, int pending, Tally tally, Budget shared,
                       JobContext context, PageImageAnalysis.ImageRunner runner) {
         if (tally.stop.get() != null) {
+            release(shared, pending);
             return;
         }
+        boolean settled = false;
         try {
             context.checkpoint();
             PageImages after = analysis.describeInBackground(snapshot, entry -> {
@@ -709,6 +746,7 @@ public final class ImageDescriptionJobs {
             synchronized (shared) {
                 shared.reserved += described - pending;
             }
+            settled = true;
             tally.pages.incrementAndGet();
             List<String> failures = after.images().stream().filter(image -> image.status() == ImageStatus.FAILED)
                     .map(ImagePayload.Entry::reason).toList();
@@ -751,8 +789,20 @@ public final class ImageDescriptionJobs {
             context.failed(1);
             LOG.log(System.Logger.Level.WARNING, "Bilder einer Seite in {0} nicht beschrieben ({1})",
                     snapshot.key().sourceId(), e.getClass().getName());
+        } finally {
+            if (!settled) {
+                // Pause, Abbruch, Anmeldung, Fehler: Die Vormerkung geht zurück, sonst beschriebe ein fortgesetzter
+                // Teil derselben Gruppe nichts mehr. Was schon beschrieben ist, zählt der nächste Lauf nicht erneut.
+                release(shared, pending);
+            }
         }
         context.processed(1);
+    }
+
+    private static void release(Budget shared, int pending) {
+        synchronized (shared) {
+            shared.reserved = Math.max(0, shared.reserved - pending);
+        }
     }
 
     /** Hält den Lauf an; nur der erste Grund meldet sich. */
@@ -792,7 +842,7 @@ public final class ImageDescriptionJobs {
      * Offene Bilder einer Seite: noch nicht beschrieben, veraltet oder mit gescheitertem Modellaufruf. Ohne gespeicherte
      * Lese-Ansicht ist die Zahl unbekannt; die Seite zählt dann als ein offenes Bild, bis die Quelle sie liefert.
      */
-    private static Work work(PageImages images) {
+    private Work work(PageImages images, PageKey key) {
         return switch (images.state()) {
             case MISSING -> {
                 if (PageImages.NO_TEXT.equals(images.reason())) {
@@ -800,7 +850,11 @@ public final class ImageDescriptionJobs {
                 }
                 long open = images.images().stream().filter(ImageDescriptionJobs::open).count();
                 // Ohne gespeicherte Lese-Ansicht ist die Liste leer; die Quelle sagt erst beim Beschreiben, was dort ist.
-                yield images.images().isEmpty() ? new Work(1) : open == 0 ? Work.NONE : new Work((int) open);
+                // Mit gespeicherter Lese-Ansicht ohne Bilder ist nichts zu tun.
+                if (images.images().isEmpty()) {
+                    yield analysis.readingViewStored(key) ? Work.NONE : new Work(1);
+                }
+                yield open == 0 ? Work.NONE : new Work((int) open);
             }
             case STALE -> new Work(Math.max(1, (int) images.images().stream()
                     .filter(image -> image.status() != ImageStatus.SKIPPED).count()));

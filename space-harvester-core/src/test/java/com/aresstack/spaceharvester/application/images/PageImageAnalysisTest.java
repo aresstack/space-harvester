@@ -1108,7 +1108,12 @@ class PageImageAnalysisTest {
         Assets assets = assets();
         assets.pageReleases(new PageKey("wiki", "1")::equals);
         PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments(), Clock.fixed(NOW, ZoneOffset.UTC));
-        List<PageSnapshot> pages = List.of(page("1", "DEV", null), page("2", "DEV", null));
+        // 3 ist ebenfalls nicht freigegeben, hat aber keine Bilder und zählt darum nicht (wie missingNotReleased).
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null), page("2", "DEV", null), page("3", "DEV", null));
+        for (PageSnapshot page : pages) {
+            new ReadingViewStore(store).save(new StoredReadingView(page.key(), "sha256:lese", "1", "", "", "",
+                    source.viewImages(page.key().pageId()), NOW));
+        }
         com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs();
         ImageDescriptionJobs images = images(jobs, analysis, pages, ON, null);
 
@@ -1118,7 +1123,9 @@ class PageImageAnalysisTest {
             assertThat(event.severity()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobEvent.Severity.WARNING);
             assertThat(event.message()).startsWith("1 Seite ohne KI-Freigabe");
         });
-        source.image("3", "att3", "karte.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 9});
+        source.image("1", "att3", "karte.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 9});
+        new ReadingViewStore(store).save(new StoredReadingView(pages.get(0).key(), "sha256:lese2", "2", "", "", "",
+                source.viewImages("1"), NOW));
         String automatic = images.startAutomatic("wiki").orElseThrow().parts().get(0).id();
         assertThat(jobs.events(automatic))
                 .noneSatisfy(event -> assertThat(event.code()).isEqualTo(ImageDescriptionJobs.NOT_RELEASED));
@@ -1142,6 +1149,20 @@ class PageImageAnalysisTest {
 
         assertThat(images.missing(USER, all).pagesOf("wiki")).as("1 ist beschrieben, 3 hat keine Bilder")
                 .containsExactly("2");
+        // Wie der Lauf: eine Seite ohne gespeicherte Lese-Ansicht und ein gescheitertes Ergebnis zählen mit.
+        PageSnapshot unread = page("4", "DEV", null);
+        PageSnapshot failed = page("5", "DEV", null);
+        List<PageSnapshot> more = List.of(pages.get(0), pages.get(1), pages.get(2), unread, failed);
+        new ReadingViewStore(store).save(new StoredReadingView(failed.key(), "sha256:lese", "1", "", "", "",
+                List.of(), NOW));
+        store.save(new com.aresstack.spaceharvester.application.enrichment.Enrichment(failed.key(),
+                ImagePayload.PROCESSOR, "1", "sha256:alt", failed.revision(),
+                com.aresstack.spaceharvester.application.enrichment.Enrichment.Status.FAILED, "{}", List.of(),
+                "model-failed", NOW));
+        ImageDescriptionJobs wider = images(jobs(), analysis, more, ON, null);
+        assertThat(wider.missing(USER, com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(
+                more.stream().map(PageSnapshot::key).toList())).pagesOf("wiki"))
+                .containsExactlyInAnyOrder("2", "4", "5");
         describer.available = false;
         assertThat(images.missing(USER, all).isEmpty()).as("ohne Modell nichts").isTrue();
     }
@@ -1187,6 +1208,136 @@ class PageImageAnalysisTest {
         assertThat(describer.calls).as("eine Grenze für beide Spaces zusammen").isEqualTo(1);
         assertThat(group.parts().stream().flatMap(part -> jobs.events(part.id()).stream()))
                 .anySatisfy(event -> assertThat(event.code()).isEqualTo(AutomaticImageDescriptions.LIMIT_REACHED));
+    }
+
+    @Test
+    void theButtonKeepsItsPoolUntilEveryImageOfThePageIsHandedIn() {
+        // Das erste Bild ist ein sofort übersprungenes Symbol; das zweite muss trotzdem noch einen Platz bekommen.
+        source.image("1", "att1", "skizze.svg", "<svg/>".getBytes(StandardCharsets.UTF_8));
+        source.image("1", "att2", "ablauf.png", PNG);
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null));
+
+        PageImages images = images(jobs(), analysis(), pages, ON, null).describePage("nutzer", pages.get(0),
+                entry -> { });
+
+        assertThat(images.images()).extracting(ImagePayload.Entry::status)
+                .containsExactly(ImageStatus.SKIPPED, ImageStatus.DESCRIBED);
+    }
+
+    @Test
+    void theButtonGivesEveryImageItsTryAndStoresThePageWhenTheModelFails() {
+        source.image("1", "a1", "a1.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1});
+        source.image("1", "a2", "a2.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1, 2});
+        describer.fail = true;
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null));
+        PageImageAnalysis analysis = analysis();
+
+        PageImages images = images(jobs(), analysis, pages, ON, null).describePage("nutzer", pages.get(0),
+                entry -> { });
+
+        assertThat(images.images()).extracting(ImagePayload.Entry::status)
+                .containsExactly(ImageStatus.FAILED, ImageStatus.FAILED);
+        assertThat(describer.sizes).as("beide Bilder beim Modell").contains(5, 6);
+        assertThat(analysis.read(pages.get(0)).images()).as("Seite gespeichert").hasSize(2)
+                .allSatisfy(image -> assertThat(image.status()).isEqualTo(ImageStatus.FAILED));
+    }
+
+    @Test
+    void theButtonWithoutReleaseEndsYellowNotRed() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        describer.released = false;
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null));
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs();
+
+        assertThatThrownBy(() -> images(jobs, analysis(), pages, ON, null).describePage("nutzer", pages.get(0),
+                entry -> { })).isInstanceOf(ImageDescriptionException.class);
+
+        com.aresstack.spaceharvester.application.jobs.JobStatus job = jobs.listAll(
+                com.aresstack.spaceharvester.application.jobs.JobType.ENRICHMENT).get(0);
+        assertThat(job.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+        assertThat(jobs.events(job.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(ImageDescriptionJobs.NOT_RELEASED);
+            assertThat(event.severity()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobEvent.Severity.WARNING);
+        });
+        assertThat(describer.calls).isZero();
+    }
+
+    @Test
+    void aCancelledPageGivesItsReservationBackToTheGroup() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null));
+        com.aresstack.spaceharvester.application.configuration.ImageSettings one =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 1);
+        ImageDescriptionJobs images = images(jobs(), analysis(), pages, one, null);
+        ImageDescriptionJobs.Budget budget = new ImageDescriptionJobs.Budget();
+        RecordingContext cancelled = new RecordingContext();
+        describer.during = () -> cancelled.cancel = true;
+
+        assertThatThrownBy(() -> images.run(pages.iterator(), page -> true, one, cancelled, budget, false))
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobCancelledException.class);
+        assertThat(budget.reserved).isZero();
+
+        describer.during = () -> { };
+        AutomaticImageDescriptions.Outcome resumed = images.run(pages.iterator(), page -> true, one,
+                new RecordingContext(), budget, false);
+        assertThat(resumed.images()).as("der fortgesetzte Teil beschreibt weiter").isEqualTo(1);
+    }
+
+    @Test
+    void aUserRunCreatesPartsOnlyForVisibleSpacesAndChecksEverySpaceWithTheUser() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        source.image("3", "att3", "karte.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 9});
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null), page("2", "DEV", null), page("3", "OPS", null));
+        List<com.aresstack.spaceharvester.application.access.AccessContext> callers =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        // Der Benutzer sieht nur Seite 1.
+        ImageDescriptionJobs.Scope scope = (caller, root) -> {
+            callers.add(caller);
+            return com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(List.of(new PageKey("wiki", "1")));
+        };
+
+        com.aresstack.spaceharvester.application.background.BackgroundGroup group =
+                images(jobs(), analysis(), pages, ON, scope).start(USER, "wiki", null, null, false).orElseThrow();
+
+        assertThat(group.parts()).as("kein Teil für OPS").singleElement()
+                .satisfies(part -> assertThat(part.partitionKey()).isEqualTo("DEV"));
+        assertThat(describer.calls).as("Seite 2 sieht der Benutzer nicht").isEqualTo(1);
+        assertThat(callers).hasSizeGreaterThanOrEqualTo(2)
+                .allSatisfy(caller -> assertThat(caller.principal()).isEqualTo("nutzer-1"));
+    }
+
+    @Test
+    void aNewOccasionWaitsBesideARunningAutomaticPartButNotBesideAWaitingOne() throws Exception {
+        source.image("1", "att1", "ablauf.png", PNG);
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null));
+        java.util.concurrent.ExecutorService threads = java.util.concurrent.Executors.newCachedThreadPool();
+        java.util.concurrent.CountDownLatch running = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        describer.during = () -> {
+            running.countDown();
+            try {
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        try {
+            com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                    .Jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), threads,
+                    new com.aresstack.spaceharvester.application.jobs.JobLimits(2, 10, java.time.Duration.ofHours(1)),
+                    Clock.fixed(NOW, ZoneOffset.UTC));
+            ImageDescriptionJobs images = images(jobs, analysis(), pages, ON, null);
+            assertThat(images.startAutomatic("wiki")).isPresent();
+            assertThat(running.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            assertThat(images.startAutomatic("wiki")).as("neben dem laufenden darf einer warten").isPresent();
+            assertThat(images.startAutomatic("wiki")).as("hinter dem wartenden keiner mehr").isEmpty();
+        } finally {
+            release.countDown();
+            threads.shutdown();
+            threads.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+        }
     }
 
     private static com.aresstack.spaceharvester.application.jobs.Jobs jobs() {
