@@ -227,17 +227,24 @@ wird automatisch verwaltet.
    Auftrag, belegt nichts und hat ihren Zustand aus den Unteraufträgen. Jeder Unterauftrag hat einen eigenen Platz und
    damit ein eigenes Kontingent (etwa `ai.parallel` je Unterauftrag), statt dass sich alle Spaces eines teilen.
 3. **Nachrangig.** `Jobs#next` startet einen Hintergrundauftrag nur, wenn kein anderer Auftrag auf einen Platz wartet,
-   und Hintergrund- und Folgeaufträge zusammen belegen nie alle Plätze („Vorbereitung“ minus eins, mindestens einer):
-   ein Auftrag des Benutzers startet immer sofort. Hintergrundaufträge haben einen eigenen Vorrat
+   und Hintergrund- und Folgeaufträge zusammen belegen nie alle Plätze: Hintergrund höchstens „Vorbereitung“ minus
+   eins, ohne Mindestplatz. Bei nur einem Platz läuft kein Hintergrund; der wartende Teil meldet gelb „Wartet, nur ein
+   Platz eingestellt“ (`Jobs.SINGLE_SLOT`). Ein Auftrag des Benutzers startet immer sofort. Hintergrundaufträge haben einen eigenen Vorrat
    (`Jobs.BACKGROUND_CAPACITY`) ohne Grenze je Auslöser und füllen nie die Warteschlange des Benutzers.
 4. **Fortsetzen nach Neustart.** Die Arbeit eines Unterauftrags baut seine Art allein aus Quelle, Space und Angaben
    (`BackgroundPart`, mit `resumed()`). `BackgroundJobs#resumeInterrupted` setzt am Ende des Harvester-Starts jeden
    Unterauftrag im selben Eintrag fort (`Jobs#rerun`), den das Beenden des Dienstes (`INTERRUPTED`) oder eine verlorene
    Verbindung unterbrochen hat, sofern seine Art angemeldet ist und `BackgroundKind#autoResume` zustimmt (etwa nur bei
    eingeschalteter Automatik und eingestelltem Modell). Vom Benutzer Angehaltenes oder Abgebrochenes läuft nie von
-   selbst weiter. „Fortsetzen“ in der Liste geht über `JobActions` an `BackgroundJobs#resumeJob`.
+   selbst weiter, auch nicht, wenn das Anhalten oder der Abbruch kurz vor dem Ende oder einem Absturz kam: der nächste
+   Start macht daraus `PAUSED` (`USER`) bzw. `CANCELLED`. Beim Beenden markiert `Harvester#close` laufende Teile als
+   unterbrochen (`Jobs#interruptBackground`), bevor die übrigen Bausteine schließen; scheitert ein Teil danach, etwa
+   weil der Planer seine Abrufe abwirft, endet er trotzdem als `INTERRUPTED`. Fehlt die Anmeldung (auch ein offener
+   Einmalcode) oder antwortet die Quelle nicht, hält sich ein Teil an (`SIGN_IN_REQUIRED` bzw. `CONNECTION_LOST`,
+   gelb), statt zu scheitern; die Ursache reicht der Planer über `Ticket#failure` durch. „Fortsetzen“ in der Liste geht über `JobActions` an `BackgroundJobs#resumeJob`.
 5. **Anhalten, Fortsetzen, Abbrechen** je Unterauftrag wie jeder Auftrag, je Gruppe über `BackgroundJobs#pause`,
-   `#resume`, `#cancel`. Beobachter (`BackgroundJobs#watch`) erfahren jede Änderung einer Gruppe über die
+   `#resume`, `#cancel`. Ein Start gilt ganz oder gar nicht: Lehnt `Jobs` einen Teil ab, werden die schon
+   angenommenen abgebrochen. Beobachter (`BackgroundJobs#watch`) erfahren jede Änderung einer Gruppe über die
    Auftragsmeldungen (ADR 0027), ohne Abfragen. Wer nur das Ende braucht, abonniert es einmal mit
    `BackgroundJobs#whenFinished` (Angelo 21.11.2026) und zeigt bis dahin den drehenden Ring (`BusyOverlay`); ist die
    Gruppe schon fertig, kommt die Meldung sofort. Gegen doppelte Anläufe: `BackgroundJobs#running`.
