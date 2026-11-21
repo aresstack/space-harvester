@@ -56,6 +56,43 @@ public interface HoldingsChanges {
         };
     }
 
+    /**
+     * Meldet jede Änderung an alle Empfänger, in dieser Reihenfolge, etwa an den Bestand und das Verzeichnis der
+     * Verweise; ein Empfänger, der doch wirft, hält die übrigen nicht auf.
+     */
+    static HoldingsChanges all(HoldingsChanges... receivers) {
+        java.util.List<HoldingsChanges> all = java.util.List.of(receivers);
+        return new HoldingsChanges() {
+            @Override
+            public void pagesChanged(String sourceId, String spaceKey, Collection<String> pageIds) {
+                all.forEach(receiver -> quietly(() -> receiver.pagesChanged(sourceId, spaceKey, pageIds)));
+            }
+
+            @Override
+            public void spaceChanged(String sourceId, String spaceKey) {
+                all.forEach(receiver -> quietly(() -> receiver.spaceChanged(sourceId, spaceKey)));
+            }
+
+            @Override
+            public void sourceChanged(String sourceId) {
+                all.forEach(receiver -> quietly(() -> receiver.sourceChanged(sourceId)));
+            }
+
+            @Override
+            public void loading(String sourceId, String spaceKey, Collection<String> pageIds) {
+                all.forEach(receiver -> quietly(() -> receiver.loading(sourceId, spaceKey, pageIds)));
+            }
+
+            private static void quietly(Runnable call) {
+                try {
+                    call.run();
+                } catch (RuntimeException ignored) {
+                    // Empfänger werfen laut Vertrag nicht; einer, der es doch tut, hält die übrigen nicht auf.
+                }
+            }
+        };
+    }
+
     /** Meldet nichts, etwa ohne Bestand. */
     HoldingsChanges NONE = new HoldingsChanges() {
         @Override
