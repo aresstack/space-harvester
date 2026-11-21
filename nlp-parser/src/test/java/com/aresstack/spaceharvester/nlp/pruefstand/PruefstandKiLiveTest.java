@@ -39,7 +39,7 @@ class PruefstandKiLiveTest {
     void zweiterAnalysatorGegenOllama() throws IOException {
         String model = System.getProperty("statement.model.live.model", "gemma4:12b");
         AiServiceSettings settings = new AiServiceSettings(URI.create(System.getProperty(
-                "statement.model.live.ollama")), null, model, null, null, Duration.ofMinutes(15), null, Set.of(),
+                "statement.model.live.ollama")), null, model, null, null, Duration.ofMinutes(10), null, Set.of(),
                 null, null, null, AiProvider.OLLAMA, null, null, null, null, null);
         StepModel chat = new ChatStepModel(ModelStatementAnalyzer.STEP, () -> settings, () -> null,
                 ConfiguredSourceCatalog.of(List.of(), "space-harvester-pruefstand"), TrustBundles.NONE,
