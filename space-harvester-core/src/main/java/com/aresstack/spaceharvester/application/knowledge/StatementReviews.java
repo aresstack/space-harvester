@@ -5,8 +5,8 @@ import java.util.function.UnaryOperator;
 /**
  * Port für die Prüfung einzelner Aussagen durch Menschen (ADR 0032, Umsetzung W3). Die Prüfung liegt nicht in der
  * Analyse, sondern in der Ablage der Entscheidungen ({@code application.standing}); dieser Port legt sie beim Lesen
- * über die gespeicherte Analyse, damit Zählung ({@link CountedStatements}), Herkunftsanzeige, Export und Begriffsgraph
- * dieselbe wirksame Prüfung sehen.
+ * über die gespeicherte Analyse, damit Zählung ({@link CountedStatements}), Herkunftsanzeige und Export dieselbe
+ * wirksame Prüfung sehen.
  *
  * <p>Wirksam ist die Prüfung aus der Entscheidung; ohne sie bleibt die gespeicherte {@link ParsedStatements.Review}. Es
  * zählen nur Entscheidungen für die Ablage des Analysators, aus der die Analyse stammt

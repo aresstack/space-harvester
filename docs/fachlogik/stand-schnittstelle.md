@@ -104,8 +104,8 @@ In der App: `Workspace#decideStanding`, `#clearStanding`, `#reviewStatement`, `#
   Analyse die Aussage gefunden wurde; die Anzeige schickt ihn nicht mit.
 - Protokoll: `set`/`remove` für den Stand, `review`/`unreview` für die Prüfung (Zurücknehmen ist eine eigene Zeile), je
   mit `standing()` und `review()`.
-- Wirksam wird die Prüfung beim Lesen an einer Stelle (`DecisionReviews`): im Knowledge Graph (Stand, Glossar, Export,
-  Begriffsgraph) und im Reiter „Aussagen“ (`StatementAnalysis#read`). Die Oberfläche liest `statement().review()` und
+- Wirksam wird die Prüfung beim Lesen an einer Stelle (`DecisionReviews`): im Knowledge Graph (Stand, Glossar, Export)
+  und im Reiter „Aussagen“ (`StatementAnalysis#read`). Die Oberfläche liest `statement().review()` und
   verrechnet nichts selbst.
 
 ## Vorschlag für die Oberfläche (Entscheidung beim Fable-Strang und Angelo)

@@ -9,6 +9,6 @@
  * com.aresstack.spaceharvester.application.standing.StandingDecisionStore}) und melden jede Änderung an Beobachter
  * (ADR 0027, kein Polling). Im selben Eintrag liegt die Prüfung einer Aussage durch Menschen (W3); sie wirkt an einer
  * Stelle beim Lesen der Analysen ({@link com.aresstack.spaceharvester.application.standing.DecisionReviews}), so dass
- * Zählung, Herkunftsanzeige, Export und Begriffsgraph sie gleich sehen.
+ * Zählung, Herkunftsanzeige und Export sie gleich sehen.
  */
 package com.aresstack.spaceharvester.application.standing;

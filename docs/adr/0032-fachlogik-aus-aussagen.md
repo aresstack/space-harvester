@@ -281,11 +281,11 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   MaltParser. Eine Prüfung am MaltParser ändert die KI-Aussage mit derselben ID nicht und umgekehrt.
 - Eine Stelle: `DecisionReviews` (Port `StatementReviews`) legt die Prüfung beim Lesen über die gespeicherte Analyse,
   angebunden an `StatementAnalysis` und von dort an `KnowledgeGraph` (alle Lesewege des Graphen, damit Stand, Begriffe,
-  Glossar, Export, Begriffsgraph) und an `StatementAnalysis#read` (Aussagen-Reiter). Nie auf einem Weg, der liest und
+  Glossar, Export) und an `StatementAnalysis#read` (Aussagen-Reiter). Nie auf einem Weg, der liest und
   zurückschreibt (Prüfschritt, Entzug von Vorstufe oder Urteilen): Diese lesen weiter die Ablage selbst.
 - Vorrang: Die Prüfung aus der Entscheidung gilt; ohne sie bleibt der gespeicherte Wert der Aussage (in der Regel
-  `UNREVIEWED`). Daraus folgen `CountedStatements` (verworfene zählen nicht), die Herkunftsanzeige, der JSON-LD-Wert
-  `sh:verificationStatus` und `GEPRUEFT` im Begriffsgraph.
+  `UNREVIEWED`). Daraus folgen `CountedStatements` (verworfene zählen nicht), die Herkunftsanzeige und der JSON-LD-Wert
+  `sh:verificationStatus`.
 - Rechte wie beim Stand: sehen wie die Seite, setzen und zurücknehmen mit `sync`; eine gesperrte Seite kann nicht
   geprüft werden. Stand und Prüfung teilen sich die Revision des Eintrags (ein Zähler, ein Konflikt).
 - Protokoll: Setzen ist `review`, Zurücknehmen eine eigene Zeile `unreview`, beide mit dem Wert der Prüfung; `remove`
