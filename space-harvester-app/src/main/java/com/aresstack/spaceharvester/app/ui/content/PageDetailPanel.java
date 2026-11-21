@@ -443,6 +443,13 @@ public final class PageDetailPanel extends JPanel {
                 }
             });
         }
+        for (SourceUpdatesView view : List.of(sourceView, sourceChanges)) {
+            view.onRetry((retrySource, spaces) -> {
+                if (context.navigator() != null) {
+                    context.navigator().retrySyncs(retrySource, spaces);
+                }
+            });
+        }
         // Beide Reiter zeigen dasselbe Update: Wer es in einem wählt, sieht es im anderen auch.
         sourceView.onSelected(sourceChanges::select);
         sourceChanges.onSelected(sourceView::select);

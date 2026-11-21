@@ -21,6 +21,8 @@ dependencies {
     implementation libs.win.proxy.java
     // TLS-Vertrauen aus JVM-Truststore und Windows-Speichern Root/CA wie network.tls im Enterprise AI Client (#189)
     implementation libs.win.trust.java
+    // QR-Codes je Zertifikat im Zertifikatsexport einer Quelle und Lesen solcher Bilder (Strang ZX)
+    implementation libs.zxing.core
     // Asynchroner Confluence-Transport (#47, ADR 0001): WebClient auf Reactor Netty nur als HTTP-Client
     implementation libs.spring.webflux
     // ReactorClientHttpConnector implementiert SmartLifecycle (spring-context), webflux zieht es nicht mit; ohne es

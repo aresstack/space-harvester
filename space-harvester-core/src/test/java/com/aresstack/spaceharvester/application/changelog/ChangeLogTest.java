@@ -89,6 +89,11 @@ class ChangeLogTest {
         log.close();
     }
 
+    /** Kennung eines Updates wie im Protokoll: Zeitpunkt der Marke in Nanosekunden. */
+    private static String id(Instant at) {
+        return Long.toString(at.getEpochSecond() * 1_000_000_000L + at.getNano());
+    }
+
     private static Instant at(long minutes) {
         return T0.plus(Duration.ofMinutes(minutes));
     }
@@ -617,6 +622,38 @@ class ChangeLogTest {
         assertThat(left.newTitle()).isNull();
         assertThat(left.newSpaceKey()).isNull();
         assertThat(log.updates(CALLER, "wiki", "OPS")).allSatisfy(update -> assertThat(update.pages()).isZero());
+    }
+
+    @Test
+    void perDayAllRoundsOfADayAreOneUpdateWithEverythingSinceThePreviousDay() {
+        ChangeLog daily = new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)),
+                () -> List.of("wiki", "other")).perDay(java.time.ZoneOffset.UTC);
+        try (daily) {
+            mark(10, true);
+            row(20, "100", ChangeKind.CONTENT_CHANGED, ChangeTrigger.MANUAL, "A", "A", "1", "2", false);
+            // Die Änderung liegt Tage zurück, der Abgleich ist heute: sie gehört ins Update von heute.
+            row(60 * 24 * 3, "101", ChangeKind.NEW, ChangeTrigger.MANUAL, null, "B", null, "1", false);
+            mark(60 * 24 * 5, false);
+            marks.add(new UpdateMark("wiki", at(60 * 24 * 5 + 30), "client:b", List.of("OPS"), 1, false,
+                    List.of("OPS")));
+            row(60 * 24 * 5 + 40, "102", ChangeKind.NEW, ChangeTrigger.MANUAL, null, "C", null, "1", false);
+            marks.add(new UpdateMark("wiki", at(60 * 24 * 5 + 50), "client:a", List.of("OPS"), 0, false));
+
+            List<ChangeUpdate> updates = daily.updates(CALLER, "wiki");
+
+            assertThat(updates).extracting(ChangeUpdate::id)
+                    .containsExactly(id(at(60 * 24 * 5 + 50)), id(at(10)));
+            ChangeUpdate today = updates.getFirst();
+            assertThat(today.from()).isEqualTo(at(10));
+            assertThat(today.mark().spaces()).containsExactly("DEV", "OPS");
+            // Der gescheiterte Abgleich von OPS wurde am selben Tag wiederholt: nichts mehr offen.
+            assertThat(today.mark().failedSyncs()).isZero();
+            assertThat(daily.report(CALLER, "wiki", today.id()).pages()).extracting(ReportedPage::pageId)
+                    .containsExactlyInAnyOrder("100", "101", "102");
+            assertThat(daily.latestMark(CALLER, "wiki")).map(UpdateMark::at).contains(at(60 * 24 * 5 + 50));
+            // Ohne perDay bleibt jede Marke ein Update.
+            assertThat(log.updates(CALLER, "wiki")).hasSize(4);
+        }
     }
 
     @Test

@@ -100,12 +100,17 @@ public final class ChatKnowledge {
      * @param sourceId Kennung der Quelle
      * @param location Adresse der Seite oder {@code null}
      * @param text     der Text des Auszugs
+     * @param pageId   die Seite des Auszugs, wenn bekannt (für die Quellen einer Antwort), sonst {@code null}
      */
-    public record Excerpt(String title, String sourceId, String location, String text) {
+    public record Excerpt(String title, String sourceId, String location, String text, String pageId) {
 
         public Excerpt {
             Objects.requireNonNull(sourceId, "sourceId");
             text = text == null ? "" : text.strip();
+        }
+
+        public Excerpt(String title, String sourceId, String location, String text) {
+            this(title, sourceId, location, text, null);
         }
     }
 

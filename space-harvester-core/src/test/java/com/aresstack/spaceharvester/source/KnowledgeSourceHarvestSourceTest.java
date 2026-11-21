@@ -1063,17 +1063,17 @@ class KnowledgeSourceHarvestSourceTest {
      */
     @Test
     void anImageOfAnotherPageIsLoadedUnderThatPagesId() {
-        TitledImages port = new TitledImages(Map.of("Community of Practice UX/UI", "4711",
-                "Anwendungsfälle & VM/ PostgreSQL", "815"));
+        TitledImages port = new TitledImages(Map.of("Plan Gestaltung A/B", "4711",
+                "Ziele & Läufe/ Nacht", "815"));
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
 
-        assertThat(source.viewImage(image("https://wiki.example.org/download/attachments/embedded-page/PMDH/"
-                + "Community%20of%20Practice%20UX%2FUI/Accordion%20hover%20.png?api=v2"), 1000))
+        assertThat(source.viewImage(image("https://wiki.example.org/download/attachments/embedded-page/DEV/"
+                + "Plan%20Gestaltung%20A%2FB/Accordion%20hover%20.png?api=v2"), 1000))
                 .containsExactly(1, 2, 3);
-        source.viewImage(image("https://wiki.example.org/download/attachments/embedded-page/PMDH/"
-                + "Community%20of%20Practice%20UX%2FUI/Details.png?api=v2"), 1000);
-        source.viewImage(image("https://wiki.example.org/confluence/download/attachments/embedded-page/PMDH/"
-                + "Anwendungsf%C3%A4lle%20&%20VM%2F%20PostgreSQL/image-2024-10-22_14-9-59.png?api=v2"), 1000);
+        source.viewImage(image("https://wiki.example.org/download/attachments/embedded-page/DEV/"
+                + "Plan%20Gestaltung%20A%2FB/Details.png?api=v2"), 1000);
+        source.viewImage(image("https://wiki.example.org/confluence/download/attachments/embedded-page/DEV/"
+                + "Ziele%20&%20L%C3%A4ufe%2F%20Nacht/image-2024-10-22_14-9-59.png?api=v2"), 1000);
 
         assertThat(port.loaded).containsExactly(
                 "https://wiki.example.org/download/attachments/4711/Accordion%20hover%20.png?api=v2",
@@ -1081,16 +1081,16 @@ class KnowledgeSourceHarvestSourceTest {
                 "https://wiki.example.org/confluence/download/attachments/815/image-2024-10-22_14-9-59.png?api=v2");
         // Je Seite eine Nachfrage, das zweite Bild derselben Seite fragt nicht noch einmal.
         assertThat(port.resolved).containsExactly(
-                "https://wiki.example.org/pages/viewpage.action?spaceKey=PMDH&title=Community+of+Practice+UX%2FUI",
-                "https://wiki.example.org/confluence/pages/viewpage.action?spaceKey=PMDH"
-                        + "&title=Anwendungsf%C3%A4lle+%26+VM%2F+PostgreSQL");
+                "https://wiki.example.org/pages/viewpage.action?spaceKey=DEV&title=Plan+Gestaltung+A%2FB",
+                "https://wiki.example.org/confluence/pages/viewpage.action?spaceKey=DEV"
+                        + "&title=Ziele+%26+L%C3%A4ufe%2F+Nacht");
     }
 
     @Test
     void anImageOfAnUnknownPageAndAnOrdinaryImageKeepTheirAddress() {
         TitledImages port = new TitledImages(Map.of());
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
-        String unknown = "https://wiki.example.org/download/attachments/embedded-page/PMDH/Gibt%20es%20nicht/a.png"
+        String unknown = "https://wiki.example.org/download/attachments/embedded-page/DEV/Gibt%20es%20nicht/a.png"
                 + "?api=v2";
         String ordinary = "https://wiki.example.org/download/attachments/123/a.png?version=2&api=v2";
 
@@ -1140,7 +1140,7 @@ class KnowledgeSourceHarvestSourceTest {
                     title = value;
                 }
             }
-            String pageId = "PMDH".equals(spaceKey) ? pages.get(title) : null;
+            String pageId = "DEV".equals(spaceKey) ? pages.get(title) : null;
             return pageId == null ? null : KnowledgeResourceId.of("confluence", "wiki.example.org/page/" + pageId);
         }
 

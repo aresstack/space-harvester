@@ -57,6 +57,31 @@ class ChatStoreTest {
     }
 
     @Test
+    void theNumberedSourcesOfAnAnswerAreKeptAndOlderChatsLoadWithout() throws Exception {
+        ChatStore store = new ChatStore(() -> home.resolve("chats"));
+        ChatNode node = new ChatNode("wiki", "DEV", "42");
+        List<ChatRecord.Source> sources = List.of(
+                new ChatRecord.Source("Nachtlauf", "wiki", "42", "https://wiki.example/42"),
+                new ChatRecord.Source("Überblick", "wiki", null, null));
+        ChatRecord chat = ChatRecord.fresh(1).plus(ChatRecord.Message.user("Frage", 1, "Seite Nachtlauf", "wiki/DEV/42"), 1)
+                .plus(ChatRecord.Message.assistant("Antwort [1]", false, 2, sources), 2);
+        store.save(node, chat);
+
+        ChatRecord loaded = store.load(node, chat.id());
+        assertThat(loaded.messages().get(1).sources()).isEqualTo(sources);
+        assertThat(loaded.messages().get(0).sources()).isEmpty();
+        String json = Files.readString(node.directory(home.resolve("chats")).resolve(chat.id() + ".json"));
+        assertThat(json).as("Fragen schreiben keine leere Quellenliste").containsOnlyOnce("\"sources\"");
+
+        Files.writeString(node.directory(home.resolve("chats")).resolve("alt.json"), """
+                {"id":"alt","title":"alt","createdAt":1,"modifiedAt":2,"messages":[
+                {"role":"user","text":"Frage","cancelled":false,"at":1},
+                {"role":"assistant","text":"Antwort","cancelled":false,"at":2}]}
+                """);
+        assertThat(store.load(node, "alt").messages()).allSatisfy(message -> assertThat(message.sources()).isEmpty());
+    }
+
+    @Test
     void anEmptyChatIsNeverWrittenAndBrokenFilesAreSkipped() throws Exception {
         ChatStore store = new ChatStore(() -> home.resolve("chats"));
         ChatNode node = new ChatNode("wiki", "DEV", null);
