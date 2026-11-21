@@ -89,6 +89,9 @@ public final class MainWindow implements AppContext.Navigator {
     private int chatWidth = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH;
     static final String CHAT_OPEN_KEY = "chat.open";
     static final String CHAT_WIDTH_KEY = "chat.width";
+    static final String CHAT_LARGE_KEY = "chat.large";
+    /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
+    private boolean chatLarge;
     static final String CHAT_TOOLTIP = "Chat (Strg+J)";
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
@@ -314,6 +317,7 @@ public final class MainWindow implements AppContext.Navigator {
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
         chatSidebar.collapseButton().addActionListener(e -> chatOpen(false));
+        chatSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
         chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, work, chatSidebar);
         chatSplit.setBorder(null);
         chatSplit.setBackground(Comic.SURFACE);
@@ -342,6 +346,7 @@ public final class MainWindow implements AppContext.Navigator {
         chatWidth = Math.max(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH,
                 WindowSizes.recallInt(CHAT_WIDTH_KEY, chatWidth));
         chatOpen = WindowSizes.recallInt(CHAT_OPEN_KEY, 0) == 1;
+        chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
         chatToggle.setSelected(chatOpen);
         placeChat();
         split = new ComicSplitPane(side, chatSplit, 200, 520, Comic.PALETTE);
@@ -484,6 +489,23 @@ public final class MainWindow implements AppContext.Navigator {
         return chatOpen;
     }
 
+    /**
+     * „Groß anzeigen“: dieselbe Leiste nimmt die ganze Arbeitsfläche, der Explorer bleibt; derselbe Knopf und Esc
+     * stellen die vorige Breite wieder her. Gemerkt wie offen/zu.
+     */
+    void chatLarge(boolean large) {
+        chatLarge = large;
+        WindowSizes.rememberInt(CHAT_LARGE_KEY, large ? 1 : 0);
+        placeChat();
+        if (chatOpen) {
+            chatSidebar.chat().focusEditor();
+        }
+    }
+
+    boolean chatLarge() {
+        return chatLarge;
+    }
+
     /** Stellt den Teiler so, dass die Leiste ihre Breite hat bzw. zugeklappt ganz verschwindet. */
     private void placeChat() {
         placingChat = true;
@@ -491,11 +513,15 @@ public final class MainWindow implements AppContext.Navigator {
             int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
             chatSidebar.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
             chatSidebar.shown(chatOpen);
+            boolean large = chatOpen && chatLarge;
+            chatSidebar.large(large, () -> chatLarge(false));
+            // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
+            chatSplit.getLeftComponent().setVisible(!large);
             // Zugeklappt lässt sich der Teiler nicht ziehen, nur doppelt klicken.
-            chatSplit.setEnabled(chatOpen);
-            chatSplit.setDividerSize(chatOpen ? ComicDivider.THICKNESS : COLLAPSED_DIVIDER);
+            chatSplit.setEnabled(chatOpen && !large);
+            chatSplit.setDividerSize(large ? 0 : chatOpen ? ComicDivider.THICKNESS : COLLAPSED_DIVIDER);
             int width = chatSplit.getWidth();
-            if (width > 0) {
+            if (width > 0 && !large) {
                 // Die Arbeitsfläche behält ihre Mindestbreite; in einem schmalen Fenster gibt die Leiste nach.
                 int room = Math.max(0, width - chatSplit.getDividerSize() - 320);
                 int shown = chatOpen ? Math.max(Math.min(min, room), Math.min(chatWidth, room)) : 0;
@@ -511,7 +537,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Merkt die Breite, die der Benutzer der offenen Leiste durch Ziehen gegeben hat. */
     private void rememberChatWidth() {
-        if (placingChat || !chatOpen || chatSplit.getWidth() <= 0) {
+        if (placingChat || !chatOpen || chatLarge || chatSplit.getWidth() <= 0) {
             return;
         }
         int width = chatSplit.getWidth() - chatSplit.getDividerSize() - chatSplit.getDividerLocation();

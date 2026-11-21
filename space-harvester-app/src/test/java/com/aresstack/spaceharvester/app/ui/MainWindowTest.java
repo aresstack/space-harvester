@@ -372,8 +372,41 @@ class MainWindowTest {
                 assertThat(surface.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW).get(
                         javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_J,
                                 java.awt.event.InputEvent.CTRL_DOWN_MASK))).isEqualTo("chat");
+                // „Groß anzeigen“: die Leiste nimmt die ganze Arbeitsfläche, der Explorer bleibt; derselbe Knopf und Esc
+                // stellen die vorige Breite wieder her.
+                com.aresstack.spaceharvester.app.ui.content.ChatSidebar bar =
+                        (com.aresstack.spaceharvester.app.ui.content.ChatSidebar) sidebar;
+                assertThat(bar.enlargeButton().getToolTipText())
+                        .isEqualTo(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.ENLARGE);
+                bar.enlargeButton().doClick();
+                layoutAll(surface);
+                assertThat(window.chatLarge()).isTrue();
+                assertThat(chatSplit.getLeftComponent().isVisible()).isFalse();
+                assertThat(sidebar.getWidth()).isEqualTo(chatSplit.getWidth());
+                assertThat(window.split().isLeftCollapsed()).as("der Explorer bleibt").isFalse();
+                assertThat(bar.enlargeButton().getToolTipText())
+                        .isEqualTo(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.SHRINK);
+                assertThat(WindowSizes.recallInt(MainWindow.CHAT_LARGE_KEY, -1)).isEqualTo(1);
+                bar.getActionMap().get("chat-shrink").actionPerformed(null);
+                layoutAll(surface);
+                assertThat(window.chatLarge()).isFalse();
+                assertThat(chatSplit.getLeftComponent().isVisible()).isTrue();
+                assertThat(sidebar.getWidth()).isEqualTo(width + 60);
+                assertThat(WindowSizes.recallInt(MainWindow.CHAT_WIDTH_KEY, -1)).isEqualTo(width + 60);
+                // Esc tut in der Leiste nichts; zugeklappt und wieder auf bleibt „groß“ gemerkt.
+                bar.getActionMap().get("chat-shrink").actionPerformed(null);
+                assertThat(window.chatOpen()).isTrue();
+                bar.enlargeButton().doClick();
+                window.chatOpen(false);
+                layoutAll(surface);
+                assertThat(chatSplit.getLeftComponent().isVisible()).as("zugeklappt ist die Arbeitsfläche da").isTrue();
+                assertThat(sidebar.getWidth()).isZero();
+                window.chatOpen(true);
+                layoutAll(surface);
+                assertThat(sidebar.getWidth()).isEqualTo(chatSplit.getWidth());
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Standard.
+                window.chatLarge(false);
                 window.chatOpen(false);
                 WindowSizes.rememberInt(MainWindow.CHAT_WIDTH_KEY,
                         com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH);

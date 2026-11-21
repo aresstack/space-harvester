@@ -38,6 +38,15 @@ class ChatPanelTest {
         }
     }
 
+    private static void layoutAll(java.awt.Component component) {
+        component.doLayout();
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                layoutAll(child);
+            }
+        }
+    }
+
     private static java.util.List<String> menuTexts(ChatPanel panel) {
         return panel.chatMenuItems().stream()
                 .map(item -> item instanceof javax.swing.JMenuItem menu ? menu.getText() : "—").toList();
@@ -157,6 +166,39 @@ class ChatPanelTest {
             assertThat(panel[0].bubbles()).isZero();
         });
         assertThat(store.load(spaceNode, earlier.id()).title()).isEqualTo("Zugriffsrechte");
+        // Die Fußzeile der Eingabe in der schmalen Leiste: erst die Modellwahl, dann der Denkaufwand nur als Symbol,
+        // der Name steht im Tooltip; „Senden“ und die Symbole rechts überlappen nie.
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.AbstractButton sendButton = panel[0].sendButton();
+            java.awt.Container footer = sendButton.getParent().getParent();
+            java.awt.Container west = (java.awt.Container) footer.getComponent(0);
+            javax.swing.AbstractButton model = (javax.swing.AbstractButton) west.getComponent(0);
+            javax.swing.AbstractButton effort = (javax.swing.AbstractButton) west.getComponent(1);
+            for (int width : new int[] {900, 420, 320, 900}) {
+                panel[0].setSize(width, 700);
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(panel[0]);
+                    for (java.awt.event.ComponentListener listener : footer.getComponentListeners()) {
+                        listener.componentResized(null);
+                    }
+                }
+                layoutAll(panel[0]);
+                assertThat(west.getPreferredSize().width + sendButton.getParent().getPreferredSize().width)
+                        .as("Breite " + width).isLessThanOrEqualTo(footer.getWidth());
+                assertThat(sendButton.getText()).isEqualTo(ChatPanel.SEND);
+                assertThat(model.getToolTipText()).startsWith(ChatPanel.MODEL_TIP);
+                assertThat(effort.getToolTipText()).isEqualTo(ChatPanel.EFFORT_TIP + ": Mittel");
+                if (width == 900) {
+                    assertThat(panel[0].footerStage()).isZero();
+                    assertThat(model.getText()).isEqualTo(ChatPanel.NO_MODEL);
+                    assertThat(effort.getText()).isEqualTo("Mittel");
+                } else {
+                    assertThat(panel[0].footerStage()).isPositive();
+                    assertThat(model.getText()).isNullOrEmpty();
+                    assertThat(model.getToolTipText()).isEqualTo(ChatPanel.MODEL_TIP + ": " + ChatPanel.NO_MODEL);
+                }
+            }
+        });
         // Der Composer wächst mit dem Text bis zu zwei Fünfteln der Höhe und schrumpft danach wieder.
         SwingUtilities.invokeAndWait(() -> {
             javax.swing.JTextArea editor = (javax.swing.JTextArea) panel[0].editor();
