@@ -198,6 +198,31 @@ class PageLinksTest {
     }
 
     @Test
+    void untilTheFirstReconcileEndsTheSourceIsIncompleteThenOneMessageForTheWholeSource() {
+        pages.page("1", "DEV", "Start", "title:DEV/Ziel");
+        pages.page("2", "DEV", "Ziel", "");
+        // Nach einem Neustart: das Verzeichnis ist da, die Titel im Speicher noch nicht.
+        index.put(new LinkIndex.Entry(key("1"), "DEV", "Start", pages.snapshot(key("1")).orElseThrow().payload()
+                .rawSha256(), List.of(LinkTarget.titled("DEV", "Ziel"))));
+        index.put(new LinkIndex.Entry(key("2"), "DEV", "Ziel", pages.snapshot(key("2")).orElseThrow().payload()
+                .rawSha256(), List.of()));
+        List<PageLinks.LinksChanged> events = new CopyOnWriteArrayList<>();
+        links.subscribe(events::add);
+
+        PageLinks.Links before = links.links(CALLER, key("1"));
+        assertThat(before.coverage().reconciling()).isTrue();
+        assertThat(before.complete()).isFalse();
+        assertThat(before.outgoing()).isEmpty();
+
+        links.reconcileNow("wiki");
+
+        PageLinks.Links after = links.links(CALLER, key("1"));
+        assertThat(after.complete()).isTrue();
+        assertThat(after.outgoing()).containsExactly(key("2"));
+        assertThat(events).containsExactly(new PageLinks.LinksChanged("wiki", java.util.Set.of()));
+    }
+
+    @Test
     void changesAreAnnouncedByTheObserverWithoutPolling() throws InterruptedException {
         pages.page("1", "DEV", "Start", "");
         pages.page("2", "DEV", "Ziel", "");

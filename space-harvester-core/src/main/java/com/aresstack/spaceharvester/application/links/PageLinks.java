@@ -46,7 +46,8 @@ import java.util.function.Consumer;
  * <p><b>Aktualität.</b> Dieser Anwendungsfall hängt als {@link HoldingsChanges}-Empfänger am Seiten-Cache: Jeder
  * Commit meldet geschriebene, entfernte und gesperrte Seiten, hier wird nur vorgemerkt und gebündelt auf dem Thread
  * eines {@link Coalescer} erfasst. {@link #reconcileOnStart} gleicht beim Start im Hintergrund über den Hash der Payload
- * ab und lädt nur abweichende Payloads; solange er läuft, nennt die {@link Coverage} den wahren Stand. Jede Änderung
+ * ab und lädt nur abweichende Payloads; bis er für eine Quelle beendet ist, gilt sie nicht als vollständig
+ * ({@link Coverage#reconciling()}), danach kommt eine Meldung für die ganze Quelle. Jede Änderung
  * meldet {@link #subscribe} gebündelt (ADR 0027); niemand fragt in Abständen.
  *
  * <p><b>Rechte.</b> Abgefragt wird mit den Rechten des Aufrufers: {@code content} auf die Seite, jede Gegenseite nur
@@ -75,6 +76,8 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
     private final Coalescer<String, String> pending;
     /** Titel aller bekannten Seiten, auch ohne Payload: entscheidet Titelziele in beiden Richtungen gleich. */
     private final KnownTitles titles = new KnownTitles();
+    /** Quellen, deren erster Abgleich seit dem Start beendet ist; vorher gilt keine als vollständig. */
+    private final Set<String> reconciled = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile boolean closed;
 
     public PageLinks(StoredPages pages, LinkIndex index, List<PageLinkExtractor> extractors, AccessGuard access) {
@@ -138,7 +141,8 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
             return Coverage.HIDDEN;
         }
         long known = pages.known(sourceId);
-        return new Coverage(index.count(sourceId), (int) Math.min(Integer.MAX_VALUE, known));
+        return new Coverage(index.count(sourceId), (int) Math.min(Integer.MAX_VALUE, known),
+                !reconciled.contains(sourceId));
     }
 
     /**
@@ -279,8 +283,13 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
         }
     }
 
-    /** Gleicht eine Quelle über den Hash der Payload mit dem Cache ab; meldet nach jedem Schritt. */
+    /**
+     * Gleicht eine Quelle über den Hash der Payload mit dem Cache ab. Ein späterer Abgleich meldet nach jedem Schritt;
+     * der erste meldet einmal am Ende für die ganze Quelle, denn erst dann stehen auch die Titel aller bekannten
+     * Seiten fest, an denen Kanten hängen.
+     */
     private void reconcile(String sourceId) {
+        boolean first = !reconciled.contains(sourceId);
         Set<String> seen = new HashSet<>();
         int refreshed = 0;
         String after = null;
@@ -307,7 +316,9 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
                 }
             }
             index.flush();
-            announce(sourceId, changed);
+            if (!first) {
+                announce(sourceId, changed);
+            }
             if (batch.size() < BATCH) {
                 break;
             }
@@ -328,7 +339,15 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
             }
         }
         index.flush();
-        announce(sourceId, removed);
+        if (first) {
+            reconciled.add(sourceId);
+            if (!listeners.isEmpty()) {
+                LinksChanged whole = new LinksChanged(sourceId, Set.of());
+                listeners.deliver(sourceId, listener -> listener.accept(whole));
+            }
+        } else {
+            announce(sourceId, removed);
+        }
         if (refreshed > 0 || !removed.isEmpty()) {
             LOG.log(System.Logger.Level.INFO, "Verweise der Quelle {0} abgeglichen: {1} Seiten erfasst", sourceId,
                     refreshed);
@@ -485,17 +504,23 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
     /**
      * Wie weit das Verzeichnis eine Quelle kennt: erfasste von bekannten Seiten.
      *
-     * @param indexed erfasste Seiten (Payload lokal, Extraktor vorhanden) oder {@code -1}, wenn verborgen
-     * @param known   bekannte Seiten der Quelle, mit und ohne Payload, oder {@code -1}, wenn verborgen
+     * @param indexed     erfasste Seiten (Payload lokal, Extraktor vorhanden) oder {@code -1}, wenn verborgen
+     * @param known       bekannte Seiten der Quelle, mit und ohne Payload, oder {@code -1}, wenn verborgen
+     * @param reconciling ob der erste Abgleich der Quelle seit dem Start noch aussteht; bis dahin nie vollständig
      */
-    public record Coverage(int indexed, int known) {
+    public record Coverage(int indexed, int known, boolean reconciling) {
 
         /** Zähler, die der Aufrufer nicht sehen darf. */
-        public static final Coverage HIDDEN = new Coverage(-1, -1);
+        public static final Coverage HIDDEN = new Coverage(-1, -1, false);
 
-        /** Ob alle bekannten Seiten erfasst sind. */
+        /** Ohne laufenden Abgleich. */
+        public Coverage(int indexed, int known) {
+            this(indexed, known, false);
+        }
+
+        /** Ob alle bekannten Seiten erfasst sind und der erste Abgleich beendet ist. */
         public boolean complete() {
-            return indexed >= 0 && indexed >= known;
+            return !reconciling && indexed >= 0 && indexed >= known;
         }
 
         /** Ob die Zähler bekannt sind. */
