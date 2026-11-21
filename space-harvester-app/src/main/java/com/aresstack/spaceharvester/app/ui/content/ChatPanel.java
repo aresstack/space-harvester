@@ -240,7 +240,8 @@ public final class ChatPanel extends JPanel {
 
     private Selection selection;
     /** Die Schnellaktionen für die untere Leiste; sichtbar nur im Reiter Chat. */
-    private final JPanel quickActions = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
+    private final JPanel quickActions = new JPanel(
+            new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 6, 4));
     /** Anmeldung bei den Bestandsmeldungen des Core für Quelle und Space der Auswahl. */
     /** Anmeldungen bei den Bestandsmeldungen: eine je Quelle und Space der Auswahl, global eine je Quelle. */
     private final List<Subscription> subscriptions = new ArrayList<>();
@@ -321,11 +322,13 @@ public final class ChatPanel extends JPanel {
         transcript.setOpaque(false);
         emptyNote.setAlignmentX(LEFT_ALIGNMENT);
         transcript.add(emptyNote);
-        JPanel transcriptHolder = new JPanel(new BorderLayout());
-        transcriptHolder.setOpaque(false);
+        // Der Verlauf folgt der Breite des Sichtfensters (Seitenleiste, Angelo 21.11.2026): die Zeilen bemessen ihre
+        // Blasen nach der Zeilenbreite, also brechen sie um, statt den Verlauf zu verbreitern.
+        JPanel transcriptHolder = new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(new BorderLayout());
         transcriptHolder.add(transcript, BorderLayout.NORTH);
         transcriptScroll = Comic.scroll(transcriptHolder);
         transcriptScroll.setBorder(BorderFactory.createEmptyBorder());
+        transcriptScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         add(transcriptScroll, BorderLayout.CENTER);
 
         composer = buildComposer();
@@ -336,9 +339,14 @@ public final class ChatPanel extends JPanel {
         knowledgeRow.add(load, BorderLayout.EAST);
         load.setVisible(false);
         load.addActionListener(e -> load());
+        // Die Schnellaktionen stehen direkt über der Wissen-Zeile und brechen in der schmalen Leiste um.
+        JPanel above = new JPanel(new BorderLayout(0, 4));
+        above.setOpaque(false);
+        above.add(feedback, BorderLayout.NORTH);
+        above.add(quickActions, BorderLayout.CENTER);
         JPanel south = new JPanel(new BorderLayout(0, 4));
         south.setOpaque(false);
-        south.add(feedback, BorderLayout.NORTH);
+        south.add(above, BorderLayout.NORTH);
         south.add(knowledgeRow, BorderLayout.CENTER);
         south.add(composer, BorderLayout.SOUTH);
         add(south, BorderLayout.SOUTH);
@@ -945,6 +953,8 @@ public final class ChatPanel extends JPanel {
             quickActions.add(chip(WHATS_NEW, WHATS_NEW_TIP, ready, () -> submit(WHATS_NEW, resolved, area,
                     ChatTurn.Kind.WHATS_NEW)));
         }
+        // Ohne Auswahl gibt es keine Chips, also auch keine leere Zeile über der Eingabe.
+        quickActions.setVisible(quickActions.getComponentCount() > 0);
         quickActions.revalidate();
         quickActions.repaint();
     }
@@ -1602,12 +1612,17 @@ public final class ChatPanel extends JPanel {
         updateQuickActions();
     }
 
-    /** „Chat: ‹Name› ▾“ für die Mitte der Kopfzeile des Inhaltsbereichs. */
+    /** „Chat: ‹Name› ▾“ für die Kopfzeile der Seitenleiste ({@link ChatSidebar}). */
     public JComponent header() {
         return header;
     }
 
-    /** Neuer Chat und Chat löschen als Symbole für die Kopfzeile des Inhaltsbereichs, rechts. */
+    /** Setzt die Schreibmarke ins Eingabefeld, etwa nach dem Aufklappen der Seitenleiste. */
+    public void focusEditor() {
+        editor.requestFocusInWindow();
+    }
+
+    /** Neuer Chat und Chat löschen als Symbole für die Kopfzeile der Seitenleiste, rechts. */
     public JComponent headerActions() {
         return headerActions;
     }

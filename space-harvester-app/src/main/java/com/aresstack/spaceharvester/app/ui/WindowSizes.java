@@ -40,6 +40,23 @@ final class WindowSizes {
         }
     }
 
+    /** Ein gemerkter Zahlenwert des Bedienzustands, etwa die Breite einer Seitenleiste. */
+    static int recallInt(String key, int fallback) {
+        try {
+            return node().getInt(key, fallback);
+        } catch (RuntimeException e) {
+            return fallback;
+        }
+    }
+
+    static void rememberInt(String key, int value) {
+        try {
+            node().putInt(key, value);
+        } catch (RuntimeException e) {
+            // Ohne Speicher gilt beim nächsten Start der Standard.
+        }
+    }
+
     private static Preferences node() {
         return Preferences.userRoot().node("com/aresstack/spaceharvester/app/windows");
     }

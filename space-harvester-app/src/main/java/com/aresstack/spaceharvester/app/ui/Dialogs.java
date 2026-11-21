@@ -201,6 +201,27 @@ public final class Dialogs {
 
     /** Wie {@link #surface(String, JComponent, Runnable)}; {@code help} steht links neben dem ✕, {@code null} entfällt. */
     static JPanel surface(String title, JComponent body, Runnable cancel, HelpButton help) {
+        return surface(title, body, cancel, help,
+                new ComicWindowCloseButton(Comic.PALETTE, cancel, "Schließen (Esc)", CLOSE_SIZE));
+    }
+
+    /**
+     * Wie {@link #frame(JDialog, String, JComponent, Runnable)}, aber als Overlay ohne Standardknöpfe: Abbrechen nur
+     * über den Esc-Kreis oben rechts (und die Taste Esc).
+     */
+    static JPanel escFrame(JDialog dialog, String title, JComponent body, Runnable cancel) {
+        JPanel content = escSurface(title, body, cancel);
+        dialog.setContentPane(content);
+        return content;
+    }
+
+    /** Der Inhalt von {@link #escFrame} ohne Fenster. */
+    static JPanel escSurface(String title, JComponent body, Runnable cancel) {
+        return surface(title, body, cancel, null,
+                new com.aresstack.spaceharvester.app.ui.controls.EscCircle(cancel, "Abbrechen (Esc)"));
+    }
+
+    private static JPanel surface(String title, JComponent body, Runnable cancel, HelpButton help, JComponent close) {
         // Der Tintenrand gehört allein der äußeren Fläche: ComicWindowShape ersetzt ihn beim Anzeigen (rund oder
         // eckig). Der Innenabstand sitzt deshalb auf einer eigenen Fläche darin und bleibt erhalten.
         JPanel content = new JPanel(new BorderLayout());
@@ -221,7 +242,7 @@ public final class Dialogs {
         if (help != null) {
             chips.add(closeButton(help));
         }
-        chips.add(closeButton(new ComicWindowCloseButton(Comic.PALETTE, cancel, "Schließen (Esc)", CLOSE_SIZE)));
+        chips.add(closeButton(close));
         header.add(chips, BorderLayout.EAST);
         ComicWindowDragger.install(header);
         JPanel inner = new JPanel(new BorderLayout());
