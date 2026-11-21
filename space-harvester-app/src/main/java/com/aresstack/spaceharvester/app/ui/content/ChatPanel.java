@@ -933,11 +933,20 @@ public final class ChatPanel extends JPanel {
         // Nachladen je Quelle, Space oder Seite; die globale Auswahl lädt man links je Wissensquelle.
         load.setVisible(current != null && !current.global() && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
-        send.setEnabled(current != null && settled);
+        // Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird.
+        updateSend();
         updateQuickActions();
         if (onResolved != null) {
             onResolved.accept(resolved);
         }
+    }
+
+    /**
+     * Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird (der
+     * Chat bleibt beim Navigieren stehen); Senden braucht eine aufgelöste Auswahl.
+     */
+    private void updateSend() {
+        send.setEnabled(turn != null || (selection != null && settled));
     }
 
     // ------------------------------------------------------------------ Schnellaktionen
@@ -1307,13 +1316,15 @@ public final class ChatPanel extends JPanel {
             status.setText(NO_CHAT_MODEL);
             return;
         }
-        addAreaMark(lastArea(chat), area);
+        // Nur die Seite statt der Auswahl samt Unterseiten ist ein eigener Bereich.
+        String scopeKey = scopeKey(node, scope != resolved);
+        addAreaMark(lastQuestion(chat), area, scopeKey);
         addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question);
         long now = System.currentTimeMillis();
         if (home == null) {
             home = store.folder(node);
         }
-        chat = chat.plus(ChatRecord.Message.user(question, now, area), now);
+        chat = chat.plus(ChatRecord.Message.user(question, now, area, scopeKey), now);
         List<ChatRecord.Message> history = chat.messages().subList(0, chat.messages().size() - 1);
         store.save(home, chat);
         showChatName();
@@ -1485,6 +1496,7 @@ public final class ChatPanel extends JPanel {
             status.setText(note);
             send.setText(SEND);
             send.setIcon(ComposerIcons.send());
+            updateSend();
             updateHeaderActions();
             send.setToolTipText("Senden (Enter)");
             showChatName();
@@ -1592,14 +1604,14 @@ public final class ChatPanel extends JPanel {
         }
         chat = record;
         home = folder;
-        String area = null;
+        ChatRecord.Message asked = null;
         transcript.removeAll();
         transcript.add(emptyNote);
         emptyNote.setVisible(true);
         for (ChatRecord.Message message : record.messages()) {
             if (message.user()) {
-                addAreaMark(area, message.area());
-                area = message.area() == null ? area : message.area();
+                addAreaMark(asked, message.area(), message.scope());
+                asked = message.area() == null ? asked : message;
                 addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du",
                         message.text());
             } else {
@@ -1705,15 +1717,44 @@ public final class ChatPanel extends JPanel {
 
     // ------------------------------------------------------------------ Bereichswechsel im Verlauf
 
-    /** Der Bereich der letzten Frage eines Chats; {@code null} ohne Frage mit Bereich. */
-    static String lastArea(ChatRecord record) {
-        String area = null;
+    /** Die letzte Frage eines Chats, die ihren Bereich kennt; {@code null} ohne solche Frage. */
+    static ChatRecord.Message lastQuestion(ChatRecord record) {
+        ChatRecord.Message asked = null;
         for (ChatRecord.Message message : record.messages()) {
             if (message.user() && message.area() != null) {
-                area = message.area();
+                asked = message;
             }
         }
-        return area;
+        return asked;
+    }
+
+    /** Der Bereich der letzten Frage eines Chats in Worten; {@code null} ohne Frage mit Bereich. */
+    static String lastArea(ChatRecord record) {
+        ChatRecord.Message asked = lastQuestion(record);
+        return asked == null ? null : asked.area();
+    }
+
+    /**
+     * Die Kennung eines Bereichs: Quelle, Space und Seite, dazu ob nur die Seite ohne Unterseiten gemeint ist. Zwei
+     * gleich benannte Spaces oder Seiten sind damit verschiedene Bereiche; {@code null} ohne Auswahl.
+     */
+    static String scopeKey(ChatNode node, boolean pageOnly) {
+        if (node == null) {
+            return null;
+        }
+        if (node.sourceId() == null) {
+            return "*";
+        }
+        return node.sourceId() + "\u0000" + (node.spaceKey() == null ? "" : node.spaceKey()) + "\u0000"
+                + (node.pageId() == null ? "" : node.pageId()) + (pageOnly ? "\u0000nur" : "");
+    }
+
+    /** Derselbe Bereich: nach der Kennung, bei Chats ohne Kennung nach dem Namen ohne Zählung. */
+    static boolean sameArea(ChatRecord.Message before, String next, String nextScope) {
+        if (before.scope() != null && nextScope != null) {
+            return before.scope().equals(nextScope);
+        }
+        return Objects.equals(areaName(before.area()), areaName(next));
     }
 
     /**
@@ -1732,8 +1773,8 @@ public final class ChatPanel extends JPanel {
      * Sie entsteht erst beim Senden, nicht bei jedem Klick im Baum; ältere Antworten sehen so nie aus, als kämen sie
      * aus dem neuen Bereich.
      */
-    private void addAreaMark(String before, String next) {
-        if (before == null || next == null || Objects.equals(areaName(before), areaName(next))) {
+    private void addAreaMark(ChatRecord.Message before, String next, String nextScope) {
+        if (before == null || next == null || sameArea(before, next, nextScope)) {
             return;
         }
         AreaMark mark = new AreaMark(FROM_HERE + next);

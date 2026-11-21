@@ -68,11 +68,11 @@ class ChatPanelTest {
         ChatNode spaceNode = new ChatNode("handbuch", space, null);
         // Ein Chat, dessen zweite Frage aus einem anderen Bereich kam; dazwischen hat der Bestand nur nachgeladen.
         ChatRecord earlier = ChatRecord.fresh(1_000)
-                .plus(ChatRecord.Message.user("Frühere Frage", 1_000, "Space Handbuch · 1 Seite"), 1_000)
+                .plus(ChatRecord.Message.user("Frühere Frage", 1_000, "Space Handbuch · 1 Seite", null), 1_000)
                 .plus(ChatRecord.Message.assistant("Frühere Antwort", false, 1_500), 1_500)
-                .plus(ChatRecord.Message.user("Noch eine", 1_600, "Space Handbuch · 3 Seiten · 1 davon nicht geladen"),
-                        1_600)
-                .plus(ChatRecord.Message.user("Und im Ganzen?", 1_700, "Handbuch · alle Spaces · 3 Seiten"), 1_700)
+                .plus(ChatRecord.Message.user("Noch eine", 1_600, "Space Handbuch · 3 Seiten · 1 davon nicht geladen",
+                        null), 1_600)
+                .plus(ChatRecord.Message.user("Und im Ganzen?", 1_700, "Handbuch · alle Spaces · 3 Seiten", null), 1_700)
                 .plus(ChatRecord.Message.assistant("Antwort im Ganzen", false, 1_800), 1_800);
         store.save(spaceNode, earlier);
         ChatNode sourceNode = new ChatNode("handbuch", null, null);
@@ -80,6 +80,20 @@ class ChatPanelTest {
         store.save(sourceNode, other);
         assertThat(store.all()).extracting(entry -> entry.record().id()).containsExactly(earlier.id(), other.id());
         assertThat(ChatPanel.areaName("Space Handbuch · 3 Seiten · 1 davon nicht geladen")).isEqualTo("Space Handbuch");
+        // Zwei gleich benannte Spaces sind verschiedene Bereiche: es zählt die Kennung, nicht der Name.
+        ChatRecord.Message asked = ChatRecord.Message.user("Frage", 1, "Space Handbuch · 2 Seiten",
+                ChatPanel.scopeKey(new ChatNode("a", "HB", null), false));
+        assertThat(ChatPanel.sameArea(asked, "Space Handbuch · 5 Seiten",
+                ChatPanel.scopeKey(new ChatNode("a", "HB", null), false))).isTrue();
+        assertThat(ChatPanel.sameArea(asked, "Space Handbuch · 2 Seiten",
+                ChatPanel.scopeKey(new ChatNode("b", "HB", null), false))).isFalse();
+        assertThat(ChatPanel.sameArea(asked, "Space Handbuch · 2 Seiten",
+                ChatPanel.scopeKey(new ChatNode("a", "HB", "p1"), true))).isFalse();
+        // Die Adresse eines Chats ist relativ zum Chat-Ordner und gilt auch nach einem Wechsel des Datenordners;
+        // nichts außerhalb wird geschrieben.
+        assertThat(store.folder(spaceNode)).isRelative();
+        store.save(Path.of("..", "draussen"), earlier);
+        assertThat(home.resolve("data").resolve("draussen")).doesNotExist();
         assertThat(ChatPanel.areaName("Handbuch · alle Spaces · " + ChatPanel.NOT_LOADED))
                 .isEqualTo("Handbuch · alle Spaces");
 
