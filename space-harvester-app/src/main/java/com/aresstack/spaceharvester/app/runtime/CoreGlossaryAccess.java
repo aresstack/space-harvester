@@ -145,9 +145,9 @@ final class CoreGlossaryAccess implements GlossaryAccess {
     }
 
     @Override
-    public List<JobStatus> classify(String sourceId, String spaceKey) {
+    public List<JobStatus> classify(String sourceId, String spaceKey, String pageId) {
         try {
-            return harvester.glossaryClassification().start(caller, sourceId, spaceKey);
+            return harvester.glossaryClassification().start(caller, sourceId, spaceKey, pageId);
         } catch (GlossaryUnavailableException e) {
             if (e.reason() == GlossaryUnavailableException.Reason.NO_MODEL) {
                 throw new AiUnavailableException();

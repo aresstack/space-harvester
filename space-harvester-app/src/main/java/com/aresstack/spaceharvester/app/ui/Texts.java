@@ -28,12 +28,19 @@ public final class Texts {
 
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.GERMANY)
             .withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter SHORT_TIME = DateTimeFormatter.ofPattern("dd.MM. HH:mm",
+            Locale.GERMANY).withZone(ZoneId.systemDefault());
 
     private Texts() {
     }
 
     public static String time(Instant instant) {
         return instant == null ? "–" : TIME.format(instant);
+    }
+
+    /** Wie {@link #time}, kurz für schmale Listen: Tag, Monat und Uhrzeit ohne Jahr und Sekunden. */
+    public static String shortTime(Instant instant) {
+        return instant == null ? "–" : SHORT_TIME.format(instant);
     }
 
     /** Eine Größengrenze: 0 (oder weniger) heißt „ohne Grenze“ (#571), sonst wie {@link #bytes}. */
@@ -151,6 +158,7 @@ public final class Texts {
             case PRESENTATION_EXPORT -> "PPTX erzeugen";
             case SEARCH_QUALITY -> "Suchqualität messen";
             case UPDATE_PODCAST -> "Podcast erzeugen";
+            case BACKGROUND -> "Hintergrund";
         };
     }
 
@@ -164,6 +172,12 @@ public final class Texts {
                 status.parameters().get(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions
                         .TASK_PARAMETER))) {
             return "Bilder beschreiben";
+        }
+        if (status.type() == JobType.BACKGROUND) {
+            // Hintergrundaufträge (ADR 0025 Nachtrag): der Titel ihrer Gruppe, etwa „Nachbarseiten laden“.
+            String title = status.parameters().get(
+                    com.aresstack.spaceharvester.application.background.BackgroundJobs.TITLE);
+            return title == null || title.isBlank() ? type(status.type()) : title;
         }
         if (status.type() == JobType.PRESENTATION_EXPORT) {
             return com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.parse(

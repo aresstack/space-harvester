@@ -109,6 +109,13 @@ public final class SourceDataStores {
         return add("Synonym-Cache", sourceId -> cache.removeSources(SynonymDiscovery.cacheKeysOf(sourceId)));
     }
 
+    /** Ergebnis-Cache der Glossar-Modellantworten (D4): Läufe der Quelle, ihrer Spaces und die globalen. */
+    public SourceDataStores glossaryCache(FileResolutionCache cache) {
+        Objects.requireNonNull(cache, "cache");
+        return add("Glossar-Cache", sourceId -> cache.removeSources(
+                com.aresstack.spaceharvester.application.glossary.GlossaryClassification.cacheKeysOf(sourceId)));
+    }
+
     /** Vektoren der Synonymerkennung mit Seiten dieser Quelle und ihr Stand (SY2). */
     public SourceDataStores synonymVectors(com.aresstack.spaceharvester.application.terms.SynonymVectorCache cache) {
         Objects.requireNonNull(cache, "cache");

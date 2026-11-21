@@ -20,6 +20,8 @@ public final class IconButton extends JButton {
     /** Kantenlänge in engen Zeilen wie der Statuszeile ({@link #compact()}). */
     static final int COMPACT_SIZE = 22;
     private int size = SIZE;
+    /** Kleiner Punkt oben rechts: eine Option hinter dem Knopf weicht vom Standard ab. */
+    private boolean marked;
     /** Den Fokus zeigt der Kreis nur, wenn er über die Tastatur kam. */
     private final KeyboardFocusRing focusRing;
 
@@ -47,6 +49,29 @@ public final class IconButton extends JButton {
             RoundHover.paint(graphics, 0, 0, getWidth(), getHeight(), getModel().isPressed());
         }
         super.paintComponent(graphics);
+        if (marked) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) graphics.create();
+            try {
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                int d = Math.max(6, getWidth() / 5);
+                g2.setColor(Comic.PETROL);
+                g2.fillOval(getWidth() - d - 2, 2, d, d);
+            } finally {
+                g2.dispose();
+            }
+        }
+    }
+
+    /** Zeigt oder entfernt den Punkt für „eine Option weicht vom Standard ab“. */
+    public IconButton marked(boolean value) {
+        marked = value;
+        repaint();
+        return this;
+    }
+
+    /** Ob der Punkt gezeigt wird. */
+    public boolean marked() {
+        return marked;
     }
 
     /** Kleiner Knopf für enge Zeilen (Statuszeile): Die Zeile behält ihre Höhe. */
