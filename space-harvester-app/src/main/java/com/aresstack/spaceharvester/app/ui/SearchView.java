@@ -89,6 +89,8 @@ public final class SearchView implements View {
     final JCheckBox neighbors = checkBox(NEIGHBORS, NEIGHBORS_TIP);
     /** Die Suche, nach deren Stapel die Nachbarseiten noch gesucht werden; -1 ohne. */
     private int neighborsFor = -1;
+    /** Läuft die Nachbarsuche dieser Anfrage, wartet „Weitere laden“: Der nächste Stapel verwürfe sonst ihre Treffer. */
+    private int neighborsPending = -1;
     /** Die Suchanfragen der semantischen Suche als Schlagwörter; die ursprüngliche steht im Suchfeld. */
     final JPanel tags = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
     /** Die laufende semantische Suche; {@code null}, wenn keine läuft. */
@@ -1357,19 +1359,31 @@ public final class SearchView implements View {
         List<KeywordSearch.Hit> shown = model.rows.stream().map(row -> new KeywordSearch.Hit(row.sourceId(),
                 row.pageId(), row.spaceKey(), row.title(), row.snippet(), null, null, row.modifiedAt(), null))
                 .toList();
+        neighborsPending = id;
+        updateMore();
+        int before = model.rows.size();
         Background.run(() -> runtime.workspace().neighborSearch(q, shown), found -> {
             if (id != request) {
+                return;
+            }
+            neighborsPending = -1;
+            updateMore();
+            if (found.isEmpty()) {
                 return;
             }
             Hit selected = selectedHit();
             model.append(found.stream().map(Hit::of).toList());
             select(selected);
-            status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer")
-                    + (found.isEmpty() ? "" : " · " + Texts.count(found.size(), "Nachbarseite", "Nachbarseiten")
-                    + " dazu"));
-            status.setForeground(Comic.MUTED);
+            // Nur die Zahl wächst; Quellenzustände und „unvollständig“ samt Farbe bleiben stehen.
+            String text = status.getText();
+            String count = Texts.count(before, "Treffer", "Treffer");
+            String rest = text.startsWith(count) ? text.substring(count.length()) : "";
+            status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · "
+                    + Texts.count(found.size(), "Nachbarseite", "Nachbarseiten") + " dazu" + rest);
         }, error -> {
             if (id == request) {
+                neighborsPending = -1;
+                updateMore();
                 LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesucht ({0})", error.getClass().getName());
                 uncheckedNeighbors();
             }
@@ -1421,7 +1435,7 @@ public final class SearchView implements View {
     private void updateMore() {
         boolean available = nextCursor != null && progressId == null;
         more.setVisible(available);
-        more.setEnabled(available);
+        more.setEnabled(available && neighborsPending != request);
     }
 
     /** „12 von 25 Seiten im Cache · 7 Treffer“: geladene gegen gefundene Seiten dieser Suche. */
