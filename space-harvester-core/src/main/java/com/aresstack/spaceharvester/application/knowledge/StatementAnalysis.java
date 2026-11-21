@@ -364,8 +364,9 @@ public class StatementAnalysis {
         }
         String input = text.get().inputSha256();
         String version = analyzer.version();
+        // Freigabe vor jedem Modellaufruf: ein Entzug während des Laufs schickt keinen weiteren Abschnitt mehr
         ParsedStatements result = analyzer.analyze(PageStatementAnalysis.documentId(key, input),
-                analyzerText(text.get()), cancelled, costs);
+                analyzerText(text.get()), cancelled, () -> released.test(key), costs);
         if (cancelled.getAsBoolean()) {
             throw new CancellationException("Analyse abgebrochen");
         }
