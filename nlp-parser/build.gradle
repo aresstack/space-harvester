@@ -64,6 +64,14 @@ tasks.named('test') {
     if (pruefstandSeiten.isPresent()) {
         systemProperty 'pruefstand.seiten', rootProject.file(pruefstandSeiten.get()).absolutePath
     }
+    // Zweiter Aussagenanalysator (Fahrplan Paket A2) gegen einen Ollama-Server, nur auf Anfrage und nur über die
+    // HTTP-API: -PstatementModelLiveOllama=http://localhost:11434 [-PstatementModelLiveModel=gemma4:12b]
+    ['statementModelLiveOllama', 'statementModelLiveModel'].each { name ->
+        if (project.hasProperty(name)) {
+            systemProperty "statement.model.live.${name.substring('statementModelLive'.length()).uncapitalize()}",
+                    project.property(name)
+        }
+    }
 }
 
 // Fest hinterlegte Modellversion aus #99 (Tag, Asset, SHA-256 der ZIP); dieselbe Datei liest GermanParserModelPin.

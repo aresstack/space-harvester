@@ -563,7 +563,12 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
         CASE_HEURISTIC,
         LEXICON,
         /** Strukturelle Heuristik gegen eine erkennbar fehlerhafte Parserkante; immer unsicher. */
-        HEURISTIC
+        HEURISTIC,
+        /**
+         * Vom Sprachmodell des KI-Analysators zugeordnet (Fahrplan Paket A2), der Wortlaut steht wörtlich im Satz; keine
+         * Parserkante. Zeigt an jeder Aussage, dass sie vom Modell stammt.
+         */
+        MODEL
     }
 
     /**

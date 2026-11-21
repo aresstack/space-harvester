@@ -1,0 +1,13 @@
+### Aufruf
+{"satz": 1, "aussagen": []}
+{"satz": 2, "aussagen": [{"verb": "prüfen", "handelnder": "Bewilligungsstelle", "betroffenes": "Antrag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": []}
+{"satz": 4, "aussagen": [{"verb": "prüfen", "handelnder": "-", "betroffenes": "Vollständigkeit", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "feststellen", "handelnder": "-", "betroffenes": "Förderfähigkeit", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "erstellen", "handelnder": "-", "betroffenes": "Bescheid", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}, {"verb": "versenden", "handelnder": "-", "betroffenes": "Bescheid", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 7, "aussagen": [{"verb": "automatisieren", "handelnder": "§automatisieren", "betroffenes": "Prüfung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 8, "aussagen": [{"verb": "verwerfen", "handelnder": "-", "betroffenes": "Überlegung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 9, "aussagen": [{"verb": "prüfen", "handelnder": "Sachbearbeiter", "betroffenes": "Förderfähigkeit", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 10, "aussagen": [{"verb": "bewerten", "handelnder": "Regelwerk", "betroffenes": "Förderfähigkeit", "empfaenger": "-", "verneint": false, "verbindlichkeit": "SOLL", "zeitbezug": "GEPLANT"}]}
+{"satz": 11, "aussagen": []}
+{"satz": 12, "aussagen": [{"verb": "abgestimmt", "handelnder": "-", "betroffenes": "Schnittstelle", "empfaenger": "-", "verneint": true, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

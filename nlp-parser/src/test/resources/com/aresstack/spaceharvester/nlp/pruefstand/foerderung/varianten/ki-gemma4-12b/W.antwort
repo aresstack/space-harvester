@@ -1,0 +1,15 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "stärken", "handelnder": "Förderung", "betroffenes": "Partnernetzwerk", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "regeln", "handelnder": "Rechtssystem", "betroffenes": "Rückforderung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "fördern", "handelnder": "-", "betroffenes": "Import", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "beraten", "handelnder": "Support", "betroffenes": "Antragsteller", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "erneuern", "handelnder": "-", "betroffenes": "Rohrleitung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "liegen", "handelnder": "Haltestelle", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 7, "aussagen": [{"verb": "bestimmen", "handelnder": "Aktienindex", "betroffenes": "Zinssatz", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 8, "aussagen": [{"verb": "gehören", "handelnder": "Studienmodul", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 9, "aussagen": [{"verb": "prüfen", "handelnder": "Bauleiter", "betroffenes": "Leistungsverzeichnis", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 10, "aussagen": [{"verb": "fördern", "handelnder": "-", "betroffenes": "Ehrenamt", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 11, "aussagen": [{"verb": "enthalten", "handelnder": "Aktenordner", "betroffenes": "Ausbildungszertifikat", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 12, "aussagen": [{"verb": "übernehmen", "handelnder": "Krankenkasse", "betroffenes": "Kosten", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 13, "aussagen": [{"verb": "fördern", "handelnder": "-", "betroffenes": "Wärmespeicher", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 14, "aussagen": [{"verb": "markieren", "handelnder": "-", "betroffenes": "Leerstelle", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

@@ -2029,8 +2029,17 @@ public class Assets implements DocumentInventory {
     }
 
     private boolean indexDescription(PageAttachmentList list, Asset asset, ImageDescription description) {
-        return indexText(list, asset, description.text(),
-                "describer:" + description.describer() + ":" + description.modelVersion());
+        return indexText(list, asset, description.text(), describedOrigin(description));
+    }
+
+    /**
+     * Herkunft einer Bildbeschreibung im Index: Modell mit Version und Prüfsumme des Textes. Ohne den Text bliebe nach
+     * „Neu beschreiben“ (gleiches Bild, gleiches Modell, anderer Text) die alte Beschreibung auffindbar.
+     */
+    private static String describedOrigin(ImageDescription description) {
+        String text = description.text() == null ? "" : description.text();
+        return "describer:" + description.describer() + ":" + description.modelVersion() + ":"
+                + sha256(text.getBytes(StandardCharsets.UTF_8));
     }
 
     /** Herkunft eines Textes im Index: Extraktion und Version, aus der er stammt. */
@@ -2997,7 +3006,7 @@ public class Assets implements DocumentInventory {
             return false;
         }
         boolean changed = indexText(page, spaceKey, asset, described.description().text(),
-                "describer:" + described.description().describer() + ":" + described.description().modelVersion());
+                describedOrigin(described.description()));
         if (changed && !mayIndexDescription(page)) {
             indexText(page, spaceKey, asset, "", "");
             flushIndex();

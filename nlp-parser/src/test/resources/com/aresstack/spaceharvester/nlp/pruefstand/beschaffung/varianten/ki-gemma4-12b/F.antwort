@@ -1,0 +1,17 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "verantwortlich", "handelnder": "Lagerleiter", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "vollständig", "handelnder": "Lieferung", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "Ansprechpartner", "handelnder": "Einkäufer", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "stornierbar", "handelnder": "Bestellung", "betroffenes": "-", "empfaenger": "-", "verneint": true, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "prüffähig", "handelnder": "-", "betroffenes": "Rechnung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "MUSS", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "klein", "handelnder": "Lager", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "FRUEHER"}]}
+{"satz": 7, "aussagen": [{"verb": "einlagern", "handelnder": "-", "betroffenes": "Ware", "empfaenger": "-", "verneint": true, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 8, "aussagen": [{"verb": "genehmigen", "handelnder": "Abteilungsleiter", "betroffenes": "Bestellung", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 9, "aussagen": [{"verb": "knapp", "handelnder": "Lagerplätze", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 10, "aussagen": [{"verb": "gültig", "handelnder": "Angebot", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 11, "aussagen": [{"verb": "sichtbar", "handelnder": "-", "betroffenes": "Auftragsnummer", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GEPLANT"}]}
+{"satz": 12, "aussagen": [{"verb": "Begleitpapier", "handelnder": "Lieferschein", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 13, "aussagen": [{"verb": "richtig", "handelnder": "Rechnung", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 14, "aussagen": [{"verb": "korrekt", "handelnder": "Lieferschein", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 15, "aussagen": [{"verb": "geschlossen", "handelnder": "-", "betroffenes": "Vertrag", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 16, "aussagen": [{"verb": "kurz", "handelnder": "Lieferfrist", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}, {"verb": "teuer", "handelnder": "Ware", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

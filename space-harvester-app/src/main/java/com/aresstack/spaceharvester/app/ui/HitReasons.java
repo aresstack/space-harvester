@@ -27,6 +27,11 @@ final class HitReasons {
         if (reasons == null || reasons.isEmpty()) {
             return null;
         }
+        // Suchmethode „Nachbarseiten“ (R2): Der Treffer kam nur als Nachbar herein, das ist sein Grund. Kurz, der
+        // Titel der Ausgangsseite steht im Tooltip und im Overlay (UX-Manager 21.11.2026).
+        if (neighbor(reasons) != null) {
+            return new MarkedTextRenderer.Mark(NEIGHBOR, NEIGHBOR);
+        }
         List<HitReason> text = reasons.stream().filter(reason -> reason.kind() == HitReason.Kind.TEXT).toList();
         if (text.isEmpty()) {
             boolean similar = reasons.stream().anyMatch(reason -> reason.kind() == HitReason.Kind.SEMANTIC);
@@ -42,6 +47,32 @@ final class HitReasons {
             return new MarkedTextRenderer.Mark(kind + " „" + first.relation().counterpart() + "“", kind);
         }
         return new MarkedTextRenderer.Mark("Variante „" + first.query() + "“", "Variante");
+    }
+
+    /** Die Marke eines Nachbar-Treffers (R2). */
+    static final String NEIGHBOR = "Nachbar";
+
+    /** Die erste Nachbar-Ursache oder {@code null}. */
+    private static HitReason neighbor(List<HitReason> reasons) {
+        return reasons == null ? null : reasons.stream().filter(reason -> reason.kind() == HitReason.Kind.NEIGHBOR)
+                .findFirst().orElse(null);
+    }
+
+    /** Der Tooltip der Marke: bei einem Nachbarn die Ausgangsseite und die Kante, sonst {@code null}. */
+    static String tip(List<HitReason> reasons) {
+        HitReason first = neighbor(reasons);
+        return first == null ? null : neighborLine(first.via());
+    }
+
+    /** „Unterseite von „Betrieb““ usw., aus Sicht des Treffers. */
+    static String neighborLine(HitReason.Neighbor via) {
+        String seed = "„" + via.title() + "“";
+        return switch (via.edge()) {
+            case PARENT -> "Elternseite von " + seed;
+            case CHILD -> "Unterseite von " + seed;
+            case LINKS_TO -> seed + " verweist hierher";
+            case LINKED_FROM -> "Verweist auf " + seed;
+        };
     }
 
     /** Die Einzelheiten aller Ursachen, je Ursache ein Absatz. */
@@ -69,6 +100,9 @@ final class HitReasons {
                     .append("“. Noch nicht im Cache geprüft, daher keine Fundstelle.");
             case SEMANTIC -> text.append("Ähnlich im Inhalt zu „").append(reason.query())
                     .append("“ (semantische Suche), keine Fundstelle einzelner Wörter.");
+            case NEIGHBOR -> text.append("Nachbarseite: ").append(neighborLine(reason.via()))
+                    .append(", einem besseren Treffer. Als Kandidat dazugenommen und wie jeder Treffer gegen „")
+                    .append(reason.query()).append("“ geprüft.");
         }
         if (reason.relation() != null) {
             HitReason.Relation relation = reason.relation();

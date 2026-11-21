@@ -4,9 +4,10 @@ import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 
 /**
- * Port des lokalen Satzanalysators (#499): macht aus dem Text einer Seite Erwähnungen, Aussagen und nominale Bezüge.
- * Die Desktop-App belegt ihn mit MaltParser aus {@code :nlp-parser}; Core und Dienst haben keine Umsetzung. Rechnet
- * lokal, ohne Netz und ohne KI-Dienst. Muss threadsicher sein.
+ * Port des Satzanalysators (#499): macht aus dem Text einer Seite Erwähnungen, Aussagen und nominale Bezüge. Zwei
+ * Belegungen: der lokale MaltParser aus {@code :nlp-parser} (Desktop-App, rechnet ohne Netz und ohne KI-Dienst) und
+ * der zweite Analysator über den eingestellten KI-Dienst ({@code ModelStatementAnalyzer}, Fahrplan Paket A2), der nur
+ * Seiten mit KI-Freigabe bekommt ({@link #remote()}). Muss threadsicher sein.
  */
 public interface StatementAnalyzer {
 
@@ -46,6 +47,50 @@ public interface StatementAnalyzer {
     default ParsedStatements analyze(String documentId, String text, BooleanSupplier cancelled,
                                      Simplification simplification) {
         return analyze(documentId, text, cancelled);
+    }
+
+    /**
+     * Ob der Analysator den Text an den KI-Dienst schickt (Fahrplan Paket A2). Dann analysiert der Core nur Seiten mit
+     * KI-Freigabe (ADR 0028) und nimmt die Analyse mit dem Entzug der Freigabe zurück. Der MaltParser rechnet lokal.
+     */
+    default boolean remote() {
+        return false;
+    }
+
+    /** Ob der Analysator jetzt rechnen kann, etwa weil ein Modell eingestellt ist; lädt und ruft nichts. */
+    default boolean ready() {
+        return true;
+    }
+
+    /**
+     * Wie {@link #analyze(String, String, BooleanSupplier)}; {@code costs} bekommt die Zahlen des Laufs, wenn der
+     * Analysator welche hat (Modellaufrufe, verworfene Antwortzeilen), nie Inhalte. Ohne eigene Umsetzung ohne Zahlen.
+     */
+    default ParsedStatements analyze(String documentId, String text, BooleanSupplier cancelled,
+                                     java.util.function.Consumer<Costs> costs) {
+        return analyze(documentId, text, cancelled);
+    }
+
+    /**
+     * Zahlen eines Laufs des KI-Analysators (Fahrplan Paket A2), ohne Inhalte.
+     *
+     * @param sentences          Sätze, die an das Modell gingen
+     * @param modelCalls         Modellaufrufe
+     * @param rejectedLines      Antwortzeilen außerhalb des Formats oder mit unbekannter Satznummer, verworfen
+     * @param rejectedStatements Aussagen, deren Beteiligte nicht wörtlich im Satz stehen, verworfen
+     * @param noStatement        Sätze ohne eindeutige Aussage (auch Sätze ohne Antwortzeile); ein Ergebnis, kein Fehler
+     */
+    record Costs(int sentences, int modelCalls, int rejectedLines, int rejectedStatements, int noStatement) {
+
+        /** Keine Zahlen. */
+        public static final Costs NONE = new Costs(0, 0, 0, 0, 0);
+
+        /** Die Summe zweier Läufe. */
+        public Costs plus(Costs other) {
+            return new Costs(sentences + other.sentences, modelCalls + other.modelCalls,
+                    rejectedLines + other.rejectedLines, rejectedStatements + other.rejectedStatements,
+                    noStatement + other.noStatement);
+        }
     }
 
     /** Die Vorstufe, wie der Core sie dem Analysator gibt (ADR 0032, FL3). */

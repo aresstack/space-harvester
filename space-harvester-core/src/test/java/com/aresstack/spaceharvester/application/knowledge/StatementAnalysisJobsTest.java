@@ -476,6 +476,69 @@ class StatementAnalysisJobsTest {
                 .isInstanceOf(com.aresstack.spaceharvester.application.check.CheckUnavailableException.class);
     }
 
+    @Test
+    void theModelRunSkipsPagesWithoutReleaseYellowAndCountsServiceErrorsRed() {
+        tree.space("wiki", "DEV", "1");
+        tree.children("1", List.of("2", "3"));
+        Set<PageKey> released = new HashSet<>(Set.of(new PageKey("wiki", "1"), new PageKey("wiki", "3")));
+        InMemoryKnowledgeGraphStore modelStore = new InMemoryKnowledgeGraphStore();
+        FakeStepModel chat = new FakeStepModel(input -> {
+            if (input.contains(" 3 ")) {
+                throw new IllegalStateException("Dienst antwortet nicht");
+            }
+            return "{\"satz\": 1, \"aussagen\": [{\"verb\": \"übermitteln\", \"handelnder\": "
+                    + "\"Der Sachbearbeiter\", \"betroffenes\": \"den Beleg\"}]}\n"
+                    + "Hinweis außerhalb des Formats";
+        });
+        StatementAnalysis withModel = new StatementAnalysis(
+                snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)),
+                new AnalyzerStores(store, modelStore, () -> AnalyzerChoice.PARSER), access, configured::get,
+                StatementAnalysisTest.clock(), null, null,
+                () -> new ModelStatementAnalyzer(chat, ModelStatementAnalyzerTest.SENTENCES), released::contains);
+        StatementAnalysisJobs modelJobs = new StatementAnalysisJobs(jobs, tree,
+                (caller, sourceId, pageId) -> page(sourceId, pageId), withModel, access, "desktop");
+
+        JobStatus done = jobs.status(modelJobs.start(CALLER, new StatementAnalysisJobs.Scope.Subtree("wiki", "DEV",
+                "1"), new StatementAnalysisJobs.Options(false, 0, null, AnalyzerChoice.MODEL)).id());
+
+        assertThat(done.progress()).isEqualTo(new JobProgress(3, 3, 1, 1));
+        assertThat(modelStore.all()).extracting(analysis -> analysis.key().pageId()).containsExactly("1");
+        assertThat(store.all()).as("die Ablage des MaltParsers bleibt unberührt").isEmpty();
+        assertThat(parser.calls).hasValue(0);
+        assertThat(chat.inputs).hasSize(2).noneMatch(input -> input.contains(" 2 "));
+        assertThat(jobs.events(done.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(StatementAnalysisJobs.MODEL_NOT_RELEASED);
+            assertThat(event.message()).isEqualTo("1 Seiten ohne KI-Freigabe bewusst ausgelassen");
+        });
+        assertThat(jobs.events(done.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(StatementAnalysisJobs.MODEL_COSTS);
+            assertThat(event.message()).contains("1 Zeilen verworfen").doesNotContain("Sachbearbeiter");
+        });
+        assertThat(jobs.events(done.id())).anySatisfy(event -> assertThat(event.code()).isEqualTo("PAGE_FAILED"));
+    }
+
+    @Test
+    void theModelRunWithoutChatModelSkipsEveryPageWithoutFailing() {
+        tree.space("wiki", "DEV", "1");
+        FakeStepModel chat = new FakeStepModel(input -> "");
+        chat.available = false;
+        StatementAnalysis withModel = new StatementAnalysis(
+                snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)),
+                new AnalyzerStores(store, new InMemoryKnowledgeGraphStore(), () -> AnalyzerChoice.PARSER), access,
+                configured::get, StatementAnalysisTest.clock(), null, null,
+                () -> new ModelStatementAnalyzer(chat, ModelStatementAnalyzerTest.SENTENCES), page -> true);
+        StatementAnalysisJobs modelJobs = new StatementAnalysisJobs(jobs, tree,
+                (caller, sourceId, pageId) -> page(sourceId, pageId), withModel, access, "desktop");
+
+        JobStatus done = jobs.status(modelJobs.start(CALLER, new StatementAnalysisJobs.Scope.SinglePage("wiki",
+                "DEV", "1"), new StatementAnalysisJobs.Options(false, 0, null, AnalyzerChoice.MODEL)).id());
+
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.progress()).isEqualTo(new JobProgress(1, 1, 0, 0));
+        assertThat(jobs.events(done.id())).anySatisfy(event ->
+                assertThat(event.code()).isEqualTo(StatementAnalysisJobs.MODEL_NO_MODEL));
+    }
+
     private JobStatus run(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {
         return jobs.status(batch.start(CALLER, scope, options).id());
     }

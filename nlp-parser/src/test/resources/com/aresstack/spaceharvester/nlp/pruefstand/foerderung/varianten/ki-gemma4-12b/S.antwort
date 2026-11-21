@@ -1,0 +1,6 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "Referentin", "handelnder": "Frau Berger", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "Poststelle", "handelnder": "Kanzlei", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "Dienstleister", "handelnder": "Rechenzentrum", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": []}
+{"satz": 5, "aussagen": [{"verb": "Vertreter", "handelnder": "Herr Roth", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}

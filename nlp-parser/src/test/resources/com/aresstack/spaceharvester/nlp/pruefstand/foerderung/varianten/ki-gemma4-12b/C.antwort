@@ -1,0 +1,9 @@
+### Aufruf
+{"satz": 1, "aussagen": [{"verb": "speichern", "handelnder": "Fachverfahren", "betroffenes": "Anträge", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 2, "aussagen": [{"verb": "bereitstellen", "handelnder": "Antragsservice", "betroffenes": "REST-Schnittstelle", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 3, "aussagen": [{"verb": "liefern", "handelnder": "Schnittstelle", "betroffenes": "Antragsdaten", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 4, "aussagen": [{"verb": "übertragen", "handelnder": "Batch-Job", "betroffenes": "Auszahlungsdaten", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 5, "aussagen": [{"verb": "bestätigen", "handelnder": "Kassensystem", "betroffenes": "Empfang", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 6, "aussagen": [{"verb": "verteilen", "handelnder": "Load Balancer", "betroffenes": "Anfragen", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 7, "aussagen": [{"verb": "erfolgen", "handelnder": "Authentifizierung", "betroffenes": "-", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
+{"satz": 8, "aussagen": [{"verb": "aufrufen", "handelnder": "Portal", "betroffenes": "Antragsservice", "empfaenger": "-", "verneint": false, "verbindlichkeit": "-", "zeitbezug": "GILT"}]}
