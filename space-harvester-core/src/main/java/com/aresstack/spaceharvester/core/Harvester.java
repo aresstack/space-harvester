@@ -78,6 +78,8 @@ import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
 import com.aresstack.spaceharvester.application.holdings.Holdings;
 import com.aresstack.spaceharvester.application.holdings.HoldingsChanges;
 import com.aresstack.spaceharvester.application.links.PageLinks;
+import com.aresstack.spaceharvester.application.structure.PageConnections;
+import com.aresstack.spaceharvester.application.structure.PageLinksDirectory;
 import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
@@ -331,6 +333,7 @@ public final class Harvester implements AutoCloseable {
     private final SearchOrchestrator progressiveSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
+    private final PageConnections connections;
     private final PassageQueries passages;
     private final NavigationQueries documentNavigation;
     private final TermQueries terms;
@@ -842,6 +845,10 @@ public final class Harvester implements AutoCloseable {
                     renewal, reranker, textIndex, preparation, runLog,
                     () -> (this.settings != null ? this.settings.enrichment() : searchEnrichment).documents(),
                     documentTexts);
+            // Paket G1: Strukturgraph aus lokalem Index, Verzeichnis der Verweise, Begriffen und gespeicherten Vektoren.
+            this.connections = new PageConnections(catalog, index, access, PageLinksDirectory.of(pageLinks), terms,
+                    termRelations, embedding == null ? null
+                    : new PageConnections.Vectors(enrichmentStore, enrichmentStore, embedding));
             // #182: Fakten aus den Anreicherungen mit den manuellen und geprüften (außerhalb des Caches), Rechte je
             // Seite an ihrem Space im Cache.
             FileFactEditStore factEditStore = new FileFactEditStore(builder.dataDirectory.resolve("facts"));
@@ -1638,6 +1645,15 @@ public final class Harvester implements AutoCloseable {
     /** Verzeichnis der Verweise zwischen lokal gespeicherten Seiten, beide Richtungen (Paket V1). */
     public PageLinks pageLinks() {
         return pageLinks;
+    }
+
+    /**
+     * Strukturgraph (Paket G1): Zusammenhänge einer Seite aus Hierarchie, Verweisen, bestätigten Begriffsbeziehungen und
+     * ähnlichen Abschnitten, jede Kante mit Art, Grundlage und Herkunft. Ergänzt den Wissensgraphen der OO-Analyse
+     * ({@link #knowledgeGraph()}), ersetzt ihn nicht.
+     */
+    public PageConnections pageConnections() {
+        return connections;
     }
 
     public PageNavigation navigation() {
