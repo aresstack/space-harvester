@@ -35,6 +35,7 @@ eine `SourceAdapter`-Bean (`SourceConfiguration`), der Katalog bekommt alle Bean
 | `betaview` | `EacSourceAdapters.betaView()` | `baseUrl` | `none`, `basic`; Anmeldung Pflicht | eigener Verweis bei `none` | ja | ja |
 | `outlook` | `EacSourceAdapters.outlook()` (`ContextualSourceAdapter`) | `mailbox` | `none` | – | Fehler | Fehler |
 | `mediawiki` | `MediaWikiSources.adapter()` | `apiUrl` | `none`, `basic` | nicht erlaubt, dafür `auth` | ja | ja |
+| `jira` | `EacSourceAdapters.jira()` | `baseUrl` | `none`, `basic`, `pat` (Bearer) | eigener Verweis bei `none` | ja | ja; `options.clientCertificate.*` ist ein Fehler |
 | `git` | `GitSourceAdapter` | `url` | `none`, `basic`, `pat` | eigener Verweis bei `none` | ja | ja |
 
 „Anmeldung Pflicht“ heißt `needsCredentials = true`: `auth.type basic` oder ein eigener `options.credentialRef`.
@@ -693,3 +694,29 @@ angegebene Zeichensatz gilt.
 - Upstream: `ConfluenceStoredContentTest`, die MediaWiki-Tests (`MediaWikiKnowledgeSourceTest`,
   `MediaWikiHttpIntegrationTest`, Vertragstest …), `GitKnowledgeSourceTest`, `GitKnowledgeSourceContractTest` und die
   übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.
+
+## Jira Data Center (`jira`)
+
+Kopie von `source-jira` aus enterprise-ai-client#228 (Upstream-Commit wie in `enterprise-ai-sources/UPSTREAM.sha256`),
+registriert über `EacSourceAdapters.jira()` im Core und als Bean im Dienst. Nur lesend über die REST-API 2 (Data Center
+ab 8.14, erprobt für 11.3.12 noch offen). Projekte sind die Partitionen (wie Spaces), Vorgänge die Seiten mit
+Beschreibung, Metadaten, Kommentaren und Anhängen; die Lese-Ansicht kommt aus `PageViewSource`, die Suche aus JQL.
+
+```yaml
+- id: jira
+  type: jira
+  title: Jira
+  auth:
+    type: pat            # oder basic mit username/password; none = anonym
+    token: ${JIRA_TOKEN}
+  options:
+    baseUrl: https://jira.example.org/jira
+    jql: resolution = Unresolved   # optional, ohne ORDER BY
+```
+
+Weitere Schlüssel unter `options` wie im Enterprise AI Client (`docs/konfiguration-jira.md` dort): `startPoints`
+(`project:KEY`, `KEY-123`, `jql:…`), `pageSize`, `maxComments`, `maxResources`, Zeitlimits und Wiederholungen. Das
+Client-Zertifikat steht wie bei den anderen Typen mit TLS unter `client-certificate`; das eigene Feld des Upstream-Typs
+(`clientCertificate.alias`, im Enterprise AI Client auch `MM_CertAlias` aus dem KeePass-Eintrag) blendet
+`KnowledgeSourceProviderAdapter` aus und schaltet es ab, damit eine Quelle ihr Zertifikat nicht an zwei Stellen hat.
+Test: `HarvesterJiraSourceTest`.

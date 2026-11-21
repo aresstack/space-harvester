@@ -30,6 +30,7 @@ modules=(
   proasteion/emporion/holkas/source-sharepoint
   proasteion/emporion/holkas/source-betaview
   proasteion/emporion/holkas/source-outlook
+  proasteion/emporion/holkas/source-jira
   embedding-api
   embedding-openai
   chat-api

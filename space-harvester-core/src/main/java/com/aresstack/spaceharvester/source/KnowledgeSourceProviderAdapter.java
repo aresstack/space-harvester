@@ -211,8 +211,42 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
      */
     @Override
     public List<SourceField> fields() {
-        return SourceFields.of(unconnected.type(), credentialKey == null || credentialRefPassThrough
+        Set<String> outside = new java.util.HashSet<>(credentialKey == null || credentialRefPassThrough
                 ? Set.of(titleKey()) : Set.of(titleKey(), credentialKey));
+        outside.addAll(certificateKeys());
+        return SourceFields.of(unconnected.type(), outside);
+    }
+
+    /**
+     * Schlüssel eines eigenen Zertifikatsfelds des Upstream-Typs ({@code CLIENT_CERTIFICATE}, etwa Jira:
+     * {@code clientCertificate.alias}) samt Schalter und Präfix; leer ohne TLS oder ohne solches Feld. Bei Typen mit
+     * TLS kommt das Client-Zertifikat aus {@code client-certificate} des Katalogs ({@link SourceTls}), damit eine
+     * Quelle es nicht an zwei Stellen hat; das Feld des Typs fehlt deshalb und sein Schalter steht fest auf aus.
+     */
+    private Set<String> certificateKeys() {
+        Set<String> keys = new java.util.LinkedHashSet<>();
+        if (!tls) {
+            return keys;
+        }
+        for (SourceSettingField field : unconnected.type().fields()) {
+            if (field.kind() == SourceSettingField.Kind.CLIENT_CERTIFICATE) {
+                keys.add(field.key());
+                keys.add(field.certificateUseKey());
+            }
+        }
+        return keys;
+    }
+
+    /** Präfixe der Zertifikatsangaben nur in der Datei, etwa {@code clientCertificate.keyStoreFile}. */
+    private Set<String> certificatePrefixes() {
+        Set<String> prefixes = new java.util.LinkedHashSet<>();
+        for (String key : certificateKeys()) {
+            int dot = key.lastIndexOf('.');
+            if (dot > 0) {
+                prefixes.add(key.substring(0, dot + 1));
+            }
+        }
+        return prefixes;
     }
 
     /** Typen mit Netz, außer nach {@link #withoutTls}. */
@@ -261,6 +295,12 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
                 secrets.put("client-certificate.password", config.clientCertificate().password());
             }
             problems.addAll(unresolved(secrets));
+        }
+        for (String key : config.options().keySet()) {
+            if (certificateKeys().contains(key)
+                    || certificatePrefixes().stream().anyMatch(prefix -> key.startsWith(prefix))) {
+                problems.add("options." + key + " ist nicht erlaubt; dafür gibt es client-certificate");
+            }
         }
         if (config.options().containsKey(titleKey())) {
             problems.add("options." + titleKey() + " ist nicht erlaubt; dafür gibt es title");
@@ -415,6 +455,13 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         }
         if (credentialKey != null && usesReference(config.auth())) {
             values.put(credentialKey, ConfiguredSecrets.refFor(config.id()).id());
+        }
+        // Zertifikat nur aus client-certificate (SourceTls): der Typ nimmt die Socket-Fabrik der Quelle und fragt
+        // weder ein eigenes Feld noch den Tresoreintrag (MM_CertAlias) nach einem Zertifikat.
+        for (String key : certificateKeys()) {
+            if (key.endsWith(".use")) {
+                values.put(key, "false");
+            }
         }
         return SourceSettings.of(values);
     }
