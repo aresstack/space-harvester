@@ -20,8 +20,10 @@ package com.aresstack.spaceharvester.application.structure;
  *       aktuellen Begriffe im Index liegen (nicht analysiert oder ohne Begriffe); sonst {@link #COMPLETE} gegenüber
  *       dem lokalen Inhalt. Begriffe werden nur aus lokal gespeichertem Text gewonnen.</li>
  *   <li>{@link ConnectionKind#SIMILAR_SECTION}: {@link #UNAVAILABLE} ohne eingestelltes Embedding-Modell oder wenn für
- *       die Ausgangsseite keine Vektoren des aktuellen Modells gespeichert sind; sonst {@link #COMPLETE} gegenüber den
- *       gespeicherten Vektoren. Seiten ohne Vektoren kommen nie als Ziel vor. Es wird nichts eingebettet.</li>
+ *       die Ausgangsseite keine Vektoren des aktuellen Modells gespeichert sind; sonst immer {@link #PARTIAL}, nie
+ *       {@link #COMPLETE}, aus zwei Gründen: Seiten ohne gespeicherte Vektoren (in der Regel alle nicht KI-freigegebenen)
+ *       kommen nie als Ziel vor, und die Nachbarsuche je Stück liefert nur eine feste Zahl von Treffern, in der auch
+ *       Treffer auf nicht sichtbare Seiten Plätze belegen. Es wird nichts eingebettet.</li>
  * </ul>
  */
 public enum Coverage {

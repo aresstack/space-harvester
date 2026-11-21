@@ -195,7 +195,7 @@ class PageConnectionsTest {
             assertThat(similarity.similarity()).isGreaterThan(0.99).isLessThan(1.0);
             assertThat(similarity.model()).isEqualTo(embedding.version());
         });
-        assertThat(result.coverage()).containsEntry(ConnectionKind.SIMILAR_SECTION, Coverage.COMPLETE);
+        assertThat(result.coverage()).containsEntry(ConnectionKind.SIMILAR_SECTION, Coverage.PARTIAL);
     }
 
     @Test

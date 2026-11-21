@@ -384,7 +384,9 @@ public class PageConnections {
                 markUnavailable(ConnectionKind.SIMILAR_SECTION);
                 return;
             }
-            coverage.put(ConnectionKind.SIMILAR_SECTION, Coverage.COMPLETE);
+            // Nie vollständig: Seiten ohne Vektoren fehlen immer, und die Nachbarsuche je Stück ist bei k abgeschnitten
+            // (auch gesperrte Treffer belegen Plätze). Siehe Coverage.
+            coverage.put(ConnectionKind.SIMILAR_SECTION, Coverage.PARTIAL);
             if (chunks.size() > budget.similarChunks()) {
                 truncated.add(ConnectionKind.SIMILAR_SECTION);
             }
@@ -419,6 +421,8 @@ public class PageConnections {
             // Zahl der Kandidaten ist ohnehin durch Stücke mal k begrenzt.
             int added = 0;
             for (Best candidate : ranked) {
+                // Eine Kante über maxPerKind hinaus wird bewusst übernommen: An ihr erkennt result() die Kürzung und
+                // setzt truncated.
                 if (added > query.maxPerKind()) {
                     break;
                 }
