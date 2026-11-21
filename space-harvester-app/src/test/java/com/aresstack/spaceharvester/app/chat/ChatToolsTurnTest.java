@@ -115,6 +115,8 @@ class ChatToolsTurnTest {
         assertThat(events.context.accepted()).extracting(ChatKnowledge.Excerpt::text)
                 .satisfiesExactly(a -> assertThat(a).contains("Berechtigungsmanagement"),
                         b -> assertThat(b).contains("vollem Spool"));
+        assertThat(events.context.accepted()).extracting(ChatKnowledge.Excerpt::pageId)
+                .as("die Quellen kennen ihre Seite, für den Verlauf").containsExactly(open.pageId(), other.pageId());
         assertThat(events.using).contains("Liest eine Seite");
     }
 
@@ -287,6 +289,18 @@ class ChatToolsTurnTest {
     @Test
     void theOpenPageAndTheSearchHitsWithExcerptAreReleasedButNotTheRest() throws Exception {
         PageKey open = page("datenhaus");
+        // Der Suchindex entsteht nach dem Sync im Hintergrund: erst warten, bis die Suche Auszüge liefert.
+        ChatTools probe = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+            }
+        });
+        await(() -> probe.search("Spool").lines().anyMatch(line -> line.split(" \\| ").length >= 3) ? true : null);
         ScriptedChat port = new ScriptedChat(List.of(
                 (request, listener) -> listener.toolCalls("", List.of(
                         new AiChat.ToolCall("c1", ChatTools.SEARCH, "{\"text\":\"Spool\"}"))),
@@ -308,6 +322,23 @@ class ChatToolsTurnTest {
         }
         assertThat(expected).as("Suche lieferte Auszüge").hasSizeGreaterThan(1);
         assertThat(released()).containsExactlyInAnyOrderElementsOf(expected);
+    }
+
+    @Test
+    void theFirstPageReadWithoutAnOpenPageIsReportedAsSourceOne() throws Exception {
+        PageKey read = page("nachtlauf");
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c1", ChatTools.READ,
+                        "{\"kennung\":\"" + ChatTools.ref(read) + "\"}"))),
+                (request, listener) -> listener.completed("Bei vollem Spool [1].")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum?", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(events.context.accepted()).extracting(ChatKnowledge.Excerpt::pageId)
+                .containsExactly(read.pageId());
     }
 
     @Test

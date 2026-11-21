@@ -227,6 +227,33 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         return new PageSelection(PageSet.of(pages), counts, List.copyOf(spaces.values()), complete);
     }
 
+    /**
+     * Die Nachfahren einer Seite als Seitenmenge (Fahrplan P1, „mit Unterseiten“): derselbe Teilbaum wie
+     * {@link #resolve} mit {@link Selection.Root#subtree}, aber ohne die Seite selbst. Die Analyse-Reiter einer Seite
+     * fragen damit beim Anzeigen über ihre Unterseiten ab; nichts wird in die Elternseite kopiert, eine Änderung einer
+     * Unterseite ist beim nächsten Abfragen von selbst dabei. Leer, wenn die Seite keine sichtbaren Unterseiten hat oder
+     * nicht im Katalog steht; {@link PageSelection#complete()} sagt wie bei {@link #resolve}, ob der Teilbaum
+     * lückenlos ist. Die Zähler zählen nur die Nachfahren.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wie {@link #resolve}
+     * @throws UnknownSourceException wie {@link #resolve}
+     */
+    public PageSelection descendants(AccessContext caller, String sourceId, String spaceKey, String pageId) {
+        Objects.requireNonNull(caller, "caller");
+        Selection.Root root = Selection.Root.subtree(sourceId, spaceKey, pageId);
+        Resolved resolved = resolve(caller, root.sourceId(), root.spaceKey(), root.pageId());
+        Set<String> below = new HashSet<>();
+        HoldingCounts counts = HoldingCounts.ZERO;
+        for (Map.Entry<String, HoldingState> page : resolved.pages().entrySet()) {
+            if (!page.getKey().equals(pageId) && below.add(page.getKey())) {
+                counts = counts.plus(HoldingCounts.of(page.getValue()));
+            }
+        }
+        Map<String, Set<String>> pages = below.isEmpty() ? Map.of() : Map.of(sourceId, below);
+        return new PageSelection(PageSet.of(pages), counts, List.of(resolved.summary()),
+                resolved.summary().inventoried() && resolved.found());
+    }
+
     /** Die Spaces einer Wurzel: ihr eigener oder alle der Quelle, die der Aufrufer sehen darf. */
     private List<String> spaceKeys(AccessContext caller, Selection.Root root) {
         if (root.spaceKey() != null) {

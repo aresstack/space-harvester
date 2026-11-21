@@ -34,7 +34,7 @@ class DocumentKindTest {
     @Test
     void aTitleWithoutExtensionAndWithoutOrWithAPageMediaTypeIsAPage() {
         assertThat(DocumentKind.of("Schutzbedarfsfeststellung Datenhaus", null)).isEqualTo(DocumentKind.PAGE);
-        assertThat(DocumentKind.of("Kurzbeschreibung DATENH V1.0", "application/json")).isEqualTo(DocumentKind.PAGE);
+        assertThat(DocumentKind.of("Kurzbeschreibung Nachtlauf V1.0", "application/json")).isEqualTo(DocumentKind.PAGE);
         assertThat(DocumentKind.of("Release 2.1", null)).isEqualTo(DocumentKind.PAGE);
         assertThat(DocumentKind.of("Seite.unbekannt", "text/html")).isEqualTo(DocumentKind.PAGE);
         assertThat(DocumentKind.of("", "")).isEqualTo(DocumentKind.PAGE);

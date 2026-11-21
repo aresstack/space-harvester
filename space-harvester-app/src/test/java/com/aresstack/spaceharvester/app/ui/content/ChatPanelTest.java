@@ -38,6 +38,15 @@ class ChatPanelTest {
         }
     }
 
+    private static void layoutAll(java.awt.Component component) {
+        component.doLayout();
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                layoutAll(child);
+            }
+        }
+    }
+
     private static java.util.List<String> menuTexts(ChatPanel panel) {
         return panel.chatMenuItems().stream()
                 .map(item -> item instanceof javax.swing.JMenuItem menu ? menu.getText() : "—").toList();
@@ -73,7 +82,11 @@ class ChatPanelTest {
                 .plus(ChatRecord.Message.user("Noch eine", 1_600, "Space Handbuch · 3 Seiten · 1 davon nicht geladen",
                         null), 1_600)
                 .plus(ChatRecord.Message.user("Und im Ganzen?", 1_700, "Handbuch · alle Spaces · 3 Seiten", null), 1_700)
-                .plus(ChatRecord.Message.assistant("Antwort im Ganzen", false, 1_800), 1_800);
+                .plus(ChatRecord.Message.assistant("Antwort im Ganzen [1]", false, 1_800, java.util.List.of(
+                        new ChatRecord.Source("Seite", "handbuch", "seite.md", null),
+                        new ChatRecord.Source("notiz.txt", "handbuch", null, null),
+                        new ChatRecord.Source("Ein sehr langer Titel, der in der schmalen Leiste nicht in eine Zeile "
+                                + "passt", "handbuch", "lang.md", null))), 1_800);
         store.save(spaceNode, earlier);
         ChatNode sourceNode = new ChatNode("handbuch", null, null);
         ChatRecord other = ChatRecord.fresh(500).plus(ChatRecord.Message.user("Ganz andere Frage", 500), 500);
@@ -109,6 +122,29 @@ class ChatPanelTest {
             assertThat(panel[0].bubbles()).isEqualTo(5);
             // Bereichswechsel im Verlauf: eine Marke vor der Frage aus dem anderen Bereich, keine beim Nachladen.
             assertThat(panel[0].areaMarks()).containsExactly(ChatPanel.FROM_HERE + "Handbuch · alle Spaces · 3 Seiten");
+            // Quellen stehen als Links unter ihrer Antwort, in der Nummer der Antwort; ohne Quellen keine Zeile. Ein
+            // Klick öffnet die Seite links, ein Anhang ohne Seite ist nur Text, lange Titel kürzt „…“.
+            java.util.List<String> opened = new java.util.ArrayList<>();
+            Runnable[] revealed = {() -> opened.add("gezeigt")};
+            context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
+                        if (method.getName().equals("openPage")) {
+                            opened.add(args[0] + "/" + args[1]);
+                        }
+                        return null;
+                    }));
+            panel[0].onSourceOpened(() -> revealed[0].run());
+            java.util.List<ChatPanel.SourceLinks> links = panel[0].sourceLinks();
+            assertThat(links).hasSize(2);
+            assertThat(links.get(0).isVisible()).isFalse();
+            assertThat(links.get(1).isVisible()).isTrue();
+            assertThat(links.get(1).texts()).containsExactly("[1] Seite", "[2] notiz.txt",
+                    "[3] Ein sehr langer Titel, der in der schmalen Leis…");
+            assertThat(links.get(1).getComponent(1)).isInstanceOf(javax.swing.JLabel.class);
+            javax.swing.JButton first = (javax.swing.JButton) links.get(1).getComponent(0);
+            assertThat(first.getToolTipText()).isEqualTo("Seite öffnen");
+            first.doClick();
+            assertThat(opened).containsExactly("handbuch/seite.md", "gezeigt");
             // Umbenennen an Ort und Stelle: der Name wechselt, die Kennung und die Datei bleiben.
             panel[0].startRename();
             assertThat(panel[0].renamingShown()).isTrue();
@@ -157,6 +193,39 @@ class ChatPanelTest {
             assertThat(panel[0].bubbles()).isZero();
         });
         assertThat(store.load(spaceNode, earlier.id()).title()).isEqualTo("Zugriffsrechte");
+        // Die Fußzeile der Eingabe in der schmalen Leiste: erst die Modellwahl, dann der Denkaufwand nur als Symbol,
+        // der Name steht im Tooltip; „Senden“ und die Symbole rechts überlappen nie.
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.AbstractButton sendButton = panel[0].sendButton();
+            java.awt.Container footer = sendButton.getParent().getParent();
+            java.awt.Container west = (java.awt.Container) footer.getComponent(0);
+            javax.swing.AbstractButton model = (javax.swing.AbstractButton) west.getComponent(0);
+            javax.swing.AbstractButton effort = (javax.swing.AbstractButton) west.getComponent(1);
+            for (int width : new int[] {900, 420, 320, 300, 900}) {
+                panel[0].setSize(width, 700);
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(panel[0]);
+                    for (java.awt.event.ComponentListener listener : footer.getComponentListeners()) {
+                        listener.componentResized(null);
+                    }
+                }
+                layoutAll(panel[0]);
+                assertThat(west.getPreferredSize().width + sendButton.getParent().getPreferredSize().width)
+                        .as("Breite " + width).isLessThanOrEqualTo(footer.getWidth());
+                assertThat(sendButton.getText()).isEqualTo(ChatPanel.SEND);
+                assertThat(model.getToolTipText()).startsWith(ChatPanel.MODEL_TIP);
+                assertThat(effort.getToolTipText()).isEqualTo(ChatPanel.EFFORT_TIP + ": Mittel");
+                if (width == 900) {
+                    assertThat(panel[0].footerStage()).isZero();
+                    assertThat(model.getText()).isEqualTo(ChatPanel.NO_MODEL);
+                    assertThat(effort.getText()).isEqualTo("Mittel");
+                } else {
+                    assertThat(panel[0].footerStage()).isPositive();
+                    assertThat(model.getText()).isNullOrEmpty();
+                    assertThat(model.getToolTipText()).isEqualTo(ChatPanel.MODEL_TIP + ": " + ChatPanel.NO_MODEL);
+                }
+            }
+        });
         // Der Composer wächst mit dem Text bis zu zwei Fünfteln der Höhe und schrumpft danach wieder.
         SwingUtilities.invokeAndWait(() -> {
             javax.swing.JTextArea editor = (javax.swing.JTextArea) panel[0].editor();

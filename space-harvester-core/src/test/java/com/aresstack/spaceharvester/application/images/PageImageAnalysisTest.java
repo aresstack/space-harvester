@@ -303,6 +303,37 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void aDescribedImageAttachmentStandsInTheFullTextIndexAtOnceButNotAfterDescribeOnce() {
+        // B2: Die Beschreibung aus dem Reiter „Bilder“ ersetzt den Eintrag des Bildanhangs (bisher nur Dateiname).
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 9});
+        try (com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex index =
+                     com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex.open(directory.resolve("text"))) {
+            PageKey one = new PageKey("wiki", "1");
+            PageKey two = new PageKey("wiki", "2");
+            index.putAttachment(new com.aresstack.spaceharvester.application.query.PageTextIndex.AttachmentEntry(one,
+                    "DEV", "att1", "ablauf.png", "", "sha256:alt", "image/png"));
+            index.putAttachment(new com.aresstack.spaceharvester.application.query.PageTextIndex.AttachmentEntry(two,
+                    "DEV", "att2", "plan.png", "", "sha256:alt", "image/png"));
+            Assets assets = new Assets(catalog(), new FileSystemAssetStore(directory), 1000,
+                    Clock.fixed(NOW, ZoneOffset.UTC), describer, null, index);
+            PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments(), Clock.fixed(NOW, ZoneOffset.UTC));
+
+            analysis.describe(page("1", "Text"));
+
+            assertThat(index.search("Bytes", java.util.Set.of("wiki"),
+                    com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 10))
+                    .extracting(com.aresstack.spaceharvester.application.query.PageTextIndex.Match::attachmentId)
+                    .containsExactly("att1");
+
+            // „Nur diese Seite einmalig beschreiben“ speichert keine Freigabe, also auch nichts im Index.
+            describer.released = false;
+            analysis.describeOnce(page("2", "Text"));
+            assertThat(index.attachmentInputSha256(two, "att2")).contains("sha256:alt");
+        }
+    }
+
+    @Test
     void aReleaseWithdrawnWhileTheModelDescribesLeavesNothingBehind() {
         source.image("1", "att1", "ablauf.png", PNG);
         describer.released = false;
@@ -468,7 +499,12 @@ class PageImageAnalysisTest {
     }
 
     private Assets assets() {
-        SourceCatalog catalog = new SourceCatalog() {
+        return new Assets(catalog(), new FileSystemAssetStore(directory), 1000, Clock.fixed(NOW, ZoneOffset.UTC),
+                describer, null);
+    }
+
+    private SourceCatalog catalog() {
+        return new SourceCatalog() {
             @Override
             public List<HarvestSource> all() {
                 return List.of(source);
@@ -479,8 +515,6 @@ class PageImageAnalysisTest {
                 return "wiki".equals(sourceId) ? Optional.of(source) : Optional.empty();
             }
         };
-        return new Assets(catalog, new FileSystemAssetStore(directory), 1000, Clock.fixed(NOW, ZoneOffset.UTC),
-                describer, null);
     }
 
     private static PageSnapshot page(String pageId, String text) {

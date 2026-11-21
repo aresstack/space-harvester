@@ -604,6 +604,29 @@ public final class Workspace {
         return harvester.sourceManagement().diagnose(sourceId);
     }
 
+    /**
+     * Zertifikatsexport einer Quelle als ZIP in den Ordner ({@code SourceManagement.exportCertificates}, Strang ZX);
+     * leer, wenn der Core die Quelle nicht kennt. Blockiert, also nur im Hintergrund.
+     */
+    public Optional<com.aresstack.spaceharvester.application.sources.CertificateExport> exportCertificates(
+            String sourceId, java.nio.file.Path directory, java.util.function.BooleanSupplier cancelled)
+            throws java.io.IOException {
+        return harvester.sourceManagement().exportCertificates(sourceId, directory, cancelled);
+    }
+
+    /** Nur die QR-Codes der vertrauten Zertifikate als Bilder in ein ZIP (Strang ZX). Blockiert. */
+    public Optional<com.aresstack.spaceharvester.application.sources.CertificateExport> exportCertificateCodes(
+            String sourceId, java.nio.file.Path directory, java.util.function.BooleanSupplier cancelled)
+            throws java.io.IOException {
+        return harvester.sourceManagement().exportCertificateCodes(sourceId, directory, cancelled);
+    }
+
+    /** Die vertrauten Zertifikate der Quelle als QR-Codes zur Anzeige (Strang ZX). Blockiert. */
+    public Optional<java.util.List<com.aresstack.spaceharvester.application.sources.CertificateCode>>
+            certificateCodes(String sourceId, java.util.function.BooleanSupplier cancelled) {
+        return harvester.sourceManagement().certificateCodes(sourceId, cancelled);
+    }
+
     /** Ob die Quelle im Core eingeschaltet ist ({@code SourceManagement.enabled}); {@code false} auch für unbekannte. */
     public boolean sourceEnabled(String sourceId) {
         return harvester.sourceManagement().enabled(sourceId);
@@ -2058,6 +2081,25 @@ public final class Workspace {
     public com.aresstack.spaceharvester.application.holdings.PageSelection resolveSelection(
             com.aresstack.spaceharvester.application.holdings.Selection selection) {
         return harvester.holdings().resolve(caller, selection);
+    }
+
+    /**
+     * Die Nachfahren einer Seite ohne die Seite selbst ({@code Holdings.descendants}, Fahrplan P1): für „mit
+     * Unterseiten“ in den Analyse-Reitern. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.holdings.PageSelection descendants(String sourceId,
+                                                                                       String spaceKey,
+                                                                                       String pageId) {
+        return harvester.holdings().descendants(caller, sourceId, spaceKey, pageId);
+    }
+
+    /**
+     * Je Begriff die Zahl der Seiten einer Menge ({@code TermQueries.pageCounts}, Fahrplan P1), etwa für „auch auf N
+     * Unterseiten“. Nie auf dem EDT.
+     */
+    public java.util.Map<TermQueries.TermRef, Integer> termPageCounts(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.terms().pageCounts(caller, pages);
     }
 
     // --- KI-Freigabe je Seite (ADR 0028) ----------------------------------------------------------------------------

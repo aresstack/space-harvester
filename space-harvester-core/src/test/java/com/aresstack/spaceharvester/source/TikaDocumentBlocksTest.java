@@ -103,8 +103,8 @@ class TikaDocumentBlocksTest {
                 <p>Der Nachtlauf startet, siehe <a href="https://example.org/plan">Ablaufplan</a>.<a name="x"></a></p>
                 <h2>Schritte</h2>
                 <ol><li>Sicherung prüfen</li><li>Job starten<ul><li>bei Fehler anrufen</li></ul></li></ol>
-                <table><tr><th>Job</th><th>Dauer</th></tr><tr><td>DATENH01</td><td>12 min</td></tr></table>
-                <pre>//DATENH01 JOB (ACCT)</pre>
+                <table><tr><th>Job</th><th>Dauer</th></tr><tr><td>NACHT01</td><td>12 min</td></tr></table>
+                <pre>//NACHT01 JOB (ACCT)</pre>
                 </body></html>""");
         TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
 
@@ -128,9 +128,9 @@ class TikaDocumentBlocksTest {
         Block.Table table = (Block.Table) sink.blocks.stream().filter(Block.Table.class::isInstance).findFirst()
                 .orElseThrow();
         assertThat(table.cells()).extracting(c -> c.row() + "/" + c.column() + "/" + c.header() + "/" + c.text())
-                .containsExactly("0/0/true/Job", "0/1/true/Dauer", "1/0/false/DATENH01", "1/1/false/12 min");
+                .containsExactly("0/0/true/Job", "0/1/true/Dauer", "1/0/false/NACHT01", "1/1/false/12 min");
         assertThat(sink.blocks).filteredOn(Block.Code.class::isInstance).extracting(b -> ((Block.Code) b).text())
-                .containsExactly("//DATENH01 JOB (ACCT)");
+                .containsExactly("//NACHT01 JOB (ACCT)");
     }
 
     @Test

@@ -919,7 +919,9 @@ public final class Harvester implements AutoCloseable {
                     () -> catalog.all().stream().map(HarvestSource::id).toList(),
                     new ChangeLog.Summaries(jobs, new ChatUpdateSummaryModel(
                             () -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles, builder.userAgent),
-                            summaryRelease::mayProcess, clock));
+                            summaryRelease::mayProcess, clock))
+                    // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
+                    .perDay(java.time.ZoneId.systemDefault());
             opened.add(changeLog);
             start.step("Änderungsprotokoll");
             if (manager != null) {

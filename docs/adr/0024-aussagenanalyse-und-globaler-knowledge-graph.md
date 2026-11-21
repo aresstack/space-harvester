@@ -94,7 +94,7 @@ von Hand entpacktes Modell gilt ohne Neustart.
 
 ### Ursachenmatrix der Aussagenqualität (Nachtrag 09.11.2026)
 
-Angelos Beta-Befunde am Confluence-Text „Kurzbeschreibung DATENH“ zeigen falsche Aussagen. Jeder Fehler wird an der
+Angelos Beta-Befunde an einem Confluence-Text (Kurzbeschreibung eines Fachverfahrens) zeigen falsche Aussagen. Jeder Fehler wird an der
 Stufe behoben, an der er entsteht, nicht nachträglich in der Projektion: Satzgrenzen → OpenNLP (Wortart, Grundform)
 → MaltParser → Extraktion → Projektion. Grundlage ist `nlp-parser/src/test/resources/…/extraction/datenh.conllu`,
 die unveränderte Ausgabe der gepinnten Kette für `datenh.txt` (`RealModelSmokeTest` prüft sie gegen die echte Kette,

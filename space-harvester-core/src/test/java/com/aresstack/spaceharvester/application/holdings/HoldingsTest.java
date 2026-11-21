@@ -244,6 +244,32 @@ class HoldingsTest {
         assertThat(subtree.pages().fingerprint()).isNotEqualTo(overlapping.pages().fingerprint());
     }
 
+    /** Fahrplan P1: die Nachfahren einer Seite ohne die Seite selbst, gezählt nur über die Nachfahren. */
+    @Test
+    void theDescendantsOfAPageAreItsSubtreeWithoutThePageItself() {
+        dev();
+        Holdings holdings = holdings(ALLOW_ALL, 100);
+
+        PageSelection below = holdings.descendants(CALLER, "wiki", "DEV", "3");
+        assertThat(below.pagesOf("wiki")).containsExactlyInAnyOrder("4", "6");
+        assertThat(below.size()).isEqualTo(2);
+        assertThat(below.complete()).isTrue();
+        assertThat(below.contains("wiki", "3")).isFalse();
+        PageSelection subtree = holdings.resolve(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "3")));
+        assertThat(below.counts().pages()).isEqualTo(subtree.counts().pages() - 1);
+
+        PageSelection leaf = holdings.descendants(CALLER, "wiki", "DEV", "4");
+        assertThat(leaf.size()).as("Blatt ohne Unterseiten").isZero();
+        assertThat(leaf.pages()).isEqualTo(PageSet.EMPTY);
+
+        assertThat(holdings.descendants(CALLER, "wiki", "DEV", "x").complete()).as("unbekannte Seite").isFalse();
+
+        AccessPolicy withoutFour = (context, scope, kind) -> "4".equals(scope.pageId())
+                ? AccessDecision.DENY : AccessDecision.ALLOW;
+        assertThat(holdings(withoutFour, 100).descendants(CALLER, "wiki", "DEV", "3").pagesOf("wiki"))
+                .as("ohne Leserecht fehlt die Seite").doesNotContain("4");
+    }
+
     @Test
     void theOutputsOfASelectionAreOnePerSpaceOrSubtreeWithoutNestedOnes() {
         dev();

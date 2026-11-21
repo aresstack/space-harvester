@@ -56,7 +56,9 @@ class ChangeLogConfiguration {
                 : available::findHeader;
         // ADR 0030, Abschnitt 5: Zusammenfassen nur auf Wunsch, an das Modell nur Seiten mit KI-Freigabe.
         return new ChangeLog(store, access, headers, () -> catalog.all().stream().map(HarvestSource::id).toList(),
-                new ChangeLog.Summaries(jobs, summaries, release::mayProcess, Clock.systemUTC()));
+                new ChangeLog.Summaries(jobs, summaries, release::mayProcess, Clock.systemUTC()))
+                // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Servers.
+                .perDay(java.time.ZoneId.systemDefault());
     }
 
     @Bean(destroyMethod = "close")
