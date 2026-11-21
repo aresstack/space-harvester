@@ -115,7 +115,11 @@ public final class AutomaticImageDescriptions {
                             synchronized (waiting) {
                                 waiting.remove(sourceId, context.jobId());
                             }
-                            run(sourceId, settings.get(), context);
+                            ImageSettings now = settings.get();
+                            // Inzwischen abgeschaltet: ein wartender Auftrag schickt nichts mehr an das Modell.
+                            if (now != null && now.automatic()) {
+                                run(sourceId, now, context);
+                            }
                         }));
             } catch (JobCapacityExceededException | IllegalStateException e) {
                 LOG.log(System.Logger.Level.INFO, "Bildbeschreibung für {0} nicht eingeplant ({1}); der nächste "
@@ -191,7 +195,14 @@ public final class AutomaticImageDescriptions {
             }
             context.discovered(1);
             try {
-                PageImages after = analysis.describe(snapshot);
+                // Zwischen den Bildern einer Seite: Abbrechen wirkt nach dem laufenden Bild, und ein ausgefallenes
+                // Modell bekommt nach den Wiederholungen dieses Bildes keine weiteren.
+                PageImages after = analysis.describe(snapshot, entry -> {
+                    context.checkpoint();
+                    if (entry.status() == ImageStatus.FAILED && PageImageAnalysis.modelFailure(entry.reason())) {
+                        throw new ModelDown(entry.reason());
+                    }
+                });
                 int described = newlyDescribed(before, after);
                 sent += described;
                 pages++;
@@ -204,14 +215,18 @@ public final class AutomaticImageDescriptions {
                     context.failed(1);
                     if (failures.stream().anyMatch(PageImageAnalysis::modelFailure)) {
                         // Ein ausgefallenes Modell bekommt keine weiteren Bilder; der nächste Lauf versucht es neu.
-                        context.record(new JobEvent.Draft(JobEvent.Severity.ERROR, JobEvent.Category.JOB, COMPONENT,
-                                MODEL_FAILED, "Das Vision-Modell antwortet nicht (" + failures.stream()
-                                .filter(PageImageAnalysis::modelFailure).findFirst().orElseThrow()
-                                + "); Lauf beendet, offene Bilder folgen beim nächsten Lauf", null, null, null));
+                        context.record(modelFailed(failures.stream().filter(PageImageAnalysis::modelFailure)
+                                .findFirst().orElseThrow()));
                         context.processed(1);
                         break;
                     }
                 }
+            } catch (ModelDown e) {
+                failed++;
+                context.failed(1);
+                context.record(modelFailed(e.reason));
+                context.processed(1);
+                break;
             } catch (SignInRequiredException e) {
                 context.record(JobEvent.Draft.warning(JobEvent.Category.SOURCE, COMPONENT, SIGN_IN,
                         "Die Quelle verlangt einen Einmalcode; Bilder dieses Laufs bewusst ausgelassen"));
@@ -252,6 +267,27 @@ public final class AutomaticImageDescriptions {
         return new Outcome(pages, sent, open, failed);
     }
 
+    private static JobEvent.Draft modelFailed(String reason) {
+        return new JobEvent.Draft(JobEvent.Severity.ERROR, JobEvent.Category.JOB, COMPONENT, MODEL_FAILED,
+                "Das Vision-Modell antwortet nicht (" + reason + "); Lauf beendet, offene Bilder folgen beim "
+                        + "nächsten Lauf", null, null, null);
+    }
+
+    /** Das Modell scheiterte an einem Bild auch nach den Wiederholungen; die übrigen Bilder warten. */
+    private static final class ModelDown extends RuntimeException {
+        final String reason;
+
+        ModelDown(String reason) {
+            super(reason, null, false, false);
+            this.reason = reason;
+        }
+    }
+
+    /** Bilder, deren Laden an einer vorübergehend nicht erreichbaren oder drosselnden Quelle scheiterte. */
+    static boolean sourceFailure(String reason) {
+        return "source-unavailable".equals(reason) || "source-rate-limited".equals(reason);
+    }
+
     /** Was an einer Seite zu tun ist: nichts, oder beschreiben mit (geschätzt) so vielen offenen Bildern. */
     private record Work(int pending) {
         static final Work NONE = new Work(-1);
@@ -277,7 +313,8 @@ public final class AutomaticImageDescriptions {
             case CURRENT -> {
                 long open = images.images().stream().filter(image -> image.status() == ImageStatus.PENDING
                         && (image.reason() == null || "model-busy".equals(image.reason())) || image.status() == ImageStatus.FAILED
-                        && PageImageAnalysis.modelFailure(image.reason())).count();
+                        && (PageImageAnalysis.modelFailure(image.reason()) || sourceFailure(image.reason())))
+                        .count();
                 yield open == 0 ? Work.NONE : new Work((int) open);
             }
         };

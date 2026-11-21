@@ -434,6 +434,80 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void aFailingModelGetsNoFurtherImagesOfTheSamePage() {
+        source.image("1", "a1", "a1.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1});
+        source.image("1", "a2", "a2.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1, 2});
+        source.image("1", "a3", "a3.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1, 2, 3});
+        describer.fail = true;
+        com.aresstack.spaceharvester.application.configuration.ImageSettings settings =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text")).iterator(), () -> settings, "wiki"::equals);
+        RecordingContext context = new RecordingContext();
+
+        AutomaticImageDescriptions.Outcome outcome = automatic.run("wiki", settings, context);
+
+        assertThat(describer.sizes).as("nur das erste Bild, samt Wiederholungen").containsOnly(5);
+        assertThat(outcome.failed()).isEqualTo(1);
+        assertThat(context.events).extracting(e -> e.code()).contains(AutomaticImageDescriptions.MODEL_FAILED);
+    }
+
+    @Test
+    void cancellingStopsBetweenTheImagesOfAPage() {
+        source.image("1", "a1", "a1.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1});
+        source.image("1", "a2", "a2.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 1, 2});
+        com.aresstack.spaceharvester.application.configuration.ImageSettings settings =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500);
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text")).iterator(), () -> settings, "wiki"::equals);
+        RecordingContext context = new RecordingContext();
+        describer.during = () -> context.cancel = true;
+
+        assertThatThrownBy(() -> automatic.run("wiki", settings, context))
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobCancelledException.class);
+        assertThat(describer.calls).as("nach dem laufenden Bild kein weiteres").isEqualTo(1);
+    }
+
+    @Test
+    void imagesThatTheSourceCouldNotDeliverAreRetriedByTheNextRun() {
+        source.image("1", "a1", "a1.png", PNG);
+        source.unavailable = true;
+        com.aresstack.spaceharvester.application.configuration.ImageSettings settings =
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500);
+        PageImageAnalysis analysis = analysis();
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis,
+                sourceId -> List.of(page("1", "Text")).iterator(), () -> settings, "wiki"::equals);
+        automatic.run("wiki", settings, new RecordingContext());
+        assertThat(describer.calls).isZero();
+
+        source.unavailable = false;
+        AutomaticImageDescriptions.Outcome again = automatic.run("wiki", settings, new RecordingContext());
+
+        assertThat(again.images()).isEqualTo(1);
+        assertThat(analysis.read(page("1", "Text")).describedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void aWaitingJobDescribesNothingOnceTheSettingIsSwitchedOff() {
+        source.image("1", "a1", "a1.png", PNG);
+        java.util.concurrent.atomic.AtomicReference<com.aresstack.spaceharvester.application.configuration.ImageSettings>
+                settings = new java.util.concurrent.atomic.AtomicReference<>(
+                new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 500));
+        describer.released = true;
+        // Der Auftrag liest die Einstellung erst beim Start: Hier ist sie dann schon aus.
+        AutomaticImageDescriptions automatic = new AutomaticImageDescriptions(jobs(), analysis(),
+                sourceId -> List.of(page("1", "Text")).iterator(), () -> {
+                    com.aresstack.spaceharvester.application.configuration.ImageSettings now = settings.get();
+                    settings.set(now.withAutomatic(false));
+                    return now;
+                }, "wiki"::equals);
+
+        automatic.automatic("wiki");
+
+        assertThat(describer.calls).isZero();
+    }
+
+    @Test
     void theLimitPerRunLeavesTheRestForTheNextRunAndSaysHowManyAreOpen() {
         // Drei Seiten mit je zwei Bildern; deren Liste ist schon bekannt (gespeicherte Lese-Ansicht).
         for (String pageId : List.of("1", "2", "3")) {
@@ -615,13 +689,18 @@ class PageImageAnalysisTest {
             return "job-1";
         }
 
+        boolean cancel;
+
         @Override
         public void checkpoint() {
+            if (cancel) {
+                throw new com.aresstack.spaceharvester.application.jobs.JobCancelledException(jobId());
+            }
         }
 
         @Override
         public boolean cancelRequested() {
-            return false;
+            return cancel;
         }
 
         @Override
@@ -857,6 +936,7 @@ class PageImageAnalysisTest {
         }
 
         final List<String> instructions = new ArrayList<>();
+        final List<Integer> sizes = new ArrayList<>();
 
         @Override
         public String describe(byte[] image, String mediaType, String instruction) {
@@ -867,6 +947,7 @@ class PageImageAnalysisTest {
         @Override
         public String describe(byte[] image, String mediaType) {
             calls++;
+            sizes.add(image.length);
             during.run();
             if (fail) {
                 throw new IllegalStateException("Modell nicht erreichbar");
@@ -891,6 +972,7 @@ class PageImageAnalysisTest {
         private final Map<String, byte[]> bytes = new HashMap<>();
         final List<PageAttachment> attachments = new ArrayList<>();
         int loads;
+        boolean unavailable;
         /** Fassung der Lese-Ansicht; ohne Lese-Ansicht ({@code UNSUPPORTED}), solange nie gesetzt. */
         String readingVersion;
         boolean reading;
@@ -920,6 +1002,11 @@ class PageImageAnalysisTest {
         @Override
         public byte[] viewImage(ViewImage image, long maxBytes) {
             loads++;
+            if (unavailable) {
+                throw new com.aresstack.spaceharvester.application.sources.SourceAccessException("wiki",
+                        com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNAVAILABLE,
+                        "Quelle nicht erreichbar", null);
+            }
             return bytes.get(image.src());
         }
 
