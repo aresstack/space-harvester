@@ -2550,9 +2550,12 @@ public final class PageDetailPanel extends JPanel {
             if (current != request || click != linkRequest) {
                 return; // inzwischen eine andere Seite gewählt oder ein anderer Link geklickt
             }
-            internalTarget(resolution).ifPresentOrElse(
-                    match -> context.navigator().openPage(match.sourceId(), match.pageId()),
-                    () -> ReadingPane.browse(url));
+            internalTarget(resolution).ifPresentOrElse(match -> {
+                // Öffnen lädt synchron (ContentView.openPage → load); wie im Weg derselben Quelle springt die
+                // Leseansicht danach zum Abschnitt hinter „#“.
+                context.navigator().openPage(match.sourceId(), match.pageId());
+                pendingAnchor = url.getRef();
+            }, () -> ReadingPane.browse(url));
         }, error -> {
             if (click == linkRequest) {
                 ReadingPane.browse(url);
