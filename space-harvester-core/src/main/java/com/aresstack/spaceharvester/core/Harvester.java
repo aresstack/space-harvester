@@ -233,6 +233,7 @@ import com.aresstack.spaceharvester.application.images.ImageProcessor;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerStores;
 import com.aresstack.spaceharvester.application.knowledge.ModelStatementAnalyzer;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysis;
@@ -390,6 +391,7 @@ public final class Harvester implements AutoCloseable {
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    private final com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison analyzerComparison;
     private final com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
     private final com.aresstack.spaceharvester.application.standing.ReadingAdvice readingAdvice;
@@ -1152,7 +1154,7 @@ public final class Harvester implements AutoCloseable {
                     graph.analysesChanged();
                 }
             };
-            KnowledgeGraphStore graphStore = new AnalyzerStores(
+            AnalyzerStores graphStore = new AnalyzerStores(
                     new com.aresstack.spaceharvester.application.knowledge.ObservedKnowledgeGraphStore(
                             new FileKnowledgeGraphStore(builder.dataDirectory.resolve("knowledge-graph")),
                             analysesChanged),
@@ -1186,6 +1188,16 @@ public final class Harvester implements AutoCloseable {
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
             observedGraph.set(this.knowledgeGraph);
             opened.add(this.knowledgeGraph::close);
+            // K2: je Ablage eine eigene Sicht mit denselben Rechten und demselben Stand je Seite, für den Abgleich.
+            // Die Sichten teilen das Gedächtnis der Eingabe-Hashes mit der Hauptsicht: Was diese vergisst (neues
+            // Transkript, Neuaufbau), vergessen sie mit, sonst gälte eine Videoseite dort weiter als AKTUELL.
+            java.util.Map<AnalyzerChoice, KnowledgeGraph> byAnalyzer = new java.util.EnumMap<>(AnalyzerChoice.class);
+            for (AnalyzerChoice choice : AnalyzerChoice.values()) {
+                byAnalyzer.put(choice, this.knowledgeGraph.sharingInputs(graphStore.store(choice)));
+            }
+            this.analyzerComparison = new com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison(
+                    access, cache::find, (who, choice, key) -> byAnalyzer.get(choice).page(who, key),
+                    graphStore::selected);
             this.verbQueries = new com.aresstack.spaceharvester.application.knowledge.VerbQueries(
                     this.knowledgeGraph);
             // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
@@ -2098,6 +2110,11 @@ public final class Harvester implements AutoCloseable {
     /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */
     public com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries() {
         return verbQueries;
+    }
+
+    /** Abgleich der beiden Aussagenanalysatoren je Seite (K2); rechnet auf Abruf, speichert nichts. */
+    public com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison analyzerComparison() {
+        return analyzerComparison;
     }
 
     /** Stand und Status-quo-Sicht (ADR 0032, FL6). */
