@@ -68,4 +68,19 @@ class HitReasonsTest {
         assertThat(hit.excerpt()).isEqualTo("Der RSL steht oben");
         assertThat(hit.mark().brief()).isEqualTo("Abkürzung");
     }
+
+    @Test
+    void aNeighborIsMarkedShortWithTheSeedInTheTipAndTheOverlay() {
+        HitReason.Neighbor via = new HitReason.Neighbor("wiki", "1", "Betrieb", HitReason.Neighbor.Edge.CHILD);
+        List<HitReason> reasons = List.of(HitReason.text("Nachtlauf", null, List.of(), List.of("nachtlauf")),
+                HitReason.neighbor("Nachtlauf", via));
+
+        assertThat(HitReasons.mark(reasons)).isEqualTo(new MarkedTextRenderer.Mark("Nachbar", "Nachbar"));
+        assertThat(HitReasons.tip(reasons)).isEqualTo("Unterseite von „Betrieb“");
+        assertThat(HitReasons.details(reasons)).contains("Nachbarseite: Unterseite von „Betrieb“")
+                .contains("gegen „Nachtlauf“ geprüft");
+        assertThat(HitReasons.tip(List.of(HitReason.semantic("Nachtlauf")))).isNull();
+        assertThat(HitReasons.neighborLine(new HitReason.Neighbor("wiki", "1", "Betrieb",
+                HitReason.Neighbor.Edge.LINKS_TO))).isEqualTo("„Betrieb“ verweist hierher");
+    }
 }

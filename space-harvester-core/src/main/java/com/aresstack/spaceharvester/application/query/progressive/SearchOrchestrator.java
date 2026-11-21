@@ -254,6 +254,8 @@ public final class SearchOrchestrator implements AutoCloseable {
         private volatile AiServiceException.Reason failure;
         /** Woher die Varianten stammen, wie die Strategie es meldet; {@code null} ohne Angabe. */
         private HitReason.Variant.Origin variantOrigin;
+        /** Stand der Suchmethode „Nachbarseiten“; zugeschaltet, bis sie fertig ist, ungeprüft. */
+        private ProgressiveResult.Neighbors neighborState;
 
         Run(VariantSearch search, AccessContext caller, KeywordSearch.Query query, SearchProfile profile,
             SearchQualityPolicy quality, ProgressiveSearchListener listener) {
@@ -267,6 +269,8 @@ public final class SearchOrchestrator implements AutoCloseable {
             this.listener = listener;
             this.slots = new Semaphore(profile.execution().parallelism());
             this.deadline = started + profile.timeBudget().toNanos();
+            this.neighborState = profile.neighbors() ? ProgressiveResult.Neighbors.UNCHECKED
+                    : ProgressiveResult.Neighbors.OFF;
         }
 
         @Override
@@ -366,7 +370,9 @@ public final class SearchOrchestrator implements AutoCloseable {
             if (profile.neighbors() && reason != Completion.FAILED && !cancelled() && successes > 0
                     && System.nanoTime() < deadline) {
                 try {
-                    neighborStep();
+                    if (neighborStep()) {
+                        neighborState = ProgressiveResult.Neighbors.CHECKED;
+                    }
                 } catch (RuntimeException e) {
                     // Die Methode ergänzt nur; ihr Scheitern lässt die Treffer der Suche stehen.
                     LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesucht ({0})", e.getClass().getName());
@@ -383,17 +389,22 @@ public final class SearchOrchestrator implements AutoCloseable {
          * Suchmethode „Nachbarseiten“ (R2): Nachbarn der besten bestätigten Treffer als Kandidaten, gesucht mit der
          * ursprünglichen Anfrage in derselben Suche, begrenzt auf sie und den bisherigen Umfang. Was zurückkommt,
          * traf die Anfrage und wird wie jeder Treffer bewertet und zusammengeführt.
+         *
+         * @return ob alle Kandidaten geprüft sind (auch: es gab keine); {@code false} nach Frist, Fehler oder Abbruch
          */
-        private void neighborStep() {
+        private boolean neighborStep() {
             List<KeywordSearch.Hit> seeds = ranked().stream().filter(RankedHit::confirmed)
                     .limit(NeighborCandidates.MAX_SEEDS).map(RankedHit::hit).toList();
+            if (seeds.isEmpty()) {
+                return true;
+            }
             // Die Nachbarsuche ist eine Suchanfrage wie jede andere und zählt gegen das Budget.
-            if (seeds.isEmpty() || searches >= profile.searchBudget()) {
-                return;
+            if (searches >= profile.searchBudget()) {
+                return false;
             }
             Map<PageKey, HitReason.Neighbor> found = collect(seeds);
             if (found == null || cancelled() || System.nanoTime() >= deadline) {
-                return;
+                return false;
             }
             Map<PageKey, HitReason.Neighbor> candidates = new LinkedHashMap<>();
             found.forEach((key, via) -> {
@@ -402,8 +413,11 @@ public final class SearchOrchestrator implements AutoCloseable {
                     candidates.put(key, via);
                 }
             });
-            if (candidates.isEmpty() || cancelled()) {
-                return;
+            if (cancelled()) {
+                return false;
+            }
+            if (candidates.isEmpty()) {
+                return true;
             }
             KeywordSearch.Query within = query.within(PageSet.ofKeys(candidates.keySet()));
             searches++;
@@ -428,20 +442,20 @@ public final class SearchOrchestrator implements AutoCloseable {
                 CompletableFuture.anyOf(future, cancelSignal).get(Math.max(0, until - System.nanoTime()),
                         TimeUnit.NANOSECONDS);
                 if (!future.isDone()) {
-                    return;
+                    return false;
                 }
                 outcome = future.join();
             } catch (TimeoutException e) {
                 LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht in der Frist");
-                return;
+                return false;
             } catch (ExecutionException | CompletionException e) {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
                 LOG.log(System.Logger.Level.INFO, "Nachbarseiten nicht gesucht ({0})", cause.getClass().getName());
-                return;
+                return false;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 cancelSignal.complete(null);
-                return;
+                return false;
             }
             KeywordSearch.Results results = outcome.results();
             if (results.progress() != null && !results.progress().done()) {
@@ -463,6 +477,8 @@ public final class SearchOrchestrator implements AutoCloseable {
             newInWave = added;
             score(unscored);
             emit(() -> listener.ranked(ranked()));
+            // Unvollständig (Quelle ausgefallen, Kandidaten noch im Laden): nicht alle Nachbarn sind geprüft.
+            return results.complete() && (results.progress() == null || results.progress().done());
         }
 
         /**
@@ -833,7 +849,7 @@ public final class SearchOrchestrator implements AutoCloseable {
                 loads.forEach(this::cancelLoading);
             }
             ProgressiveResult done = new ProgressiveResult(ranked(), variants(), reason, loads,
-                    Duration.ofNanos(System.nanoTime() - started), failure);
+                    Duration.ofNanos(System.nanoTime() - started), failure, neighborState);
             record(done);
             emit(() -> listener.variants(done.variants()));
             emit(() -> listener.completed(done));

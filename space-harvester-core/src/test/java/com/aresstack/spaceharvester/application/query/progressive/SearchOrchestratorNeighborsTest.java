@@ -47,14 +47,22 @@ class SearchOrchestratorNeighborsTest {
      * Die Suche: ohne Seitengrenze trifft die Anfrage o und a, in der Grenze nur Seiten, die „matching“ trifft
      * (n1 trifft, n2 nicht), außerdem eine Seite außerhalb der Kandidaten, die nie übernommen werden darf.
      */
+    private volatile boolean neighborSearchFails;
+    private volatile boolean neighborSearchIncomplete;
+
     private final VariantSearch search = new VariantSearch() {
         @Override
         public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit) {
             queries.add(query);
+            if (neighborSearchFails && query.pages() != null) {
+                throw new IllegalStateException("Quelle antwortet nicht");
+            }
             if (query.pages() == null || query.pages().contains(new PageKey("wiki", "o"))) {
                 return confirmed(query.pages(), "o", "a");
             }
-            return confirmed(query.pages(), "n1", "fremd");
+            KeywordSearch.Results within = confirmed(query.pages(), "n1", "fremd");
+            return neighborSearchIncomplete ? new KeywordSearch.Results("wiki", within.hits(), List.of(), null,
+                    false, 0, List.of(), null) : within;
         }
     };
 
@@ -110,6 +118,18 @@ class SearchOrchestratorNeighborsTest {
                 .map(hit -> hit.hit().reasons()).toList());
         assertThat(queries).hasSize(1);
         assertThat(seedsSeen).isEmpty();
+        assertThat(off.neighbors()).isEqualTo(ProgressiveResult.Neighbors.OFF);
+    }
+
+    @Test
+    void aFailingNeighborSearchKeepsTheHitsAndSaysTheNeighborsAreUnchecked() throws Exception {
+        neighborSearchFails = true;
+
+        ProgressiveResult result = run(neighbors, profile().withNeighbors(true), KeywordSearch.Query.of(ORIGINAL));
+
+        assertThat(ids(result)).containsExactly("o", "a");
+        assertThat(result.reason()).isEqualTo(ProgressiveResult.Completion.ALL_VARIANTS_DONE);
+        assertThat(result.neighbors()).isEqualTo(ProgressiveResult.Neighbors.UNCHECKED);
     }
 
     @Test
@@ -129,6 +149,7 @@ class SearchOrchestratorNeighborsTest {
         KeywordSearch.Query within = queries.get(1);
         assertThat(within.text()).isEqualTo(ORIGINAL);
         assertThat(within.pages().asMap()).isEqualTo(Map.of("wiki", Set.of("n1", "n2")));
+        assertThat(result.neighbors()).isEqualTo(ProgressiveResult.Neighbors.CHECKED);
     }
 
     @Test
@@ -149,6 +170,7 @@ class SearchOrchestratorNeighborsTest {
 
         assertThat(ids(result)).containsExactly("o", "a");
         assertThat(queries).hasSize(1);
+        assertThat(result.neighbors()).isEqualTo(ProgressiveResult.Neighbors.CHECKED);
     }
 
     @Test
@@ -159,6 +181,17 @@ class SearchOrchestratorNeighborsTest {
         assertThat(ids(result)).containsExactly("o", "a");
         assertThat(queries).hasSize(1);
         assertThat(seedsSeen).isEmpty();
+        assertThat(result.neighbors()).isEqualTo(ProgressiveResult.Neighbors.UNCHECKED);
+    }
+
+    @Test
+    void anIncompleteNeighborSearchKeepsItsHitsButSaysTheNeighborsAreUnchecked() throws Exception {
+        neighborSearchIncomplete = true;
+
+        ProgressiveResult result = run(neighbors, profile().withNeighbors(true), KeywordSearch.Query.of(ORIGINAL));
+
+        assertThat(ids(result)).containsExactly("o", "a", "n1");
+        assertThat(result.neighbors()).isEqualTo(ProgressiveResult.Neighbors.UNCHECKED);
     }
 
     @Test
@@ -185,5 +218,6 @@ class SearchOrchestratorNeighborsTest {
         assertThat(took).isLessThan(Duration.ofSeconds(4));
         assertThat(ids(result)).containsExactly("o", "a");
         assertThat(queries).hasSize(1);
+        assertThat(result.neighbors()).isEqualTo(ProgressiveResult.Neighbors.UNCHECKED);
     }
 }

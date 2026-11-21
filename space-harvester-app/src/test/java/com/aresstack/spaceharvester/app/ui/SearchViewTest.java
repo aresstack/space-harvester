@@ -486,7 +486,13 @@ class SearchViewTest {
                     .contains("Alpha", "Beta", "Dateien", "Seiten (HTML)", "PDF", "Word", "PowerPoint", "Excel",
                             "Bilder", "Videos", SearchView.SEMANTIC);
             assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
-                    .contains("WISSENSQUELLEN", "DATEITYPEN");
+                    .contains("WISSENSQUELLEN", "DATEITYPEN", "SUCHMETHODEN");
+            // Suchmethoden als Gruppe: Semantische Suche, darunter Nachbarseiten (R2), Standard aus.
+            List<String> methods = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
+                    .filter(text -> text.equals(SearchView.SEMANTIC) || text.equals(SearchView.NEIGHBORS)).toList();
+            assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS);
+            assertThat(view[0].neighbors.isEnabled()).isTrue();
+            assertThat(view[0].neighbors.getToolTipText()).isEqualTo(SearchView.NEIGHBORS_TIP);
             assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
                     .anySatisfy(text -> assertThat(text).contains("Hinweise zur Suche", "space-harvester://"));
             assertThat(view[0].optionsButton.getAccessibleContext().getAccessibleName()).isEqualTo("Suchoptionen");
