@@ -125,8 +125,8 @@ public class SynonymDiscovery {
     /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
     private volatile Predicate<PageKey> pageReleases = key -> false;
     /**
-     * Hintergrundaufträge (ADR 0025 Nachtrag) für den automatischen Lauf; ohne sie bleibt es beim eigenen Auftrag ohne
-     * Auftraggeber (Dienst).
+     * Hintergrundaufträge (ADR 0025 Nachtrag) für den automatischen Lauf; ohne sie (Dienst) bleibt es beim eigenen
+     * Auftrag {@code ENRICHMENT} des Eigentümers aus {@link #owner}.
      */
     private volatile BackgroundJobs background;
 
@@ -134,6 +134,13 @@ public class SynonymDiscovery {
     public static final String BACKGROUND_KIND = "synonyms";
     /** Titel der Gruppe in der Auftragsliste. */
     public static final String BACKGROUND_TITLE = "Synonyme erkennen";
+
+    /** Angabe am Auftrag, woran die Auftragsliste den Lauf erkennt (D4.4, wie die Bildbeschreibung). */
+    public static final String TASK_PARAMETER = "task";
+    /** Wert von {@link #TASK_PARAMETER}: „Synonyme erkennen“. */
+    public static final String TASK = "synonyms";
+
+    private volatile String owner;
 
     /**
      * @param model  das Chat-Modell der wirksamen Konfiguration; {@link SynonymJudgmentModel#NONE} ohne
@@ -275,7 +282,7 @@ public class SynonymDiscovery {
         }
         SynonymBudget chosen = effective;
         JobStatus status = jobs.submit(JobType.ENRICHMENT, scope.global() ? Jobs.ALL_SOURCES : scope.sourceId(),
-                scope.spaceKey(), caller.jobOwner(), JobTask.blocking(context -> {
+                scope.spaceKey(), null, caller.jobOwner(), Map.of(TASK_PARAMETER, TASK), JobTask.blocking(context -> {
                     // Je Umfang nacheinander: Ein zweiter Auftrag findet danach alles im Cache und fragt nicht erneut.
                     synchronized (lock(scope)) {
                         run(scope, chosen, context);
@@ -283,6 +290,14 @@ public class SynonymDiscovery {
                 }));
         started.add(status.id());
         return status;
+    }
+
+    /**
+     * Eigentümer der automatischen Läufe (D4.4), wie bei den übrigen Aufträgen, die der Core von sich aus startet;
+     * ohne Angabe ohne Eigentümer.
+     */
+    public void owner(String owner) {
+        this.owner = owner;
     }
 
     /**
@@ -309,7 +324,7 @@ public class SynonymDiscovery {
         if (hosted != null) {
             // Ein wartender Teil der Quelle nimmt die Änderung mit; ein laufender nicht, dann folgt ein neuer.
             Optional<BackgroundGroup> group = hosted.startUnlessWaiting(BACKGROUND_KIND, BACKGROUND_TITLE,
-                    new BackgroundPart.Draft(sourceId, null));
+                    new BackgroundPart.Draft(sourceId, null, Map.of(TASK_PARAMETER, TASK)));
             group.ifPresent(begun -> {
                 started.addAll(begun.jobIds());
                 LOG.log(System.Logger.Level.INFO, "Synonymerkennung für {0} als Hintergrundauftrag eingeplant",
@@ -324,7 +339,8 @@ public class SynonymDiscovery {
                 return Optional.empty();
             }
             waiting.remove(sourceId);
-            JobStatus status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, JobTask.blocking(context -> {
+            JobStatus status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, owner,
+                    Map.of(TASK_PARAMETER, TASK), JobTask.blocking(context -> {
                 waiting.remove(sourceId, context.jobId());
                 runAutomatic(sourceId, chosen, context);
             }));
