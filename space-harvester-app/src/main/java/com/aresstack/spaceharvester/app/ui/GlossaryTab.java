@@ -103,6 +103,12 @@ public final class GlossaryTab {
             + "das Modell entfällt, weil keines eingestellt ist (Einstellungen › Modelle)";
     static final String MODEL_SKIPPED_NOT_RELEASED = DETECT + ": Begriffe ohne Modell abgeleitet; die Einordnung "
             + "durch das Modell entfällt, weil die Quelle nicht für die KI freigegeben ist";
+    /** D4: im Bereich keine aktuelle Aussagenanalyse; die Zahl aus dem Code hängt an. */
+    static final String MODEL_SKIPPED_NO_ANALYSIS = DETECT + ": Begriffe ohne Modell abgeleitet; die Einordnung "
+            + "durch das Modell entfällt: ";
+    /** D4: Die Modellphase lief nur über die aktuellen Analysen; die Zahl der übrigen hängt an. */
+    static final String ANALYSIS_PARTLY_MISSING = DETECT + ": Einordnung durch das Modell nur über aktuelle "
+            + "Aussagenanalysen; ";
     static final String EMPTY = "Noch keine Fachbegriffe zur Auswahl. „Fachbegriffe ermitteln“ leitet sie aus den "
             + "analysierten Seiten ab; „Fachbegriff hinzufügen“ legt einen von Hand an.";
     static final String NO_MATCH = "Kein Fachbegriff passt zu Suche und Filter.";
@@ -531,8 +537,20 @@ public final class GlossaryTab {
 
     /** Die Statuszeile nach einer bewusst ausgelassenen Modellphase, in Worten; {@code null} für andere Ereignisse. */
     static String modelSkipped(String code) {
-        if (code == null || !code.startsWith(GlossaryClassification.MODEL_SKIPPED)) {
+        if (code == null) {
             return null;
+        }
+        // D4: Die Zahl kommt strukturiert als Endung des Codes, nie aus dem Meldungstext.
+        if (code.startsWith(GlossaryClassification.ANALYSIS_MISSING + ":")) {
+            return ANALYSIS_PARTLY_MISSING + GlossaryClassification.missingAnalysis(
+                    GlossaryClassification.countOf(code));
+        }
+        if (!code.startsWith(GlossaryClassification.MODEL_SKIPPED)) {
+            return null;
+        }
+        if (code.startsWith(GlossaryClassification.SkipReason.NO_ANALYSIS.code())) {
+            return MODEL_SKIPPED_NO_ANALYSIS + GlossaryClassification.missingAnalysis(
+                    GlossaryClassification.countOf(code));
         }
         return code.endsWith(":NOT_RELEASED") ? MODEL_SKIPPED_NOT_RELEASED : MODEL_SKIPPED_NO_MODEL;
     }

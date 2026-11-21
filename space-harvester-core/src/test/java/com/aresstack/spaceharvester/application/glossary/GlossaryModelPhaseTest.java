@@ -440,6 +440,71 @@ class GlossaryModelPhaseTest {
     }
 
     @Test
+    void withOnlyStaleAnalysesTheSkipSaysAnalysisMissingNotRelease() {
+        // D4: Fehlt jede aktuelle Aussagenanalyse, heißt der Grund so, nie „nicht für die KI freigegeben“.
+        pages.replaceAll(page -> new KnowledgeGraph.AnalysedPage(new KnowledgeGraph.PageRef(page.page().key(),
+                page.page().spaceKey(), page.page().title(), PageStatements.State.STALE, null), page.analysis()));
+        JobContext context = mock(JobContext.class);
+
+        GlossaryClassification.Outcome outcome = classification.job(WIKI, context, EDITOR);
+
+        assertThat(outcome.modelSkipped()).isEqualTo(GlossaryClassification.SkipReason.NO_ANALYSIS);
+        assertThat(requests).isEmpty();
+        ArgumentCaptor<JobEvent.Draft> events = ArgumentCaptor.forClass(JobEvent.Draft.class);
+        verify(context, atLeastOnce()).record(events.capture());
+        assertThat(events.getAllValues()).filteredOn(event -> event.code().equals(
+                        "GLOSSARY_MODEL_SKIPPED:NO_ANALYSIS:" + pages.size()))
+                .singleElement().satisfies(event -> assertThat(event.message())
+                        .endsWith(pages.size() + " Seiten ohne aktuelle Aussagenanalyse"));
+        assertThat(events.getAllValues()).filteredOn(event -> event.code().equals(GlossaryClassification.RULES_DONE))
+                .singleElement().satisfies(event -> assertThat(event.message())
+                        .contains(pages.size() + " Seiten mit veralteter Aussagenanalyse übersprungen"));
+        assertThat(GlossaryClassification.missingAnalysis(0)).isEqualTo("Aussagenanalyse fehlt");
+    }
+
+    @Test
+    void neverAnalysedAndStalePagesAreNamedEvenWhenThePhaseRunsForTheRest() {
+        // Auflage AT zu D4: 3 lokale Seiten, 1 aktuell, 1 veraltet, 1 nie analysiert → Phase über 1, Hinweis nennt 2.
+        pages.clear();
+        page("1", "Bewilligungsstelle", "prüft", "Zuwendung");
+        page("2", "Antragsdatenbank", "speichert", "Zuwendung");
+        pages.set(1, new KnowledgeGraph.AnalysedPage(new KnowledgeGraph.PageRef(pages.get(1).page().key(), "FOE",
+                "Seite 2", PageStatements.State.STALE, null), pages.get(1).analysis()));
+        classification.localPages((who, scope) -> com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(
+                List.of(new PageKey("wiki", "1"), new PageKey("wiki", "2"), new PageKey("wiki", "9"))));
+        JobContext context = mock(JobContext.class);
+
+        GlossaryClassification.Outcome outcome = classification.job(WIKI, context, EDITOR);
+
+        assertThat(outcome.modelSkipped()).isNull();
+        assertThat(requests).isNotEmpty().allSatisfy(request -> assertThat(request).doesNotContain("speichert"));
+        ArgumentCaptor<JobEvent.Draft> events = ArgumentCaptor.forClass(JobEvent.Draft.class);
+        verify(context, atLeastOnce()).record(events.capture());
+        assertThat(events.getAllValues()).extracting(JobEvent.Draft::code).contains("GLOSSARY_ANALYSIS_MISSING:2");
+    }
+
+    @Test
+    void inASubtreeOnlyItsPagesCountAsMissingAnalysis() {
+        // D4.2, Auflage 3: Teilbaum {1, 9}; die veraltete Seite 2 liegt außerhalb und zählt nicht.
+        pages.clear();
+        page("1", "Bewilligungsstelle", "prüft", "Zuwendung");
+        page("2", "Antragsdatenbank", "speichert", "Zuwendung");
+        pages.set(1, new KnowledgeGraph.AnalysedPage(new KnowledgeGraph.PageRef(pages.get(1).page().key(), "FOE",
+                "Seite 2", PageStatements.State.STALE, null), pages.get(1).analysis()));
+        classification.localPages((who, scope) -> com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(
+                List.of(new PageKey("wiki", "1"), new PageKey("wiki", "2"), new PageKey("wiki", "9"))));
+        JobContext context = mock(JobContext.class);
+
+        classification.job(WIKI, com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(
+                List.of(new PageKey("wiki", "1"), new PageKey("wiki", "9"))), context, EDITOR);
+
+        ArgumentCaptor<JobEvent.Draft> events = ArgumentCaptor.forClass(JobEvent.Draft.class);
+        verify(context, atLeastOnce()).record(events.capture());
+        assertThat(events.getAllValues()).extracting(JobEvent.Draft::code).contains("GLOSSARY_ANALYSIS_MISSING:1")
+                .doesNotContain("GLOSSARY_ANALYSIS_MISSING:2");
+    }
+
+    @Test
     void withoutAnyReleasedPageTheModelPhaseIsSkippedAndThePagesSurviveTheStore() {
         classification.job(WIKI, null, EDITOR);
         List<PageKey> kept = entry("Zuwendung").classification().pages();

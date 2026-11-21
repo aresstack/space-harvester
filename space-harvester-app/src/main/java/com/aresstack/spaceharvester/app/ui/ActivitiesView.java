@@ -478,7 +478,8 @@ public final class ActivitiesView implements View {
             return new Note(CHECK_LABEL, message, false);
         }
         if (code.startsWith(com.aresstack.spaceharvester.application.glossary.GlossaryClassification.MODEL_SKIPPED
-                + ":")) {
+                + ":") || code.startsWith(com.aresstack.spaceharvester.application.glossary.GlossaryClassification
+                .ANALYSIS_MISSING + ":")) {
             return new Note(SKIPPED_LABEL, message, true);
         }
         // Fahrplan B1: ohne Vision-Modell, mit Einmalcode oder an der Obergrenze bewusst ausgelassen (gelb).
