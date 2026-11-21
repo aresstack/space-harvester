@@ -689,6 +689,20 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void anOldCountingSummaryStaysVisibleAndIsReplacedOnceByATopicalOne() {
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, "Eine neue Seite.", List.of(
+                new SummaryStatement("Eine neue Seite.", List.of(new SummaryPage("20", "Neue Seite")))),
+                "update-summary-v1:gpt-test", SECOND, 0, false);
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("Seit dem letzten Update");
+
+        assertThat(summary.reportTexts()).contains("Eine neue Seite.");
+        assertThat(actions.summarizeCalls).as("einmal von selbst neu, inhaltlich").isEqualTo(1);
+        summary.clickUpdate("Seit dem letzten Update");
+        assertThat(actions.summarizeCalls).isEqualTo(1);
+    }
+
+    @Test
     void topicsFromSeveralSpacesStandApartAndManyPagesAreFolded() {
         SummaryStatement one = new SummaryStatement("A", List.of(new SummaryPage("1", "Eins", "BAU")), "A", null);
         SummaryStatement both = new SummaryStatement("B", List.of(new SummaryPage("2", "Zwei", "BAU"),

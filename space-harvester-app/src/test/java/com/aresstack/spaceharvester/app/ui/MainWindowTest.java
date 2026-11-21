@@ -528,6 +528,9 @@ class MainWindowTest {
             assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
             assertThat(window.searchView().queryText()).isEqualTo("betrieb");
             assertThat(SwingUtilities.isDescendingFrom(bar, surface)).isTrue();
+            // In der Suche ist die Auswahl links nur der Filter: ein Klick auf eine Seite lässt die Suche stehen.
+            window.openFromTree("handbuch", "4711");
+            assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
         });
     }
 
