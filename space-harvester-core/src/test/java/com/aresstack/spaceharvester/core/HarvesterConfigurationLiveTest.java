@@ -9,6 +9,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
+import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
@@ -17,12 +18,18 @@ import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
+import com.aresstack.spaceharvester.application.knowledge.ModelStatementAnalyzer;
+import com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis;
+import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException;
 import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.persistence.files.FileKnowledgeGraphStore;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import com.aresstack.spaceharvester.source.network.TestProxy;
@@ -30,6 +37,7 @@ import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -324,4 +332,45 @@ class HarvesterConfigurationLiveTest {
             assertThat(proxy.requestLines()).isEmpty();
         }
     }
+
+    /**
+     * Fahrplan A2/A3 (AT, D6a): Die Wahl des Analysators setzt auch die Lese-Ablage, zur Laufzeit. Mit „KI“ lesen Graph
+     * und alle Leser daraus (knowledge-graph-model), mit dem MaltParser aus knowledge-graph; nichts wird gemischt.
+     */
+    @Test
+    void theChosenAnalyzerDecidesWhichStoreTheGraphReadsAtRuntime() {
+        PageKey page = new PageKey("wiki", "100");
+        new FileKnowledgeGraphStore(data.resolve("knowledge-graph-model")).replace(analysis(page,
+                ModelStatementAnalyzer.ID, "Die Stelle prüft den Antrag."));
+        ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
+        try (Harvester harvester = harvester(manager)) {
+            assertThat(harvester.statementAnalyzerChoice()).isEqualTo(AnalyzerChoice.PARSER);
+            assertThat(harvester.knowledgeGraph().analysed(harvester.caller())).isEmpty();
+
+            assertThat(manager.apply(manager.current().configuration().withAnalyzer(
+                    new AnalyzerSettings(AnalyzerChoice.MODEL, null))).activated()).isTrue();
+            assertThat(harvester.statementAnalyzerChoice()).isEqualTo(AnalyzerChoice.MODEL);
+            assertThat(harvester.knowledgeGraph().analysed(harvester.caller()))
+                    .extracting(found -> found.analysis().analyzerId()).containsExactly(ModelStatementAnalyzer.ID);
+
+            assertThat(manager.apply(manager.current().configuration().withAnalyzer(AnalyzerSettings.DEFAULT))
+                    .activated()).isTrue();
+            assertThat(harvester.knowledgeGraph().analysed(harvester.caller())).isEmpty();
+        }
+    }
+
+    private static PageStatementAnalysis analysis(PageKey page, String analyzerId, String text) {
+        String doc = page.sourceId() + "/" + page.pageId() + "@0123456789ab";
+        ParsedStatements.Mention subject = new ParsedStatements.Mention(doc + "#s0.k1", 0, 0, 9, "Die Stelle",
+                "Stelle", "Stelle", ParsedStatements.MentionKind.NOUN, false, Set.of());
+        ParsedStatements.Statement statement = new ParsedStatements.Statement(doc + "#s0.v0", 0, 10, 15, "prüft",
+                "prüfen", ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true,
+                List.of(new ParsedStatements.Argument(ParsedStatements.Role.ACTOR, subject.id(), "nsubj", null,
+                        ParsedStatements.Priority.CORE, ParsedStatements.Basis.PARSER, true)), Set.of());
+        ParsedStatements result = new ParsedStatements(List.of(new ParsedStatements.Sentence(0, 0, text.length())),
+                List.of(subject), List.of(statement), List.of(), List.of("analyzer=" + analyzerId), null);
+        return new PageStatementAnalysis(page, "DEV", "Start", "1", "sha256:0123456789abcdef", analyzerId,
+                "1|test", Instant.parse("2026-11-21T18:00:00Z"), result);
+    }
 }
+

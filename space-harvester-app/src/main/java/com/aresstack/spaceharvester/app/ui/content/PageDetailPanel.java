@@ -1139,6 +1139,7 @@ public final class PageDetailPanel extends JPanel {
         shownStore = now;
         storeField.show(now);
         if (switched) {
+            showTabStatus();
             statementsView.storeChanged();
             graphView.reload();
             // „Beziehungen“ (Glossar und Analyseschritte) liest nicht aus der Aussagen-Ablage: kein Neuladen nötig.
@@ -1730,7 +1731,19 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void showTabStatus() {
-        statusShown.accept(tabStatus.getOrDefault(selectedTab(), " "));
+        String tab = selectedTab();
+        statusShown.accept(withStore(tab, tabStatus.getOrDefault(tab, " "), shownStore));
+    }
+
+    /**
+     * Die Statuszeile der Reiter, die aus der Ablage der Aussagenanalyse lesen (Aussagen, Graph, Stand, Glossar), nennt
+     * den Analysator dieser Ablage (AT, D6a); leere Zeilen bleiben leer, andere Reiter unverändert.
+     */
+    static String withStore(String tab, String text,
+                            com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice store) {
+        boolean reads = STATEMENTS.equals(tab) || GRAPH.equals(tab) || STAND.equals(tab)
+                || OVERVIEW_GLOSSARY.equals(tab);
+        return !reads || text == null || text.isBlank() ? text : text + " · Ablage: " + AnalyzerNames.name(store);
     }
 
     private void show(Loaded loaded) {
