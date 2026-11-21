@@ -61,6 +61,8 @@ public final class ChangeLog implements AutoCloseable {
     private final Listeners<ChangeLogListener> listeners = new Listeners<>("Änderungsprotokoll");
     private final Coalescer<String, String> coalescer;
     private final Summaries summaries;
+    /** Zeitzone der Tage, wenn je Tag ein Update gilt ({@link #perDay}); {@code null}: jede Marke ein Update. */
+    private volatile ZoneId days;
     /** Hält „schon offen?“ und Einreihen von „Zusammenfassen“ zusammen. */
     private final Object summarizing = new Object();
     /** Entscheidungen „Erstbefüllung“ je Quelle, Marke und Seitenzahl; ändern sich erst mit neuen Seiten. */
@@ -111,6 +113,24 @@ public final class ChangeLog implements AutoCloseable {
     }
 
     /**
+     * Höchstens ein Update je Tag in {@code zone} (Angelo, 21.11.2026): alle Abgleiche eines Tages bilden ein Update mit
+     * einer Zusammenfassung, siehe {@link DailyUpdateMarks}. Ohne Aufruf ist jede Marke ein eigenes Update.
+     *
+     * @return dieses Protokoll
+     */
+    public ChangeLog perDay(ZoneId zone) {
+        this.days = Objects.requireNonNull(zone, "zone");
+        return this;
+    }
+
+    /** Die Marken einer Quelle, älteste zuerst; je Tag zusammengelegt, wenn {@link #perDay} gesetzt ist. */
+    private List<UpdateMark> marks(String sourceId) {
+        List<UpdateMark> stored = store.marks(sourceId);
+        ZoneId zone = days;
+        return zone == null ? stored : DailyUpdateMarks.perDay(stored, zone);
+    }
+
+    /**
      * Meldet neue Zeilen und Marken einer Quelle, oder aller Quellen, die der Aufrufer sehen darf (ADR 0027).
      *
      * @param sourceId eine Quelle, {@code null} für alle
@@ -146,7 +166,7 @@ public final class ChangeLog implements AutoCloseable {
     public Optional<UpdateMark> latestMark(AccessContext caller, String sourceId, String spaceKey) {
         Objects.requireNonNull(caller, "caller");
         requireReadable(caller, sourceId);
-        List<UpdateMark> marks = store.marks(sourceId);
+        List<UpdateMark> marks = marks(sourceId);
         for (int i = marks.size() - 1; i >= 0; i--) {
             if (spaceKey == null || marks.get(i).spaces().contains(spaceKey)) {
                 return Optional.of(marks.get(i));
@@ -197,7 +217,7 @@ public final class ChangeLog implements AutoCloseable {
                 continue;
             }
             if (summarized.contains(update.id()) && store.summary(sourceId, update.id(), spaceKey)
-                    .filter(stored -> valid(stored, visible)).isPresent()) {
+                    .filter(stored -> sameSpan(stored, span) && valid(stored, visible)).isPresent()) {
                 update = update.withSummarized();
             }
             updates.add(update);
@@ -420,7 +440,7 @@ public final class ChangeLog implements AutoCloseable {
         Span span = span(sourceId, update);
         Visibility visible = new Visibility(caller);
         Optional<StoredSummary> stored = store.summary(sourceId, update, spaceKey)
-                .filter(found -> valid(found, visible));
+                .filter(found -> sameSpan(found, span) && valid(found, visible));
         if (stored.isEmpty()) {
             return Optional.empty();
         }
@@ -507,7 +527,7 @@ public final class ChangeLog implements AutoCloseable {
                     store.saveSummary(new StoredSummary(sourceId, update, spaceKey, result.text(), result.statements(),
                             runtime.model().version(), now, report.update().to() != null ? report.update().to() : now,
                             result.unreadable(), UpdateSummarizer.reportSha256(report, page -> contentState(page, span)),
-                            result.inputPages()));
+                            result.inputPages(), span.from()));
                     context.written(1);
                 }));
     }
@@ -597,22 +617,44 @@ public final class ChangeLog implements AutoCloseable {
 
     // --- Updates -------------------------------------------------------------------------------------------------
 
-    /** Zeitraum eines Updates zwischen zwei Marken. */
-    private record Span(String id, String sourceId, Instant from, Instant to, UpdateMark mark, boolean initial) {
+    /**
+     * Zeitraum eines Updates zwischen zwei Marken.
+     *
+     * @param merged ob das Update mehrere abgelegte Marken eines Tages zusammenlegt ({@link #perDay})
+     */
+    private record Span(String id, String sourceId, Instant from, Instant to, UpdateMark mark, boolean initial,
+                        boolean merged) {
     }
 
     private List<Span> spans(String sourceId) {
-        List<UpdateMark> marks = store.marks(sourceId);
+        List<UpdateMark> stored = store.marks(sourceId);
+        ZoneId zone = days;
+        List<UpdateMark> marks = zone == null ? stored : DailyUpdateMarks.perDay(stored, zone);
         List<Span> spans = new ArrayList<>();
         Instant previous = null;
+        int raw = 0;
         for (UpdateMark mark : marks) {
+            int rounds = 0;
+            while (raw < stored.size() && !stored.get(raw).at().isAfter(mark.at())) {
+                raw++;
+                rounds++;
+            }
             spans.add(new Span(id(mark.at()), sourceId, previous, mark.at(), mark,
-                    mark.initial() && inventory(sourceId, mark.at())));
+                    mark.initial() && inventory(sourceId, mark.at()), rounds > 1));
             previous = mark.at();
         }
         spans.add(new Span(ChangeUpdate.OPEN, sourceId, previous, null, null,
-                marks.isEmpty() && inventory(sourceId, null)));
+                marks.isEmpty() && inventory(sourceId, null), false));
         return spans;
+    }
+
+    /**
+     * Ob die abgelegte Zusammenfassung für genau diese Spanne entstand (Architekt, 21.11.2026): Mit {@link #perDay}
+     * trägt das Tages-Update die Kennung der letzten Runde; eine Zusammenfassung dieser Runde allein beschreibt nicht
+     * den ganzen Tag und gilt dann als nicht vorhanden. Einträge ohne Beginn (von vorher) gelten nur ohne Zusammenlegen.
+     */
+    private static boolean sameSpan(StoredSummary stored, Span span) {
+        return stored.from() != null ? stored.from().equals(span.from()) : !span.merged();
     }
 
     /**

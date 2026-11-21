@@ -183,6 +183,13 @@ public final class AppContext {
         default void refresh(String sourceId, String spaceKey, String pageId) {
         }
 
+        /**
+         * Wiederholt gescheiterte Abgleiche (Angelo, 21.11.2026): holt die Spaces wie die Kreispfeile im Baum nach,
+         * ohne {@code spaceKeys} jeden Space der Quelle.
+         */
+        default void retrySyncs(String sourceId, java.util.List<String> spaceKeys) {
+        }
+
         void search(String text);
     }
 

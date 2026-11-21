@@ -13,10 +13,12 @@ import java.util.Objects;
  * @param reportSha256 Stand des Berichts bei der Erstellung
  * @param inputPages  die Seiten, deren Titel und Unterschiede an das Modell gingen; verliert eine die Freigabe, verfällt
  *                    die Zusammenfassung
+ * @param from        Beginn der Spanne des Updates bei der Erstellung (ausschließlich), {@code null} vor der ersten Marke
+ *                    oder bei Einträgen von vor dieser Angabe; mit einem Update je Tag gilt sie nur für dieselbe Spanne
  */
 public record StoredSummary(String sourceId, String updateId, String spaceKey, String text, List<Statement> statements, String model,
                             Instant createdAt, Instant at, int unreadableChanges, String reportSha256,
-                            List<InputPage> inputPages) {
+                            List<InputPage> inputPages, Instant from) {
 
     /** Eine Aussage mit den IDs ihrer Seiten. */
     public record Statement(String text, List<String> pageIds) {
@@ -54,6 +56,14 @@ public record StoredSummary(String sourceId, String updateId, String spaceKey, S
         Objects.requireNonNull(at, "at");
         Objects.requireNonNull(reportSha256, "reportSha256");
         inputPages = List.copyOf(inputPages);
+    }
+
+    /** Ohne bekannten Beginn der Spanne. */
+    public StoredSummary(String sourceId, String updateId, String spaceKey, String text, List<Statement> statements,
+                         String model, Instant createdAt, Instant at, int unreadableChanges, String reportSha256,
+                         List<InputPage> inputPages) {
+        this(sourceId, updateId, spaceKey, text, statements, model, createdAt, at, unreadableChanges, reportSha256,
+                inputPages, null);
     }
 
     /** Zusammenfassung der ganzen Quelle (ohne Space). */

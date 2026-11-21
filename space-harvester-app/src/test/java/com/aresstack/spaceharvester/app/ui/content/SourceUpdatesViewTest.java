@@ -76,6 +76,54 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void behindTheRedLineTheCircleArrowsRetryTheFailedSyncsOfTheLatestUpdate() {
+        actions.failed = 2;
+        actions.failedSpaces = List.of("DEV");
+        List<String> retried = new ArrayList<>();
+        view.onRetry((sourceId, spaces) -> retried.add(sourceId + ":" + spaces));
+        view.source("wiki", "Confluence HaVdB");
+
+        assertThat(view.reportTexts()).contains("2 Abgleiche sind dabei gescheitert.");
+        javax.swing.JButton retry = retryButton(view);
+        assertThat(retry).isNotNull();
+        assertThat(retry.getToolTipText()).isEqualTo("Abgleich wiederholen (ein Space)");
+        assertThat(retry.getAccessibleContext().getAccessibleName()).isEqualTo(retry.getToolTipText());
+
+        retry.doClick();
+
+        assertThat(retried).containsExactly("wiki:[DEV]");
+        assertThat(retry.isEnabled()).as("gesperrt, nicht ausgeblendet").isFalse();
+        assertThat(retry.isVisible()).isTrue();
+        assertThat(status).contains(SourceUpdatesView.RETRYING);
+    }
+
+    @Test
+    void withoutARetryHandlerOnlyTheRedLineStands() {
+        actions.failed = 1;
+        view.source("wiki", "Confluence HaVdB");
+
+        assertThat(view.reportTexts()).contains("Ein Abgleich ist dabei gescheitert.");
+        assertThat(retryButton(view)).isNull();
+        assertThat(SourceUpdatesView.retryTip(0)).isEqualTo("Abgleich wiederholen (alle Spaces der Quelle)");
+        assertThat(SourceUpdatesView.retryTip(38)).isEqualTo("Abgleich wiederholen (38 Spaces)");
+    }
+
+    private static javax.swing.JButton retryButton(java.awt.Container root) {
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof javax.swing.JButton button && "updates.retry".equals(button.getName())) {
+                return button;
+            }
+            if (child instanceof java.awt.Container container) {
+                javax.swing.JButton found = retryButton(container);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    @Test
     void anUpdateMarkedByTheCoreItselfShowsOnlyTheDate() {
         ChangeUpdate s = actions.second();
         ChangeUpdate byCore = new ChangeUpdate(s.id(), s.sourceId(), s.from(), s.to(), new UpdateMark("wiki", SECOND,
@@ -629,6 +677,9 @@ class SourceUpdatesViewTest {
 
     static final class FakeActions implements SourceUpdatesView.Actions {
 
+        /** Gescheiterte Abgleiche des jüngsten Updates und ihre Spaces. */
+        int failed;
+        List<String> failedSpaces = List.of();
         boolean none;
         boolean closed;
         int updateCalls;
@@ -692,7 +743,7 @@ class SourceUpdatesViewTest {
             kinds.put(ChangeKind.RENAMED, 1);
             kinds.put(ChangeKind.REMOVED, 1);
             return new ChangeUpdate(String.valueOf(SECOND.toEpochMilli()), "wiki", FIRST, SECOND,
-                    new UpdateMark("wiki", SECOND, "angelo", List.of("CLUK"), 0, false), false, kinds,
+                    new UpdateMark("wiki", SECOND, "angelo", List.of("CLUK"), failed, false, failedSpaces), false, kinds,
                     Map.of("CLUK", 3), 3, 4, 1, false);
         }
 
