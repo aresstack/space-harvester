@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
@@ -27,6 +28,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.TermProcesso
 import com.aresstack.spaceharvester.application.terms.TermPayload;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
@@ -52,7 +54,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
@@ -376,6 +382,185 @@ class DocumentEnrichmentsTest {
     }
 
     @Test
+    void theEnrichmentAfterASyncAsksNoModelAndOnlyNotesThePartStartsWhenItEnds() throws InterruptedException {
+        // Abnahme #1052, Punkt 1: Der Auftrag nach dem Abgleich rechnet keine Anhänge, er vermerkt sie nur.
+        Queue<Runnable> held = new ConcurrentLinkedQueue<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = hosted(true, jobs, new BackgroundJobs(jobs, "app"));
+        inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
+        AtomicInteger asked = new AtomicInteger(-1);
+        AtomicInteger parts = new AtomicInteger(-1);
+        jobs.submit(JobType.ENRICHMENT, "wiki", "DEV", null, null,
+                Map.of(EnrichmentsAfterSync.TASK_PARAMETER, EnrichmentsAfterSync.TASK), JobTask.blocking(context -> {
+                    documents.afterSync("wiki", "DEV", List.of(PAGE.pageId()), context);
+                    asked.set(recording.inputs.size());
+                    parts.set(jobs.list("app", JobType.BACKGROUND).size());
+                }));
+
+        awaitUntil(held, () -> jobs.list("app", JobType.BACKGROUND).stream()
+                .anyMatch(part -> part.state() == JobState.COMPLETED));
+
+        assertThat(asked).as("die Anreicherung fragt kein Modell").hasValue(0);
+        assertThat(parts).as("solange sie läuft, wartet der Teil").hasValue(0);
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("ihr Ende startet ihn").singleElement()
+                .extracting(JobStatus::state).isEqualTo(JobState.COMPLETED);
+        assertThat(recording.inputs).containsExactly("Erster Teil.");
+    }
+
+    @Test
+    void whilePausedNeitherThePartNorTheEnrichmentAfterASyncAsksTheModel() {
+        // Ein Platz: der Teil wartet und lässt sich anhalten, bevor er läuft; die Anreicherung läuft trotzdem.
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        DocumentEnrichments documents = hosted(true, jobs, background);
+        Asset asset = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
+        documents.indexed(list(), asset, extractions);
+        BackgroundGroup group = background.groups().getFirst();
+        background.pause(group.groupId());
+
+        JobStatus enrichment = jobs.submit(JobType.ENRICHMENT, "wiki", "DEV", null, null,
+                Map.of(EnrichmentsAfterSync.TASK_PARAMETER, EnrichmentsAfterSync.TASK), JobTask.blocking(context ->
+                        documents.afterSync("wiki", "DEV", List.of(PAGE.pageId()), context)));
+
+        assertThat(jobs.status(enrichment.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(recording.inputs).as("Anhalten hält, auch über den nächsten Abgleich").isEmpty();
+        assertThat(background.groups()).singleElement().satisfies(paused -> assertThat(paused.paused()).isTrue());
+    }
+
+    @Test
+    void afterASyncWithNothingToDoNoEmptyGroupAppears() {
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = hosted(true, jobs, new BackgroundJobs(jobs, "app"));
+        Asset asset = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
+        documents.indexed(list(), asset, extractions);
+        reads.sections.set(0);
+
+        documents.afterSync("wiki", "DEV", List.of(PAGE.pageId()), null);
+
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("aktuell, am Manifest erkannt: kein neuer Teil")
+                .hasSize(1);
+        assertThat(reads.sections).as("ohne einen Abschnitt zu lesen").hasValue(0);
+        assertThat(recording.inputs).containsExactly("Erster Teil.");
+    }
+
+    @Test
+    void attachmentsAwaitingTheirExportAndOtherEnrichmentsDoNotHoldThePartBack() {
+        // Abnahme #1052, Punkt 2: Nur Abgleich, Neulesen, laufende Anhänge und die Anreicherung nach dem Abgleich
+        // desselben Space halten auf.
+        Queue<Runnable> held = new ConcurrentLinkedQueue<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = hosted(true, jobs, new BackgroundJobs(jobs, "app"));
+        jobs.submitAwaiting(JobType.ATTACHMENTS, "wiki", "DEV", null, null, Map.of(),
+                JobTask.blocking(context -> { }), "export-1");
+        jobs.submit(JobType.ENRICHMENT, "wiki", null, null, JobTask.blocking(context -> { }));
+        jobs.submit(JobType.ENRICHMENT, "wiki", "OPS", null, null,
+                Map.of(EnrichmentsAfterSync.TASK_PARAMETER, EnrichmentsAfterSync.TASK), JobTask.blocking(context -> { }));
+        Asset asset = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
+
+        documents.indexed(list(), asset, extractions);
+
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("startet sofort").hasSize(1);
+        runAll(held);
+        assertThat(recording.inputs).containsExactly("Erster Teil.");
+    }
+
+    @Test
+    void aSyncStartingWhileThePartComputesEndsItAfterItsRoundAndTheSyncsEndStartsTheNext()
+            throws InterruptedException {
+        // Abnahme #1052, Punkt 3: keine Runde um Runde gegen einen laufenden Abgleich.
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = hosted(true, jobs, new BackgroundJobs(jobs, "app"));
+        Asset first = inStock(stored("a1", "eins.zip", Map.of("eins.txt", "Erster Teil.")));
+        Asset second = stored("a2", "zwei.zip", Map.of("zwei.txt", "Zweiter Teil."));
+        CompletableFuture<Void> sync = new CompletableFuture<>();
+        AtomicBoolean once = new AtomicBoolean();
+        recording.onInput = () -> {
+            if (once.compareAndSet(false, true)) {
+                // Während der Teil rechnet, beginnt ein Abgleich des Space und legt einen weiteren Anhang ab.
+                jobs.submit(JobType.SYNC, "wiki", "DEV", null, context -> sync);
+                inStock(second);
+                documents.indexed(list(), second, extractions);
+            }
+        };
+
+        documents.indexed(list(), first, extractions);
+
+        assertThat(recording.inputs).as("die nächste Runde wartet auf das Ende des Abgleichs")
+                .containsExactly("Erster Teil.");
+        assertThat(jobs.list("app", JobType.BACKGROUND)).singleElement().extracting(JobStatus::state)
+                .isEqualTo(JobState.COMPLETED);
+
+        sync.complete(null);
+        awaitUntil(new ConcurrentLinkedQueue<>(), () -> recording.inputs.size() == 2
+                && jobs.list("app", JobType.BACKGROUND).stream().allMatch(part -> part.state().terminal()));
+
+        assertThat(recording.inputs).containsExactly("Erster Teil.", "Zweiter Teil.");
+        assertThat(jobs.list("app", JobType.BACKGROUND)).hasSize(2)
+                .allSatisfy(part -> assertThat(part.state()).isEqualTo(JobState.COMPLETED));
+    }
+
+    @Test
+    void aCancelledPartDoesNotComeBackForReportsFromItsRun() throws InterruptedException {
+        // Abnahme #1052, Punkt 4: Abbrechen heißt diese Arbeit nicht; erst ein neuer Anlass startet wieder.
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        DocumentEnrichments documents = hosted(true, jobs, background);
+        Asset first = inStock(stored("a1", "eins.zip", Map.of("eins.txt", "Erster Teil.")));
+        Asset second = stored("a2", "zwei.zip", Map.of("zwei.txt", "Zweiter Teil."));
+        CountDownLatch delivered = cancelledDelivered(jobs);
+        AtomicBoolean once = new AtomicBoolean();
+        recording.onInput = () -> {
+            if (once.compareAndSet(false, true)) {
+                // Während der Teil rechnet, kommt ein weiterer Anhang; dann bricht der Benutzer ab.
+                inStock(second);
+                documents.indexed(list(), second, extractions);
+                background.cancel(background.groups().getFirst().groupId());
+            }
+        };
+
+        documents.indexed(list(), first, extractions);
+
+        assertThat(delivered.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("Abbrechen startet nicht neu").singleElement()
+                .extracting(JobStatus::state).isEqualTo(JobState.CANCELLED);
+        assertThat(recording.inputs).containsExactly("Erster Teil.");
+
+        documents.indexed(list(), second, extractions);
+
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("ein neuer Anlass startet wieder").hasSize(2);
+        assertThat(recording.inputs).containsExactly("Erster Teil.", "Zweiter Teil.");
+    }
+
+    @Test
+    void aCancelledPartCannotBeResumedWhileAnotherOfItsSpaceIsOpen() throws InterruptedException {
+        // Abnahme #1052, Punkt 5: höchstens ein offener Teil je Space, auch beim Fortsetzen.
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        DocumentEnrichments documents = hosted(true, jobs, background);
+        Asset asset = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
+        documents.indexed(list(), asset, extractions);
+        String cancelled = background.groups().getFirst().parts().getFirst().id();
+        CountDownLatch delivered = cancelledDelivered(jobs);
+        jobs.cancel(cancelled);
+        assertThat(delivered.await(10, TimeUnit.SECONDS)).isTrue();
+        documents.indexed(list(), asset, extractions);
+        assertThat(background.groups()).as("ein neuer Anlass, ein neuer Teil").hasSize(2);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> background.resumeJob(cancelled))
+                .isInstanceOf(com.aresstack.spaceharvester.application.background.BackgroundPartOpenException.class);
+
+        assertThat(jobs.status(cancelled).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(recording.inputs).isEmpty();
+    }
+
+    @Test
     void aJobCancelledBeforeItStartsDoesNotHoldUpLaterReports() {
         List<Runnable> held = new ArrayList<>();
         Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(1, 5, Duration.ofHours(1)),
@@ -552,6 +737,34 @@ class DocumentEnrichmentsTest {
     private Asset inStock(Asset asset) {
         inventory.add(asset);
         return asset;
+    }
+
+    /**
+     * Zählt herunter, sobald ein abgebrochener Hintergrundteil gemeldet ist. Nach den Analysen angemeldet: Sieht dieser
+     * Hörer die Meldung, haben jene sie schon verarbeitet (dieselbe Zustellung, in Reihenfolge der Anmeldung).
+     */
+    private static CountDownLatch cancelledDelivered(Jobs jobs) {
+        CountDownLatch delivered = new CountDownLatch(1);
+        jobs.subscribeAll(new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+                if (status.type() == JobType.BACKGROUND && status.state() == JobState.CANCELLED) {
+                    delivered.countDown();
+                }
+            }
+        });
+        return delivered;
+    }
+
+    /** Führt Zurückgehaltenes aus, bis die Bedingung gilt; Auftragsmeldungen kommen auf ihrem eigenen Thread. */
+    private static void awaitUntil(Queue<Runnable> held, BooleanSupplier condition) throws InterruptedException {
+        Instant deadline = Instant.now().plusSeconds(10);
+        while (Instant.now().isBefore(deadline) && !condition.getAsBoolean()) {
+            runAll(held);
+            Thread.sleep(20);
+        }
+        runAll(held);
+        assertThat(condition.getAsBoolean()).as("rechtzeitig erreicht").isTrue();
     }
 
     private static void runAll(Queue<Runnable> held) {

@@ -1309,7 +1309,9 @@ public final class ActivitiesView implements View {
                 if (outcome.failed() > 0) {
                     feedback.warning(Texts.count(outcome.changed(), "Unterauftrag", "Unteraufträge") + " erreicht, "
                             + outcome.failed() + " nicht", outcome.problem() == null ? null
-                            : outcome.problem().getMessage());
+                            : outcome.problem() instanceof com.aresstack.spaceharvester.application.background
+                            .BackgroundPartOpenException ? "Läuft schon. " + com.aresstack.spaceharvester.application
+                            .background.BackgroundPartOpenException.REASON : outcome.problem().getMessage());
                 }
                 poll();
             }, feedback::problem);
@@ -1329,7 +1331,15 @@ public final class ActivitiesView implements View {
                 show(after.id());
             }
             poll();
-        }, feedback::problem);
+        }, error -> {
+            if (error instanceof com.aresstack.spaceharvester.application.background.BackgroundPartOpenException) {
+                // Abnahme #1052: Ein anderer Teil für diesen Space erledigt die Arbeit mit, das ist kein Fehler.
+                feedback.warning("Läuft schon",
+                        com.aresstack.spaceharvester.application.background.BackgroundPartOpenException.REASON);
+            } else {
+                feedback.problem(error);
+            }
+        });
     }
 
     /** Für Tests und Bilder: zeigt diese Aufträge, als kämen sie vom Core. */

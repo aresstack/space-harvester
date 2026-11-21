@@ -48,6 +48,16 @@ class BackgroundJobsTest {
         return background;
     }
 
+    /** Mit der Art „solo“: höchstens ein offener Teil je Quelle und Space (Abnahme #1052). */
+    private BackgroundJobs exclusive(Jobs jobs) {
+        BackgroundJobs background = background(jobs, new AtomicBoolean(true));
+        background.register(BackgroundKind.exclusive("solo", part -> JobTask.blocking(context -> {
+            context.checkpoint();
+            seen.add(part);
+        }), () -> true));
+        return background;
+    }
+
     private static List<BackgroundPart.Draft> twoSpaces() {
         return List.of(new BackgroundPart.Draft("wiki", "ALPHA", Map.of("x", "1")),
                 new BackgroundPart.Draft("wiki", "BETA", Map.of("x", "2")));
@@ -273,6 +283,78 @@ class BackgroundJobsTest {
         List<BackgroundGroup> late = new CopyOnWriteArrayList<>();
         background.whenFinished(group.groupId(), late::add);
         assertThat(late).singleElement().satisfies(report -> assertThat(report.finished()).isTrue());
+    }
+
+    @Test
+    void anExclusiveKindRefusesToResumeAPartWhileAnotherOfItsSpaceWaitsIsPausedOrRuns() {
+        Jobs jobs = jobs(executor);
+        BackgroundJobs background = exclusive(jobs);
+        BackgroundPart.Draft alpha = new BackgroundPart.Draft("wiki", "ALPHA");
+        BackgroundGroup cancelled = background.startUnlessRunning("solo", "Solo", alpha).orElseThrow();
+        background.cancel(cancelled.groupId());
+        executor.runAll();
+        String cancelledId = cancelled.parts().getFirst().id();
+        BackgroundGroup open = background.startUnlessRunning("solo", "Solo", alpha).orElseThrow();
+        String openId = open.parts().getFirst().id();
+
+        assertThatThrownBy(() -> background.resumeJob(cancelledId)).as("läuft schon")
+                .isInstanceOfSatisfying(BackgroundPartOpenException.class,
+                        refused -> assertThat(refused.openJobId()).isEqualTo(openId));
+        background.resume(cancelled.groupId());
+        assertThat(jobs.status(cancelledId).state()).isEqualTo(JobState.CANCELLED);
+
+        background.pause(open.groupId());
+        executor.runAll();
+        assertThat(jobs.status(openId).state()).isEqualTo(JobState.PAUSED);
+        assertThatThrownBy(() -> background.resumeJob(cancelledId)).as("der angehaltene nimmt die Arbeit mit")
+                .isInstanceOf(BackgroundPartOpenException.class);
+
+        background.resumeJob(openId);
+        executor.runAll();
+        assertThat(jobs.status(openId).state()).isEqualTo(JobState.COMPLETED);
+        background.resumeJob(cancelledId);
+        executor.runAll();
+        assertThat(jobs.status(cancelledId).state()).as("ist keiner mehr offen, geht es").isEqualTo(JobState.COMPLETED);
+        assertThat(seen).extracting(BackgroundPart::jobId).containsExactly(openId, cancelledId);
+    }
+
+    @Test
+    void aKindWithoutThatLimitStillResumesNextToAnOpenPart() {
+        Jobs jobs = jobs(executor);
+        BackgroundJobs background = background(jobs, new AtomicBoolean(true));
+        BackgroundPart.Draft alpha = new BackgroundPart.Draft("wiki", "ALPHA");
+        BackgroundGroup cancelled = background.start("demo", "Demo", List.of(alpha));
+        background.cancel(cancelled.groupId());
+        executor.runAll();
+        background.start("demo", "Demo", List.of(alpha));
+
+        background.resumeJob(cancelled.parts().getFirst().id());
+        executor.runAll();
+
+        assertThat(jobs.status(cancelled.parts().getFirst().id()).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
+    void afterARestartAnExclusiveKindResumesOnlyTheYoungestInterruptedPartOfEachSpace() {
+        // Zwei unterbrochene Teile desselben Space (je ein eigener Anlass) und einer eines anderen Space.
+        Jobs first = jobs(new Steps());
+        BackgroundJobs before = exclusive(first);
+        String older = before.start("solo", "Solo", List.of(new BackgroundPart.Draft("wiki", "ALPHA")))
+                .parts().getFirst().id();
+        String younger = before.start("solo", "Solo", List.of(new BackgroundPart.Draft("wiki", "ALPHA")))
+                .parts().getFirst().id();
+        String beta = before.start("solo", "Solo", List.of(new BackgroundPart.Draft("wiki", "BETA")))
+                .parts().getFirst().id();
+
+        Jobs restarted = jobs(executor);
+        List<JobStatus> resumed = exclusive(restarted).resumeInterrupted();
+        executor.runAll();
+
+        assertThat(resumed).extracting(JobStatus::id).as("der jüngste nimmt die Arbeit des älteren mit")
+                .containsExactlyInAnyOrder(younger, beta);
+        assertThat(restarted.status(older).state()).isEqualTo(JobState.FAILED);
+        assertThat(restarted.status(younger).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(restarted.status(beta).state()).isEqualTo(JobState.COMPLETED);
     }
 
     /** Führt Arbeit erst auf Anforderung aus. */

@@ -286,13 +286,36 @@ wird automatisch verwaltet.
      `terms.synonyms.automatic`.
    - `documents` „Anhänge analysieren“ (`DocumentEnrichments`, vorher ebenso ein Auftrag ohne Auftraggeber). Die
      Arbeit kommt allein aus Quelle, Space und Bestand: die Anhänge der Seiten des Space ohne aktuelle Analyse. Eine
-     Meldung (`IndexedDocuments#indexed`) vermerkt nur, dass es im Space Arbeit gibt; Anhalten hält also wirklich an,
-     und nach einem Neustart setzt der Teil mit der Arbeit aus dem Bestand fort (nur bei
-     `enrichment.documents.enabled`). Je Anlass eine Gruppe, je Space höchstens ein offener Teil; eine Meldung während
-     des Laufs holt derselbe Teil in einem weiteren Durchgang ab. Gestartet wird erst, wenn im Space kein Abgleich,
-     keine Anreicherung, kein Anhänge- und kein Neu-Lese-Auftrag mehr wartet oder läuft; deren Ende kommt als
-     Auftragsmeldung (ADR 0027, kein Abfragen). Außerhalb solcher Aufträge bündelt ein `Coalescer` die Meldungen
-     zehn Sekunden lang. So geben die Anhänge eines Abgleichs eine einzige Gruppe.
+     Meldung (`IndexedDocuments#indexed`) und die Anreicherung nach einem Abgleich (`DocumentEnrichments#afterSync`)
+     vermerken nur, dass es im Space Arbeit gibt; gerechnet wird nur im Teil, Anhalten hält also wirklich an. Die
+     Anreicherung vermerkt nur, wenn für einen Anhang der abgeglichenen Seiten laut Manifest etwas zu tun ist, ohne
+     einen Abschnitt zu lesen; nach einem Abgleich ohne Arbeit erscheint keine Gruppe. Je Anlass eine Gruppe, je Space
+     höchstens ein offener Teil (`BackgroundKind#exclusive`, unten); eine Meldung während des Laufs holt derselbe Teil
+     in einem weiteren Durchgang ab. Gestartet wird erst, und eine weitere Runde beginnt erst, wenn für den Space kein
+     Abgleich, kein Neulesen (es gilt für die ganze Quelle), kein Anhangsauftrag und keine Anreicherung nach dem
+     Abgleich dieses Space (Angabe `task` = `after-sync`) mehr wartet oder läuft; sonst endet der Teil nach seiner
+     Runde und vermerkt den Rest. Andere Anreicherungen (Bildbeschreibung, Abkürzungen, Synonyme) halten nicht auf,
+     ebenso kein Auftrag, der auf seinen Vorgänger wartet (`AWAITING`, etwa die Anhänge eines Exports bis zu dessen
+     Text). Das Ende solcher Aufträge kommt als Auftragsmeldung (ADR 0027, kein Abfragen). Außerhalb davon bündelt
+     ein `Coalescer` die Meldungen zehn Sekunden lang. So geben die Anhänge eines Abgleichs eine einzige Gruppe. Nur
+     ein fertiger Teil plant für Vermerke aus seiner Laufzeit einen neuen; ein abgebrochener verwirft sie, erst ein
+     neuer Anlass startet wieder. Endet die Arbeit eines nach `STOP_GRACE` abgekoppelten Teils, plant sie selbst,
+     falls seither etwas vermerkt ist und kein Teil des Space mehr offen ist.
+
+   Höchstens ein offener Teil je Quelle und Space (`BackgroundKind#exclusive`, Abnahme #1052): `resumeJob` lehnt
+   unter dem Startriegel der Art ab, solange ein anderer Teil wartet, angehalten ist oder läuft
+   (`BackgroundPartOpenException`, in der App gelb „Läuft schon“), und `resumeInterrupted` setzt je Art, Quelle und
+   Space nur den jüngsten unterbrochenen fort; dessen Arbeit aus dem Bestand deckt die der älteren. Nur für Arten,
+   die neue Teile mit `startUnlessRunning` starten: Bei `startUnlessWaiting` (etwa `synonyms`) dürfen ein laufender
+   und ein wartender Teil nebeneinander stehen, und nach „Alle anhalten“ sperrten sie sich beim Fortsetzen
+   gegenseitig.
+
+   Grenzen: Vermerke, aus denen noch kein Teil wurde (die zehn Sekunden Bündelung, ein noch laufender Abgleich),
+   liegen nur im Speicher. Beim Beenden des Dienstes gehen sie verloren; der nächste Abgleich des Space holt sie über
+   die Anreicherung nach. Ebenso ein Vermerk, der in den Augenblick zwischen Abbrechen und dessen Meldung fällt. Nach
+   einem Neustart setzt nur ein schon angelegter, unterbrochener Teil von selbst fort (nur bei
+   `enrichment.documents.enabled`). Die Ablage der Anhänge kennt keinen Space: Ein Teil liest die Anhangseinträge der
+   ganzen Quelle und behält die der Seiten seines Space.
 
    Ohne Hintergrundaufträge (Dienst) bleibt es beim bisherigen Weg.
 
