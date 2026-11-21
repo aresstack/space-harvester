@@ -132,6 +132,9 @@ class SearchApiTest {
         // Ausschlussliste (#179) nur für die Schlagwortsuche.
         assertThat(get("/api/v1/search?text=Nachtlauf&excludeSpaceKey=OPS").statusCode()).isEqualTo(200);
         assertProblem(get("/api/v1/search?sourceId=wiki&title=seite&excludeSpaceKey=OPS"), 400, "invalid-request");
+        // Synonyme der Fachbegriffe (K5a) ebenso nur für die Schlagwortsuche.
+        assertThat(get("/api/v1/search?text=Nachtlauf&glossarySynonyms=true").statusCode()).isEqualTo(200);
+        assertProblem(get("/api/v1/search?sourceId=wiki&title=seite&glossarySynonyms=true"), 400, "invalid-request");
     }
 
     @Test

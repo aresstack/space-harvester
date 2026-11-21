@@ -294,6 +294,17 @@ public class RelevanceSearch {
      */
     public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, String discovery,
                                    Set<String> excludedSpaceKeys, int limit, SearchRunId partOf) {
+        return search(caller, query, text, discovery, excludedSpaceKeys, limit, partOf, false);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, PageSearchQuery, String, String, Set, int, SearchRunId)}; mit
+     * {@code glossarySynonyms} findet die Vorbereitung auch über die Synonyme bestätigter Fachbegriffe (K5a), wie die
+     * Schlagwortsuche mit {@code KeywordSearch.Query#withGlossarySynonyms}.
+     */
+    public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, String discovery,
+                                   Set<String> excludedSpaceKeys, int limit, SearchRunId partOf,
+                                   boolean glossarySynonyms) {
         Set<String> excluded = Set.copyOf(excludedSpaceKeys);
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query);
         if (limit < 1 || limit > Reranking.MAX_WINDOW) {
@@ -322,7 +333,7 @@ public class RelevanceSearch {
         boolean prepared = false;
         if (preparation != null) {
             try {
-                preparing = preparation.prepare(caller, query, findText, excluded, runId);
+                preparing = preparation.prepare(caller, query, findText, excluded, runId, glossarySynonyms);
                 prepared = true;
             } catch (RuntimeException e) {
                 // Ohne Anfragetext im Log; gesucht wird über das, was schon im Cache liegt.
@@ -630,6 +641,16 @@ public class RelevanceSearch {
         default int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys,
                             SearchRunId partOf) {
             return prepare(caller, query, text, excludedSpaceKeys);
+        }
+
+        /**
+         * Wie {@link #prepare(AccessContext, PageSearchQuery, String, Set, SearchRunId)}; mit {@code glossarySynonyms}
+         * findet die Vorbereitung auch über die Synonyme bestätigter Fachbegriffe (K5a). Ohne eigene Umsetzung ohne
+         * Synonyme.
+         */
+        default int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys,
+                            SearchRunId partOf, boolean glossarySynonyms) {
+            return prepare(caller, query, text, excludedSpaceKeys, partOf);
         }
     }
 

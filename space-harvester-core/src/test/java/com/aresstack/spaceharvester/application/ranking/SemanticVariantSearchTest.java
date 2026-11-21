@@ -84,6 +84,7 @@ class SemanticVariantSearchTest {
     private final List<String> embeddedQueries = Collections.synchronizedList(new ArrayList<>());
     private final List<String> discovered = Collections.synchronizedList(new ArrayList<>());
     private final List<Set<String>> excludedOnDiscovery = Collections.synchronizedList(new ArrayList<>());
+    private final List<Boolean> synonymsOnDiscovery = Collections.synchronizedList(new ArrayList<>());
     private final EmbeddingProcessor processor = new EmbeddingProcessor(new EmbeddingProvider() {
         @Override
         public String modelId() {
@@ -143,6 +144,15 @@ class SemanticVariantSearchTest {
                     assertThat(hit.spaceKey()).isEqualTo("DEV");
                     assertThat(hit.title()).isEqualTo("Nachtbetrieb");
                 });
+    }
+
+    @Test
+    void theGlossarySynonymsMethodReachesTheDiscoveryOfTheSemanticProfile() {
+        // K5a, Auflage 1: Mit Einbettungsmodell findet die Vorbereitung auch über Synonymvorschläge, nur mit Häkchen.
+        search(ALLOW_ALL).run(CALLER, query("Betrieb", Set.of()).withGlossarySynonyms(true), ORIGINAL, 10);
+        search(ALLOW_ALL).run(CALLER, query("Betrieb", Set.of()), ORIGINAL, 10);
+
+        assertThat(synonymsOnDiscovery).containsExactly(true, false);
     }
 
     @Test
@@ -258,6 +268,14 @@ class SemanticVariantSearchTest {
                 discovered.add(text);
                 excludedOnDiscovery.add(excluded);
                 return 0;
+            }
+
+            @Override
+            public int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excluded,
+                               com.aresstack.spaceharvester.application.searchrun.SearchRunId partOf,
+                               boolean glossarySynonyms) {
+                synonymsOnDiscovery.add(glossarySynonyms);
+                return prepare(caller, query, text, excluded);
             }
         };
         RelevanceSearch relevance = new RelevanceSearch(CATALOG, index, new AccessGuard(policy), store, store,
