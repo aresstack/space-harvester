@@ -253,8 +253,7 @@ class RemoteAiTest {
                 });
         assertThatThrownBy(() -> remote(settings).queryVariants().complete("Anweisung", "Frage"))
                 .isInstanceOfSatisfying(AiServiceException.class, e -> assertThat(e.getMessage())
-                        .contains("finish_reason=length", "max_tokens=" + RemoteAi.MAX_VARIANT_TOKENS)
-                        .doesNotContain("chat-max-tokens"));
+                        .contains("finish_reason=length", "max_tokens=256", "chat-max-tokens"));
     }
 
     @Test
@@ -397,6 +396,34 @@ class RemoteAiTest {
                         .isEqualTo(AiServiceException.Reason.INVALID_RESPONSE))
                 .hasMessageContaining("3593 Token Prompt + 4599 Token Antwort")
                 .hasMessageContaining("context-tokens");
+    }
+
+    @Test
+    void everyRequestCarriesTheTokenLengthOfItsModel() {
+        // Angelo 21.11.2026: Ohne mitgeschickte Tokenlänge brachen lange Antworten (SVG-Bilder) ab.
+        List<String> chats = new CopyOnWriteArrayList<>();
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"text-model","model":"text-model"},{"name":"bild-model","model":"bild-model"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"fertig"},"done":true,"done_reason":"stop"}""");
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "text-model", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA).withVisionModel("bild-model").withChatMaxTokens(4096)
+                .withVisionMaxTokens(2048).withImageGeneration(null, 65536);
+
+        remote(settings).statementChat().complete(List.of(
+                new com.aresstack.spaceharvester.application.enrichment.statements.StatementChat.Message(
+                        com.aresstack.spaceharvester.application.enrichment.statements.StatementChat.Role.USER,
+                        "Satz")));
+        remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png", "Beschreibe.");
+        remote(settings.imageGeneration()).termCompletions().apply("Zeichne ein SVG", "{}");
+
+        assertThat(chats).hasSize(3);
+        assertThat(chats.get(0)).contains("\"num_predict\":4096");
+        assertThat(chats.get(1)).contains("\"num_predict\":2048");
+        assertThat(chats.get(2)).contains("\"num_predict\":65536", "\"model\":\"text-model\"");
     }
 
     @Test

@@ -43,7 +43,8 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.EMBEDDING_DIMENSIONS, "ai." + AiServiceSettings.TIMEOUT,
             "ai." + AiServiceSettings.TRUST_BUNDLE, "ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
             "ai." + AiServiceSettings.RERANK_MODEL, "ai." + AiServiceSettings.VISION_MODEL,
-            "ai." + AiServiceSettings.CHAT_MAX_TOKENS,
+            "ai." + AiServiceSettings.CHAT_MAX_TOKENS, "ai." + AiServiceSettings.VISION_MAX_TOKENS,
+            "ai." + AiServiceSettings.IMAGE_MODEL, "ai." + AiServiceSettings.IMAGE_MAX_TOKENS,
             SearchSettings.SEMANTIC, SearchSettings.RERANK, SearchSettings.PREFETCH_HITS,
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
@@ -111,6 +112,9 @@ public final class ConfigurationOverlay {
         put(properties, "ai." + AiServiceSettings.RERANK_MODEL, ai.rerankModel());
         put(properties, "ai." + AiServiceSettings.VISION_MODEL, ai.visionModel());
         put(properties, "ai." + AiServiceSettings.CHAT_MAX_TOKENS, ai.chatMaxTokens());
+        put(properties, "ai." + AiServiceSettings.VISION_MAX_TOKENS, ai.visionMaxTokens());
+        put(properties, "ai." + AiServiceSettings.IMAGE_MODEL, ai.imageModel());
+        put(properties, "ai." + AiServiceSettings.IMAGE_MAX_TOKENS, ai.imageMaxTokens());
         SearchSettings search = configuration.search();
         put(properties, SearchSettings.SEMANTIC, search.semantic());
         put(properties, SearchSettings.RERANK, search.rerank());

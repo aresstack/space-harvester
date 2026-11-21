@@ -31,6 +31,7 @@ public final class ChatStepModel implements StepModel {
     private final String id;
     private final Supplier<AiServiceSettings> settings;
     private final Supplier<String> stepModel;
+    private final Supplier<Integer> maxTokens;
     private final Function<AiServiceSettings, RemoteAi> remote;
 
     /**
@@ -39,7 +40,17 @@ public final class ChatStepModel implements StepModel {
      */
     public ChatStepModel(String id, Supplier<AiServiceSettings> settings, Supplier<String> stepModel,
                          ConfiguredSourceCatalog catalog, TrustBundles trustBundles, String userAgent) {
-        this(id, settings, stepModel, current -> RemoteAi.of(current, catalog, trustBundles, userAgent));
+        this(id, settings, stepModel, () -> null, catalog, trustBundles, userAgent);
+    }
+
+    /**
+     * Mit eigener Tokenlänge des Schritts: {@code maxTokens} geht bei jeder Anfrage als Ausgabelimit mit
+     * ({@code max_tokens}, bei Ollama {@code num_predict}); {@code null} heißt {@code ai.chat-max-tokens}.
+     */
+    public ChatStepModel(String id, Supplier<AiServiceSettings> settings, Supplier<String> stepModel,
+                         Supplier<Integer> maxTokens, ConfiguredSourceCatalog catalog, TrustBundles trustBundles,
+                         String userAgent) {
+        this(id, settings, stepModel, maxTokens, current -> RemoteAi.of(current, catalog, trustBundles, userAgent));
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(trustBundles, "trustBundles");
         Objects.requireNonNull(userAgent, "userAgent");
@@ -47,27 +58,33 @@ public final class ChatStepModel implements StepModel {
 
     ChatStepModel(String id, Supplier<AiServiceSettings> settings, Supplier<String> stepModel,
                   Function<AiServiceSettings, RemoteAi> remote) {
+        this(id, settings, stepModel, () -> null, remote);
+    }
+
+    ChatStepModel(String id, Supplier<AiServiceSettings> settings, Supplier<String> stepModel,
+                  Supplier<Integer> maxTokens, Function<AiServiceSettings, RemoteAi> remote) {
+        this.maxTokens = Objects.requireNonNull(maxTokens, "maxTokens");
         this.id = Objects.requireNonNull(id, "id");
         this.settings = Objects.requireNonNull(settings, "settings");
         this.stepModel = Objects.requireNonNull(stepModel, "stepModel");
         this.remote = Objects.requireNonNull(remote, "remote");
     }
 
-    /** Die wirksamen Einstellungen mit dem Modell des Schritts als Chat-Modell; {@code null} ohne Dienst. */
+    /**
+     * Die wirksamen Einstellungen mit dem Modell und der Tokenlänge des Schritts als Chat-Modell; {@code null} ohne
+     * Dienst.
+     */
     AiServiceSettings effective() {
         AiServiceSettings current = settings.get();
         if (current == null) {
             return null;
         }
         String step = stepModel.get();
-        if (step == null || step.isBlank()) {
+        Integer limit = maxTokens.get();
+        if ((step == null || step.isBlank()) && limit == null) {
             return current;
         }
-        return new AiServiceSettings(current.baseUrl(), current.apiKey(), step.strip(), current.embeddingModel(),
-                current.embeddingDimensions(), current.timeout(), current.trustBundle(),
-                current.externalProcessingSources(), current.rerankModel(), current.visionModel(),
-                current.chatMaxTokens(), current.provider(), current.contextTokens(), current.loadTimeout(),
-                current.retries(), current.loadPollInterval(), current.stepThinking(), current.parallel());
+        return current.forChat(step, limit);
     }
 
     /** Verfahren, Modell und ein Fingerabdruck der Dienstadresse; nie die Adresse selbst. */

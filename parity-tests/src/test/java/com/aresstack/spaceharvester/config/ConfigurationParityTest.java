@@ -66,6 +66,10 @@ class ConfigurationParityTest {
                 vision-model: vision-model
                 step-thinking: low
                 parallel: 6
+                chat-max-tokens: 4096
+                vision-max-tokens: 32768
+                image-model: svg-model
+                image-max-tokens: 65536
                 external-processing-sources:
                   - confluence
               cache:
@@ -184,6 +188,10 @@ class ConfigurationParityTest {
         assertThat(appAi.visionModel()).isEqualTo(ai.visionModel());
         assertThat(appAi.stepThinking()).isEqualTo(ai.stepThinking()).isEqualTo("low");
         assertThat(appAi.parallel()).isEqualTo(ai.parallel()).isEqualTo(6);
+        assertThat(appAi.chatMaxTokens()).isEqualTo(ai.chatMaxTokens()).isEqualTo(4096);
+        assertThat(appAi.visionMaxTokens()).isEqualTo(ai.visionMaxTokens()).isEqualTo(32768);
+        assertThat(appAi.imageModel()).isEqualTo(ai.imageModel()).isEqualTo("svg-model");
+        assertThat(appAi.imageMaxTokens()).isEqualTo(ai.imageMaxTokens()).isEqualTo(65536);
         assertThat(appAi.externalProcessingSources()).containsExactlyInAnyOrderElementsOf(
                 ai.externalProcessingSources());
         assertThat(appAi.externalProcessingSources()).isEqualTo(List.of("confluence"));

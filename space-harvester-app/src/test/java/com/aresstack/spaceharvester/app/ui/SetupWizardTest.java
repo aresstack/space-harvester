@@ -450,7 +450,13 @@ class SetupWizardTest {
                     panel.chunkTokens)) {
                 assertThat(javax.swing.SwingUtilities.convertPoint(field, 0, 0, models).x).isEqualTo(left);
             }
-            int right = javax.swing.SwingUtilities.convertPoint(chatFrame, chatFrame.getWidth(), 0, models).x;
+            // Rechts neben dem Text-Modell stehen Tokenlänge und ?-Knopf (Angelo 21.11.2026): verglichen wird die
+            // rechte Kante der ganzen Zeile.
+            java.awt.Component chatRow = chatFrame.getParent();
+            int right = javax.swing.SwingUtilities.convertPoint(chatRow, chatRow.getWidth(), 0, models).x;
+            assertThat(SwingUtilities.isDescendingFrom(panel.chatMaxTokens, chatRow)).isTrue();
+            assertThat(SwingUtilities.isDescendingFrom(panel.imageMaxTokens, panel.imageModel.getParent().getParent()))
+                    .as("Bildgenerierung: Modell und Tokenlänge in einer Zeile").isTrue();
             assertThat(javax.swing.SwingUtilities.convertPoint(panel.dimensions, panel.dimensions.getWidth(), 0,
                     models).x).as("gleiche rechte Kante wie Feld mit ▾").isEqualTo(right);
             assertThat(javax.swing.SwingUtilities.convertPoint(panel.advanced, 0, 0, models).x)

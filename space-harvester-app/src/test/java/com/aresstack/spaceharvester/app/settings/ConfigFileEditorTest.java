@@ -1062,6 +1062,27 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theTokenLengthOfVisionAndImageGenerationGoIntoTheAiBlock() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("https://ki.firma.de/v1", "text-modell", null, null, null, java.util.List.of())
+                .withVisionModel("bild-modell").withVisionMaxTokens("2048")
+                .withImageGeneration("svg-modell", "65536");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("vision-max-tokens: 2048", "image-model: \"svg-modell\"",
+                "image-max-tokens: 65536");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().visionMaxTokens()).isEqualTo(2048);
+        assertThat(settings.ai().imageModel()).isEqualTo("svg-modell");
+        assertThat(settings.ai().imageMaxTokens()).isEqualTo(65536);
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(ai.withImageGeneration(null, "viel").problems()).anyMatch(p -> p.contains("Bildgenerierung"));
+        assertThat(ai.withVisionMaxTokens("0").problems()).anyMatch(p -> p.contains("Vision-Modells"));
+    }
+
+    @Test
     void rerankModelAndChunkingGoIntoTheAiBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sources: []\n");
