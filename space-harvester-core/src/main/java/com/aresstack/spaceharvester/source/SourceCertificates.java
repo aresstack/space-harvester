@@ -92,7 +92,8 @@ public final class SourceCertificates {
         if (cancelled.getAsBoolean()) {
             throw new CancellationException("abgebrochen");
         }
-        CertificatePackage bundle = CertificatePackage.of(title(config), base.getHost(), recorder.chain(), anchors,
+        CertificatePackage bundle = CertificatePackage.of(title(config), base.getHost(), recorder.chain(),
+                recorder.checked() && recorder.rejection() == null, anchors,
                 client, problems, notes, now);
         Files.createDirectories(directory);
         Path file = unique(directory, "Zertifikate " + CertificatePackage.safe(title(config)) + " "

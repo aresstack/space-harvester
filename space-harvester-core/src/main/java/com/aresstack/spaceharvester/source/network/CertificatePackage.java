@@ -93,13 +93,14 @@ public final class CertificatePackage {
      * @param title       Titel der Quelle, für LIESMICH
      * @param host        Hostname der Quelle
      * @param presented   vom Server gesendete Kette (Server-Reihenfolge); leer, wenn der Handshake nicht so weit kam
+     * @param verdict     Urteil des Vertrauens der Quelle: {@code true}, wenn es die Kette geprüft und angenommen hat
      * @param anchors     Vertrauensanker der Quelle samt mitgelieferter Zwischenzertifikate
      * @param client      Kette des Client-Zertifikats (Zertifikat zuerst); leer ohne Client-Zertifikat
      * @param problems    Gründe, warum etwas fehlt (Handshake gescheitert, Speicher nicht lesbar); ohne Geheimnisse
      * @param notes       weitere Hinweise für LIESMICH
      */
     public static CertificatePackage of(String title, String host, List<X509Certificate> presented,
-                                        List<X509Certificate> anchors, List<X509Certificate> client,
+                                        boolean verdict, List<X509Certificate> anchors, List<X509Certificate> client,
                                         List<String> problems, List<String> notes, ZonedDateTime created) {
         Objects.requireNonNull(created, "created");
         Set<String> anchorKeys = new HashSet<>();
@@ -113,14 +114,12 @@ public final class CertificatePackage {
         Map<String, Entry> byKey = new LinkedHashMap<>();
         Names names = new Names();
 
-        boolean serverTrusted = false;
         if (!presented.isEmpty()) {
             List<X509Certificate> path = path(presented.get(0), presented, anchors);
-            serverTrusted = reachesAnchor(path, anchorKeys);
             add(byKey, names, path.get(0), Role.SERVER, sentKeys, anchorKeys);
-            for (X509Certificate certificate : path.subList(1, path.size())) {
-                add(byKey, names, certificate, serverTrusted ? caRole(certificate) : Role.UNTRUSTED, sentKeys,
-                        anchorKeys);
+            List<Role> roles = roles(path, anchorKeys);
+            for (int i = 1; i < path.size(); i++) {
+                add(byKey, names, path.get(i), roles.get(i), sentKeys, anchorKeys);
             }
             for (X509Certificate certificate : presented) {
                 // Vom Server mitgeschickt, aber nicht auf dem Weg: nur zur Ansicht.
@@ -130,13 +129,14 @@ public final class CertificatePackage {
         boolean clientTrusted = false;
         if (!client.isEmpty()) {
             List<X509Certificate> path = path(client.get(0), client, anchors);
-            clientTrusted = reachesAnchor(path, anchorKeys);
+            List<Role> roles = roles(path, anchorKeys);
+            clientTrusted = roles.contains(Role.ROOT);
             add(byKey, names, path.get(0), Role.CLIENT, sentKeys, anchorKeys);
-            for (X509Certificate certificate : path.subList(1, path.size())) {
-                add(byKey, names, certificate, clientTrusted ? caRole(certificate) : Role.UNTRUSTED, sentKeys,
-                        anchorKeys);
+            for (int i = 1; i < path.size(); i++) {
+                add(byKey, names, path.get(i), roles.get(i), sentKeys, anchorKeys);
             }
         }
+        boolean serverTrusted = verdict && !presented.isEmpty();
         return new CertificatePackage(blankToDash(title), blankToDash(host), created, problems, notes, serverTrusted,
                 clientTrusted, !presented.isEmpty(), new ArrayList<>(byKey.values()));
     }
@@ -236,7 +236,7 @@ public final class CertificatePackage {
                         .append("anderes.\r\n");
             }
         } else {
-            text.append("- ACHTUNG: Die Kette des Servers endet an KEINEM Zertifikat, dem dieser Rechner vertraut.\r\n")
+            text.append("- ACHTUNG: Das Vertrauen dieses Rechners nimmt die Kette des Servers NICHT an.\r\n")
                     .append("  Ihre Zertifikate liegen nur zur Ansicht unter ").append(SERVER)
                     .append(" und stehen NICHT im Importskript.\r\n")
                     .append("  Bitte nicht importieren, ohne die Fingerabdrücke mit der IT abzugleichen.\r\n");
@@ -348,14 +348,34 @@ public final class CertificatePackage {
         return path;
     }
 
-    private static boolean reachesAnchor(List<X509Certificate> path, Set<String> anchorKeys) {
-        for (X509Certificate certificate : path.subList(1, path.size())) {
-            if (anchorKeys.contains(sha256(certificate))) {
-                return true;
+    /**
+     * Rollen der Glieder eines Wegs (Index 0 = Zertifikat selbst, dort ohne Bedeutung). Importierbar ist nur, was eine
+     * Vertrauensaussage hat: {@link Role#ROOT} nur für ein selbstsigniertes Zertifikat, das selbst Anker ist;
+     * {@link Role#INTERMEDIATE} für ein Anker-Zwischenzertifikat oder ein Glied unterhalb eines solchen
+     * Stammzertifikats. Ein Zwischenzertifikat im Windows-Speicher „Zwischenzertifizierungsstellen“ ist keine
+     * Vertrauensaussage für das, was darüber liegt; alles andere ist {@link Role#UNTRUSTED}.
+     */
+    static List<Role> roles(List<X509Certificate> path, Set<String> anchorKeys) {
+        int root = -1;
+        for (int i = 0; i < path.size(); i++) {
+            if (selfSigned(path.get(i)) && anchorKeys.contains(sha256(path.get(i)))) {
+                root = i;
+                break;
             }
         }
-        // Auch das erste Glied selbst kann Anker sein (z. B. ein ausdrücklich vertrautes Serverzertifikat).
-        return !path.isEmpty() && anchorKeys.contains(sha256(path.get(0)));
+        List<Role> roles = new ArrayList<>();
+        for (int i = 0; i < path.size(); i++) {
+            X509Certificate certificate = path.get(i);
+            boolean anchor = anchorKeys.contains(sha256(certificate));
+            if (i == root) {
+                roles.add(Role.ROOT);
+            } else if (!selfSigned(certificate) && (anchor || root > i)) {
+                roles.add(Role.INTERMEDIATE);
+            } else {
+                roles.add(Role.UNTRUSTED);
+            }
+        }
+        return roles;
     }
 
     private static X509Certificate issuer(X509Certificate certificate, List<X509Certificate> candidates) {
@@ -366,10 +386,6 @@ public final class CertificatePackage {
             }
         }
         return null;
-    }
-
-    private static Role caRole(X509Certificate certificate) {
-        return selfSigned(certificate) ? Role.ROOT : Role.INTERMEDIATE;
     }
 
     static boolean selfSigned(X509Certificate certificate) {
