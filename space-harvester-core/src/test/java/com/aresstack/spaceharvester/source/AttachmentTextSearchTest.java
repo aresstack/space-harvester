@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.assets.ImageDescription;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.passages.PassageId;
 import com.aresstack.spaceharvester.application.passages.PassagePayload;
@@ -377,6 +378,17 @@ class AttachmentTextSearchTest {
         Optional<String> state = index.attachmentInputSha256(page, "att7");
         assets.harvest(list);
         assertThat(index.attachmentInputSha256(page, "att7")).isEqualTo(state);
+
+        // „Neu beschreiben“: gleiches Bild, gleiches Modell, anderer Text; der neue Text ersetzt den alten.
+        Assets.DescribedImage again = new Assets.DescribedImage(described.asset(), new ImageDescription(
+                described.description().imageSha256(), described.description().describer(),
+                described.description().modelVersion(), "Richtfunk auf dem Dach",
+                described.description().createdAt()), true);
+        assertThat(assets.indexDescription(page, "DEV", again)).isTrue();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Richtfunk"), null, 10).hits())
+                .extracting(KeywordSearch.Hit::pageId).containsExactly("101");
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assertThat(assets.indexDescription(page, "DEV", described)).isTrue();
 
         // Bilder, die kein Anhang im Index sind (eingebettete Adressen), legen keinen neuen Eintrag an.
         assertThat(assets.indexDescription(new PageKey("wiki", "102"), "DEV", described)).isFalse();
