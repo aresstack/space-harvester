@@ -525,26 +525,33 @@ public class KeywordSearch {
         // bestätigten Begriffsbeziehungen ihres Umfangs als Anfragen dazu (#336).
         List<String> nativeQueries = nativeQueries(query.text());
         String spaceKey = query.singleSpace();
-        Map<String, List<String>> expansions = new HashMap<>();
+        Map<String, List<SearchExpansion.Expansion>> expansions = new HashMap<>();
+        // Je Quelle die Anfragen in der Reihenfolge ihrer Aufrufe, für die Ursache am Treffer (R1).
+        Map<String, List<SourceQuery>> asked = new HashMap<>();
+        Map<String, List<HitReason>> sourceReasons = new HashMap<>();
         tally.queries = searches.isEmpty() ? 0 : nativeQueries.size();
         List<List<Future<List<SourceSearchMatch>>>> calls = new ArrayList<>();
         try (ExecutorService searching = Executors.newVirtualThreadPerTaskExecutor()) {
             for (LiveSearch search : searches) {
                 List<Future<List<SourceSearchMatch>>> perQuery = new ArrayList<>();
-                List<String> expanded = expansion.expand(caller, query.text(), search.source().id(), spaceKey);
+                List<SearchExpansion.Expansion> expanded = expansion.expansions(caller, query.text(),
+                        search.source().id(), spaceKey);
                 expansions.put(search.source().id(), expanded);
                 tally.queries = Math.max(tally.queries, nativeQueries.size() + expanded.size());
-                List<String> all = new ArrayList<>(nativeQueries);
-                all.addAll(expanded);
-                for (String text : all) {
-                    perQuery.add(searching.submit(() -> search.source().searchPages(text, search.wanted(),
+                List<SourceQuery> all = new ArrayList<>();
+                nativeQueries.forEach(text -> all.add(new SourceQuery(text, null)));
+                expanded.forEach(extra -> all.add(new SourceQuery(extra.query(), extra.relation())));
+                asked.put(search.source().id(), List.copyOf(all));
+                for (SourceQuery sent : all) {
+                    perQuery.add(searching.submit(() -> search.source().searchPages(sent.text(), search.wanted(),
                             query.spaces())));
                 }
                 calls.add(perQuery);
                 if (observer != null) {
                     // Sobald diese Quelle geantwortet hat, erfährt es der Beobachter, auch wenn andere noch suchen.
                     List<Future<List<SourceSearchMatch>>> answers = List.copyOf(perQuery);
-                    searching.submit(() -> report(observer, caller, query, search, answers, limit));
+                    List<SourceQuery> sent = List.copyOf(all);
+                    searching.submit(() -> report(observer, caller, query, search, answers, sent, limit));
                 }
             }
         }
@@ -554,9 +561,13 @@ public class KeywordSearch {
             int offset = search.offset();
             List<List<SourceSearchMatch>> answered = new ArrayList<>();
             SourceAccessException failure = null;
-            for (Future<List<SourceSearchMatch>> call : calls.get(s)) {
+            List<SourceQuery> sent = asked.get(sourceId);
+            for (int q = 0; q < calls.get(s).size(); q++) {
+                Future<List<SourceSearchMatch>> call = calls.get(s).get(q);
                 try {
-                    answered.add(call.get());
+                    List<SourceSearchMatch> answer = call.get();
+                    answered.add(answer);
+                    noteSourceReasons(sourceReasons, sourceId, sent.get(q), answer);
                 } catch (ExecutionException e) {
                     if (e.getCause() instanceof SourceAccessException sourceFailure) {
                         failure = failure == null ? sourceFailure : failure;
@@ -615,7 +626,9 @@ public class KeywordSearch {
                     index++;
                 }
                 if (index < matches.size() && candidates.size() < limit) {
-                    candidates.add(new Candidate(entry.getKey(), matches.get(index), false, null, null));
+                    candidates.add(new Candidate(entry.getKey(), matches.get(index), false, null, null, null,
+                            sourceReasons.getOrDefault(mark(entry.getKey(), matches.get(index).pageId()),
+                                    List.of())));
                     index++;
                     added = true;
                 }
@@ -699,12 +712,18 @@ public class KeywordSearch {
                 int wanted = Math.min(delivered.size() + limit + 1, MAX_DEPTH);
                 List<PageTextIndex.Match> matches = new ArrayList<>(searchTexts(query.text(), searchable, query,
                         wanted));
+                // Ursachen je Seite (R1): jede Anfrage, die sie im Index lieferte, mit den Wörtern, die trafen.
+                Map<String, List<DocumentReason>> textReasons = new HashMap<>();
+                noteTextReasons(textReasons, matches, query.text(), null);
                 // Erweiterungen je Quelle, nur in dieser Quelle gesucht, damit Beziehungen ihres Umfangs bleiben.
                 for (String sourceId : searchable) {
-                    List<String> expanded = expansions.computeIfAbsent(sourceId, id ->
-                            expansion.expand(caller, query.text(), id, spaceKey));
-                    for (String text : expanded) {
-                        matches.addAll(searchTexts(text, Set.of(sourceId), query, wanted));
+                    List<SearchExpansion.Expansion> expanded = expansions.computeIfAbsent(sourceId, id ->
+                            expansion.expansions(caller, query.text(), id, spaceKey));
+                    for (SearchExpansion.Expansion extra : expanded) {
+                        List<PageTextIndex.Match> byExtra = searchTexts(extra.query(), Set.of(sourceId), query,
+                                wanted);
+                        noteTextReasons(textReasons, byExtra, extra.query(), extra.relation());
+                        matches.addAll(byExtra);
                     }
                 }
                 Set<String> seenMatches = new HashSet<>();
@@ -739,7 +758,7 @@ public class KeywordSearch {
                     fromCache.add(new Candidate(match.sourceId(), hit, true, seen, match.inAttachment()
                             ? new AttachmentMatch(match.attachmentId(), match.attachmentTitle(), match.partId(),
                                     match.partTitle()) : null,
-                            match.passageId()));
+                            match.passageId(), reasonsFor(textReasons.getOrDefault(mark, List.of()), match)));
                 }
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Volltextindex nicht lesbar ({0})", e.getClass().getName());
@@ -868,7 +887,7 @@ public class KeywordSearch {
                     id -> access.permitsSourceWide(caller, id, AccessKind.CONTENT));
             hits.add(new Hit(sourceId, match.pageId(), null, match.title(), snippet ? match.snippet() : "",
                     match.url(), match.version(), match.modifiedAt(), null, null,
-                    snippet ? candidate.passageId() : null));
+                    snippet ? candidate.passageId() : null, candidate.reasons()));
         }
         return new Checked(hits, complete);
     }
@@ -889,11 +908,15 @@ public class KeywordSearch {
      * Beobachters lässt die Suche hier unbeachtet, der Stapel meldet sie.
      */
     private void report(Found found, AccessContext caller, Query query, LiveSearch search,
-                        List<Future<List<SourceSearchMatch>>> answers, int limit) {
+                        List<Future<List<SourceSearchMatch>>> answers, List<SourceQuery> sent, int limit) {
         List<List<SourceSearchMatch>> answered = new ArrayList<>();
-        for (Future<List<SourceSearchMatch>> answer : answers) {
+        Map<String, List<HitReason>> reasons = new HashMap<>();
+        String sourceId = search.source().id();
+        for (int q = 0; q < answers.size(); q++) {
             try {
-                answered.add(answer.get());
+                List<SourceSearchMatch> answer = answers.get(q).get();
+                answered.add(answer);
+                noteSourceReasons(reasons, sourceId, sent.get(q), answer);
             } catch (ExecutionException e) {
                 // Der Stapel wertet den Ausfall aus.
             } catch (InterruptedException e) {
@@ -901,7 +924,6 @@ public class KeywordSearch {
                 return;
             }
         }
-        String sourceId = search.source().id();
         if (answered.isEmpty() || !access.permitsSourceWide(caller, sourceId, AccessKind.METADATA)) {
             return;
         }
@@ -916,7 +938,8 @@ public class KeywordSearch {
                 continue;
             }
             hits.add(new Hit(sourceId, match.pageId(), null, match.title(), snippet ? match.snippet() : "",
-                    match.url(), match.version(), match.modifiedAt(), null, null, null));
+                    match.url(), match.version(), match.modifiedAt(), null, null, null,
+                    reasons.getOrDefault(mark(sourceId, match.pageId()), List.of())));
         }
         try {
             found.found(sourceId, List.copyOf(hits));
@@ -933,7 +956,7 @@ public class KeywordSearch {
         for (Candidate candidate : candidates) {
             SourceSearchMatch match = candidate.match();
             hits.add(new Hit(candidate.sourceId(), match.pageId(), null, match.title(), match.snippet(), match.url(),
-                    match.version(), match.modifiedAt(), null));
+                    match.version(), match.modifiedAt(), null, null, null, candidate.reasons()));
         }
         return new Checked(hits, true);
     }
@@ -992,7 +1015,8 @@ public class KeywordSearch {
             String snippet = fromSource ? known.snippet() : candidate.match().snippet();
             return Optional.of(new Hit(known.sourceId(), known.pageId(), known.spaceKey(), known.title(), snippet,
                     known.url(), known.version(), known.modifiedAt(),
-                    known.parentPageId(), candidate.attachment(), fromSource ? null : candidate.passageId()));
+                    known.parentPageId(), candidate.attachment(), fromSource ? null : candidate.passageId(),
+                    candidate.reasons()));
         }
         PageMetadata metadata;
         HarvestSource source = catalog.find(candidate.sourceId()).orElse(null);
@@ -1035,7 +1059,8 @@ public class KeywordSearch {
                 metadata.url() != null ? metadata.url() : match.url(),
                 metadata.version() != null ? metadata.version() : match.version(),
                 metadata.modifiedAt() != null ? metadata.modifiedAt() : match.modifiedAt(),
-                metadata.parentPageId(), candidate.attachment(), candidate.indexed() ? candidate.passageId() : null));
+                metadata.parentPageId(), candidate.attachment(), candidate.indexed() ? candidate.passageId() : null,
+                candidate.reasons()));
     }
 
     /**
@@ -1159,11 +1184,69 @@ public class KeywordSearch {
      * @param passageId  Passage-ID des Absatzes, aus dem der Auszug des Index stammt, oder {@code null}
      */
     private record Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known,
-                             AttachmentMatch attachment, String passageId) {
+                             AttachmentMatch attachment, String passageId, List<HitReason> reasons) {
 
-        Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known, AttachmentMatch attachment) {
-            this(sourceId, match, indexed, known, attachment, null);
+        Candidate {
+            reasons = reasons == null ? List.of() : List.copyOf(reasons);
         }
+    }
+
+    /**
+     * Eine Anfrage an die Suche einer Quelle.
+     *
+     * @param relation die bestätigte Beziehung, aus der die Anfrage entstand, oder {@code null}
+     */
+    private record SourceQuery(String text, HitReason.Relation relation) {
+    }
+
+    /** Merkt je gefundener Seite der Quelle die Anfrage, auf die sie gemeldet wurde (R1). */
+    private static void noteSourceReasons(Map<String, List<HitReason>> reasons, String sourceId, SourceQuery sent,
+                                          List<SourceSearchMatch> answer) {
+        if (sent == null || answer == null) {
+            return;
+        }
+        HitReason reason = HitReason.source(sent.text(), sent.relation());
+        for (SourceSearchMatch match : answer) {
+            reasons.merge(mark(sourceId, match.pageId()), List.of(reason), HitReason::union);
+        }
+    }
+
+    /**
+     * Eine Ursache aus dem Volltextindex mit dem Dokument (Seite, Anhang oder enthaltene Datei), in dem ihre Wörter
+     * trafen.
+     */
+    private record DocumentReason(String document, HitReason reason) {
+    }
+
+    /** Merkt je Seite die Anfrage, die sie im Volltextindex lieferte, mit den Wörtern, die dort trafen (R1). */
+    private static void noteTextReasons(Map<String, List<DocumentReason>> reasons, List<PageTextIndex.Match> matches,
+                                        String text, HitReason.Relation relation) {
+        for (PageTextIndex.Match match : matches) {
+            HitReason reason = HitReason.text(text, relation, match.words().inTitle(), match.words().inText());
+            reasons.computeIfAbsent(mark(match.sourceId(), match.pageId()), key -> new ArrayList<>())
+                    .add(new DocumentReason(document(match), reason));
+        }
+    }
+
+    /**
+     * Die Ursachen einer Seite für den Treffer mit dem Dokument {@code shown}. Fand eine Anfrage die Seite über ein
+     * anderes Dokument (etwa einen anderen Anhang), bleibt sie Ursache, aber ohne Wörter: Sie stehen nicht im
+     * gezeigten Dokument.
+     */
+    private static List<HitReason> reasonsFor(List<DocumentReason> found, PageTextIndex.Match shown) {
+        String document = document(shown);
+        List<HitReason> reasons = List.of();
+        for (DocumentReason entry : found) {
+            HitReason reason = entry.document().equals(document) ? entry.reason()
+                    : HitReason.text(entry.reason().query(), entry.reason().relation(), List.of(), List.of());
+            reasons = HitReason.union(reasons, List.of(reason));
+        }
+        return reasons;
+    }
+
+    private static String document(PageTextIndex.Match match) {
+        return match.inAttachment() ? match.attachmentId() + "\u0000" + (match.partId() == null ? "" : match.partId())
+                : "";
     }
 
     /**
@@ -1441,10 +1524,22 @@ public class KeywordSearch {
      *                   Seite selbst passt
      * @param passageId  die Passage-ID ({@code PassageId}) des Absatzes, aus dem der Auszug stammt, wie
      *                   {@code passage:} an den Treffern im Enterprise AI Client; {@code null} ohne Auszug aus Absätzen
+     * @param reasons    warum der Treffer gefunden wurde (R1), aus dem Lauf der Suche; leer, wenn unbekannt
      */
     public record Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
                       String version, Instant modifiedAt, String parentPageId, AttachmentMatch attachment,
-                      String passageId) {
+                      String passageId, List<HitReason> reasons) {
+
+        public Hit {
+            reasons = reasons == null ? List.of() : List.copyOf(reasons);
+        }
+
+        public Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
+                   String version, Instant modifiedAt, String parentPageId, AttachmentMatch attachment,
+                   String passageId) {
+            this(sourceId, pageId, spaceKey, title, snippet, url, version, modifiedAt, parentPageId, attachment,
+                    passageId, List.of());
+        }
 
         public Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
                    String version, Instant modifiedAt, String parentPageId) {
@@ -1455,6 +1550,12 @@ public class KeywordSearch {
                    String version, Instant modifiedAt, String parentPageId, AttachmentMatch attachment) {
             this(sourceId, pageId, spaceKey, title, snippet, url, version, modifiedAt, parentPageId, attachment,
                     null);
+        }
+
+        /** Derselbe Treffer mit diesen Ursachen. */
+        public Hit withReasons(List<HitReason> reasons) {
+            return new Hit(sourceId, pageId, spaceKey, title, snippet, url, version, modifiedAt, parentPageId,
+                    attachment, passageId, reasons);
         }
 
         /** Wo der Treffer liegt: in der Seite oder in einem ihrer Anhänge. */

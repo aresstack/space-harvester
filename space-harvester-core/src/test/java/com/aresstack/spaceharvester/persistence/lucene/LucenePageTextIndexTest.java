@@ -40,6 +40,25 @@ class LucenePageTextIndexTest {
     }
 
     @Test
+    void eachMatchNamesTheWordsThatHitInTitleAndText() {
+        // R1: genau die Wörter, die im Index trafen, je Feld; nichts aus dem Auszug erschlossen.
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            index.put(entry("wiki", "1", "DEV", "Nachtlauf", "Die Prüfung läuft nachts."));
+            index.put(entry("wiki", "2", "DEV", "Urlaub", "Nachtlauf und Prüfung"));
+
+            var matches = index.search("Nachtlauf Prüfung Fehlt", Set.of("wiki"), SearchSpaces.all(), 10);
+
+            assertThat(matches).extracting(PageTextIndex.Match::pageId).containsExactlyInAnyOrder("1", "2");
+            var first = matches.stream().filter(match -> match.pageId().equals("1")).findFirst().orElseThrow();
+            assertThat(first.words().inTitle()).containsExactly("nachtlauf");
+            assertThat(first.words().inText()).containsExactly("prüfung");
+            var second = matches.stream().filter(match -> match.pageId().equals("2")).findFirst().orElseThrow();
+            assertThat(second.words().inTitle()).isEmpty();
+            assertThat(second.words().inText()).containsExactly("nachtlauf", "prüfung");
+        }
+    }
+
+    @Test
     void theWindowIsAroundAWholeWordNotAPartOfOne() {
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
             index.put(entry("wiki", "1", "DEV", "A", "Die party beginnt. " + "Füllwort ".repeat(80)

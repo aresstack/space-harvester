@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.query.progressive;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.query.HitReason;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -31,6 +32,16 @@ class AiQueryExpansionTest {
 
         assertThat(variants).containsExactly("Nachtlauf Abrechnung Abbruch", "Nachtlauf Abrechnung", "Nachtlauf");
         assertThat(questions).containsExactly(ORIGINAL);
+    }
+
+    @Test
+    void theOriginIsTheModelOnlyWhenItsAnswerIsUsedOtherwiseWhatTheFallbackReports() {
+        // R1: Die Herkunft einer Variante wird gemeldet, nie geraten.
+        assertThat(expansion(answer("{\"queries\":[{\"text\":\"Nachtlauf\",\"priority\":1}]}"))
+                .variants(ORIGINAL, 8).origin()).isEqualTo(HitReason.Variant.Origin.MODEL);
+        assertThat(expansion(answer("Leider keine Varianten.")).variants(ORIGINAL, 8).origin()).isNull();
+        assertThat(new AiQueryExpansion(Optional::empty, new RuleBasedExpansion(), Duration.ofSeconds(1))
+                .variants(ORIGINAL, 8).origin()).isEqualTo(HitReason.Variant.Origin.RULES);
     }
 
     @Test

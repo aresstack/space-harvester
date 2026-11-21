@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.query.progressive;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
+import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.Completion;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.RankedHit;
@@ -183,6 +184,8 @@ public final class SearchOrchestrator implements AutoCloseable {
         KeywordSearch.Hit hit;
         double score = Double.NaN;
         boolean confirmed;
+        /** Ob der {@link HitScorer} den Wert gab (Reranker), nicht die Suche selbst. */
+        boolean reranked;
 
         Entry(long sequence, int foundBy, KeywordSearch.Hit hit, boolean confirmed) {
             this.sequence = sequence;
@@ -192,9 +195,12 @@ public final class SearchOrchestrator implements AutoCloseable {
         }
 
         RankedHit ranked() {
-            return new RankedHit(hit, score, foundBy, confirmed);
+            return new RankedHit(hit, score, foundBy, confirmed, reranked);
         }
     }
+
+    private static final QueryExpansionStrategy.Variants NO_VARIANTS =
+            new QueryExpansionStrategy.Variants(List.of(), null);
 
     private final class Run implements ProgressiveSearch {
 
@@ -230,6 +236,8 @@ public final class SearchOrchestrator implements AutoCloseable {
         private int newInWave;
         private boolean budgetHit;
         private volatile AiServiceException.Reason failure;
+        /** Woher die Varianten stammen, wie die Strategie es meldet; {@code null} ohne Angabe. */
+        private HitReason.Variant.Origin variantOrigin;
 
         Run(VariantSearch search, AccessContext caller, KeywordSearch.Query query, SearchProfile profile,
             SearchQualityPolicy quality, ProgressiveSearchListener listener) {
@@ -270,8 +278,8 @@ public final class SearchOrchestrator implements AutoCloseable {
             try {
                 QueryExpansionStrategy strategy = profile.expansion() == SearchProfile.Expansion.RULES ? rules
                         : expansion;
-                CompletableFuture<List<String>> expanded = CompletableFuture.supplyAsync(
-                        () -> strategy.expand(query.text(), profile.maxVariants()), executor);
+                CompletableFuture<QueryExpansionStrategy.Variants> expanded = CompletableFuture.supplyAsync(
+                        () -> strategy.variants(query.text(), profile.maxVariants()), executor);
                 variants.add(new QueryVariant(query.text(), 0));
                 states.add(Status.PENDING);
                 newHits.add(0);
@@ -521,6 +529,13 @@ public final class SearchOrchestrator implements AutoCloseable {
             PageKey key = new PageKey(hit.sourceId(), hit.pageId());
             Double given = scores.get(key);
             Entry known = entries.get(key);
+            // R1: Ursachen der Suchanfrage als Ursachen dieser Variante; beim Zusammenführen vereinigt.
+            hit = hit.withReasons(fromVariant(index, hit.reasons()));
+            if (known != null) {
+                List<HitReason> reasons = HitReason.union(known.hit.reasons(), hit.reasons());
+                known.hit = known.hit.withReasons(reasons);
+                hit = hit.withReasons(reasons);
+            }
             if (known == null) {
                 Entry entry = new Entry(sequence++, variants.get(index).priority(), hit, confirmed);
                 entries.put(key, entry);
@@ -535,6 +550,7 @@ public final class SearchOrchestrator implements AutoCloseable {
                 // Dieselbe ursprüngliche Anfrage; ein neuer Wert kommt etwa von einem inzwischen neu berechneten
                 // Embedding.
                 known.score = given;
+                known.reranked = false;
             }
             if (confirmed && !known.confirmed) {
                 // Bestätigt aus dem Cache: Kopfdaten und Auszug aus dem Inhalt, Platz nach der Bewertung.
@@ -548,6 +564,16 @@ public final class SearchOrchestrator implements AutoCloseable {
                 }
             }
             return 0;
+        }
+
+        /** Die Ursachen einer Suchanfrage als Ursachen ihrer Variante; die ursprüngliche Anfrage bleibt ohne. */
+        private List<HitReason> fromVariant(int index, List<HitReason> reasons) {
+            int priority = variants.get(index).priority();
+            if (priority == 0 || reasons.isEmpty()) {
+                return reasons;
+            }
+            HitReason.Variant variant = new HitReason.Variant(priority, variantOrigin);
+            return reasons.stream().map(reason -> reason.fromVariant(variant)).toList();
         }
 
         private static boolean usable(Double score) {
@@ -572,6 +598,7 @@ public final class SearchOrchestrator implements AutoCloseable {
             for (int i = 0; i < scores.length; i++) {
                 if (!Double.isNaN(scores[i]) && !Double.isInfinite(scores[i])) {
                     unscored.get(i).score = scores[i];
+                    unscored.get(i).reranked = true;
                 }
             }
         }
@@ -591,31 +618,33 @@ public final class SearchOrchestrator implements AutoCloseable {
             return new SearchQualityPolicy.State(scores, entries.size(), newInWave, searches);
         }
 
-        private List<String> awaitExpansion(CompletableFuture<List<String>> expanded) {
+        private QueryExpansionStrategy.Variants awaitExpansion(
+                CompletableFuture<QueryExpansionStrategy.Variants> expanded) {
             long until = Math.min(deadline, System.nanoTime() + profile.execution().variantTimeout().toNanos());
             try {
                 CompletableFuture.anyOf(expanded, cancelSignal).get(Math.max(0, until - System.nanoTime()),
                         TimeUnit.NANOSECONDS);
-                return expanded.isDone() ? expanded.join() : List.of();
+                return expanded.isDone() && expanded.join() != null ? expanded.join() : NO_VARIANTS;
             } catch (TimeoutException e) {
                 LOG.log(System.Logger.Level.INFO, "Keine Varianten in der Frist");
-                return List.of();
+                return NO_VARIANTS;
             } catch (ExecutionException | CompletionException e) {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
                 LOG.log(System.Logger.Level.INFO, "Varianten nicht erzeugt ({0})", cause.getClass().getName());
-                return List.of();
+                return NO_VARIANTS;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 cancelSignal.complete(null);
-                return List.of();
+                return NO_VARIANTS;
             }
         }
 
         /** Dubletten (auch der ursprünglichen Anfrage) und ungültige Texte fallen weg; Prioritäten nach Reihenfolge. */
-        private void addVariants(List<String> expanded) {
+        private void addVariants(QueryExpansionStrategy.Variants expanded) {
+            variantOrigin = expanded.origin();
             Set<String> seen = new HashSet<>();
             seen.add(RuleBasedExpansion.normalize(query.text()));
-            for (String text : expanded == null ? List.<String>of() : expanded) {
+            for (String text : expanded.texts()) {
                 if (variants.size() > profile.maxVariants()) {
                     break;
                 }

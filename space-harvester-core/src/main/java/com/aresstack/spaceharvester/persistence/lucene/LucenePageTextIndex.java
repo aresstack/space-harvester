@@ -29,6 +29,9 @@ import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.PostingsEnum;
+import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
@@ -506,12 +509,14 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                         continue;
                     }
                     String snippet = window(doc.get(TEXT), wanted);
-                    pages.put(page, ATTACHMENT_KIND.equals(doc.get(KIND))
+                    // Nur für ausgelieferte Treffer: je Wort und Feld ein Blick in die Postings dieses Dokuments.
+                    Words words = words(searcher, hit.doc, terms);
+                    pages.put(page, (ATTACHMENT_KIND.equals(doc.get(KIND))
                             ? new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), "", snippet,
                                     doc.get(ATTACHMENT_ID), doc.get(TITLE), null, doc.get(PART_ID),
                                     doc.get(PART_ID) == null ? null : doc.get(PART_TITLE))
                             : new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), doc.get(TITLE),
-                                    snippet));
+                                    snippet)).withWords(words));
                 }
                 if (pages.size() == limit || top.scoreDocs.length < documents || documents >= MAX_DOCUMENTS) {
                     return List.copyOf(pages.values());
@@ -519,6 +524,33 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                 documents = Math.min(documents * 2, MAX_DOCUMENTS);
             }
         });
+    }
+
+    /**
+     * Welche Wörter der Anfrage in diesem Dokument trafen (R1): dieselben Wortabfragen wie in der Rangfolge, über
+     * die Postings des Dokuments, nicht aus dem Auszug erschlossen. Titel heißt Titel der Seite, Dateiname des Anhangs
+     * oder Name der enthaltenen Datei.
+     */
+    private static Words words(IndexSearcher searcher, int doc, List<String> terms) throws IOException {
+        List<LeafReaderContext> leaves = searcher.getIndexReader().leaves();
+        LeafReaderContext leaf = leaves.get(ReaderUtil.subIndex(doc, leaves));
+        int local = doc - leaf.docBase;
+        List<String> inTitle = new ArrayList<>();
+        List<String> inText = new ArrayList<>();
+        for (String term : terms) {
+            if (contains(leaf, TITLE, term, local) || contains(leaf, PART_TITLE, term, local)) {
+                inTitle.add(term);
+            }
+            if (contains(leaf, TEXT, term, local)) {
+                inText.add(term);
+            }
+        }
+        return new Words(inTitle, inText);
+    }
+
+    private static boolean contains(LeafReaderContext leaf, String field, String term, int doc) throws IOException {
+        PostingsEnum postings = leaf.reader().postings(new Term(field, term), PostingsEnum.NONE);
+        return postings != null && postings.advance(doc) == doc;
     }
 
     /** Die Art des Dokuments: enthaltene Datei nach Anzeigename, sonst Name und gemeldeter Medientyp. */

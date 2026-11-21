@@ -287,6 +287,8 @@ public class ProgressiveSearchController {
      * @param attachment bei {@code attachment} der Anhang, sonst {@code null}
      * @param passageId  Passage-ID des Absatzes, aus dem der Auszug stammt (auflösbar über
      *                   {@code GET /api/v1/passages?id=}), sonst {@code null}
+     * @param reasons    warum der Treffer gefunden wurde (R1), über alle Suchanfragen vereinigt
+     * @param reranked   ob {@code score} vom Reranker stammt; er ordnet nur um und ist keine Ursache
      */
     public record ProgressiveHitResponse(String sourceId, String pageId, @Schema(nullable = true) String spaceKey,
                                          String title, String snippet, @Schema(nullable = true) URI url,
@@ -297,7 +299,8 @@ public class ProgressiveSearchController {
                                          @Schema(allowableValues = {"page", "attachment"}) String matchedIn,
                                          @Schema(nullable = true)
                                          SearchController.AttachmentMatchResponse attachment,
-                                         @Schema(nullable = true) String passageId) {
+                                         @Schema(nullable = true) String passageId,
+                                         List<SearchController.HitReasonResponse> reasons, boolean reranked) {
 
         static ProgressiveHitResponse of(ProgressiveResult.RankedHit ranked) {
             KeywordSearch.Hit hit = ranked.hit();
@@ -306,7 +309,8 @@ public class ProgressiveSearchController {
                     hit.snippet(), hit.url(), hit.version(), hit.modifiedAt(), hit.parentPageId(),
                     Double.isNaN(score) || Double.isInfinite(score) ? null : score, ranked.foundBy(),
                     ranked.confirmed(), SearchController.matchKind(hit),
-                    SearchController.AttachmentMatchResponse.of(hit.attachment()), hit.passageId());
+                    SearchController.AttachmentMatchResponse.of(hit.attachment()), hit.passageId(),
+                    SearchController.HitReasonResponse.of(hit), ranked.reranked());
         }
     }
 

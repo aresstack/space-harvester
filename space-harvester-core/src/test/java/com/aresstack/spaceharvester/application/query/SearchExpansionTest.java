@@ -35,6 +35,18 @@ class SearchExpansionTest {
     }
 
     @Test
+    void eachExpansionNamesItsTermCounterpartAndTypeWhenTheRelationsKnowIt() {
+        // R1: Die Beziehung, aus der eine Anfrage entstand, kommt aus der Nachschlage-Antwort selbst.
+        SearchExpansion typed = SearchExpansion.typed((caller, term, sourceId, spaceKey) -> "RSL".equals(term)
+                ? List.of(new SearchExpansion.Counterpart("Rückmeldeschlüssel", "abbreviation")) : List.of());
+
+        assertThat(typed.expansions(APP, "RSL Meldung", "wiki", "DEV")).containsExactly(new SearchExpansion.Expansion(
+                "Rückmeldeschlüssel Meldung", new HitReason.Relation("RSL", "Rückmeldeschlüssel", "abbreviation")));
+        assertThat(expansion.expansions(APP, "RSL Meldung", "wiki", "DEV")).singleElement()
+                .satisfies(found -> assertThat(found.relation().type()).isNull());
+    }
+
+    @Test
     void aMultiWordTermIsLookedUpAsAWholeFirstAndTheResultIsBounded() {
         assertThat(expansion.expand(APP, "Application Programming Interface", "wiki", null))
                 .containsExactly("API");

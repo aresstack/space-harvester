@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.query.progressive;
 
+import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.SearchTerms;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -18,6 +19,11 @@ public final class RuleBasedExpansion implements QueryExpansionStrategy {
 
     /** Höchstens so viele Begriffe gehen in die erste Variante. */
     static final int MAX_TERMS = 8;
+
+    @Override
+    public Variants variants(String original, int maxVariants) {
+        return new Variants(expand(original, maxVariants), HitReason.Variant.Origin.RULES);
+    }
 
     @Override
     public List<String> expand(String original, int maxVariants) {
