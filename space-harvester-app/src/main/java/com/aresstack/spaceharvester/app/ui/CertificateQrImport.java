@@ -35,7 +35,8 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 final class CertificateQrImport {
 
     static final String TOOLTIP = "Zertifikat aus QR-Bild lesen …";
-    static final String FILE_NAME = "vertraut-aus-qr.pem";
+    /** Anfang des Dateinamens; dahinter ein Fingerabdruck des Inhalts, damit jeder Stand eine eigene Datei ist. */
+    static final String FILE_PREFIX = "vertraut-aus-qr-";
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd.MM.yyyy", Locale.GERMANY);
 
     /** Fragt je Zertifikat; {@code true} = eintragen. */
@@ -72,7 +73,9 @@ final class CertificateQrImport {
 
     /**
      * Fragt je Zertifikat nach und schreibt die bestätigten samt der bisherigen CA-Datei nach
-     * {@code <Datenordner>/zertifikate/vertraut-aus-qr.pem}; trägt die Datei ins Feld ein.
+     * {@code <Datenordner>/zertifikate/vertraut-aus-qr-<Fingerabdruck>.pem}; trägt die Datei ins Feld ein. Jeder
+     * Stand bekommt eine eigene Datei: Die geltende CA-Datei bleibt unberührt, bis „Speichern“ die neue übernimmt,
+     * und der geänderte Pfad löst beim Speichern den Neustart der Quellen aus.
      *
      * @return kurze Meldung für den Benutzer, {@code null}, wenn nichts eingetragen wurde
      * @throws IllegalArgumentException wenn das Bild kein Zertifikat enthält
@@ -92,8 +95,7 @@ final class CertificateQrImport {
             return null;
         }
         Path existing = field.getText().isBlank() ? null : Path.of(field.getText().strip());
-        Path target = dataDirectory.resolve("zertifikate").resolve(FILE_NAME);
-        merge(existing, accepted, target);
+        Path target = merge(existing, accepted, dataDirectory.resolve("zertifikate"));
         field.setText(target.toAbsolutePath().toString());
         return accepted.size() == 1 ? "1 Zertifikat eingetragen; gilt nach „Speichern“"
                 : accepted.size() + " Zertifikate eingetragen; gilt nach „Speichern“";
@@ -122,8 +124,13 @@ final class CertificateQrImport {
         return text.toString();
     }
 
-    /** Schreibt die Zertifikate der bisherigen Datei und die neuen ohne Dubletten als PEM nach {@code target}. */
-    static void merge(Path existing, List<X509Certificate> added, Path target) throws IOException {
+    /**
+     * Schreibt die Zertifikate der bisherigen Datei und die neuen ohne Dubletten als PEM in eine neue Datei im
+     * Ordner, benannt nach dem Fingerabdruck des Inhalts; die bisherige Datei bleibt unverändert.
+     *
+     * @return die geschriebene Datei
+     */
+    static Path merge(Path existing, List<X509Certificate> added, Path folder) throws IOException {
         Map<String, X509Certificate> all = new LinkedHashMap<>();
         if (existing != null && Files.isRegularFile(existing)) {
             try (InputStream in = Files.newInputStream(existing)) {
@@ -145,10 +152,22 @@ final class CertificateQrImport {
                     .replaceAll("[^\\x20-\\x7e]", "_")).append('\n');
             pem.append(CertificateQrCodes.text(certificate));
         }
-        Files.createDirectories(target.toAbsolutePath().getParent());
-        Path temp = target.resolveSibling(target.getFileName() + ".neu");
-        Files.writeString(temp, pem.toString(), StandardCharsets.US_ASCII);
-        Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        byte[] bytes = pem.toString().getBytes(StandardCharsets.US_ASCII);
+        String digest;
+        try {
+            digest = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(bytes)).substring(0, 16);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 nicht verfügbar", e);
+        }
+        Files.createDirectories(folder);
+        Path target = folder.resolve(FILE_PREFIX + digest + ".pem");
+        if (!Files.isRegularFile(target)) {
+            Path temp = folder.resolve(target.getFileName() + ".neu");
+            Files.write(temp, bytes);
+            Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+        return target;
     }
 
     private static String day(Instant instant) {

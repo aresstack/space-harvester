@@ -51,14 +51,22 @@ class CertificateQrImportTest {
             return true;
         });
 
-        Path target = data.resolve("zertifikate").resolve(CertificateQrImport.FILE_NAME);
-        assertThat(field.getText()).isEqualTo(target.toAbsolutePath().toString());
+        Path target = Path.of(field.getText());
+        assertThat(target.getParent()).isEqualTo(data.resolve("zertifikate").toAbsolutePath());
+        assertThat(target.getFileName().toString()).startsWith(CertificateQrImport.FILE_PREFIX).endsWith(".pem");
         assertThat(read(target)).containsExactly(other, ca);
         assertThat(Files.readString(existing)).isEqualTo(CertificateQrCodes.text(other));
         assertThat(asked).hasSize(2);
         assertThat(asked.get(0)).contains("wirklich als vertrauenswürdig eintragen?").contains("SHA-1: ")
                 .contains("Aussteller: CN=Erfundene Wurzel").contains("nicht für Windows");
         assertThat(message).contains("2 Zertifikate eingetragen");
+
+        // Ein zweiter Import schreibt eine neue Datei; die geltende bleibt bis „Speichern“ unverändert.
+        String before = Files.readString(target);
+        CertificateQrImport.apply(List.of(leaf), field, data, (title, question) -> true);
+        assertThat(Path.of(field.getText())).isNotEqualTo(target);
+        assertThat(Files.readString(target)).isEqualTo(before);
+        assertThat(read(Path.of(field.getText()))).containsExactly(other, ca, leaf);
     }
 
     @Test

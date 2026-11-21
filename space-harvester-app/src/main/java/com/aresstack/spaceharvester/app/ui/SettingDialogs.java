@@ -582,6 +582,7 @@ final class SettingDialogs {
         caFile.dialogTitle("CA-Datei wählen");
         caFile.onChange(path -> file.setText(path == null ? "" : path.toString()));
         IconButton qr = new IconButton(Glyph.QR, CertificateQrImport.TOOLTIP);
+        qr.getAccessibleContext().setAccessibleName(CertificateQrImport.TOOLTIP);
         qr.setEnabled(context.settings() != null);
         caFile.addButton(qr);
         JPanel switches = new JPanel();
