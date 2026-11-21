@@ -1443,6 +1443,20 @@ class PageImageAnalysisTest {
         assertThat(analysis.read(pages.get(0)).describedCount()).isEqualTo(1);
     }
 
+    @Test
+    void aWaitingPlannerPartForSomePagesDoesNotSwallowTheAutomaticRunOfTheSpace() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null), page("2", "DEV", null));
+        ImageDescriptionJobs images = images(jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(),
+                task -> { }), analysis(), pages, ON, null);
+        images.background().start(com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId(),
+                ImageDescriptionJobs.KIND, "Bilder beschreiben", List.of(
+                        new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", "DEV",
+                                Map.of(ImageDescriptionJobs.PAGES, "2"))));
+
+        assertThat(images.startAutomatic("wiki")).as("der wartende Teil deckt nur Seite 2 ab").isPresent();
+    }
+
     private static com.aresstack.spaceharvester.application.jobs.Jobs jobs() {
         return new com.aresstack.spaceharvester.application.jobs.Jobs(
                 new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,

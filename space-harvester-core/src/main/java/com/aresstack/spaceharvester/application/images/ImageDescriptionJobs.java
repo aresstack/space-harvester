@@ -406,6 +406,8 @@ public final class ImageDescriptionJobs {
                 .filter(status -> !status.state().terminal()
                         && (!waiting || status.state() != com.aresstack.spaceharvester.application.jobs.JobState.RUNNING)
                         && KIND.equals(status.parameter(BackgroundJobs.KIND))
+                        // Ein Teil des Planers deckt nur seine Seiten ab, nie den ganzen Space oder Teilbaum.
+                        && status.parameter(PAGES) == null
                         && sourceId.equals(status.sourceId()) && Objects.equals(space, status.partitionKey())
                         && Objects.equals(root, status.parameter(ROOT))
                         && (root == null || Boolean.toString(subtree).equals(status.parameter(SUBTREE))))
