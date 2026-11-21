@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.source.ai;
 
+import com.aresstack.spaceharvester.ai.AiChat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -442,6 +443,90 @@ class RemoteAiTest {
 
         assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("Hallo");
         assertThat(deltas).containsExactly("Hal", "lo");
+    }
+
+    @Test
+    void theChatOffersToolsAndReportsTheCallsOfTheModel() throws Exception {
+        // ADR 0031: Die Werkzeuge leben beim Aufrufer; hier gehen nur Definition, Aufruf und Ergebnis über die Leitung.
+        // Der Testserver antwortet am Stück (application/json), wie Dienste, die stream=true übergehen.
+        chatAnswer = """
+                {"choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                  "tool_calls":[{"id":"call_7","type":"function","function":{"name":"seite_lesen","arguments":"{\\"id\\":\\"42\\"}"}}]}}]}""";
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+        AiChat.Tool tool = new AiChat.Tool("seite_lesen", "Liest eine Seite des Bereichs.",
+                "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]}");
+        List<AiChat.Message> history = List.of(AiChat.Message.user("Was steht auf Seite 41?"),
+                AiChat.Message.assistant("", List.of(new AiChat.ToolCall("call_6", "seite_lesen", "{\"id\":\"41\"}"))),
+                AiChat.Message.tool("call_6", "Inhalt von 41"));
+
+        java.util.concurrent.CompletableFuture<List<AiChat.ToolCall>> calls = new java.util.concurrent.CompletableFuture<>();
+        remote(settings).chat().stream(new AiChat.Request(history, "gpt-x", null, List.of(tool)), new ToolListener(calls));
+
+        assertThat(calls.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                .containsExactly(new AiChat.ToolCall("call_7", "seite_lesen", "{\"id\":\"42\"}"));
+        assertThat(bodies).singleElement().asString()
+                .contains("\"tools\":[{\"type\":\"function\"", "\"name\":\"seite_lesen\"", "\"required\":[\"id\"]")
+                .contains("\"tool_calls\":[", "\"id\":\"call_6\"")
+                .contains("\"role\":\"tool\"", "\"tool_call_id\":\"call_6\"", "Inhalt von 41");
+    }
+
+    @Test
+    void theOllamaChatOffersToolsAndNumbersTheCallsOfTheModel() throws Exception {
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"gemma4:12b","model":"gemma4:12b"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"im_bereich_suchen","arguments":{"text":"Nachtlauf"}}}]},"done":false}
+                    {"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}
+                    """);
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "gemma4:12b", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA);
+        AiChat.Tool tool = new AiChat.Tool("im_bereich_suchen", "Sucht im Bereich.", null);
+        List<AiChat.Message> history = List.of(AiChat.Message.user("Warum bricht der Nachtlauf ab?"),
+                AiChat.Message.assistant("", List.of(new AiChat.ToolCall("call_1", "im_bereich_suchen", "{\"text\":\"Abbruch\"}"))),
+                AiChat.Message.tool("call_1", "Treffer"));
+
+        java.util.concurrent.CompletableFuture<List<AiChat.ToolCall>> calls = new java.util.concurrent.CompletableFuture<>();
+        remote(settings).chat().stream(new AiChat.Request(history, "gemma4:12b", null, List.of(tool)),
+                new ToolListener(calls));
+
+        assertThat(calls.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                .containsExactly(new AiChat.ToolCall("call_1", "im_bereich_suchen", "{\"text\":\"Nachtlauf\"}"));
+        assertThat(bodies).filteredOn(body -> body.contains("\"messages\"")).singleElement().asString()
+                .contains("\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"im_bereich_suchen\"")
+                .contains("\"tool_calls\":[{\"function\":{\"name\":\"im_bereich_suchen\",\"arguments\":{\"text\":\"Abbruch\"}}}]")
+                .contains("\"role\":\"tool\"", "Treffer");
+    }
+
+    /** Erwartet Werkzeugaufrufe; eine fertige Antwort oder ein Fehler lässt den Test scheitern. */
+    private record ToolListener(java.util.concurrent.CompletableFuture<List<AiChat.ToolCall>> calls)
+            implements AiChat.Listener {
+
+        @Override
+        public void delta(String text) {
+        }
+
+        @Override
+        public void completed(String text) {
+            calls.completeExceptionally(new AssertionError("Antwort statt Werkzeugaufruf"));
+        }
+
+        @Override
+        public void toolCalls(String text, List<AiChat.ToolCall> called) {
+            calls.complete(called);
+        }
+
+        @Override
+        public void failed(com.aresstack.spaceharvester.ai.AiChatException error) {
+            calls.completeExceptionally(error);
+        }
+
+        @Override
+        public void cancelled() {
+            calls.cancel(false);
+        }
     }
 
     @Test

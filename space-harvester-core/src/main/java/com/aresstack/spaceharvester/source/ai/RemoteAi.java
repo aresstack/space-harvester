@@ -8,6 +8,8 @@ import com.aresstack.enterpriseai.astu.chat.ChatFinishReason;
 import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatOptions;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
+import com.aresstack.enterpriseai.astu.chat.ChatToolCall;
+import com.aresstack.enterpriseai.astu.chat.ChatToolDefinition;
 import com.aresstack.enterpriseai.astu.chat.ChatResponse;
 import com.aresstack.enterpriseai.astu.chat.ChatUsage;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelCategory;
@@ -221,15 +223,22 @@ public final class RemoteAi {
                 messages.add(switch (message.role()) {
                     case SYSTEM -> ChatMessage.system(message.text());
                     case USER -> ChatMessage.user(message.text());
-                    case ASSISTANT -> ChatMessage.assistant(message.text());
+                    case ASSISTANT -> message.toolCalls().isEmpty() ? ChatMessage.assistant(message.text())
+                            : ChatMessage.assistantToolCalls(message.text(), message.toolCalls().stream()
+                                    .map(call -> new ChatToolCall(call.id(), call.name(), call.argumentsJson()))
+                                    .toList());
+                    case TOOL -> ChatMessage.tool(message.toolCallId(), message.text());
                 });
             }
             ChatOptions.Builder options = ChatOptions.builder().model(request.model());
             if (request.reasoningEffort() != null) {
                 options.reasoningEffort(request.reasoningEffort());
             }
+            List<ChatToolDefinition> tools = request.tools().stream()
+                    .map(tool -> new ChatToolDefinition(tool.name(), tool.description(), tool.parametersSchemaJson()))
+                    .toList();
             StringBuilder received = new StringBuilder();
-            ChatTask task = adapter.stream(new ChatRequest(messages, options.build()), new ChatStreamListener() {
+            ChatTask task = adapter.stream(new ChatRequest(messages, options.build(), tools), new ChatStreamListener() {
                 @Override
                 public void onStart() {
                 }
@@ -248,6 +257,12 @@ public final class RemoteAi {
                     synchronized (received) {
                         full = received.length() > 0 || response == null || response.content() == null
                                 ? received.toString() : response.content();
+                    }
+                    if (response != null && response.message() != null && response.message().hasToolCalls()) {
+                        listener.toolCalls(full, response.message().toolCalls().stream()
+                                .map(call -> new AiChat.ToolCall(call.id(), call.name(), call.argumentsJson()))
+                                .toList());
+                        return;
                     }
                     listener.completed(full);
                 }

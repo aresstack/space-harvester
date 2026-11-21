@@ -6,6 +6,8 @@ import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatOptions;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
 import com.aresstack.enterpriseai.astu.chat.ChatResponse;
+import com.aresstack.enterpriseai.astu.chat.ChatToolCall;
+import com.aresstack.enterpriseai.astu.chat.ChatToolDefinition;
 import com.aresstack.enterpriseai.astu.chat.ChatUsage;
 import com.aresstack.enterpriseai.chat.api.ChatCompletionException;
 import com.aresstack.enterpriseai.chat.api.ChatCompletionPort;
@@ -25,7 +27,9 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -83,7 +87,9 @@ final class OllamaChatAdapter implements ChatCompletionPort {
             } catch (IOException e) {
                 throw transport(e);
             }
-            return response(answer, answer.path("message").path("content").asString(""));
+            List<ChatToolCall> calls = new ArrayList<>();
+            collectToolCalls(answer.path("message"), calls);
+            return response(answer, answer.path("message").path("content").asString(""), calls);
         } finally {
             connection.disconnect();
         }
@@ -101,6 +107,7 @@ final class OllamaChatAdapter implements ChatCompletionPort {
                 HttpURLConnection connection = send(request, true);
                 open.set(connection);
                 StringBuilder content = new StringBuilder();
+                List<ChatToolCall> calls = new ArrayList<>();
                 JsonNode last = null;
                 try (BufferedReader lines = new BufferedReader(new InputStreamReader(connection.getInputStream(),
                         StandardCharsets.UTF_8))) {
@@ -114,6 +121,7 @@ final class OllamaChatAdapter implements ChatCompletionPort {
                             throw new ChatCompletionException(ChatErrorKind.PROVIDER_ERROR,
                                     "POST " + PATH + ": Fehler im Strom");
                         }
+                        collectToolCalls(chunk.path("message"), calls);
                         String delta = chunk.path("message").path("content").asString("");
                         if (!delta.isEmpty()) {
                             content.append(delta);
@@ -132,7 +140,7 @@ final class OllamaChatAdapter implements ChatCompletionPort {
                 } else if (last == null) {
                     throw new ChatCompletionException(ChatErrorKind.PROTOCOL, "POST " + PATH + ": Strom ohne Ende");
                 } else {
-                    listener.onComplete(response(last, content.toString()));
+                    listener.onComplete(response(last, content.toString(), calls));
                 }
             } catch (ChatCompletionException e) {
                 if (cancelled.get()) {
@@ -178,7 +186,7 @@ final class OllamaChatAdapter implements ChatCompletionPort {
     }
 
     /** Die Antwort ohne Nachdenken; {@code done_reason = length} heißt am Ausgabelimit abgeschnitten. */
-    private ChatResponse response(JsonNode answer, String content) {
+    private ChatResponse response(JsonNode answer, String content, List<ChatToolCall> calls) {
         ChatFinishReason reason = switch (answer.path("done_reason").asString("")) {
             case "stop" -> ChatFinishReason.STOP;
             case "length" -> ChatFinishReason.LENGTH;
@@ -188,7 +196,9 @@ final class OllamaChatAdapter implements ChatCompletionPort {
         int completion = answer.path("eval_count").asInt(0);
         ChatUsage usage = answer.has("eval_count") ? ChatUsage.of(prompt, completion, prompt + completion)
                 : ChatUsage.notReported();
-        return new ChatResponse(ChatMessage.assistant(content), reason, usage,
+        ChatMessage message = calls.isEmpty() ? ChatMessage.assistant(content)
+                : ChatMessage.assistantToolCalls(content, calls);
+        return new ChatResponse(message, calls.isEmpty() ? reason : ChatFinishReason.TOOL_CALLS, usage,
                 answer.path("model").asString(null));
     }
 
@@ -233,11 +243,28 @@ final class OllamaChatAdapter implements ChatCompletionPort {
                 case TOOL -> "tool";
             });
             entry.put("content", message.content());
+            if (message.hasToolCalls()) {
+                ArrayNode calls = entry.putArray("tool_calls");
+                for (ChatToolCall call : message.toolCalls()) {
+                    ObjectNode function = calls.addObject().putObject("function");
+                    function.put("name", call.name());
+                    function.set("arguments", arguments(call.argumentsJson()));
+                }
+            }
             if (!message.images().isEmpty()) {
                 ArrayNode images = entry.putArray("images");
                 for (ChatImage image : message.images()) {
                     images.add(Base64.getEncoder().encodeToString(image.bytes()));
                 }
+            }
+        }
+        if (!request.tools().isEmpty()) {
+            ArrayNode tools = body.putArray("tools");
+            for (ChatToolDefinition tool : request.tools()) {
+                ObjectNode function = tools.addObject().put("type", "function").putObject("function");
+                function.put("name", tool.name());
+                function.put("description", tool.description());
+                function.set("parameters", arguments(tool.parametersSchemaJson()));
             }
         }
         String effort = options.reasoningEffort() != null ? options.reasoningEffort() : thinking;
@@ -268,6 +295,35 @@ final class OllamaChatAdapter implements ChatCompletionPort {
             options.stop().forEach(stop::add);
         }
         return body;
+    }
+
+    /** Ein JSON-Objekt aus Text (Argumente, Schema); Unlesbares wird ein leeres Objekt. */
+    private static JsonNode arguments(String json) {
+        try {
+            JsonNode node = JSON.readTree(json);
+            return node != null && node.isObject() ? node : JSON.createObjectNode();
+        } catch (JacksonException e) {
+            return JSON.createObjectNode();
+        }
+    }
+
+    /**
+     * Werkzeugaufrufe aus {@code message.tool_calls}. Ollama vergibt keine Kennungen: Sie werden je Antwort
+     * fortlaufend vergeben ({@code call_1}, …), Argumente kommen als Objekt und gehen als JSON-Text weiter.
+     */
+    private static void collectToolCalls(JsonNode message, List<ChatToolCall> into) {
+        for (JsonNode call : message.path("tool_calls")) {
+            JsonNode function = call.path("function");
+            String name = function.path("name").asString("");
+            if (name.isEmpty()) {
+                continue;
+            }
+            JsonNode arguments = function.path("arguments");
+            String json = arguments.isString() ? arguments.asString() : arguments.isObject() ? arguments.toString()
+                    : "{}";
+            String id = call.path("id").asString("");
+            into.add(new ChatToolCall(id.isEmpty() ? "call_" + (into.size() + 1) : id, name, json));
+        }
     }
 
     private static ChatCompletionException transport(IOException e) {
