@@ -764,6 +764,9 @@ public final class Harvester implements AutoCloseable {
                     : com.aresstack.spaceharvester.application.holdings.Selection.of(
                     new com.aresstack.spaceharvester.application.holdings.Selection.Root(scope.sourceId(),
                             scope.spaceKey(), null))).pages());
+            // D4.2: eine Seite samt Unterseiten mit den Rechten des Aufrufers.
+            this.glossaryClassification.subtrees((caller, sourceId, spaceKey, pageId) -> holdings.resolve(caller,
+                    Selection.of(Selection.Root.subtree(sourceId, spaceKey, pageId))).pages());
             // #336: Synonymerkennung auf Knopfdruck; Embedding- und Chat-Modell folgen der Konfiguration, Text nur
             // aus freigegebenen Quellen, Budget aus terms.synonyms.*.
             EmbeddingProcessor embeddingForTerms = embedding;

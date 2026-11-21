@@ -144,6 +144,9 @@ public class Glossary {
 
     /** Ergebnis eines Abgleichs. */
     public record ProposalRun(int added, int updated, int withdrawn, int suppressed, int stale) {
+
+        /** Nichts geändert. */
+        public static final ProposalRun NONE = new ProposalRun(0, 0, 0, 0, 0);
     }
 
     /** @throws UnknownSourceException bei unbekannter Quelle */
@@ -362,6 +365,18 @@ public class Glossary {
     }
 
     /**
+     * Ergebnis eines Laufs über eine Seite samt Unterseiten (D4.2): legt neue Vorschläge an und ERGÄNZT bestehende
+     * nur. Belege von Seiten außerhalb bleiben (die des Teilbaums ersetzen nur die derselben Seite), die Unterstützung
+     * kommt dazu, eine vorhandene Einordnung und Erläuterung bleiben. Entfernt und markiert nie etwas; Schutzregeln wie
+     * {@link #propose}. Belege einer Teilbaumseite, die den Begriff nicht mehr enthält, bleiben deshalb bis zum nächsten
+     * Lauf über den ganzen Space.
+     */
+    public synchronized ProposalRun supplement(RelationOrigin origin, String actor, RelationScope scope,
+                                               String generation, List<Proposal> proposals) {
+        return merge(origin, actor, scope, generation, proposals, Set.of(), false, true);
+    }
+
+    /**
      * Der Mensch setzt die Einordnung (ADR 0032, FL5); danach ändert kein Lauf sie mehr. Fehler wie {@link #confirm}.
      */
     public synchronized GlossaryEntry categorize(AccessContext caller, String id, GlossaryDerivation.Category category,
@@ -403,6 +418,12 @@ public class Glossary {
 
     private ProposalRun merge(RelationOrigin origin, String actor, RelationScope scope, String generation,
                               List<Proposal> proposals, Set<String> retained, boolean reconcile) {
+        return merge(origin, actor, scope, generation, proposals, retained, reconcile, false);
+    }
+
+    private ProposalRun merge(RelationOrigin origin, String actor, RelationScope scope, String generation,
+                              List<Proposal> proposals, Set<String> retained, boolean reconcile,
+                              boolean supplement) {
         if (origin == RelationOrigin.MANUAL) {
             throw new IllegalArgumentException("Ein Lauf ist nie manuell");
         }
@@ -446,16 +467,20 @@ public class Glossary {
             }
             List<RelationEvidence> evidence = current.evidence();
             String run = current.generation();
-            if (current.status() == ReviewStatus.PROPOSED && !evidence.equals(proposal.evidence())) {
+            List<RelationEvidence> offered = supplement ? supplemented(evidence, proposal.evidence())
+                    : proposal.evidence();
+            if (current.status() == ReviewStatus.PROPOSED && !evidence.equals(offered)) {
                 // Bestätigte Einträge behalten ihre Belege; ungeprüfte zeigen die des letzten Laufs.
-                evidence = proposal.evidence();
+                evidence = offered;
                 run = generation;
             }
             Set<RelationOrigin> support = EnumSet.of(origin);
             support.addAll(current.supportedBy());
-            GlossaryEntry.Classification classification = nextClassification(current.classification(),
-                    proposal.classification());
+            GlossaryEntry.Classification classification = supplement && current.classification() != null
+                    ? current.classification()
+                    : nextClassification(current.classification(), proposal.classification());
             RelationEvidence definition = current.status() == ReviewStatus.PROPOSED && proposal.definition() != null
+                    && !(supplement && current.definitionProposal() != null)
                     ? proposal.definition() : current.definitionProposal();
             if (current.evidenceStale() || !evidence.equals(current.evidence())
                     || !support.equals(current.supportedBy())
@@ -503,6 +528,35 @@ public class Glossary {
             write(put.values(), removed, audit);
         }
         return new ProposalRun(added, updated, withdrawn, suppressed, stale);
+    }
+
+    /**
+     * Belege eines Teilbaumlaufs zu den bisherigen (D4.2): bisherige zuerst, die einer Seite des Laufs durch dessen
+     * ersetzt, neue Seiten dahinter, höchstens {@link #MAX_EVIDENCE}.
+     */
+    private static List<RelationEvidence> supplemented(List<RelationEvidence> current, List<RelationEvidence> found) {
+        Map<String, List<RelationEvidence>> byPage = new LinkedHashMap<>();
+        for (RelationEvidence evidence : found) {
+            byPage.computeIfAbsent(evidence.sourceId() + '\u0000' + evidence.pageId(), key -> new ArrayList<>())
+                    .add(evidence);
+        }
+        List<RelationEvidence> all = new ArrayList<>();
+        Set<String> placed = new HashSet<>();
+        for (RelationEvidence evidence : current) {
+            String page = evidence.sourceId() + '\u0000' + evidence.pageId();
+            List<RelationEvidence> fresh = byPage.get(page);
+            if (fresh == null) {
+                all.add(evidence);
+            } else if (placed.add(page)) {
+                all.addAll(fresh);
+            }
+        }
+        byPage.forEach((page, fresh) -> {
+            if (placed.add(page)) {
+                all.addAll(fresh);
+            }
+        });
+        return all.size() > MAX_EVIDENCE ? List.copyOf(all.subList(0, MAX_EVIDENCE)) : List.copyOf(all);
     }
 
     /**
