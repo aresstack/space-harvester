@@ -200,6 +200,11 @@ public final class TermGraphView {
             }
         };
         evidence.addPopupMenuListener(closed);
+        root.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && root.isShowing()) {
+                catchUp();
+            }
+        });
         suggestions.addPopupMenuListener(closed);
         start.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override
@@ -334,6 +339,11 @@ public final class TermGraphView {
     private boolean coreDirty;
     /** Belege werden gerade gelesen. */
     private boolean evidencePending;
+    /** Liest die Sätze der Belege; {@code null} = über die Laufzeit. Tests setzen es fest. */
+    private java.util.function.Function<java.util.Map<com.aresstack.spaceharvester.application.knowledge
+            .KnowledgeGraph.PageRef, java.util.List<com.aresstack.spaceharvester.application.knowledge
+            .ParsedStatements.Statement>>, java.util.Map<String, com.aresstack.spaceharvester.application.standing
+            .SentenceText>> sentenceReader;
     /** Ob die Ansicht zu sehen ist; Tests setzen es fest. */
     private java.util.function.BooleanSupplier showing = () -> root.isShowing();
     /** Ob der Nutzer gerade Belege liest, Vorschläge sieht oder tippt; Tests setzen es fest. */
@@ -345,10 +355,11 @@ public final class TermGraphView {
      * stehen; tippt der Nutzer gerade oder liest er Belege, wartet sie, bis er fertig ist.
      */
     private void followCore() {
-        if (!domainMode() || !showing.getAsBoolean() || centre == null) {
+        if (!domainMode() || centre == null) {
             return;
         }
-        if (userBusy.getAsBoolean()) {
+        // Verborgen oder der Nutzer beschäftigt: vormerken und beim Sichtbarwerden bzw. danach nachholen.
+        if (!showing.getAsBoolean() || userBusy.getAsBoolean()) {
             coreDirty = true;
             return;
         }
@@ -365,7 +376,12 @@ public final class TermGraphView {
     /** Eine aufgeschobene Meldung nachholen, sobald der Nutzer fertig ist. */
     private void catchUp() {
         if (coreDirty) {
-            javax.swing.SwingUtilities.invokeLater(this::followCore);
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                // Inzwischen kann ein anderer Abruf die Meldung schon abgedeckt haben.
+                if (coreDirty) {
+                    followCore();
+                }
+            });
         }
     }
 
@@ -427,11 +443,25 @@ public final class TermGraphView {
         }
         java.util.function.BooleanSupplier overtaken = () -> current != request;
         Background.run(() -> active.around(wanted, levels, withProposals, overtaken), graph -> {
-            if (current == request) {
-                show(graph);
+            if (current != request) {
+                return;
             }
+            if (!announce && userBusy.getAsBoolean()) {
+                // Stilles Ergebnis, aber der Nutzer hat inzwischen Belege geöffnet oder tippt: zurückhalten und nach
+                // dem Schließen neu rechnen, statt sein Overlay zu schließen.
+                coreDirty = true;
+                return;
+            }
+            show(graph);
         }, failure -> {
-            if (current == request && !(failure instanceof java.util.concurrent.CancellationException)) {
+            if (current != request) {
+                return;
+            }
+            if (!announce && userBusy.getAsBoolean()) {
+                coreDirty = true;
+                return;
+            }
+            if (!(failure instanceof java.util.concurrent.CancellationException)) {
                 show(GraphSource.Graph.EMPTY);
                 hint.setText("Graph nicht lesbar: " + failure.getMessage());
             }
@@ -467,7 +497,12 @@ public final class TermGraphView {
         int total = edgeCount(edge);
         AppRuntime runtime = context == null ? null : context.runtime();
         int current = ++evidenceRequest;
-        if (runtime == null) {
+        java.util.function.Function<java.util.Map<com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph
+                .PageRef, java.util.List<com.aresstack.spaceharvester.application.knowledge.ParsedStatements
+                .Statement>>, java.util.Map<String, com.aresstack.spaceharvester.application.standing.SentenceText>>
+                reader = sentenceReader != null ? sentenceReader
+                : runtime == null ? null : runtime.workspace()::statementSentences;
+        if (reader == null) {
             evidence.fill(title, total, edge.evidence(), java.util.Map.of(), true).showAt(canvas, x, y);
             return;
         }
@@ -478,13 +513,20 @@ public final class TermGraphView {
                 .add(item.statement()));
         int graphRequest = request;
         evidencePending = true;
-        Background.run(() -> runtime.workspace().statementSentences(byPage), sentences -> {
+        Background.run(() -> reader.apply(byPage), sentences -> {
+            // Nur die Antwort auf den letzten Klick beendet das Lesen; eine überholte lässt es stehen.
+            if (current != evidenceRequest) {
+                return;
+            }
             evidencePending = false;
             if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
                 evidence.fill(title, total, edge.evidence(), sentences, false).showAt(canvas, x, y);
             }
             catchUp();
         }, failure -> {
+            if (current != evidenceRequest) {
+                return;
+            }
             evidencePending = false;
             if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
                 evidence.fill(title, total, edge.evidence(), java.util.Map.of(), true).showAt(canvas, x, y);
@@ -557,6 +599,28 @@ public final class TermGraphView {
         followCore();
     }
 
+    /** Wie sichtbar, und eine Meldung des Core trifft ein; ob der Nutzer beschäftigt ist, entscheidet die Ansicht. */
+    void coreChangedWhileShowing() {
+        showing = () -> true;
+        followCore();
+    }
+
+    /** Tests: der Nutzer öffnet Belege bzw. schließt sie wieder. */
+    void userBusy(boolean busy) {
+        userBusy = () -> busy;
+        if (!busy) {
+            catchUp();
+        }
+    }
+
+    /** Tests: Sätze der Belege ohne Laufzeit. */
+    void sentenceReader(java.util.function.Function<java.util.Map<com.aresstack.spaceharvester.application.knowledge
+            .KnowledgeGraph.PageRef, java.util.List<com.aresstack.spaceharvester.application.knowledge
+            .ParsedStatements.Statement>>, java.util.Map<String, com.aresstack.spaceharvester.application.standing
+            .SentenceText>> reader) {
+        sentenceReader = reader;
+    }
+
     /** Der Nutzer ist fertig (Belege oder Vorschläge zu, Startfeld verlassen). */
     void userDone() {
         userBusy = () -> false;
@@ -581,6 +645,10 @@ public final class TermGraphView {
 
     EvidencePopup evidencePopup() {
         return evidence;
+    }
+
+    boolean coreDirty() {
+        return coreDirty;
     }
 
     void showEvidenceFor(GraphSource.Edge edge) {

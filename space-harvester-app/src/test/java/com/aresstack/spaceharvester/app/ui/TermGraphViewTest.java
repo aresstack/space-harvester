@@ -293,6 +293,96 @@ class TermGraphViewTest {
     }
 
     @Test
+    void aQuietResultWaitsWhileTheUserOpenedTheEvidenceMeanwhile() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        DomainTermGraph.View alone = new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND,
+                List.of(new DomainTermGraph.Node("antragsteller", "Antragsteller", DomainTermGraph.NodeKind.TERM, 0,
+                        null)), List.of(), false, 0, Set.of(),
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.PARSER);
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, cancelled) -> {
+            if (asked.incrementAndGet() == 2) {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return asked.get() == 1 ? FACHSICHT : alone;
+        }, id -> "MaltParser");
+        TermGraphView[] holder = new TermGraphView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            holder[0] = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY, domain);
+            holder[0].domainChoice().doClick();
+            holder[0].showTerm("Antragsteller");
+        });
+        awaitTrue(() -> asked.get() == 1 && !holder[0].hint().startsWith("Lädt"));
+        String before = holder[0].hint();
+        SwingUtilities.invokeAndWait(() -> holder[0].coreChangedWhileShowing());
+        awaitTrue(() -> asked.get() == 2);
+        SwingUtilities.invokeAndWait(() -> holder[0].userBusy(true));
+        release.countDown();
+        awaitTrue(() -> holder[0].coreDirty());
+        assertThat(holder[0].hint()).as("Ergebnis zurückgehalten, das Overlay bleibt").isEqualTo(before);
+
+        SwingUtilities.invokeAndWait(() -> holder[0].userBusy(false));
+        awaitTrue(() -> asked.get() == 3 && !holder[0].hint().equals(before));
+        assertThat(holder[0].coreDirty()).isFalse();
+    }
+
+    @Test
+    void anOvertakenEvidenceAnswerKeepsTheReloadWaitingForTheLastClick() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        GraphSource domain = GraphSource.ofDomainTerms((start, depth, cancelled) -> {
+            asked.incrementAndGet();
+            return FACHSICHT;
+        }, id -> "MaltParser");
+        java.util.concurrent.CountDownLatch first = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch second = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger read = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean firstDone = new java.util.concurrent.atomic.AtomicBoolean();
+        TermGraphView[] holder = new TermGraphView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            holder[0] = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY, domain);
+            holder[0].sentenceReader(byPage -> {
+                try {
+                    if (read.incrementAndGet() == 1) {
+                        first.await();
+                        firstDone.set(true);
+                    } else {
+                        second.await();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return Map.of();
+            });
+            holder[0].domainChoice().doClick();
+            holder[0].showTerm("Antragsteller");
+        });
+        awaitTrue(() -> asked.get() == 1 && !holder[0].hint().startsWith("Lädt"));
+        GraphSource.Edge verb = domain.around("Antragsteller", 2, false).edges().stream()
+                .filter(edge -> edge.style() == GraphSource.Style.VERB).findFirst().orElseThrow();
+        asked.set(1);
+        SwingUtilities.invokeAndWait(() -> {
+            holder[0].showEvidenceFor(verb);
+            holder[0].showEvidenceFor(verb);
+        });
+        first.countDown();
+        awaitTrue(firstDone::get);
+        for (int i = 0; i < 20; i++) {
+            SwingUtilities.invokeAndWait(() -> { });
+            Thread.sleep(10);
+        }
+        SwingUtilities.invokeAndWait(() -> holder[0].coreChangedWhileShowing());
+        assertThat(asked).as("die überholte Antwort beendet das Lesen nicht").hasValue(1);
+        assertThat(holder[0].coreDirty()).isTrue();
+
+        second.countDown();
+        awaitTrue(() -> asked.get() == 2);
+    }
+
+    @Test
     void theOverlayNeverMakesUpASentence() {
         com.aresstack.spaceharvester.application.standing.SentenceText found =
                 new com.aresstack.spaceharvester.application.standing.SentenceText("Der Antragsteller stellt den Antrag.",
