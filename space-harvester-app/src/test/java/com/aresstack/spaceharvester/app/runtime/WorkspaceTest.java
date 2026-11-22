@@ -1011,6 +1011,11 @@ class WorkspaceTest {
         JobStatus part = workspace.catchUp("handbuch", space, SyncMode.SYNC_CACHE, "sammlung-1");
         assertThat(part.parameter(SpaceSyncJobs.GROUP)).isEqualTo("sammlung-1");
         await(workspace, part);
+        // Codex zu #1162: „Neu erzwingen“ auf der Zeile erreicht die Teile, statt still nichts zu tun.
+        AllJobs.Outcome forced = workspace.performSyncGroupAction("sammlung-1",
+                com.aresstack.spaceharvester.application.jobs.JobAction.FORCE_REFRESH);
+        assertThat(forced.changed()).isEqualTo(1);
+        await(workspace, workspace.job(part.id()));
 
         AllJobs.Outcome outcome = workspace.performSyncGroupAction("sammlung-1",
                 com.aresstack.spaceharvester.application.jobs.JobAction.DELETE);

@@ -2051,7 +2051,7 @@ public final class Workspace {
             case RESUME -> AllJobs.apply(parts.stream().filter(job -> job.lifecycle().allows(JobAction.RESUME))
                     .toList(), job -> performJobAction(job.id(), JobAction.RESUME));
             case CANCEL -> AllJobs.apply(AllJobs.toCancel(parts), job -> performJobAction(job.id(), JobAction.CANCEL));
-            case START_NOW, DELETE, RETRY_FAILED -> AllJobs.apply(parts.stream()
+            case START_NOW, DELETE, RETRY_FAILED, FORCE_REFRESH -> AllJobs.apply(parts.stream()
                     .filter(job -> job.lifecycle().allows(action)).toList(), job -> performJobAction(job.id(), action));
             default -> new AllJobs.Outcome(0, 0, null);
         };
