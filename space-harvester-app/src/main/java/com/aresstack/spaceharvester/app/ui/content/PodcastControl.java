@@ -6,13 +6,11 @@ import com.aresstack.spaceharvester.app.speech.PodcastPlayer;
 import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.app.ui.content.viewer.VideoSeekBar;
 import com.aresstack.spaceharvester.app.ui.controls.PodcastOrb;
-import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.podcast.Podcast;
-import com.aresstack.spaceharvester.application.podcast.UpdatePodcasts;
 
 import javax.swing.SwingUtilities;
 import java.util.ArrayList;
@@ -38,36 +36,54 @@ import java.util.function.Supplier;
  *
  * Gespielt wird nur die gerade gezeigte Zusammenfassung; eine andere Wahl beendet die Wiedergabe.
  */
-final class PodcastControl {
+final class PodcastControl<S> {
 
-    /** Was die Steuerung vom Core braucht; in Tests ersetzbar. */
-    interface Source {
+    /**
+     * Was die Steuerung vom Core braucht; in Tests ersetzbar.
+     *
+     * @param <S> wofür der Podcast entsteht: eine Update-Zusammenfassung oder eine Seite
+     */
+    interface Source<S> {
 
         /** Chat-Modell und Sprachausgabe eingerichtet. */
         boolean available();
 
-        Optional<Podcast> podcast(UpdateSummary summary);
+        /** Der Schlüssel des Podcasts, ohne zu lesen (auf dem EDT). */
+        String key(S subject);
 
-        JobStatus start(UpdateSummary summary);
+        Optional<Podcast> podcast(S subject);
+
+        JobStatus start(S subject);
 
         Subscription subscribe(String key, Runnable listener);
 
         Subscription subscribeJobs(JobListener listener);
 
         /** Ohne Laufzeit: der Knopf bleibt aus. */
-        Source NONE = new Source() {
+        @SuppressWarnings("unchecked")
+        static <S> Source<S> none() {
+            return (Source<S>) NONE;
+        }
+
+        /** Ohne Laufzeit: der Knopf bleibt aus. */
+        Source<Object> NONE = new Source<>() {
             @Override
             public boolean available() {
                 return false;
             }
 
             @Override
-            public Optional<Podcast> podcast(UpdateSummary summary) {
+            public String key(Object subject) {
+                return "";
+            }
+
+            @Override
+            public Optional<Podcast> podcast(Object subject) {
                 return Optional.empty();
             }
 
             @Override
-            public JobStatus start(UpdateSummary summary) {
+            public JobStatus start(Object subject) {
                 throw new IllegalStateException("Keine Laufzeit");
             }
 
@@ -83,15 +99,30 @@ final class PodcastControl {
         };
     }
 
-    private final Supplier<Source> sources;
+    /** Die Texte am Knopf, je nachdem, wofür der Podcast entsteht. */
+    record Labels(String listen, String missing, String name, boolean hideUnusable) {
+
+        /** Der Podcast der Update-Zusammenfassung. */
+        static final Labels SUMMARY = new Labels("Die Zusammenfassung als Podcast hören",
+                "Podcast: erst eine Zusammenfassung erstellen", "updates", false);
+        /**
+         * Der Erklär-Podcast einer Seite (Angelo 21.11.2026); ohne Chat-Modell oder Sprachausgabe bleibt der Knopf
+         * weg, statt auf jeder Seite ausgegraut zu stehen.
+         */
+        static final Labels PAGE = new Labels("Diese Seite und ihre Unterseiten als Podcast erklären lassen",
+                "Podcast: erst eine Seite öffnen", "page", true);
+    }
+
+    private final Supplier<Source<S>> sources;
+    private final Labels labels;
     private final SourceUpdatesView.Runner runner;
     private final PodcastOrb orb = new PodcastOrb();
     private final PodcastPlayer player;
     private final VideoSeekBar timeline;
     private Consumer<ApplicationEvent<?>> events = event -> { };
 
-    private Source source = Source.NONE;
-    private UpdateSummary summary;
+    private Source<S> source = Source.none();
+    private S summary;
     private String key;
     private Subscription stages = Subscription.NONE;
     private Subscription jobs = Subscription.NONE;
@@ -107,12 +138,18 @@ final class PodcastControl {
     private boolean refreshRunning;
     private boolean refreshPending;
 
-    PodcastControl(Supplier<Source> sources, SourceUpdatesView.Runner runner) {
+    PodcastControl(Supplier<Source<S>> sources, SourceUpdatesView.Runner runner) {
+        this(sources, runner, Labels.SUMMARY);
+    }
+
+    PodcastControl(Supplier<Source<S>> sources, SourceUpdatesView.Runner runner, Labels labels) {
         this.sources = Objects.requireNonNull(sources, "sources");
+        this.labels = Objects.requireNonNull(labels, "labels");
         this.runner = Objects.requireNonNull(runner, "runner");
         this.player = new PodcastPlayer(new PlayerEvents());
         this.timeline = new VideoSeekBar(share -> player.seek(Math.round(share * player.total()))).light(this::titleAt);
-        timeline.setName("updates.podcastTimeline");
+        timeline.setName(labels.name() + ".podcastTimeline");
+        orb.setName(labels.name() + ".podcastOrb");
         orb.addActionListener(event -> clicked());
         summary(null);
     }
@@ -130,10 +167,11 @@ final class PodcastControl {
         return timeline;
     }
 
-    /** Die gezeigte Zusammenfassung, {@code null} ohne; eine andere beendet die Wiedergabe. */
-    void summary(UpdateSummary shown) {
-        Source current = shown == null ? Source.NONE : Objects.requireNonNullElse(sources.get(), Source.NONE);
-        String shownKey = shown == null ? null : UpdatePodcasts.key(shown);
+    /** Das Gezeigte (Zusammenfassung oder Seite), {@code null} ohne; etwas anderes beendet die Wiedergabe. */
+    void summary(S shown) {
+        Source<S> current = shown == null ? Source.none()
+                : Objects.requireNonNullElse(sources.get(), Source.<S>none());
+        String shownKey = shown == null ? null : key(current, shown);
         if (shownKey != null && shownKey.equals(key) && current == source) {
             summary = shown;
             return;
@@ -153,8 +191,11 @@ final class PodcastControl {
         orb.setState(PodcastOrb.State.PLAY);
         boolean usable = shown != null && available(current);
         orb.setEnabled(usable);
-        orb.setToolTipText(shown == null ? "Podcast: erst eine Zusammenfassung erstellen"
-                : usable ? "Die Zusammenfassung als Podcast hören"
+        if (labels.hideUnusable()) {
+            orb.setVisible(usable);
+        }
+        orb.setToolTipText(shown == null ? labels.missing()
+                : usable ? labels.listen()
                 : "Podcast: kein Chat-Modell oder keine Sprachausgabe (TTS) eingerichtet");
         if (!usable) {
             return;
@@ -169,8 +210,8 @@ final class PodcastControl {
         jobs = current.subscribeJobs(new JobListener() {
             @Override
             public void changed(JobStatus status) {
-                if (status.type() == JobType.UPDATE_PODCAST && watched.equals(status.parameter(
-                        UpdatePodcasts.PODCAST_PARAMETER))) {
+                if (status.type() == JobType.UPDATE_PODCAST && watched != null && watched.equals(status.parameter(
+                        com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.PODCAST_PARAMETER))) {
                     SwingUtilities.invokeLater(() -> {
                         if (mine == generation) {
                             refresh();
@@ -182,7 +223,16 @@ final class PodcastControl {
         refresh();
     }
 
-    private static boolean available(Source source) {
+    private static <S> String key(Source<S> source, S subject) {
+        try {
+            String key = source.key(subject);
+            return key == null || key.isEmpty() ? null : key;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static boolean available(Source<?> source) {
         try {
             return source.available();
         } catch (RuntimeException e) {
@@ -231,8 +281,8 @@ final class PodcastControl {
         orb.setState(PodcastOrb.State.WAITING);
         orb.setToolTipText("Podcast wird vorbereitet");
         showTimeline(true);
-        Source current = source;
-        UpdateSummary shown = summary;
+        Source<S> current = source;
+        S shown = summary;
         int mine = generation;
         runner.run(() -> {
             Optional<Podcast> podcast = current.podcast(shown);
@@ -280,8 +330,8 @@ final class PodcastControl {
             return;
         }
         refreshRunning = true;
-        Source current = source;
-        UpdateSummary shown = summary;
+        Source<S> current = source;
+        S shown = summary;
         int mine = generation;
         runner.run(() -> {
             Optional<Podcast> podcast = current.podcast(shown);
@@ -363,7 +413,7 @@ final class PodcastControl {
                 if (retrying) {
                     // Das Wiederholen hat geklappt: wieder blau.
                     retrying = false;
-                    orb.setToolTipText("Die Zusammenfassung als Podcast hören");
+                    orb.setToolTipText(labels.listen());
                 }
                 if (orb.state() != PodcastOrb.State.PAUSE && !player.paused()) {
                     orb.setState(PodcastOrb.State.PAUSE);

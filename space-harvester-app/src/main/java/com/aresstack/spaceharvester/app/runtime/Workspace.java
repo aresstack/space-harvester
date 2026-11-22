@@ -2613,6 +2613,35 @@ public final class Workspace {
         return harvester.podcasts().subscribe(key, listener);
     }
 
+    /** Ob der Erklär-Podcast einer Seite erzeugt werden kann: Chat-Modell und Sprachausgabe (TTS) eingerichtet. */
+    public boolean pagePodcastsAvailable() {
+        return harvester.pagePodcasts().available();
+    }
+
+    /** Der Schlüssel des Erklär-Podcasts einer Seite, ohne zu lesen (auch auf dem EDT). */
+    public String pagePodcastKey(String sourceId, String pageId) {
+        return com.aresstack.spaceharvester.application.podcast.PagePodcasts.key(caller, sourceId, pageId);
+    }
+
+    /**
+     * Der Stand des Erklär-Podcasts einer Seite (Angelo 21.11.2026), leer, solange nichts erzeugt ist oder wenn sich
+     * der Inhalt seither geändert hat. Liest Seiten und Dateien, nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.podcast.Podcast> pagePodcast(String sourceId,
+                                                                                                   String pageId) {
+        return harvester.pagePodcasts().podcast(caller, sourceId, pageId);
+    }
+
+    /** Startet den Erklär-Podcast einer Seite oder setzt ihn fort. */
+    public JobStatus startPagePodcast(String sourceId, String pageId) {
+        return harvester.pagePodcasts().start(caller, sourceId, pageId);
+    }
+
+    /** Meldet jede abgelegte Stufe eines Erklär-Podcasts, auf einem Thread des Core. */
+    public Subscription subscribePagePodcast(String key, Runnable listener) {
+        return harvester.pagePodcasts().subscribe(key, listener);
+    }
+
     /**
      * Ob die abgelegte Zusammenfassung eines Updates noch gilt (Rechte, KI-Freigabe), ohne Inhalt; einmal beim Wechsel
      * der Update-Kennung (Abnahme #1037). Nie auf dem EDT.
