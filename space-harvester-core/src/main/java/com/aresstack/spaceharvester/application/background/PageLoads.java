@@ -97,7 +97,11 @@ public final class PageLoads {
     /** Gruppen, die {@link #join} gerade startet, bis ihre Teile im Abbild stehen. */
     private final Set<String> starting = new java.util.HashSet<>();
     /** Teile, die gerade im selben Eintrag neu starten ({@link BackgroundJobs#onRerun}), bis ihr Stand im Abbild steht. */
-    private final Set<String> rerunning = new java.util.HashSet<>();
+    /**
+     * Je Teil die Zahl laufender Neustarts, nicht nur ob einer läuft (Abnahme #1133): Zwei können überlappen, etwa ein
+     * Doppelklick auf Fortsetzen; der gescheiterte darf {@link #gone} nicht räumen, solange der andere noch läuft.
+     */
+    private final Map<String, Integer> rerunning = new java.util.HashMap<>();
     /**
      * Teile, deren Ende gemeldet wurde, während sie starteten, neu starteten oder das Abbild gefüllt wurde, mit dem Anlass
      * (Gruppe oder Teil): Der ältere Stand aus {@code start()}, dem Neustart oder dem Speicher bringt sie nicht als offen
@@ -137,24 +141,30 @@ public final class PageLoads {
         } finally {
             image.unlock();
         }
-        this.reruns = background.onRerun(new BackgroundJobs.Reruns() {
-            @Override
-            public void before(String partId) {
-                guard(() -> rerunning.add(partId));
-            }
+        this.reruns = background.onRerun(rerunWatch);
+    }
 
-            @Override
-            public void after(String partId, com.aresstack.spaceharvester.application.jobs.JobStatus rerun) {
-                if (rerun != null && KIND.equals(rerun.parameter(BackgroundJobs.KIND))) {
-                    adopt(rerun);
-                }
-                guard(() -> {
+    /** Hält das Abbild bei Neustarts im selben Eintrag aktuell; paketsichtbar für Tests überlappender Neustarts. */
+    final BackgroundJobs.Reruns rerunWatch = new BackgroundJobs.Reruns() {
+        @Override
+        public void before(String partId) {
+            guard(() -> rerunning.merge(partId, 1, Integer::sum));
+        }
+
+        @Override
+        public void after(String partId, com.aresstack.spaceharvester.application.jobs.JobStatus rerun) {
+            if (rerun != null && KIND.equals(rerun.parameter(BackgroundJobs.KIND))) {
+                adopt(rerun);
+            }
+            guard(() -> {
+                // Erst der letzte überlappende Neustart räumt; vorher hält gone ein gemeldetes Ende fest.
+                if (rerunning.merge(partId, -1, Integer::sum) <= 0) {
                     rerunning.remove(partId);
                     gone.values().removeIf(partId::equals);
-                });
-            }
-        });
-    }
+                }
+            });
+        }
+    };
 
     /** Anlass in {@link #gone} für Enden, die beim Füllen gemeldet wurden. */
     private static final String SEEDING = "";
@@ -184,7 +194,7 @@ public final class PageLoads {
             String group = groupOf(last);
             if (starting.contains(group)) {
                 gone.put(last.id(), group);
-            } else if (rerunning.contains(last.id())) {
+            } else if (rerunning.containsKey(last.id())) {
                 gone.put(last.id(), last.id());
             } else if (seeding) {
                 gone.put(last.id(), SEEDING);

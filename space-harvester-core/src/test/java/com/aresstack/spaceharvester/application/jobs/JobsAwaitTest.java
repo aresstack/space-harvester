@@ -14,8 +14,9 @@ import org.junit.jupiter.api.Test;
 class JobsAwaitTest {
 
     private final ManualExecutor executor = new ManualExecutor();
+    private final MutableClock clock = new MutableClock();
     private final Jobs jobs = new Jobs(new InMemoryJobStore(), executor, new JobLimits(1, 5, Duration.ofHours(1)),
-            new MutableClock());
+            clock);
 
     @AfterEach
     void close() {
@@ -87,7 +88,11 @@ class JobsAwaitTest {
                     assertThat(each.get(10, TimeUnit.SECONDS).state()).isEqualTo(JobState.COMPLETED);
                 }
             } finally {
-                // Scheitert eine Frist, wartet close() des Executors sonst auf die Wartenden.
+                // Scheitert eine Frist, wartet close() des Executors sonst auf die Wartenden: Der Auftrag läuft schon,
+                // close() allein beendet ihn nicht (Abnahme #1133).
+                if (executor.pending() > 0) {
+                    executor.runNext();
+                }
                 jobs.close();
             }
         }
@@ -105,28 +110,30 @@ class JobsAwaitTest {
             release.await();
         }));
         assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
-        runManyWaiters(() -> threaded.cancelSource("wiki", Duration.ofMinutes(1)), release, threaded, Boolean.TRUE);
+        runManyWaiters(() -> threaded.cancelSource("wiki", Duration.ofMinutes(1)), release::countDown,
+                threaded::close, Boolean.TRUE);
     }
 
     @Test
     void manyCallersOfAwaitSettledOnVirtualThreadsNeverHoldTheirCarriers() throws Exception {
-        Jobs threaded = new Jobs(new InMemoryJobStore(), command -> Thread.ofPlatform().daemon().start(command),
-                new JobLimits(1, 5, Duration.ofHours(1)), new MutableClock());
-        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
-        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
-        String id = threaded.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> {
-            started.countDown();
-            release.await();
-        })).id();
-        assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
-        runManyWaiters(() -> threaded.awaitSettled(id, "client-a", Duration.ofMinutes(1)).state(), release, threaded,
-                JobState.COMPLETED);
+        // Abnahme #1133: Die Wartenden müssen in der eigenen Schleife von awaitSettled parken, also auf einen nach der
+        // Anhaltefrist abgekoppelten Schritt warten, nicht nur in await.
+        CompletableFuture<Void> hanging = new CompletableFuture<>();
+        String id = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", context -> hanging).id();
+        executor.runNext();
+        jobs.pause(id, "client-a");
+        clock.advance(Jobs.STOP_GRACE.plusSeconds(1));
+        assertThat(jobs.status(id).state()).isEqualTo(JobState.PAUSED);
+        assertThatThrownBy(() -> jobs.awaitSettled(id, "client-a", Duration.ZERO))
+                .isInstanceOf(TimeoutException.class);
+
+        runManyWaiters(() -> jobs.awaitSettled(id, "client-a", Duration.ofMinutes(1)).state(),
+                () -> hanging.complete(null), () -> { }, JobState.PAUSED);
     }
 
     /** 400 Wartende auf virtuellen Threads: alle parken, ein Träger bleibt frei, das Freigeben weckt alle. */
-    private static <T> void runManyWaiters(java.util.concurrent.Callable<T> wait,
-                                           java.util.concurrent.CountDownLatch release, Jobs threaded, T expected)
-            throws Exception {
+    private static <T> void runManyWaiters(java.util.concurrent.Callable<T> wait, Runnable release, Runnable close,
+                                           T expected) throws Exception {
         int waiters = 400;
         java.util.List<java.util.concurrent.Future<T>> waiting = new java.util.ArrayList<>();
         java.util.List<Thread> threads = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -142,13 +149,13 @@ class JobsAwaitTest {
                 assertThat(allParkedOnceStarted(threads, waiters)).isTrue();
                 assertThat(virtual.submit(() -> "frei").get(10, TimeUnit.SECONDS)).isEqualTo("frei");
 
-                release.countDown();
+                release.run();
                 for (java.util.concurrent.Future<T> each : waiting) {
                     assertThat(each.get(10, TimeUnit.SECONDS)).isEqualTo(expected);
                 }
             } finally {
-                release.countDown();
-                threaded.close();
+                release.run();
+                close.run();
             }
         }
     }

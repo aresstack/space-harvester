@@ -130,7 +130,11 @@ public class Jobs implements AutoCloseable {
     private DeadlineTimer deadlines;
     private java.util.concurrent.ScheduledThreadPoolExecutor ownDeadlines;
 
-    /** Plant eine einmalige Aufgabe; das Ergebnis meldet sie wieder ab. In Tests von Hand. */
+    /**
+     * Testnaht: plant eine einmalige Aufgabe; das Ergebnis meldet sie wieder ab. Im Betrieb nie gesetzt, dann plant
+     * {@code Jobs} selbst; öffentlich nur, weil Tests anderer Pakete (etwa der Zusammenfassung) den Ablauf von Hand
+     * auslösen.
+     */
     @FunctionalInterface
     public interface DeadlineTimer {
         AutoCloseable at(Duration delay, Runnable task);
@@ -2516,8 +2520,10 @@ public class Jobs implements AutoCloseable {
         }
     }
 
-    /** Nur für Tests (auch anderer Pakete): plant das Wecken bei Ablauf der Laufzeitgrenze von Hand. */
-    public void deadlineTimer(DeadlineTimer timer) {
+    /**
+     * Testnaht, nie im Betrieb: plant das Wecken bei Ablauf der Laufzeitgrenze von Hand ({@link DeadlineTimer}).
+     */
+    public void deadlineTimerForTests(DeadlineTimer timer) {
         lock.lock();
         try {
             deadlines = java.util.Objects.requireNonNull(timer, "timer");
@@ -3100,7 +3106,13 @@ public class Jobs implements AutoCloseable {
         void stopRequested() {
             for (Runnable listener : stopListeners) {
                 if (stopListeners.remove(listener)) {
-                    listener.run();
+                    try {
+                        listener.run();
+                    } catch (RuntimeException e) {
+                        // Ein scheiternder Zuhörer überspringt nie die übrigen (Abnahme #1133).
+                        LOG.log(System.Logger.Level.WARNING, "Zuhörer beim Anhalten scheiterte ({0})",
+                                e.getClass().getName());
+                    }
                 }
             }
         }

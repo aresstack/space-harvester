@@ -164,13 +164,9 @@ class ConnectionBudgetTest {
                         return null;
                     }));
                 }
-                long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-                while ((threads.size() < waiters || !threads.stream().allMatch(thread ->
-                        thread.getState() == Thread.State.WAITING || thread.getState() == Thread.State.TIMED_WAITING))
-                        && System.nanoTime() < until) {
-                    Thread.onSpinWait();
-                }
-                assertThat(threads).hasSize(waiters);
+                assertThat(within(() -> threads.size() == waiters && threads.stream().allMatch(thread ->
+                        thread.getState() == Thread.State.WAITING
+                                || thread.getState() == Thread.State.TIMED_WAITING))).isTrue();
                 assertThat(job.registrations).hasValue(1);
 
                 job.cancel();
@@ -236,9 +232,7 @@ class ConnectionBudgetTest {
         StopContext limited = new StopContext();
         java.util.concurrent.CompletableFuture<Void> waiter = java.util.concurrent.CompletableFuture.runAsync(
                 () -> budget.awaitAvailable(limited));
-        while (limited.listeners.isEmpty()) {
-            Thread.onSpinWait();
-        }
+        assertThat(within(() -> !limited.listeners.isEmpty())).isTrue();
 
         limited.expire();
 
@@ -254,9 +248,7 @@ class ConnectionBudgetTest {
         StopContext waiting = new StopContext();
         java.util.concurrent.CompletableFuture<Void> waiter = java.util.concurrent.CompletableFuture.runAsync(
                 () -> budget.awaitAvailable(waiting));
-        while (waiting.listeners.isEmpty()) {
-            Thread.onSpinWait();
-        }
+        assertThat(within(() -> !waiting.listeners.isEmpty())).isTrue();
 
         waiting.cancel();
 
@@ -282,9 +274,7 @@ class ConnectionBudgetTest {
         second.setDaemon(true);
         second.start();
         assertThat(waiting.await(5, TimeUnit.SECONDS)).isTrue();
-        while (second.getState() != Thread.State.TIMED_WAITING) {
-            Thread.onSpinWait();
-        }
+        assertThat(within(() -> second.getState() == Thread.State.TIMED_WAITING)).isTrue();
 
         lease.release();
         second.join(5_000);
@@ -292,6 +282,18 @@ class ConnectionBudgetTest {
         assertThat(started).isTrue();
         lease.release();
         lease.close();
+    }
+
+    /** Ob {@code condition} binnen zehn Sekunden eintritt; ohne Schlafen, mit Frist (Abnahme #1133). */
+    private static boolean within(java.util.function.BooleanSupplier condition) {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!condition.getAsBoolean()) {
+            if (System.nanoTime() >= until) {
+                return false;
+            }
+            Thread.onSpinWait();
+        }
+        return true;
     }
 
     private static final class StopContext implements JobContext {
