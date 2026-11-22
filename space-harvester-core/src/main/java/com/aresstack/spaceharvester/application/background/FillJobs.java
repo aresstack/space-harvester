@@ -493,6 +493,12 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                     mine.done.completeExceptionally(e);
                 }
             });
+            if (active && !rescan && current.waiting(where) == 0) {
+                // Endete die letzte wartende Seite, nachdem „wartend“ oben gelesen war, aber bevor der Teil in live
+                // stand, zählte sie nur nachgemeldet und ihr „leer“ fand keinen Teil; ohne neue Suche liefe er ewig
+                // (CI #1121). Jetzt steht er in live: Jede spätere Seite meldet sich selbst, für die früheren sucht er.
+                rescan = true;
+            }
             if (!active) {
                 // Ohne laufende Füllung gibt es nichts zu zeigen.
                 synchronized (monitor) {
