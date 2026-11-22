@@ -474,6 +474,34 @@ wird automatisch verwaltet.
       angenommen sind: Neusortieren allein erzeugt keinen Teil, holt aber Abgewiesenes nach.
     - Bei nur einem Platz unter „Vorbereitung“ bleibt es beim bisherigen Weg im Speicher.
 
+13. **Suchtreffer laden** (Angelo 21.11.2026, Fundstelle 13, Entwurf vom Architekten bestätigt, Abnahme #1085).
+    - Kehrt die Suche eines technischen Aufrufers zurück, bevor die Treffer eines Stapels geladen sind
+      (`technicalWait`, in der App null), wird, was noch lädt oder wartet, die Gruppe „Suchtreffer laden“ der eigenen
+      Art `search-hits` (`SearchHitLoads`), je Quelle und Space ein Teil. Das gilt für jede Schlagwortsuche, auch aus
+      Chat und progressiver Suche.
+    - Die Suche übergibt nur und kehrt sofort zurück: Die Gruppe legt ein eigener Arbeiter an (`Coalescer`, gebündelt je
+      Stapel). Welche Seiten offene Teile schon laden, führt `SearchHitLoads` im Speicher, gepflegt über Anlegen und die
+      Auftragsmeldungen der Art (`BackgroundJobs#subscribe(kind, …)`); solche Seiten fallen aus neuen Teilen heraus.
+    - Die Abrufe bleiben dieselben: Vorrang des Vordergrunds, Platz im Planer, kein zweiter Abruf. Der Teil wartet über
+      Rückrufe auf sie (kein blockierter Arbeiter) und zählt sie; `progress()` der Suche zählt dieselben Abrufe, beide
+      Anzeigen stimmen also überein.
+    - Scheitert eine Seite, zählt sie rot mit Grund (Ereignis im Auftrag), die übrigen laden weiter; der Teil endet dann
+      als gescheitert („… ließen sich nicht laden; die nächste Suche versucht es erneut“) und lässt sich einzeln
+      wiederholen.
+    - Die übernommenen Abrufe bricht nur der Benutzer ab: Abbrechen oder Anhalten in der Auftragsliste zieht sie
+      zurück, Abbrechen in der Trefferliste bricht auch die Gruppe ab. Scheitert das Anlegen der Gruppe, laufen die
+      Abrufe der Suche unverändert weiter.
+    - Erst nach einem Neustart oder Fortsetzen fordert der Teil selbst an, was noch fehlt: höchstens 32 zugleich, wie
+      die Suche als Vordergrund ohne `refresh` (zurückgestellt, Anlass `SEARCH`); ist der Planer voll, weckt ihn
+      dessen Meldung.
+    - Delegierte Benutzer laden wie bisher nur während ihres Aufrufs, ohne Auftrag. Bei nur einem Platz unter
+      „Vorbereitung“ bleibt es beim bisherigen Weg.
+    - **Eigene Spur** (Abnahme #1085, gilt auch für die Hintergrundfüllung): Teile, die nur auf Arbeit warten, die der
+      Planer ohnehin begrenzt, belegen keinen Hintergrundplatz. `BackgroundKind#ownLane` ist nur für die genannten Arten
+      erlaubt (`OWN_LANE_KINDS`); solche Teile starten sofort, zählen weder unter „läuft“ noch im Hintergrundanteil und
+      haben keine Frist. Sie laufen nur mit mehr als einem Platz unter „Vorbereitung“ und ruhen mit „Hintergrund
+      anhalten“ wie alle Hintergrundteile.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel

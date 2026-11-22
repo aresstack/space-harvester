@@ -21,12 +21,30 @@ import java.util.function.Function;
  *                   setzt {@link BackgroundJobs#resumeInterrupted} nur den jüngsten unterbrochenen fort. Nicht für
  *                   Arten mit {@link BackgroundJobs#startUnlessWaiting}: Dort dürfen ein laufender und ein wartender
  *                   Teil nebeneinander stehen, und nach „Alle anhalten“ sperrten sich beide beim Fortsetzen gegenseitig
+ * @param ownLane    Teile auf eigener Spur ({@link com.aresstack.spaceharvester.application.jobs.Jobs#OWN_LANE}): ohne
+ *                   Platz unter „Vorbereitung“ und ohne Laufzeitgrenze. Kein freier Schalter (Abnahme Fundstelle 12):
+ *                   nur für Arten, deren Teil selbst nichts rechnet, sondern die Arbeit eines eigenen, begrenzten
+ *                   Ausführers sichtbar macht und über dessen Rückrufe wartet, ohne Thread; heute nur
+ *                   {@link #OWN_LANE_KINDS}, beide begrenzt durch den Planer
  */
 public record BackgroundKind(String id, Function<BackgroundPart, JobTask> work, BooleanSupplier autoResume,
-                             boolean exclusive) {
+                             boolean exclusive, boolean ownLane) {
+
+    /** Arten mit abgenommener eigener Spur: Suchtreffer laden (Fundstelle 13) und Hintergrundfüllung (12). */
+    public static final java.util.Set<String> OWN_LANE_KINDS = java.util.Set.of("search-hits", "fill");
+
+    /** Ohne eigene Spur. */
+    public BackgroundKind(String id, Function<BackgroundPart, JobTask> work, BooleanSupplier autoResume,
+                          boolean exclusive) {
+        this(id, work, autoResume, exclusive, false);
+    }
 
     public BackgroundKind {
         Objects.requireNonNull(id, "id");
+        if (ownLane && !OWN_LANE_KINDS.contains(id)) {
+            // Abnahme Fundstellen 12 und 13: nur abgenommene Arten; eine weitere braucht eine eigene Abnahme.
+            throw new IllegalArgumentException("Eigene Spur nur für Arten, die einen eigenen Ausführer sichtbar machen");
+        }
         if (id.isBlank()) {
             throw new IllegalArgumentException("id darf nicht leer sein");
         }
