@@ -326,12 +326,9 @@ final class PodcastProduction {
     private Future<?> picturesThread(String key, String sourceId, PodcastWriter.Material material, PodcastPlan plan,
                                      Pictures configured, RankedPool pool, CompletableFuture<?> firstAudio,
                                      JobContext context, List<String> repairs, PodcastPictures.Fence fence) {
-        // Jeder Modellaufruf eines Bildes läuft im Pool mit dem Rang seines Themas, hinter dessen Text und Audio.
-        java.util.concurrent.atomic.AtomicLong rank = new java.util.concurrent.atomic.AtomicLong(
-                rank(0, Stage.PICTURE, 0));
-        java.util.concurrent.Executor parts = work -> pool.execute(rank.get(), work);
-        PodcastPictures maker = new PodcastPictures(store, model, configured.drawer(), configured.images(), parts,
-                attempt -> waits.accept(context, attempt), fence);
+        // Jeder Modellaufruf eines Bildes läuft im Pool mit dem Rang seines Themas, hinter dessen Text und Audio. Die
+        // Themen laufen zugleich (je ein eigener Faden, der nur wartet), damit jedes Bild vor seinem Kapitel fertig
+        // ist; wie viele Aufrufe wirklich zum Modell gehen, begrenzt allein der Pool (ai.parallel).
         List<PodcastPictures.Brief> briefs = briefs(material, plan);
         java.util.concurrent.FutureTask<Void> task = new java.util.concurrent.FutureTask<>(() -> {
             try {
@@ -342,16 +339,44 @@ final class PodcastProduction {
                 return null;
             }
             java.util.Set<String> used = new java.util.HashSet<>();
-            for (PodcastPictures.Brief brief : briefs) {
-                if (Thread.currentThread().isInterrupted() || revoked.contains(key)) {
-                    return null;
+            java.util.concurrent.ExecutorService topics = java.util.concurrent.Executors.newFixedThreadPool(Math.max(1, Math.min(briefs.size(), 8)),
+                    runnable -> {
+                        Thread thread = new Thread(runnable, "space-harvester-podcast-bild-" + key.substring(0, 6));
+                        thread.setDaemon(true);
+                        return thread;
+                    });
+            try {
+                List<Future<?>> each = new ArrayList<>();
+                for (PodcastPictures.Brief brief : briefs) {
+                    long topicRank = rank(brief.topic(), Stage.PICTURE, 0);
+                    PodcastPictures maker = new PodcastPictures(store, model, configured.drawer(),
+                            configured.images(), work -> pool.execute(topicRank, work),
+                            attempt -> waits.accept(context, attempt), fence);
+                    each.add(topics.submit(() -> {
+                        if (Thread.currentThread().isInterrupted() || revoked.contains(key)) {
+                            return;
+                        }
+                        boolean known = maker.picture(key, brief.topic()).isPresent();
+                        maker.make(key, sourceId, brief, used, repairs);
+                        if (!known) {
+                            notify(key);
+                        }
+                    }));
                 }
-                rank.set(rank(brief.topic(), Stage.PICTURE, 0));
-                boolean known = maker.picture(key, brief.topic()).isPresent();
-                maker.make(key, sourceId, brief, used, repairs);
-                if (!known) {
-                    notify(key);
+                for (Future<?> one : each) {
+                    try {
+                        one.get();
+                    } catch (ExecutionException e) {
+                        if (e.getCause() instanceof PodcastPictures.Closed closed) {
+                            throw closed;
+                        }
+                        repairs.add("Bild gescheitert (" + e.getCause().getClass().getSimpleName() + ")");
+                    }
                 }
+            } catch (InterruptedException stopped) {
+                Thread.currentThread().interrupt();
+            } finally {
+                topics.shutdownNow();
             }
             return null;
         });
