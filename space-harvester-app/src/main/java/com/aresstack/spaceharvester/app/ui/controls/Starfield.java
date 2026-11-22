@@ -32,7 +32,7 @@ public final class Starfield extends JPanel {
 
     /** Wie schnell der Flug geht. */
     public enum Mode {
-        /** Flug mit Streifen, für Mission Protocol. */
+        /** Flug mit Streifen, für Mission Control. */
         WARP(0.42),
         /** Langsames Treiben, etwa hinter einer Arbeitsfläche. */
         DRIFT(0.035),

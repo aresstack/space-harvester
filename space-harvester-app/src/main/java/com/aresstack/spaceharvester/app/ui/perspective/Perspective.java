@@ -4,7 +4,7 @@ import java.util.Objects;
 import javax.swing.JComponent;
 
 /**
- * Ein Arbeitsplatz an Bord desselben Raumschiffs (#1141): Space Harvester, Command Deck, später Mission Protocol. Eine
+ * Ein Arbeitsplatz an Bord desselben Raumschiffs (#1141): Space Harvester, Command Deck, Proving Ground, später Mission Control. Eine
  * Perspektive bringt ihre eigene Navigation (oben neben dem Titel), ihre Arbeitsfläche (Mitte) und, wenn sie eine hat,
  * ihre linke Leiste mit. Logo, Titelleiste, rechte Chat-/Auftrags-Seitenleiste und Statuszeile gehören zum gemeinsamen
  * Rahmen und bleiben beim Wechsel stehen; das Hauptfenster kennt keine Sonderfälle einzelner Perspektiven.

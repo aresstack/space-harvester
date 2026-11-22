@@ -7,6 +7,8 @@ import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
 import com.aresstack.spaceharvester.deck.ftp.FtpSessions;
 import com.aresstack.spaceharvester.deck.ftp.commonsnet.CommonsNetFtpConnector;
+import com.aresstack.spaceharvester.deck.ndv.NdvSessions;
+import com.aresstack.spaceharvester.deck.ndv.pal.PalNdvConnector;
 import com.aresstack.spaceharvester.deck.terminal.TerminalSessions;
 import com.aresstack.spaceharvester.deck.terminal.openterm.OpenTermConnector;
 import java.awt.BorderLayout;
@@ -37,11 +39,13 @@ public final class CommandDeck {
     private final JPanel workspace = new JPanel(cards);
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
+    private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(), connecting);
     private final TerminalWorkspace terminal;
     private final FtpSessions ftpSessions = new FtpSessions(new CommonsNetFtpConnector(), connecting);
     private final FtpWorkspace ftp;
     /** Oben rechts in der Titelleiste: die Bedienelemente des gewählten Bereichs (FTP: Datasets | JES-Jobs). */
     private final JPanel tools = new JPanel(new BorderLayout());
+    private final NdvWorkspace ndv;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
 
@@ -51,12 +55,13 @@ public final class CommandDeck {
     }
 
     /**
-     * @param accounts Host-Zugänge (KeePass), gemeinsam für Terminal und später FTP und NDV
+     * @param accounts Host-Zugänge (KeePass), gemeinsam für Terminal, NDV und später FTP
      */
     public CommandDeck(com.aresstack.spaceharvester.deck.access.ServerAccounts accounts) {
         terminal = new TerminalWorkspace(sessions, accounts);
         ftp = new FtpWorkspace(ftpSessions, accounts);
         tools.setOpaque(false);
+        ndv = new NdvWorkspace(ndvSessions, accounts);
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
@@ -74,6 +79,7 @@ public final class CommandDeck {
             workspace.add(switch (candidate) {
                 case TERMINAL -> terminal;
                 case FTP -> ftp;
+                case NDV -> ndv;
                 default -> placeholder(candidate);
             }, candidate.name());
         }
@@ -87,8 +93,28 @@ public final class CommandDeck {
         return perspective;
     }
 
+    /**
+     * Was der globale Chat in dieser Perspektive bekommt (#1151): die Werkzeuge des Maskenassistenten für die gerade
+     * gewählte Terminal-Sitzung – Maske lesen, Felder lokal ausfüllen, Schreibmarke bewegen, nie abschicken. Beim
+     * Senden ausgewertet; ohne Sitzung sagen die Werkzeuge das dem Modell.
+     */
+    public com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope chatScope() {
+        com.aresstack.spaceharvester.deck.terminal.TerminalSession session = terminal.selected();
+        String area = "Command Deck › Terminal" + (session == null ? " (keine Sitzung gewählt)"
+                : " " + session.profile().label());
+        String key = "command-deck/terminal" + (session == null ? "" : "/" + session.profile().label());
+        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(area, key,
+                new com.aresstack.spaceharvester.app.chat.TerminalChatTools(session, terminal::selected),
+                com.aresstack.spaceharvester.app.chat.TerminalChatTools.systemMessage(area));
+    }
+
     public TerminalSessions sessions() {
         return sessions;
+    }
+
+    /** Die NDV-Sitzungen; sie überleben jeden Wechsel von Bereich und Perspektive. */
+    public NdvSessions ndvSessions() {
+        return ndvSessions;
     }
 
     /** Zeigt einen Arbeitsbereich; offene Sitzungen der anderen bleiben, wie sie sind. */
@@ -112,6 +138,7 @@ public final class CommandDeck {
     public void shutdown() {
         sessions.closeAll();
         ftpSessions.closeAll();
+        ndvSessions.closeAll();
         connecting.shutdownNow();
     }
 
@@ -129,6 +156,10 @@ public final class CommandDeck {
 
     TerminalWorkspace terminal() {
         return terminal;
+    }
+
+    NdvWorkspace ndv() {
+        return ndv;
     }
 
     JComponent navigation() {

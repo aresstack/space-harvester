@@ -41,11 +41,16 @@ class PerspectivesTest {
     }
 
     @Test
-    void missionProtocolIsOnlyAPlaceholderWithoutNavigationOrDrawer() {
-        Perspective mission = Perspectives.missionProtocol();
+    void provingGroundAndMissionControlAreOnlyPlaceholdersWithoutNavigationOrDrawer() {
+        Perspective proving = Perspectives.provingGround();
+        assertThat(proving.ready()).isFalse();
+        assertThat(proving.navigation()).isNull();
+        assertThat(proving.drawer()).isNull();
+        assertThat(proving.title()).isEqualTo("Proving Ground");
+        Perspective mission = Perspectives.missionControl();
         assertThat(mission.ready()).isFalse();
         assertThat(mission.navigation()).isNull();
         assertThat(mission.drawer()).isNull();
-        assertThat(mission.title()).isEqualTo("Mission Protocol");
+        assertThat(mission.title()).isEqualTo("Mission Control");
     }
 }
