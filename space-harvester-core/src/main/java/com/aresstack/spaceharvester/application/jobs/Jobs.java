@@ -3039,9 +3039,14 @@ public class Jobs implements AutoCloseable {
             }
         }
 
-        /** Koppelt die Arbeit ab; wartet auf ein gerade entstehendes Ereignis ({@link #emit}). */
-        synchronized void detach() {
-            detached = true;
+        /**
+         * Koppelt die Arbeit ab; wartet auf ein gerade entstehendes Ereignis ({@link #emit}). Die Zuhörer laufen
+         * außerhalb des Monitors (Abnahme #1133): Sie nehmen fremde Sperren, etwa die des Verbindungsbudgets.
+         */
+        void detach() {
+            synchronized (this) {
+                detached = true;
+            }
             stopRequested();
         }
 
@@ -3059,9 +3064,17 @@ public class Jobs implements AutoCloseable {
                 return;
             }
             deadlineWake = deadlines().at(Duration.between(clock.instant(), limit), () -> {
-                if (deadline == limit) {
-                    overdue = true;
-                    stopRequested();
+                // Unter dem Sperrobjekt geprüft und geweckt (Abnahme #1133): Zwischen Prüfen und Wecken beginnt kein
+                // neuer Lauf, dessen Zuhörer ein veraltetes Wecken verbrauchte. Die Zuhörer nehmen danach nur ihre
+                // eigene Sperre (Reihenfolge: Aufträge, dann etwa das Verbindungsbudget).
+                lock.lock();
+                try {
+                    if (deadline == limit) {
+                        overdue = true;
+                        stopRequested();
+                    }
+                } finally {
+                    lock.unlock();
                 }
             });
         }

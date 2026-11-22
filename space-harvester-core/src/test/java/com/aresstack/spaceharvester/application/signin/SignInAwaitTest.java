@@ -35,19 +35,30 @@ class SignInAwaitTest {
         signIns.onChange(joined::countDown);
         Challenge challenge = new Challenge();
         List<Future<SignInRequests.Outcome>> waiting = new ArrayList<>();
+        List<Thread> threads = new CopyOnWriteArrayList<>();
         try (ExecutorService virtual = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (int i = 0; i < waiters; i++) {
-                String jobId = "job-" + i;
-                waiting.add(virtual.submit(() -> signIns.await("wiki", jobId, challenge, null, new StopContext(jobId))));
-            }
-            assertThat(joined.await(10, TimeUnit.SECONDS)).isTrue();
-            String requestId = signIns.pendingFor("wiki").orElseThrow().id();
+            try {
+                for (int i = 0; i < waiters; i++) {
+                    String jobId = "job-" + i;
+                    waiting.add(virtual.submit(() -> {
+                        threads.add(Thread.currentThread());
+                        return signIns.await("wiki", jobId, challenge, null, new StopContext(jobId));
+                    }));
+                }
+                assertThat(joined.await(10, TimeUnit.SECONDS)).isTrue();
+                assertThat(allParked(threads)).isTrue();
+                String requestId = signIns.pendingFor("wiki").orElseThrow().id();
 
-            Future<SignInRequest.Answer> sent = virtual.submit(() -> signIns.submit(requestId, "123456".toCharArray()));
+                Future<SignInRequest.Answer> sent =
+                        virtual.submit(() -> signIns.submit(requestId, "123456".toCharArray()));
 
-            assertThat(sent.get(10, TimeUnit.SECONDS)).isEqualTo(SignInRequest.Answer.ACCEPTED);
-            for (Future<SignInRequests.Outcome> each : waiting) {
-                assertThat(each.get(10, TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.UNLOCKED);
+                assertThat(sent.get(10, TimeUnit.SECONDS)).isEqualTo(SignInRequest.Answer.ACCEPTED);
+                for (Future<SignInRequests.Outcome> each : waiting) {
+                    assertThat(each.get(10, TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.UNLOCKED);
+                }
+            } finally {
+                // Scheitert eine Frist, wartet close() des Executors sonst 15 Minuten auf die Wartenden.
+                release(signIns);
             }
         }
         assertThat(signIns.pendingFor("wiki")).isEmpty();
@@ -60,19 +71,24 @@ class SignInAwaitTest {
         CountDownLatch joined = new CountDownLatch(1);
         signIns.onChange(joined::countDown);
         StopContext context = new StopContext("job-1");
-        CompletableFuture<SignInRequests.Outcome> waiter = CompletableFuture.supplyAsync(
-                () -> signIns.await("wiki", "job-1", new Challenge(), null, context),
-                Executors.newVirtualThreadPerTaskExecutor());
-        assertThat(joined.await(5, TimeUnit.SECONDS)).isTrue();
-        assertThat(signIns.waiting("job-1")).isPresent();
+        try (ExecutorService virtual = Executors.newVirtualThreadPerTaskExecutor()) {
+            try {
+                CompletableFuture<SignInRequests.Outcome> waiter = CompletableFuture.supplyAsync(
+                        () -> signIns.await("wiki", "job-1", new Challenge(), null, context), virtual);
+                assertThat(joined.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(signIns.waiting("job-1")).isPresent();
 
-        context.cancel();
+                context.cancel();
 
-        assertThat(waiter).failsWithin(5, TimeUnit.SECONDS).withThrowableThat()
-                .havingCause().isInstanceOf(JobCancelledException.class);
-        assertThat(signIns.waiting("job-1")).isEmpty();
-        assertThat(signIns.pendingFor("wiki")).isEmpty();
-        assertThat(context.listeners).isEmpty();
+                assertThat(waiter).failsWithin(5, TimeUnit.SECONDS).withThrowableThat()
+                        .havingCause().isInstanceOf(JobCancelledException.class);
+                assertThat(signIns.waiting("job-1")).isEmpty();
+                assertThat(signIns.pendingFor("wiki")).isEmpty();
+                assertThat(context.listeners).isEmpty();
+            } finally {
+                context.cancel();
+            }
+        }
     }
 
     @Test
@@ -83,15 +99,34 @@ class SignInAwaitTest {
         CountDownLatch joined = new CountDownLatch(1);
         signIns.onChange(joined::countDown);
         StopContext context = new StopContext("job-1");
+        try {
+            CompletableFuture<SignInRequests.Outcome> waiter = CompletableFuture.supplyAsync(
+                    () -> signIns.await("wiki", "job-1", new Challenge(), null, context));
+            assertThat(joined.await(5, TimeUnit.SECONDS)).isTrue();
+
+            context.expire();
+
+            assertThat(waiter).failsWithin(5, TimeUnit.SECONDS).withThrowableThat().havingCause()
+                    .isInstanceOfSatisfying(JobFailedException.class, e -> assertThat(e.code()).isEqualTo("TIMEOUT"));
+            assertThat(signIns.waiting("job-1")).isEmpty();
+        } finally {
+            context.cancel();
+        }
+    }
+
+    @Test
+    void aRunTimeLimitAlreadyExpiredEndsTheWaitBeforeItBegins() {
+        // Wie Jobs: Ist die Grenze schon abgelaufen, feuert ein neu angemeldeter Zuhörer sofort.
+        SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), new FixedClock());
+        StopContext context = new StopContext("job-1");
+        context.expire();
+
         CompletableFuture<SignInRequests.Outcome> waiter = CompletableFuture.supplyAsync(
                 () -> signIns.await("wiki", "job-1", new Challenge(), null, context));
-        assertThat(joined.await(5, TimeUnit.SECONDS)).isTrue();
-
-        context.expire();
 
         assertThat(waiter).failsWithin(5, TimeUnit.SECONDS).withThrowableThat().havingCause()
                 .isInstanceOfSatisfying(JobFailedException.class, e -> assertThat(e.code()).isEqualTo("TIMEOUT"));
-        assertThat(signIns.waiting("job-1")).isEmpty();
+        assertThat(signIns.pendingFor("wiki")).isEmpty();
     }
 
     @Test
@@ -122,16 +157,38 @@ class SignInAwaitTest {
         SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), new FixedClock());
         CountDownLatch joined = new CountDownLatch(2);
         signIns.onChange(joined::countDown);
-        CompletableFuture<SignInRequests.Outcome> first = CompletableFuture.supplyAsync(
-                () -> signIns.await("wiki", "job-1", new Challenge(), null, null));
-        CompletableFuture<SignInRequests.Outcome> second = CompletableFuture.supplyAsync(
-                () -> signIns.await("wiki", "job-2", new Challenge(), null, new StopContext("job-2")));
-        assertThat(joined.await(5, TimeUnit.SECONDS)).isTrue();
+        try {
+            CompletableFuture<SignInRequests.Outcome> first = CompletableFuture.supplyAsync(
+                    () -> signIns.await("wiki", "job-1", new Challenge(), null, null));
+            CompletableFuture<SignInRequests.Outcome> second = CompletableFuture.supplyAsync(
+                    () -> signIns.await("wiki", "job-2", new Challenge(), null, new StopContext("job-2")));
+            assertThat(joined.await(5, TimeUnit.SECONDS)).isTrue();
 
-        assertThat(signIns.decline(signIns.pendingFor("wiki").orElseThrow().id())).isTrue();
+            assertThat(signIns.decline(signIns.pendingFor("wiki").orElseThrow().id())).isTrue();
 
-        assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.DECLINED);
-        assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.DECLINED);
+            assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.DECLINED);
+            assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.DECLINED);
+        } finally {
+            release(signIns);
+        }
+    }
+
+    /** Lehnt eine offene Anforderung ab und weckt so jeden Wartenden; für das finally der Tests. */
+    private static void release(SignInRequests signIns) {
+        signIns.pendingFor("wiki").ifPresent(request -> signIns.decline(request.id()));
+    }
+
+    /** Ob alle Threads binnen zehn Sekunden parken (WAITING oder TIMED_WAITING); ohne Schlafen. */
+    private static boolean allParked(List<Thread> threads) {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < until) {
+            if (threads.stream().allMatch(thread -> thread.getState() == Thread.State.WAITING
+                    || thread.getState() == Thread.State.TIMED_WAITING)) {
+                return true;
+            }
+            Thread.onSpinWait();
+        }
+        return false;
     }
 
     private static final class StopContext implements JobContext {
@@ -168,7 +225,7 @@ class SignInAwaitTest {
         @Override
         public AutoCloseable whenStopRequested(Runnable listener) {
             listeners.add(listener);
-            if (cancelled && listeners.remove(listener)) {
+            if ((cancelled || timedOut) && listeners.remove(listener)) {
                 listener.run();
             }
             return () -> listeners.remove(listener);

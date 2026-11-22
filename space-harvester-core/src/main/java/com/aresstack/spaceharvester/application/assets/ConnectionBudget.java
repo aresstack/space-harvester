@@ -98,8 +98,10 @@ public final class ConnectionBudget {
      * {@link #lock}; er blockiert nicht.
      * <p>
      * Sperrreihenfolge (Abnahme #1133), bitte so lassen: Der Stopp-Rückruf läuft unter der Sperre der Aufträge und
-     * nimmt danach {@link #lock}; {@link #checkpoint()} läuft unter {@link #lock} und darf darum nie eine Sperre der
-     * Aufträge nehmen (nur Flag und Frist lesen), sonst drohte eine Verklemmung.
+     * nimmt danach {@link #lock}. Unter {@link #lock} laufen dagegen {@link #checkpoint()} sowie An- und Abmelden des
+     * Zuhörers ({@link JobContext#whenStopRequested}, {@code registration.close()}, auch über
+     * {@link Lease#acquire}/{@link Lease#close}); sie dürfen darum nie eine Sperre der Aufträge nehmen (nur Flag, Frist
+     * und eine nebenläufige Liste), sonst drohte eine Verklemmung.
      */
     private final class Wake implements AutoCloseable {
 
@@ -160,10 +162,14 @@ public final class ConnectionBudget {
         private int running;
         /**
          * Ein Zuhörer je Lease statt je {@link #acquire} (Architekt, Abnahme #1133): Jedes Anmelden und Abmelden kopiert
-         * die Zuhörerliste des Auftrags. Neu angemeldet wird nur bei einem anderen Auftrag oder nachdem der Zuhörer
-         * gefeuert hat (er läuft höchstens einmal, ein fortgesetzter Lauf braucht einen neuen). Nur unter {@link #lock}.
+         * die Zuhörerliste des Auftrags. Verglichen wird der Auftrag ({@link JobContext#jobId()}), nicht das Objekt:
+         * Die Aufrufer hüllen ihn je Seite neu ein. Neu angemeldet wird nur für einen anderen Auftrag oder nachdem der
+         * Zuhörer gefeuert hat (er läuft höchstens einmal, ein fortgesetzter Lauf braucht einen neuen). Nur unter
+         * {@link #lock}.
          */
         private Wake wake;
+        /** Abgemeldet ({@link #close()}); danach belegt die Lease nichts mehr. Nur unter {@link #lock}. */
+        private boolean closed;
 
         private Lease(LongSupplier remaining) {
             this.remaining = remaining;
@@ -178,9 +184,14 @@ public final class ConnectionBudget {
             java.util.Objects.requireNonNull(context, "context");
             lock.lock();
             try {
-                Wake wake = wakeFor(context);
+                if (closed) {
+                    throw new IllegalStateException("Die Anmeldung beim Verbindungsbudget ist schon geschlossen");
+                }
+                wakeFor(context);
                 while (true) {
-                    wake.checkpoint();
+                    // Der Prüfpunkt des eigenen Aufrufers: Der Zuhörer kann zu einer anderen Hülle desselben Auftrags
+                    // gehören. Darin keine Sperre der Aufträge (siehe Wake).
+                    context.checkpoint();
                     if (inFlight < total && running < ConnectionBudget.this.share(this)) {
                         break;
                     }
@@ -205,7 +216,8 @@ public final class ConnectionBudget {
         /** Unter {@link #lock}: der Zuhörer dieses Leases für {@code context}, wenn nötig neu angemeldet. */
         private Wake wakeFor(JobContext context) {
             Wake current = wake;
-            if (current != null && current.context == context && !current.fired) {
+            if (current != null && !current.fired
+                    && java.util.Objects.equals(current.context.jobId(), context.jobId())) {
                 return current;
             }
             wake = null;
@@ -248,6 +260,7 @@ public final class ConnectionBudget {
         public void close() {
             lock.lock();
             try {
+                closed = true;
                 Wake current = wake;
                 wake = null;
                 if (current != null) {

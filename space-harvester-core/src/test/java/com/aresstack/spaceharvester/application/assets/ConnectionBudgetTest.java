@@ -144,6 +144,62 @@ class ConnectionBudgetTest {
     }
 
     @Test
+    void manyWaitersInDifferentWrappersOfOneJobShareOneListenerAndAStopWakesThemAll() throws Exception {
+        // Architekt, Abnahme #1133: ExportAssetCollection hüllt den Auftrag je Seite neu ein; verglichen wird der
+        // Auftrag, nicht die Hülle. Ein Stopp weckt alle Wartenden, auch die über eine andere Hülle.
+        int waiters = 200;
+        ConnectionBudget budget = new ConnectionBudget(1, java.time.Duration.ofHours(1));
+        StopContext job = new StopContext();
+        ConnectionBudget.Lease lease = budget.register(() -> 1);
+        lease.acquire(new Wrapper(job));
+        List<java.util.concurrent.Future<?>> waiting = new java.util.ArrayList<>();
+        List<Thread> threads = new CopyOnWriteArrayList<>();
+        try (java.util.concurrent.ExecutorService virtual =
+                     java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            try {
+                for (int i = 0; i < waiters; i++) {
+                    waiting.add(virtual.submit(() -> {
+                        threads.add(Thread.currentThread());
+                        lease.acquire(new Wrapper(job));
+                        return null;
+                    }));
+                }
+                long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while ((threads.size() < waiters || !threads.stream().allMatch(thread ->
+                        thread.getState() == Thread.State.WAITING || thread.getState() == Thread.State.TIMED_WAITING))
+                        && System.nanoTime() < until) {
+                    Thread.onSpinWait();
+                }
+                assertThat(threads).hasSize(waiters);
+                assertThat(job.registrations).hasValue(1);
+
+                job.cancel();
+
+                for (java.util.concurrent.Future<?> each : waiting) {
+                    assertThat(each).failsWithin(10, TimeUnit.SECONDS).withThrowableThat().havingCause()
+                            .isInstanceOf(JobCancelledException.class);
+                }
+            } finally {
+                job.cancel();
+            }
+        }
+        lease.release();
+        lease.close();
+        assertThat(job.listeners).isEmpty();
+    }
+
+    @Test
+    void anAcquireAfterCloseFailsInsteadOfRegisteringAListenerNobodyCloses() {
+        ConnectionBudget budget = new ConnectionBudget(4);
+        StopContext job = new StopContext();
+        ConnectionBudget.Lease lease = budget.register(() -> 1);
+        lease.close();
+
+        assertThatThrownBy(() -> lease.acquire(job)).isInstanceOf(IllegalStateException.class);
+        assertThat(job.listeners).isEmpty();
+    }
+
+    @Test
     void aFiredListenerIsRegisteredAgainForTheNextAcquire() {
         // Der Zuhörer läuft höchstens einmal; danach braucht ein weiteres acquire einen neuen.
         ConnectionBudget budget = new ConnectionBudget(4);
@@ -279,7 +335,7 @@ class ConnectionBudgetTest {
         public AutoCloseable whenStopRequested(Runnable listener) {
             registrations.incrementAndGet();
             listeners.add(listener);
-            if (cancelled && listeners.remove(listener)) {
+            if ((cancelled || expired) && listeners.remove(listener)) {
                 listener.run();
             }
             return () -> listeners.remove(listener);
@@ -303,6 +359,52 @@ class ConnectionBudgetTest {
         @Override
         public boolean cancelRequested() {
             return cancelled;
+        }
+
+        @Override
+        public void discovered(long pages) {
+        }
+
+        @Override
+        public void processed(long pages) {
+        }
+
+        @Override
+        public void written(long pages) {
+        }
+
+        @Override
+        public void failed(long pages) {
+        }
+    }
+
+    /** Eine Hülle um den Auftrag wie {@code ExportAssetCollection.Tally}: anderes Objekt, derselbe Auftrag. */
+    private static final class Wrapper implements JobContext {
+
+        private final JobContext job;
+
+        Wrapper(JobContext job) {
+            this.job = job;
+        }
+
+        @Override
+        public AutoCloseable whenStopRequested(Runnable listener) {
+            return job.whenStopRequested(listener);
+        }
+
+        @Override
+        public String jobId() {
+            return job.jobId();
+        }
+
+        @Override
+        public void checkpoint() {
+            job.checkpoint();
+        }
+
+        @Override
+        public boolean cancelRequested() {
+            return job.cancelRequested();
         }
 
         @Override
