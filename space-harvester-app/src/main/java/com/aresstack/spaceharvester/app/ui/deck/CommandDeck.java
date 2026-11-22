@@ -10,6 +10,8 @@ import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
 import com.aresstack.spaceharvester.deck.access.ServerAccounts;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
 import com.aresstack.spaceharvester.deck.betaview.http.HttpBetaViewServer;
+import com.aresstack.spaceharvester.deck.ndv.NdvSessions;
+import com.aresstack.spaceharvester.deck.ndv.pal.PalNdvConnector;
 import com.aresstack.spaceharvester.deck.terminal.TerminalSessions;
 import com.aresstack.spaceharvester.deck.terminal.openterm.OpenTermConnector;
 import java.awt.BorderLayout;
@@ -40,8 +42,10 @@ public final class CommandDeck {
     private final JPanel workspace = new JPanel(cards);
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
+    private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(), connecting);
     private final TerminalWorkspace terminal;
     private final BetaViewWorkspace betaView;
+    private final NdvWorkspace ndv;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
 
@@ -51,20 +55,21 @@ public final class CommandDeck {
     }
 
     /**
-     * @param accounts Host-Zugänge (KeePass), gemeinsam für Terminal und später FTP und NDV
+     * @param accounts Host-Zugänge (KeePass), gemeinsam für Terminal, NDV und später FTP
      */
     public CommandDeck(ServerAccounts accounts) {
         this(accounts, BetaViewAccess.direct());
     }
 
     /**
-     * @param accounts       Host-Zugänge (KeePass), gemeinsam für Terminal und später FTP und NDV
+     * @param accounts       Host-Zugänge (KeePass), gemeinsam für Terminal, NDV und später FTP
      * @param betaViewAccess Netzweg (Proxy, Zertifikate) und KeePass-Kopplung der App für BetaView
      */
     public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess) {
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), betaViewAccess);
+        ndv = new NdvWorkspace(ndvSessions, accounts);
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
@@ -82,6 +87,7 @@ public final class CommandDeck {
             workspace.add(switch (candidate) {
                 case TERMINAL -> terminal;
                 case BETAVIEW -> betaView;
+                case NDV -> ndv;
                 default -> placeholder(candidate);
             }, candidate.name());
         }
@@ -95,8 +101,28 @@ public final class CommandDeck {
         return perspective;
     }
 
+    /**
+     * Was der globale Chat in dieser Perspektive bekommt (#1151): die Werkzeuge des Maskenassistenten für die gerade
+     * gewählte Terminal-Sitzung – Maske lesen, Felder lokal ausfüllen, Schreibmarke bewegen, nie abschicken. Beim
+     * Senden ausgewertet; ohne Sitzung sagen die Werkzeuge das dem Modell.
+     */
+    public com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope chatScope() {
+        com.aresstack.spaceharvester.deck.terminal.TerminalSession session = terminal.selected();
+        String area = "Command Deck › Terminal" + (session == null ? " (keine Sitzung gewählt)"
+                : " " + session.profile().label());
+        String key = "command-deck/terminal" + (session == null ? "" : "/" + session.profile().label());
+        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(area, key,
+                new com.aresstack.spaceharvester.app.chat.TerminalChatTools(session, terminal::selected),
+                com.aresstack.spaceharvester.app.chat.TerminalChatTools.systemMessage(area));
+    }
+
     public TerminalSessions sessions() {
         return sessions;
+    }
+
+    /** Die NDV-Sitzungen; sie überleben jeden Wechsel von Bereich und Perspektive. */
+    public NdvSessions ndvSessions() {
+        return ndvSessions;
     }
 
     /** Zeigt einen Arbeitsbereich; offene Sitzungen der anderen bleiben, wie sie sind. */
@@ -114,6 +140,7 @@ public final class CommandDeck {
     public void shutdown() {
         sessions.closeAll();
         betaView.shutdown();
+        ndvSessions.closeAll();
         connecting.shutdownNow();
     }
 
@@ -123,6 +150,10 @@ public final class CommandDeck {
 
     BetaViewWorkspace betaView() {
         return betaView;
+    }
+
+    NdvWorkspace ndv() {
+        return ndv;
     }
 
     JComponent navigation() {

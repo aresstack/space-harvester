@@ -179,6 +179,11 @@ public final class ChatTurn {
     private boolean byTools;
     private PageKey openPage;
     private volatile ChatTools tools;
+    /** Die Werkzeuge der laufenden Frage: die Wissenswerkzeuge oder die der Perspektive ({@link #withToolset}). */
+    private volatile ChatToolset toolset;
+    /** Von der Perspektive gesetzte Werkzeuge samt Systemnachricht (Command Deck, #1151); sonst {@code null}. */
+    private ChatToolset custom;
+    private String customSystem;
     private final List<ChatKnowledge.Excerpt> cited = new ArrayList<>();
     /** Ob die Quellen schon einmal gemeldet wurden; danach meldet jede neue Quelle die Liste erneut. */
     private boolean sourcesAnnounced;
@@ -265,6 +270,24 @@ public final class ChatTurn {
         return this;
     }
 
+    /**
+     * Werkzeuge der aktiven Perspektive statt der Wissenswerkzeuge (#1151): Der Chat bleibt derselbe, nur was das
+     * Modell für diese Frage tun darf, kommt aus der Perspektive – im Command Deck der Maskenassistent. Ohne
+     * Wissenssuche und ohne Rückfall: Lehnt der Dienst Werkzeuge ab, endet die Frage mit einer Meldung.
+     *
+     * @param tools  die Werkzeuge
+     * @param system die Systemnachricht dazu
+     */
+    public ChatTurn withToolset(ChatToolset tools, String system) {
+        this.custom = Objects.requireNonNull(tools, "tools");
+        this.customSystem = Objects.requireNonNull(system, "system");
+        return this;
+    }
+
+    /** Die feste Meldung, wenn der Dienst für dieses Modell keine Werkzeuge annimmt. */
+    public static final String NO_TOOLS = "Das gewählte Modell nimmt keine Werkzeuge an; ohne Werkzeuge kann der "
+            + "Chat hier nichts lesen oder ausfüllen.";
+
     /** Für Tests: ein anderes Begriffswissen für {@value ChatTools#TERM}. */
     ChatTurn termLookup(ChatTools.TermLookup lookup) {
         this.termLookup = Objects.requireNonNull(lookup, "lookup");
@@ -283,7 +306,7 @@ public final class ChatTurn {
     /** Bricht Suche oder Antwort ab; die Abbruchmeldung kommt über den Listener. */
     public void cancel() {
         cancelRequested = true;
-        ChatTools using = tools;
+        ChatToolset using = toolset;
         if (using != null) {
             using.cancel();
         }
@@ -298,7 +321,11 @@ public final class ChatTurn {
     }
 
     private void run() {
-        if (byTools) {
+        if (custom != null) {
+            toolset = custom;
+            onUi(() -> listener.context(ChatKnowledge.Context.EMPTY));
+            round(conversation(customSystem, question), 0);
+        } else if (byTools) {
             runWithTools();
         } else {
             runWithSearch();
@@ -424,6 +451,27 @@ public final class ChatTurn {
             running.termLookup(termLookup);
         }
         tools = running;
+        toolset = new ChatToolset() {
+            @Override
+            public List<AiChat.Tool> definitions() {
+                return ChatTools.definitions();
+            }
+
+            @Override
+            public String run(AiChat.ToolCall call) {
+                return running.run(call);
+            }
+
+            @Override
+            public String describe(AiChat.ToolCall call) {
+                return ChatTools.describe(call);
+            }
+
+            @Override
+            public void cancel() {
+                running.cancel();
+            }
+        };
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
         int shown = 0;
@@ -480,7 +528,7 @@ public final class ChatTurn {
             finish(() -> listener.cancelled(partial));
             return;
         }
-        List<AiChat.Tool> offered = round < MAX_TOOL_ROUNDS ? ChatTools.definitions() : List.of();
+        List<AiChat.Tool> offered = round < MAX_TOOL_ROUNDS ? toolset.definitions() : List.of();
         int roundStart;
         synchronized (received) {
             roundStart = received.length();
@@ -528,6 +576,11 @@ public final class ChatTurn {
                 synchronized (received) {
                     nothingYet = received.length() == 0;
                 }
+                if (custom != null && round == 0 && nothingYet
+                        && error.kind() == AiChatException.Kind.INVALID_REQUEST) {
+                    finish(() -> listener.failed(NO_TOOLS + "\nTechnische Ursache: " + describe(error)));
+                    return;
+                }
                 if (round == 0 && nothingYet && error.kind() == AiChatException.Kind.INVALID_REQUEST) {
                     // Der Dienst lehnt Werkzeuge ab: für dieses Modell merken und still auf die Suche zurückfallen.
                     WITHOUT_TOOLS.add(model);
@@ -565,9 +618,9 @@ public final class ChatTurn {
             if (cancelRequested) {
                 break;
             }
-            String what = ChatTools.describe(call);
+            String what = toolset.describe(call);
             onUi(() -> listener.using(what));
-            next.add(AiChat.Message.tool(call.id(), tools.run(call)));
+            next.add(AiChat.Message.tool(call.id(), toolset.run(call)));
         }
         round(next, round + 1);
     }

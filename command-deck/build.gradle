@@ -1,5 +1,6 @@
-// Command Deck (#1142): interaktive Host-Systeme, zuerst TN3270, dann BetaView. Fachmodell und Anwendungsfälle in
-// com.aresstack.spaceharvester.deck.terminal (ohne Swing, ohne OpenTerm), der OpenTerm-Adapter in ...terminal.openterm.
+// Command Deck (#1142): interaktive Host-Systeme. Fachmodell und Anwendungsfälle in
+// com.aresstack.spaceharvester.deck.terminal (ohne Swing, ohne OpenTerm), der OpenTerm-Adapter in ...terminal.openterm;
+// NDV ebenso: deck.ndv (Fachmodell) und der PAL-Adapter deck.ndv.pal;
 // BetaView: Fachmodell in ...deck.betaview (ohne Swing, ohne HTTP/HTML), der HTTP-Adapter in ...betaview.http.
 // Gehört nur zur Desktop-App: Eine Terminal-Sitzung ist keine indizierbare Quelle, deshalb nie im Core oder Dienst.
 // Aufbau nach dem Muster von aresstack/corenth (Ports und Adapter; UI -> Anwendungsfall -> Fachmodell <- Adapter).
@@ -24,6 +25,9 @@ dependencies {
     implementation libs.jsoup
     // JSON-Antworten (offene Reiter, Seitentext) mit einem echten Parser statt Klammersuche
     implementation libs.jackson.jr.objects
+    // NDV (#1142): PAL-Protokoll (NATSPOD) aus MainframeMate, in derselben Kopie, die auch die NDV-Quelle nutzt;
+    // nur der Adapter deck.ndv.pal spricht damit
+    implementation project(':enterprise-ai-sources')
 
     testImplementation platform(libs.junit.bom)
     testImplementation 'org.junit.jupiter:junit-jupiter'

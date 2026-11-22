@@ -45,6 +45,8 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     /** So lange ohne neues Zeichnen gilt ein Bild als fertig gelesen. */
     private static final long SETTLE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(150);
     private final transient IntConsumer statusListener;
+    /** Von der KI ausgefüllte Felder, gelb umrandet bis zum Absenden oder Zurücknehmen (#1151). */
+    private transient volatile java.util.List<Span> highlighted = java.util.List.of();
 
     OpenTermScreen(Terminal terminal, TerminalModel model, IntConsumer statusListener) {
         super(terminal, hiddenToolbar());
@@ -388,4 +390,47 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
             refresh();
         }
     }
+
+    @Override
+    public void highlight(java.util.List<Span> spans) {
+        highlighted = spans == null ? java.util.List.of() : java.util.List.copyOf(spans);
+        repaint();
+    }
+
+    @Override
+    protected void paintComponent(java.awt.Graphics g) {
+        super.paintComponent(g);
+        java.util.List<Span> spans = highlighted;
+        int columns = terminal.getCols();
+        int rows = terminal.getRows();
+        if (spans.isEmpty() || columns <= 0 || rows <= 0 || getFont() == null) {
+            return;
+        }
+        FontMetrics metrics = getFontMetrics(getFont());
+        int width = metrics.charWidth('M');
+        int height = metrics.getHeight();
+        java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+        g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setStroke(new java.awt.BasicStroke(2f));
+        g2.setColor(ASSIST);
+        int cells = rows * columns;
+        for (Span span : spans) {
+            // Je Zeile ein Rahmen; ein Feld kann über das Zeilenende laufen.
+            int position = span.start();
+            int left = span.length();
+            while (left > 0) {
+                int row = (position % cells) / columns;
+                int column = position % columns;
+                int run = Math.min(left, columns - column);
+                g2.drawRoundRect(MARGIN_X + column * width - 1, MARGIN_Y + row * height, run * width + 2,
+                        height, 6, 6);
+                left -= run;
+                position += run;
+            }
+        }
+        g2.dispose();
+    }
+
+    /** Gelb wie die Griffe der App: Hier hat die KI etwas vorbereitet. */
+    private static final java.awt.Color ASSIST = new java.awt.Color(0xF2, 0xC2, 0x1B);
 }
