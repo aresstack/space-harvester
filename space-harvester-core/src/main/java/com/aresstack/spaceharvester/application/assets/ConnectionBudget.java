@@ -96,6 +96,10 @@ public final class ConnectionBudget {
     /**
      * Weckt die Wartenden dieses Budgets, wenn der Auftrag anhalten oder abbrechen soll. Der Prüfpunkt läuft unter
      * {@link #lock}; er blockiert nicht.
+     * <p>
+     * Sperrreihenfolge (Abnahme #1133), bitte so lassen: Der Stopp-Rückruf läuft unter der Sperre der Aufträge und
+     * nimmt danach {@link #lock}; {@link #checkpoint()} läuft unter {@link #lock} und darf darum nie eine Sperre der
+     * Aufträge nehmen (nur Flag und Frist lesen), sonst drohte eine Verklemmung.
      */
     private final class Wake implements AutoCloseable {
 
