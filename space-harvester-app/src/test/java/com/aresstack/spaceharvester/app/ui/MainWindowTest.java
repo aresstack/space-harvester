@@ -257,13 +257,13 @@ class MainWindowTest {
                     .findFirst().orElseThrow();
             index.doClick();
         });
-        // Der Abgleich plant danach selbst Folgeaufträge ein (Anreicherung, Bilder); gezählt wird, was der Klick
-        // startet.
+        // Der Abgleich plant danach selbst Folgeaufträge ein (Anreicherung, Bilder), und Hintergrundaufträge des
+        // Starts können noch nachkommen; gezählt wird, was der Klick startet.
         List<JobStatus> clicked = List.of();
         for (int i = 0; i < 100 && clicked.isEmpty(); i++) {
             Thread.sleep(50);
             clicked = context.runtime().workspace().jobs().stream().filter(j -> !jobsBefore.contains(j.id()))
-                    .filter(j -> !j.type().followUp()).toList();
+                    .filter(j -> !j.type().followUp()).filter(j -> !j.type().background()).toList();
         }
         assertThat(clicked).as("vom Klick gestartete Aufträge").singleElement()
                 .extracting(JobStatus::type).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.SYNC);
