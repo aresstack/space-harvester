@@ -84,7 +84,8 @@ class TermSearchKnowledgeTest {
         TermSearch search = new TermSearch(keywords, (caller, query) -> PageSet.ofKeys(texts.keySet()),
                 TermSearch.Knowledge.of(() -> {
                     created.incrementAndGet();
-                    return new TermKnowledge(new DomainTermGraph(graph, vocabulary()));
+                    return new TermKnowledge(new DomainTermGraph(graph, vocabulary()),
+                            com.aresstack.spaceharvester.application.release.AiRelease.ofSources(sourceId -> true));
                 }, this::words));
 
         TermSearch.Result result = search.search(CALLER, KeywordSearch.Query.of("Wie läuft das Vorhaben heute"),

@@ -726,7 +726,8 @@ class ChatToolsTurnTest {
                 return List.of();
             }
         };
-        TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(graph, vocabulary));
+        TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(graph, vocabulary),
+                com.aresstack.spaceharvester.application.release.AiRelease.ofSources(sourceId -> true));
         List<String> order = new CopyOnWriteArrayList<>();
 
         String text = tools(order).termLookup((query, scope, delivery, cancelled) -> {
