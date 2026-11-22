@@ -34,6 +34,18 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param imageMaxTokens      Ausgabelimit einer Bildgenerierung in Tokens; leer: 16384
  * @param visionThinking      Nachdenken des Vision-Modells (none, low, medium, high); leer: wie step-thinking
  * @param imageThinking       Nachdenken der Bildgenerierung; leer: wie step-thinking
+ * @param summaryModel        Modell der Update-Zusammenfassung; leer: das Chat-Modell
+ * @param summaryMaxTokens    Tokenlänge der Update-Zusammenfassung; leer: 32768
+ * @param summaryThinking     Nachdenken der Update-Zusammenfassung; leer: none
+ * @param podcastModel        Modell der Podcast-Texte; leer: das Chat-Modell
+ * @param podcastMaxTokens    Tokenlänge der Podcast-Texte; leer: 16384
+ * @param podcastThinking     Nachdenken der Podcast-Texte; leer: none
+ * @param summaryPlanModel    Modell für den Plan der Zusammenfassung; leer: das Chat-Modell
+ * @param summaryPlanMaxTokens Tokenlänge des Plans; leer: 16384
+ * @param summaryPlanThinking Nachdenken des Plans; leer: none
+ * @param imagePlanModel      Modell für den Plan eines Schaubilds; leer: das Chat-Modell
+ * @param imagePlanMaxTokens  Tokenlänge des Schaubild-Plans; leer: 16384
+ * @param imagePlanThinking   Nachdenken des Schaubild-Plans; leer: none
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -46,14 +58,21 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            Integer contextTokens, Duration loadTimeout, Integer retries,
                            Duration loadPollInterval, String stepThinking, Integer parallel,
                            Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
-                           String visionThinking, String imageThinking) {
+                           String visionThinking, String imageThinking, String summaryModel,
+                           Integer summaryMaxTokens, String summaryThinking, String podcastModel,
+                           Integer podcastMaxTokens, String podcastThinking, String summaryPlanModel,
+                           Integer summaryPlanMaxTokens, String summaryPlanThinking, String imagePlanModel,
+                           Integer imagePlanMaxTokens, String imagePlanThinking) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
                 trustBundle, externalProcessingSources, rerankModel, visionModel, chatMaxTokens,
                 AiProvider.fromKey(provider), contextTokens, loadTimeout, retries,
                 loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
-                visionThinking, imageThinking);
+                visionThinking, imageThinking, new AiServiceSettings.ModelUse(summaryModel, summaryMaxTokens,
+                summaryThinking), new AiServiceSettings.ModelUse(podcastModel, podcastMaxTokens, podcastThinking),
+                new AiServiceSettings.ModelUse(summaryPlanModel, summaryPlanMaxTokens, summaryPlanThinking),
+                new AiServiceSettings.ModelUse(imagePlanModel, imagePlanMaxTokens, imagePlanThinking));
     }
 
     /** Ohne API-Key. */

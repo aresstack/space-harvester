@@ -72,6 +72,18 @@ class ConfigurationParityTest {
                 image-max-tokens: 65536
                 vision-thinking: high
                 image-thinking: medium
+                summary-model: teile-model
+                summary-max-tokens: 65536
+                summary-thinking: low
+                summary-plan-model: plan-model
+                summary-plan-max-tokens: 8192
+                summary-plan-thinking: high
+                podcast-model: podcast-model
+                podcast-max-tokens: 32768
+                podcast-thinking: none
+                image-plan-model: schaubild-plan
+                image-plan-max-tokens: 8192
+                image-plan-thinking: medium
                 external-processing-sources:
                   - confluence
               cache:
@@ -202,6 +214,14 @@ class ConfigurationParityTest {
         assertThat(appAi.imageMaxTokens()).isEqualTo(ai.imageMaxTokens()).isEqualTo(65536);
         assertThat(appAi.visionThinking()).isEqualTo(ai.visionThinking()).isEqualTo("high");
         assertThat(appAi.imageThinking()).isEqualTo(ai.imageThinking()).isEqualTo("medium");
+        assertThat(appAi.summary()).isEqualTo(ai.summaryUse())
+                .isEqualTo(new AiServiceSettings.ModelUse("teile-model", 65536, "low"));
+        assertThat(appAi.summaryPlan()).isEqualTo(ai.summaryPlanUse())
+                .isEqualTo(new AiServiceSettings.ModelUse("plan-model", 8192, "high"));
+        assertThat(appAi.podcast()).isEqualTo(ai.podcastUse())
+                .isEqualTo(new AiServiceSettings.ModelUse("podcast-model", 32768, "none"));
+        assertThat(appAi.imagePlan()).isEqualTo(ai.imagePlanUse())
+                .isEqualTo(new AiServiceSettings.ModelUse("schaubild-plan", 8192, "medium"));
         assertThat(appAi.externalProcessingSources()).containsExactlyInAnyOrderElementsOf(
                 ai.externalProcessingSources());
         assertThat(appAi.externalProcessingSources()).isEqualTo(List.of("confluence"));
