@@ -181,6 +181,7 @@ final class PodcastProduction {
             return thread;
         });
         Future<?> drawing = null;
+        java.util.concurrent.atomic.AtomicBoolean ended = new java.util.concurrent.atomic.AtomicBoolean();
         try {
             final PodcastPlan planned = plan;
             // Bilder je Thema neben allem anderen: ein eigener Faden geht die Themen durch, die Teile der Schaubilder
@@ -188,7 +189,7 @@ final class PodcastProduction {
             Pictures configured = pictures;
             if (configured != null) {
                 drawing = picturesThread(key, origin.sourceId(), material, planned, configured, pool, context,
-                        repairs);
+                        repairs, ended);
             }
             // Stufe 2 und 3 parallel; je Thema eine Kette, damit Thema 1 nicht auf Thema 8 wartet.
             List<Future<List<Future<List<Turn>>>>> scripts = new ArrayList<>();
@@ -242,6 +243,10 @@ final class PodcastProduction {
             }
             context.written(topics);
         } finally {
+            // Danach legt der Bilderfaden nichts mehr ab, auch kein Symbol im Pool: run() darf löschen.
+            synchronized (ended) {
+                ended.set(true);
+            }
             if (drawing != null) {
                 drawing.cancel(true);
             }
@@ -252,9 +257,17 @@ final class PodcastProduction {
     /** Startet die Bilder aller Themen in einem eigenen Faden; jedes fertige Bild meldet {@link #subscribe}. */
     private Future<?> picturesThread(String key, String sourceId, PodcastWriter.Material material, PodcastPlan plan,
                                      Pictures configured, ExecutorService parts, JobContext context,
-                                     List<String> repairs) {
+                                     List<String> repairs, java.util.concurrent.atomic.AtomicBoolean ended) {
+        PodcastPictures.Fence fence = write -> {
+            synchronized (ended) {
+                if (ended.get() || revoked.contains(key)) {
+                    throw new PodcastPictures.Closed("Podcast-Lauf beendet oder zurückgezogen");
+                }
+                write.run();
+            }
+        };
         PodcastPictures maker = new PodcastPictures(store, model, configured.drawer(), configured.images(), parts,
-                attempt -> waits.accept(context, attempt));
+                attempt -> waits.accept(context, attempt), fence);
         List<PodcastPictures.Brief> briefs = briefs(material, plan);
         java.util.concurrent.FutureTask<Void> task = new java.util.concurrent.FutureTask<>(() -> {
             java.util.Set<String> used = new java.util.HashSet<>();
