@@ -358,6 +358,59 @@ class AcquisitionSchedulerTest {
     }
 
     @Test
+    void reloadingWaitsBehindTheSearchAndUsesAtMostOneSlot() throws Exception {
+        // Abnahme #1080: Nachladen im Vordergrund (Delegierte, abgeschaltete Füllung) verdrängt nie die Suche.
+        gate("d1", "s1");
+        AcquisitionScheduler planner = scheduler(2, 0, 2);
+        AcquisitionScheduler.Mode reload = new AcquisitionScheduler.Mode(true, true, null);
+        AcquisitionScheduler.Ticket d1 = planner.request(USER, key("d1"), AcquisitionScheduler.Priority.FOREGROUND,
+                reload);
+        planner.request(USER, key("d2"), AcquisitionScheduler.Priority.FOREGROUND, reload);
+        planner.request(USER, key("d3"), AcquisitionScheduler.Priority.FOREGROUND, reload);
+        awaitRunning("d1");
+        assertThat(started).as("Nachladen auf höchstens einem Platz").containsExactly("d1");
+
+        planner.request(APP, key("s1"), AcquisitionScheduler.Priority.FOREGROUND);
+        awaitRunning("s1");
+        gate("s2");
+        planner.request(APP, key("s2"), AcquisitionScheduler.Priority.FOREGROUND);
+
+        release("d1");
+        assertThat(d1.done().get(10, TimeUnit.SECONDS)).isTrue();
+        awaitRunning("s2");
+        assertThat(started).as("die Suche geht vor").containsExactly("d1", "s1", "s2");
+
+        release("s1");
+        release("s2");
+        awaitRunning("d2");
+        awaitRunning("d3");
+        assertThat(started).containsExactly("d1", "s1", "s2", "d2", "d3");
+    }
+
+    @Test
+    void theTriggerOfARequestReachesTheLoadExplicitly() throws Exception {
+        // Abnahme #1080, ADR 0030: der Anlass bleibt, egal auf welchem Platz und mit welchem Aufrufer geladen wird.
+        List<com.aresstack.spaceharvester.application.changelog.ChangeTrigger> seen =
+                Collections.synchronizedList(new ArrayList<>());
+        List<Boolean> strict = Collections.synchronizedList(new ArrayList<>());
+        try (AcquisitionScheduler planner = new AcquisitionScheduler((caller, key, background) -> {
+            seen.add(com.aresstack.spaceharvester.application.changelog.ChangeTrigger.current());
+            strict.add(background);
+        }, new AcquisitionScheduler.Limits(2, 1, 2, 50), null, Duration.ZERO)) {
+            assertThat(planner.request(USER, key("r"), AcquisitionScheduler.Priority.FOREGROUND,
+                    new AcquisitionScheduler.Mode(true, true,
+                            com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH))
+                    .done().get(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(planner.request(APP, key("n"), AcquisitionScheduler.Priority.FOREGROUND).done()
+                    .get(10, TimeUnit.SECONDS)).isTrue();
+        }
+
+        assertThat(seen).containsExactly(com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.UNKNOWN);
+        assertThat(strict).as("refresh lädt streng, auch im Vordergrund").containsExactly(true, false);
+    }
+
+    @Test
     void theBackgroundNeverTakesAUserCredential() {
         AcquisitionScheduler planner = scheduler(1, 1, 1);
 

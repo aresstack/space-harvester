@@ -430,18 +430,29 @@ wird automatisch verwaltet.
       vor jedem Prozessor; der Knopf wartet auf das Ende und sagt „Wartet auf freien Platz …“, solange der Auftrag
       hinter laufenden Folgeaufträgen wartet. Abgebrochen oder angehalten meldet er als Info, gescheitert rot mit Grund.
 
-11. **Seiten nachladen** (Angelo 21.11.2026, Fundstellen 10 und 15, Entwurf vom Architekten bestätigt).
+11. **Seiten nachladen** (Angelo 21.11.2026, Fundstellen 10 und 15, Entwurf vom Architekten bestätigt, Abnahme #1080).
     - Veraltete Treffer der semantischen Suche (`PageRenewal`) sammeln sich je Aufrufer kurz und gehen als eine
-      Gruppe „Veraltete Treffer nachladen“ an `PageLoads#join(…, refresh)`: Mit der Angabe `refresh` lädt der Teil
-      auch Seiten, die im Cache liegen, und schließt sich nur Teilen an, die ebenfalls nachladen.
-    - Auch Benutzer mit Anmeldung laden sichtbar: Ihr Aufrufer liegt nur im Speicher (Angaben `caller`, `owner`),
-      die Abrufe gehen über den Vordergrund des Planers. Nach einem Neustart endet so ein Teil gelb
-      (`NOT_RESUMED`, unvollständig) statt mit technischen Rechten weiterzuladen; die nächste Suche holt nach.
-    - Vorladen der Lese-Ansichten beim Aufklappen (`ReadingViews#prefetch`) ist die Art `reading-prefetch`
-      „Lese-Ansichten vorladen“: höchstens ein wartender Teil je Quelle, ein neuer Aufruf ersetzt ihn und nimmt
-      seine Seiten hinter den eigenen mit (höchstens 25). Innen höchstens zwei zugleich, nie mit Anmeldedialog. Ist
-      die Quelle nicht erreichbar, verlangt sie eine Anmeldung oder drosselt sie, startet der Teil keine weitere Seite
-      und endet gescheitert mit Grund (`SOURCE_UNAVAILABLE`), ohne automatische Wiederholung.
+      Gruppe „Veraltete Treffer nachladen“ an `PageLoads#join(…, refresh, SEARCH)`: Mit der Angabe `refresh` lädt der
+      Teil auch Seiten, die im Cache liegen, und zwar streng (nie aus dem Cache-Zeitfenster), auch im Vordergrund. Er
+      schließt sich nur wartenden oder laufenden Teilen an, die ebenfalls nachladen, nie angehaltenen.
+    - Der Anlass im Änderungsprotokoll bleibt `SEARCH` (ADR 0030), unabhängig von Aufrufer und Füllung: Er steht als
+      Angabe `change-trigger` am Teil und geht über `AcquisitionScheduler.Mode` ausdrücklich bis zum Abruf.
+    - Auch Benutzer mit Anmeldung laden sichtbar: Ihr Aufrufer liegt nur im Speicher (Angaben `caller`, `owner`), bis
+      kein Teil der Gruppe mehr wartet, läuft oder angehalten ist; die Abrufe gehen über den Vordergrund des Planers.
+      Nach einem Neustart endet so ein Teil gelb (`NOT_RESUMED`, unvollständig) statt mit technischen Rechten
+      weiterzuladen; die nächste Suche holt nach.
+    - Nachladen im Vordergrund (Benutzer mit Anmeldung, abgeschaltete Füllung) ist nachrangig: Seiten einer Suche
+      gehen vor, und es belegt höchstens einen Platz des Vordergrunds zugleich.
+    - Vorladen der Lese-Ansichten beim Aufklappen (`ReadingViews#prefetch`) kommt von einem Klick und ist darum ein
+      gewöhnlicher Auftrag `JobType#READING_PREFETCH` „Lese-Ansichten vorladen“ über `Jobs#submitInteractive`, nie
+      hinter Hintergrundteilen: höchstens ein wartender je Quelle und Auftraggeber, ein neuer Aufruf ersetzt ihn und
+      nimmt seine Seiten hinter den eigenen mit, höchstens 25; was der Grenze wegen entfällt, nennt der ersetzte
+      Auftrag mit Zahl. Innen mit allen übrigen Vorladungen höchstens zwei zugleich, nie mit Anmeldedialog. Ist die
+      Quelle nicht erreichbar, verlangt sie eine Anmeldung oder drosselt sie, startet der Auftrag keine weitere Seite
+      und endet gescheitert mit Grund (`SOURCE_UNAVAILABLE`), ohne automatische Wiederholung. Was ein Neustart
+      unterbrach, schließt der Start ab; das Aufklappen lädt selbst.
+    - Bei nur einem Platz unter „Vorbereitung“ (`BackgroundJobs#canRun()` falsch) nehmen Nachladen und Vorladen ihren
+      bisherigen Weg.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.acquisition;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.observe.Coalescer;
 import com.aresstack.spaceharvester.application.observe.Listeners;
 import com.aresstack.spaceharvester.application.observe.Subscription;
@@ -151,6 +152,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
     private final Map<String, int[]> runningPerSource = new HashMap<>();
     private int foregroundRunning;
     private int backgroundRunning;
+    /** Davon Nachladen ({@link Mode#deferred()}) im Vordergrund. */
+    private int deferredRunning;
     private int pauses;
     private long promoted;
     private boolean closed;
@@ -233,19 +236,34 @@ public final class AcquisitionScheduler implements AutoCloseable {
      * @throws IllegalArgumentException   bei einer Hintergrundanfrage mit durchgereichter Benutzeranmeldung
      */
     public Ticket request(AccessContext caller, PageKey key, Priority priority) {
-        return request(caller, key, priority, false);
+        return request(caller, key, priority, Mode.NORMAL);
     }
 
     /**
-     * Wie {@link #request(AccessContext, PageKey, Priority)}; mit {@code refresh} lädt der Abruf streng wie für den
-     * Hintergrund ({@link Load}), unabhängig vom Platz (Codex-Befund #1080): Eine als veraltet gemeldete Seite kommt
-     * dann nie aus dem Cache-Zeitfenster, auch nicht für einen Benutzer mit eigener Anmeldung oder bei abgeschaltetem
-     * Hintergrund. Gilt für den nächsten Start des Eintrags; ein schon laufender Abruf bleibt, wie er ist.
+     * Wie eine Anfrage lädt ({@link #request(AccessContext, PageKey, Priority, Mode)}).
+     *
+     * @param refresh  der Abruf lädt streng wie für den Hintergrund ({@link Load}), unabhängig vom Platz (Codex-Befund
+     *                 #1080): Eine als veraltet gemeldete Seite kommt dann nie aus dem Cache-Zeitfenster, auch nicht für
+     *                 einen Benutzer mit eigener Anmeldung oder bei abgeschaltetem Hintergrund
+     * @param deferred eine Anfrage des Vordergrunds, die nachlädt statt zu suchen (Abnahme #1080): Seiten einer Suche
+     *                 gehen vor, und solche Abrufe belegen höchstens einen Platz des Vordergrunds zugleich
+     * @param trigger  der Anlass im Änderungsprotokoll (ADR 0030) für den Abruf, oder {@code null} für den des Wegs
      */
-    public Ticket request(AccessContext caller, PageKey key, Priority priority, boolean refresh) {
+    public record Mode(boolean refresh, boolean deferred, ChangeTrigger trigger) {
+
+        /** Eine gewöhnliche Anfrage. */
+        public static final Mode NORMAL = new Mode(false, false, null);
+    }
+
+    /**
+     * Wie {@link #request(AccessContext, PageKey, Priority)}, auf eine bestimmte Art ({@link Mode}). Strenger Abruf und
+     * Anlass gelten für den nächsten Start des Eintrags; ein schon laufender Abruf bleibt, wie er ist.
+     */
+    public Ticket request(AccessContext caller, PageKey key, Priority priority, Mode mode) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(priority, "priority");
+        Objects.requireNonNull(mode, "mode");
         if (priority == Priority.BACKGROUND && caller.credential() != null) {
             throw new IllegalArgumentException("Der Hintergrund lädt nie mit der Anmeldung eines Benutzers");
         }
@@ -270,9 +288,12 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 entry.queued = Priority.FOREGROUND;
                 promoted++;
             }
-            ticket = new Ticket(entry, priority);
-            if (refresh && !entry.running) {
-                entry.refresh = true;
+            ticket = new Ticket(entry, priority, priority == Priority.FOREGROUND && mode.deferred());
+            if (!entry.running) {
+                entry.refresh |= mode.refresh();
+                if (entry.trigger == null) {
+                    entry.trigger = mode.trigger();
+                }
             }
             if (priority == Priority.FOREGROUND) {
                 lastForeground = System.nanoTime();
@@ -468,6 +489,9 @@ public final class AcquisitionScheduler implements AutoCloseable {
         if (counts[0] == 0 && counts[1] == 0) {
             runningPerSource.remove(entry.key.sourceId());
         }
+        if (entry.deferredSlot) {
+            deferredRunning += delta;
+        }
         if (entry.slot == Priority.FOREGROUND) {
             foregroundRunning += delta;
         } else {
@@ -482,13 +506,35 @@ public final class AcquisitionScheduler implements AutoCloseable {
             if (closed) {
                 return;
             }
+            boolean searchWaiting = false;
             for (Iterator<Entry> it = foregroundQueue.iterator();
                  it.hasNext() && foregroundRunning < limits.foreground(); ) {
                 Entry entry = it.next();
+                if (entry.deferred()) {
+                    continue;
+                }
                 if (running(entry.key.sourceId(), false) < limits.perSource()) {
                     it.remove();
                     begin(entry, Priority.FOREGROUND);
                     start.add(entry);
+                } else {
+                    searchWaiting = true;
+                }
+            }
+            // Nachladen (Abnahme #1080): erst, wenn keine Seite einer Suche mehr wartet, und auf höchstens einem Platz.
+            if (deferredRunning == 0 && !searchWaiting && foregroundRunning < limits.foreground()) {
+                for (Iterator<Entry> it = foregroundQueue.iterator(); it.hasNext(); ) {
+                    Entry entry = it.next();
+                    if (!entry.deferred()) {
+                        // Nicht gestartet, weil die Plätze voll sind: Die Suche geht vor.
+                        break;
+                    }
+                    if (running(entry.key.sourceId(), false) < limits.perSource()) {
+                        it.remove();
+                        begin(entry, Priority.FOREGROUND);
+                        start.add(entry);
+                        break;
+                    }
                 }
             }
             AcquisitionStatus.Pause pause = pause();
@@ -539,6 +585,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
         // Technisch vor delegiert: so bleibt keine Benutzeranmeldung länger als nötig im Spiel.
         entry.caller = entry.technical != null ? entry.technical : entry.foreground.values().iterator().next();
         entry.strict = !entry.background.isEmpty() || entry.refresh;
+        entry.deferredSlot = slot == Priority.FOREGROUND && entry.deferred();
         count(entry, 1);
     }
 
@@ -546,7 +593,15 @@ public final class AcquisitionScheduler implements AutoCloseable {
         boolean stored = false;
         RuntimeException failure = null;
         try {
-            load.load(entry.caller, entry.key, entry.strict);
+            AccessContext caller = entry.caller;
+            boolean strict = entry.strict;
+            Runnable call = () -> load.load(caller, entry.key, strict);
+            if (entry.trigger != null) {
+                // Der Anlass der Anfrage, ausdrücklich durchgereicht (Abnahme #1080), nie aus dem Platz geraten.
+                entry.trigger.run(call);
+            } else {
+                call.run();
+            }
             stored = true;
         } catch (RuntimeException e) {
             failure = e;
@@ -634,14 +689,31 @@ public final class AcquisitionScheduler implements AutoCloseable {
         private AccessContext technical;
         /** Ob der laufende Abruf für den Hintergrund zählt ({@link Load}). */
         private boolean strict;
-        /** Ob eine wartende Anfrage den strengen Abruf verlangt ({@code refresh}). */
+        /** Ob eine wartende Anfrage den strengen Abruf verlangt ({@link Mode#refresh()}). */
         private boolean refresh;
+        /** Der Anlass der ersten Anfrage, die einen nennt ({@link Mode#trigger()}). */
+        private ChangeTrigger trigger;
+        /** Ob der laufende Abruf einen Platz für Nachladen belegt ({@link Mode#deferred()}). */
+        private boolean deferredSlot;
         private final Map<Ticket, AccessContext> foreground = new LinkedHashMap<>();
         private final List<Ticket> background = new ArrayList<>();
 
         private Entry(PageKey key, Priority queued) {
             this.key = key;
             this.queued = queued;
+        }
+
+        /** Ob nur Nachladen im Vordergrund die Seite braucht ({@link Mode#deferred()}). Unter {@link #lock}. */
+        private boolean deferred() {
+            if (foreground.isEmpty()) {
+                return false;
+            }
+            for (Ticket ticket : foreground.keySet()) {
+                if (!ticket.deferred) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private List<Ticket> tickets() {
@@ -662,9 +734,12 @@ public final class AcquisitionScheduler implements AutoCloseable {
         private final CompletableFuture<Boolean> done = new CompletableFuture<>();
         private volatile RuntimeException failure;
 
-        private Ticket(Entry entry, Priority priority) {
+        private final boolean deferred;
+
+        private Ticket(Entry entry, Priority priority, boolean deferred) {
             this.entry = entry;
             this.priority = priority;
+            this.deferred = deferred;
         }
 
         public CompletableFuture<Boolean> done() {

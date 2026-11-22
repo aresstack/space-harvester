@@ -20,7 +20,9 @@ import java.util.concurrent.RejectedExecutionException;
  *
  * <p>Mit {@link PageLoads} ist das Nachladen ein Hintergrundauftrag „{@value #TITLE}“ (Fundstelle 10, Abnahme PR 4):
  * Die veralteten Treffer eines Aufrufers sammeln sich kurz ({@link Coalescer#INTERVAL}) und gehen dann als eine Gruppe
- * an {@link PageLoads#join(AccessContext, String, java.util.Collection, boolean)}, auch für Benutzer mit Anmeldung.
+ * an {@link PageLoads#join(AccessContext, String, java.util.Collection, boolean, ChangeTrigger)}, auch für Benutzer mit
+ * Anmeldung, immer mit dem Anlass {@link ChangeTrigger#SEARCH}. Kann der Teil nicht laufen (nur ein Platz,
+ * {@link PageLoads#canRun()}), bleibt es beim bisherigen Weg.
  */
 public final class PageRenewal implements RelevanceSearch.Renewal, AutoCloseable {
 
@@ -50,7 +52,8 @@ public final class PageRenewal implements RelevanceSearch.Renewal, AutoCloseable
 
     @Override
     public void renew(AccessContext caller, PageKey key) {
-        if (collected != null) {
+        // Abnahme #1080: Bei nur einem Platz liefe der Teil nie; dann der bisherige Weg.
+        if (collected != null && loads.canRun()) {
             collected.mark(caller, java.util.List.of(key));
             return;
         }
@@ -78,7 +81,9 @@ public final class PageRenewal implements RelevanceSearch.Renewal, AutoCloseable
     /** Die gesammelten veralteten Treffer eines Aufrufers als eine Gruppe; Seiten, die schon nachladen, schließen sich an. */
     private void load(AccessContext caller, Set<PageKey> keys) {
         try {
-            loads.join(caller, TITLE, keys, true);
+            // ADR 0030: Die Suche hat die Treffer als veraltet gemeldet, egal mit welchem Aufrufer und auf welchem Platz
+            // sie laden (Abnahme #1080).
+            loads.join(caller, TITLE, keys, true, ChangeTrigger.SEARCH);
         } catch (RuntimeException e) {
             // Voll oder beendet: Die nächste Suche meldet die Treffer wieder als veraltet.
             LOG.log(System.Logger.Level.INFO, "{0} veraltete Treffer nicht nachgeladen ({1})", keys.size(),

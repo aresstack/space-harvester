@@ -320,8 +320,9 @@ public class PageQueries {
      * @throws IllegalStateException wenn im Hintergrund nichts Aktuelles abgelegt ist
      */
     public void acquire(AccessContext caller, PageKey key, boolean background) {
-        // ADR 0030: Hintergrundfüllung schreibt als BACKGROUND, sonst holt eine Suche die Seite.
-        DeliveredPage delivered = (background ? ChangeTrigger.BACKGROUND : ChangeTrigger.SEARCH)
+        // ADR 0030: Hintergrundfüllung schreibt als BACKGROUND, sonst holt eine Suche die Seite; einen ausdrücklich
+        // durchgereichten Anlass (Planer, Abnahme #1080: etwa SEARCH für veraltete Treffer) behält der Abruf.
+        DeliveredPage delivered = ChangeTrigger.currentOr(background ? ChangeTrigger.BACKGROUND : ChangeTrigger.SEARCH)
                 .call(() -> page(caller, key.sourceId(), key.pageId(), background, true));
         if (background && (delivered.refresh() == null || delivered.live())) {
             throw new IllegalStateException("Seite nicht aktuell abgelegt");

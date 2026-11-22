@@ -739,9 +739,9 @@ public final class Harvester implements AutoCloseable {
             this.passages = new PassageQueries(pages, enrichments, projector, documentTexts);
             this.documentNavigation = new NavigationQueries(pages, enrichments, projector, navigationBuilder);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
-            if (backgroundJobs != null) {
-                // Fundstelle 15: Vorladen beim Aufklappen als Hintergrundauftrag „Lese-Ansichten vorladen“.
-                readingViews.background(backgroundJobs, AccessContext.technicalClient(OWNER));
+            if (jobs != null) {
+                // Fundstelle 15, Abnahme #1080: Vorladen beim Aufklappen als Klick-Auftrag „Lese-Ansichten vorladen“.
+                readingViews.jobs(jobs);
             }
             // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
             // Füllung erfährt die neuen Lücken, auch in Spaces ohne bestätigte Generation.

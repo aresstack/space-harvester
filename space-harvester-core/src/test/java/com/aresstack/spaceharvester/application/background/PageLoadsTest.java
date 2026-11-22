@@ -187,6 +187,91 @@ class PageLoadsTest {
     }
 
     @Test
+    void aDelegatedUserReloadsWithTheirOwnRights() throws Exception {
+        // Abnahme #1080: der erfolgreiche Weg eines Benutzers mit Anmeldung, mit seinen Rechten.
+        AccessContext delegated = AccessContext.endUser("erfunden", "app",
+                new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "erfunden"));
+        List<AccessContext> used = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        AcquisitionScheduler recording = new AcquisitionScheduler((caller, key) -> {
+            used.add(caller);
+            cache.add(key);
+        }, new AcquisitionScheduler.Limits(2, 1, 2, 50));
+        try {
+            BackgroundJobs own = new BackgroundJobs(jobs, "app-delegated");
+            PageLoads delegatedLoads = new PageLoads(own, recording, AccessContext.technicalClient("app"),
+                    cache::contains, key -> Optional.of("ALPHA"));
+            BackgroundGroup group = delegatedLoads.join(delegated, "Veraltete Treffer nachladen", pages("1", "2"), true)
+                    .started().orElseThrow();
+            executor.runAll();
+
+            assertThat(used).hasSize(2).containsOnly(delegated);
+            assertThat(own.group(group.groupId()).orElseThrow().parts()).singleElement().satisfies(part -> {
+                assertThat(part.state()).isEqualTo(JobState.COMPLETED);
+                assertThat(part.incomplete()).isFalse();
+            });
+        } finally {
+            recording.close();
+        }
+    }
+
+    @Test
+    void aRefreshDoesNotJoinAPausedRefreshPartThatWouldNeverLoad() {
+        // Abnahme #1080: etwa nach abgelaufener Anmeldung angehalten; die veralteten Seiten kämen nie.
+        BackgroundGroup paused = loads.join(AccessContext.technicalClient("app"), "Veraltete Treffer nachladen",
+                pages("1"), true).started().orElseThrow();
+        background.pause(paused.groupId());
+        executor.runAll();
+        assertThat(background.group(paused.groupId()).orElseThrow().parts()).extracting(JobStatus::state)
+                .containsOnly(JobState.PAUSED);
+
+        PageLoads.Joined again = loads.join(AccessContext.technicalClient("app"), "Veraltete Treffer nachladen",
+                pages("1"), true);
+
+        assertThat(again.joined()).isEmpty();
+        assertThat(again.started()).isPresent();
+    }
+
+    @Test
+    void theCallerOfAnOpenPartStaysHowEverManyGroupsFollowAndGoesWhenItEnds() throws Exception {
+        // Abnahme #1080: kein falsches „nicht fortgesetzt“ ohne Neustart, weil ein Aufrufer aus einer Zuordnung fiel.
+        AccessContext delegated = AccessContext.endUser("erfunden", "app",
+                new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "erfunden"));
+        Jobs many = new Jobs(new InMemoryJobStore(), executor, new JobLimits(4, 1000, Duration.ofHours(1)),
+                new BackgroundJobsTest.Ticking());
+        AcquisitionScheduler quick = new AcquisitionScheduler((caller, key) -> cache.add(key),
+                new AcquisitionScheduler.Limits(4, 1, 4, 500), null, Duration.ZERO);
+        try {
+            BackgroundJobs own = new BackgroundJobs(many, "app-many");
+            PageLoads held = new PageLoads(own, quick, AccessContext.technicalClient("app"), cache::contains,
+                    key -> Optional.of("ALPHA"));
+            BackgroundGroup first = held.join(delegated, "Veraltete Treffer nachladen", pages("u1"), true).started()
+                    .orElseThrow();
+            own.pause(first.groupId());
+            executor.runAll();
+            for (int i = 0; i < 300; i++) {
+                held.join(AccessContext.technicalClient("app"), "Veraltete Treffer nachladen", pages("t" + i), true);
+            }
+
+            own.resume(first.groupId());
+            executor.runAll();
+
+            JobStatus ended = own.group(first.groupId()).orElseThrow().parts().getFirst();
+            assertThat(ended.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(ended.incomplete()).isFalse();
+            assertThat(many.events(ended.id())).noneSatisfy(event -> assertThat(event.code())
+                    .isEqualTo(PageLoads.NOT_RESUMED));
+            long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+            while (held.heldCallers() > 0 && System.nanoTime() < until) {
+                Thread.sleep(10);
+            }
+            assertThat(held.heldCallers()).as("nach dem Ende aller Gruppen losgelassen").isZero();
+        } finally {
+            quick.close();
+            many.close();
+        }
+    }
+
+    @Test
     void theBackgroundNeverLoadsWithAUsersSignIn() {
         AccessContext delegated = AccessContext.endUser("erfunden", "app",
                 new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "erfunden"));
