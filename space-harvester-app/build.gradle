@@ -47,6 +47,9 @@ dependencies {
     // Aussagenanalyse auf Knopfdruck (#499, ADR 0024): MaltParser und OpenNLP nur in der App, nie im Core oder Dienst;
     // das Modell lädt die App erst beim ersten Klick aus <Datenverzeichnis>/nlp-model, nie aus dem Netz
     implementation project(':nlp-parser')
+    // Command Deck (#1142): Terminal-Sitzungen (TN3270 über OpenTerm), nur in der App
+    implementation project(':command-deck')
+    testImplementation testFixtures(project(':command-deck'))
     // KeePass koppeln und Einträge lesen/anlegen wie im Enterprise AI Client; nur die App, nie der Core
     implementation project(':enterprise-ai-keepass')
     implementation libs.snakeyaml

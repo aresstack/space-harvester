@@ -79,17 +79,4 @@ public final class Perspectives {
         return Perspective.of(MISSION_PROTOCOL, "Mission Protocol",
                 "Workflows definieren, ausführen und überwachen – in Vorbereitung", false, null, stars, null);
     }
-
-    /**
-     * Command Deck (#1142) als Vorschau, bis Terminal, FTP, NDV, BetaView und Dateien eingebaut sind: ruhig treibende
-     * Sterne hinter dem Namen, keine Verbindung, kein Schreibvorgang.
-     */
-    public static Perspective commandDeckPreview() {
-        Starfield stars = new Starfield(Starfield.Mode.DRIFT)
-                .headline("COMMAND DECK")
-                .caption("Terminal · FTP · NDV · BetaView · Dateien – wird gerade eingerichtet");
-        return Perspective.of(COMMAND_DECK, "Command Deck",
-                "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", false, null, stars,
-                null);
-    }
 }
