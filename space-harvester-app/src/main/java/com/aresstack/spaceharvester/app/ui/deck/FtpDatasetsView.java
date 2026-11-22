@@ -1,6 +1,12 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
+import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
+import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
+import com.aresstack.spaceharvester.deck.editor.EditorSession;
+import com.aresstack.spaceharvester.deck.editor.EditorSessions;
+import com.aresstack.spaceharvester.deck.ftp.FtpDocumentStore;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Glyph;
@@ -14,6 +20,8 @@ import com.aresstack.spaceharvester.deck.ftp.MvsPath;
 import com.aresstack.spaceharvester.deck.ftp.RemoteEntry;
 import com.aresstack.spaceharvester.deck.ftp.RemoteFile;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.FlowLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.nio.charset.StandardCharsets;
@@ -22,23 +30,26 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import javax.swing.BorderFactory;
+import javax.swing.ButtonGroup;
+import javax.swing.SwingUtilities;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSplitPane;
 import javax.swing.JTable;
-import javax.swing.JTextArea;
 import javax.swing.KeyStroke;
 import javax.swing.table.AbstractTableModel;
 
 /**
  * Unteransicht „Datasets“ des FTP-Bereichs (MVS-Dateibrowser wie in MainframeMate): oben der Pfad mit Zurück, Hoch und
- * Neu laden im Feld und rechts ein Filter, links die Liste (Datasets wie Ordner, Members wie Dateien), rechts die
- * Vorschau des gewählten Members. Die Aktionen stehen unten in der Werkzeugleiste. Bearbeitet wird später im
- * gemeinsamen Editor des Command Deck; hier wird nur gelesen, übertragen, angelegt, gelöscht und eingereicht.
+ * Neu laden im Feld und rechts ein Filter, links die Liste (Datasets wie Ordner, Members wie Dateien), rechts der
+ * gemeinsame Editor des Command Deck mit einem Reiter je geöffnetem Member (Doppelklick oder Enter öffnet). Die
+ * Aktionen stehen unten in der Werkzeugleiste; ist ein Member offen, kommen Speichern, Neu laden und Schließen dazu.
  */
 final class FtpDatasetsView extends JPanel {
 
@@ -48,8 +59,21 @@ final class FtpDatasetsView extends JPanel {
     private final PlaceholderField filter = new PlaceholderField(12, "Filtern");
     private final Entries model = new Entries();
     private final JTable table = Comic.table(new JTable(model));
-    private final JTextArea preview = Comic.code();
-    private final JLabel previewTitle = Comic.caption("Vorschau");
+    private static final String HINT = "hint";
+    private final EditorSessions editors;
+    private final FtpDocumentStore store;
+    private final JLabel documentsTitle = Comic.caption("Editor");
+    private final JPanel documentPills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    private final ButtonGroup documentGroup = new ButtonGroup();
+    private final CardLayout documentCards = new CardLayout();
+    private final JPanel documents = new JPanel(documentCards);
+    private final Map<EditorSession, DocumentEditor> editorOf = new LinkedHashMap<>();
+    private final Map<EditorSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
+    private final ComposerButton save;
+    private final IconButton reloadDocument;
+    private final ComposerButton closeDocument;
+    private final JPanel documentsHead;
+    private EditorSession document;
     private final PlaceholderField newName = new PlaceholderField(12, "");
     private final JLabel newLabel = Comic.text("");
     private final JPanel newBar = new JPanel(new BorderLayout(8, 0));
@@ -66,10 +90,12 @@ final class FtpDatasetsView extends JPanel {
     private boolean creatingDataset;
     private boolean connected;
 
-    FtpDatasetsView(FtpSessionView owner, Runnable showJobs) {
+    FtpDatasetsView(FtpSessionView owner, Runnable showJobs, EditorSessions editors) {
         super(new BorderLayout());
         this.owner = owner;
         this.showJobs = showJobs;
+        this.editors = editors;
+        this.store = new FtpDocumentStore(owner.session());
         setOpaque(false);
 
         // Kopf: Pfad mit seinen Knöpfen im Feld, rechts der Filter.
@@ -157,14 +183,21 @@ final class FtpDatasetsView extends JPanel {
             }
         });
         table.getAccessibleContext().setAccessibleName("Datasets und Members");
-        preview.setEditable(false);
-        preview.getAccessibleContext().setAccessibleName("Vorschau");
-        JPanel previewPanel = new JPanel(new BorderLayout(0, 4));
-        previewPanel.setOpaque(false);
-        previewPanel.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
-        previewPanel.add(previewTitle, BorderLayout.NORTH);
-        previewPanel.add(Comic.scroll(preview), BorderLayout.CENTER);
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, Comic.scroll(table), previewPanel);
+        documentPills.setOpaque(false);
+        documentsHead = new JPanel(new BorderLayout(8, 0));
+        documentsHead.setOpaque(false);
+        documentsHead.add(documentsTitle, BorderLayout.WEST);
+        documentsHead.add(documentPills, BorderLayout.CENTER);
+        JLabel hint = Comic.muted("Doppelklick oder Enter auf ein Member öffnet es hier zum Bearbeiten.");
+        hint.setHorizontalAlignment(JLabel.CENTER);
+        documents.setOpaque(false);
+        documents.add(hint, HINT);
+        JPanel documentPanel = new JPanel(new BorderLayout(0, 4));
+        documentPanel.setOpaque(false);
+        documentPanel.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
+        documentPanel.add(documentsHead, BorderLayout.NORTH);
+        documentPanel.add(documents, BorderLayout.CENTER);
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, Comic.scroll(table), documentPanel);
         ComicDivider.install(split, Comic.PALETTE);
         split.setResizeWeight(0.42);
         split.setBorder(BorderFactory.createEmptyBorder(0, 12, 8, 12));
@@ -185,7 +218,27 @@ final class FtpDatasetsView extends JPanel {
         delete.addActionListener(e -> delete());
         submit = Comic.button("Als Job einreichen", "Gewähltes Member als JCL an JES übergeben");
         submit.addActionListener(e -> submit());
+        save = Comic.primary("Speichern", "Änderungen zurück auf den Host schreiben (Strg+S)");
+        save.setIcon(FilesIcons.save());
+        save.addActionListener(e -> {
+            if (document != null) {
+                document.save();
+            }
+        });
+        reloadDocument = new IconButton(Glyph.REFRESH, "Member neu lesen; ungespeicherte Änderungen gehen verloren");
+        reloadDocument.addActionListener(e -> reloadDocument());
+        closeDocument = Comic.button("Schließen", "Dokument schließen");
+        closeDocument.addActionListener(e -> {
+            if (document != null) {
+                closeDocument(document);
+            }
+        });
         actions = Comic.row(download, upload, newMember, newDataset, submit, delete);
+        // Die Knöpfe des Dokuments stehen rechts über dem Editor, damit die Leiste unten auch bei 960 px passt.
+        documentsHead.add(Comic.row(reloadDocument, save, closeDocument), BorderLayout.EAST);
+        editors.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        editors.onClosed(session -> SwingUtilities.invokeLater(() -> removed(session)));
+        editors.all().forEach(this::added);
         enableActions();
     }
 
@@ -217,8 +270,6 @@ final class FtpDatasetsView extends JPanel {
             path.setText(resolved);
             model.sizes(!session.mvs());
             model.show(list);
-            preview.setText("");
-            previewTitle.setText("Vorschau");
             newBar.setVisible(false);
             owner.status(resolved + " · " + list.size() + (list.size() == 1 ? " Eintrag" : " Einträge"), false);
             enableActions();
@@ -254,18 +305,147 @@ final class FtpDatasetsView extends JPanel {
             navigate(entry.path(), true);
             return;
         }
-        owner.status("Lese " + entry.path() + " …", false);
-        owner.run(owner.session().files(files -> files.read(entry.path())), "Lesen von " + entry.path()
-                + " fehlgeschlagen", file -> {
-            preview.setText(file.text());
-            preview.setCaretPosition(0);
-            previewTitle.setText("Vorschau · " + file.path());
-            owner.status(file.path() + " · " + lines(file.text()) + " Zeilen", false);
+        EditorSession session = editors.open(store, entry.path(), FtpDocumentStore.name(entry.path()));
+        added(session);
+        showDocument(session);
+    }
+
+    // ---- Editor ----------------------------------------------------------------------------------------------------
+
+    private void added(EditorSession session) {
+        if (session.store() != store || pillOf.containsKey(session)) {
+            return;
+        }
+        DocumentEditor editor = new DocumentEditor(session);
+        editorOf.put(session, editor);
+        documents.add(editor, session.location());
+        ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.file(), session.name(), session.location());
+        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        pill.getAccessibleContext().setAccessibleName(session.name());
+        pill.addActionListener(e -> showDocument(session));
+        pill.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (SwingUtilities.isMiddleMouseButton(event)) {
+                    closeDocument(session);
+                }
+            }
         });
+        documentGroup.add(pill);
+        documentPills.add(pill);
+        pillOf.put(session, pill);
+        session.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
+        documentPills.revalidate();
+        documentPills.repaint();
+    }
+
+    private void showDocument(EditorSession session) {
+        document = session;
+        ComposerToggleButton pill = session == null ? null : pillOf.get(session);
+        if (pill != null) {
+            pill.setSelected(true);
+        }
+        documentCards.show(documents, session == null ? HINT : session.location());
+        if (session != null) {
+            DocumentEditor editor = editorOf.get(session);
+            if (editor != null) {
+                SwingUtilities.invokeLater(editor::focusText);
+            }
+            documentStatus();
+        }
+        enableActions();
+    }
+
+    private void documentChanged(EditorSession session) {
+        ComposerToggleButton pill = pillOf.get(session);
+        if (pill == null) {
+            return;
+        }
+        boolean broken = session.state() == EditorSession.State.FAILED
+                || session.state() == EditorSession.State.CONFLICT;
+        pill.setIcon(broken ? FilesIcons.dot(Comic.RED) : session.dirty() ? FilesIcons.unsaved() : FilesIcons.file());
+        pill.setToolTipText(session.location() + (session.dirty() ? " – ungespeicherte Änderungen" : ""));
+        if (session == document) {
+            documentStatus();
+            enableActions();
+        }
+    }
+
+    /** Der Stand des gezeigten Dokuments unten links; rot nur bei Fehler oder Konflikt. */
+    private void documentStatus() {
+        EditorSession session = document;
+        String text = session.location() + " · " + session.state().label();
+        boolean error = false;
+        if (session.state() == EditorSession.State.FAILED || session.state() == EditorSession.State.CONFLICT) {
+            text += session.problem().map(problem -> ": " + problem).orElse("");
+            error = true;
+        } else if (session.note().isPresent()) {
+            text += " · " + session.note().get();
+            error = session.note().get().startsWith("Nicht");
+        } else if (session.dirty()) {
+            text += " · ungespeicherte Änderungen";
+        } else {
+            text += session.text().map(content -> " · " + lines(content) + " Zeilen").orElse("");
+        }
+        owner.status(text, error);
     }
 
     private static int lines(String text) {
         return text.isEmpty() ? 0 : text.split("\n", -1).length;
+    }
+
+    private void removed(EditorSession session) {
+        ComposerToggleButton pill = pillOf.remove(session);
+        DocumentEditor editor = editorOf.remove(session);
+        if (pill != null) {
+            documentGroup.remove(pill);
+            documentPills.remove(pill);
+            documentPills.revalidate();
+            documentPills.repaint();
+        }
+        if (editor != null) {
+            documents.remove(editor);
+        }
+        if (session == document) {
+            showDocument(pillOf.isEmpty() ? null : pillOf.keySet().iterator().next());
+        }
+    }
+
+    private void closeDocument(EditorSession session) {
+        if (session.dirty() && !Dialogs.confirm(this, "Dokument schließen",
+                "„" + session.name() + "“ hat ungespeicherte Änderungen. Wirklich schließen und verwerfen?")) {
+            return;
+        }
+        editors.close(session);
+    }
+
+    private void reloadDocument() {
+        EditorSession session = document;
+        if (session == null) {
+            return;
+        }
+        if (session.dirty() && !Dialogs.confirm(this, "Neu laden",
+                "„" + session.name() + "“ hat ungespeicherte Änderungen. Wirklich neu laden und verwerfen?")) {
+            return;
+        }
+        session.load();
+    }
+
+    /**
+     * Schließt alle Dokumente dieser Sitzung (beim Schließen der Sitzung); bei ungespeicherten Änderungen erst nach
+     * einer Rückfrage.
+     *
+     * @return {@code false}, wenn die Rückfrage verneint wurde
+     */
+    boolean closeDocuments() {
+        List<EditorSession> open = new ArrayList<>(pillOf.keySet());
+        long dirty = open.stream().filter(EditorSession::dirty).count();
+        if (dirty > 0 && !Dialogs.confirm(this, "Sitzung schließen", (dirty == 1 ? "Ein Member hat"
+                : dirty + " Members haben") + " ungespeicherte Änderungen. Wirklich schließen und verwerfen?")) {
+            return false;
+        }
+        open.forEach(editors::close);
+        return true;
     }
 
     private RemoteEntry selected() {
@@ -286,6 +466,16 @@ final class FtpDatasetsView extends JPanel {
         newMember.setText(mvs ? "Neues Member …" : "Neue Datei …");
         newDataset.setText(mvs ? "Neues Dataset …" : "Neuer Ordner …");
         back.setEnabled(!history.isEmpty());
+        boolean showing = document != null;
+        save.setVisible(showing);
+        reloadDocument.setVisible(showing);
+        closeDocument.setVisible(showing);
+        if (showing) {
+            EditorSession.State state = document.state();
+            save.setEnabled(connected && document.dirty()
+                    && (state == EditorSession.State.READY || state == EditorSession.State.CONFLICT));
+            reloadDocument.setEnabled(connected && state != EditorSession.State.LOADING && state != EditorSession.State.SAVING);
+        }
     }
 
     private void askNew(boolean dataset) {
@@ -445,8 +635,18 @@ final class FtpDatasetsView extends JPanel {
         return current;
     }
 
-    String previewText() {
-        return preview.getText();
+    /** Der Text im gezeigten Editor (leer ohne Dokument). */
+    String documentText() {
+        DocumentEditor editor = document == null ? null : editorOf.get(document);
+        return editor == null ? "" : editor.text();
+    }
+
+    EditorSession document() {
+        return document;
+    }
+
+    DocumentEditor editor(EditorSession session) {
+        return editorOf.get(session);
     }
 
     JTable table() {

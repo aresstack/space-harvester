@@ -68,7 +68,7 @@ public final class CommandDeck {
         files = new FilesWorkspace(new com.aresstack.spaceharvester.deck.files.FileBrowser(
                 new com.aresstack.spaceharvester.deck.files.local.LocalFileSource(() -> sharedFolders.get()),
                 connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore());
-        ftp = new FtpWorkspace(ftpSessions, accounts);
+        ftp = new FtpWorkspace(ftpSessions, accounts, editors);
         tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts);
         workspace.setBackground(Comic.SURFACE);
