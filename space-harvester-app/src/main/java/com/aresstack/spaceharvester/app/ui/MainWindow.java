@@ -214,6 +214,9 @@ public final class MainWindow implements AppContext.Navigator {
         // Server des Command Deck aus KeePass, über dieselbe Kopplung wie die Wissensquellen.
         commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass));
+        // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
+        commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
+                : context.settings().localFiles().roots());
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
@@ -311,7 +314,7 @@ public final class MainWindow implements AppContext.Navigator {
         frame.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent event) {
-                if (confirmClose(frame)) {
+                if (confirmUnsaved(frame) && confirmClose(frame)) {
                     WindowPlacement.remember(frame);
                     commandDeck.shutdown();
                     frame.dispose();
@@ -1346,6 +1349,19 @@ public final class MainWindow implements AppContext.Navigator {
 
     ComposerButton statusClose() {
         return statusClose;
+    }
+
+    /** Fragt nach, wenn Dokumente im Editor des Command Deck ungespeicherte Änderungen haben. */
+    private boolean confirmUnsaved(JFrame frame) {
+        java.util.List<String> unsaved = commandDeck.unsavedDocuments();
+        if (unsaved.isEmpty()) {
+            return true;
+        }
+        String names = String.join(", ", unsaved.subList(0, Math.min(unsaved.size(), 5)))
+                + (unsaved.size() > 5 ? " …" : "");
+        return Dialogs.confirm(frame, "Ungespeicherte Änderungen", (unsaved.size() == 1
+                ? "„" + names + "“ hat" : unsaved.size() + " Dokumente (" + names + ") haben")
+                + " ungespeicherte Änderungen. Space Harvester wirklich beenden und die Änderungen verwerfen?");
     }
 
     private boolean confirmClose(JFrame frame) {

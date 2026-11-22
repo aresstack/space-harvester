@@ -11,7 +11,7 @@ public enum DeckArea {
     FTP("FTP", "MVS-Datasets und Members, Transfers, JES-Jobs und Spool", true),
     NDV("NDV", "Natural Development Server: Bibliotheken, Objekte, Quelltext", true),
     BETAVIEW("BetaView", "Beleg- und Dokumentserver", false),
-    FILES("Dateien", "Lokale Dateien, SharePoint und weitere Dateisysteme", false);
+    FILES("Dateien", "Lokale Dateien, SharePoint und weitere Dateisysteme", true);
 
     private final String title;
     private final String hint;
