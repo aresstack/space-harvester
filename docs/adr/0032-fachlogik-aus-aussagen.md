@@ -298,4 +298,26 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   (`staleDecisions`) sind auch reine Prüfungen verschwundener Aussagen, aber nur Einträge des gelesenen Analysators.
 - Ablage `standing-decisions/v2`: Stand, Prüfung und Analysator je optional; `v1` wird weiter gelesen.
   Ein älterer Stand der Anwendung lehnt `v2` mit klarer Meldung ab.
-- Die Bedienung (✓/✕ ohne Rückfrage, Klick auf den gesetzten Knopf nimmt zurück) folgt getrennt.
+- Bedienung (W3-Bedienung): Im Overlay „Belege“ der Fachsicht (Analysen und Seitenreiter „Graph“) stehen rechts in der
+  Fußzeile jeder Belegzeile ✓ und ✕ (`app.ui.controls.ReviewToggle`, gezeichnet, Größe der Icon-Knöpfe der
+  Reiterzeile, ohne Fachlogik und auch für die Fachbegriffe-Liste nutzbar). Ohne Rückfrage; ein Klick auf den gesetzten
+  Knopf nimmt zurück. ✓/✕ setzen den festen Wert ohne Revisionsprüfung; Zurücknehmen übergibt die Revision der
+  Entscheidung, die das Overlay gezeigt hat (beim Füllen abseits des EDT über `StatusQuo#reviews` gelesen, das auch das
+  Recht nennt: `sync`, keine gesperrte Seite; nach eigenem Speichern die zurückgegebene). Bei Konflikt keine Rückfrage:
+  Die Zeile zeigt den aktuellen Wert, der eine Statusbereich oben gelb „inzwischen geändert“. Lehnt der Core ab,
+  springt der Knopf zurück, eine rote Meldung nennt die Aussage; ohne Recht sind beide Knöpfe gesperrt sichtbar.
+  Geschrieben wird abseits des EDT; die Zeilen springen nicht, solange das Overlay offen ist (verworfen: Satz gedämpft,
+  Pille „verworfen“ dunkel; bestätigt: „von Hand bestätigt“; zurückgenommen: die vorherige Stufe). Der Graph zieht über
+  den Beobachter nach, sobald das Overlay zu ist. Der Analysator kommt aus der Analyse, in der die Aussage steht.
+  Nichts scheitert still: Scheitert ein Schreiben erst, nachdem das Overlay zu (oder neu gefüllt) ist, meldet
+  `EvidencePopup#onClosedFailure` es dem Reiter; dessen Statuszeile zeigt rot „Entscheidung zu „…“ nicht gespeichert“
+  mit Kreispfeil, der dasselbe Schreiben wiederholt (derselbe Wert, beim Zurücknehmen dieselbe Revision), bei einem
+  Konflikt beim Zurücknehmen gelb „… inzwischen geändert“ ohne Wiederholen. Der Seitenlink bleibt blau; Tastaturfokus
+  zeigt der gelbe Ring wie bei den übrigen Knöpfen, der erste Fokus beim Öffnen nicht.
+  Jeder Beleg trägt seinen Analysator (`Evidence#analyzerId`); Lesen, ✓/✕ und Zurücknehmen nennen ihn ausdrücklich
+  (`StatusQuo#reviews/review/withdrawReview` mit `AnalyzerChoice`, die alten Aufrufe ohne ihn bleiben), damit ein
+  Wechsel der Einstellung zwischen Anzeige und Klick nicht in der anderen Ablage landet. Eine im Bestand gesperrte Seite
+  (ADR 0014) behält ihre lesbare Analyse, ist aber nicht prüfbar: `Reviews#locked`, gesperrte Knöpfe mit „Seite ist
+  gesperrt; Aussagen lassen sich nicht prüfen“, der Core lehnt mit `LockedPageException` ab. Nur der Titel selbst öffnet
+  die Seite, nicht der leere Platz bis ✓/✕; nach einer Meldung im Overlay (Neuaufbau) kehrt der Fokus dorthin zurück, wo
+  er war. Der Seitenreiter „Graph“ hält eine Meldung des Core auch zurück, solange das Overlay noch lädt.

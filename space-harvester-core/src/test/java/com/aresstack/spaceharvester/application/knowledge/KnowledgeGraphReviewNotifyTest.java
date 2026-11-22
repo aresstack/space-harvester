@@ -77,6 +77,19 @@ class KnowledgeGraphReviewNotifyTest {
                 assertThat(reported.tryAcquire(10, TimeUnit.SECONDS)).as("Zurücknehmen meldet sich").isTrue();
                 assertThat(statement(harvester, page).review()).isEqualTo(ParsedStatements.Review.UNREVIEWED);
             }
+
+            // ✓/✕ im Overlay nennen die Ablage des Belegs ausdrücklich; die Seite ist im Bestand nicht gesperrt.
+            Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews> parser =
+                    harvester.statusQuo().reviews(harvester.caller(), AnalyzerChoice.PARSER,
+                            Map.of(page, java.util.List.of(id)));
+            assertThat(parser.get(page).writable()).isTrue();
+            assertThat(parser.get(page).locked()).isFalse();
+            assertThat(harvester.statusQuo().reviews(harvester.caller(), AnalyzerChoice.MODEL,
+                    Map.of(page, java.util.List.of(id))).get(page).writable())
+                    .as("ohne Analyse der KI-Ablage nicht prüfbar").isFalse();
+            assertThat(harvester.statusQuo().review(harvester.caller(), page, id, AnalyzerChoice.PARSER,
+                    ParsedStatements.Review.CONFIRMED, null).analyzer()).isEqualTo(AnalyzerChoice.PARSER);
+            assertThat(statement(harvester, page).review()).isEqualTo(ParsedStatements.Review.CONFIRMED);
         }
     }
 
