@@ -125,6 +125,28 @@ class FtpWorkspaceTest {
             waitFor(() -> host.text("KKR.JCL(ORBIT)") != null, until);
             assertThat(host.text("KKR.JCL(ORBIT)")).isEqualTo("//ORBIT    JOB");
 
+            // Ein vorhandenes Member wird nie still überschrieben: erst die Rückfrage, bei Nein bleibt es.
+            waitFor(() -> onEdt(() -> datasets.shown().stream().anyMatch(e -> e.name().equals("ORBIT"))), until);
+            List<String> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+            SwingUtilities.invokeAndWait(() -> {
+                datasets.confirmOverwrite = question -> {
+                    asked.add(question);
+                    return false;
+                };
+                datasets.createNamed("ORBIT");
+                datasets.uploadFile(local);
+            });
+            assertThat(asked).hasSize(2).allMatch(question -> question.contains("ORBIT") && question.toLowerCase(java.util.Locale.ROOT).contains("wirklich"));
+            assertThat(onEdt(view::statusText)).contains("Nicht überschrieben");
+            assertThat(host.text("KKR.JCL(ORBIT)")).isEqualTo("//ORBIT    JOB");
+            // Ein Zeichen, das der Zeichensatz nicht kennt, wird gemeldet statt still zu „?“.
+            Path euro = temp.resolve("preis.jcl");
+            Files.writeString(euro, "//PREIS    JOB\n* 5 €\n", StandardCharsets.UTF_8);
+            SwingUtilities.invokeAndWait(() -> datasets.uploadFile(euro));
+            waitFor(() -> onEdt(view::statusText).contains("€"), until);
+            assertThat(onEdt(view::statusText)).contains("ISO-8859-1");
+            assertThat(host.text("KKR.JCL(PREIS)")).isNull();
+
             // Umschalten auf JES-Jobs tauscht nur die Mitte; die Verbindung bleibt.
             SwingUtilities.invokeAndWait(() -> deck.ftp().toggle().select(FtpSessionView.JOBS));
             FtpJobsView jobs = view.jobs();
