@@ -161,7 +161,113 @@ final class PodcastControl<S> {
     private final PodcastPlayer player;
     private final VideoSeekBar timeline;
     /** Die Zeitleiste; sie steht über der Suchleiste, solange der Podcast spielt. */
-    private final JPanel timelineRow = new JPanel(new BorderLayout(6, 0));
+    private final JPanel timelineRow = new JPanel(new TimelineLayout());
+    /**
+     * Der Untertitel (Angelo 22.11.2026): der gerade gesprochene Satz, zwischen den Zeitangaben der Zeitleiste und
+     * im Platz darunter.
+     */
+    private final com.aresstack.spaceharvester.app.ui.controls.SubtitleLine subtitle =
+            new com.aresstack.spaceharvester.app.ui.controls.SubtitleLine();
+    /** Der Schalter „Untertitel“ rechts in der Leiste unten; sichtbar, solange die Zeitleiste steht. */
+    private final com.aresstack.spaceharvester.app.ui.IconButton subtitleToggle =
+            new com.aresstack.spaceharvester.app.ui.IconButton(
+                    com.aresstack.spaceharvester.app.ui.controls.SubtitleLine.icon(true), SUBTITLES_ON);
+
+    static final String SUBTITLES_ON = "Untertitel ausblenden";
+    static final String SUBTITLES_OFF = "Untertitel einblenden";
+    /** Gemerkt im App-State: 1 = Untertitel an (Vorgabe), 0 = aus. */
+    static final String SUBTITLES_KEY = "podcast.subtitles";
+    /** Links und rechts bleibt der Platz der Zeitangaben frei. */
+    static final int SUBTITLE_SIDE = 72;
+    /** Oberkante des Untertitels: die Zeile der Zeitangaben unter dem Balken. */
+    static final int SUBTITLE_TOP = 25;
+
+    /** Die Zeitleiste oben in voller Breite; der Untertitel liegt über ihrer Zeile der Zeitangaben und darunter. */
+    private final class TimelineLayout implements java.awt.LayoutManager {
+
+        @Override
+        public void layoutContainer(java.awt.Container parent) {
+            int width = parent.getWidth();
+            timeline.setBounds(0, 0, width, timeline.getPreferredSize().height);
+            subtitle.setBounds(SUBTITLE_SIDE, SUBTITLE_TOP, Math.max(0, width - 2 * SUBTITLE_SIDE),
+                    subtitle.getPreferredSize().height);
+        }
+
+        @Override
+        public java.awt.Dimension preferredLayoutSize(java.awt.Container parent) {
+            int height = timeline.getPreferredSize().height;
+            if (subtitle.isVisible()) {
+                height = Math.max(height, SUBTITLE_TOP + subtitle.getPreferredSize().height + 4);
+            }
+            return new java.awt.Dimension(timeline.getPreferredSize().width, height);
+        }
+
+        @Override
+        public java.awt.Dimension minimumLayoutSize(java.awt.Container parent) {
+            return new java.awt.Dimension(0, preferredLayoutSize(parent).height);
+        }
+
+        @Override
+        public void addLayoutComponent(String name, java.awt.Component component) {
+        }
+
+        @Override
+        public void removeLayoutComponent(java.awt.Component component) {
+        }
+    }
+
+    /** Ob Untertitel gezeigt werden; gilt für alle Podcasts und über den Neustart. */
+    static boolean subtitles() {
+        return com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(SUBTITLES_KEY, 1) != 0;
+    }
+
+    /** Der Schalter „Untertitel“ für die Leiste unten, rechtsbündig. */
+    JComponent subtitleToggle() {
+        return subtitleToggle;
+    }
+
+    com.aresstack.spaceharvester.app.ui.controls.SubtitleLine subtitle() {
+        return subtitle;
+    }
+
+    private void toggleSubtitles() {
+        com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(SUBTITLES_KEY, subtitles() ? 0 : 1);
+        applySubtitles();
+        subtitleAt(player.position());
+    }
+
+    /** Stellt Schalter und Zeile auf die gemerkte Einstellung (auch die eines anderen Podcasts). */
+    private void applySubtitles() {
+        boolean on = subtitles();
+        if (on != subtitlesOn || subtitleToggle.getToolTipText() == null) {
+            subtitlesOn = on;
+            subtitleToggle.setIcon(com.aresstack.spaceharvester.app.ui.controls.SubtitleLine.icon(on));
+            String tip = on ? SUBTITLES_ON : SUBTITLES_OFF;
+            subtitleToggle.setToolTipText(tip);
+            subtitleToggle.getAccessibleContext().setAccessibleName(tip);
+        }
+        if (subtitle.isVisible() != on) {
+            subtitle.setVisible(on);
+            timelineRow.revalidate();
+            timelineRow.repaint();
+        }
+    }
+
+    private boolean subtitlesOn = true;
+
+    /** Der Satz, der an {@code millis} gesprochen wird; ohne Wiedergabe oder ausgeschaltet bleibt die Zeile leer. */
+    private void subtitleAt(long millis) {
+        applySubtitles();
+        Podcast podcast = last;
+        int track = podcast == null || !timelineShown || !subtitlesOn ? -1 : player.trackAt(millis);
+        if (track < 0 || track >= podcast.parts().size()) {
+            subtitle.show("", 0);
+            return;
+        }
+        PodcastSubtitles.Cue cue = PodcastSubtitles.at(podcast.parts().get(track).lines(),
+                player.shareInTrack(millis));
+        subtitle.show(cue.text(), cue.share());
+    }
     /**
      * „Transkript kopieren“ für die Leiste unten neben der Lupe (Angelo 22.11.2026); sichtbar, sobald es zum
      * Gezeigten einen Podcast gibt.
@@ -219,7 +325,13 @@ final class PodcastControl<S> {
         orb.setName(labels.name() + ".podcastOrb");
         orb.addActionListener(event -> clicked());
         timelineRow.setOpaque(false);
-        timelineRow.add(timeline, BorderLayout.CENTER);
+        // Der Untertitel liegt über der Zeitleiste (zuerst hinzugefügt = oben), fängt aber keine Maus.
+        timelineRow.add(subtitle);
+        timelineRow.add(timeline);
+        subtitleToggle.setName(labels.name() + ".podcastSubtitles");
+        subtitleToggle.setVisible(false);
+        subtitleToggle.addActionListener(event -> toggleSubtitles());
+        applySubtitles();
         timelineRow.setName(labels.name() + ".podcastTimelineRow");
         transcriptCopy.setName(labels.name() + ".podcastTranscript");
         transcriptCopy.setVisible(false);
@@ -733,6 +845,7 @@ final class PodcastControl<S> {
         last = podcast;
         // Text gibt es, sobald Abschnitte geplant sind; ob schon einer geschrieben ist, zeigt erst das Lesen.
         transcriptCopy.setVisible(podcast != null && podcast.parts().stream().anyMatch(part -> part.segment() >= 0));
+        subtitleAt(player.position());
         timeline.slides(player.topicStarts());
         // Ein Bild, das erst jetzt fertig wurde, erscheint zum laufenden Thema.
         pictureAt(player.position());
@@ -760,6 +873,8 @@ final class PodcastControl<S> {
             return;
         }
         timelineShown = show;
+        subtitleToggle.setVisible(show);
+        subtitleAt(player.position());
         events.accept(show ? TimelineEvent.show(timelineRow) : TimelineEvent.hide(timelineRow));
         if (!show) {
             runningPicture = null;
@@ -790,6 +905,7 @@ final class PodcastControl<S> {
                 pictureAt(millis);
                 followAt(millis);
                 cueAt(millis);
+                subtitleAt(millis);
                 if (retrying) {
                     // Das Wiederholen hat geklappt: wieder blau.
                     retrying = false;
