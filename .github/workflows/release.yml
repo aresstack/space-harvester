@@ -33,8 +33,9 @@ permissions:
   contents: read
 
 # Drei Gruppen für den Bau (Job app): andere Branches teilen sich das Snapshot-Release, main ohne Tag (Push oder manuell
-# ohne Tag) das rollierende „latest“, Tags und manuell angelegte Releases laufen nacheinander. Bei Snapshot und latest
-# bricht ein neuer Lauf den laufenden Bau ab, damit nur der neueste Stand gebaut wird (Angelo 22.11.). Das Veröffentlichen
+# ohne Tag) das rollierende „latest“, Tags und manuell angelegte Releases laufen nacheinander. Bei Snapshot bricht
+# ein neuer Lauf den laufenden Bau ab. Bei latest läuft der Bau zu Ende; GitHub hält höchstens einen wartenden Lauf, den
+# neuesten, Zwischenstände entfallen (Angelo 22.11.: kein Abbruch bei häufigen Merges). Das Veröffentlichen
 # der rollierenden Releases ist ein eigener Job, der nie abgebrochen wird und je Release nacheinander läuft, damit kein
 # Abbruch ein halb ersetztes Release hinterlässt. Getaggte Releases werden nie abgebrochen.
 
@@ -54,7 +55,7 @@ jobs:
     timeout-minutes: 45
     concurrency:
       group: release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || ((github.ref == 'refs/heads/main' && (inputs.tag == '' || inputs.tag == null)) && 'latest' || 'versioned') }}
-      cancel-in-progress: ${{ github.ref_type == 'branch' && (github.ref != 'refs/heads/main' || inputs.tag == '' || inputs.tag == null) }}
+      cancel-in-progress: ${{ github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
     outputs:
       mode: ${{ steps.version.outputs.mode }}
       tag: ${{ steps.version.outputs.tag }}
