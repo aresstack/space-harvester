@@ -485,6 +485,35 @@ class PageLoadsTest {
     }
 
     @Test
+    void overlappingRerunsOfOnePartNeverBringBackAPartThatEnded() throws Exception {
+        // Abnahme #1133: Zwei Neustarts desselben Teils überlappen (Doppelklick); der gescheiterte meldet sich zuerst
+        // zurück, dann endet der Teil, dann bringt der andere seinen älteren Stand. Der Teil darf nicht offen bleiben.
+        BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("1")).orElseThrow();
+        JobStatus stale = first.parts().get(0);
+        java.util.concurrent.CountDownLatch ended = new java.util.concurrent.CountDownLatch(1);
+        background.subscribe(PageLoads.KIND, status -> {
+            if (status.id().equals(stale.id()) && status.state().terminal()
+                    && status.state() != JobState.PAUSED) {
+                ended.countDown();
+            }
+        }, last -> { });
+
+        loads.rerunWatch.before(stale.id());
+        loads.rerunWatch.before(stale.id());
+        loads.rerunWatch.after(stale.id(), null);
+        background.cancel(first.groupId());
+        executor.runAll();
+        assertThat(ended.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        loads.rerunWatch.after(stale.id(), stale);
+
+        PageLoads.Joined again = loads.join(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("1"));
+
+        assertThat(again.joined()).isEmpty();
+        assertThat(again.started()).isPresent();
+    }
+
+    @Test
     void afterARestartTheImageStartsWithThePartsLeftOpen() {
         BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
                 pages("1")).orElseThrow();

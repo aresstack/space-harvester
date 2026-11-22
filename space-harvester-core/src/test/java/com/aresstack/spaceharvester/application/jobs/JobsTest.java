@@ -651,7 +651,7 @@ class JobsTest {
         java.util.List<Duration> planned = new java.util.ArrayList<>();
         java.util.concurrent.atomic.AtomicReference<Runnable> expiry = new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.atomic.AtomicInteger withdrawn = new java.util.concurrent.atomic.AtomicInteger();
-        jobs.deadlineTimer((delay, task) -> {
+        jobs.deadlineTimerForTests((delay, task) -> {
             planned.add(delay);
             expiry.set(task);
             return withdrawn::incrementAndGet;
@@ -681,7 +681,7 @@ class JobsTest {
         Jobs jobs = new Jobs(store, executor, new JobLimits(1, 5, Duration.ofMinutes(10)), clock);
         java.util.concurrent.atomic.AtomicReference<Runnable> expiry = new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.atomic.AtomicInteger withdrawn = new java.util.concurrent.atomic.AtomicInteger();
-        jobs.deadlineTimer((delay, task) -> {
+        jobs.deadlineTimerForTests((delay, task) -> {
             expiry.set(task);
             return withdrawn::incrementAndGet;
         });

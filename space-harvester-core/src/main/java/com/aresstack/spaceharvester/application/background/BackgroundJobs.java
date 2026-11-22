@@ -76,7 +76,12 @@ public final class BackgroundJobs {
     /** Ob {@link #resumeInterrupted()} schon lief; dann läuft {@link #afterResume} sofort. */
     private volatile boolean resumedOnce;
     /** Je Art ein Riegel, damit zwei gleichzeitige Anlässe nicht beide einen Teil starten. */
-    private final Map<String, Object> startLocks = new ConcurrentHashMap<>();
+    /**
+     * Startsperre je Art; {@link java.util.concurrent.locks.ReentrantLock} statt Monitor (Abnahme #1133): Darunter
+     * laufen Schreibzugriffe auf den Auftragsspeicher und die Sperre der Aufträge, ein virtueller Thread gibt dabei
+     * seinen Träger frei.
+     */
+    private final Map<String, java.util.concurrent.locks.ReentrantLock> startLocks = new ConcurrentHashMap<>();
 
     /**
      * @param owner Auftraggeber aller Hintergrundaufträge, in der Desktop-App {@code Harvester.OWNER}, damit die
@@ -232,7 +237,8 @@ public final class BackgroundJobs {
         own.keySet().removeIf(key -> key.startsWith(PREFIX));
         BackgroundPart part = new BackgroundPart(current.id(), groupOf(current), registered.id(), current.sourceId(),
                 current.partitionKey(), own, true, false);
-        synchronized (startLock(kind)) {
+        startLock(kind).lock();
+        try {
             if (!retry.prepare(part)) {
                 throw new NothingToRetryException(jobId);
             }
@@ -258,6 +264,8 @@ public final class BackgroundJobs {
             }
             retry.started(part);
             return rerun;
+        } finally {
+            startLock(kind).unlock();
         }
     }
 
@@ -500,11 +508,14 @@ public final class BackgroundJobs {
      */
     public Optional<BackgroundGroup> startUnlessWaiting(String kind, String title, BackgroundPart.Draft part) {
         Objects.requireNonNull(part, "part");
-        synchronized (startLock(kind)) {
+        startLock(kind).lock();
+        try {
             if (waiting(kind, part.sourceId(), part.partitionKey()).isPresent()) {
                 return Optional.empty();
             }
             return Optional.of(start(kind, title, List.of(part)));
+        } finally {
+            startLock(kind).unlock();
         }
     }
 
@@ -516,11 +527,14 @@ public final class BackgroundJobs {
      */
     public Optional<BackgroundGroup> startUnlessRunning(String kind, String title, BackgroundPart.Draft part) {
         Objects.requireNonNull(part, "part");
-        synchronized (startLock(kind)) {
+        startLock(kind).lock();
+        try {
             if (open(kind, part.sourceId(), part.partitionKey()).isPresent()) {
                 return Optional.empty();
             }
             return Optional.of(start(kind, title, List.of(part)));
+        } finally {
+            startLock(kind).unlock();
         }
     }
 
@@ -533,10 +547,13 @@ public final class BackgroundJobs {
      */
     public Optional<BackgroundGroup> startUnlessRunning(String kind, String title, List<BackgroundPart.Draft> parts) {
         Objects.requireNonNull(parts, "parts");
-        synchronized (startLock(kind)) {
+        startLock(kind).lock();
+        try {
             List<BackgroundPart.Draft> missing = parts.stream()
                     .filter(part -> open(kind, part.sourceId(), part.partitionKey()).isEmpty()).toList();
             return missing.isEmpty() ? Optional.empty() : Optional.of(start(kind, title, missing));
+        } finally {
+            startLock(kind).unlock();
         }
     }
 
@@ -552,12 +569,15 @@ public final class BackgroundJobs {
                                                         Predicate<JobStatus> covers) {
         Objects.requireNonNull(parts, "parts");
         Objects.requireNonNull(covers, "covers");
-        synchronized (startLock(kind)) {
+        startLock(kind).lock();
+        try {
             List<BackgroundPart.Draft> missing = parts.stream()
                     .filter(part -> openParts(kind).noneMatch(status -> covers.test(status)
                             && Objects.equals(part.sourceId(), status.sourceId())
                             && Objects.equals(part.partitionKey(), status.partitionKey()))).toList();
             return missing.isEmpty() ? Optional.empty() : Optional.of(start(kind, title, missing));
+        } finally {
+            startLock(kind).unlock();
         }
     }
 
@@ -573,7 +593,8 @@ public final class BackgroundJobs {
                                                                   List<BackgroundPart.Draft> parts) {
         Objects.requireNonNull(parts, "parts");
         Objects.requireNonNull(title, "title");
-        synchronized (startLock(kind)) {
+        startLock(kind).lock();
+        try {
             List<BackgroundPart.Draft> missing = parts.stream()
                     .filter(part -> open(kind, part.sourceId(), part.partitionKey()).isEmpty()).toList();
             if (missing.isEmpty()) {
@@ -589,6 +610,8 @@ public final class BackgroundJobs {
                         afterJobs.isEmpty() && afterSteps.isEmpty() ? List.of() : List.of(title)));
             }
             return Optional.of(startSteps(newGroupId(), kind, title, steps, true));
+        } finally {
+            startLock(kind).unlock();
         }
     }
 
@@ -603,10 +626,13 @@ public final class BackgroundJobs {
     public BackgroundGroup startBehindOpen(String groupId, String kind, String title, BackgroundPart.Draft part) {
         Objects.requireNonNull(part, "part");
         Objects.requireNonNull(title, "title");
-        synchronized (startLock(kind)) {
+        startLock(kind).lock();
+        try {
             List<String> openIds = openParts(kind).map(JobStatus::id).toList();
             return startSteps(groupId, kind, title, List.of(new Step(kind, title, part, openIds, List.of(),
                     openIds.isEmpty() ? List.of() : List.of(title))), true);
+        } finally {
+            startLock(kind).unlock();
         }
     }
 
@@ -685,8 +711,9 @@ public final class BackgroundJobs {
         return all().stream().filter(status -> isOpen(status.state()) && kind.equals(status.parameter(KIND)));
     }
 
-    private Object startLock(String kind) {
-        return startLocks.computeIfAbsent(Objects.requireNonNull(kind, "kind"), ignored -> new Object());
+    private java.util.concurrent.locks.ReentrantLock startLock(String kind) {
+        return startLocks.computeIfAbsent(Objects.requireNonNull(kind, "kind"),
+                ignored -> new java.util.concurrent.locks.ReentrantLock());
     }
 
     /**
@@ -914,12 +941,15 @@ public final class BackgroundJobs {
         if (!registered.exclusive()) {
             return rerun(jobId, null, task(true, false));
         }
-        synchronized (startLock(kind)) {
+        startLock(kind).lock();
+        try {
             Optional<JobStatus> open = openOther(kind, current.sourceId(), current.partitionKey(), jobId);
             if (open.isPresent()) {
                 throw new BackgroundPartOpenException(jobId, open.get().id());
             }
             return rerun(jobId, null, task(true, false));
+        } finally {
+            startLock(kind).unlock();
         }
     }
 
@@ -1051,7 +1081,8 @@ public final class BackgroundJobs {
         List<JobStatus> older = siblings.subList(0, siblings.size() - 1);
         Set<String> interruptedIds = new HashSet<>();
         siblings.forEach(sibling -> interruptedIds.add(sibling.id()));
-        synchronized (startLock(kind.id())) {
+        startLock(kind.id()).lock();
+        try {
             Optional<JobStatus> open = all().stream()
                     .filter(other -> !interruptedIds.contains(other.id()) && isOpen(other.state())
                             && kind.id().equals(other.parameter(KIND))
@@ -1067,6 +1098,8 @@ public final class BackgroundJobs {
             JobStatus resumed = rerun(youngest.id(), null, task(true, true));
             older.forEach(sibling -> retire(sibling, SUPERSEDED_BY_YOUNGER));
             return Optional.of(resumed);
+        } finally {
+            startLock(kind.id()).unlock();
         }
     }
 
@@ -1294,7 +1327,11 @@ public final class BackgroundJobs {
     /** Startet einen Teil im selben Eintrag neu und meldet das den {@link #onRerun Zuhörern} davor und danach. */
     private JobStatus rerun(String jobId, Map<String, String> parameters, JobTask task) {
         for (Reruns listener : reruns) {
-            listener.before(jobId);
+            try {
+                listener.before(jobId);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Zuhörer vor dem Neustart scheiterte ({0})", e.getClass().getName());
+            }
         }
         JobStatus result = null;
         try {
@@ -1302,7 +1339,12 @@ public final class BackgroundJobs {
             return result;
         } finally {
             for (Reruns listener : reruns) {
-                listener.after(jobId, result);
+                try {
+                    listener.after(jobId, result);
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Zuhörer nach dem Neustart scheiterte ({0})",
+                            e.getClass().getName());
+                }
             }
         }
     }

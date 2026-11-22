@@ -180,6 +180,11 @@ class UpdateSummaryTest {
                 if (hold != null) {
                     entered.countDown();
                     hold.await();
+                    // Wie ein abgebrochener Aufruf: Nach der Freigabe liefert kein gehaltener Aufruf eine Antwort, also
+                    // weckt kein erfolgreicher Teil den Oberauftrag vor seinen Fehlern (Abnahme #1133).
+                    throw new com.aresstack.spaceharvester.ai.AiServiceException(
+                            com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED,
+                            "Chat-Dienst: Aufruf abgebrochen");
                 }
                 if (delayMillis > 0) {
                     Thread.sleep(delayMillis);
@@ -947,7 +952,7 @@ class UpdateSummaryTest {
                 Clock.fixed(T0.plusSeconds(3600), ZoneOffset.UTC));
         // Die Uhr steht; nur der Zeitgeber meldet den Ablauf, der erste geplante gehört zum Oberauftrag.
         List<Runnable> expiries = new java.util.concurrent.CopyOnWriteArrayList<>();
-        wide.deadlineTimer((delay, task) -> {
+        wide.deadlineTimerForTests((delay, task) -> {
             expiries.add(task);
             return () -> { };
         });
