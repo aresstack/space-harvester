@@ -103,6 +103,9 @@ public final class ActivitiesView implements View {
     final IconButton moreJobs = new IconButton(new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(),
             MORE_JOB_ACTIONS);
     static final String DELETE_FINISHED = "Abgeschlossene Aufträge löschen";
+    static final String PARALLEL_PREPARATIONS = "Parallele Vorbereitungen";
+    static final String PARALLEL_DOWNLOADS = "Parallele Downloads";
+    static final String CONNECTIONS = "Verbindungen";
     static final String DELETE_ALL = "Alle Aufträge löschen";
     static final String MORE_JOB_ACTIONS = "Weitere Aktionen zu den Aufträgen";
     /** Links neben den Auswahlen (Angelo 11.11.2026): alle Bilder- und Anhänge-Unterzeilen auf- bzw. zuklappen. */
@@ -291,23 +294,15 @@ public final class ActivitiesView implements View {
         JPanel listTitle = new JPanel(new java.awt.GridBagLayout());
         listTitle.setOpaque(false);
         listTitle.add(tabs);
-        JLabel downloadsLabel = new JLabel("Downloads");
-        downloadsLabel.setToolTipText(downloads.box().getToolTipText());
-        JLabel preparationsLabel = new JLabel("Vorbereitung");
-        preparationsLabel.setToolTipText(preparations.box().getToolTipText());
-        JLabel connectionsLabel = new JLabel("Verbindungen");
-        connectionsLabel.setToolTipText(connections.box().getToolTipText());
-        connectionsLabel.setLabelFor(connections.box());
-        for (JLabel label : List.of(downloadsLabel, preparationsLabel, connectionsLabel)) {
-            label.setFont(Comic.regular(12f));
-            label.setForeground(Comic.INK);
+        // Die drei Grenzen der Parallelität stehen im Menü hinter dem Dreieck (Angelo 22.11.2026), damit die
+        // Kopfzeile auch in der Seitenleiste Platz hat.
+        for (ParallelChoice choice : List.of(preparations, downloads, connections)) {
+            choice.ask = current -> Dialogs.askNumber(root, "Benutzerdefiniert", choice.box().getToolTipText(),
+                    choice.min(), choice.max(), current);
         }
-        downloadsLabel.setLabelFor(downloads.box());
-        preparationsLabel.setLabelFor(preparations.box());
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
-        JPanel listTools = Comic.row(preparationsLabel, preparations.box(), downloadsLabel,
-                downloads.box(), connectionsLabel, connections.box(), hint, deleteFinished, moreJobs);
+        JPanel listTools = Comic.row(hint, deleteFinished, moreJobs);
         // „Alle anhalten“ und „Alle abbrechen“ sind Aktionen und stehen mittig in der Werkzeugleiste unten
         // (tools(), Angelo 22.11.2026); oben bleibt Platz für die Wippe.
         pauseAll.addActionListener(e -> pauseOrResumeAll());
@@ -325,16 +320,8 @@ public final class ActivitiesView implements View {
         globalRow.add(folding);
         globalRow.add(global);
         tools = globalRow;
-        // Wird die Kopfzeile zu schmal für Wippe und Werkzeuge, weichen die drei Beschriftungen der Auswahlfelder
-        // (ihre Tooltips nennen sie weiter), statt dass die Wippe umbricht oder Knöpfe abgeschnitten werden.
-        List<JLabel> headLabels = List.of(preparationsLabel, downloadsLabel, connectionsLabel);
-        int labelsWidth = headLabels.stream().mapToInt(label -> label.getPreferredSize().width + 6).sum();
         JPanel listHead = new JPanel();
-        listHead.setLayout(new HeadLayout(listTitle, listTools, labelsWidth, narrow -> {
-            for (JLabel label : headLabels) {
-                label.setVisible(!narrow);
-            }
-        }));
+        listHead.setLayout(new HeadLayout(listTitle, listTools, 0, narrow -> { }));
         listHead.setOpaque(false);
         listHead.add(listTitle);
         listHead.add(listTools);
@@ -1955,7 +1942,8 @@ public final class ActivitiesView implements View {
 
     /**
      * Das Menü hinter dem Dreieck neben dem Besen: oben „Suchqualität messen …“ (Angelo 21.11.2026, Q1b), Trenner, dann
-     * „Alle Aufträge löschen“.
+     * „Alle Aufträge löschen“, Trenner und die drei Grenzen der Parallelität als Untermenüs
+     * ({@link ParallelChoice#menu}).
      */
     javax.swing.JPopupMenu moreJobsMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
@@ -1976,6 +1964,10 @@ public final class ActivitiesView implements View {
         all.setEnabled(!model.rows.isEmpty());
         all.addActionListener(e -> deleteAll());
         menu.add(all);
+        menu.addSeparator();
+        menu.add(preparations.menu(PARALLEL_PREPARATIONS));
+        menu.add(downloads.menu(PARALLEL_DOWNLOADS));
+        menu.add(connections.menu(CONNECTIONS));
         return menu;
     }
 

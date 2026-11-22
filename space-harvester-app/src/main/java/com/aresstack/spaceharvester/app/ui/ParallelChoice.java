@@ -24,8 +24,11 @@ final class ParallelChoice {
     private final int max;
     private final IntConsumer apply;
     private final Consumer<String> invalid;
+    private final List<Integer> suggestions;
     private int value;
     private boolean updating;
+    /** Fragt den eigenen Wert ab (aktueller Wert hinein, neuer oder {@code null} heraus); Tests setzen einen Ersatz. */
+    java.util.function.IntFunction<Integer> ask = current -> null;
 
     /**
      * @param suggestions Werte in der Liste
@@ -40,6 +43,7 @@ final class ParallelChoice {
         this.apply = apply;
         this.invalid = invalid;
         this.value = initial;
+        this.suggestions = List.copyOf(suggestions);
         box.setEditable(true);
         box.setToolTipText(tooltip);
         for (int suggestion : suggestions) {
@@ -88,6 +92,61 @@ final class ParallelChoice {
         } finally {
             updating = false;
         }
+    }
+
+    static final String CUSTOM = "Benutzerdefiniert …";
+
+    /**
+     * Die Auswahl als Untermenü (Angelo 22.11.2026: statt der Auswahlfelder in der Kopfzeile): je Vorschlag ein
+     * Eintrag, der geltende Wert mit Haken, darunter „Benutzerdefiniert …“ für eine freie Zahl; gilt gerade eine
+     * freie Zahl, trägt dieser Eintrag den Haken und nennt sie.
+     *
+     * @param title was eingestellt wird, etwa „Parallele Downloads“; der geltende Wert steht dahinter
+     */
+    javax.swing.JMenu menu(String title) {
+        javax.swing.JMenu menu = new javax.swing.JMenu(title + ": " + value);
+        menu.setFont(Comic.regular(13f));
+        menu.setToolTipText(box.getToolTipText());
+        for (int suggestion : suggestions) {
+            javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(Integer.toString(suggestion),
+                    suggestion == value);
+            item.setFont(Comic.regular(13f));
+            item.addActionListener(e -> choose(Integer.toString(suggestion)));
+            menu.add(item);
+        }
+        menu.addSeparator();
+        boolean own = !suggestions.contains(value);
+        javax.swing.JCheckBoxMenuItem custom = new javax.swing.JCheckBoxMenuItem(own ? CUSTOM + " (" + value + ")"
+                : CUSTOM, own);
+        custom.setFont(Comic.regular(13f));
+        custom.setToolTipText("Eine ganze Zahl von " + min + " bis " + max);
+        custom.addActionListener(e -> {
+            Integer chosen = ask.apply(value);
+            if (chosen != null) {
+                choose(Integer.toString(chosen));
+            }
+        });
+        menu.add(custom);
+        return menu;
+    }
+
+    int min() {
+        return min;
+    }
+
+    int max() {
+        return max;
+    }
+
+    /** Übernimmt {@code text} wie eine Eingabe im Feld. */
+    void choose(String text) {
+        updating = true;
+        try {
+            box.setSelectedItem(text);
+        } finally {
+            updating = false;
+        }
+        commit();
     }
 
     /** Übernimmt die Eingabe oder springt mit Meldung zurück. */

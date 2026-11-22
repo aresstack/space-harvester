@@ -221,8 +221,7 @@ class ActivitiesBackgroundTabTest {
                 java.awt.Rectangle visible = new java.awt.Rectangle(0, 0, 900, 520);
                 for (javax.swing.JComponent part : List.<javax.swing.JComponent>of(
                         view.tabs.button(ActivitiesView.JOBS_TAB), view.tabs.button(ActivitiesView.BACKGROUND_TAB),
-                        view.preparations.box(), view.downloads.box(),
-                        view.connections.box(), view.deleteFinished, view.moreJobs)) {
+                        view.deleteFinished, view.moreJobs)) {
                     java.awt.Rectangle bounds = SwingUtilities.convertRectangle(part.getParent(), part.getBounds(),
                             root);
                     assertThat(part.isShowing() || part.isVisible()).isTrue();

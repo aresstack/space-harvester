@@ -182,6 +182,13 @@ class SearchQualityStartTest {
                 assertThat(((JMenuItem) menu.getComponent(0)).getText()).isEqualTo(SearchQualityStart.MENU);
                 assertThat(menu.getComponent(1)).isInstanceOf(JPopupMenu.Separator.class);
                 assertThat(((JMenuItem) menu.getComponent(2)).getText()).isEqualTo(ActivitiesView.DELETE_ALL);
+                // Darunter die Grenzen der Parallelität als Untermenüs (Angelo 22.11.2026).
+                assertThat(menu.getComponent(3)).isInstanceOf(JPopupMenu.Separator.class);
+                assertThat(((JMenuItem) menu.getComponent(4)).getText())
+                        .startsWith(ActivitiesView.PARALLEL_PREPARATIONS + ": ");
+                assertThat(((JMenuItem) menu.getComponent(5)).getText())
+                        .startsWith(ActivitiesView.PARALLEL_DOWNLOADS + ": ");
+                assertThat(((JMenuItem) menu.getComponent(6)).getText()).startsWith(ActivitiesView.CONNECTIONS + ": ");
                 assertThat(view.moreJobs.isEnabled()).isTrue();
             });
         } finally {
