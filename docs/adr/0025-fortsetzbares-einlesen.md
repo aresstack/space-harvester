@@ -510,7 +510,15 @@ wird automatisch verwaltet.
     - Anhalten: Der Space ruht, bis der Teil fortgesetzt wird. Abbrechen: Der Space ruht bis zum nächsten
       abgeschlossenen Abgleich des Space oder der ganzen Quelle. Beides wird aus den Aufträgen abgeleitet, nicht im
       Speicher gehalten, und übersteht so den Neustart. Ruhende Spaces übergeht die Füllung beim Suchen, Anbieten und
-      Nachschieben.
+      Nachschieben. Das gilt auch für einen noch wartenden Teil.
+    - Ruhen räumt ab (`BackgroundFill#rest`): Was beim Planer noch wartet, wird sofort zurückgezogen, nur im Speicher.
+      Die Einträge des Space verlassen die Warteschlange in einem Commit auf dem Arbeiter der Füllung, nie unter der
+      Sperre der Aufträge. Laufende Abrufe enden regulär und werden gezählt, rot mit Grund, wenn sie scheitern.
+    - Fortsetzen setzt denselben Teil fort, keine neue Gruppe: Die Füllung sucht sofort im Katalog nach Lücken seines
+      Space (`BackgroundFill#scanFor`), und der Teil endet erst, wenn sie dort nichts mehr findet.
+    - Wird ein Teil gelöscht, von Hand oder nach der Aufbewahrungsfrist, folgt sein Space den übrigen Teilen. „Daten
+      bereinigen“ leert die Warteschlange über die Füllung (`BackgroundFill#removeSource`), damit auch ihr Spiegel
+      bereinigt wird. „Wartend“ zeigt bei beendeten und angehaltenen Teilen 0.
     - Gescheiterte Abrufe stehen rot mit Grund im Teil; endet er mit Fehlern, scheitert er (`PAGES_MISSING`), und die
       Füllung versucht die Seiten nach ihrer Wartezeit erneut. Abrufe, die enden, bevor ihr Teil läuft, werden beim
       Start nachgemeldet.

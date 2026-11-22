@@ -1517,7 +1517,15 @@ public final class Harvester implements AutoCloseable {
             KnowledgeGraph graph = this.knowledgeGraph;
             // „Daten bereinigen“ und „Quelle entfernen“ leeren dieselben Ablagen; die Füllschlange zuerst.
             SourceDataPurge purge = new SourceDataPurge(jobs, SourceDataStores.builder()
-                    .fillQueue(fillQueue)
+                    // Über die Füllung, sobald es sie gibt: Sie bereinigt ihren Spiegel mit (Abnahme #1087).
+                    .fillQueue(fillQueue == null ? null : sourceId -> {
+                        BackgroundFill current = filling.get();
+                        if (current != null) {
+                            current.removeSource(sourceId);
+                        } else {
+                            fillQueue.removeSource(sourceId);
+                        }
+                    })
                     .pageReleases(pageReleases)
                     .pageCache(cache)
                     .fullText(textIndex)

@@ -115,17 +115,19 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
         }
         this.parts = background.subscribe(KIND, status -> {
             boolean woke;
+            boolean rests;
             synchronized (monitor) {
                 woke = track(status);
+                rests = status.state() == JobState.PAUSED || status.state() == JobState.CANCELLED;
+            }
+            if (rests) {
+                // Auch ein noch wartender Teil, angehalten oder abgebrochen, lässt seinen Space ruhen (Abnahme #1087).
+                restFill(where(status));
             }
             if (woke) {
                 wakeFill();
             }
-        }, last -> {
-            synchronized (monitor) {
-                open.remove(where(last));
-            }
-        });
+        }, this::removed);
         this.syncs = jobs.subscribeAll(new JobListener() {
             @Override
             public void changed(JobStatus status) {
@@ -143,16 +145,59 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
         });
     }
 
-    /** Hängt die Füllung an: Sie meldet ihre Abrufe hierher und lässt ruhende Spaces aus. */
+    /**
+     * Hängt die Füllung an: Sie meldet ihre Abrufe hierher und lässt ruhende Spaces aus; was schon vor dem Neustart
+     * ruhte, räumt sie aus ihrer Warteschlange.
+     */
     public void attach(BackgroundFill fill, Function<PageKey, Optional<String>> spaceOf) {
         this.fill = Objects.requireNonNull(fill, "fill");
         fill.observe(spaceOf, this, this::resting);
+        Set<BackgroundFill.Where> resting = new HashSet<>();
+        synchronized (monitor) {
+            resting.addAll(paused);
+            cancelled.keySet().stream().filter(this::restingLocked).forEach(resting::add);
+        }
+        resting.forEach(fill::rest);
     }
 
     private void wakeFill() {
         BackgroundFill current = fill;
         if (current != null) {
             current.wake();
+        }
+    }
+
+    /** Lässt den Space in der Füllung ruhen; kehrt sofort zurück, die Füllung räumt auf ihrem Arbeiter ab. */
+    private void restFill(BackgroundFill.Where where) {
+        BackgroundFill current = fill;
+        if (current != null) {
+            current.rest(where);
+        }
+    }
+
+    /**
+     * Ein Teil wurde gelöscht (von Hand oder nach der Aufbewahrungsfrist): Der Zustand seines Space folgt den übrigen
+     * Teilen, sonst ruhte er bis zum Neustart (Abnahme #1087).
+     */
+    private void removed(JobStatus last) {
+        BackgroundFill.Where where = where(last);
+        List<JobStatus> others = background.parts(KIND).stream()
+                .filter(part -> !part.id().equals(last.id()) && where.equals(where(part))).toList();
+        boolean woke;
+        synchronized (monitor) {
+            boolean wasResting = restingLocked(where);
+            open.remove(where);
+            paused.remove(where);
+            stopping.remove(where);
+            cancelled.remove(where);
+            if (!live.containsKey(where)) {
+                early.remove(where);
+            }
+            others.forEach(this::track);
+            woke = wasResting && !restingLocked(where);
+        }
+        if (woke) {
+            wakeFill();
         }
     }
 
@@ -168,6 +213,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
             case QUEUED, RUNNING -> {
                 open.add(where);
                 paused.remove(where);
+                // Ein fortgesetzter abgebrochener Teil lässt den Space nicht mehr ruhen (Abnahme #1087).
+                cancelled.remove(where);
             }
             case PAUSED -> {
                 open.remove(where);
@@ -233,7 +280,7 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
         boolean canRun = background.canRun();
         synchronized (monitor) {
             part = live.get(where);
-            start = part == null && !open.contains(where) && canRun;
+            start = part == null && !open.contains(where) && canRun && !restingLocked(where);
             if (start) {
                 // Vor dem Start vermerkt, damit die nächste Seite keinen zweiten Teil anlegt.
                 open.add(where);
@@ -260,29 +307,27 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     public void completed(BackgroundFill.Where where, boolean stored, Throwable failure) {
         Live part;
         synchronized (monitor) {
+            // In einem Sperrblock mit dem Nachmelden: Sonst könnte der Teil dazwischen starten und die Zählung verpassen.
             part = live.get(where);
             if (part != null) {
                 part.processed++;
                 if (!stored) {
                     part.failed++;
                 }
-            }
-        }
-        if (part == null) {
-            synchronized (monitor) {
-                if (open.contains(where)) {
-                    // Der Teil ist angelegt, läuft aber noch nicht: beim Start nachmelden.
-                    Early tally = early.computeIfAbsent(where, ignored -> new Early());
-                    if (stored) {
-                        tally.written++;
-                    } else {
-                        tally.failed++;
-                        if (tally.failures.size() < 20) {
-                            tally.failures.add(failure);
-                        }
+            } else if (open.contains(where) || paused.contains(where) || stopping.contains(where)) {
+                // Der Teil ist angelegt oder angehalten, läuft aber gerade nicht: beim (Wieder-)Start nachmelden.
+                Early tally = early.computeIfAbsent(where, ignored -> new Early());
+                if (stored) {
+                    tally.written++;
+                } else {
+                    tally.failed++;
+                    if (tally.failures.size() < 20) {
+                        tally.failures.add(failure);
                     }
                 }
             }
+        }
+        if (part == null) {
             return;
         }
         count(part, where, 0);
@@ -389,10 +434,9 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                     stopping.add(where);
                     live.remove(where, mine);
                 }
-                BackgroundFill current = fill;
-                if (current != null) {
-                    current.rest(where);
-                }
+                // Nur vormerken: Der Rückruf läuft unter der Sperre der Aufträge, die Füllung räumt auf ihrem Arbeiter
+                // ab, in einem Commit (Abnahme #1087).
+                restFill(where);
                 try {
                     context.checkpoint();
                     mine.done.complete(null);
@@ -401,9 +445,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                 }
             });
             BackgroundFill current = fill;
-            int waiting = current == null || !current.enabled() ? 0 : current.waiting(where);
-            if (waiting == 0) {
-                // Fortgesetzt, aber dort wartet nichts (mehr): fertig; die nächste Suche im Katalog legt neu an.
+            if (current == null || !current.enabled()) {
+                // Ohne laufende Füllung gibt es nichts zu zeigen.
                 synchronized (monitor) {
                     live.remove(where, mine);
                 }
@@ -411,6 +454,12 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                 finish(mine);
             } else {
                 count(mine, where, 0);
+                if (woke || current.waiting(where) == 0) {
+                    // Fortgesetzt (die Schlange des Space wurde beim Anhalten geräumt) oder dort wartet nichts: Der Teil
+                    // setzt seine Arbeit fort, die Füllung sucht für ihn sofort im Katalog und meldet „leer“, wenn sie
+                    // nichts (mehr) findet; keine neue Gruppe je Pause (Abnahme #1087).
+                    current.scanFor(where);
+                }
             }
             if (woke) {
                 wakeFill();

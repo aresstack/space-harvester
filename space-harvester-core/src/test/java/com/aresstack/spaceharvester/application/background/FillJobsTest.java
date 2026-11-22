@@ -40,6 +40,8 @@ class FillJobsTest {
     private static final BackgroundFill.Where DEV = new BackgroundFill.Where("wiki", "DEV");
 
     private final List<String> loaded = Collections.synchronizedList(new ArrayList<>());
+    /** Seiten, deren Abruf begann (auch die noch gesperrten). */
+    private final List<String> started = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> failing = ConcurrentHashMap.newKeySet();
     private final Map<String, CountDownLatch> gates = new ConcurrentHashMap<>();
     /** Lücken des Katalogs; was geladen ist, fällt heraus. */
@@ -61,7 +63,12 @@ class FillJobsTest {
     }
 
     private BackgroundFill fill() {
+        return fill(2);
+    }
+
+    private BackgroundFill fill(int background) {
         AcquisitionScheduler scheduler = new AcquisitionScheduler((caller, key) -> {
+            started.add(key.pageId());
             CountDownLatch gate = gates.get(key.pageId());
             if (gate != null) {
                 try {
@@ -77,7 +84,7 @@ class FillJobsTest {
             }
             loaded.add(key.pageId());
             gaps.remove(key.pageId());
-        }, new AcquisitionScheduler.Limits(4, 2, 4, 50), null, Duration.ZERO);
+        }, new AcquisitionScheduler.Limits(4, background, 4, 50), null, Duration.ZERO);
         open.add(scheduler);
         BackgroundFill fill = new BackgroundFill(scheduler, BackgroundFill.FillQueue.inMemory(),
                 new BackgroundFill.Catalog() {
@@ -142,37 +149,65 @@ class FillJobsTest {
         assertThat(jobs.events(done.id())).anySatisfy(event -> assertThat(event.message()).contains("UNAVAILABLE"));
     }
 
+    private void gate(String... ids) {
+        for (String id : ids) {
+            gates.put(id, new CountDownLatch(1));
+        }
+    }
+
+    /** Länger als die Ruhe nach einem Wecken ({@code BackgroundFill.SETTLE}): Eine Suche im Katalog wäre gelaufen. */
+    private static void longerThanASearch() throws InterruptedException {
+        TimeUnit.MILLISECONDS.sleep(1500);
+    }
+
     @Test
-    void pausingLetsTheSpaceRestUntilThePartIsResumed() throws Exception {
-        gaps.addAll(List.of("1", "2"));
-        gates.put("1", new CountDownLatch(1));
-        BackgroundFill fill = fill();
+    void pausingLetsTheSpaceRestAndResumingLoadsOnInTheSamePart() throws Exception {
+        // Abnahme #1087, Punkt 9: alle Seiten gesperrt; während der Pause beginnt nichts, es bleibt ein Teil.
+        gaps.addAll(List.of("1", "2", "3"));
+        gate("1", "2", "3");
+        BackgroundFill fill = fill(1);
         FillJobs fillJobs = fillJobs(fill);
         fill.start();
-        eventually(() -> part(JobState.RUNNING).isPresent());
+        eventually(() -> started.contains("1") && part(JobState.RUNNING).isPresent());
         String groupId = part(JobState.RUNNING).orElseThrow().parameter(BackgroundJobs.GROUP);
 
         background.pause(groupId);
         eventually(() -> part(JobState.PAUSED).isPresent());
         assertThat(fillJobs.resting(DEV)).isTrue();
-        eventually(() -> fill.waiting(DEV) == 0);
-        gates.get("1").countDown();
+        // Nur der laufende Abruf bleibt eingetragen, damit sein Ende zählt.
+        eventually(() -> fill.waiting(DEV) == 1);
+        fill.wake();
+        longerThanASearch();
+        assertThat(started).containsExactly("1");
+        assertThat(background.parts(FillJobs.KIND)).hasSize(1);
 
         background.resume(groupId);
-        eventually(() -> loaded.containsAll(List.of("1", "2")));
+        gates.values().forEach(CountDownLatch::countDown);
+
+        eventually(() -> loaded.containsAll(List.of("1", "2", "3")));
         eventually(() -> part(JobState.COMPLETED).isPresent());
-        // Die Auftragsmeldungen kommen gebündelt auf eigenem Thread (ADR 0027).
+        assertThat(background.parts(FillJobs.KIND)).hasSize(1);
+        assertThat(part(JobState.COMPLETED).orElseThrow().progress().written()).isEqualTo(3);
         eventually(() -> !fillJobs.resting(DEV));
     }
 
     @Test
-    void cancellingLetsTheSpaceRestUntilTheNextSyncEvenAfterARestart() throws Exception {
+    void cancellingLetsTheSpaceRestUntilTheNextSyncOfTheSpaceEvenAfterARestart() throws Exception {
+        cancelThenSync("DEV");
+    }
+
+    @Test
+    void cancellingLetsTheSpaceRestUntilTheNextSyncOfTheWholeSource() throws Exception {
+        cancelThenSync(null);
+    }
+
+    private void cancelThenSync(String syncedSpace) throws Exception {
         gaps.addAll(List.of("1", "2"));
-        gates.put("1", new CountDownLatch(1));
-        BackgroundFill fill = fill();
+        gate("1");
+        BackgroundFill fill = fill(1);
         FillJobs fillJobs = fillJobs(fill);
         fill.start();
-        eventually(() -> part(JobState.RUNNING).isPresent());
+        eventually(() -> started.contains("1") && part(JobState.RUNNING).isPresent());
 
         background.cancel(part(JobState.RUNNING).orElseThrow().parameter(BackgroundJobs.GROUP));
         eventually(() -> part(JobState.CANCELLED).isPresent());
@@ -182,13 +217,83 @@ class FillJobsTest {
         open.add(restarted);
         assertThat(restarted.resting(DEV)).isTrue();
         assertThat(restarted.resting(new BackgroundFill.Where("wiki", "OPS"))).isFalse();
+        // Bis zum Abgleich lädt nichts, auch wenn die Füllung im Katalog sucht.
+        gates.get("1").countDown();
+        fill.wake();
+        longerThanASearch();
+        assertThat(started).containsExactly("1");
+        assertThat(background.parts(FillJobs.KIND)).hasSize(1);
 
-        jobs.submit(JobType.SYNC, "wiki", "DEV", "app", JobTask.blocking(context -> {
+        jobs.submit(JobType.SYNC, "wiki", syncedSpace, "app", JobTask.blocking(context -> {
         }));
 
         eventually(() -> !fillJobs.resting(DEV));
-        gates.get("1").countDown();
         eventually(() -> loaded.containsAll(List.of("1", "2")));
+    }
+
+    @Test
+    void cleaningUpASourceEndsItsPartAndALaterPartOfTheSpaceEndsToo() throws Exception {
+        // Abnahme #1087, Punkt 2: „Daten bereinigen“ über die Füllung bereinigt auch ihren Spiegel.
+        gaps.addAll(List.of("1", "2"));
+        gate("1");
+        BackgroundFill fill = fill(1);
+        fillJobs(fill);
+        fill.start();
+        eventually(() -> started.contains("1") && part(JobState.RUNNING).isPresent());
+
+        fill.removeSource("wiki");
+
+        eventually(() -> part(JobState.COMPLETED).isPresent());
+        assertThat(fill.waiting(DEV)).isZero();
+        gates.get("1").countDown();
+        gaps.clear();
+        gaps.add("3");
+        fill.wake();
+        eventually(() -> loaded.contains("3"));
+        eventually(() -> background.parts(FillJobs.KIND).size() == 2 && background.parts(FillJobs.KIND).stream()
+                .allMatch(part -> part.state() == JobState.COMPLETED));
+        assertThat(fill.waiting(DEV)).isZero();
+    }
+
+    @Test
+    void deletingAPausedPartLetsTheSpaceLoadAgain() throws Exception {
+        // Abnahme #1087, Punkt 4: sonst ruhte der Space bis zum Neustart.
+        gaps.addAll(List.of("1", "2"));
+        gate("1");
+        BackgroundFill fill = fill(1);
+        FillJobs fillJobs = fillJobs(fill);
+        fill.start();
+        eventually(() -> started.contains("1") && part(JobState.RUNNING).isPresent());
+        background.pause(part(JobState.RUNNING).orElseThrow().parameter(BackgroundJobs.GROUP));
+        eventually(() -> part(JobState.PAUSED).isPresent());
+        assertThat(fillJobs.resting(DEV)).isTrue();
+
+        jobs.delete(part(JobState.PAUSED).orElseThrow().id(), "app");
+        gates.get("1").countDown();
+
+        eventually(() -> !fillJobs.resting(DEV));
+        eventually(() -> loaded.containsAll(List.of("1", "2")));
+    }
+
+    @Test
+    void twoLastPagesEndingAtOnceAreBothCountedAndThePartEndsOnce() throws Exception {
+        // Abnahme #1087, Punkt 9: zwei gleichzeitige letzte Abschlüsse.
+        gaps.addAll(List.of("1", "2"));
+        CountDownLatch together = new CountDownLatch(1);
+        gates.put("1", together);
+        gates.put("2", together);
+        BackgroundFill fill = fill(2);
+        fillJobs(fill);
+        fill.start();
+        eventually(() -> started.containsAll(List.of("1", "2")));
+
+        together.countDown();
+
+        eventually(() -> part(JobState.COMPLETED).isPresent());
+        assertThat(background.parts(FillJobs.KIND)).hasSize(1);
+        JobStatus done = part(JobState.COMPLETED).orElseThrow();
+        assertThat(done.progress().written()).isEqualTo(2);
+        assertThat(done.progress().processed()).isEqualTo(2);
     }
 
     @Test
