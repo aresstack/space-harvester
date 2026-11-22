@@ -39,6 +39,9 @@ public final class SourceManagement {
     /** So lange warten Entfernen und Ändern auf laufende Aufträge der Quelle. */
     static final Duration JOB_STOP_TIMEOUT = Duration.ofSeconds(30);
 
+    /** So lange wartet {@link #change} auf das Löschen der alten Daten; danach läuft der Auftrag sichtbar weiter. */
+    static final Duration WITHDRAWAL_WAIT = Duration.ofMinutes(5);
+
     private static final System.Logger LOG = System.getLogger(SourceManagement.class.getName());
 
     private final ConfiguredSourceCatalog catalog;
@@ -166,8 +169,16 @@ public final class SourceManagement {
                 || !Objects.equals(previous.baseUrl(), config.baseUrl());
         LOG.log(System.Logger.Level.INFO, "Quelle {0} geändert{1}", config.id(), moved ? ", neues Ziel" : "");
         if (moved) {
-            // Fundstelle 22: als Auftrag „Daten bereinigen“, sichtbar und fortsetzbar.
-            purge.startWithdrawal(config.id(), Harvester.OWNER, SourceDataPurge.MOVED);
+            // Fundstelle 22: als Auftrag „Daten bereinigen“, sichtbar und fortsetzbar. Gewartet wird wie bisher: Ein
+            // gleich danach gestarteter Abgleich der Quelle darf nicht vom Löschen der alten Daten beendet werden.
+            JobStatus withdrawal = purge.startWithdrawal(config.id(), Harvester.OWNER, SourceDataPurge.MOVED);
+            try {
+                jobs.await(withdrawal.id(), Harvester.OWNER, WITHDRAWAL_WAIT);
+            } catch (java.util.concurrent.TimeoutException e) {
+                LOG.log(System.Logger.Level.WARNING, "Daten der Quelle {0} werden noch gelöscht", config.id());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
         return moved;
     }

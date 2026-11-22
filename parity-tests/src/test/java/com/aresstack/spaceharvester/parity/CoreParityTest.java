@@ -698,6 +698,11 @@ class CoreParityTest {
             synced(harvester);
             management.remove("wiki");
             CORE_MANAGEMENT.put("remove.listed", String.valueOf(listed(management, "wiki")));
+            // Fundstelle 22: Die Daten löscht ein Auftrag; bis er endet, ist die ID gesperrt.
+            var removal = management.removalPending("wiki");
+            if (removal.isPresent()) {
+                assertThat(harvester.await(removal.get().id(), WAIT).state()).isEqualTo(JobState.COMPLETED);
+            }
             management.add(wiki);
             CORE_MANAGEMENT.put("remove.withdrawn", String.valueOf(!cached(harvester)));
         }
