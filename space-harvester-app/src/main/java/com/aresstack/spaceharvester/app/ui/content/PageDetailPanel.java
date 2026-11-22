@@ -3523,6 +3523,11 @@ public final class PageDetailPanel extends JPanel {
         linksSubscription = com.aresstack.spaceharvester.application.observe.Subscription.NONE;
         linksRuntime = null;
         referencesLoaded = false;
+        // Auch die Rückmeldung von „Anhänge ablegen“ soll das Panel nicht festhalten.
+        if (harvestWatch != null) {
+            harvestWatch.close();
+            harvestWatch = null;
+        }
         super.removeNotify();
     }
 

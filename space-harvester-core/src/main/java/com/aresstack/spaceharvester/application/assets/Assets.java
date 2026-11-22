@@ -393,8 +393,9 @@ public class Assets implements DocumentInventory {
         try {
             for (PageAttachment attachment : list.attachments().attachments()) {
                 if (stop != null) {
-                    report(entries, each, failed(list, attachment, stop));
+                    // Erst den veralteten Text austragen: Ein Abbrechen im Rückruf ließe ihn sonst durchsuchbar.
                     indexed |= forgetStale(list, attachment);
+                    report(entries, each, failed(list, attachment, stop));
                     continue;
                 }
                 Optional<Asset> stored = stored(list.sourceId(), attachment);
@@ -413,18 +414,18 @@ public class Assets implements DocumentInventory {
                     report(entries, each, new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.STORED,
                             downloaded.asset(), null));
                 } catch (AssetTooLargeException e) {
-                    report(entries, each, failed(list, attachment, "asset-too-large"));
                     indexed |= forgetStale(list, attachment);
+                    report(entries, each, failed(list, attachment, "asset-too-large"));
                 } catch (AssetStoreFullException e) {
                     stop = "asset-store-full";
-                    report(entries, each, failed(list, attachment, stop));
                     indexed |= forgetStale(list, attachment);
+                    report(entries, each, failed(list, attachment, stop));
                 } catch (SourceAccessException e) {
                     if (e.reason() == SourceAccessException.Reason.RATE_LIMITED) {
                         stop = code(e.reason());
                     }
-                    report(entries, each, failed(list, attachment, code(e.reason())));
                     indexed |= forgetStale(list, attachment);
+                    report(entries, each, failed(list, attachment, code(e.reason())));
                 }
             }
         } finally {

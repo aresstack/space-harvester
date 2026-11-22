@@ -61,7 +61,8 @@ public final class PageAssetHarvests {
             throw new JobNotResumableException(jobId, "kein Auftrag „Anhänge ablegen“");
         }
         if (jobs.resumable(jobId, owner)) {
-            return jobs.resume(jobId, owner);
+            // Auch ohne Neustart mit frischer Anhangsliste: Neue Anhänge kommen dazu, geänderte mit aktuellen Angaben.
+            return jobs.resume(jobId, owner, previous -> task(list));
         }
         return jobs.rerun(jobId, owner, task(list));
     }
@@ -70,6 +71,8 @@ public final class PageAssetHarvests {
         return JobTask.blocking(context -> {
             PageAttachmentList current = list.get();
             context.discovered(current.attachments().attachments().size());
+            // Ein Download-Auftrag: erst ein Platz der parallelen Downloads, dann die Übertragungen (wie beim Export).
+            context.awaitDownloadSlot();
             AssetHarvest result = assets.harvest(current, entry -> {
                 context.processed(1);
                 switch (entry.status()) {

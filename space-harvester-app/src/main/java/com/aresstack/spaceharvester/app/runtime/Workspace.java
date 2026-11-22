@@ -2378,8 +2378,15 @@ public final class Workspace {
     public Subscription whenJobFinished(String jobId, java.util.function.Consumer<JobStatus> listener) {
         java.util.Objects.requireNonNull(listener, "listener");
         java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<Subscription> registered = new java.util.concurrent.atomic
+                .AtomicReference<>();
         java.util.function.Consumer<JobStatus> once = status -> {
             if (fired.compareAndSet(false, true)) {
+                // Nach der einen Meldung abgemeldet: Der Zuhörer hielt sonst seinen Aufrufer (etwa ein Panel) fest.
+                Subscription own = registered.getAndSet(Subscription.NONE);
+                if (own != null) {
+                    own.close();
+                }
                 javax.swing.SwingUtilities.invokeLater(() -> listener.accept(status));
             }
         };
@@ -2398,6 +2405,10 @@ public final class Workspace {
                 }
             }
         });
+        if (!registered.compareAndSet(null, watch)) {
+            // Schon gemeldet, bevor die Anmeldung zurückkam.
+            watch.close();
+        }
         currentStatus(jobId).filter(status -> status.state().terminal()).ifPresent(once);
         return watch;
     }
