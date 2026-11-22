@@ -53,7 +53,15 @@ final class WindowPlacement {
             return;
         }
         Rectangle saved = new Rectangle(state.getInt(X, 0), state.getInt(Y, 0), width, height);
-        frame.setBounds(fit(saved, screens, frame.getMinimumSize()));
+        Rectangle fitted = fit(saved, screens, frame.getMinimumSize());
+        // Ein Bildschirm kleiner als die Mindestgröße: AWT hielte sonst in setBounds() die Mindestgröße fest und das
+        // Fenster ragte über den Rand.
+        Dimension minimum = frame.getMinimumSize();
+        if (minimum.width > fitted.width || minimum.height > fitted.height) {
+            frame.setMinimumSize(new Dimension(Math.min(minimum.width, fitted.width),
+                    Math.min(minimum.height, fitted.height)));
+        }
+        frame.setBounds(fitted);
     }
 
     /** War das Fenster beim letzten Beenden maximiert, wird es wieder maximiert (nach dem Sichtbarmachen). */
