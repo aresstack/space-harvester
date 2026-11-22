@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
+import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
@@ -8,6 +9,7 @@ import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -17,7 +19,7 @@ import java.util.concurrent.CompletionException;
  * „Neu berechnen“ einer Seite (Fundstelle 21, Architekt 21.11.2026): ein gewöhnlicher Auftrag
  * {@link JobType#ENRICHMENT} mit einer Seite, in der Auftragsliste sichtbar und abbrechbar. Ein Klick wartet nie hinter
  * Hintergrund ({@link Jobs#submitInteractive}). Gerechnet wird wie bisher {@link Enrichments#recompute}, also auch die
- * Prozessoren, die über das Netz rechnen, im Auftrag selbst.
+ * Prozessoren, die über das Netz rechnen, im Auftrag selbst; vor jedem Prozessor hält ein Abbruch die Arbeit an.
  */
 public final class PageRecomputation {
 
@@ -49,9 +51,10 @@ public final class PageRecomputation {
                 JobTask.blocking(context -> {
                     try {
                         context.discovered(1);
-                        context.checkpoint();
-                        Enrichments.Run run = enrichments.recompute(snapshot, processorId);
+                        Enrichments.Run run = recompute(snapshot, processorId, context);
                         enrichments.flush();
+                        // Abgebrochen während des letzten Prozessors: Der Wartende erfährt den Abbruch, nicht Erfolg.
+                        context.checkpoint();
                         context.processed(1);
                         if (run.failed() > 0) {
                             context.failed(1);
@@ -93,5 +96,27 @@ public final class PageRecomputation {
         } finally {
             watching.close();
         }
+    }
+
+    /**
+     * Prozessor für Prozessor wie {@link Enrichments#recompute}, mit einem Halt vor jedem (Codex-Befund #1078): Ein
+     * Abbruch während eines langsamen Embeddings startet keinen weiteren Netz-Prozessor mehr.
+     */
+    private Enrichments.Run recompute(PageSnapshot snapshot, String processorId, JobContext context) {
+        List<String> ids = processorId != null ? List.of(processorId) : enrichments.processorIds();
+        int computed = 0;
+        int current = 0;
+        int failed = 0;
+        for (String id : ids) {
+            context.checkpoint();
+            Enrichments.Run part = enrichments.recompute(snapshot, id);
+            if (!part.supported()) {
+                return part;
+            }
+            computed += part.computed();
+            current += part.current();
+            failed += part.failed();
+        }
+        return new Enrichments.Run(true, computed, current, failed);
     }
 }

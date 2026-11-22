@@ -2,8 +2,10 @@ package com.aresstack.spaceharvester.application.enrichment;
 
 import static com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages.text;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -62,6 +64,39 @@ class PageRecomputationTest {
         assertThat(run.failed()).isEqualTo(1);
         JobStatus job = jobs.listAll(JobType.ENRICHMENT).getFirst();
         assertThat(job.progress().failed()).isEqualTo(1);
+    }
+
+    @Test
+    void cancellingDuringAProcessorStopsBeforeTheNextAndReportsTheCancellation() {
+        // Codex-Befund #1078: Nach dem Abbruch startet kein weiterer Prozessor, und der Knopf meldet keinen Erfolg.
+        AtomicInteger calls = new AtomicInteger();
+        InMemoryEnrichmentStore store = new InMemoryEnrichmentStore();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(2, 10, Duration.ofHours(1)), CLOCK);
+        EnrichmentProcessor cancelling = new EnrichmentProcessor() {
+            @Override
+            public String id() {
+                return "erster";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public EnrichmentOutput process(PageText text) {
+                jobs.cancel(jobs.listAll(JobType.ENRICHMENT).getFirst().id());
+                return EnrichmentOutput.of("{}");
+            }
+        };
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(cancelling, new Counting(calls)), store, CLOCK);
+
+        assertThatThrownBy(() -> new PageRecomputation(jobs, enrichments).recompute("app",
+                text("wiki", "9", "1", "Ein dritter erfundener Text"), null))
+                .isInstanceOf(JobCancelledException.class);
+
+        assertThat(calls).as("der zweite Prozessor startet nicht mehr").hasValue(0);
+        assertThat(jobs.listAll(JobType.ENRICHMENT).getFirst().state()).isEqualTo(JobState.CANCELLED);
     }
 
     private record Counting(AtomicInteger calls) implements EnrichmentProcessor {
