@@ -113,6 +113,12 @@ public final class TermGraphView {
     private final JPopupMenu optionsMenu = new JPopupMenu();
     private final ComposerButton showButton = Comic.button("Zeigen", "Den Graphen um den Startbegriff zeichnen");
     private final JLabel hint = Comic.muted(" ");
+    /**
+     * Vor dem Zähler: eine Entscheidung (✓/✕), die erst nach dem Schließen des Overlays scheiterte (AT W3) – rot mit
+     * Kreispfeil zum Wiederholen oder gelb „inzwischen geändert“; sonst unsichtbar.
+     */
+    private final com.aresstack.spaceharvester.app.ui.controls.StatusLabel reviewLine =
+            new com.aresstack.spaceharvester.app.ui.controls.StatusLabel();
     private final Canvas canvas = new Canvas();
     private final JPopupMenu suggestions = new JPopupMenu();
     private String centre;
@@ -208,7 +214,12 @@ public final class TermGraphView {
                 new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(canvas);
         canvas.onBusy(canvasBusy::setBusy);
         root.add(canvasBusy, BorderLayout.CENTER);
-        root.add(hint, BorderLayout.SOUTH);
+        JPanel south = new JPanel(new BorderLayout(8, 0));
+        south.setOpaque(false);
+        reviewLine.setVisible(false);
+        south.add(reviewLine, BorderLayout.WEST);
+        south.add(hint, BorderLayout.CENTER);
+        root.add(south, BorderLayout.SOUTH);
 
         start.addActionListener(e -> showTerm(start.getText()));
         showButton.addActionListener(e -> showTerm(start.getText()));
@@ -226,10 +237,21 @@ public final class TermGraphView {
             reload();
         });
         evidence.onOpen(target -> onOpen.accept(target));
+        if (context != null) {
+            // ✓/✕ je Beleg (W3): gespeichert abseits des EDT; der Graph zieht über den Beobachter nach, sobald das
+            // Overlay zu ist (userBusy hält eine stille Neuberechnung bis dahin zurück).
+            evidence.reviewing(EvidencePopup.Reviewing.of(context::runtime), Background::run);
+        }
+        evidence.onClosedFailure(failure -> reviewNote(failure.note(() -> reviewNote(null))));
         // Aufgeschobene Meldungen des Core holen nach, sobald Belege, Vorschläge oder das Startfeld frei sind.
         javax.swing.event.PopupMenuListener closed = new javax.swing.event.PopupMenuListener() {
             @Override
             public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+                // „inzwischen geändert“ ist gesehen, sobald man wieder prüft; ein Fehler mit Kreispfeil bleibt stehen.
+                com.aresstack.spaceharvester.app.ui.controls.StatusNote shown = reviewNote();
+                if (shown != null && shown.icon() == null) {
+                    reviewNote(null);
+                }
             }
 
             @Override
@@ -719,6 +741,28 @@ public final class TermGraphView {
 
     void showEvidenceFor(GraphSource.Edge edge) {
         showEvidence(edge, 10, 10);
+    }
+
+    /** Zeigt eine nach dem Schließen gescheiterte Entscheidung in der Statuszeile ({@code null}: entfernt sie). */
+    private void reviewNote(com.aresstack.spaceharvester.app.ui.controls.StatusNote note) {
+        if (note == null) {
+            reviewLine.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(" "));
+        } else {
+            reviewLine.show(note);
+        }
+        reviewLine.setVisible(note != null);
+        root.revalidate();
+        root.repaint();
+    }
+
+    /** Die Meldung einer nach dem Schließen gescheiterten Entscheidung, sonst {@code null} (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.StatusNote reviewNote() {
+        return reviewLine.isVisible() ? reviewLine.note() : null;
+    }
+
+    /** Das Overlay „Belege“ (für Tests). */
+    EvidencePopup evidence() {
+        return evidence;
     }
 
     String hint() {

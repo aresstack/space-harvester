@@ -2888,6 +2888,9 @@ public final class PageDetailPanel extends JPanel {
             if (sourceId != null && pageId != null) {
                 loadVerbs();
                 terms.reloadBelow();
+                // Eine gezeigte Fachsicht im Reiter „Graph“ zieht nach, etwa nach ✓/✕ im Overlay „Belege“ (W3); mit
+                // offenem Overlay erst nach dem Schließen.
+                graphView.domainChanged();
                 // „Aus Unterseiten“ unter Aussagen und Graph zeigt, was vorliegt: neue oder gelöschte Analysen
                 // (etwa einer Hintergrundgruppe „mit Unterseiten“) lesen neu; verdeckte Reiter beim nächsten Zeigen.
                 belowSectionFor.remove(STATEMENTS);
