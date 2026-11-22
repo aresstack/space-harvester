@@ -637,41 +637,54 @@ public class Enrichments {
      * sich ändern, während die Berechnung wartet oder läuft, ohne neue Payload (etwa ein neues Transkript eines Videos):
      * Gerechnet und gespeichert wird nur der aktuelle; ist er weggefallen, nichts.
      */
-    private void computeQueued(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input,
-                               boolean force) {
+    private Outcome computeQueued(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input,
+                                  boolean force) {
         try {
             PageText current = text;
             String currentInput = input;
             for (int attempt = 0; attempt < TEXT_CHANGE_ATTEMPTS; attempt++) {
                 if (!processor.appliesTo(snapshot.key())) {
-                    return;
+                    return Outcome.SKIPPED;
                 }
                 Enrichment previous = store.find(snapshot.key()).stream()
                         .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
                         .orElse(null);
                 if (!force && previous != null && previous.freshness(currentInput, processor.version())
                         == Enrichment.Freshness.CURRENT) {
-                    return;
+                    return Outcome.SKIPPED;
                 }
                 Enrichment result = compute(processor, snapshot, current, currentInput);
                 Optional<PageText> now = projection(snapshot);
                 if (now.isEmpty()) {
-                    return;
+                    return Outcome.SKIPPED;
                 }
                 if (!now.get().inputSha256().equals(currentInput)) {
                     current = now.get();
                     currentInput = current.inputSha256();
                     continue;
                 }
-                if (saveWhileApplies(processor, result)) {
-                    store.flush();
+                if (!saveWhileApplies(processor, result)) {
+                    return Outcome.SKIPPED;
                 }
-                return;
+                store.flush();
+                return result.status() == Enrichment.Status.FAILED ? Outcome.FAILED : Outcome.WRITTEN;
             }
+            return Outcome.SKIPPED;
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Hintergrundberechnung {0} scheiterte ({1})",
                     processor.id(), e.getClass().getName());
+            return Outcome.FAILED;
         }
+    }
+
+    /** Was eine Berechnung der Warteschlange ergab, für den Fortschritt des Teils (Codex-Befund #1077). */
+    private enum Outcome {
+        /** gespeichert */
+        WRITTEN,
+        /** als fehlgeschlagen gespeichert oder gescheitert */
+        FAILED,
+        /** nichts zu tun: aktuell, nicht freigegeben, ohne Text */
+        SKIPPED
     }
 
     // --- Warteschlange als Hintergrundauftrag (ADR 0025 Nachtrag, Punkt 10) ----------------------------------------
@@ -883,8 +896,11 @@ public class Enrichments {
                     next = waiting.next();
                     waiting.remove();
                 }
-                if (computeWork(next)) {
-                    context.written(1);
+                switch (computeWork(next)) {
+                    case WRITTEN -> context.written(1);
+                    case FAILED -> context.failed(1);
+                    case SKIPPED -> {
+                    }
                 }
                 context.processed(1);
             }
@@ -898,19 +914,22 @@ public class Enrichments {
         }
     }
 
-    /** Rechnet eine Berechnung der Warteschlange mit dem Snapshot von jetzt; {@code false} ohne Snapshot oder Text. */
-    private boolean computeWork(Work work) {
+    /** Rechnet eine Berechnung der Warteschlange mit dem Snapshot von jetzt. */
+    private Outcome computeWork(Work work) {
         EnrichmentProcessor processor = processors.get(work.processorId());
         Optional<PageSnapshot> snapshot = processor == null ? Optional.empty() : lookup.apply(work.key());
         Optional<PageText> text = snapshot.flatMap(this::projection);
         if (text.isEmpty()) {
-            return false;
+            return Outcome.SKIPPED;
         }
-        computeQueued(processor, snapshot.get(), text.get(), text.get().inputSha256(), work.force());
-        return true;
+        return computeQueued(processor, snapshot.get(), text.get(), text.get().inputSha256(), work.force());
     }
 
-    /** Der bisherige Weg für eine Berechnung, die kein Teil abholt. */
+    /**
+     * Der bisherige Weg für eine Berechnung, die kein Teil abholt. Eine erzwungene, die auch dort keinen Platz findet,
+     * rechnet im aufrufenden Thread wie bisher {@link #recomputeInBackground} (Codex-Befund #1077): Ihr altes Ergebnis
+     * sähe sonst weiter aktuell aus.
+     */
     private void fallback(Work work) {
         EnrichmentProcessor processor = processors.get(work.processorId());
         Optional<PageSnapshot> snapshot = processor == null ? Optional.empty() : lookup.apply(work.key());
@@ -918,13 +937,11 @@ public class Enrichments {
         if (text.isEmpty() || background == null) {
             return;
         }
+        String input = text.get().inputSha256();
         if (!work.force()) {
-            schedule(processor, snapshot.get(), text.get(), text.get().inputSha256());
-        } else if (forcedSlots.tryAcquire()) {
-            schedule(processor, snapshot.get(), text.get(), text.get().inputSha256(), true);
-        } else {
-            LOG.log(System.Logger.Level.INFO, "Erzwungene Neuberechnung {0} entfällt, Hintergrund voll",
-                    processor.id());
+            schedule(processor, snapshot.get(), text.get(), input);
+        } else if (!forcedSlots.tryAcquire() || !schedule(processor, snapshot.get(), text.get(), input, true)) {
+            computeQueued(processor, snapshot.get(), text.get(), input, true);
         }
     }
 

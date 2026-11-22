@@ -189,6 +189,57 @@ class EnrichmentsBackgroundJobsTest {
         }
     }
 
+    @Test
+    void aFailedComputationCountsAsFailedInThePartNotAsWritten() throws Exception {
+        // Codex-Befund #1077: Scheitert der Dienst, meldet der Teil das, statt fertig ohne Fehler zu wirken.
+        Remote remote = new Remote();
+        remote.failing.add("wiki/2");
+        ExecutorService executor = Enrichments.background(10);
+        Jobs jobs = jobs(Runnable::run, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            PageSnapshot ok = page("wiki", "1", "Eins");
+            PageSnapshot broken = page("wiki", "2", "Zwei");
+            // Beide warten, bevor der Teil läuft: ein Platz, dann zwei.
+            jobs.parallelPreparations(1);
+            enrichments.refresh(ok);
+            enrichments.refresh(broken);
+            jobs.parallelPreparations(2);
+            awaitUntil(() -> part(background, "wiki").state() == JobState.COMPLETED);
+
+            assertThat(part(background, "wiki").progress()).satisfies(progress -> {
+                assertThat(progress.processed()).isEqualTo(2);
+                assertThat(progress.written()).isEqualTo(1);
+                assertThat(progress.failed()).isEqualTo(1);
+            });
+            assertThat(store.find(broken.key())).singleElement().satisfies(result -> assertThat(result.status())
+                    .isEqualTo(Enrichment.Status.FAILED));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void aForcedRecomputationThatFindsNoPlaceAnywhereRunsInTheCaller() throws Exception {
+        // Codex-Befund #1077: Sonst sähe das alte Ergebnis weiter aktuell aus.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        Jobs jobs = jobs(Runnable::run, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            jobs.close();
+            executor.shutdownNow();
+
+            assertThat(enrichments.recomputeInBackground(page("wiki", "1", "Eins"), List.of("remote"))).isEqualTo(1);
+
+            assertThat(remote.calls).containsOnlyKeys("wiki/1");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     private Enrichments enrichments(Remote remote, ExecutorService executor, BackgroundJobs background) {
         Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
         enrichments.background(background, key -> Optional.ofNullable(cache.get(key)));
@@ -228,6 +279,7 @@ class EnrichmentsBackgroundJobsTest {
     private static final class Remote implements EnrichmentProcessor {
 
         private final Map<String, AtomicInteger> calls = new ConcurrentHashMap<>();
+        private final java.util.Set<String> failing = ConcurrentHashMap.newKeySet();
 
         @Override
         public String id() {
@@ -251,8 +303,11 @@ class EnrichmentsBackgroundJobsTest {
 
         @Override
         public EnrichmentOutput process(PageKey key, PageText text) {
-            calls.computeIfAbsent(key.sourceId() + "/" + key.pageId(), ignored -> new AtomicInteger())
-                    .incrementAndGet();
+            String page = key.sourceId() + "/" + key.pageId();
+            calls.computeIfAbsent(page, ignored -> new AtomicInteger()).incrementAndGet();
+            if (failing.contains(page)) {
+                throw new IllegalStateException("Dienst nicht erreichbar");
+            }
             return EnrichmentOutput.of("{}");
         }
     }
