@@ -1033,7 +1033,10 @@ public final class Harvester implements AutoCloseable {
                             summaryRelease::mayProcess, clock,
                             // Worum es geht (Angelo, 21.11.2026): Lesetext und Space-Namen aus dem Cache.
                             new com.aresstack.spaceharvester.application.changelog.SnapshotSummaryMaterial(
-                                    cache::find, pageTexts)))
+                                    cache::find, pageTexts),
+                            // Plan vorab (Angelo 22.11.2026), Zeile „Zusammenfassung – Plan“.
+                            ChatUpdateSummaryModel.plan(() -> liveAi ? this.settings.ai() : startAi, catalog,
+                                    trustBundles, builder.userAgent)))
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault());
             opened.add(changeLog);

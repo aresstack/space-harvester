@@ -2258,6 +2258,10 @@ public final class ActivitiesView implements View {
         if (job.type() == JobType.EXPORT) {
             return "export:" + job.id();
         }
+        if (job.type() == JobType.UPDATE_SUMMARY && job.parameter(com.aresstack.spaceharvester.application.changelog.ChangeLog.PARENT_PARAMETER) == null) {
+            // „Zusammenfassen“ ist Oberauftrag seiner Teile und Zusammenführungen (Angelo 22.11.2026).
+            return "summary:" + job.id();
+        }
         String run = job.parameter(com.aresstack.spaceharvester.application.presentation.VideoPresentations
                 .RUN_PARAMETER);
         return job.type() == JobType.PRESENTATION_EXPORT && run != null ? "presentation:" + run : null;
@@ -2268,6 +2272,10 @@ public final class ActivitiesView implements View {
         if (job.type() == JobType.BACKGROUND && !groupRow(job)) {
             String group = job.parameter(BackgroundJobs.GROUP);
             return group == null ? null : "background:" + group;
+        }
+        if (job.type() == JobType.UPDATE_SUMMARY) {
+            String parent = job.parameter(com.aresstack.spaceharvester.application.changelog.ChangeLog.PARENT_PARAMETER);
+            return parent == null ? null : "summary:" + parent;
         }
         if (showsProgress(job)) {
             String exportId = job.parameter(ExportAssetCollection.EXPORT_ID);
