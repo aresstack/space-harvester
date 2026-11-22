@@ -75,6 +75,13 @@ public final class PageLoads {
     private final Map<String, AccessContext> callers = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, com.aresstack.spaceharvester.application.observe.Subscription> watched =
             new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * Sperre aller Überladungen von {@code join}: Zwei Aufrufe sehen nie denselben Stand der wartenden Teile und starten
+     * dieselbe Seite doppelt. {@link java.util.concurrent.locks.ReentrantLock} statt {@code synchronized}, weil darin
+     * der Auftragsspeicher gelesen und geschrieben wird; ein virtueller Thread gibt dabei seinen Träger frei. Der
+     * {@link Wake} hat seine eigene Sperre.
+     */
+    private final java.util.concurrent.locks.ReentrantLock joining = new java.util.concurrent.locks.ReentrantLock();
 
     /**
      * @param technical der technische Aufrufer des Dienstes, für fortgesetzte Unteraufträge nach einem Neustart
@@ -109,7 +116,7 @@ public final class PageLoads {
      * Wie {@link #load}, nennt dazu die Gruppen, die übersprungene Seiten schon laden: Wer auf die Seiten wartet,
      * wartet auf alle beteiligten Gruppen.
      */
-    public synchronized Joined join(AccessContext caller, String title, Collection<PageKey> keys) {
+    public Joined join(AccessContext caller, String title, Collection<PageKey> keys) {
         Objects.requireNonNull(caller, "caller");
         if (caller.credential() != null) {
             throw new IllegalArgumentException("Der Hintergrund lädt nie mit der Anmeldung eines Benutzers");
@@ -135,9 +142,20 @@ public final class PageLoads {
      *
      * @param trigger der Anlass, oder {@code null} für den des Wegs (Hintergrund bzw. Suche)
      */
-    public synchronized Joined join(AccessContext caller, String title, Collection<PageKey> keys, boolean refresh,
-                                    ChangeTrigger trigger) {
+    public Joined join(AccessContext caller, String title, Collection<PageKey> keys, boolean refresh,
+                       ChangeTrigger trigger) {
         Objects.requireNonNull(caller, "caller");
+        joining.lock();
+        try {
+            return joinLocked(caller, title, keys, refresh, trigger);
+        } finally {
+            joining.unlock();
+        }
+    }
+
+    /** Unter {@link #joining}: das Abgleichen mit wartenden Teilen und der Start gehen nicht durcheinander. */
+    private Joined joinLocked(AccessContext caller, String title, Collection<PageKey> keys, boolean refresh,
+                              ChangeTrigger trigger) {
         // Ein Teil ohne refresh überspränge eine veraltete Seite im Cache: Nachladen schließt sich nur seinesgleichen an.
         Map<PageKey, String> queued = queued(refresh);
         Set<String> joined = new LinkedHashSet<>();
@@ -466,24 +484,45 @@ public final class PageLoads {
         }
     }
 
-    /** Weckt den wartenden Unterauftrag; jede Meldung zählt eins hoch, damit keine verloren geht. */
+    /**
+     * Weckt den wartenden Unterauftrag; jede Meldung zählt eins hoch, damit keine verloren geht. Mit
+     * {@link java.util.concurrent.locks.ReentrantLock} statt {@code synchronized}: Der Unterauftrag wartet auf einem
+     * virtuellen Thread und gibt dabei seinen Träger frei (Architekt 22.11.2026).
+     */
     static final class Wake {
 
+        private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+        private final java.util.concurrent.locks.Condition rung = lock.newCondition();
         private long generation;
 
-        synchronized void ring() {
-            generation++;
-            notifyAll();
+        void ring() {
+            lock.lock();
+            try {
+                generation++;
+                rung.signalAll();
+            } finally {
+                lock.unlock();
+            }
         }
 
-        synchronized long mark() {
-            return generation;
+        long mark() {
+            lock.lock();
+            try {
+                return generation;
+            } finally {
+                lock.unlock();
+            }
         }
 
         /** Wartet, bis nach {@code seen} geläutet wurde; ohne Zeitgrenze. */
-        synchronized void awaitAfter(long seen) throws InterruptedException {
-            while (generation == seen) {
-                wait();
+        void awaitAfter(long seen) throws InterruptedException {
+            lock.lock();
+            try {
+                while (generation == seen) {
+                    rung.await();
+                }
+            } finally {
+                lock.unlock();
             }
         }
     }

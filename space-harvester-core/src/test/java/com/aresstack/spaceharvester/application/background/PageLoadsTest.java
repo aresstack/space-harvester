@@ -49,6 +49,34 @@ class PageLoadsTest {
     }
 
     @Test
+    void manyPartsWaitingForTheirWakeOnVirtualThreadsNeverHoldTheirCarriers() throws Exception {
+        // Architekt 22.11.2026: Mit synchronized und wait() hielte jeder wartende Teil seinen Träger fest.
+        int waiters = 400;
+        PageLoads.Wake wake = new PageLoads.Wake();
+        long seen = wake.mark();
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(waiters);
+        List<java.util.concurrent.Future<?>> waiting = new java.util.ArrayList<>();
+        try (java.util.concurrent.ExecutorService virtual =
+                     java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < waiters; i++) {
+                waiting.add(virtual.submit(() -> {
+                    entered.countDown();
+                    wake.awaitAfter(seen);
+                    return null;
+                }));
+            }
+            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            // Während alle warten, läuft noch Arbeit auf einem virtuellen Thread.
+            assertThat(virtual.submit(() -> "frei").get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("frei");
+
+            wake.ring();
+            for (java.util.concurrent.Future<?> each : waiting) {
+                each.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    @Test
     void missingPagesLoadInOneBackgroundJobPerSpace() {
         cache.add(new PageKey("wiki", "2"));
 
@@ -372,6 +400,35 @@ class PageLoadsTest {
             real.close();
             threads.shutdownNow();
         }
+    }
+
+    @Test
+    void joinsRacingOnVirtualThreadsThroughBothOverloadsStartTheSamePagesOnlyOnce() throws Exception {
+        int callers = 64;
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        List<java.util.concurrent.Future<PageLoads.Joined>> joins = new java.util.ArrayList<>();
+        try (java.util.concurrent.ExecutorService threads =
+                     java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < callers; i++) {
+                boolean plain = i % 2 == 0;
+                joins.add(threads.submit(() -> {
+                    go.await();
+                    return plain
+                            ? loads.join(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("1", "3"))
+                            : loads.join(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("1", "3"),
+                                    false, null);
+                }));
+            }
+            go.countDown();
+        }
+        long started = 0;
+        for (java.util.concurrent.Future<PageLoads.Joined> join : joins) {
+            if (join.get().started().isPresent()) {
+                started++;
+            }
+        }
+        assertThat(started).isEqualTo(1);
+        assertThat(background.groups()).filteredOn(group -> PageLoads.KIND.equals(group.kind())).hasSize(1);
     }
 
     @Test
