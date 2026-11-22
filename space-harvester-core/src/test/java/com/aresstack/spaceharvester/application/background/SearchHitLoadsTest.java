@@ -173,7 +173,7 @@ class SearchHitLoadsTest {
         eventually(() -> tickets.values().stream().allMatch(ticket -> ticket.done().isCancelled()));
         assertThat(requests).hasValue(0);
         gate.countDown();
-        background.resume(groupId);
+        background.resumeGroupWithoutCaller(groupId);
         eventually(() -> background.group(groupId).orElseThrow().completed());
         assertThat(requests).hasValue(2);
         assertThat(background.group(groupId).orElseThrow().written()).isEqualTo(2);

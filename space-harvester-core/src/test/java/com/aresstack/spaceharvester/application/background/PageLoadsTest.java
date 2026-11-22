@@ -115,7 +115,7 @@ class PageLoadsTest {
         executor.runAll();
         cache.add(new PageKey("wiki", "1"));
 
-        background.resume(group.groupId());
+        background.resumeGroupWithoutCaller(group.groupId());
         executor.runAll();
 
         BackgroundGroup done = background.group(group.groupId()).orElseThrow();
@@ -175,7 +175,7 @@ class PageLoadsTest {
         // Neustart: eine neue Laufzeit kennt den Aufrufer nicht.
         new PageLoads(background, scheduler, AccessContext.technicalClient("app"), cache::contains,
                 key -> Optional.ofNullable(spaces.get(key.pageId())));
-        background.resume(group.groupId());
+        background.resumeGroupWithoutCaller(group.groupId());
         executor.runAll();
 
         JobStatus ended = background.group(group.groupId()).orElseThrow().parts().getFirst();
@@ -252,7 +252,7 @@ class PageLoadsTest {
                 held.join(AccessContext.technicalClient("app"), "Veraltete Treffer nachladen", pages("t" + i), true);
             }
 
-            own.resume(first.groupId());
+            own.resumeGroupWithoutCaller(first.groupId());
             executor.runAll();
 
             JobStatus ended = own.group(first.groupId()).orElseThrow().parts().getFirst();

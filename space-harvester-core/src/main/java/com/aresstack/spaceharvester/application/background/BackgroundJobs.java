@@ -195,25 +195,27 @@ public final class BackgroundJobs {
 
     /**
      * „Nur Fehler neu versuchen“ (↻) an einem beendeten oder angehaltenen Teil einer Art mit {@link Retry}: Die Art legt
-     * ihre gescheiterte Arbeit bereit, der Teil läuft damit im selben Eintrag neu, die Zähler beginnen neu.
+     * ihre gescheiterte Arbeit bereit, der Teil läuft damit im selben Eintrag neu, die Zähler beginnen neu. Ohne
+     * Benutzer und damit ohne Prüfung des Eigentümers: nur für Wege ohne Klick; ein Klick nimmt
+     * {@link #retryFailed(String, com.aresstack.spaceharvester.application.access.AccessContext)}.
      *
      * @throws NothingToRetryException  wenn die Art nichts mehr zu wiederholen hat
      * @throws JobNotResumableException wenn die Art nichts wiederholt oder der Teil noch wartet oder läuft
      */
-    public JobStatus retryFailed(String jobId) {
+    public JobStatus retryFailedWithoutCaller(String jobId) {
         return retryFailed(jobId, null);
     }
 
     /**
-     * Wie {@link #retryFailed(String)}, für einen Klick von {@code caller}: Den Teil eines Benutzers wiederholt nur er
-     * selbst ({@link #mayContinue}, Abnahme #1112).
+     * Wie {@link #retryFailedWithoutCaller(String)}, für einen Klick von {@code caller}: Den Teil eines Benutzers
+     * wiederholt nur er selbst ({@link #mayContinue}, Abnahme #1112).
      *
      * @param caller wer ↻ drückt, {@code null} ohne Prüfung (etwa die Wiederaufnahme nach dem Neustart)
      * @throws JobNotResumableException auch, wenn der Teil einem anderen Benutzer gehört
      */
     public JobStatus retryFailed(String jobId, com.aresstack.spaceharvester.application.access.AccessContext caller) {
         JobStatus current = jobs.status(jobId, owner);
-        requireStarter(current, caller);
+        requireMayContinue(current, caller);
         if (current.type() != JobType.BACKGROUND) {
             throw new JobNotResumableException(jobId, "kein Hintergrundauftrag");
         }
@@ -654,8 +656,14 @@ public final class BackgroundJobs {
         return principal == null || principal.equals(caller.principal());
     }
 
-    private static void requireStarter(JobStatus part,
-                                       com.aresstack.spaceharvester.application.access.AccessContext caller) {
+    /**
+     * Lehnt Fortsetzen oder ↻ am Hintergrundteil eines anderen Benutzers ab ({@link #mayContinue}); ohne
+     * {@code caller} (Wege ohne Klick) nichts.
+     *
+     * @throws JobNotResumableException wenn der Teil einem anderen Benutzer gehört
+     */
+    public static void requireMayContinue(JobStatus part,
+                                          com.aresstack.spaceharvester.application.access.AccessContext caller) {
         if (caller != null && part.type() == JobType.BACKGROUND && !mayContinue(part, caller)) {
             throw new JobNotResumableException(part.id(), "nur der Benutzer, der ihn startete, setzt ihn fort");
         }
@@ -824,8 +832,24 @@ public final class BackgroundJobs {
         return group(groupId);
     }
 
-    /** Setzt jeden angehaltenen, gescheiterten oder abgebrochenen Unterauftrag der Gruppe fort. */
-    public Optional<BackgroundGroup> resume(String groupId) {
+    /**
+     * Setzt jeden angehaltenen, gescheiterten oder abgebrochenen Unterauftrag der Gruppe fort, für einen Klick von
+     * {@code caller}: Teile eines anderen Benutzers bleiben stehen ({@link #mayContinue}, Abnahme #1112), ihre Nachfolger
+     * auch.
+     */
+    public Optional<BackgroundGroup> resume(String groupId, com.aresstack.spaceharvester.application.access.AccessContext caller) {
+        return resumeGroup(groupId, Objects.requireNonNull(caller, "caller"));
+    }
+
+    /**
+     * Wie {@link #resume(String, com.aresstack.spaceharvester.application.access.AccessContext)}, ohne Benutzer und damit ohne Prüfung des
+     * Eigentümers: nur für Wege ohne Klick, etwa beim Start.
+     */
+    public Optional<BackgroundGroup> resumeGroupWithoutCaller(String groupId) {
+        return resumeGroup(groupId, null);
+    }
+
+    private Optional<BackgroundGroup> resumeGroup(String groupId, com.aresstack.spaceharvester.application.access.AccessContext caller) {
         // Älteste zuerst; lässt sich ein Vorgänger nicht fortsetzen, bleiben seine Nachfolger stehen, statt frei zu
         // werden (Abnahme D1).
         java.util.Set<String> notResumed = new java.util.HashSet<>();
@@ -838,7 +862,7 @@ public final class BackgroundJobs {
                         return;
                     }
                     try {
-                        resumeJob(status.id());
+                        resumeJob(status.id(), caller);
                     } catch (RuntimeException e) {
                         notResumed.add(status.id());
                         LOG.log(System.Logger.Level.WARNING, "Hintergrundauftrag {0} nicht fortgesetzt ({1})",
@@ -852,27 +876,29 @@ public final class BackgroundJobs {
      * Setzt einen Unterauftrag im selben Eintrag fort, mit frisch gebauter Arbeit ({@link BackgroundPart#resumed()}),
      * auch nach einem Neustart; der Weg für „Fortsetzen“ in der Auftragsliste. Für eine Art mit höchstens einem offenen
      * Teil je Quelle und Space ({@link BackgroundKind#exclusive()}) nur, solange kein anderer wartet, angehalten ist oder
-     * läuft (Abnahme #1052), geprüft unter dem Startriegel der Art.
+     * läuft (Abnahme #1052), geprüft unter dem Startriegel der Art. Ohne Benutzer und damit ohne Prüfung des
+     * Eigentümers: nur für Wege ohne Klick, etwa beim Start; ▶ nimmt
+     * {@link #resumeJob(String, com.aresstack.spaceharvester.application.access.AccessContext)}.
      *
      * @throws UnknownJobException          wenn es den Auftrag nicht gibt
      * @throws BackgroundPartOpenException  wenn für eine solche Art schon ein anderer Teil offen ist („läuft schon“)
      * @throws JobNotResumableException     wenn er kein Hintergrundauftrag ist, seine Art fehlt, er wartet, läuft oder
      *                                      fertig ist
      */
-    public JobStatus resumeJob(String jobId) {
+    public JobStatus resumeWithoutCaller(String jobId) {
         return resumeJob(jobId, null);
     }
 
     /**
-     * Wie {@link #resumeJob(String)}, für einen Klick von {@code caller}: Den Teil eines Benutzers setzt nur er selbst
-     * fort ({@link #mayContinue}, Abnahme #1112), auch den, der dessen Arbeit nach einem Neustart übernommen hat.
+     * Wie {@link #resumeWithoutCaller(String)}, für einen Klick von {@code caller}: Den Teil eines Benutzers setzt nur er
+     * selbst fort ({@link #mayContinue}, Abnahme #1112), auch den, der dessen Arbeit nach einem Neustart übernommen hat.
      *
      * @param caller wer fortsetzt, {@code null} ohne Prüfung (etwa die Wiederaufnahme nach dem Neustart)
      * @throws JobNotResumableException auch, wenn der Teil einem anderen Benutzer gehört
      */
     public JobStatus resumeJob(String jobId, com.aresstack.spaceharvester.application.access.AccessContext caller) {
         JobStatus current = jobs.status(jobId, owner);
-        requireStarter(current, caller);
+        requireMayContinue(current, caller);
         if (current.type() != JobType.BACKGROUND) {
             throw new JobNotResumableException(jobId, "kein Hintergrundauftrag");
         }

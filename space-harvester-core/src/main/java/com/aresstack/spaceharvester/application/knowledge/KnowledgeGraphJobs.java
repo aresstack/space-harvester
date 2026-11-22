@@ -83,11 +83,12 @@ public class KnowledgeGraphJobs {
     }
 
     /**
-     * Setzt einen Teil der Art {@value #KIND} von Hand fort; der Weg der App für ▶. Mit den Rechten des Fortsetzenden
-     * nur, wenn er der Eigentümer ({@value #OWNER}) ist; sonst bleibt alles wie ohne Aufrufer, ein fremder Teil hält
-     * also wieder gelb an ({@value #RESUME_BY_HAND}).
+     * Setzt einen Teil der Art {@value #KIND} von Hand fort; der Weg der App für ▶, mit den Rechten des Fortsetzenden.
+     * Einen fremden Teil (anderer Eigentümer, {@value #OWNER}) lehnt er ab ({@link BackgroundJobs#mayContinue},
+     * Abnahme #1112).
      *
      * @throws IllegalStateException ohne angeschlossenen Hintergrund
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException für einen fremden Teil
      */
     public JobStatus resume(AccessContext caller, String jobId) {
         Objects.requireNonNull(caller, "caller");
@@ -99,7 +100,7 @@ public class KnowledgeGraphJobs {
                 .filter(status -> KIND.equals(status.parameter(BackgroundJobs.KIND)))
                 .filter(status -> caller.jobOwner().equals(status.parameter(OWNER)))
                 .ifPresent(status -> callers.put(status.id(), caller));
-        return jobs.resumeJob(jobId);
+        return jobs.resumeJob(jobId, caller);
     }
 
     /**

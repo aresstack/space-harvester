@@ -1055,6 +1055,16 @@ class PageImageAnalysisTest {
                 assertThat(event.code()).isEqualTo(ImageDescriptionJobs.RESUME_BY_HAND));
         assertThat(describer.calls).isZero();
 
+        // Abnahme #1112: ▶ eines anderen Benutzers lehnt der Lauf ab, auch über diesen Weg der App.
+        com.aresstack.spaceharvester.application.access.AccessContext other =
+                com.aresstack.spaceharvester.application.access.AccessContext.endUser("nutzer-3", "app",
+                        new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "erfunden"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> restarted.resume(other, id))
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobNotResumableException.class)
+                .hasMessageContaining("nur der Benutzer");
+        assertThat(after.status(id).state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.PAUSED);
+        assertThat(describer.calls).isZero();
+
         restarted.resume(endUser, id);
         assertThat(after.status(id).state())
                 .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);

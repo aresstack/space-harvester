@@ -309,7 +309,7 @@ class DocumentEnrichmentsTest {
         assertThat(recording.inputs).as("angehalten heißt: nichts rechnet").isEmpty();
 
         jobs.parallelPreparations(2);
-        background.resume(group.groupId());
+        background.resumeGroupWithoutCaller(group.groupId());
 
         assertThat(background.group(group.groupId()).orElseThrow().completed()).isTrue();
         assertThat(recording.inputs).containsExactly("Erster Teil.");
@@ -657,7 +657,7 @@ class DocumentEnrichmentsTest {
         documents.indexed(list(), asset, extractions);
         assertThat(background.groups()).as("ein neuer Anlass, ein neuer Teil").hasSize(2);
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> background.resumeJob(cancelled))
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> background.resumeWithoutCaller(cancelled))
                 .isInstanceOf(com.aresstack.spaceharvester.application.background.BackgroundPartOpenException.class);
 
         assertThat(jobs.status(cancelled).state()).isEqualTo(JobState.CANCELLED);

@@ -126,7 +126,8 @@ public class JobActions {
 
     /**
      * Wie {@link #perform(String, String, JobAction, UnaryOperator)}, für einen Klick von {@code caller}: Fortsetzen
-     * und ↻ am Hintergrundteil eines Benutzers nur durch ihn selbst ({@link com.aresstack.spaceharvester.application.background.BackgroundJobs#mayContinue}).
+     * und ↻ am Hintergrundteil eines Benutzers nur durch ihn selbst
+     * ({@link com.aresstack.spaceharvester.application.background.BackgroundJobs#mayContinue}), geprüft vor jedem Weg.
      *
      * @param caller wer klickt, {@code null} ohne diese Prüfung (etwa die Wiederaufnahme nach dem Neustart)
      */
@@ -135,6 +136,10 @@ public class JobActions {
         Objects.requireNonNull(action, "action");
         Objects.requireNonNull(access, "access");
         JobStatus current = jobs.status(jobId, owner);
+        if (action == JobAction.RESUME || action == JobAction.RETRY_FAILED) {
+            // Abnahme #1112: vor jedem Weg, auch dem ↻, das ein laufendes Anhalten nur vormerkt.
+            com.aresstack.spaceharvester.application.background.BackgroundJobs.requireMayContinue(current, caller);
+        }
         JobLifecycleState state = current.lifecycle();
         if (action == JobAction.RETRY_FAILED && (state instanceof JobLifecycleState.Restarting
                 || state instanceof JobLifecycleState.Stopping stopping && stopping.pausing())) {

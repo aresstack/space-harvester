@@ -322,7 +322,7 @@ class KnowledgeGraphJobsTest {
                 .satisfies(event -> assertThat(event.severity()).isEqualTo(JobEvent.Severity.WARNING));
         assertThat(ran).as("nur der eigene Teil meldet dem Graph").containsExactly("graph");
 
-        after.background().resume(foreign.groupId());
+        after.background().resumeGroupWithoutCaller(foreign.groupId());
 
         JobStatus again = after.jobs().status(foreign.parts().get(0).id());
         assertThat(again.state()).as("▶ setzt nie mit fremden Rechten fort").isEqualTo(JobState.PAUSED);
@@ -330,7 +330,10 @@ class KnowledgeGraphJobsTest {
         assertThat(coverage(after.jobs(), again)).isEmpty();
         assertThat(ran).containsExactly("graph");
 
-        after.graph().resume(APP, again.id());
+        // Abnahme #1112: ▶ eines anderen wird abgelehnt, der Teil bleibt in der gelben Pause.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> after.graph().resume(APP, again.id()))
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobNotResumableException.class)
+                .hasMessageContaining("nur der Benutzer");
 
         JobStatus byOther = after.jobs().status(again.id());
         assertThat(byOther.state()).as("▶ eines anderen bleibt in der gelben Pause").isEqualTo(JobState.PAUSED);

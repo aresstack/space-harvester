@@ -109,7 +109,7 @@ class EnrichmentsBackgroundJobsTest {
 
             runAll(held);
             assertThat(remote.calls).containsOnlyKeys("x/1");
-            background.resume(groupId);
+            background.resumeGroupWithoutCaller(groupId);
             runAll(held);
 
             assertThat(remote.calls).containsOnlyKeys("x/1", "wiki/1", "wiki/2");
@@ -470,7 +470,7 @@ class EnrichmentsBackgroundJobsTest {
             remote.failing.clear();
             // Die KI-Freigabe gilt je Seite neu: Seite 3 ist inzwischen ausgenommen.
             remote.blocked.add("wiki/3");
-            JobStatus again = background.retryFailed(first.id());
+            JobStatus again = background.retryFailedWithoutCaller(first.id());
             runAll(held);
 
             assertThat(again.id()).isEqualTo(first.id());
@@ -482,7 +482,7 @@ class EnrichmentsBackgroundJobsTest {
             assertThat(remote.calls.get("wiki/1").get()).isEqualTo(1);
             assertThat(remote.calls.get("wiki/2").get()).isEqualTo(2);
             assertThat(remote.calls.get("wiki/3").get()).as("ohne Freigabe nichts an den Dienst").isEqualTo(1);
-            assertThatThrownBy(() -> background.retryFailed(first.id()))
+            assertThatThrownBy(() -> background.retryFailedWithoutCaller(first.id()))
                     .isInstanceOf(com.aresstack.spaceharvester.application.background.NothingToRetryException.class);
         } finally {
             executor.shutdownNow();
@@ -507,7 +507,7 @@ class EnrichmentsBackgroundJobsTest {
             runAll(held);
             assertThat(part(background, "wiki").state()).isEqualTo(JobState.PAUSED);
 
-            background.resume(groupId);
+            background.resumeGroupWithoutCaller(groupId);
             runAll(held);
 
             JobStatus done = part(background, "wiki");
@@ -539,7 +539,7 @@ class EnrichmentsBackgroundJobsTest {
             JobStatus newer = part(background, "ops");
             remote.failing.clear();
 
-            background.retryFailed(older.id());
+            background.retryFailedWithoutCaller(older.id());
 
             assertThat(background.part(older.id()).orElseThrow().parameter(Jobs.AFTER)).isEqualTo(newer.id());
             runAll(held);
@@ -607,7 +607,7 @@ class EnrichmentsBackgroundJobsTest {
             assertThat(resumed.lifecycle().allows(com.aresstack.spaceharvester.application.jobs.JobAction.RETRY_FAILED))
                     .isTrue();
 
-            backgroundAfter.retryFailed(interrupted.id());
+            backgroundAfter.retryFailedWithoutCaller(interrupted.id());
             assertThat(remote.calls.get("wiki/1").get()).isEqualTo(2);
             assertThat(backgroundAfter.part(interrupted.id()).orElseThrow().progress().failed()).isZero();
             assertThat(queue.all()).as("nichts mehr offen, nichts mehr abgelegt").isEmpty();
@@ -646,7 +646,7 @@ class EnrichmentsBackgroundJobsTest {
             assertThat(part(backgroundAfter, "wiki").state()).as("vom Benutzer angehalten bleibt angehalten")
                     .isEqualTo(JobState.PAUSED);
             assertThat(remote.calls).containsOnlyKeys("x/1");
-            backgroundAfter.resume(groupId);
+            backgroundAfter.resumeGroupWithoutCaller(groupId);
 
             assertThat(remote.calls).containsOnlyKeys("x/1", "wiki/1", "wiki/2");
             assertThat(part(backgroundAfter, "wiki").state()).isEqualTo(JobState.COMPLETED);
@@ -698,7 +698,7 @@ class EnrichmentsBackgroundJobsTest {
             assertThat(queue.all()).singleElement().satisfies(saved -> assertThat(saved.work()).hasSize(1));
 
             // Von Hand fortgesetzt rechnet er.
-            backgroundAfter.resume(started.groupId());
+            backgroundAfter.resumeGroupWithoutCaller(started.groupId());
             assertThat(remote.calls).containsOnlyKeys("wiki/1");
         } finally {
             executor.shutdownNow();
@@ -732,7 +732,7 @@ class EnrichmentsBackgroundJobsTest {
             runAll(held);
             assertThat(remote.calls).containsOnlyKeys("wiki/9", "ops/1");
             assertThat(queue.all()).isEmpty();
-            assertThatThrownBy(() -> background.retryFailed(background.group(failedGroup).orElseThrow().parts()
+            assertThatThrownBy(() -> background.retryFailedWithoutCaller(background.group(failedGroup).orElseThrow().parts()
                     .getFirst().id()))
                     .isInstanceOf(com.aresstack.spaceharvester.application.background.NothingToRetryException.class);
         } finally {
@@ -829,7 +829,7 @@ class EnrichmentsBackgroundJobsTest {
             assertThat(queue.all()).singleElement().satisfies(saved -> assertThat(saved.partId())
                     .isEqualTo(handedOver.id()));
 
-            backgroundAfter.resume(handedOver.parameter(BackgroundJobs.GROUP));
+            backgroundAfter.resumeGroupWithoutCaller(handedOver.parameter(BackgroundJobs.GROUP));
             assertThat(remote.calls).containsOnlyKeys("wiki/1", "ops/1");
         } finally {
             executor.shutdownNow();
@@ -896,7 +896,7 @@ class EnrichmentsBackgroundJobsTest {
             assertThat(waiting.state()).isEqualTo(JobState.PAUSED);
             assertThat(waiting.pauseReason())
                     .isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason.RESUME_BY_HAND);
-            backgroundThird.resume(handedOver.parameter(BackgroundJobs.GROUP));
+            backgroundThird.resumeGroupWithoutCaller(handedOver.parameter(BackgroundJobs.GROUP));
             assertThat(remote.calls).containsOnlyKeys("ops/1");
         } finally {
             executor.shutdownNow();
@@ -1172,7 +1172,7 @@ class EnrichmentsBackgroundJobsTest {
 
             assertThat(remote.calls).containsOnlyKeys("wiki/1");
             assertThat(queue.all()).isEmpty();
-            assertThatThrownBy(() -> background.retryFailed(part(background, "wiki").id()))
+            assertThatThrownBy(() -> background.retryFailedWithoutCaller(part(background, "wiki").id()))
                     .isInstanceOf(com.aresstack.spaceharvester.application.background.NothingToRetryException.class);
         } finally {
             executor.shutdownNow();

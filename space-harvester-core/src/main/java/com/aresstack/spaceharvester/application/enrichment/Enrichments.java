@@ -903,6 +903,8 @@ public class Enrichments {
          * in den nächsten Teil hinten in der Kette.
          */
         boolean sealed;
+        /** Unter {@link #pendingLock}: Die Quelle wurde bereinigt ({@link #forgetQueued}), die Gruppe gilt nicht mehr. */
+        boolean forgotten;
         /**
          * Die Berechnung, die der Teil gerade rechnet: Sie bleibt im abgelegten Stand, bis ihr Ergebnis feststeht
          * (Abnahme #1112); unter {@link #pendingLock}.
@@ -1040,12 +1042,17 @@ public class Enrichments {
 
     /** Übergibt die Arbeit gescheiterter Teile von vor dem Neustart je einem neuen Teil. */
     private void handOver() {
-        List<HandOver> all;
-        synchronized (pendingLock) {
-            all = List.copyOf(handOvers);
-            handOvers.clear();
+        while (true) {
+            HandOver left;
+            synchronized (pendingLock) {
+                if (handOvers.isEmpty()) {
+                    return;
+                }
+                // Je Eintrag unter dem Riegel heraus: forgetQueued sieht so jeden noch nicht begonnenen (Abnahme #1112).
+                left = handOvers.removeFirst();
+            }
+            handOver(left);
         }
-        all.forEach(this::handOver);
     }
 
     /**
@@ -1059,18 +1066,23 @@ public class Enrichments {
         if (jobs == null || closed || left.work().isEmpty()) {
             return;
         }
-        if (jobs.withdrawing(left.sourceId())) {
+        Pending created = new Pending(BackgroundJobs.newGroupId(), left.sourceId());
+        created.sealed = true;
+        left.work().forEach(created::add);
+        boolean withdrawing;
+        synchronized (pendingLock) {
+            // Unter demselben Riegel wie forgetQueued: Entweder es sieht die neue Gruppe, oder hier das Löschen.
+            withdrawing = jobs.withdrawing(left.sourceId());
+            if (!withdrawing) {
+                groups.put(created.groupId, created);
+            }
+        }
+        if (withdrawing) {
             LOG.log(System.Logger.Level.INFO, "KI-Anreicherung der Quelle {0}: Löschen offen, {1} übernommene "
                     + "Berechnungen entfallen", left.sourceId(), left.work().size());
             persist(left.oldGroupId());
             retire(jobs, left.partId());
             return;
-        }
-        Pending created = new Pending(BackgroundJobs.newGroupId(), left.sourceId());
-        created.sealed = true;
-        left.work().forEach(created::add);
-        synchronized (pendingLock) {
-            groups.put(created.groupId, created);
         }
         Map<String, String> parameters = new LinkedHashMap<>(left.starter());
         if (!left.starter().isEmpty()) {
@@ -1082,17 +1094,22 @@ public class Enrichments {
         if (!start(jobs, left.sourceId(), created.groupId, parameters, true)) {
             return;
         }
+        boolean forgotten;
+        synchronized (pendingLock) {
+            forgotten = created.forgotten;
+        }
+        if (forgotten) {
+            // Die Quelle wurde inzwischen bereinigt (forgetQueued): Ihre Arbeit entfällt samt dem alten Teil.
+            cancel(jobs, created.groupId, left.sourceId());
+            retire(jobs, left.partId(), FORGOTTEN_WITH_SOURCE);
+            return;
+        }
         // Erst wenn der Stand des neuen Teils sicher auf der Platte liegt, verliert die alte Datei die Arbeit.
         if (!persistNow(created.groupId)) {
             synchronized (pendingLock) {
                 groups.remove(created.groupId, created);
             }
-            try {
-                jobs.cancel(created.groupId);
-            } catch (RuntimeException e) {
-                LOG.log(System.Logger.Level.WARNING, "KI-Anreicherung der Quelle {0}: neuer Teil nicht abgebrochen "
-                        + "({1})", left.sourceId(), e.getClass().getName());
-            }
+            cancel(jobs, created.groupId, left.sourceId());
             LOG.log(System.Logger.Level.WARNING, "KI-Anreicherung der Quelle {0}: Stand des neuen Teils nicht abgelegt, "
                     + "der gescheiterte behält seine {1} Berechnungen bis zum nächsten Start", left.sourceId(),
                     left.work().size());
@@ -1100,6 +1117,16 @@ public class Enrichments {
         }
         persist(left.oldGroupId());
         retire(jobs, left.partId());
+    }
+
+    /** Bricht den neuen Teil einer gescheiterten Übergabe ab; seine Arbeit hat er nicht mehr. */
+    private static void cancel(BackgroundJobs jobs, String groupId, String sourceId) {
+        try {
+            jobs.cancel(groupId);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "KI-Anreicherung der Quelle {0}: neuer Teil nicht abgebrochen ({1})",
+                    sourceId, e.getClass().getName());
+        }
     }
 
     /** Schließt den gescheiterten Teil ab, dessen Arbeit jetzt ein neuer hat. */
@@ -1351,7 +1378,13 @@ public class Enrichments {
         List<String> dropped = new ArrayList<>();
         synchronized (pendingLock) {
             pending.remove(sourceId);
-            groups.values().removeIf(waiting -> waiting.sourceId.equals(sourceId));
+            groups.values().removeIf(waiting -> {
+                if (!waiting.sourceId.equals(sourceId)) {
+                    return false;
+                }
+                waiting.forgotten = true;
+                return true;
+            });
             failed.values().removeIf(broken -> broken.sourceId.equals(sourceId));
             RetryFailed retry = retryFailed;
             if (retry != null) {
