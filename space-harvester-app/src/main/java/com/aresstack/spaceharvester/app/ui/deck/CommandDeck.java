@@ -47,6 +47,12 @@ public final class CommandDeck {
     private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(), connecting);
     private final TerminalWorkspace terminal;
     private final BetaViewWorkspace betaView;
+    /** Gemeinsamer Editor aller Bereiche (Dateien, später FTP und NDV); die Dokumente überleben jeden Wechsel. */
+    private final com.aresstack.spaceharvester.deck.editor.EditorSessions editors =
+            new com.aresstack.spaceharvester.deck.editor.EditorSessions(connecting);
+    private final FilesWorkspace files;
+    /** Freigegebene Ordner aus Einstellungen › Dateizugriff, als Orte im Bereich Dateien. */
+    private volatile java.util.function.Supplier<java.util.List<java.nio.file.Path>> sharedFolders = java.util.List::of;
     private final FtpSessions ftpSessions = new FtpSessions(new CommonsNetFtpConnector(), connecting);
     private final FtpWorkspace ftp;
     /** Oben rechts in der Titelleiste: die Bedienelemente des gewählten Bereichs (FTP: Datasets | JES-Jobs). */
@@ -75,6 +81,9 @@ public final class CommandDeck {
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), betaViewAccess);
+        files = new FilesWorkspace(new com.aresstack.spaceharvester.deck.files.FileBrowser(
+                new com.aresstack.spaceharvester.deck.files.local.LocalFileSource(() -> sharedFolders.get()),
+                connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore());
         ftp = new FtpWorkspace(ftpSessions, accounts);
         tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts);
@@ -95,6 +104,7 @@ public final class CommandDeck {
             workspace.add(switch (candidate) {
                 case TERMINAL -> terminal;
                 case BETAVIEW -> betaView;
+                case FILES -> files;
                 case FTP -> ftp;
                 case NDV -> ndv;
                 default -> placeholder(candidate);
@@ -158,6 +168,26 @@ public final class CommandDeck {
         ftpSessions.closeAll();
         ndvSessions.closeAll();
         connecting.shutdownNow();
+    }
+
+    /** Der gemeinsame Editor: FTP und NDV öffnen ihre Dokumente hier mit einer eigenen Ablage. */
+    public com.aresstack.spaceharvester.deck.editor.EditorSessions editors() {
+        return editors;
+    }
+
+    /** Namen der offenen Dokumente mit ungespeicherten Änderungen (Rückfrage beim Beenden). */
+    public java.util.List<String> unsavedDocuments() {
+        return editors.all().stream().filter(com.aresstack.spaceharvester.deck.editor.EditorSession::dirty)
+                .map(com.aresstack.spaceharvester.deck.editor.EditorSession::name).toList();
+    }
+
+    /** Woher der Bereich Dateien die freigegebenen Ordner (Einstellungen › Dateizugriff) als Orte nimmt. */
+    public void sharedFolders(java.util.function.Supplier<java.util.List<java.nio.file.Path>> folders) {
+        sharedFolders = folders == null ? java.util.List::of : folders;
+    }
+
+    FilesWorkspace files() {
+        return files;
     }
 
     public FtpSessions ftpSessions() {

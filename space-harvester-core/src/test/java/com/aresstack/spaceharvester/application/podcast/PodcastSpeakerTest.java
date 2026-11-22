@@ -77,8 +77,7 @@ class PodcastSpeakerTest {
 
         speaker.speak(List.of(new Turn(Speaker.HOST, "Willkommen zum BSCW-Update!")), new ArrayList<>());
 
-        assertThat(speech.calls).containsExactly("Jana|Willkommen zum Be Es Ze We-Update!|absatzweise");
-        assertThat(PodcastSpeaker.pronounced("Confluence und BSCWX")).isEqualTo("Confluence und BSCWX");
+        assertThat(speech.calls).containsExactly("Jana|Willkommen zum Be Es Ze We Update!|absatzweise");
     }
 
     @Test

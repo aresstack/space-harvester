@@ -8,6 +8,9 @@ springdoc = "3.1.1"
 archunit = "1.4.1"
 # TN3270-Emulation des Command Deck (#1142), dieselbe Fassung wie in MainframeMate; reines Java, LGPL
 openterm = "1.7.2"
+# Gemeinsamer Editor des Command Deck (Dateien, später FTP/NDV): Syntaxhervorhebung wie in MainframeMate, dort 3.3.3
+# wegen Java 8; hier die aktuelle Fassung (BSD-3, reines Java, ohne weitere Abhängigkeiten)
+rsyntaxtextarea = "4.0.1"
 # Spring Cloud Azure 7.4.x baut gegen Spring Boot 4.1 (spring-cloud-azure-autoconfigure 7.4.0 → Boot 4.1.0)
 springCloudAzure = "7.4.0"
 # Spring Cloud 2025.1 (Boot 4.0): für Boot 4.1 gibt es nur Meilensteine; nur der Config-Client, geprüft in ConfigServerImportTest
@@ -67,6 +70,7 @@ zxing = "3.5.3"
 
 [libraries]
 openterm = { module = "com.ascert.open:openterm", version.ref = "openterm" }
+rsyntaxtextarea = { module = "com.fifesoft:rsyntaxtextarea", version.ref = "rsyntaxtextarea" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
 jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
