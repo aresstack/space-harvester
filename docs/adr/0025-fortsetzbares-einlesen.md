@@ -274,6 +274,59 @@ wird automatisch verwaltet.
    Freigabe endet er gelb. `missing()` nennt dieselben Seiten, die ein Lauf an das Modell gäbe (auch gescheiterte und
    ohne gespeicherte Lese-Ansicht). Mit `jobs.parallel-preparations=1` läuft „Bilder beschreiben“ als
    Hintergrundauftrag nie (`SINGLE_SLOT`, gewollt seit #1030): Hintergrundaufträge brauchen mindestens zwei Plätze.
+9. **Nichts läuft unsichtbar** (Angelo 21.11.2026: „volle Kontrolle über das, was passiert, beziehungsweise zumindest
+   informiert“). Arbeit, die der Core von sich aus anstößt und die bisher an der Auftragsliste vorbeilief, meldet sich
+   als eigene Art an. Gegen doppelte Anläufe gibt es neben `running` `BackgroundJobs#waiting` (ein noch nicht
+   gestarteter oder angehaltener Teil), `#startUnlessWaiting` (für Arten, die ihre Arbeit erst beim Start aus dem
+   Bestand bestimmen: ein laufender Teil sieht einen neuen Anlass nicht mehr) und `#startUnlessRunning` (für Arten,
+   deren laufender Teil sich neue Arbeit selbst abholt). Ein angehaltener Teil zählt in allen dreien mit: Er hält neue
+   Anlässe zurück, beim Fortsetzen rechnet er sie mit (Abnahme #1052). Bisher umgestellt:
+   - `synonyms` „Synonyme erkennen“ (`SynonymDiscovery#automatic`, ein Teil je Quelle; vorher ein Auftrag
+     `ENRICHMENT` ohne Auftraggeber, den die App nie zeigte). Fortsetzen nach Neustart nur bei
+     `terms.synonyms.automatic`.
+   - `documents` „Anhänge analysieren“ (`DocumentEnrichments`, vorher ebenso ein Auftrag ohne Auftraggeber). Die
+     Arbeit kommt allein aus Quelle, Space und Bestand: die Anhänge der Seiten des Space ohne aktuelle Analyse. Eine
+     Meldung (`IndexedDocuments#indexed`) und die Anreicherung nach einem Abgleich (`DocumentEnrichments#afterSync`)
+     vermerken nur, dass es im Space Arbeit gibt; gerechnet wird nur im Teil, Anhalten hält also wirklich an. Die
+     Anreicherung vermerkt nur, wenn für einen Anhang der abgeglichenen Seiten laut Manifest etwas zu tun ist, ohne
+     einen Abschnitt zu lesen; nach einem Abgleich ohne Arbeit erscheint keine Gruppe. Je Anlass eine Gruppe, je Space
+     höchstens ein offener Teil (`BackgroundKind#exclusive`, unten); eine Meldung während des Laufs holt derselbe Teil
+     in einem weiteren Durchgang ab. Gestartet wird erst, und eine weitere Runde beginnt erst, wenn für den Space kein
+     Abgleich, kein Neulesen (es gilt für die ganze Quelle), kein Anhangsauftrag und keine Anreicherung nach dem
+     Abgleich dieses Space (Angabe `task` = `after-sync`) mehr wartet oder läuft; sonst endet der Teil nach seiner
+     Runde und vermerkt den Rest. Andere Anreicherungen (Bildbeschreibung, Abkürzungen, Synonyme) halten nicht auf,
+     ebenso kein Auftrag, der auf seinen Vorgänger wartet (`AWAITING`, etwa die Anhänge eines Exports bis zu dessen
+     Text). Das Ende solcher Aufträge kommt als Auftragsmeldung (ADR 0027, kein Abfragen). Außerhalb davon bündelt
+     ein `Coalescer` die Meldungen zehn Sekunden lang. So geben die Anhänge eines Abgleichs eine einzige Gruppe. Nur
+     ein fertiger Teil plant für Vermerke aus seiner Laufzeit einen neuen; ein abgebrochener (auch ein laufend
+     gelöschter) verwirft sie einmal, erst ein neuer Anlass startet wieder. Wiederholte Meldungen desselben beendeten
+     Teils verwerfen nichts mehr, ebenso wenig das Ende der noch rechnenden Arbeit eines gelöschten Teils: Was nach
+     dem Löschen gemeldet wurde, bekommt einen neuen Teil. Rechnet beim Start eines Teils noch die abgekoppelte Arbeit eines anderen desselben
+     Space, endet er sofort und vermerkt; deren Ende plant. Endet die Arbeit eines nach `STOP_GRACE` abgekoppelten Teils, plant sie selbst,
+     falls seither etwas vermerkt ist und kein Teil des Space mehr offen ist.
+
+   Höchstens ein offener Teil je Quelle und Space (`BackgroundKind#exclusive`, Abnahme #1052): `resumeJob` lehnt
+   unter dem Startriegel der Art ab, solange ein anderer Teil wartet, angehalten ist oder läuft
+   (`BackgroundPartOpenException`, in der App gelb „Läuft schon“), und `resumeInterrupted` setzt je Art, Quelle und
+   Space nur den jüngsten unterbrochenen fort; dessen Arbeit aus dem Bestand deckt die der älteren. Die älteren
+   schließt es als abgebrochen ab (`Jobs#retire`, Info „Durch jüngeren Teil ersetzt“), damit sie nach einem späteren
+   Neustart nicht von selbst loslaufen, auch wenn der Benutzer den jüngeren inzwischen abgebrochen hat; ist schon ein
+   anderer Teil offen, schließt es alle unterbrochenen so ab. Diese Prüfungen zählen einen angehaltenen Teil als offen
+   (`BackgroundJobs#open`); `BackgroundJobs#running` zählt ihn nicht, denn der Planer nimmt einen solchen Teil als
+   Vorgänger, und ein angehaltener Teil einer fremden Gruppe ließe sein Ziel warten. Nur für Arten,
+   die neue Teile mit `startUnlessRunning` starten: Bei `startUnlessWaiting` (etwa `synonyms`) dürfen ein laufender
+   und ein wartender Teil nebeneinander stehen, und nach „Alle anhalten“ sperrten sie sich beim Fortsetzen
+   gegenseitig.
+
+   Grenzen: Vermerke, aus denen noch kein Teil wurde (die zehn Sekunden Bündelung, ein noch laufender Abgleich),
+   liegen nur im Speicher. Beim Beenden des Dienstes gehen sie verloren; der nächste Abgleich des Space holt sie über
+   die Anreicherung nach. Ebenso ein Vermerk, der nach einem Abbruch eintrifft, solange die Arbeit des abgebrochenen
+   Teils noch bis zu ihrem nächsten Prüfpunkt rechnet, höchstens `Jobs#STOP_GRACE` lang: Ihr Ende verwirft ihn mit. Nach
+   einem Neustart setzt nur ein schon angelegter, unterbrochener Teil von selbst fort (nur bei
+   `enrichment.documents.enabled`). Die Ablage der Anhänge kennt keinen Space: Ein Teil liest die Anhangseinträge der
+   ganzen Quelle und behält die der Seiten seines Space.
+
+   Ohne Hintergrundaufträge (Dienst) bleibt es beim bisherigen Weg.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
