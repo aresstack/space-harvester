@@ -33,12 +33,17 @@ class ConnectionBudgetTest {
                     return null;
                 }));
             }
-            assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
-            assertThat(virtual.submit(() -> "frei").get(10, TimeUnit.SECONDS)).isEqualTo("frei");
+            try {
+                assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                assertThat(virtual.submit(() -> "frei").get(10, TimeUnit.SECONDS)).isEqualTo("frei");
 
-            budget.total(4);
-            for (java.util.concurrent.Future<?> each : waiting) {
-                each.get(10, TimeUnit.SECONDS);
+                budget.total(4);
+                for (java.util.concurrent.Future<?> each : waiting) {
+                    each.get(10, TimeUnit.SECONDS);
+                }
+            } finally {
+                // Scheitert eine Frist, wartet close() sonst ewig auf die Wartenden.
+                budget.total(4);
             }
         }
     }
@@ -149,28 +154,29 @@ class ConnectionBudgetTest {
 
     @Test
     void releasingAConnectionLetsTheNextDownloadStartAtOnce() throws Exception {
-        // Freigeben signalisiert: der Wartende läuft weiter, ohne auf die Frist der Anteile zu warten.
-        ConnectionBudget budget = new ConnectionBudget(1);
+        // Freigeben signalisiert: der Wartende läuft weiter, ohne auf die Frist der Anteile zu warten. Die Frist ist
+        // hier eine Stunde, also weckt ihn nur das Signal; keine Zeitmessung.
+        ConnectionBudget budget = new ConnectionBudget(1, java.time.Duration.ofHours(1));
         ConnectionBudget.Lease lease = budget.register(() -> 1);
         lease.acquire(NOTHING);
         CountDownLatch waiting = new CountDownLatch(1);
-        java.util.concurrent.atomic.AtomicLong startedAt = new java.util.concurrent.atomic.AtomicLong();
+        java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
         Thread second = new Thread(() -> {
             waiting.countDown();
             lease.acquire(NOTHING);
-            startedAt.set(System.nanoTime());
+            started.set(true);
         });
+        second.setDaemon(true);
         second.start();
         assertThat(waiting.await(5, TimeUnit.SECONDS)).isTrue();
         while (second.getState() != Thread.State.TIMED_WAITING) {
             Thread.onSpinWait();
         }
 
-        long released = System.nanoTime();
         lease.release();
         second.join(5_000);
 
-        assertThat(TimeUnit.NANOSECONDS.toMillis(startedAt.get() - released)).isLessThan(150);
+        assertThat(started).isTrue();
         lease.release();
         lease.close();
     }

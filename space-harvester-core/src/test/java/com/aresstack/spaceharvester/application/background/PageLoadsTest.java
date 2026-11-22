@@ -65,13 +65,19 @@ class PageLoadsTest {
                     return null;
                 }));
             }
-            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            // Während alle warten, läuft noch Arbeit auf einem virtuellen Thread.
-            assertThat(virtual.submit(() -> "frei").get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("frei");
+            try {
+                assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                // Während alle warten, läuft noch Arbeit auf einem virtuellen Thread.
+                assertThat(virtual.submit(() -> "frei").get(10, java.util.concurrent.TimeUnit.SECONDS))
+                        .isEqualTo("frei");
 
-            wake.ring();
-            for (java.util.concurrent.Future<?> each : waiting) {
-                each.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                wake.ring();
+                for (java.util.concurrent.Future<?> each : waiting) {
+                    each.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                }
+            } finally {
+                // Scheitert eine Frist, wartet close() sonst ewig auf die Wartenden (Codex-Review #1132).
+                wake.ring();
             }
         }
     }

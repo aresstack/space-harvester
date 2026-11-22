@@ -31,10 +31,18 @@ public final class ConnectionBudget {
     private final Set<Lease> leases = new LinkedHashSet<>();
     private int total;
     private int inFlight;
+    /** Frist des Rückfallnetzes beim Warten auf eine Verbindung, siehe {@link Lease#acquire}. */
+    private final long fallbackNanos;
 
     /** @param total Verbindungen aller Downloads zusammen, 0 bis {@value JobLimits#MAX_DOWNLOAD_CONNECTIONS} */
     public ConnectionBudget(int total) {
+        this(total, java.time.Duration.ofMillis(200));
+    }
+
+    /** Mit eigener Frist des Rückfallnetzes; Tests setzen sie lang, damit nur ein Signal weckt. */
+    ConnectionBudget(int total, java.time.Duration fallback) {
         this.total = JobLimits.requireConnections(total);
+        this.fallbackNanos = fallback.toNanos();
     }
 
     /** Verbindungen aller Downloads zusammen. */
@@ -167,7 +175,7 @@ public final class ConnectionBudget {
                             // Anhalten oder Abbrechen wecken sofort per signalAll. Die Frist greift nur für die
                             // Verschiebung der Anteile nach Restzeit: die Schätzungen der Aufträge ändern sich ohne
                             // Meldung.
-                            changed.await(200, java.util.concurrent.TimeUnit.MILLISECONDS);
+                            changed.awaitNanos(fallbackNanos);
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                             throw new IllegalStateException("Warten auf eine Verbindung unterbrochen", e);
