@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui.controls;
 import javax.swing.BorderFactory;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import javax.swing.text.DefaultCaret;
 import javax.swing.text.View;
 import java.awt.Dimension;
@@ -71,14 +72,17 @@ public final class WrappedText extends JTextArea {
         // Am eigenen Textbaum messen, nicht an einem zweiten Feld ohne Eltern: Das kennt den Bildschirm nicht und
         // bricht bei skalierter Anzeige (200 %) anders um als der gezeigte Text; die letzte Zeile war dann
         // abgeschnitten. Breite UND Höhe gesetzt: nur dann bricht der Text für genau diese Breite um.
+        // Gezeichnet wird um die Breite der Schreibmarke schmaler als die Innenfläche (BasicTextUI): genauso messen,
+        // sonst bricht der gezeigte Text an der Grenze eine Zeile früher um als gemessen.
+        int caret = caretMargin();
         View root = getUI().getRootView(this);
-        root.setSize(inner, Integer.MAX_VALUE);
+        root.setSize(Math.max(1, inner - caret), Integer.MAX_VALUE);
         measuredHeight = (int) Math.ceil(root.getPreferredSpan(View.Y_AXIS));
         // Der Baum zeichnet auch: zurück auf die Breite, die der Text gerade hat.
         Insets insets = getInsets();
         int shown = getWidth() - insets.left - insets.right;
         if (shown > 0 && shown != inner) {
-            root.setSize(shown, Math.max(0, getHeight() - insets.top - insets.bottom));
+            root.setSize(Math.max(1, shown - caret), Math.max(0, getHeight() - insets.top - insets.bottom));
         }
         FontMetrics metrics = getFontMetrics(font);
         int natural = 1;
@@ -93,6 +97,13 @@ public final class WrappedText extends JTextArea {
         measuredFont = font;
         measuredWidth = inner;
         measuredScreen = screen;
+    }
+
+    /** Der Platz, den das Look and Feel rechts für die Schreibmarke frei hält (wie in BasicTextUI). */
+    private int caretMargin() {
+        Object own = getClientProperty("caretWidth");
+        Object width = own instanceof Number ? own : UIManager.get("Caret.width");
+        return width instanceof Number number ? number.intValue() : 1;
     }
 
     @Override
