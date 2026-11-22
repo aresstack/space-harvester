@@ -47,7 +47,7 @@ import java.util.function.BooleanSupplier;
  *   <li>{@value #READ}: der Lesetext einer Seite in Stücken von {@value #READ_CHARS} Zeichen mit Versatz.</li>
  *   <li>{@value #SEARCH}: dieselbe Suche wie die Suche mit Auswahl links, nie über den Bereich hinaus.</li>
  *   <li>{@value #TERM}: was der Wissensgraph im Bereich über einen bestätigten Fachbegriff weiß (Paket W7, auf
- *   {@link TermKnowledge#answer}): Aussagen mit Stufe und Belegseiten, Nachbarbegriffe und was gekappt
+ *   {@link TermKnowledge#answer}): Aussagen mit Stufe und Belegseiten, Synonyme, Nachbarbegriffe und was gekappt
  *   wurde. Bereich und Obergrenzen erzwingt der Kern; jede Belegseite, deren Aussagen geliefert werden, geht vor der
  *   Antwort an {@link Sources#delivered} (ADR 0033 Punkt 8).</li>
  * </ul>
@@ -194,8 +194,9 @@ final class ChatTools {
                         "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"},"
                                 + "\"versatz\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"kennung\"]}"),
                 new AiChat.Tool(TERM, "Schlägt einen Fachbegriff im gewählten Bereich nach: was der Wissensgraph "
-                        + "dort über ihn weiß, als Aussagen mit Verb, Vertrauensstufe und Belegseiten, dazu verwandte "
-                        + "Begriffe. Die Belegseiten vor dem Zitieren mit " + READ + " lesen.",
+                        + "dort über ihn weiß, als Aussagen mit Verb, Vertrauensstufe und Belegseiten, dazu seine "
+                        + "Synonyme und verwandte Begriffe. Ist das Wort dort kein bestätigter Fachbegriff, nennt es "
+                        + "ähnliche. Die Belegseiten vor dem Zitieren mit " + READ + " lesen.",
                         "{\"type\":\"object\",\"properties\":{\"begriff\":{\"type\":\"string\","
                                 + "\"description\":\"Der Fachbegriff, etwa ein Wort aus der Frage\"}},"
                                 + "\"required\":[\"begriff\"]}"));
@@ -519,9 +520,9 @@ final class ChatTools {
     }
 
     /**
-     * Die Antwort als Text für das Modell: knapp, je Aussage eine Zeile, Belegseiten mit Kennung. Nur Namen aus
-     * gelieferten Aussagen des Bereichs: Ähnliche Fachbegriffe und Synonyme kommen aus dem ganzen Glossar und gehen
-     * deshalb nicht hinaus (Auflage Architekt, bis der Core sie auf den Bereich beschränkt).
+     * Die Antwort als Text für das Modell: knapp, je Aussage eine Zeile, Belegseiten mit Kennung. Fachbegriff, Synonyme
+     * und ähnliche Fachbegriffe entscheidet der Core nur nach dem Bereich und der KI-Freigabe (ADR 0032, Nachtrag
+     * Abnahme W7); hier wird nichts nachgefiltert.
      */
     static String render(String query, TermKnowledge.Answer answer) {
         StringBuilder b = new StringBuilder();
@@ -533,29 +534,31 @@ final class ChatTools {
                 return "Der Bereich enthält keine Seiten.";
             }
             case NOT_A_TERM -> {
-                return noTerm(query, answer.limits());
+                return noTerm(query, answer.candidates(), answer.limits());
             }
             case FOUND -> {
                 // weiter unten
             }
         }
         List<TermKnowledge.Term> terms = answer.terms();
-        int statements = terms.stream().mapToInt(term -> term.statements().size()).sum();
-        if (statements == 0) {
-            // Ohne gelieferte Aussage derselbe Text wie „kein Fachbegriff“: Sonst verriete die Antwort, dass der
-            // Begriff irgendwo im Glossar bestätigt ist (Auflage Architekt, bis der Core FOUND nur im Bereich meldet).
-            return noTerm(query, answer.limits());
+        b.append("Fachbegriff: ").append(oneLine(terms.getFirst().term())).append('\n');
+        if (terms.size() > 1) {
+            b.append("Synonyme: ").append(String.join(", ", terms.subList(1, terms.size()).stream()
+                    .map(term -> oneLine(term.term())).toList())).append('\n');
         }
-        String main = terms.getFirst().term();
-        boolean named = terms.stream().flatMap(term -> term.statements().stream())
-                .anyMatch(statement -> statement.subject().equals(main) || statement.object().equals(main));
-        // Den Namen des Fachbegriffs nur, wenn eine gelieferte Aussage ihn trägt; sonst die Eingabe.
-        b.append("Fachbegriff: ").append(oneLine(named ? main : query)).append('\n');
+        int statements = terms.stream().mapToInt(term -> term.statements().size()).sum();
         TermKnowledge.Limits limits = answer.limits();
-        b.append("Aussagen (Stufe: geprüft, einig, ungeprüft, abweichend):\n");
-        for (TermKnowledge.Term term : terms) {
-            for (TermKnowledge.Statement statement : term.statements()) {
-                b.append("- ").append(statement(statement)).append('\n');
+        if (statements == 0) {
+            b.append(read(limits) == null
+                    ? "Im gewählten Bereich gibt es keine Aussagen zu diesem Begriff; nutze " + SEARCH + ".\n"
+                    : "In den gelesenen Seiten gibt es keine Aussagen zu diesem Begriff (" + read(limits)
+                    + "); nutze " + SEARCH + ".\n");
+        } else {
+            b.append("Aussagen (Stufe: geprüft, einig, ungeprüft, abweichend):\n");
+            for (TermKnowledge.Term term : terms) {
+                for (TermKnowledge.Statement statement : term.statements()) {
+                    b.append("- ").append(statement(statement)).append('\n');
+                }
             }
         }
         if (!answer.neighbours().isEmpty()) {
@@ -566,19 +569,31 @@ final class ChatTools {
         if (!cut.isEmpty()) {
             b.append("Unvollständig: ").append(cut).append('\n');
         }
-        b.append("Lies eine Belegseite mit ").append(READ).append(", bevor du dich auf sie berufst.");
+        if (statements > 0) {
+            b.append("Lies eine Belegseite mit ").append(READ).append(", bevor du dich auf sie berufst.");
+        }
         return b.toString().stripTrailing();
     }
 
-    /** Kein Fachbegriff mit Aussagen im Bereich; bei gekapptem Bereich mit dem Hinweis, was ungelesen blieb. */
-    private static String noTerm(String query, TermKnowledge.Limits limits) {
+    /** Was bei gekapptem Bereich gelesen wurde; {@code null}, wenn alle Seiten des Bereichs gelesen wurden. */
+    private static String read(TermKnowledge.Limits limits) {
+        return limits.pagesRead() < limits.pagesInScope() ? "gelesen wurden " + limits.pagesRead() + " von "
+                + limits.pagesInScope() + " Seiten des Bereichs, die übrigen sind ungelesen" : null;
+    }
+
+    /** Kein Fachbegriff im Bereich, mit ähnlichen aus dem Bereich und dem Hinweis, was ungelesen blieb. */
+    private static String noTerm(String query, List<String> candidates, TermKnowledge.Limits limits) {
         StringBuilder b = new StringBuilder("„").append(oneLine(query))
                 .append("“ ist im gewählten Bereich kein bestätigter Fachbegriff");
-        if (limits.pagesRead() < limits.pagesInScope()) {
-            b.append(" (gelesen wurden ").append(limits.pagesRead()).append(" von ").append(limits.pagesInScope())
-                    .append(" Seiten des Bereichs, die übrigen sind ungelesen)");
+        if (read(limits) != null) {
+            b.append(" (").append(read(limits)).append(')');
         }
-        return b.append("; nutze ").append(SEARCH).append('.').toString();
+        b.append('.');
+        if (!candidates.isEmpty()) {
+            b.append(" Ähnliche Fachbegriffe: ").append(String.join(", ", candidates.stream()
+                    .map(ChatTools::oneLine).toList())).append('.');
+        }
+        return b.append(" Sonst nutze ").append(SEARCH).append('.').toString();
     }
 
     private static String statement(TermKnowledge.Statement statement) {
@@ -640,6 +655,9 @@ final class ChatTools {
         List<String> parts = new ArrayList<>();
         if (limits.pagesRead() < limits.pagesInScope()) {
             parts.add(limits.pagesRead() + " von " + limits.pagesInScope() + " Seiten des Bereichs gelesen");
+        }
+        if (limits.omittedTerms() > 0) {
+            parts.add(limits.omittedTerms() + (limits.omittedTerms() == 1 ? " weiteres Synonym" : " weitere Synonyme"));
         }
         if (limits.omittedStatements() > 0) {
             parts.add(limits.omittedStatements() + " weitere Aussagen");
