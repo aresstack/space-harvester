@@ -75,18 +75,69 @@ public final class BackgroundJobs {
     public BackgroundJobs(Jobs jobs, String owner) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.owner = owner;
-        // D1: ein unterbrochener Vorgänger hält, solange er sich fortsetzen lässt; sonst gibt er frei.
-        jobs.predecessorGate(predecessor -> {
-            if (Jobs.PredecessorGate.DEFAULT.holds(predecessor)) {
-                return true;
+        jobs.predecessorGate(new Jobs.PredecessorGate() {
+            @Override
+            public boolean holds(JobStatus predecessor) {
+                return holdsAfter(predecessor);
             }
-            if (predecessor == null || predecessor.state() != JobState.FAILED || predecessor.error() == null
-                    || !INTERRUPTED.equals(predecessor.error().code())) {
-                return false;
+
+            @Override
+            public boolean holds(JobStatus predecessor, JobStatus follower) {
+                // Abnahme #1077: Wartet ein Teil nur der Reihe wegen, hält ihn ein angehaltener Vorgänger einer anderen
+                // Quelle nicht auf, denn Anhalten von A darf B nicht stoppen.
+                if (predecessor != null && predecessor.state() == JobState.PAUSED && follower != null
+                        && "true".equals(follower.parameter(ORDER_ONLY))
+                        && !Objects.equals(predecessor.sourceId(), follower.sourceId())) {
+                    return false;
+                }
+                return holdsAfter(predecessor);
             }
-            BackgroundKind kind = predecessor.type() == JobType.BACKGROUND ? kindOfPart(predecessor) : null;
-            return kind != null && kind.autoResume().getAsBoolean();
         });
+    }
+
+    /** D1: ein unterbrochener Vorgänger hält, solange er sich fortsetzen lässt; sonst gibt er frei. */
+    private boolean holdsAfter(JobStatus predecessor) {
+        if (Jobs.PredecessorGate.DEFAULT.holds(predecessor)) {
+            return true;
+        }
+        if (predecessor == null || predecessor.state() != JobState.FAILED || predecessor.error() == null
+                || !INTERRUPTED.equals(predecessor.error().code())) {
+            return false;
+        }
+        BackgroundKind kind = predecessor.type() == JobType.BACKGROUND ? kindOfPart(predecessor) : null;
+        return kind != null && kind.autoResume().getAsBoolean();
+    }
+
+    /**
+     * Ob Hintergrundteile überhaupt laufen können: erst ab zwei Plätzen unter „Vorbereitung“; mit einem wartet jeder
+     * gelb ({@link Jobs#SINGLE_SLOT}). Wer sonst einen eigenen Weg hat, nimmt dann den (Abnahme #1077).
+     */
+    public boolean canRun() {
+        return jobs.parallelPreparations() > 1;
+    }
+
+    /**
+     * Schließt alle Teile dieser Art ab, die sich noch fortsetzen ließen (angehalten oder gescheitert), als abgebrochen
+     * mit Info {@code reason} ({@link Jobs#retire}): für Arten, deren Arbeit nur im Speicher liegt und nach dem Neustart
+     * fehlt (Abnahme #1077). Wartende und laufende bleiben.
+     *
+     * @return die abgeschlossenen Teile
+     */
+    public List<JobStatus> retireResumable(String kind, String reason) {
+        Objects.requireNonNull(reason, "reason");
+        List<JobStatus> retired = new ArrayList<>();
+        for (JobStatus part : parts(kind)) {
+            if (part.state() != JobState.PAUSED && part.state() != JobState.FAILED) {
+                continue;
+            }
+            try {
+                jobs.retire(part.id(), owner, reason).ifPresent(retired::add);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Hintergrundauftrag {0} nicht abgeschlossen ({1})", part.id(),
+                        e.getClass().getName());
+            }
+        }
+        return retired;
     }
 
     /** Meldet eine Art an; eine zweite mit derselben Kennung ersetzt die erste. */
@@ -396,6 +447,24 @@ public final class BackgroundJobs {
     }
 
     /**
+     * Startet eine Gruppe mit einem Teil hinter jedem schon offenen Teil der Art ({@link Jobs#AFTER}, nur der Reihe
+     * wegen, {@value #ORDER_ONLY}): Für Arten, deren Teile eine Arbeit nacheinander abholen, die erst nach dem Start
+     * dazukommt, etwa die KI-Anreicherung je Quelle. Ein offener Teil derselben Quelle verhindert ihn nicht; ob es einen
+     * braucht, entscheidet der Aufrufer. Ein angehaltener Vorgänger hält nur Teile seiner eigenen Quelle auf.
+     *
+     * @param groupId vorher vergeben ({@link #newGroupId()}), denn der Teil kann schon während des Starts laufen
+     */
+    public BackgroundGroup startBehindOpen(String groupId, String kind, String title, BackgroundPart.Draft part) {
+        Objects.requireNonNull(part, "part");
+        Objects.requireNonNull(title, "title");
+        synchronized (startLock(kind)) {
+            List<String> openIds = openParts(kind).map(JobStatus::id).toList();
+            return startSteps(groupId, kind, title, List.of(new Step(kind, title, part, openIds, List.of(),
+                    openIds.isEmpty() ? List.of() : List.of(title))), true);
+        }
+    }
+
+    /**
      * Angabe eines Teils, der nur der Reihenfolge wegen auf seinen Vorgänger wartet
      * ({@link #startInSequenceUnlessRunning}): Dessen Ergebnis braucht er nicht.
      */
@@ -419,6 +488,21 @@ public final class BackgroundJobs {
         Objects.requireNonNull(part, "part");
         return part.type() == JobType.BACKGROUND && (USER.equals(part.parameter(TRIGGER))
                 || STARTER.stream().anyMatch(key -> part.parameter(key) != null));
+    }
+
+    /** Der Stand eines Unterauftrags; leer, wenn es ihn nicht (mehr) gibt. */
+    public Optional<JobStatus> part(String jobId) {
+        Objects.requireNonNull(jobId, "jobId");
+        try {
+            return Optional.of(jobs.status(jobId, owner));
+        } catch (UnknownJobException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Ob ein Unterauftrag wartet, angehalten ist oder läuft, also seine Arbeit noch tun wird. */
+    public static boolean open(JobStatus part) {
+        return isOpen(part.state());
     }
 
     /** Alle Teile dieser Art, älteste zuerst, in jedem Zustand; etwa für Teile, die der Start zu Ende führt. */

@@ -615,6 +615,13 @@ public final class Harvester implements AutoCloseable {
                     new com.aresstack.spaceharvester.application.presentation.VideoTranscriptTextProjector(
                             this::assets)));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
+            if (background != null) {
+                // ADR 0025 Nachtrag, Punkt 10: die Warteschlange der Netz-Prozessoren als „KI-Anreicherung“ je Quelle;
+                // schließt nach den Komponenten, die einreihen, und vor der Ablage.
+                Enrichments hostedEnrichments = enrichments;
+                hostedEnrichments.background(backgroundJobs, cache::find);
+                opened.add(() -> hostedEnrichments.closeBackground(Duration.ofSeconds(10)));
+            }
             this.pageTexts = projector;
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
             // Cache neu, eingeschaltet auch statements (#108); images rechnet nur auf Abruf und prüft die Freigabe dann
