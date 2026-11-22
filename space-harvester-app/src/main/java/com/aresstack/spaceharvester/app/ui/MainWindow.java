@@ -198,8 +198,7 @@ public final class MainWindow implements AppContext.Navigator {
     /** Ob die linke Leiste des Space Harvesters zu war, als er verlassen wurde. */
     private boolean harvesterDrawerCollapsed;
     /** Das Command Deck (#1142); seine Sitzungen leben so lange wie das Fenster, über jeden Wechsel hinweg. */
-    private final com.aresstack.spaceharvester.app.ui.deck.CommandDeck commandDeck =
-            new com.aresstack.spaceharvester.app.ui.deck.CommandDeck();
+    private final com.aresstack.spaceharvester.app.ui.deck.CommandDeck commandDeck;
     private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
@@ -210,6 +209,9 @@ public final class MainWindow implements AppContext.Navigator {
     public MainWindow(AppContext context) {
         this.context = context;
         context.setNavigator(this);
+        // Server des Command Deck aus KeePass, über dieselbe Kopplung wie die Wissensquellen.
+        commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
+                new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass));
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
@@ -501,7 +503,8 @@ public final class MainWindow implements AppContext.Navigator {
         perspectives.add(new Perspective(Perspectives.HARVESTER, "Space Harvester",
                 "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null));
         perspectives.add(commandDeck.perspective());
-        perspectives.add(Perspectives.missionProtocol());
+        perspectives.add(Perspectives.provingGround());
+        perspectives.add(Perspectives.missionControl());
         for (Perspective perspective : perspectives.all()) {
             stage.add(perspective.workspace(), perspective.id());
         }

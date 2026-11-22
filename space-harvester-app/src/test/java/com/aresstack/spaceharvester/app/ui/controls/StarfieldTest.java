@@ -11,7 +11,7 @@ class StarfieldTest {
 
     @Test
     void paintsStarsOnDeepSpaceAndDoesNotAnimateWhileHidden() {
-        Starfield stars = new Starfield(Starfield.Mode.WARP, new Random(7)).headline("MISSION PROTOCOL")
+        Starfield stars = new Starfield(Starfield.Mode.WARP, new Random(7)).headline("MISSION CONTROL")
                 .caption("In Vorbereitung").cockpit(true);
         stars.setSize(640, 400);
         assertThat(stars.animating()).as("nicht auf dem Bildschirm, keine Animation").isFalse();
