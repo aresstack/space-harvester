@@ -136,8 +136,7 @@ tasks.named('jar') {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'java.awt.headless', 'true'
-    // Die App-Suite (Swing, Medien, Markdown) reizt den Gradle-Standard von 512 MB aus; mit 1 GB bricht der
-    // Testprozess nicht mehr mit OutOfMemoryError ab.
+    // Die App-Tests rendern PDFs mit Systemschriften und bauen viele Swing-Oberflächen; 512 MB (Vorgabe) reichen nicht mehr.
     maxHeapSize = '1g'
     // Echttest des Chats mit Werkzeugen (ADR 0033) gegen einen Ollama-Server, nur auf Anfrage:
     // -PchatLiveOllama=http://localhost:11434 [-PchatLiveModel=gemma4:12b] [-PchatLiveNoToolsModel=qwen2.5-coder:1.5b-base]

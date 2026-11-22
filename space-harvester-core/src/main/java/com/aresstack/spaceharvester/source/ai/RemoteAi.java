@@ -361,6 +361,40 @@ public final class RemoteAi {
         };
     }
 
+    /** Frist je Anfrage der Update-Zusammenfassung: lange Eingaben und Antworten mit Themen und Details. */
+    public static final Duration SUMMARY_TIMEOUT = Duration.ofMinutes(5);
+    /** Ausgabelimit der Update-Zusammenfassung mindestens, auch wenn {@code ai.chat-max-tokens} kleiner ist. */
+    public static final int SUMMARY_MIN_TOKENS = 32_768;
+
+    /**
+     * Wie {@link #termCompletions()} für die Update-Zusammenfassung (ADR 0030, update-summary-v2): Die Antworten tragen
+     * Themen mit ausführlichen Details, denkende Modelle (gpt-oss) verbrauchen zusätzlich Ausgabe fürs Nachdenken. Daher
+     * mindestens {@link #SUMMARY_MIN_TOKENS} und eine Frist von mindestens {@link #SUMMARY_TIMEOUT} (oder
+     * {@code ai.timeout}, wenn länger) statt der 90 Sekunden der Akronymauflösung.
+     */
+    public BinaryOperator<String> summaryCompletions() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        int maxTokens = Math.max(settings.chatMaxTokens(), SUMMARY_MIN_TOKENS);
+        String thinking = settings.stepThinking();
+        ChatOptions.Builder builder = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens);
+        if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {
+            builder.reasoningEffort(thinking);
+        }
+        ChatOptions options = builder.build();
+        int timeout = (int) Math.min(Integer.MAX_VALUE, Math.max(SUMMARY_TIMEOUT.toMillis(), timeoutMillis()));
+        return (instructions, input) -> {
+            ChatCompletionPort adapter = chatPort(settings.chatModel(), awaitedTimeout(settings.chatModel(), timeout));
+            try {
+                return complete(adapter.complete(new ChatRequest(
+                        List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)), maxTokens, true);
+            } catch (ChatCompletionException e) {
+                throw chatFailure(e);
+            }
+        };
+    }
+
     /** Eigene Frist je Anfrage der Abschnittsbenennung, unabhängig von {@code ai.timeout} (#181). */
     public static final Duration LABEL_TIMEOUT = Duration.ofSeconds(60);
 

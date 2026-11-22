@@ -47,6 +47,12 @@ public final class BackgroundJobs {
     public static final String GROUP = PREFIX + "group";
     /** Angabe: Titel der Gruppe, wie ihn die Auftragsliste zeigt. */
     public static final String TITLE = PREFIX + "title";
+    /** Angabe einer gemischten Gruppe ({@link #startSteps}): die Art des Ziels, nach der die Gruppe heißt. */
+    public static final String GROUP_KIND = PREFIX + "groupKind";
+    /** Angabe: Titel der Stufe eines Unterauftrags, etwa „Bilder beschreiben“. */
+    public static final String STEP_TITLE = PREFIX + "stepTitle";
+    /** Code der Warnung: eine Vorstufe ist gescheitert, abgebrochen oder gelöscht; der Teil läuft über das Vorhandene. */
+    public static final String PREDECESSOR_MISSING = "PREDECESSOR_MISSING";
     /** Fehlercode eines vom Beenden des Dienstes unterbrochenen Auftrags ({@code JobLifecycleState.INTERRUPTED}). */
     static final String INTERRUPTED = com.aresstack.spaceharvester.application.jobs.JobLifecycleState.INTERRUPTED;
 
@@ -63,6 +69,19 @@ public final class BackgroundJobs {
     public BackgroundJobs(Jobs jobs, String owner) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.owner = owner;
+        // D1: ein unterbrochener Vorgänger hält, solange er sich fortsetzen lässt; sonst gibt er frei.
+        jobs.predecessorGate(predecessor -> {
+            if (Jobs.PredecessorGate.DEFAULT.holds(predecessor)) {
+                return true;
+            }
+            if (predecessor == null || predecessor.state() != JobState.FAILED || predecessor.error() == null
+                    || !INTERRUPTED.equals(predecessor.error().code())) {
+                return false;
+            }
+            BackgroundKind kind = predecessor.type() == JobType.BACKGROUND ? kinds.get(predecessor.parameter(KIND))
+                    : null;
+            return kind != null && kind.autoResume().getAsBoolean();
+        });
     }
 
     /** Meldet eine Art an; eine zweite mit derselben Kennung ersetzt die erste. */
@@ -110,7 +129,8 @@ public final class BackgroundJobs {
             }
         } catch (RuntimeException e) {
             // Ganz oder gar nicht (wie GlossaryClassification): keine Teile ohne ihre Gruppe.
-            for (JobStatus accepted : started) {
+            // Nachfolger zuerst, damit keiner dazwischen frei wird und startet (Abnahme D1).
+            for (JobStatus accepted : started.reversed()) {
                 try {
                     jobs.cancel(accepted.id(), owner);
                 } catch (RuntimeException ignored) {
@@ -121,6 +141,86 @@ public final class BackgroundJobs {
         }
         LOG.log(System.Logger.Level.INFO, "Hintergrund „{0}“ gestartet: {1} Teile", kind, started.size());
         return new BackgroundGroup(groupId, registered.id(), title, started);
+    }
+
+    /**
+     * Ein Unterauftrag einer gemischten Gruppe ({@link #startSteps}).
+     *
+     * @param kind        Art dieses Teils
+     * @param stepTitle   Titel der Stufe, etwa „Bilder beschreiben“
+     * @param draft       Quelle, Space und Angaben
+     * @param afterJobs   IDs schon bestehender Vorgänger, etwa eines wiederverwendeten laufenden Teils
+     * @param afterSteps  Stellen früherer Teile dieser Liste, auf die er wartet
+     * @param afterTitles Titel der Vorstufen für „wartet auf …“
+     */
+    public record Step(String kind, String stepTitle, BackgroundPart.Draft draft, List<String> afterJobs,
+                       List<Integer> afterSteps, List<String> afterTitles) {
+
+        public Step {
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(stepTitle, "stepTitle");
+            Objects.requireNonNull(draft, "draft");
+            afterJobs = List.copyOf(afterJobs);
+            afterSteps = List.copyOf(afterSteps);
+            afterTitles = List.copyOf(afterTitles);
+        }
+    }
+
+    /**
+     * Startet EINE Gruppe aus Teilen verschiedener Arten (D1, Dienst-Planer), ganz oder gar nicht. Ein Teil startet
+     * erst, wenn seine Vorgänger frei sind ({@link Jobs#AFTER}); laufen Teile anderer Spaces, warten sie nicht mit.
+     *
+     * @param groupKind die Art des Ziels, nach der die Gruppe heißt
+     * @throws IllegalArgumentException wenn eine Art nicht angemeldet ist, keine Teile da sind oder ein Teil auf einen
+     *                                  späteren wartet
+     */
+    public BackgroundGroup startSteps(String groupId, String groupKind, String title, List<Step> steps) {
+        Objects.requireNonNull(groupId, "groupId");
+        Objects.requireNonNull(groupKind, "groupKind");
+        Objects.requireNonNull(title, "title");
+        if (steps.isEmpty()) {
+            throw new IllegalArgumentException("Mindestens ein Teil");
+        }
+        for (int i = 0; i < steps.size(); i++) {
+            requireKind(steps.get(i).kind());
+            for (int before : steps.get(i).afterSteps()) {
+                if (before < 0 || before >= i) {
+                    throw new IllegalArgumentException("Teil " + i + " wartet auf Teil " + before);
+                }
+            }
+        }
+        List<JobStatus> started = new ArrayList<>();
+        try {
+            for (Step step : steps) {
+                Map<String, String> parameters = new HashMap<>(step.draft().parameters());
+                parameters.put(KIND, step.kind());
+                parameters.put(GROUP, groupId);
+                parameters.put(GROUP_KIND, groupKind);
+                parameters.put(TITLE, title);
+                parameters.put(STEP_TITLE, step.stepTitle());
+                List<String> after = new ArrayList<>(step.afterJobs());
+                step.afterSteps().forEach(index -> after.add(started.get(index).id()));
+                if (!after.isEmpty()) {
+                    parameters.put(Jobs.AFTER, String.join(",", after));
+                    parameters.put(Jobs.AFTER_TITLES, step.afterTitles().stream().distinct()
+                            .map(name -> "„" + name + "“").collect(java.util.stream.Collectors.joining(", ")));
+                }
+                started.add(jobs.submit(JobType.BACKGROUND, step.draft().sourceId(), step.draft().partitionKey(),
+                        null, owner, parameters, task(false)));
+            }
+        } catch (RuntimeException e) {
+            // Nachfolger zuerst, damit keiner dazwischen frei wird und startet (Abnahme D1).
+            for (JobStatus accepted : started.reversed()) {
+                try {
+                    jobs.cancel(accepted.id(), owner);
+                } catch (RuntimeException ignored) {
+                    // Schon beendet: bleibt, wie er ist.
+                }
+            }
+            throw e;
+        }
+        LOG.log(System.Logger.Level.INFO, "Hintergrund „{0}“ gestartet: {1} Teile", groupKind, started.size());
+        return new BackgroundGroup(groupId, groupKind, title, started);
     }
 
     /** Eine neue Gruppen-ID für {@link #start(String, String, String, List)}. */
@@ -137,6 +237,29 @@ public final class BackgroundJobs {
                 .findFirst();
     }
 
+    /**
+     * Bricht die noch wartenden Unteraufträge dieser Art für Quelle und Space ab, mit gelbem Grund (etwa „durch Klick
+     * ersetzt“); laufende bleiben unberührt ({@link Jobs#cancelIfWaiting}).
+     *
+     * @param partitionKey ein Space, oder {@code null} für alle Spaces der Quelle
+     * @return die abgebrochenen Unteraufträge
+     */
+    public List<JobStatus> cancelWaiting(String kind, String sourceId, String partitionKey, String reason) {
+        List<JobStatus> cancelled = new ArrayList<>();
+        all().stream()
+                .filter(status -> status.state() == JobState.QUEUED && kind.equals(status.parameter(KIND))
+                        && sourceId.equals(status.sourceId())
+                        && (partitionKey == null || partitionKey.equals(status.partitionKey())))
+                .forEach(status -> {
+                    try {
+                        jobs.cancelIfWaiting(status.id(), owner, reason).ifPresent(cancelled::add);
+                    } catch (UnknownJobException e) {
+                        // inzwischen gelöscht
+                    }
+                });
+        return cancelled;
+    }
+
     /** Die Gruppe, solange noch einer ihrer Unteraufträge in der Liste steht. */
     public Optional<BackgroundGroup> group(String groupId) {
         List<JobStatus> parts = all().stream().filter(status -> groupId.equals(status.parameter(GROUP)))
@@ -145,7 +268,7 @@ public final class BackgroundJobs {
             return Optional.empty();
         }
         JobStatus first = parts.get(0);
-        return Optional.of(new BackgroundGroup(groupId, first.parameter(KIND), first.parameter(TITLE), parts));
+        return Optional.of(new BackgroundGroup(groupId, kindOf(first), first.parameter(TITLE), parts));
     }
 
     /** Alle Gruppen, die jüngste zuerst. */
@@ -155,7 +278,7 @@ public final class BackgroundJobs {
                 .forEach(status -> byGroup.computeIfAbsent(groupOf(status), key -> new ArrayList<>()).add(status));
         List<BackgroundGroup> result = new ArrayList<>();
         byGroup.forEach((groupId, parts) -> result.add(0, new BackgroundGroup(groupId,
-                parts.get(0).parameter(KIND), parts.get(0).parameter(TITLE), parts)));
+                kindOf(parts.get(0)), parts.get(0).parameter(TITLE), parts)));
         return result;
     }
 
@@ -173,12 +296,21 @@ public final class BackgroundJobs {
 
     /** Setzt jeden angehaltenen, gescheiterten oder abgebrochenen Unterauftrag der Gruppe fort. */
     public Optional<BackgroundGroup> resume(String groupId) {
+        // Älteste zuerst; lässt sich ein Vorgänger nicht fortsetzen, bleiben seine Nachfolger stehen, statt frei zu
+        // werden (Abnahme D1).
+        java.util.Set<String> notResumed = new java.util.HashSet<>();
         group(groupId).ifPresent(group -> group.parts().stream()
                 .filter(status -> Jobs.resumableState(status.state()))
                 .forEach(status -> {
+                    String after = status.parameter(Jobs.AFTER);
+                    if (after != null && java.util.Arrays.stream(after.split(",")).anyMatch(notResumed::contains)) {
+                        notResumed.add(status.id());
+                        return;
+                    }
                     try {
                         resumeJob(status.id());
                     } catch (RuntimeException e) {
+                        notResumed.add(status.id());
                         LOG.log(System.Logger.Level.WARNING, "Hintergrundauftrag {0} nicht fortgesetzt ({1})",
                                 status.id(), e.getClass().getName());
                     }
@@ -219,7 +351,8 @@ public final class BackgroundJobs {
      */
     public List<JobStatus> resumeInterrupted() {
         List<JobStatus> resumed = new ArrayList<>();
-        for (JobStatus status : all()) {
+        // Älteste zuerst: Vorgänger einer Kette sind wieder offen, bevor ihre Nachfolger fortsetzen (D1).
+        for (JobStatus status : all().stream().sorted(Comparator.comparing(JobStatus::createdAt)).toList()) {
             if (!interrupted(status)) {
                 continue;
             }
@@ -322,6 +455,12 @@ public final class BackgroundJobs {
                 }));
     }
 
+    /** Die Art der Gruppe: bei einer gemischten die des Ziels. */
+    private static String kindOf(JobStatus status) {
+        String kind = status.parameter(GROUP_KIND);
+        return kind != null ? kind : status.parameter(KIND);
+    }
+
     private static String groupOf(JobStatus status) {
         String group = status.parameter(GROUP);
         return group != null ? group : status.id();
@@ -335,6 +474,43 @@ public final class BackgroundJobs {
         return registered;
     }
 
+    /**
+     * Meldet gelb, wenn eine Vorstufe gescheitert, abgebrochen, nicht fortsetzbar unterbrochen oder gelöscht ist: der
+     * Teil läuft trotzdem, über das, was vorhanden ist (D1).
+     */
+    private void notePredecessors(JobStatus status, com.aresstack.spaceharvester.application.jobs.JobContext context) {
+        String after = status.parameter(Jobs.AFTER);
+        if (after == null || after.isBlank()) {
+            return;
+        }
+        for (String id : after.split(",")) {
+            if (id.isBlank()) {
+                continue;
+            }
+            String reason;
+            String name;
+            try {
+                JobStatus predecessor = jobs.status(id, owner);
+                name = predecessor.parameter(STEP_TITLE) != null ? predecessor.parameter(STEP_TITLE)
+                        : predecessor.parameter(TITLE);
+                reason = switch (predecessor.state()) {
+                    case FAILED -> "gescheitert";
+                    case CANCELLED -> "abgebrochen";
+                    default -> null;
+                };
+            } catch (UnknownJobException e) {
+                name = null;
+                reason = "gelöscht, ihr Ergebnis ist unbekannt";
+            }
+            if (reason != null) {
+                context.record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.warning(
+                        com.aresstack.spaceharvester.application.jobs.JobEvent.Category.JOB, "background",
+                        PREDECESSOR_MISSING, "Vorstufe " + (name == null ? "" : "„" + name + "“ ") + reason
+                                + "; läuft über das Vorhandene"));
+            }
+        }
+    }
+
     /** Die Arbeit eines Unterauftrags, beim Start aus seinen abgelegten Angaben gebaut. */
     private JobTask task(boolean resumed) {
         return context -> {
@@ -345,6 +521,7 @@ public final class BackgroundJobs {
                 own.keySet().removeIf(key -> key.startsWith(PREFIX));
                 BackgroundPart part = new BackgroundPart(status.id(), groupOf(status), kind.id(), status.sourceId(),
                         status.partitionKey(), own, resumed);
+                notePredecessors(status, context);
                 return kind.work().apply(part).start(context);
             } catch (RuntimeException e) {
                 return java.util.concurrent.CompletableFuture.failedFuture(e);

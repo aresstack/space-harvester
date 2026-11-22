@@ -11,19 +11,26 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Schreibt den Podcast in drei Stufen über das Chat-Modell, wie das Audio-Studio (aresstack/audio) Musik plant: die
  * Grobübersicht ({@link #outline}), je Thema die Abschnitte mit Sprecherwechseln ({@link #segments}) und je Abschnitt den
- * gesprochenen Text ({@link #script}). Jeder Aufruf kennt den ganzen Plan, damit die Abschnitte, die parallel entstehen,
- * zusammenpassen; der Anschluss an den vorigen Abschnitt kommt aus dessen Plan, nicht aus seinem Text.
+ * gesprochenen Text ({@link #script}).
  *
- * <p>Selbstheilend (Angelo 21.11.2026): Jede Stufe fragt bis zu {@link #ATTEMPTS}-mal; eine unbrauchbare Antwort wird
- * repariert, und gelingt gar nichts, entsteht die Stufe ohne Modell aus der Zusammenfassung selbst. Der Podcast
- * verstummt also nie wegen einer Antwort des Modells; jede Reparatur steht in {@link PodcastPlan#repairs()}.
+ * <p>Nachrichtenformat (Angelo 21.11.2026): Das Material sind die Meldungen der Zusammenfassung, je Thema mit seiner
+ * ausführlichen Fassung und dem Ort, an dem es steht. Die Grobübersicht bündelt zusammengehörige Meldungen und ordnet
+ * sie, wie es am spannendsten ist (mit Aufmacher); jeder Abschnitt bekommt nur die Meldungen seines Themas im Volltext,
+ * dazu die Titel der übrigen, damit nichts doppelt erzählt wird. Erzählt wird, was inhaltlich neu ist, mit einem kurzen
+ * Verweis, wo es steht; Seitenzahlen, Größen und andere Metadaten sind kein Gesprächsstoff.
+ *
+ * <p>Selbstheilend: Jede Stufe fragt bis zu {@link #ATTEMPTS}-mal; eine unbrauchbare Antwort wird repariert, und gelingt
+ * gar nichts, entsteht die Stufe ohne Modell aus den Meldungen selbst. Jede Reparatur steht in
+ * {@link PodcastPlan#repairs()}.
  */
 public final class PodcastWriter {
 
@@ -31,15 +38,86 @@ public final class PodcastWriter {
     public static final int ATTEMPTS = 3;
     /** Längster Text eines Beitrags; das liegt unter den rund 500 Zeichen je Stück des Stimmstabilitäts-Fixes. */
     static final int MAX_TURN_CHARS = 450;
-    /** So viel der Zusammenfassung geht höchstens an das Modell. */
-    static final int MAX_MATERIAL_CHARS = 12000;
+    /** So viel einer Meldung geht in der Grobübersicht an das Modell. */
+    static final int MAX_STORY_BRIEF_CHARS = 400;
+    /** So viel einer Meldung geht in Abschnitt und Text an das Modell. */
+    static final int MAX_STORY_CHARS = 3000;
+    /** So viele Orte nennt eine Meldung höchstens. */
+    static final int MAX_PLACES = 3;
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
-    static final String STYLE = "Du schreibst einen lockeren deutschen Podcast im Stil von NotebookLM: zwei Stimmen "
-            + "unterhalten sich natürlich und gut gelaunt über das, was sich in einer Wissensquelle getan hat. Sie "
-            + "erklären, ordnen ein und reagieren aufeinander, ohne zu übertreiben. Nur Fakten aus dem Material, nichts "
-            + "erfinden, keine Namen von Personen. Antworte nur mit gültigem JSON, ohne Markdown.";
+    static final String STYLE = "Du schreibst einen lockeren deutschen Nachrichten-Podcast im Stil von NotebookLM: zwei "
+            + "Stimmen erzählen gut gelaunt, was es in einer Wissensquelle Neues gibt, als würden sie Kolleginnen und "
+            + "Kollegen auf den neuesten Stand bringen. Sie erzählen anschaulich, WAS inhaltlich neu ist und was das "
+            + "bedeutet, ordnen ein und reagieren aufeinander. Regeln: Nur Fakten aus dem Material, nichts erfinden, "
+            + "keine Namen von Personen. Nie über Metadaten reden: keine Anzahl von Seiten oder Änderungen, keine "
+            + "Größen, Kilobyte, Versionsnummern oder Zeitstempel, keine Feststellung, dass Seiten angelegt oder "
+            + "geändert wurden, ohne zu sagen, was drinsteht. Antworte nur mit gültigem JSON, ohne Markdown.";
+
+    /**
+     * Der Erklär-Podcast einer Seite (Angelo 21.11.2026): Überblick über das Wesentliche, nicht alles; Tabellen nur, wenn
+     * sie etwas aussagen.
+     */
+    static final String EXPLAINER_STYLE = "Du schreibst einen lockeren deutschen Erklär-Podcast im Stil von NotebookLM: "
+            + "zwei Stimmen erklären gut gelaunt, worum es auf einer Seite einer Wissensquelle und ihren Unterseiten "
+            + "geht, als würden sie Kolleginnen und Kollegen einen Überblick geben. Sie erzählen das Wesentliche "
+            + "anschaulich: wozu es das gibt, wie es funktioniert, was man wissen und beachten muss, mit Beispielen aus "
+            + "dem Material. Regeln: Überblick statt Vollständigkeit; Unwichtiges, Wiederholungen, Inhaltsverzeichnisse "
+            + "und Änderungshistorien weglassen. Tabellen nie vorlesen: aus einer Tabelle höchstens die Aussage in einem "
+            + "Satz, keine Zahlenkolonnen. Nur Fakten aus dem Material, nichts erfinden, keine Namen von Personen. Nie "
+            + "über Metadaten reden: keine Anzahl von Seiten, keine Größen, Versionsnummern oder Zeitstempel. Antworte "
+            + "nur mit gültigem JSON, ohne Markdown.";
+
+    /** Wofür eine Folge entsteht: Neuigkeiten eines Updates oder die Erklärung einer Seite. */
+    public enum Format {
+        /** Was es Neues gibt: jede Meldung genau einmal, Reihenfolge nach Spannung. */
+        NEWS(STYLE, "Neuigkeiten", "Meldung", "Meldungen", "Was gibt es Neues bei uns",
+                "Das erste Thema ist ein kurzer Einstieg mit Aufmacher: macht neugierig auf die spannendste Meldung.",
+                "jede Meldung kommt in genau einem Thema vor. Ordne so, wie es am spannendsten und interessantesten "
+                        + "ist, nicht nach Umfang.",
+                "inhaltlich neu ist und was es bedeutet", "Heute schauen wir uns an, was es Neues gibt.",
+                "Nennt im Thema einmal knapp in einem Halbsatz, wo es steht (Space oder Seite), nicht öfter. ", true),
+        /** Was auf einer Seite steht: das Wesentliche, Unwichtiges darf wegfallen. */
+        EXPLAINER(EXPLAINER_STYLE, "Seite zum Erklären", "Teil", "Teile", "Kurz erklärt",
+                "Das erste Thema ist ein kurzer Einstieg: worum es geht und wozu man das braucht.",
+                "jeder Teil kommt höchstens in einem Thema vor; Teile ohne wesentliche Aussage (reine Tabellen, "
+                        + "Verzeichnisse, Historie, Formales) lässt du weg. Ordne so, dass man es gut versteht: erst das "
+                        + "Große und Ganze, dann die Einzelheiten.",
+                "erklären: das Wesentliche verständlich und mit Beispielen aus dem Material, statt alles aufzuzählen",
+                "Heute erklären wir, worum es auf dieser Seite geht.",
+                "Steht etwas auf einer Unterseite, nennt sie einmal knapp; die erklärte Seite selbst nennt ihr nicht "
+                        + "immer wieder. ", false);
+
+        final String style;
+        final String heading;
+        final String one;
+        final String many;
+        final String episode;
+        final String opening;
+        final String coverage;
+        final String content;
+        final String greeting;
+        /** Wie oft und wie der Ort vorkommt. */
+        final String place;
+        /** Jede Meldung muss vorkommen (fehlende werden ergänzt). */
+        final boolean complete;
+
+        Format(String style, String heading, String one, String many, String episode, String opening,
+               String coverage, String content, String greeting, String place, boolean complete) {
+            this.style = style;
+            this.heading = heading;
+            this.one = one;
+            this.many = many;
+            this.episode = episode;
+            this.opening = opening;
+            this.coverage = coverage;
+            this.content = content;
+            this.greeting = greeting;
+            this.place = place;
+            this.complete = complete;
+        }
+    }
 
     private final StepModel model;
     private final Pause pause;
@@ -57,20 +135,39 @@ public final class PodcastWriter {
 
     // --- Stufe 1: Grobübersicht ---------------------------------------------------------------------------------
 
-    /** Die Grobübersicht aus dem Material; nie leer. */
+    /** Die Grobübersicht aus den Meldungen; nie leer, jede Meldung genau einem Thema zugeordnet. */
     public PodcastPlan outline(Material material) {
-        String prompt = "# MATERIAL: KI-Zusammenfassung des Updates" + material.describe() + "\n"
-                + cut(material.text(), MAX_MATERIAL_CHARS) + "\n\n# AUFGABE\nPlane die Folge grob: einen Titel und "
-                + "2 bis " + PodcastPlan.MAX_TOPICS + " Themen in Sendereihenfolge. Das erste Thema ist ein kurzer "
-                + "Einstieg (worum es heute geht), das letzte ein kurzer Abschluss (was man mitnehmen sollte). Fasse "
-                + "Zusammengehöriges zu einem Thema zusammen. energy: 0 ruhig und einordnend bis 1 lebhaft. points: "
-                + "die Kernpunkte aus dem Material, die das Thema tragen.\nAntworte mit genau einem JSON-Objekt: "
-                + "{\"title\":\"...\",\"topics\":[{\"title\":\"...\",\"angle\":\"ein Satz\",\"energy\":0.5,"
-                + "\"points\":[\"...\"]}]}";
+        Format format = material.format();
+        StringBuilder prompt = new StringBuilder("# MATERIAL: ").append(format.heading).append(material.describe())
+                .append('\n');
+        if (!material.overview().isBlank()) {
+            prompt.append("Überblick: ").append(cut(flat(material.overview()), 1200)).append('\n');
+        }
+        prompt.append(format.many).append(":\n");
+        List<Story> stories = material.stories();
+        for (int i = 0; i < stories.size(); i++) {
+            Story story = stories.get(i);
+            prompt.append('[').append(i + 1).append("] ").append(story.title()).append(": ")
+                    .append(cut(flat(story.text()), MAX_STORY_BRIEF_CHARS));
+            if (!story.place().isEmpty()) {
+                prompt.append(" (").append(story.place()).append(')');
+            }
+            prompt.append('\n');
+        }
+        prompt.append("\n# AUFGABE\nPlane eine Folge \"").append(format.episode).append("\": einen packenden Titel "
+                + "und 3 bis ").append(PodcastPlan.MAX_TOPICS).append(" Themen in Sendereihenfolge. ")
+                .append(format.opening).append(" Das letzte ist ein kurzer Abschluss. Dazwischen erzählt jedes Thema ")
+                .append(format == Format.NEWS ? "eine " : "einen ").append(format.one).append(" oder mehrere, die inhaltlich zusammenpassen; ")
+                .append(format.coverage).append(" title nennt den Inhalt, nie eine Anzahl. angle: ein Satz, was daran "
+                + "neu oder wichtig ist. energy: 0 ruhig und einordnend bis 1 lebhaft. stories: die Nummern der ")
+                .append(format.many).append(", beim Einstieg und Abschluss leer.\nAntworte mit genau einem "
+                + "JSON-Objekt: {\"title\":\"...\","
+                + "\"topics\":[{\"title\":\"...\",\"angle\":\"ein Satz\",\"energy\":0.5,\"stories\":[1]}]}");
         List<String> repairs = new ArrayList<>();
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
-                PodcastPlan plan = readOutline(model.complete(STYLE, prompt), repairs);
+                PodcastPlan plan = readOutline(model.complete(format.style, prompt.toString()), stories.size(),
+                        format.complete, repairs);
                 if (plan != null) {
                     return plan;
                 }
@@ -83,24 +180,42 @@ public final class PodcastWriter {
                 pause.before(attempt + 1);
             }
         }
-        repairs.add("Grobübersicht ohne Modell aus der Zusammenfassung");
+        repairs.add("Grobübersicht ohne Modell aus den Meldungen");
         return fallbackOutline(material, repairs);
     }
 
-    static PodcastPlan readOutline(String answer, List<String> repairs) {
+    /**
+     * Liest die Grobübersicht und sorgt dafür, dass jede Meldung genau einmal erzählt wird: doppelte Nummern fallen weg,
+     * vergessene Meldungen bekommen ein eigenes Thema vor dem Abschluss (oder gehen zum letzten Thema davor, wenn kein
+     * Platz ist).
+     */
+    static PodcastPlan readOutline(String answer, int storyCount, List<String> repairs) {
+        return readOutline(answer, storyCount, true, repairs);
+    }
+
+    /** @param complete ob jede Meldung vorkommen muss; sonst dürfen unwichtige Teile fehlen (Erklär-Podcast) */
+    static PodcastPlan readOutline(String answer, int storyCount, boolean complete, List<String> repairs) {
         JsonNode root = json(answer);
         if (root == null || !root.path("topics").isArray()) {
             return null;
         }
         List<Topic> topics = new ArrayList<>();
+        Set<Integer> told = new LinkedHashSet<>();
         for (JsonNode node : root.path("topics")) {
             String title = text(node, "title");
             if (title.isBlank()) {
                 repairs.add("Grobübersicht: Thema ohne Titel übergangen");
                 continue;
             }
+            List<Integer> stories = new ArrayList<>();
+            for (JsonNode number : node.path("stories")) {
+                int story = number.asInt(0);
+                if (story >= 1 && story <= storyCount && told.add(story)) {
+                    stories.add(story);
+                }
+            }
             topics.add(new Topic(title, text(node, "angle"), node.path("energy").asDouble(0.5), strings(node,
-                    "points")));
+                    "points"), stories));
         }
         if (topics.isEmpty()) {
             return null;
@@ -109,43 +224,83 @@ public final class PodcastWriter {
             repairs.add("Grobübersicht: " + topics.size() + " Themen auf " + PodcastPlan.MAX_TOPICS + " gekürzt");
             List<Topic> kept = new ArrayList<>(topics.subList(0, PodcastPlan.MAX_TOPICS - 1));
             kept.add(topics.get(topics.size() - 1)); // der Abschluss bleibt
+            told.clear();
+            kept.forEach(topic -> told.addAll(topic.stories()));
             topics = kept;
+        }
+        List<Integer> missing = new ArrayList<>();
+        for (int story = 1; story <= storyCount; story++) {
+            if (!told.contains(story)) {
+                missing.add(story);
+            }
+        }
+        if (complete && !missing.isEmpty()) {
+            repairs.add("Grobübersicht: Meldungen " + missing + " ergänzt");
+            topics = withMissing(topics, missing);
         }
         return new PodcastPlan(text(root, "title"), topics, repairs);
     }
 
-    /** Ein Einstieg, je Aussage der Zusammenfassung ein Thema (höchstens so viele, wie Platz ist), ein Abschluss. */
+    /** Vergessene Meldungen: je eine als Thema vor dem Abschluss, bei vollem Plan an das letzte mittlere Thema. */
+    private static List<Topic> withMissing(List<Topic> topics, List<Integer> missing) {
+        List<Topic> result = new ArrayList<>(topics);
+        int closing = result.size() >= 2 ? result.size() - 1 : result.size();
+        for (int story : missing) {
+            if (result.size() < PodcastPlan.MAX_TOPICS) {
+                result.add(closing, new Topic("Außerdem neu", "", 0.5, List.of(), List.of(story)));
+                closing++;
+            } else {
+                int target = Math.max(1, closing - 1);
+                Topic topic = result.get(target);
+                List<Integer> stories = new ArrayList<>(topic.stories());
+                stories.add(story);
+                result.set(target, new Topic(topic.title(), topic.angle(), topic.energy(), topic.points(), stories));
+            }
+        }
+        return result;
+    }
+
+    /** Ein Einstieg, je Meldung ein Thema (gebündelt, wenn es mehr sind als Platz), ein Abschluss. */
     static PodcastPlan fallbackOutline(Material material, List<String> repairs) {
         List<Topic> topics = new ArrayList<>();
-        topics.add(new Topic("Einstieg", "Worum es in diesem Update geht", 0.6, List.of()));
-        List<String> statements = material.statements().isEmpty() ? paragraphs(material.text())
-                : material.statements();
-        for (String statement : statements) {
-            if (topics.size() >= PodcastPlan.MAX_TOPICS - 1) {
-                break;
+        topics.add(new Topic("Einstieg", "Worum es heute geht", 0.6, List.of(), List.of()));
+        int slots = PodcastPlan.MAX_TOPICS - 2;
+        List<Story> stories = material.stories();
+        for (int slot = 0; slot < Math.min(slots, stories.size()); slot++) {
+            List<Integer> numbers = new ArrayList<>();
+            for (int i = slot; i < stories.size(); i += slots) {
+                numbers.add(i + 1);
             }
-            topics.add(new Topic(headline(statement), "", 0.5, List.of(statement)));
+            topics.add(new Topic(stories.get(slot).title(), "", 0.5, List.of(), numbers));
         }
-        topics.add(new Topic("Abschluss", "Was man mitnehmen sollte", 0.4, List.of()));
+        topics.add(new Topic("Abschluss", "Was man mitnehmen sollte", 0.4, List.of(), List.of()));
         return new PodcastPlan(null, topics, repairs);
     }
 
     // --- Stufe 2: Abschnitte je Thema ---------------------------------------------------------------------------
 
     /** Die Abschnitte eines Themas mit ihren Sprecherwechseln; nie leer. */
-    public List<Segment> segments(PodcastPlan plan, int topicIndex, Voices voices, List<String> repairs) {
+    public List<Segment> segments(Material material, PodcastPlan plan, int topicIndex, Voices voices,
+                                  List<String> repairs) {
         Topic topic = plan.topics().get(topicIndex);
         boolean edge = topicIndex == 0 || topicIndex == plan.topics().size() - 1;
-        String prompt = planText(plan, voices) + "\n# AUFGABE\nPlane Thema " + (topicIndex + 1) + " \"" + topic.title()
-                + "\" genauer: " + (edge ? "genau 1 Abschnitt" : "1 bis " + PodcastPlan.MAX_SEGMENTS + " Abschnitte")
+        String prompt = planText(plan, voices) + topicMaterial(material, plan, topicIndex) + "\n# AUFGABE\nPlane Thema "
+                + (topicIndex + 1) + " \"" + topic.title() + "\" genauer: "
+                + (edge ? "genau 1 kurzer Abschnitt" : "1 bis " + PodcastPlan.MAX_SEGMENTS + " Abschnitte, je nach "
+                + "Stoff; jeder Abschnitt erzählt etwas anderes. Zusammen erzählen die Abschnitte jeden wichtigen "
+                + "Fakt der " + material.format().many + " (jede Regel, jede Stufe, jeden Schritt eines Ablaufs), "
+                + "keinen doppelt")
                 + ", je Abschnitt 2 bis " + PodcastPlan.MAX_BEATS + " Wortbeiträge mit Sprecherwechsel. speaker ist "
                 + "\"host\" (" + voices.host() + ", führt durch die Folge) oder \"cohost\" (" + voices.cohost()
-                + ", fragt nach, ordnet ein). intent sagt in wenigen Worten, was der Beitrag tut.\nAntworte mit genau "
-                + "einem JSON-Objekt: {\"segments\":[{\"title\":\"...\",\"beats\":[{\"speaker\":\"host\","
-                + "\"intent\":\"...\"}]}]}";
+                + ", fragt nach, ordnet ein). intent sagt konkret, welchen Inhalt der Beitrag erzählt (etwa \"erklärt, "
+                + "was die neue Prüfung vor dem Start verhindert\"), nie Metadaten. Der letzte Beitrag eines "
+                + "Abschnitts ist nie eine offene Frage.\nAntworte mit genau einem "
+                + "JSON-Objekt: {\"segments\":[{\"title\":\"...\",\"beats\":[{\"speaker\":\"host\",\"intent\":"
+                + "\"...\"}]}]}";
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
-                List<Segment> segments = readSegments(model.complete(STYLE, prompt), edge, repairs);
+                List<Segment> segments = readSegments(model.complete(material.format().style, prompt), edge,
+                        repairs);
                 if (!segments.isEmpty()) {
                     return segments;
                 }
@@ -192,29 +347,43 @@ public final class PodcastWriter {
     }
 
     static Segment fallbackSegment(Topic topic) {
-        return new Segment(topic.title(), List.of(new Beat(Speaker.HOST, "stellt das Thema vor"),
-                new Beat(Speaker.COHOST, "ordnet ein")));
+        return new Segment(topic.title(), List.of(new Beat(Speaker.HOST, "erzählt, was neu ist"),
+                new Beat(Speaker.COHOST, "ordnet ein, was das bedeutet")));
     }
 
     // --- Stufe 3: gesprochener Text -----------------------------------------------------------------------------
 
     /**
-     * Der gesprochene Text eines Abschnitts nach seinem Plan; nie leer. {@code before} ist der Plan des Abschnitts davor
-     * ({@code null} am Anfang), damit der Übergang passt, auch wenn beide gleichzeitig entstehen.
+     * Der gesprochene Text eines Abschnitts nach seinem Plan; nie leer.
+     *
+     * @param segments alle Abschnitte des Themas, damit jeder seinen Teil erzählt und nicht den der anderen
+     * @param before   der Plan des Abschnitts davor ({@code null} am Anfang), damit der Übergang passt, auch wenn beide
+     *                 gleichzeitig entstehen
      */
-    public List<Turn> script(PodcastPlan plan, int topicIndex, Segment segment, Segment before, boolean last,
-                             Voices voices, List<String> repairs) {
+    public List<Turn> script(Material material, PodcastPlan plan, int topicIndex, List<Segment> segments,
+                             int segmentIndex, Segment before, boolean last, Voices voices, List<String> repairs) {
         Topic topic = plan.topics().get(topicIndex);
+        Segment segment = segments.get(segmentIndex);
+        boolean first = topicIndex == 0 && segmentIndex == 0;
         StringBuilder prompt = new StringBuilder(planText(plan, voices));
+        prompt.append(topicMaterial(material, plan, topicIndex));
         prompt.append("\n# ABSCHNITT\nThema ").append(topicIndex + 1).append(" \"").append(topic.title())
-                .append("\", Abschnitt \"").append(segment.title()).append("\", Energie ")
+                .append("\", Abschnitt ").append(segmentIndex + 1).append(" von ").append(segments.size())
+                .append(" \"").append(segment.title()).append("\", Energie ")
                 .append(String.format(Locale.ROOT, "%.1f", topic.energy())).append('\n');
-        if (!topic.points().isEmpty()) {
-            prompt.append("Kernpunkte: ").append(String.join(" | ", topic.points())).append('\n');
+        if (segments.size() > 1) {
+            List<String> others = new ArrayList<>();
+            for (int i = 0; i < segments.size(); i++) {
+                if (i != segmentIndex) {
+                    others.add("\"" + segments.get(i).title() + "\"");
+                }
+            }
+            prompt.append("Die anderen Abschnitte dieses Themas erzählen ").append(String.join(", ", others))
+                    .append("; das gehört nicht hierher.\n");
         }
-        prompt.append(before == null ? "Davor: nichts, das ist der Anfang der Folge; begrüßt kurz.\n"
-                : "Davor endete der Abschnitt \"" + before.title() + "\"; schließt natürlich daran an, ohne neu zu "
-                + "begrüßen.\n");
+        prompt.append(first ? "Davor: nichts, das ist der Anfang der Folge; begrüßt kurz.\n"
+                : "Davor endete der Abschnitt \"" + (before == null ? "" : before.title()) + "\"; schließt natürlich "
+                + "daran an, ohne neu zu begrüßen und ohne den Überblick zu wiederholen.\n");
         if (last) {
             prompt.append("Das ist der letzte Abschnitt: verabschiedet euch kurz.\n");
         }
@@ -223,14 +392,28 @@ public final class PodcastWriter {
             prompt.append("- ").append(name(beat.speaker(), voices)).append(": ").append(beat.intent()).append('\n');
         }
         prompt.append("\n# AUFGABE\nSchreibe genau diese Beiträge als gesprochenen Text, je Beitrag 1 bis 3 kurze Sätze, "
-                + "höchstens ").append(MAX_TURN_CHARS).append(" Zeichen, Umgangssprache, keine Aufzählungen, keine "
-                + "Abkürzungen, die man nicht sprechen kann, keine Regieanweisungen.\nAntworte mit genau einem "
-                + "JSON-Objekt: {\"turns\":[{\"speaker\":\"host\",\"text\":\"...\"}]}");
+                + "höchstens ").append(MAX_TURN_CHARS).append(" Zeichen, Umgangssprache. ");
+        if (topic.stories().isEmpty()) {
+            prompt.append("Erzählt keine ").append(material.format().many).append(" im Detail, die kommen in "
+                    + "ihren eigenen Themen. ");
+        } else {
+            prompt.append("Erzählt anschaulich, was die ").append(material.format().many)
+                    .append(" dieses Themas ").append(material.format().content).append(", mit den konkreten "
+                    + "Fakten (Regeln, Stufen, Schritte) statt allgemeiner Worte. ").append(material.format().place);
+            if (segmentIndex == segments.size() - 1) {
+                prompt.append("Das ist der letzte Abschnitt des Themas: was aus seinen ")
+                        .append(material.format().many).append(" Wichtiges noch nicht erzählt ist, gehört hierher. ");
+            }
+        }
+        prompt.append("Jede Frage wird im selben Abschnitt beantwortet; der letzte Beitrag ist keine Frage. ");
+        prompt.append("Keine Anzahl von Seiten oder Änderungen, keine Größen, keine Aufzählungen, keine Abkürzungen, "
+                + "die man nicht sprechen kann, keine Regieanweisungen.\nAntworte mit genau einem JSON-Objekt: "
+                + "{\"turns\":[{\"speaker\":\"host\",\"text\":\"...\"}]}");
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
-                List<Turn> turns = readTurns(model.complete(STYLE, prompt.toString()), segment);
+                List<Turn> turns = readTurns(model.complete(material.format().style, prompt.toString()), segment);
                 if (!turns.isEmpty()) {
-                    return turns;
+                    return withoutOpenQuestion(turns, segment, repairs);
                 }
                 repairs.add("Abschnitt \"" + segment.title() + "\": Antwort " + attempt + " ohne Text");
             } catch (RuntimeException e) {
@@ -241,8 +424,21 @@ public final class PodcastWriter {
                 pause.before(attempt + 1);
             }
         }
-        repairs.add("Abschnitt \"" + segment.title() + "\": Text ohne Modell aus den Kernpunkten");
-        return fallbackScript(topic, before == null, last);
+        repairs.add("Abschnitt \"" + segment.title() + "\": Text ohne Modell aus den Meldungen");
+        return fallbackScript(material, topic, first, last);
+    }
+
+    /**
+     * Ein Abschnitt endet nie mit einer offenen Frage: Die Abschnitte entstehen gleichzeitig, der nächste beantwortet sie
+     * also nicht. Eine Frage am Ende fällt weg.
+     */
+    static List<Turn> withoutOpenQuestion(List<Turn> turns, Segment segment, List<String> repairs) {
+        List<Turn> result = new ArrayList<>(turns);
+        while (result.size() > 1 && result.get(result.size() - 1).text().strip().endsWith("?")) {
+            result.remove(result.size() - 1);
+            repairs.add("Abschnitt \"" + segment.title() + "\": offene Frage am Ende weggelassen");
+        }
+        return result;
     }
 
     static List<Turn> readTurns(String answer, Segment segment) {
@@ -264,16 +460,27 @@ public final class PodcastWriter {
         return turns;
     }
 
-    /** Die Kernpunkte, abwechselnd vorgelesen; am Anfang eine Begrüßung, am Ende ein Abschied. */
-    static List<Turn> fallbackScript(Topic topic, boolean first, boolean last) {
+    /** Die Meldungen des Themas, abwechselnd vorgelesen; am Anfang eine Begrüßung, am Ende ein Abschied. */
+    static List<Turn> fallbackScript(Material material, Topic topic, boolean first, boolean last) {
         List<Turn> turns = new ArrayList<>();
         Speaker speaker = Speaker.HOST;
         if (first) {
-            turns.add(new Turn(speaker, "Hallo und willkommen! Heute schauen wir uns an, was sich getan hat."));
+            turns.add(new Turn(speaker, "Hallo und willkommen! " + material.format().greeting));
             speaker = speaker.other();
         }
-        turns.add(new Turn(speaker, "Weiter geht es mit: " + topic.title() + "."));
-        speaker = speaker.other();
+        List<Story> stories = material.stories(topic);
+        if (stories.isEmpty()) {
+            turns.add(new Turn(speaker, first ? "Los geht es mit: " + topic.title() + "." : topic.title() + "."));
+            speaker = speaker.other();
+        }
+        for (Story story : stories) {
+            // Der Ort hat höchstens ein Drittel des Beitrags: lange Seitentitel lassen dem Inhalt immer Platz.
+            String where = story.place().isEmpty() ? ""
+                    : " Zu finden " + cut(story.place(), MAX_TURN_CHARS / 3) + ".";
+            turns.add(new Turn(speaker, cut(spoken(story.title() + ": " + flat(story.text())), MAX_TURN_CHARS
+                    - where.length()) + where));
+            speaker = speaker.other();
+        }
         for (String point : topic.points()) {
             turns.add(new Turn(speaker, cut(spoken(point), MAX_TURN_CHARS)));
             speaker = speaker.other();
@@ -284,17 +491,78 @@ public final class PodcastWriter {
         return turns;
     }
 
-    // --- Hilfen -------------------------------------------------------------------------------------------------
+    // --- Material -----------------------------------------------------------------------------------------------
 
-    /** Die Zusammenfassung, aus der der Podcast entsteht; nur Text, den der Aufrufer sehen darf. */
-    public record Material(String text, List<String> statements, String scope) {
+    /**
+     * Woraus der Podcast entsteht; nur Text, den der Aufrufer sehen darf.
+     *
+     * @param overview der Überblick in wenigen Sätzen
+     * @param stories  die Meldungen, je ein Thema der Zusammenfassung
+     * @param scope    die Ebene, etwa „Space Betrieb“ oder „Seite „Handbuch““, {@code null} für die ganze Quelle
+     * @param format   Neuigkeiten oder Erklärung einer Seite
+     */
+    public record Material(String overview, List<Story> stories, String scope, Format format) {
         public Material {
-            text = text == null ? "" : text;
-            statements = List.copyOf(statements);
+            overview = overview == null ? "" : overview;
+            stories = List.copyOf(stories);
+            format = format == null ? Format.NEWS : format;
+        }
+
+        /** Neuigkeiten eines Updates. */
+        public Material(String overview, List<Story> stories, String scope) {
+            this(overview, stories, scope, Format.NEWS);
         }
 
         String describe() {
             return scope == null || scope.isBlank() ? "" : " (" + scope + ")";
+        }
+
+        /** Alle Seiten, deren Text in die Meldungen einging, ohne Wiederholung. */
+        public List<String> pageIds() {
+            java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
+            stories.forEach(story -> ids.addAll(story.pageIds()));
+            return List.copyOf(ids);
+        }
+
+        /** Die Meldungen eines Themas, ungültige Nummern übergangen. */
+        public List<Story> stories(Topic topic) {
+            List<Story> result = new ArrayList<>();
+            for (int number : topic.stories()) {
+                if (number >= 1 && number <= stories.size()) {
+                    result.add(stories.get(number - 1));
+                }
+            }
+            return result;
+        }
+    }
+
+    /**
+     * Eine Meldung: ein Thema der Zusammenfassung.
+     *
+     * @param title   kurzer Titel
+     * @param text    der Inhalt, die ausführliche Fassung, wenn es sie gibt
+     * @param places  wo es steht, etwa „auf der Seite „Eskalation“ im Space Betrieb, unter Handbuch“
+     * @param pageIds die Seiten der Meldung (für Bilder und Verweise), in der Reihenfolge der Zusammenfassung
+     */
+    public record Story(String title, String text, List<String> places, List<String> pageIds) {
+        public Story {
+            title = title == null || title.isBlank() ? "Neu" : title.strip();
+            text = text == null ? "" : text.strip();
+            places = places == null ? List.of() : List.copyOf(places);
+            pageIds = pageIds == null ? List.of() : List.copyOf(pageIds);
+        }
+
+        public Story(String title, String text, List<String> places) {
+            this(title, text, places, List.of());
+        }
+
+        /** Die Orte als ein Halbsatz, höchstens {@link #MAX_PLACES}. */
+        String place() {
+            if (places.isEmpty()) {
+                return "";
+            }
+            List<String> shown = places.subList(0, Math.min(MAX_PLACES, places.size()));
+            return String.join("; ", shown) + (places.size() > MAX_PLACES ? " und weitere Seiten" : "");
         }
     }
 
@@ -306,6 +574,8 @@ public final class PodcastWriter {
         }
     }
 
+    // --- Hilfen -------------------------------------------------------------------------------------------------
+
     private static String planText(PodcastPlan plan, Voices voices) {
         StringBuilder text = new StringBuilder("# PLAN DER FOLGE \"").append(plan.title()).append("\"\nStimmen: ")
                 .append(voices.host()).append(" (host) und ").append(voices.cohost()).append(" (cohost)\n");
@@ -313,6 +583,38 @@ public final class PodcastWriter {
             Topic topic = plan.topics().get(i);
             text.append(i + 1).append(". ").append(topic.title())
                     .append(topic.angle().isEmpty() ? "" : " – " + topic.angle()).append('\n');
+        }
+        return text.toString();
+    }
+
+    /**
+     * Was ein Thema erzählen darf: seine Meldungen im Volltext mit Ort. Der Einstieg kennt den Überblick und die
+     * Titel der Themen, die folgen; der Abschluss nur die Titel.
+     */
+    static String topicMaterial(Material material, PodcastPlan plan, int topicIndex) {
+        Topic topic = plan.topics().get(topicIndex);
+        List<Story> stories = material.stories(topic);
+        StringBuilder text = new StringBuilder("\n# MATERIAL DIESES THEMAS").append(material.describe()).append('\n');
+        if (stories.isEmpty()) {
+            if (topicIndex == 0 && !material.overview().isBlank()) {
+                text.append("Überblick: ").append(cut(flat(material.overview()), 1200)).append('\n');
+            }
+            text.append(topicIndex == 0 ? "Macht neugierig auf die folgenden Themen, ohne sie schon zu erzählen.\n"
+                    : "Rundet die Folge ab: nennt zu jedem Thema der Folge in einem Halbsatz konkret, was man "
+                    + "mitnehmen sollte, ohne allgemeine Worte wie Effizienz oder Struktur.\n");
+            if (topicIndex > 0) {
+                for (Story story : material.stories()) {
+                    text.append("- ").append(story.title()).append('\n');
+                }
+            }
+            return text.toString();
+        }
+        for (Story story : stories) {
+            text.append(material.format().one).append(" \"").append(story.title()).append("\"");
+            if (!story.place().isEmpty()) {
+                text.append(" – steht ").append(story.place());
+            }
+            text.append(":\n").append(cut(story.text(), MAX_STORY_CHARS)).append('\n');
         }
         return text.toString();
     }
@@ -328,6 +630,10 @@ public final class PodcastWriter {
                 .replaceAll("^\\s*\\w{1,20}\\s*:\\s+", "")
                 .replaceAll("\\s+", " ").strip();
         return cut(result, MAX_TURN_CHARS * 2);
+    }
+
+    static String flat(String text) {
+        return text.replaceAll("\\s+", " ").strip();
     }
 
     static JsonNode json(String answer) {
@@ -361,24 +667,10 @@ public final class PodcastWriter {
         return values;
     }
 
-    private static List<String> paragraphs(String text) {
-        List<String> parts = new ArrayList<>();
-        for (String part : text.split("\\n\\s*\\n")) {
-            if (!part.isBlank()) {
-                parts.add(part.strip());
-            }
-        }
-        return parts;
-    }
-
-    private static String headline(String statement) {
-        String flat = statement.replaceAll("\\s+", " ").strip();
-        int end = flat.indexOf(". ");
-        String first = end > 0 ? flat.substring(0, end) : flat;
-        return cut(first, 60);
-    }
-
     static String cut(String text, int max) {
+        if (max < 2) {
+            return text.isEmpty() ? text : "…";
+        }
         if (text.length() <= max) {
             return text;
         }
