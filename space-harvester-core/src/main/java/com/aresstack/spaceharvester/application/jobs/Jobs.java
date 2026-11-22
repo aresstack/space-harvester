@@ -268,14 +268,18 @@ public class Jobs implements AutoCloseable {
      */
     public static final String SURVIVES_SHUTDOWN = "jobs.survivesShutdown";
 
+    /** Code des Hinweises: ein Auftrag wartet, bis das Löschen der Daten seiner Quelle durch ist ({@link #sourceHold}). */
+    public static final String WAITING_FOR_WITHDRAWAL = "WAITING_FOR_WITHDRAWAL";
+    static final String WAITING_FOR_WITHDRAWAL_TEXT = "wartet auf das Löschen der Daten der Quelle";
+
     /**
-     * Angabe eines Auftrags, hinter dem jeder später angenommene Auftrag derselben Quelle startet ({@link #AFTER}),
-     * solange er offen oder angehalten ist, etwa das Löschen der alten Daten einer auf ein neues Ziel umgestellten
-     * Quelle (Fundstelle 22): Ein Abgleich gleich nach dem Umstellen wartet, statt vom Löschen beendet zu werden.
+     * Welcher Auftrag die Daten einer Quelle gerade löscht (Fundstelle 22): liefert dessen ID, solange das Löschen offen
+     * ist, sonst {@code null}. Jeder andere Auftrag der Quelle startet erst danach, auf jedem Weg (Annahme, Fortsetzen,
+     * erneuter Lauf, Hintergrund); offene Löschungen lassen sich nicht löschen.
      */
-    public static final String HOLDS_SOURCE = "jobs.holdsSource";
-    /** Text in „wartet auf …“ hinter einem {@link #HOLDS_SOURCE}-Auftrag. */
-    static final String HOLDS_SOURCE_TITLE = "das Löschen der alten Daten der Quelle";
+    private volatile java.util.function.Function<String, String> sourceHold = sourceId -> null;
+    /** Die Quelle des Auftrags, dessen Arbeit gerade auf diesem Thread läuft ({@link #runningSource()}). */
+    private static final ThreadLocal<String> RUNNING_SOURCE = new ThreadLocal<>();
 
     /**
      * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)} für einen Klick des Benutzers, etwa
@@ -315,7 +319,6 @@ public class Jobs implements AutoCloseable {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
             }
             requireCapacity(type, owner);
-            holdBehindSource(job);
             // Vor dem Einreihen: sonst könnte ein paralleler dispatch() den Start vor der Annahme festhalten.
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
                     null, null);
@@ -355,7 +358,6 @@ public class Jobs implements AutoCloseable {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
             }
             requireCapacity(type, owner);
-            holdBehindSource(job);
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
                     null, null);
             open.put(job.id, job);
@@ -1113,6 +1115,11 @@ public class Jobs implements AutoCloseable {
                 Job open = this.open.get(jobId);
                 JobStatus status = requireOwner(open != null ? open.snapshot()
                         : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
+                if (openWithdrawal(status)) {
+                    // Fundstelle 22: Ein offenes Löschen der Daten einer Quelle bleibt, bis es gelingt oder abbricht;
+                    // sonst fiele die Sperre und die alten Daten blieben liegen.
+                    throw new JobStillRunningException(jobId);
+                }
                 freed = stop(jobId);
                 // Was auf diesen Auftrag wartet (Bilder und Anhänge eines Exports), verschwindet mit; auch, was nach
                 // einem Neustart als unterbrochen gilt, ohne je gestartet zu sein.
@@ -1207,6 +1214,8 @@ public class Jobs implements AutoCloseable {
                     removed++;
                 } catch (UnknownJobException e) {
                     // inzwischen gelöscht
+                } catch (JobStillRunningException e) {
+                    // ein offenes Löschen der Daten einer Quelle bleibt
                 }
             }
         }
@@ -1224,7 +1233,7 @@ public class Jobs implements AutoCloseable {
         int removed = 0;
         for (JobStatus status : store.all()) {
             if (Objects.equals(status.owner(), owner) && (type == null || status.type() == type)
-                    && deleteIfFinished(status.id(), false)) {
+                    && !openWithdrawal(status) && deleteIfFinished(status.id(), false)) {
                 removed++;
             }
         }
@@ -1330,7 +1339,7 @@ public class Jobs implements AutoCloseable {
     /**
      * Wie {@link #cancelSource(String, String, Duration)}, aber nur für Aufträge, die vor {@code createdBefore}
      * angenommen wurden: Das Löschen der Daten einer Quelle beendet keinen Auftrag, der erst danach kam und hinter ihm
-     * wartet ({@link #HOLDS_SOURCE}).
+     * wartet ({@link #sourceHold}).
      *
      * @param createdBefore Grenze oder {@code null} für alle
      */
@@ -1588,6 +1597,7 @@ public class Jobs implements AutoCloseable {
         for (JobStatus status : all) {
             if (status.state().terminal() && status.finishedAt() != null && status.finishedAt().isBefore(limit)
                     && !(status.state() == JobState.PAUSED && awaited.contains(status.id()))
+                    && !openWithdrawal(status)
                     && !(pendingAfterShutdown(status)
                             && status.createdAt().equals(newest.get(status.type() + "|" + status.sourceId())))
                     && deleteIfFinished(status.id(), true)) {
@@ -1762,6 +1772,10 @@ public class Jobs implements AutoCloseable {
             if (job.awaiting != null || job.starting) {
                 continue;
             }
+            if (heldBySource(job)) {
+                // Das Löschen der Daten seiner Quelle ist offen: zählt nicht als wartend und hält keinen anderen auf.
+                continue;
+            }
             if (job.type.background()) {
                 if (ownLane(job) && parallelPreparations > 1 && !backgroundStopped && !held(job)) {
                     // Eigene Spur: ohne Platz, sofort; sie hält keinen anderen Auftrag auf.
@@ -1778,10 +1792,6 @@ public class Jobs implements AutoCloseable {
                     job.emit(JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, SINGLE_SLOT,
                             SINGLE_SLOT_TEXT, null, null, null, null);
                 }
-                continue;
-            }
-            if (job.parameters != null && job.parameters.containsKey(AFTER) && held(job)) {
-                // Hinter einem Auftrag, der die Quelle hält ({@link #HOLDS_SOURCE}): zählt nicht als wartend.
                 continue;
             }
             othersWaiting = true;
@@ -1880,36 +1890,59 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
-     * Unter dem Sperrobjekt, vor dem Einreihen: Hält ein offener oder angehaltener Auftrag die Quelle
-     * ({@link #HOLDS_SOURCE}), startet {@code job} erst nach ihm ({@link #AFTER}).
+     * Unter dem Sperrobjekt: ob das offene Löschen der Daten seiner Quelle den Auftrag hält ({@link #sourceHold});
+     * meldet „wartet auf …“ einmal je Sperre.
      */
-    private void holdBehindSource(Job job) {
-        if (job.sourceId == null || job.type.background()) {
-            return;
+    private boolean heldBySource(Job job) {
+        String holder;
+        try {
+            holder = job.sourceId == null ? null : sourceHold.apply(job.sourceId);
+        } catch (RuntimeException e) {
+            holder = null;
         }
-        List<String> holders = new ArrayList<>();
-        for (Job other : open.values()) {
-            if (other != job && job.sourceId.equals(other.sourceId) && other.parameters != null
-                    && "true".equals(other.parameters.get(HOLDS_SOURCE))) {
-                holders.add(other.id);
-            }
+        boolean held = holder != null && !holder.equals(job.id);
+        if (held && !job.withdrawalNoted) {
+            job.withdrawalNoted = true;
+            job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, WAITING_FOR_WITHDRAWAL,
+                    WAITING_FOR_WITHDRAWAL_TEXT, null, null, null, null);
+        } else if (!held) {
+            job.withdrawalNoted = false;
         }
-        for (Job other : stopped.values()) {
-            if (other.state == JobState.PAUSED && job.sourceId.equals(other.sourceId) && other.parameters != null
-                    && "true".equals(other.parameters.get(HOLDS_SOURCE)) && !holders.contains(other.id)) {
-                holders.add(other.id);
-            }
+        return held;
+    }
+
+    /**
+     * Bindet an, welcher Auftrag die Daten einer Quelle gerade löscht (Fundstelle 22): {@code hold} liefert dessen ID,
+     * solange das Löschen offen ist, sonst {@code null}. Nach jeder Änderung ruft der Aufrufer {@link #holdsChanged()}.
+     */
+    public void sourceHold(java.util.function.Function<String, String> hold) {
+        this.sourceHold = Objects.requireNonNull(hold, "hold");
+        holdsChanged();
+    }
+
+    /** Ein Löschen hat begonnen oder ist durch: wartende Aufträge neu prüfen. */
+    public void holdsChanged() {
+        synchronized (lock) {
+            lock.notifyAll();
         }
-        if (holders.isEmpty() || job.parameters != null && "true".equals(job.parameters.get(HOLDS_SOURCE))) {
-            return;
+        dispatch();
+    }
+
+    /**
+     * Die Quelle des Auftrags, dessen Arbeit gerade auf diesem Thread läuft, etwa {@link #ALL_SOURCES}; sonst
+     * {@code null}. Damit lassen quellenübergreifende Aufträge eine Quelle aus, deren Daten gerade gelöscht werden.
+     */
+    public static String runningSource() {
+        return RUNNING_SOURCE.get();
+    }
+
+    /** Ob {@code status} das offene Löschen der Daten seiner Quelle ist ({@link #sourceHold}). */
+    private boolean openWithdrawal(JobStatus status) {
+        try {
+            return status.sourceId() != null && status.id().equals(sourceHold.apply(status.sourceId()));
+        } catch (RuntimeException e) {
+            return false;
         }
-        Map<String, String> held = new java.util.HashMap<>(job.parameters == null ? Map.of() : job.parameters);
-        String after = held.get(AFTER);
-        held.put(AFTER, (after == null || after.isBlank() ? "" : after + ",") + String.join(",", holders));
-        String titles = held.get(AFTER_TITLES);
-        held.put(AFTER_TITLES, titles == null || titles.isBlank() ? HOLDS_SOURCE_TITLE
-                : titles + ", " + HOLDS_SOURCE_TITLE);
-        job.parameters = Map.copyOf(held);
     }
 
     /** Ob der Auftrag auf eigener Spur läuft ({@value #OWN_LANE}). */
@@ -2019,7 +2052,13 @@ public class Jobs implements AutoCloseable {
         CompletionStage<Void> stage;
         try {
             // ADR 0030: Was der Auftrag in den Cache schreibt, trägt seinen Auslöser; blockierende Arbeit läuft hier.
-            stage = trigger(job.type, job.parameters).call(() -> job.task.start(job));
+            String previous = RUNNING_SOURCE.get();
+            RUNNING_SOURCE.set(job.sourceId);
+            try {
+                stage = trigger(job.type, job.parameters).call(() -> job.task.start(job));
+            } finally {
+                RUNNING_SOURCE.set(previous);
+            }
             if (stage == null) {
                 stage = CompletableFuture.failedFuture(new IllegalStateException("JobTask lieferte null"));
             }
@@ -2437,6 +2476,8 @@ public class Jobs implements AutoCloseable {
         final AtomicLong failedPages = new AtomicLong();
         volatile JobState state = JobState.QUEUED;
         volatile boolean cancelRequested;
+        /** „wartet auf das Löschen der Daten der Quelle“ ist für die laufende Sperre gemeldet. */
+        boolean withdrawalNoted;
         /** Mit {@link #cancelRequested}: der Benutzer hält an, statt abzubrechen. */
         volatile boolean pauseRequested;
         /** Wann Abbruch oder Anhalten zuerst angefordert wurde, für {@link #STOP_GRACE}. */

@@ -135,6 +135,8 @@ public final class SourceDataPurge {
         for (JobStatus status : jobs.listAll(JobType.PURGE)) {
             note(status);
         }
+        // Eine Wahrheit für Halten, Sperre und Löschschutz: das offene Löschen je Quelle (Abnahme zu Fundstelle 22).
+        jobs.sourceHold(this::openWithdrawal);
     }
 
     /** Die Ablagen in der Reihenfolge, in der sie geleert werden. */
@@ -155,6 +157,11 @@ public final class SourceDataPurge {
         if (!configured.test(sourceId)) {
             throw new UnknownSourceException(sourceId);
         }
+        String open = openWithdrawal(sourceId);
+        if (open != null) {
+            // Die alten Daten werden schon gelöscht; ein zweites Bereinigen bräche dieses Löschen ab.
+            throw new SourceRemovalPendingException(sourceId, open);
+        }
         // Gibt Plätze frei, bevor der Auftrag sie braucht; gewartet wird erst im Auftrag.
         stopJobs(sourceId, null, Duration.ZERO);
         return jobs.submit(JobType.PURGE, sourceId, null, owner, task(sourceId));
@@ -167,9 +174,9 @@ public final class SourceDataPurge {
      * {@link #resumePending()} ihn beim nächsten Start im selben Eintrag fort. Scheitert er, wiederholt er sich von
      * selbst ({@link #HEAL_DELAYS}), bis er gelingt.
      *
-     * <p>Beim Umstellen ({@link #MOVED}) hält der Auftrag die Quelle ({@link Jobs#HOLDS_SOURCE}): Jeder später
-     * angenommene Auftrag der Quelle startet erst nach ihm, und das Löschen beendet nur Aufträge, die vor ihm
-     * angenommen wurden.
+     * <p>Solange das Löschen offen ist ({@link #openWithdrawal}), auch angehalten, unterbrochen oder gescheitert, hält es
+     * die Quelle ({@link Jobs#sourceHold}): Jeder andere Auftrag der Quelle startet erst danach, und das Löschen beendet
+     * nur Aufträge, die vor ihm angenommen wurden.
      *
      * @param reason {@link #REMOVED} oder {@link #MOVED}
      */
@@ -180,11 +187,9 @@ public final class SourceDataPurge {
         java.util.Map<String, String> parameters = new java.util.HashMap<>();
         parameters.put(REASON, reason);
         parameters.put(Jobs.SURVIVES_SHUTDOWN, "true");
-        if (MOVED.equals(reason)) {
-            parameters.put(Jobs.HOLDS_SOURCE, "true");
-        }
         JobStatus started = jobs.submit(JobType.PURGE, sourceId, null, null, owner, parameters, task(sourceId));
         note(started);
+        jobs.holdsChanged();
         return started;
     }
 
@@ -213,8 +218,21 @@ public final class SourceDataPurge {
         return result;
     }
 
-    /** Wird nach jedem gelungenen Löschen aus {@link #startWithdrawal} mit der Quelle aufgerufen. */
-    public void onWithdrawn(Consumer<String> listener) {
+    /**
+     * Der Auftrag, der die Daten der Quelle gerade löscht (aus {@link #startWithdrawal}, entfernt oder umgestellt), von
+     * der Annahme bis er gelingt oder der Benutzer ihn abbricht, auch angehalten, unterbrochen oder gescheitert mit
+     * ausstehender Selbstheilung; sonst {@code null}. Aus dem Speicher.
+     */
+    public String openWithdrawal(String sourceId) {
+        JobStatus status = sourceId == null ? null : withdrawals.get(sourceId);
+        return status != null && pending(status) ? status.id() : null;
+    }
+
+    /**
+     * Wird aufgerufen, sobald das Löschen einer Quelle aus {@link #startWithdrawal} nicht mehr offen ist: gelungen
+     * oder vom Benutzer abgebrochen.
+     */
+    public void onSettled(Consumer<String> listener) {
         this.withdrawn = Objects.requireNonNull(listener, "listener");
     }
 
@@ -227,9 +245,19 @@ public final class SourceDataPurge {
         if (current.type() != JobType.PURGE) {
             throw new com.aresstack.spaceharvester.application.jobs.UnknownJobException(jobId);
         }
-        stopJobs(current.sourceId(), jobId, Duration.ZERO);
+        String open = openWithdrawal(current.sourceId());
+        if (open != null && !open.equals(jobId)) {
+            throw new SourceRemovalPendingException(current.sourceId(), open);
+        }
+        // Nur was vor dem Löschen kam: Was danach kam, wartet hinter ihm (Abnahme Punkt 1).
+        try {
+            jobs.cancelSource(current.sourceId(), jobId, current.createdAt(), Duration.ZERO);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         JobStatus resumed = jobs.rerun(jobId, owner, task(current.sourceId()));
         note(resumed);
+        jobs.holdsChanged();
         return resumed;
     }
 
@@ -267,9 +295,10 @@ public final class SourceDataPurge {
                     LOG.log(System.Logger.Level.INFO, "Löschen der Daten von Quelle {0} wird fortgesetzt",
                             status.sourceId());
                 } catch (RuntimeException e) {
-                    // Bleibt gescheitert stehen und läuft nicht ab; der nächste Start versucht es erneut.
+                    // Bleibt gescheitert und offen stehen; die Selbstheilung versucht es weiter (Abnahme Punkt 4).
                     LOG.log(System.Logger.Level.WARNING, "Löschen der Daten von Quelle {0} nicht fortgesetzt ({1})",
                             status.sourceId(), e.getClass().getName());
+                    heal(status);
                 }
             }
         }
@@ -295,16 +324,26 @@ public final class SourceDataPurge {
         if (latest == null || !latest.id().equals(status.id())) {
             return;
         }
-        if (status.state() == JobState.COMPLETED) {
+        if (status.state().terminal()) {
+            jobs.holdsChanged();
+        }
+        if (status.state() == JobState.CANCELLED) {
             healAttempts.remove(status.id());
-            try {
-                withdrawn.accept(status.sourceId());
-            } catch (RuntimeException e) {
-                LOG.log(System.Logger.Level.WARNING, "Nach dem Löschen der Daten von Quelle {0}: {1}",
-                        status.sourceId(), e.getClass().getName());
-            }
+            settled(status.sourceId());
+        } else if (status.state() == JobState.COMPLETED) {
+            healAttempts.remove(status.id());
+            settled(status.sourceId());
         } else if (status.state() == JobState.FAILED && !interrupted(status)) {
             heal(status);
+        }
+    }
+
+    private void settled(String sourceId) {
+        try {
+            withdrawn.accept(sourceId);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Nach dem Löschen der Daten von Quelle {0}: {1}", sourceId,
+                    e.getClass().getName());
         }
     }
 
@@ -326,10 +365,15 @@ public final class SourceDataPurge {
             }
             try {
                 resume(failed.id(), failed.owner());
+            } catch (IllegalStateException e) {
+                // Der Dienst wird beendet: der nächste Start setzt fort.
+                LOG.log(System.Logger.Level.INFO, "Löschen der Daten von Quelle {0} beim Beenden nicht wiederholt",
+                        failed.sourceId());
             } catch (RuntimeException e) {
-                // Dienst beendet oder Warteschlange voll: der nächste Start setzt fort.
+                // Warteschlange voll oder Auftrag noch nicht freigegeben: nächster Versuch (Abnahme Punkt 4).
                 LOG.log(System.Logger.Level.WARNING, "Löschen der Daten von Quelle {0} nicht wiederholt ({1})",
                         failed.sourceId(), e.getClass().getName());
+                heal(failed);
             }
         });
     }
@@ -356,7 +400,7 @@ public final class SourceDataPurge {
         return JobTask.blocking(context -> {
             context.discovered(stores.size());
             context.phase(COMPONENT, "Aufträge der Quelle beenden");
-            // Nur was vor diesem Auftrag kam: Was danach kam, wartet hinter ihm (Jobs.HOLDS_SOURCE).
+            // Nur was vor diesem Auftrag kam: Was danach kam, wartet hinter ihm (Jobs#sourceHold).
             java.time.Instant before = jobs.status(context.jobId()).createdAt();
             while (!jobs.cancelSource(sourceId, context.jobId(), before, JOB_STOP_TIMEOUT)) {
                 // Laufende Aufträge brauchen länger: weiter warten statt scheitern; Abbrechen geht.

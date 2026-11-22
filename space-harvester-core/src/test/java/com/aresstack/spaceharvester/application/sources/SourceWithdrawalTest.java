@@ -205,17 +205,155 @@ class SourceWithdrawalTest {
             JobStatus withdrawal = purge.startWithdrawal("altwiki", "app", SourceDataPurge.MOVED);
             assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
 
-            // Ein Abgleich gleich nach dem Umstellen: wartet hinter dem Löschen (Jobs.HOLDS_SOURCE).
-            JobStatus sync = jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "altwiki", null,
-                    "app", com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> { }));
-            assertThat(sync.parameter(Jobs.AFTER)).isEqualTo(withdrawal.id());
-            TimeUnit.MILLISECONDS.sleep(200);
-            assertThat(jobs.status(sync.id()).state()).isEqualTo(JobState.QUEUED);
+            // Ein Abgleich gleich nach dem Umstellen: wartet hinter dem Löschen (Jobs.sourceHold).
+            JobStatus sync = submitSync(jobs);
+            assertHeld(jobs, sync);
 
             release.countDown();
             assertThat(jobs.await(withdrawal.id(), "app", Duration.ofSeconds(30)).state())
                     .isEqualTo(JobState.COMPLETED);
             assertThat(jobs.await(sync.id(), "app", Duration.ofSeconds(30)).state()).isEqualTo(JobState.COMPLETED);
+        } finally {
+            jobs.close();
+        }
+    }
+
+    private static JobStatus submitSync(Jobs jobs) {
+        return jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "altwiki", null, "app",
+                com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> { }));
+    }
+
+    /** Der Auftrag wartet hinter dem offenen Löschen und sagt es. */
+    private static void assertHeld(Jobs jobs, JobStatus job) throws InterruptedException {
+        eventually(() -> jobs.events(job.id(), "app").stream()
+                .anyMatch(event -> Jobs.WAITING_FOR_WITHDRAWAL.equals(event.code())));
+        TimeUnit.MILLISECONDS.sleep(100);
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.QUEUED);
+    }
+
+    @Test
+    void pausingAndResumingTheWithdrawalKeepsTheWaitingSyncHeldAlsoAfterARestart() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Jobs before = jobs();
+        SourceDataPurge first = new SourceDataPurge(before, List.of(new SourceDataPurge.Store("Seiten", id -> {
+            entered.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }), new SourceDataPurge.Store("Analysen", cleared::add)), id -> true);
+        JobStatus withdrawal = first.startWithdrawal("altwiki", "app", SourceDataPurge.MOVED);
+        assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+        JobStatus sync = submitSync(before);
+        before.pause(withdrawal.id(), "app");
+        release.countDown();
+        eventually(() -> before.status(withdrawal.id()).state() == JobState.PAUSED);
+        // Angehalten ist das Löschen offen: Der Abgleich bleibt stehen.
+        assertHeld(before, sync);
+        assertThat(first.openWithdrawal("altwiki")).isEqualTo(withdrawal.id());
+        before.close();
+
+        // Nach dem Neustart hält das angehaltene Löschen weiter, auch einen neuen Abgleich.
+        Jobs after = jobs();
+        try {
+            SourceDataPurge second = new SourceDataPurge(after, List.of(
+                    new SourceDataPurge.Store("Analysen", cleared::add)), id -> true);
+            assertThat(second.resumePending()).as("angehalten bleibt angehalten").isEmpty();
+            JobStatus again = submitSync(after);
+            assertHeld(after, again);
+
+            second.resume(withdrawal.id(), "app");
+            assertThat(after.await(withdrawal.id(), "app", Duration.ofSeconds(30)).state())
+                    .isEqualTo(JobState.COMPLETED);
+            assertThat(after.await(again.id(), "app", Duration.ofSeconds(30)).state()).isEqualTo(JobState.COMPLETED);
+        } finally {
+            after.close();
+        }
+    }
+
+    @Test
+    void aWaitingSyncStaysHeldWhileAFailedWithdrawalWaitsForItsNextAttempt() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        Jobs jobs = jobs();
+        try {
+            SourceDataPurge purge = new SourceDataPurge(jobs, List.of(new SourceDataPurge.Store("Analysen", id -> {
+                if (attempts.incrementAndGet() == 1) {
+                    throw new IllegalStateException("Ablage gesperrt");
+                }
+                cleared.add(id);
+            })), id -> true);
+            purge.healDelays(List.of(Duration.ofMillis(800)));
+            JobStatus withdrawal = purge.startWithdrawal("altwiki", "app", SourceDataPurge.MOVED);
+            eventually(() -> jobs.status(withdrawal.id()).state() == JobState.FAILED);
+            JobStatus sync = submitSync(jobs);
+            assertHeld(jobs, sync);
+
+            assertThat(jobs.await(sync.id(), "app", Duration.ofSeconds(30)).state()).isEqualTo(JobState.COMPLETED);
+            assertThat(jobs.status(withdrawal.id()).state()).isEqualTo(JobState.COMPLETED);
+            assertThat(attempts.get()).isEqualTo(2);
+        } finally {
+            jobs.close();
+        }
+    }
+
+    @Test
+    void theSelfHealingGoesOnAfterARejectedAttempt() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        CountDownLatch blockers = new CountDownLatch(1);
+        Jobs jobs = new Jobs(store, executor, new JobLimits(1, 1, Duration.ofHours(1)), Clock.systemUTC());
+        try {
+            SourceDataPurge purge = new SourceDataPurge(jobs, List.of(new SourceDataPurge.Store("Analysen", id -> {
+                if (attempts.incrementAndGet() == 1) {
+                    throw new IllegalStateException("Ablage gesperrt");
+                }
+                cleared.add(id);
+            })), id -> false);
+            purge.healDelays(List.of(Duration.ofMillis(300), Duration.ofMillis(50)));
+            JobStatus withdrawal = purge.startWithdrawal("altwiki", "app", SourceDataPurge.REMOVED);
+            eventually(() -> jobs.status(withdrawal.id()).state() == JobState.FAILED);
+            // Die Warteschlange ist voll: Die nächsten Versuche werden abgelehnt und neu geplant.
+            for (int i = 0; i < 2; i++) {
+                jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "andere", null, "app",
+                        com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context ->
+                                blockers.await(10, TimeUnit.SECONDS)));
+            }
+            TimeUnit.MILLISECONDS.sleep(600);
+            assertThat(jobs.status(withdrawal.id()).state()).isEqualTo(JobState.FAILED);
+            assertThat(purge.withdrawing("altwiki")).isPresent();
+
+            blockers.countDown();
+            eventually(() -> jobs.status(withdrawal.id()).state() == JobState.COMPLETED);
+            assertThat(cleared).containsExactly("altwiki");
+        } finally {
+            blockers.countDown();
+            jobs.close();
+        }
+    }
+
+    @Test
+    void anOpenWithdrawalCannotBeSweptAway() throws Exception {
+        Jobs jobs = jobs();
+        try {
+            SourceDataPurge purge = new SourceDataPurge(jobs, List.of(new SourceDataPurge.Store("Analysen", id -> {
+                throw new IllegalStateException("Ablage gesperrt");
+            })), id -> false);
+            purge.healDelays(List.of(Duration.ofMinutes(10)));
+            JobStatus withdrawal = purge.startWithdrawal("altwiki", "app", SourceDataPurge.REMOVED);
+            eventually(() -> jobs.status(withdrawal.id()).state() == JobState.FAILED);
+
+            // Der Besen lässt das gescheiterte, sich wiederholende Löschen stehen; Löschen von Hand ebenso.
+            jobs.deleteFinished("app", null);
+            assertThat(store.find(withdrawal.id())).isPresent();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> jobs.delete(withdrawal.id(), "app"))
+                    .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobStillRunningException.class);
+            assertThat(purge.withdrawing("altwiki")).isPresent();
+
+            // Bricht der Benutzer es ab, ist es nicht mehr offen und lässt sich löschen.
+            jobs.retire(withdrawal.id(), "app", "Test");
+            eventually(() -> purge.openWithdrawal("altwiki") == null);
+            jobs.delete(withdrawal.id(), "app");
         } finally {
             jobs.close();
         }

@@ -561,9 +561,24 @@ wird automatisch verwaltet.
       gelöscht; bis dahin ist sie abgeschaltet und zeigt gelb „Wird noch entfernt“, danach ist sie leer und wieder an.
     - Das Löschen entfernter Quellen sieht, wer die Konfiguration verwaltet, auch wenn die Quelle nach dem Neuladen in
       keiner Richtlinie mehr steht.
-    - Beim Umstellen auf ein neues Ziel kehrt `SourceManagement#change` sofort zurück. Der Auftrag hält die Quelle
-      (`Jobs.HOLDS_SOURCE`): Jeder später angenommene Auftrag der Quelle startet erst nach ihm (`Jobs.AFTER`, „wartet
-      auf das Löschen der alten Daten der Quelle“), und das Löschen beendet nur Aufträge, die vor ihm angenommen wurden.
+    - Beim Umstellen auf ein neues Ziel kehrt `SourceManagement#change` sofort zurück.
+    - **Eine Wahrheit „Löschen offen“** (zweite Abnahme): `SourceDataPurge#openWithdrawal` hält je Quelle den jüngsten
+      Löschauftrag im Speicher, gepflegt aus den Auftragsmeldungen und beim Start aus der Ablage aufgebaut. Offen ist er
+      von der Annahme bis `COMPLETED` oder `CANCELLED`, also auch angehalten, unterbrochen und gescheitert mit
+      ausstehender Selbstheilung. Daran hängen Halten, Sperre der Kennung, Abschalten und Löschschutz.
+    - Halten: Solange das Löschen offen ist, startet kein anderer Auftrag der Quelle (`Jobs#sourceHold`, auf jedem Weg:
+      Annahme, Fortsetzen, ↻, Hintergrund); er wartet und meldet einmal „wartet auf das Löschen der Daten der Quelle“
+      (`Jobs.WAITING_FOR_WITHDRAWAL`). Aufträge über alle Quellen überspringen die Quelle (`AccessGuard#withhold`).
+      Das Löschen beendet nur Aufträge, die vor ihm angenommen wurden, auch nach Anhalten und Fortsetzen (Annahmezeit
+      des Eintrags).
+    - Die Selbstheilung plant nach einem abgelehnten neuen Versuch (etwa volle Warteschlange) weiter; beim Start bekommt
+      jedes offene gescheiterte Löschen seinen Zeitgeber.
+    - Löschschutz: Der Besen („Abgeschlossene löschen“) lässt offenes Löschen stehen und meldet gelb „Löschen der Quelle
+      läuft noch“; einzeln lässt es sich nicht löschen (`JobStillRunningException`), die Aufbewahrungsfrist nimmt es
+      nicht mit. „Daten bereinigen …“ ist bis dahin gesperrt, mit Hinweis.
+    - Eine bis zum Ende des Löschens abgeschaltete Quelle merkt sich den Schalter des Benutzers getrennt; schaltet er
+      sie in der Zeit aus, bleibt sie danach aus. Freigegeben wird bei `COMPLETED` und `CANCELLED`. Beim Start wird
+      erst gehalten, dann fortgesetzt.
     - Nimmt `Jobs` den Auftrag nicht an (Warteschlange voll), wird wie früher sofort gelöscht; die Daten bleiben nie
       ohne Auftrag liegen. Ein unterbrochener, gescheiterter oder angehaltener Auftrag läuft nicht nach der
       Aufbewahrungsfrist ab, solange ihn kein neuerer Auftrag derselben Art und Quelle ablöst (`Jobs#purgeExpired`).

@@ -1801,7 +1801,16 @@ public final class ActivitiesView implements View {
         AppRuntime runtime = context.runtime();
         // Nur echte Aufträge des Reiters: Gruppenzeilen sind bloß Darstellung und zählen nicht mit.
         List<JobStatus> own = tabJobs(lastJobs, backgroundTab());
-        List<String> confirmed = own.stream().filter(ActivitiesView::finished).map(JobStatus::id).toList();
+        // Ein offenes Löschen der Daten einer Quelle (gescheitert, wiederholt sich) bleibt: sonst fiele die Sperre und
+        // die alten Daten blieben liegen (Fundstelle 22).
+        List<String> withdrawing = runtime == null ? List.of() : own.stream().filter(ActivitiesView::finished)
+                .filter(job -> openWithdrawal(runtime, job)).map(JobStatus::id).toList();
+        List<String> confirmed = own.stream().filter(ActivitiesView::finished)
+                .filter(job -> !withdrawing.contains(job.id())).map(JobStatus::id).toList();
+        if (runtime != null && confirmed.isEmpty() && !withdrawing.isEmpty()) {
+            feedback.warning(WITHDRAWAL_KEPT, WITHDRAWAL_KEPT_TEXT);
+            return;
+        }
         if (runtime == null || confirmed.isEmpty()) {
             return;
         }
@@ -1822,9 +1831,27 @@ public final class ActivitiesView implements View {
                 table.clearSelection();
                 render();
             }
-            feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            if (withdrawing.isEmpty()) {
+                feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            } else {
+                feedback.warning(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht; " + WITHDRAWAL_KEPT,
+                        WITHDRAWAL_KEPT_TEXT);
+            }
             poll();
         }, feedback::problem);
+    }
+
+    /** Gelb, wenn der Besen ein offenes Löschen der Daten einer Quelle stehen lässt (Fundstelle 22). */
+    static final String WITHDRAWAL_KEPT = "Löschen der Quelle läuft noch";
+    static final String WITHDRAWAL_KEPT_TEXT = "Das Löschen der Daten einer entfernten Quelle bleibt in der Liste, bis "
+            + "es gelingt; es wiederholt sich von selbst.";
+
+    private static boolean openWithdrawal(AppRuntime runtime, JobStatus job) {
+        try {
+            return runtime.workspace().openWithdrawal(job);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /**

@@ -748,6 +748,19 @@ public final class Workspace {
     }
 
     /**
+     * Ob die Daten der Quelle gerade gelöscht werden (entfernt oder umgestellt), auch angehalten oder gescheitert mit
+     * ausstehender Wiederholung; aus dem Speicher des Core.
+     */
+    public boolean sourceDataBeingDeleted(String sourceId) {
+        return harvester.sourceManagement().withdrawalOpen(sourceId) != null;
+    }
+
+    /** Ob {@code job} ein offenes Löschen der Daten einer Quelle ist; das bleibt, bis es gelingt oder abbricht. */
+    public boolean openWithdrawal(JobStatus job) {
+        return job.sourceId() != null && job.id().equals(harvester.sourceManagement().withdrawalOpen(job.sourceId()));
+    }
+
+    /**
      * „Daten bereinigen“: löscht als Auftrag alle lokal gespeicherten Daten dieser einen Quelle (Seiten, Katalog,
      * Suchindex, Analysen, Anhänge, Begriffsbeziehungen, geprüfte Fakten, Aussagen); die Quelle bleibt eingerichtet,
      * andere Quellen bleiben unberührt ({@code SourceManagement.purge}, {@code DELETE /api/v1/sources/{id}/data}).
@@ -3231,6 +3244,8 @@ public final class Workspace {
                     deleted++;
                 } catch (UnknownJobException e) {
                     activities.forget(status.id());
+                } catch (JobStillRunningException e) {
+                    // ein offenes Löschen der Daten einer Quelle bleibt
                 }
             }
         }

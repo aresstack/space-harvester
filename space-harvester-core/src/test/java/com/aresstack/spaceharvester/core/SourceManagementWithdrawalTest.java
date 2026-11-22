@@ -99,8 +99,8 @@ class SourceManagementWithdrawalTest {
         }
     }
 
-    @Test
-    void aSourceConfiguredAgainBeforeTheRestartStaysInactiveUntilItsOldDataIsGone() throws Exception {
+    /** Entfernt die Quelle mitten im Löschen und beendet die App; danach steht sie per YAML wieder da. */
+    private String removedBeforeTheRestart() throws InterruptedException {
         Jobs before = jobs();
         String removal;
         try (ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(handbuch()), "test")) {
@@ -110,26 +110,36 @@ class SourceManagementWithdrawalTest {
             assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
             removal = sources.removalPending("handbuch").orElseThrow().id();
         }
-        // Die App endet mitten im Löschen; danach steht die Quelle per YAML wieder in der Konfiguration.
         before.close();
+        return removal;
+    }
 
+    /** Nach dem Neustart hält die Analysenablage an, bis {@code again} freigibt; danach kommt die Seitenablage. */
+    private List<SourceDataPurge.Store> storesAfter(CountDownLatch again) {
+        return List.of(new SourceDataPurge.Store("Analysen", id -> {
+            try {
+                again.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            cleared.add(id);
+        }), new SourceDataPurge.Store("Seiten", cleared::add));
+    }
+
+    @Test
+    void aSourceConfiguredAgainBeforeTheRestartStaysInactiveUntilItsOldDataIsGone() throws Exception {
+        String removal = removedBeforeTheRestart();
         CountDownLatch again = new CountDownLatch(1);
         Jobs after = jobs();
         try (ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(handbuch()), "test")) {
-            SourceDataPurge purge = new SourceDataPurge(after, List.of(new SourceDataPurge.Store("Analysen", id -> {
-                try {
-                    again.await(10, TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                cleared.add(id);
-            })), id -> catalog.config(id).isPresent());
+            SourceDataPurge purge = new SourceDataPurge(after, storesAfter(again), id -> catalog.config(id).isPresent());
             SourceManagement sources = new SourceManagement(catalog, after, purge);
 
             assertThat(sources.resumeWithdrawals()).extracting(JobStatus::id).containsExactly(removal);
             // Halb gelöschte Daten übernimmt sie nie: Sie ruht, bis das Löschen durch ist.
             assertThat(sources.enabled("handbuch")).isFalse();
             assertThat(sources.removalPending("handbuch")).isPresent();
+            assertThat(sources.withdrawalOpen("handbuch")).isEqualTo(removal);
 
             again.countDown();
             assertThat(after.await(removal, Harvester.OWNER, Duration.ofSeconds(30)).state())
@@ -137,6 +147,52 @@ class SourceManagementWithdrawalTest {
             eventually(() -> sources.enabled("handbuch"));
             assertThat(sources.removalPending("handbuch")).isEmpty();
             assertThat(cleared).contains("handbuch");
+        } finally {
+            after.close();
+        }
+    }
+
+    @Test
+    void theUsersSwitchStaysOffWhenTheyTurnTheHeldSourceOff() throws Exception {
+        String removal = removedBeforeTheRestart();
+        CountDownLatch again = new CountDownLatch(1);
+        Jobs after = jobs();
+        try (ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(handbuch()), "test")) {
+            SourceManagement sources = new SourceManagement(catalog, after,
+                    new SourceDataPurge(after, storesAfter(again), id -> catalog.config(id).isPresent()));
+            sources.resumeWithdrawals();
+            // Der Benutzer schaltet die gehaltene Quelle aus: Das gilt nach dem Löschen.
+            assertThat(sources.setEnabled("handbuch", false)).isFalse();
+
+            again.countDown();
+            assertThat(after.await(removal, Harvester.OWNER, Duration.ofSeconds(30)).state())
+                    .isEqualTo(JobState.COMPLETED);
+            eventually(() -> sources.removalPending("handbuch").isEmpty());
+            TimeUnit.MILLISECONDS.sleep(100);
+            assertThat(sources.enabled("handbuch")).isFalse();
+            assertThat(sources.setEnabled("handbuch", true)).isTrue();
+        } finally {
+            after.close();
+        }
+    }
+
+    @Test
+    void cancellingTheWithdrawalReleasesTheHeldSource() throws Exception {
+        String removal = removedBeforeTheRestart();
+        CountDownLatch again = new CountDownLatch(1);
+        Jobs after = jobs();
+        try (ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(handbuch()), "test")) {
+            SourceManagement sources = new SourceManagement(catalog, after,
+                    new SourceDataPurge(after, storesAfter(again), id -> catalog.config(id).isPresent()));
+            sources.resumeWithdrawals();
+            assertThat(sources.enabled("handbuch")).isFalse();
+
+            after.cancel(removal, Harvester.OWNER);
+            again.countDown();
+            assertThat(after.await(removal, Harvester.OWNER, Duration.ofSeconds(30)).state())
+                    .isEqualTo(JobState.CANCELLED);
+            eventually(() -> sources.enabled("handbuch"));
+            assertThat(sources.withdrawalOpen("handbuch")).isNull();
         } finally {
             after.close();
         }

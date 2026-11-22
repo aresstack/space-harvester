@@ -951,6 +951,15 @@ public final class SourcesView implements View {
         SourceForm.open(root, context, editable, this::select);
     }
 
+    /** Ob die Daten der Quelle gerade gelöscht werden (entfernt oder umgestellt); aus dem Speicher des Core. */
+    private boolean dataBeingDeleted(AppSettings.SourceEntry entry) {
+        try {
+            return context.runtime() != null && context.runtime().workspace().sourceDataBeingDeleted(entry.id());
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     /** Ob die Daten einer entfernten Quelle dieser ID noch gelöscht werden; aus dem Speicher des Core. */
     private boolean removing(AppSettings.SourceEntry entry) {
         try {
@@ -1879,8 +1888,14 @@ public final class SourcesView implements View {
             JMenuItem purge = new JMenuItem("Daten bereinigen …");
             purge.setToolTipText("Alle lokal gespeicherten Daten dieser Quelle löschen; die Quelle bleibt eingerichtet");
             // Auch abgeschaltet; nur nicht, solange der Core die Quelle nicht geöffnet hat (wartet auf ihr Geheimnis).
-            purge.setEnabled(context.runtime() != null
+            boolean deleting = dataBeingDeleted(entry);
+            purge.setEnabled(context.runtime() != null && !deleting
                     && !context.runtime().waitingForSecret().contains(entry.id()));
+            if (deleting) {
+                // Fundstelle 22: Ein zweites Bereinigen bräche das laufende Löschen ab.
+                purge.setToolTipText("Gesperrt: Die Daten dieser Quelle werden gerade gelöscht; Fortschritt unter "
+                        + "Aufträge");
+            }
             purge.addActionListener(e -> SourcesView.this.purge(entry));
             menu.add(purge);
             return menu;

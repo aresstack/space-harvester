@@ -19,12 +19,32 @@ public final class AccessGuard {
 
     private final AccessPolicy policy;
 
+    /** Quellen, die gerade niemandem gezeigt werden, unabhängig von der Richtlinie ({@link #withhold}). */
+    private volatile java.util.function.Predicate<String> withheld = sourceId -> false;
+
     public AccessGuard(AccessPolicy policy) {
         this.policy = Objects.requireNonNull(policy, "policy");
     }
 
+    /**
+     * Hält Quellen zurück, solange {@code withheld} sie nennt, etwa für quellenübergreifende Aufträge eine Quelle,
+     * deren Daten gerade gelöscht werden (Fundstelle 22): {@link #permits} und {@link #permitsSourceWide} verweigern
+     * dann, egal was die Richtlinie sagt.
+     */
+    public void withhold(java.util.function.Predicate<String> withheld) {
+        this.withheld = Objects.requireNonNull(withheld, "withheld");
+    }
+
+    private boolean withheld(String sourceId) {
+        try {
+            return sourceId != null && withheld.test(sourceId);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     public boolean permits(AccessContext context, ResourceScope scope, AccessKind kind) {
-        if (context == null || scope == null || kind == null) {
+        if (context == null || scope == null || kind == null || withheld(scope.sourceId())) {
             return false;
         }
         try {
@@ -42,7 +62,7 @@ public final class AccessGuard {
      * Fail closed wie {@link #permits}.
      */
     public boolean permitsSourceWide(AccessContext context, String sourceId, AccessKind kind) {
-        if (context == null || sourceId == null || kind == null) {
+        if (context == null || sourceId == null || kind == null || withheld(sourceId)) {
             return false;
         }
         try {
